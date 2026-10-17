@@ -109,15 +109,49 @@ extension MongoSession {
 
   // MARK: - Reads
 
+  /// The documents of one find or aggregate as typed BSON, at most `documentCap`, as one
+  /// statement (cancellable, the statement timeout shortened by the command's `maxTimeMS`).
+  /// Anything else, including an aggregate with `$out`/`$merge`, is refused before anything is
+  /// sent (defense in depth: the manager's gate already allowed only reads).
+  func readDocuments(_ command: MongoCommand) async throws -> [MongoValue] {
+    let isDocumentRead: Bool
+    switch command {
+    case .find, .aggregate:
+      isDocumentRead = MongoCommandClassifier.classifyStatement(command.render())?.kind == .read
+    default:
+      isDocumentRead = false
+    }
+    guard isDocumentRead else {
+      throw MongoSessionError(
+        message: "Only read commands return documents: a find, or an aggregate without "
+          + "$out/$merge.")
+    }
+    let database = databaseName
+    let cap = documentCap
+    return try await withStatement { token, connection in
+      try await readDocuments(
+        command, cap: cap, token: token, connection: connection, database: database)
+    }
+  }
+
+  /// The find / aggregate branch of `read` and `readDocuments`, inside their statement.
+  private func readDocuments(
+    _ command: MongoCommand, cap: Int, token: String, connection: MongoConnection,
+    database: String
+  ) async throws -> [MongoValue] {
+    try await readCursor(
+      Self.readCommand(command), cap: cap, token: token, connection: connection,
+      database: database, maxTimeMS: statementMaxTimeMS(Self.userMaxTimeMS(command)))
+  }
+
   private func read(_ command: MongoCommand) async throws -> ([ColumnInfo], [[CellValue]]) {
     let database = databaseName
     let cap = documentCap
     return try await withStatement { token, connection in
       switch command {
       case .find, .aggregate:
-        let documents = try await readCursor(
-          Self.readCommand(command), cap: cap, token: token, connection: connection,
-          database: database, maxTimeMS: statementMaxTimeMS(Self.userMaxTimeMS(command)))
+        let documents = try await readDocuments(
+          command, cap: cap, token: token, connection: connection, database: database)
         let columns = MongoBSONMapping.columns(for: documents)
         return (columns, documents.map { MongoBSONMapping.row(for: $0, columns: columns) })
       case .countDocuments(let collection, let filter, let options):

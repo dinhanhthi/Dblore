@@ -392,8 +392,8 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     }
   }
 
-  /// Full string representation (not truncated)
-  var fullString: String {
+  /// Full string representation (not truncated). Nonisolated: CSV export builds off the main actor
+  nonisolated var fullString: String {
     switch self {
     case .string(let value):
       return value

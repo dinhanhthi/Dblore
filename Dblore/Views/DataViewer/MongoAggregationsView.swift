@@ -89,7 +89,7 @@ struct MongoAggregationsView: View {
 
   /// Explains the enabled stages as one `aggregate` (the sheet is in `DataViewerView`)
   private func explainButton(_ builder: AggregationBuilderModel) -> some View {
-    let target = explainTarget(builder)
+    let target = builder.explainTarget
     return Button("Explain") {
       guard case .success(let command) = target else { return }
       model.explain(command)
@@ -99,51 +99,12 @@ struct MongoAggregationsView: View {
     .help(target.reason ?? "Explain the pipeline with execution statistics")
   }
 
-  /// The `aggregate` of the enabled stages, or why it cannot be explained: no enabled stage, a
-  /// stage error, or a stage that writes (`$out`, `$merge`: the gate's classifier decides)
-  private func explainTarget(_ builder: AggregationBuilderModel) -> PipelineTarget {
-    let target = pipelineTarget(builder, verb: "explain")
-    guard case .success(let command) = target else { return target }
-    guard MongoCommandClassifier.classifyStatement(command.render())?.kind == .read else {
-      return .blocked("A stage writes data ($out or $merge): such a pipeline is not explained")
-    }
-    return target
-  }
-
-  /// The `aggregate` of the enabled stages, or why there is none (no enabled stage, a stage
-  /// error); `verb` names the action in the reason
-  private func pipelineTarget(_ builder: AggregationBuilderModel, verb: String) -> PipelineTarget {
-    let enabled = builder.stages.filter(\.isEnabled)
-    guard !enabled.isEmpty else { return .blocked("Add an enabled stage to \(verb)") }
-    var pipeline: [MongoValue] = []
-    for stage in enabled {
-      guard case .success(let value) = AggregationBuilderModel.value(of: stage) else {
-        return .blocked("Fix the stage errors to \(verb) the pipeline")
-      }
-      pipeline.append(value)
-    }
-    return .success(MongoCommand.aggregate(collection: builder.collection, pipeline: pipeline))
-  }
-
-  private enum PipelineTarget {
-    case success(MongoCommand)
-    case blocked(String)
-
-    var command: MongoCommand? {
-      if case .success(let command) = self { command } else { nil }
-    }
-
-    var reason: String? {
-      if case .blocked(let reason) = self { reason } else { nil }
-    }
-  }
-
   // MARK: - Export Code
 
   /// Opens the driver code of the enabled stages as one `aggregate`; `$out` and `$merge` export
   /// too, since nothing runs
   private func exportButton(_ builder: AggregationBuilderModel) -> some View {
-    let target = pipelineTarget(builder, verb: "export")
+    let target = builder.pipeline(verb: "export")
     return Button("Export Code") {
       guard case .success(let command) = target else { return }
       exportRequest = MongoExportCodeSheet.Request(command: command, database: database)

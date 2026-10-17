@@ -38,12 +38,48 @@ extension SavedMongoQuery {
   }
 }
 
-/// Saved table filters, highlights and MongoDB queries per connection and table, stored as JSON
-/// in UserDefaults
+/// A named MongoDB aggregation pipeline (stages and options) saved for one collection
+struct SavedMongoPipeline: Codable, Identifiable, Equatable {
+  struct Stage: Codable, Equatable {
+    var `operator`: String
+    var body: String
+    var isEnabled: Bool
+  }
+
+  var id = UUID()
+  var name: String
+  var stages: [Stage]
+  var options: MongoQueryOptions
+}
+
+extension SavedMongoPipeline {
+  /// Options are optional, so an entry saved without them still loads
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    stages = try container.decode([Stage].self, forKey: .stages)
+    options = try container.decodeIfPresent(MongoQueryOptions.self, forKey: .options) ?? .init()
+  }
+}
+
+extension SavedMongoPipeline.Stage {
+  /// The enabled flag is optional, so a stage saved without it loads enabled
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    `operator` = try container.decode(String.self, forKey: .operator)
+    body = try container.decode(String.self, forKey: .body)
+    isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+  }
+}
+
+/// Saved table filters, highlights, MongoDB queries and pipelines per connection and table, stored
+/// as JSON in UserDefaults
 final class SavedFilterStore {
   private nonisolated static let storageKey = "ace.thi.dblore.savedFilters"
   private nonisolated static let highlightStorageKey = "ace.thi.dblore.savedHighlights"
   private nonisolated static let mongoQueryStorageKey = "ace.thi.dblore.savedMongoQueries"
+  private nonisolated static let mongoPipelineStorageKey = "ace.thi.dblore.savedMongoPipelines"
 
   private let defaults: UserDefaults
 
@@ -128,6 +164,33 @@ final class SavedFilterStore {
     var all: [String: [SavedMongoQuery]] = load(Self.mongoQueryStorageKey)
     all[key]?.removeAll { $0.id == id }
     store(all, Self.mongoQueryStorageKey)
+  }
+
+  func listMongoPipelines(for key: String) -> [SavedMongoPipeline] {
+    load(Self.mongoPipelineStorageKey)[key] ?? []
+  }
+
+  /// Saves `stages` and `options` under `name`; a pipeline with the same name is replaced
+  func saveMongoPipeline(
+    stages: [SavedMongoPipeline.Stage], options: MongoQueryOptions, named name: String,
+    for key: String
+  ) {
+    var all: [String: [SavedMongoPipeline]] = load(Self.mongoPipelineStorageKey)
+    var pipelines = all[key] ?? []
+    if let index = pipelines.firstIndex(where: { $0.name == name }) {
+      pipelines[index].stages = stages
+      pipelines[index].options = options
+    } else {
+      pipelines.append(SavedMongoPipeline(name: name, stages: stages, options: options))
+    }
+    all[key] = pipelines
+    store(all, Self.mongoPipelineStorageKey)
+  }
+
+  func deleteMongoPipeline(id: UUID, for key: String) {
+    var all: [String: [SavedMongoPipeline]] = load(Self.mongoPipelineStorageKey)
+    all[key]?.removeAll { $0.id == id }
+    store(all, Self.mongoPipelineStorageKey)
   }
 
   private func load<T: Decodable>(

@@ -192,6 +192,46 @@ struct MongoGateTests {
     #expect(result.columns.map(\.name) == ["_id"])
   }
 
+  // MARK: - Documents read
+
+  @Test("A documents read of a $out pipeline under read-only is blocked before anything is sent")
+  func documentsReadBlocksOut() async throws {
+    let config = Self.config(level: .readOnly)
+    let (manager, factory) = try await connect(config)
+    do {
+      _ = try await manager.executeMongoDocuments(
+        userSQL: "db.c.aggregate([{$match: {}}, {$out: \"copy\"}])",
+        policy: ProtectionPolicy(config: config), maxRows: Self.maxRows)
+      Issue.record("$out should be blocked")
+    } catch DatabaseError.blockedByProtection(let index, let kind, let message) {
+      #expect(index == 0)
+      #expect(kind == .ddl)
+      #expect(message.contains("not allowed on a read-only connection"), "\(message)")
+    }
+    #expect(factory.statements.isEmpty)
+  }
+
+  @Test(
+    "A documents read refuses anything but one find or aggregate, before anything is sent",
+    arguments: [
+      ("db.c.find()\ndb.c.find()", "one command"),
+      ("db.c.aggregate([{$match: {}}, {$merge: {into: \"x\"}}])", "Only a read"),
+      ("db.c.countDocuments({})", "Only a find or an aggregate"),
+      // The fake session is not a MongoSession
+      ("db.c.find()", "needs a MongoDB session"),
+    ])
+  func documentsReadRefusals(text: String, reason: String) async throws {
+    let (manager, factory) = try await connect()
+    do {
+      _ = try await manager.executeMongoDocuments(
+        userSQL: text, policy: open, maxRows: Self.maxRows)
+      Issue.record("\(text) should be refused")
+    } catch let error as MongoSessionError {
+      #expect(error.message.contains(reason), "\(error.message)")
+    }
+    #expect(factory.statements.isEmpty)
+  }
+
   // MARK: - Errors
 
   @Test("A failing Mongo read or write shows the session's formatError text; SQL does not")

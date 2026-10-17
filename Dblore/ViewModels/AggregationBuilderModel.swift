@@ -2,8 +2,13 @@
 // The aggregation builder's state: one collection and an ordered list of stages (operator and
 // relaxed-JSON body), per-stage errors, previews of each enabled prefix sent through the gate
 // under a read-only policy (never past a `$out`/`$merge` stage), results cached per prefix
-// text, and the rendered `aggregate` command for Insert as Cell and Copy. A builder opens empty
-// on a collection or from a cell holding exactly one `aggregate` command.
+// text, the aggregate options (collation, maxTimeMS), the Text mode (the whole pipeline as one
+// mongosh array, disabled stages as `//` lines), and the effective pipeline: the `aggregate` of
+// the enabled stages and options that Insert as Cell, Copy, Explain, Run and Export use (in Text
+// mode, those of the text). Run and Export Data send that pipeline through the gate read-only,
+// never one that writes (`$out`/`$merge`); Export Data renders the documents off the main actor
+// and saves them as JSON or CSV. A saved pipeline restores its stages, collation and maxTimeMS.
+// A builder opens empty on a collection or from a cell holding exactly one `aggregate`.
 
 import AppKit
 import Foundation
@@ -75,6 +80,60 @@ final class AggregationBuilderModel: Identifiable {
     }
   }
 
+  /// The effective pipeline as one `aggregate`, or why an action cannot use it.
+  enum PipelineTarget {
+    case success(MongoCommand)
+    case blocked(String)
+
+    var command: MongoCommand? {
+      if case .success(let command) = self { command } else { nil }
+    }
+
+    var reason: String? {
+      if case .blocked(let reason) = self { reason } else { nil }
+    }
+  }
+
+  /// The last Run of the whole pipeline.
+  enum RunState {
+    case idle
+    case running
+    /// The result and the `aggregate` text the run sent (before the gate's row cap)
+    case done(QueryResult, command: String)
+    /// Refused before sending (with the reason) or failed on the server
+    case failed(String)
+  }
+
+  /// The file Export Data writes.
+  enum DataExportFormat {
+    case json
+    case csv
+
+    var fileExtension: String {
+      switch self {
+      case .json: "json"
+      case .csv: "csv"
+      }
+    }
+  }
+
+  /// The last Export Data of the whole pipeline.
+  enum ExportState {
+    case idle
+    /// Reading and rendering the documents, or the save panel is open
+    case running(DataExportFormat)
+    /// Refused before sending (with the reason) or failed on the server
+    case failed(String)
+    /// The file is saved; `note` says when it holds only the first documents
+    case finished(note: String?)
+  }
+
+  /// How the pipeline is edited: one editor per stage, or the whole pipeline as text.
+  enum EditMode {
+    case stages
+    case text
+  }
+
   /// Documents a preview shows: the `{$limit: 20}` stage appended to each preview prefix.
   nonisolated static let previewLimit: Int32 = 20
 
@@ -88,12 +147,33 @@ final class AggregationBuilderModel: Identifiable {
 
   let collection: String
   private(set) var stages: [Stage] = []
+  /// The aggregate options as typed. Only `collation` and `maxTimeMS` are used: the other
+  /// fields stay blank and are never sent.
+  var options = MongoQueryOptions()
+  private(set) var editMode = EditMode.stages
+  /// The pipeline as text in Text mode, written by `showText()`. An edit clears `textError`.
+  var pipelineText = "" {
+    didSet { textError = nil }
+  }
+  /// Why the text is not a pipeline, set when `showStages()` refuses it
+  private(set) var textError: String?
+  /// The text `showText()` wrote: while `pipelineText` still equals it, the stages stand as is
+  @ObservationIgnored private var writtenText = ""
   /// Preview results by preview command text (the prefix "hash"): an edit to a stage changes
   /// the text of its own and every later preview, so those miss the cache.
   private var results: [String: QueryResult] = [:]
   private var failures: [String: String] = [:]
   /// Running previews by command text; the token tells a restarted preview from a cancelled one
   private var inFlight: [String: (token: UUID, task: Task<Void, Never>)] = [:]
+  private(set) var runState = RunState.idle
+  /// Whether the results pane shows the Run result rather than a stage preview: set by `run`,
+  /// cleared by `preview(_:)`. The views own the stage selection and clear it on a selection.
+  var showsRunResults = false
+  @ObservationIgnored private var runTask: Task<Void, Never>?
+  private(set) var exportState = ExportState.idle
+  @ObservationIgnored private var exportTask: Task<Void, Never>?
+  /// The export the save panel answers for: a cancelled or superseded one never sets the state
+  @ObservationIgnored private var exportToken: UUID?
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
 
   init(collection: String, connectionManager: DatabaseConnectionManager) {
@@ -101,14 +181,16 @@ final class AggregationBuilderModel: Identifiable {
     self.connectionManager = connectionManager
   }
 
-  /// A builder holding the stages of an `aggregate` command, nil for any other command or when
-  /// a pipeline element is not a one-key document (see `stages(from:)`).
+  /// A builder holding the stages, collation and maxTimeMS of an `aggregate` command, nil for
+  /// any other command or when a pipeline element is not a one-key document (see `stages(from:)`).
   convenience init?(command: MongoCommand, connectionManager: DatabaseConnectionManager) {
-    guard case .aggregate(let collection, _, _) = command,
+    guard case .aggregate(let collection, _, let cursor) = command,
       let stages = Self.stages(from: command)
     else { return nil }
     self.init(collection: collection, connectionManager: connectionManager)
     for stage in stages { addStage(operator: stage.operator, body: stage.body) }
+    options.collation = cursor.collation.map { MongoRelaxedJSON.render($0, as: .mongosh) } ?? ""
+    options.maxTimeMS = cursor.maxTimeMS.map(String.init) ?? ""
   }
 
   /// Operator and mongosh-notation body of each stage of an `aggregate` command. Nil for any
@@ -126,12 +208,12 @@ final class AggregationBuilderModel: Identifiable {
   }
 
   /// The command of a mongosh cell that is exactly one `aggregate` the builder can open (see
-  /// `stages(from:)`), nil otherwise. Nil too for an aggregate with options: the builder does
-  /// not hold them yet, so its whole-cell Insert would drop them.
+  /// `stages(from:)`), nil otherwise. Nil too for an aggregate with a hint: the builder holds
+  /// only collation and maxTimeMS, so its whole-cell Insert would drop the hint.
   nonisolated static func aggregateCommand(in text: String) -> MongoCommand? {
     let pieces = MongoshSplitter.split(text)
     guard pieces.count == 1, let command = try? MongoshParser.parse(pieces[0]),
-      case .aggregate(_, _, let options) = command, options == .none,
+      case .aggregate(_, _, let options) = command, options.hint == nil,
       stages(from: command) != nil
     else { return nil }
     return command
@@ -261,17 +343,236 @@ final class AggregationBuilderModel: Identifiable {
     return MongoCommandClassifier.classifyStatement(text)?.kind != .read
   }
 
-  // MARK: - Insert and Copy
+  // MARK: - Effective pipeline
 
-  /// The full `aggregate` of the enabled stages (`$out`/`$merge` included, no preview limit),
-  /// nil while an enabled stage has an error.
-  var commandText: String? {
+  /// The `aggregate` of the enabled stages (`$out`/`$merge` included, no preview limit) with
+  /// the collation and maxTimeMS options, or why there is none: no enabled stage, a stage
+  /// error, or an option that does not parse. `verb` names the action in the reason.
+  /// In Text mode, the stages and options of the edited text, blocked when it is not a pipeline.
+  func pipeline(verb: String) -> PipelineTarget {
+    let draft: Draft
+    switch self.draft() {
+    case .success(let value): draft = value
+    case .failure(let error): return .blocked(error.message)
+    }
+    guard draft.stages.contains(where: \.isEnabled) else {
+      return .blocked("Add an enabled stage to \(verb)")
+    }
+    return effectivePipeline(draft, verb: verb)
+  }
+
+  /// `pipeline(verb: "explain")`, also blocked when a stage writes (`$out`, `$merge`: the
+  /// gate's classifier decides): such a pipeline is never explained.
+  var explainTarget: PipelineTarget {
+    readTarget(verb: "explain", refusal: "explained")
+  }
+
+  /// `pipeline(verb: "run")`, also blocked when a stage writes, as `explainTarget` is.
+  var runTarget: PipelineTarget {
+    readTarget(verb: "run", refusal: "run")
+  }
+
+  /// `pipeline(verb: "export")`, also blocked when a stage writes, as `explainTarget` is.
+  var exportTarget: PipelineTarget {
+    readTarget(verb: "export", refusal: "exported")
+  }
+
+  /// `pipeline(verb:)`, blocked when the gate's classifier does not read it as a read.
+  private func readTarget(verb: String, refusal: String) -> PipelineTarget {
+    let target = pipeline(verb: verb)
+    guard case .success(let command) = target else { return target }
+    guard MongoCommandClassifier.classifyStatement(command.render())?.kind == .read else {
+      return .blocked("A stage writes data ($out or $merge): such a pipeline is not \(refusal)")
+    }
+    return target
+  }
+
+  /// `pipeline(verb:)` without the enabled-stage check: no enabled stage is an empty pipeline.
+  private func effectivePipeline(_ draft: Draft, verb: String) -> PipelineTarget {
     var pipeline: [MongoValue] = []
-    for stage in stages where stage.isEnabled {
-      guard case .success(let value) = Self.value(of: stage) else { return nil }
+    for stage in draft.stages where stage.isEnabled {
+      guard case .success(let value) = Self.value(of: stage) else {
+        return .blocked("Fix the stage errors to \(verb) the pipeline")
+      }
       pipeline.append(value)
     }
-    return MongoCommand.aggregate(collection: collection, pipeline: pipeline).render()
+    let parsed: MongoQueryOptions.Parsed
+    do {
+      parsed = try draft.options.parsed()
+    } catch {
+      return .blocked(error.localizedDescription)
+    }
+    // Only collation and maxTimeMS are aggregate options of the builder
+    let cursor = MongoCommand.CursorOptions(
+      collation: parsed.cursor.collation, maxTimeMS: parsed.cursor.maxTimeMS)
+    return .success(
+      MongoCommand.aggregate(collection: collection, pipeline: pipeline, options: cursor))
+  }
+
+  // MARK: - Text mode
+
+  /// The stages and options an action uses.
+  private struct Draft {
+    var stages: [Stage]
+    var options: MongoQueryOptions
+  }
+
+  /// The builder's stages and options, or in Text mode those of the text once it is edited.
+  private func draft() -> Result<Draft, StageError> {
+    guard editMode == .text, pipelineText != writtenText else {
+      return .success(Draft(stages: stages, options: options))
+    }
+    return textDraft()
+  }
+
+  /// Writes the stages as text, one per line, and switches to Text.
+  func showText() {
+    pipelineText = Self.text(of: stages)
+    writtenText = pipelineText
+    editMode = .text
+  }
+
+  /// Switches to Stages. An unchanged text keeps the stages as they are; an edited one replaces
+  /// them (new ids) and sets the collation and maxTimeMS it holds. False, staying in Text with
+  /// `textError` set, when the text is not a pipeline.
+  @discardableResult
+  func showStages() -> Bool {
+    guard editMode == .text else { return true }
+    if pipelineText != writtenText {
+      switch textDraft() {
+      case .failure(let error):
+        textError = error.message
+        return false
+      case .success(let draft):
+        stages = draft.stages
+        options = draft.options
+        cancelStalePreviews()
+      }
+    }
+    textError = nil
+    editMode = .stages
+    return true
+  }
+
+  /// The stages as `AIMongoAssist.pipelineText` writes them, a disabled stage as a `// ` line
+  /// with its body on one line; `""` for no stages. A body whose last line has a `//` comment
+  /// closes on the next line, so the comment cannot swallow the closing brace and comma.
+  private static func text(of stages: [Stage]) -> String {
+    guard !stages.isEmpty else { return "" }
+    let lines = stages.map { stage in
+      guard stage.isEnabled else { return "  // { \(stage.operator): \(oneLine(stage.body)) }" }
+      let lastLine = stage.body.components(separatedBy: .newlines).last ?? ""
+      return lastLine.contains("//")
+        ? "  { \(stage.operator): \(stage.body)\n  }" : "  { \(stage.operator): \(stage.body) }"
+    }
+    return "[\n" + lines.joined(separator: ",\n") + "\n]"
+  }
+
+  /// `body` on one line: rendered again when it parses, else its lines joined by spaces.
+  private static func oneLine(_ body: String) -> String {
+    guard body.contains(where: \.isNewline) else { return body }
+    if let value = try? MongoRelaxedJSON.parse(body) {
+      return MongoRelaxedJSON.render(value, as: .mongosh)
+    }
+    return body.components(separatedBy: .newlines)
+      .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+      .joined(separator: " ")
+  }
+
+  /// The stages and options of `pipelineText`: a stage array or a `db.<c>.aggregate([...], {...})`
+  /// (its collation and maxTimeMS replace the builder's), `// { $op: body }` lines between
+  /// stages as disabled stages in place. Blank text is no stage.
+  private func textDraft() -> Result<Draft, StageError> {
+    var draft = Draft(stages: [], options: options)
+    // A pasted reply loses its code fence once, for the parse and the disabled lines alike
+    let text = AIMongoAssist.unfenced(pipelineText)
+    guard !text.isEmpty else {
+      return .success(draft)
+    }
+    let parsed:
+      (
+        collection: String, stages: [AIMongoAssist.GeneratedStage],
+        options: MongoCommand.CursorOptions
+      )
+    do {
+      parsed = try AIMongoAssist.aggregate(fromReply: text, collection: collection)
+    } catch {
+      return .failure(StageError(message: error.localizedDescription, offset: nil))
+    }
+    guard parsed.collection == collection else {
+      return .failure(
+        StageError(
+          message: "This builder runs on \(collection): the text names \(parsed.collection)",
+          offset: nil))
+    }
+    // The builder holds only collation and maxTimeMS (as `aggregateCommand(in:)` refuses hints)
+    guard parsed.options.hint == nil else {
+      return .failure(
+        StageError(
+          message: "The builder keeps only the collation and maxTimeMS options: remove the hint",
+          offset: nil))
+    }
+    draft.stages = parsed.stages.map {
+      Stage(id: UUID(), operator: $0.operator, body: $0.body, isEnabled: true)
+    }
+    for (offset, found) in disabledStages(in: text).enumerated() {
+      draft.stages.insert(found.stage, at: found.enabledBefore + offset)
+    }
+    if let collation = parsed.options.collation {
+      draft.options.collation = MongoRelaxedJSON.render(collation, as: .mongosh)
+    }
+    if let maxTimeMS = parsed.options.maxTimeMS { draft.options.maxTimeMS = String(maxTimeMS) }
+    return .success(draft)
+  }
+
+  /// The `// { $op: body }` lines of `text` that sit between stages (the text before the line,
+  /// closed with `]` or `])`, is a pipeline), in order, with the number of stages before each.
+  /// Such a line anywhere else (inside a stage, before the array) is only a comment.
+  private func disabledStages(in text: String) -> [(enabledBefore: Int, stage: Stage)] {
+    let lines = text.components(separatedBy: "\n")
+    let isCall = text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("db.")
+    var found: [(enabledBefore: Int, stage: Stage)] = []
+    for (index, line) in lines.enumerated() {
+      guard let stage = Self.disabledStage(in: line) else { continue }
+      // On its own line, so a `//` comment ending the line before cannot swallow it
+      let prefix = lines[..<index].joined(separator: "\n") + (isCall ? "\n])" : "\n]")
+      guard let before = try? AIMongoAssist.aggregate(fromReply: prefix, collection: collection)
+      else { continue }
+      found.append((before.stages.count, stage))
+    }
+    return found
+  }
+
+  /// The disabled stage of a `// { $op: body }` line (a trailing comma allowed), nil for any
+  /// other line. A body that does not parse is kept as written.
+  private static func disabledStage(in line: String) -> Stage? {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("//") else { return nil }
+    var content = trimmed.dropFirst(2).trimmingCharacters(in: .whitespaces)
+    if content.hasSuffix(",") {
+      content = content.dropLast().trimmingCharacters(in: .whitespaces)
+    }
+    guard content.hasPrefix("{"), content.hasSuffix("}") else { return nil }
+    if case .document(let fields)? = try? MongoRelaxedJSON.parse(content), fields.count == 1 {
+      let body = MongoRelaxedJSON.render(fields[0].value, as: .mongosh)
+      return Stage(id: UUID(), operator: fields[0].key, body: body, isEnabled: false)
+    }
+    // As written: the operator up to the first colon, the body up to the closing brace
+    let inner = content.dropFirst().dropLast()
+    guard let colon = inner.firstIndex(of: ":") else { return nil }
+    let name = inner[..<colon].trimmingCharacters(in: .whitespaces)
+    guard !name.isEmpty, !name.contains(where: \.isWhitespace) else { return nil }
+    let body = inner[inner.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+    return Stage(id: UUID(), operator: name, body: body, isEnabled: false)
+  }
+
+  // MARK: - Insert and Copy
+
+  /// The full `aggregate` with its options for Insert, Copy and Open in Query (an empty
+  /// pipeline when no stage is enabled), nil while a stage or an option has an error.
+  var commandText: String? {
+    guard case .success(let draft) = draft() else { return nil }
+    return effectivePipeline(draft, verb: "copy").command?.render()
   }
 
   /// Inserts `commandText` at the cursor of `viewModel`, as the sidebar does. False when there
@@ -352,6 +653,7 @@ final class AggregationBuilderModel: Identifiable {
   /// when the same prefix is already in flight. A failure is shown and not cached.
   @discardableResult
   func preview(_ id: Stage.ID) -> Task<Void, Never>? {
+    showsRunResults = false
     guard case .command(let text) = plan(for: id), results[text] == nil else { return nil }
     if let running = inFlight[text] { return running.task }
     failures[text] = nil
@@ -390,6 +692,163 @@ final class AggregationBuilderModel: Identifiable {
     case .success(let result): results[text] = result
     case .failure(let error): failures[text] = error.localizedDescription
     }
+  }
+
+  // MARK: - Run
+
+  /// Runs `runTarget` through the gate with a read-only policy, at most `maxRows` documents,
+  /// dropping a run in flight, and shows the run results. Nil, nothing sent, when the pipeline
+  /// is blocked or writes (`runState` is `.failed` with the reason). A cancelled or superseded
+  /// run never writes its result.
+  @discardableResult
+  func run(maxRows: Int) -> Task<Void, Never>? {
+    cancelRun()
+    showsRunResults = true
+    let command: MongoCommand
+    switch runTarget {
+    case .success(let value): command = value
+    case .blocked(let reason):
+      runState = .failed(reason)
+      return nil
+    }
+    runState = .running
+    let text = command.render()
+    let manager = connectionManager
+    let task = Task { [weak self] in
+      let state: RunState
+      do {
+        let result = try await manager.execute(
+          userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly), maxRows: maxRows)
+        try Task.checkCancellation()
+        state = .done(result, command: text)
+      } catch {
+        state = .failed(error.localizedDescription)
+      }
+      guard !Task.isCancelled, let self else { return }
+      self.runState = state
+      self.runTask = nil
+    }
+    runTask = task
+    return task
+  }
+
+  /// Drops the run in flight; nothing is shown for it.
+  func cancelRun() {
+    runTask?.cancel()
+    runTask = nil
+    if case .running = runState { runState = .idle }
+  }
+
+  // MARK: - Export Data
+
+  /// The most documents Export Data writes: the session row cap's upper bound.
+  static let exportDocumentLimit = SessionBrakeLimits.rowCapRange.upperBound
+
+  /// Reads the documents of `exportTarget` through the gate with a read-only policy (at most
+  /// `exportDocumentLimit`), renders them as `format` off the main actor, then asks where to save
+  /// them (`<collection>.json` / `.csv`), dropping an export in flight. Nil, nothing sent, when
+  /// the pipeline is blocked or writes (`exportState` is `.failed` with the reason). A cancelled
+  /// or superseded export never writes its state; a cancelled save panel goes back to idle.
+  @discardableResult
+  func exportData(_ format: DataExportFormat) -> Task<Void, Never>? {
+    cancelExport()
+    let command: MongoCommand
+    switch exportTarget {
+    case .success(let value): command = value
+    case .blocked(let reason):
+      exportState = .failed(reason)
+      return nil
+    }
+    exportState = .running(format)
+    let text = command.render()
+    let manager = connectionManager
+    let filename = "\(collection).\(format.fileExtension)"
+    let token = UUID()
+    exportToken = token
+    let task = Task { [weak self] in
+      let content: String
+      let truncated: Bool
+      do {
+        let read = try await manager.executeMongoDocuments(
+          userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly),
+          maxRows: Self.exportDocumentLimit)
+        try Task.checkCancellation()
+        let documents = read.documents
+        content = await Task.detached(priority: .userInitiated) {
+          Self.render(documents, as: format)
+        }.value
+        try Task.checkCancellation()
+        truncated = read.truncated
+      } catch {
+        guard !Task.isCancelled, let self, self.exportToken == token else { return }
+        self.exportState = .failed(error.localizedDescription)
+        self.exportTask = nil
+        return
+      }
+      guard !Task.isCancelled, let self, self.exportToken == token else { return }
+      self.exportTask = nil
+      DataExporter.saveFile(
+        content: content, defaultFilename: filename, allowedFileTypes: [format.fileExtension]
+      ) { [weak self] saved in
+        guard let self, self.exportToken == token else { return }
+        self.exportToken = nil
+        let note = "Exported the first \(Self.exportDocumentLimit.formatted()) documents"
+        self.exportState = saved ? .finished(note: truncated ? note : nil) : .idle
+      }
+    }
+    exportTask = task
+    return task
+  }
+
+  /// Drops the export in flight; nothing is saved or shown for it.
+  func cancelExport() {
+    exportTask?.cancel()
+    exportTask = nil
+    exportToken = nil
+    if case .running = exportState { exportState = .idle }
+  }
+
+  /// The documents as indented relaxed Extended JSON (one array), or as CSV with one column per
+  /// top-level field (`MongoBSONMapping`).
+  nonisolated private static func render(
+    _ documents: [MongoValue], as format: DataExportFormat
+  ) -> String {
+    switch format {
+    case .json:
+      return MongoRelaxedJSON.render(.array(documents), as: .relaxedExtendedJSON, indented: true)
+    case .csv:
+      let columns = MongoBSONMapping.columns(for: documents)
+      let rows = documents.map { MongoBSONMapping.row(for: $0, columns: columns) }
+      return DataExporter.toCSV(
+        result: CellResult(columns: columns, rows: rows, rowCount: rows.count))
+    }
+  }
+
+  // MARK: - Saved pipelines
+
+  /// The stages as a saved pipeline holds them. In Text mode, call `showStages()` first.
+  func savedStages() -> [SavedMongoPipeline.Stage] {
+    stages.map { .init(operator: $0.operator, body: $0.body, isEnabled: $0.isEnabled) }
+  }
+
+  /// Replaces the stages (new ids, `isEnabled` kept) and options with those of `saved`, of
+  /// which only collation and maxTimeMS are kept, in Stages mode (the text is dropped unparsed),
+  /// with no run result.
+  func restore(_ saved: SavedMongoPipeline) {
+    stages = saved.stages.map {
+      Stage(id: UUID(), operator: $0.operator, body: $0.body, isEnabled: $0.isEnabled)
+    }
+    var restored = MongoQueryOptions()
+    restored.collation = saved.options.collation
+    restored.maxTimeMS = saved.options.maxTimeMS
+    options = restored
+    editMode = .stages
+    textError = nil
+    cancelRun()
+    cancelExport()
+    runState = .idle
+    showsRunResults = false
+    cancelStalePreviews()
   }
 
   /// Cancels in-flight previews whose command no stage would send any more.

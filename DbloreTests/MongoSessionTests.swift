@@ -287,7 +287,7 @@ struct MongoSessionTests {
   }
 
   @Test(
-    "query refuses writes and $out/$merge; command refuses reads; bad text throws the parser's error"
+    "query and readDocuments refuse writes and $out/$merge; command refuses reads; bad text throws the parser's error"
   )
   func nonReadRefusedInQuery() async {
     let session = MongoSession(config: Self.config())
@@ -298,6 +298,12 @@ struct MongoSessionTests {
       let error = await Self.failure { _ = try await session.query(text, binds: []) }
       #expect(
         (error as? MongoSessionError)?.message.contains("Only read commands") == true, "\(text)")
+      let documents = await Self.failure {
+        _ = try await session.readDocuments(try MongoshParser.parse(text))
+      }
+      #expect(
+        (documents as? MongoSessionError)?.message.contains("Only read commands") == true,
+        "\(text)")
     }
     for text in ["db.c.find()", "show collections", "db.c.aggregate([{$match: {}}])"] {
       let error = await Self.failure { _ = try await session.command(text, binds: []) }
