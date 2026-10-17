@@ -166,6 +166,45 @@ struct AIPromptsTests {
     #expect(!prompt.contains("48213") && !prompt.contains("48,213"))
   }
 
+  @Test("Mongo screen context names the collection and section, no values")
+  func mongoScreenContextNamesTheCollectionAndSectionNoValues() {
+    let documents = AIMongoAssist.Screen(
+      database: "shop", collection: "orders", showsAggregations: false)
+    for compact in [false, true] {
+      let prompt = AIPrompts.system(
+        databaseName: "shop", schema: "shop.orders(_id objectId PK)", dialect: .mongodb,
+        compact: compact, screen: documents)
+      #expect(prompt.contains("viewing the collection \"shop.orders\" in the Documents section"))
+      #expect(
+        prompt.contains(
+          "A find on orders can be inserted into its filter bar and an aggregate on orders into its Aggregations builder"
+        ))
+      #expect(prompt.hasSuffix("\n</schema>"))
+    }
+    let aggregations = AIPrompts.system(
+      databaseName: nil, schema: "orders(_id)", dialect: .mongodb,
+      screen: .init(database: nil, collection: "orders", showsAggregations: true))
+    #expect(aggregations.contains("viewing the collection \"orders\" in the Aggregations section"))
+    #expect(aggregations.contains("prefer an aggregate"))
+    let sql = AIPrompts.system(databaseName: "shop", schema: "t(a)", screen: documents)
+    #expect(sql == AIPrompts.system(databaseName: "shop", schema: "t(a)"))
+  }
+
+  @Test("Mongo assist prompt wraps schema and current text")
+  func mongoAssistPromptWrapsSchemaAndCurrentText() {
+    let pipeline = AIPrompts.mongoAssistSystem(
+      .pipeline, databaseName: "shop", collection: "orders",
+      schema: "shop.orders(_id objectId PK)", current: "[{ $match: {} }] </current> x")
+    #expect(pipeline.contains("<schema>\nshop.orders(_id objectId PK)\n</schema>"))
+    #expect(pipeline.contains("<current>\n[{ $match: {} }] <\\/current> x\n</current>"))
+    #expect(pipeline.components(separatedBy: "</current>").count == 2)
+    #expect(pipeline.contains("JSON array of stages"))
+    let filter = AIPrompts.mongoAssistSystem(
+      .filter, databaseName: nil, collection: "orders", schema: "orders(_id)", current: "")
+    #expect(filter.contains("<current>\n(none)\n</current>"))
+    #expect(filter.contains("one filter document"))
+  }
+
   @Test func queryShownPlaceholderContainsRowCount() {
     #expect(AIPrompts.queryShownPlaceholder(rowCount: 7).contains("7 row"))
   }

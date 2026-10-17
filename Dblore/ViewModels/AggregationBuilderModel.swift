@@ -156,6 +156,12 @@ final class AggregationBuilderModel: Identifiable {
     cancelStalePreviews()
   }
 
+  /// Drops every current stage, disabled ones included, for the given ones, all enabled.
+  func replaceStages(_ new: [AIMongoAssist.GeneratedStage]) {
+    stages = new.map { Stage(id: UUID(), operator: $0.operator, body: $0.body, isEnabled: true) }
+    cancelStalePreviews()
+  }
+
   /// Same arguments as SwiftUI's `onMove`.
   func move(fromOffsets source: IndexSet, toOffset destination: Int) {
     let moving = source.map { stages[$0] }

@@ -71,6 +71,15 @@ extension NotebookViewModel {
     return error
   }
 
+  /// The MongoDB collection screen shown in this tab, nil unless it is a collection data viewer.
+  /// Names and section only: the filter and pipeline text never go into a prompt.
+  var aiMongoScreen: AIMongoAssist.Screen? {
+    guard let model = mongoCollection else { return nil }
+    return AIMongoAssist.Screen(
+      database: model.database, collection: model.collection,
+      showsAggregations: model.section == .aggregations)
+  }
+
   private var aiSelectedCell: NotebookCell? {
     notebook.cells.first { $0.id == selectedCellId }
   }

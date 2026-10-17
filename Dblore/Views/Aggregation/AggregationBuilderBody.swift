@@ -12,7 +12,8 @@ import SwiftUI
 
 struct AggregationBuilderBody: View {
   let model: AggregationBuilderModel
-  /// The stage shown in the preview pane; set to the first stage on appear when nil
+  /// The stage shown in the preview pane; set to the first stage on appear when nil, and when
+  /// the stages change without it (AI replaced them, or it was removed)
   @Binding var selectedStage: AggregationBuilderModel.Stage.ID?
   /// The workspace's autocomplete source, for field names in stage bodies; nil = no completion
   var fieldSource: SQLAutocompleteProvider? = nil
@@ -30,6 +31,11 @@ struct AggregationBuilderBody: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .onAppear { selectedStage = selectedStage ?? model.stages.first?.id }
+    .onChange(of: model.stages.map(\.id)) { _, ids in
+      if selectedStage.map({ !ids.contains($0) }) ?? true {
+        selectedStage = ids.first
+      }
+    }
   }
 
   // MARK: - Stages

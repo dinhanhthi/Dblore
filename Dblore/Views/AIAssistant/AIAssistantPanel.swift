@@ -29,6 +29,14 @@ struct AIAssistantPanel: View {
     "Rows created in the last 7 days",
   ]
 
+  private static let mongoExamples = [
+    "Orders over 100 placed this month",
+    "Count documents by status",
+    "Documents missing an email field",
+  ]
+
+  private var isMongo: Bool { assistant.sqlDialect == .mongodb }
+
   private static var isComposing: Bool {
     (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
   }
@@ -246,7 +254,7 @@ struct AIAssistantPanel: View {
       Text(emptyStateText)
         .font(.labelText)
         .foregroundColor(.foregroundMuted)
-      ForEach(Self.examples, id: \.self) { example in
+      ForEach(isMongo ? Self.mongoExamples : Self.examples, id: \.self) { example in
         Button {
           assistant.draft = example
           composerFocused = true
@@ -263,13 +271,18 @@ struct AIAssistantPanel: View {
 
   /// Discloses whether read-only queries run
   private var emptyStateText: String {
-    let intro = "Ask about your schema or describe a query."
+    let intro =
+      isMongo
+      ? "Ask about your collections or describe a query."
+      : "Ask about your schema or describe a query."
     guard assistant.settings.configuration.runsQueries else {
       return intro + " Suggestions are never run automatically."
     }
     return intro
       + " Read-only queries run automatically; results are shown only to you."
-      + " Ask for the SQL to get it without running."
+      + (isMongo
+        ? " Ask for the command to get it without running."
+        : " Ask for the SQL to get it without running.")
   }
 
   private var messageList: some View {
@@ -285,7 +298,9 @@ struct AIAssistantPanel: View {
               onRetry: canRetry(entry) ? { retryEntryId = entry.id } : nil,
               onEdit: canRetry(entry)
                 ? { assistant.retry(from: entry.id, editedText: $0) } : nil,
-              firstRunLabel: firstRunLabel(after: index, in: messages))
+              firstRunLabel: firstRunLabel(after: index, in: messages),
+              mongoCollection: activeTab?.mongoCollection?.collection,
+              onMongoAction: mongoActionHandler)
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }
@@ -336,6 +351,17 @@ struct AIAssistantPanel: View {
   private var insertHandler: ((String) -> Void)? {
     guard let activeTab else { return nil }
     return { activeTab.insertAISQL($0) }
+  }
+
+  /// Fills the filter bar or the Aggregations builder of the viewed collection (never runs)
+  private var mongoActionHandler: ((AIMongoAssist.BlockAction) -> Void)? {
+    guard let model = activeTab?.mongoCollection else { return nil }
+    return { action in
+      switch action {
+      case .insertFilter(let text): model.insertFilterDraft(text)
+      case .generateAggregation(let stages): model.showGeneratedPipeline(stages)
+      }
+    }
   }
 
   // MARK: - Footer

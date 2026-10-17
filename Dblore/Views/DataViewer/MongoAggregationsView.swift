@@ -4,8 +4,9 @@
 //
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
 //  collection (stages, Add Stage and per-stage previews from `AggregationBuilderBody`), with
-//  Copy, Explain, Export Code and Open in Query of the whole `aggregate`. Previews run read-only
-//  through the gate (`AggregationBuilderModel`), as in the builder sheet.
+//  Copy, Explain, Export Code and Open in Query of the whole `aggregate`, and an AI button that
+//  builds the stages from a prompt. Previews run read-only through the gate
+//  (`AggregationBuilderModel`), as in the builder sheet.
 //
 
 import SwiftUI
@@ -18,6 +19,7 @@ struct MongoAggregationsView: View {
   var fieldSource: SQLAutocompleteProvider? = nil
   /// Database the exported driver code connects to
   var database: String = MongoSession.defaultDatabase
+  var aiAssistant: AIAssistantViewModel? = nil
 
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
   @State private var exportRequest: MongoExportCodeSheet.Request?
@@ -44,12 +46,9 @@ struct MongoAggregationsView: View {
 
   private func header(_ builder: AggregationBuilderModel) -> some View {
     HStack(spacing: Spacing.sm) {
-      Text(model.collection)
-        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-        .foregroundColor(.foreground)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .help(model.collection)
+      if let aiAssistant {
+        MongoAIPipelineButton(assistant: aiAssistant, builder: builder, database: model.database)
+      }
       Text(stageCount(builder))
         .font(.small)
         .foregroundColor(.foregroundMuted)

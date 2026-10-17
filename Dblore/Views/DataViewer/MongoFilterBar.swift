@@ -3,15 +3,16 @@
 //  Dblore
 //
 //  MongoDB data viewer filter: an Extended JSON / mongosh filter document above the grid, in
-//  place of the SQL filter form, with the query options panel, saved queries, and Explain and
-//  Export Code of the draft. Text that is not a document or an option that does not parse shows
-//  inline.
+//  place of the SQL filter form, with the query options panel, saved queries, Explain and
+//  Export Code of the draft, and an AI button that writes the draft from a prompt. Text that is
+//  not a document or an option that does not parse shows inline.
 //
 
 import SwiftUI
 
 struct MongoFilterBar: View {
   @Bindable var viewModel: NotebookViewModel
+  var aiAssistant: AIAssistantViewModel? = nil
   @State private var draft = ""
   @State private var draftOptions = MongoQueryOptions()
   @State private var showsOptions = false
@@ -71,7 +72,10 @@ struct MongoFilterBar: View {
         .fill(Color.foregroundMuted.opacity(0.1))
         .frame(height: 1)
     }
-    .onAppear { restartDraft() }
+    .onAppear {
+      restartDraft()
+      consumePendingDraft()
+    }
     .onChange(of: collection) { restartDraft() }
     // The draft follows a filter or options applied elsewhere
     .onChange(of: appliedFilter) {
@@ -82,6 +86,15 @@ struct MongoFilterBar: View {
     .sheet(item: $exportRequest) { request in
       MongoExportCodeSheet(request: request)
     }
+    .onChange(of: viewModel.mongoCollection?.pendingFilterDraft) { consumePendingDraft() }
+  }
+
+  /// Takes a filter sent from outside the bar (the AI chat) into the draft, without applying it
+  private func consumePendingDraft() {
+    guard let pending = viewModel.mongoCollection?.pendingFilterDraft else { return }
+    draft = pending
+    error = nil
+    viewModel.mongoCollection?.pendingFilterDraft = nil
   }
 
   // MARK: - Filter row
@@ -105,6 +118,21 @@ struct MongoFilterBar: View {
       // radius makes a pill at one line and a rounded card at several
       .inputStyle()
       .onChange(of: draft) { error = nil }
+      if let aiAssistant {
+        MongoAIPromptButton(
+          assistant: aiAssistant,
+          placeholder: "Describe the filter, or paste a query (e.g. SQL)",
+          help: "Write the filter with AI"
+        ) { prompt in
+          guard let model = viewModel.mongoCollection else { return }
+          let reply = try await aiAssistant.mongoAssist(
+            .filter, prompt: prompt, database: model.database, collection: model.collection,
+            current: draft)
+          draft = try AIMongoAssist.filter(fromReply: reply)
+          error = nil
+        }
+        .frame(height: MongoQueryField.styledLineHeight)
+      }
       Button(optionsTitle) { showsOptions.toggle() }
         .buttonStyle(GhostButtonStyle(isActive: showsOptions))
         .help(showsOptions ? "Hide the query options" : "Show the query options")

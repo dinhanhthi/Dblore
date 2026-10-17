@@ -15,6 +15,8 @@ struct DataViewerView: View {
   /// Opens a new query tab holding the text (Open in Query of the Aggregations section); nil
   /// disables it
   var openQuery: ((String) -> Void)? = nil
+  /// Workspace AI assistant behind the MongoDB filter and pipeline prompts; nil hides them
+  var aiAssistant: AIAssistantViewModel? = nil
 
   var body: some View {
     VStack(spacing: 0) {
@@ -35,7 +37,7 @@ struct DataViewerView: View {
             MongoAggregationsView(
               model: model, openQuery: openQuery,
               fieldSource: viewModel.autocompleteProvider,
-              database: MongoExportCodeSheet.database(for: viewModel))
+              database: MongoExportCodeSheet.database(for: viewModel), aiAssistant: aiAssistant)
           case .schema:
             MongoSchemaView(
               model: model, autocompleteSource: viewModel.autocompleteProvider,
@@ -50,9 +52,12 @@ struct DataViewerView: View {
         }
       }
       // AppKit views ignore `disabled`: drop the focus so keys never reach the hidden filter
-      // field (Return would apply it) or grid
+      // field (Return would apply it) or grid. The search panel only searches the documents:
+      // close it first, as closing restores the focus it took.
       .onChange(of: hidesDocuments) { _, hidden in
-        if hidden { NSApp.keyWindow?.makeFirstResponder(nil) }
+        guard hidden else { return }
+        if viewModel.isSearchPanelVisible { viewModel.closeSearch() }
+        NSApp.keyWindow?.makeFirstResponder(nil)
       }
       // Explain of the Documents bar and the Aggregations section. On its own node: two
       // sheets on one view would conflict
@@ -103,7 +108,7 @@ struct DataViewerView: View {
   private var documents: some View {
     VStack(spacing: 0) {
       if viewModel.isMongoDataViewer {
-        MongoFilterBar(viewModel: viewModel)
+        MongoFilterBar(viewModel: viewModel, aiAssistant: aiAssistant)
       }
       content
         .frame(maxWidth: .infinity, maxHeight: .infinity)

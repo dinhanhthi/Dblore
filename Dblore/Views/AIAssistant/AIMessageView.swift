@@ -25,6 +25,10 @@ struct AIMessageView: View {
   /// Label of this entry's first ```sql run block ("Ran", "Failed" or "Not run"); other run
   /// blocks are "Not run". nil while the reply streams: no label yet.
   var firstRunLabel: String? = "Not run"
+  /// Collection shown in the active MongoDB data viewer; nil hides the collection actions
+  var mongoCollection: String? = nil
+  /// Fills the filter bar or the Aggregations builder of `mongoCollection`; never runs
+  var onMongoAction: ((AIMongoAssist.BlockAction) -> Void)? = nil
 
   @State private var isHovering = false
   @State private var isEditing = false
@@ -163,7 +167,8 @@ struct AIMessageView: View {
           case .code(let language, let body, let isRun):
             AICodeBlock(
               language: language, code: body, onInsert: onInsert, dialect: dialect,
-              runLabel: isRun ? runLabel(isFirstRun: offset == firstRun) : nil)
+              runLabel: isRun ? runLabel(isFirstRun: offset == firstRun) : nil,
+              mongoCollection: mongoCollection, onMongoAction: onMongoAction)
           }
         }
       }
@@ -477,10 +482,20 @@ private struct AICodeBlock: View {
   let dialect: SQLDialect
   /// "Ran", "Failed" or "Not run" on a ```sql run block; nil for plain blocks
   var runLabel: String? = nil
+  /// Collection shown in the active MongoDB data viewer; nil hides the collection actions
+  var mongoCollection: String? = nil
+  var onMongoAction: ((AIMongoAssist.BlockAction) -> Void)? = nil
 
   @State private var copied = false
 
   private var isRunnable: Bool { AIMessageParser.isRunnable(language: language, dialect: dialect) }
+  /// A find or aggregate on the viewed collection; nil hides the button
+  private var mongoAction: AIMongoAssist.BlockAction? {
+    guard dialect == .mongodb, isRunnable, let mongoCollection, onMongoAction != nil else {
+      return nil
+    }
+    return AIMongoAssist.blockAction(code: code, collection: mongoCollection)
+  }
   private var modifiesData: Bool {
     isRunnable && !AIMessageParser.isReadOnly(code, dialect: dialect)
   }
@@ -502,6 +517,7 @@ private struct AICodeBlock: View {
             .disabled(onInsert == nil)
             .help(onInsert == nil ? "No active tab" : "Insert into the active tab (does not run)")
         }
+        if let mongoAction, let mongoCollection { mongoActionButton(mongoAction, mongoCollection) }
       }
       .padding(.horizontal, Spacing.sm)
       .padding(.vertical, Spacing.xs)
@@ -521,6 +537,26 @@ private struct AICodeBlock: View {
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
     .overlay(
       HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md)))
+  }
+
+  @ViewBuilder
+  private func mongoActionButton(
+    _ action: AIMongoAssist.BlockAction, _ collection: String
+  )
+    -> some View
+  {
+    switch action {
+    case .insertFilter:
+      Button("Insert to filter") { onMongoAction?(action) }
+        .buttonStyle(AICodeActionButtonStyle())
+        .help(
+          "Fill the filter bar of \(collection) (projection, sort and limit are not used; does not run)"
+        )
+    case .generateAggregation:
+      Button("Generate aggregation") { onMongoAction?(action) }
+        .buttonStyle(AICodeActionButtonStyle())
+        .help("Replace the stages of the Aggregations builder of \(collection) (does not run)")
+    }
   }
 
   var modifiesBadge: some View {

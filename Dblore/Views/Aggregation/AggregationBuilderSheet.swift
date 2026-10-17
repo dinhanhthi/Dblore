@@ -4,7 +4,8 @@
 //
 //  The aggregation builder of a MongoDB collection: the stages on the left (drag to reorder,
 //  add, remove, switch off), the preview of the selected stage on the right (the pipeline up to
-//  it, at most 20 documents, as a document tree), and Insert / Copy of the whole `aggregate`.
+//  it, at most 20 documents, as a document tree), Insert / Copy of the whole `aggregate`, and an
+//  AI button that builds the stages from a prompt.
 //  Previews run read-only through the gate (`AggregationBuilderModel`); stages that write are
 //  never previewed.
 //
@@ -21,6 +22,8 @@ struct AggregationBuilderSheet: View {
   let onClose: () -> Void
   /// The workspace's autocomplete source, for field names in stage bodies; nil = no completion
   var fieldSource: SQLAutocompleteProvider? = nil
+  /// The workspace's AI assistant behind the pipeline prompt; nil hides the AI button
+  var aiAssistant: AIAssistantViewModel? = nil
 
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
   /// The last Insert inserted nothing: the sheet stays open with a message
@@ -42,14 +45,21 @@ struct AggregationBuilderSheet: View {
 
   private var header: some View {
     HStack(spacing: Spacing.sm) {
-      Text("Aggregation")
-        .font(.subheading)
-        .foregroundColor(.foreground)
-      Text(model.collection)
-        .font(.monoMedium)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(1)
-        .truncationMode(.middle)
+      HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+        Text("Aggregation")
+          .font(.subheading)
+          .foregroundColor(.foreground)
+        Text(model.collection)
+          .font(.monoMedium)
+          .foregroundColor(.foregroundMuted)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          // Lift by half the x-height gap (15pt vs 12pt mono) so both share one optical center.
+          .alignmentGuide(.firstTextBaseline) { $0[.firstTextBaseline] + 0.8 }
+      }
+      if let aiAssistant {
+        MongoAIPipelineButton(assistant: aiAssistant, builder: model)
+      }
       Spacer()
       Button(action: onClose) {
         Image(systemName: "xmark")

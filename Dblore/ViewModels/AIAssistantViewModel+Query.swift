@@ -19,6 +19,8 @@ extension AIAssistantViewModel {
     let compactPrompt: Bool
     /// Dialect at send time; a query runs only while the connection still has it
     let dialect: SQLDialect
+    /// MongoDB collection screen shown at send time
+    var screen: AIMongoAssist.Screen? = nil
   }
 
   /// Refused before the query reached the database: no `queryRunner` (the workspace has no
@@ -49,7 +51,7 @@ extension AIAssistantViewModel {
     let request = await Self.buildRequest(
       model: context.model, question: context.question, explicit: context.explicit,
       snapshot: context.snapshot, history: history, runsQueries: context.runsQueries,
-      compactPrompt: context.compactPrompt)
+      compactPrompt: context.compactPrompt, screen: context.screen)
     guard await streamReply(request, from: context.client, into: entryId),
       context.runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,

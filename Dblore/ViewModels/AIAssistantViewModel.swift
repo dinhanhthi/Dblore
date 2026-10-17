@@ -75,6 +75,8 @@ final class AIAssistantViewModel {
   @ObservationIgnored private let makeClient:
     (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient
   @ObservationIgnored var schemaSource: () -> AISchemaSnapshot = { .empty }
+  /// The MongoDB collection screen of the active tab, read at send time; nil elsewhere
+  @ObservationIgnored var mongoScreenSource: () -> AIMongoAssist.Screen? = { nil }
   /// Reads only the connection's dialect, so a view body does not collect the whole schema.
   /// Nil falls back to `schemaSource`.
   @ObservationIgnored var dialectSource: (() -> SQLDialect)?
@@ -215,7 +217,7 @@ final class AIAssistantViewModel {
     let context = TurnContext(
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
-      compactPrompt: provider == .localMLX, dialect: sqlDialect)
+      compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource())
     let history = makeHistory()
     isGenerating = true
     generation += 1
@@ -274,6 +276,42 @@ final class AIAssistantViewModel {
     historyStore?.save(conversations)
   }
 
+  // MARK: - One-shot
+
+  /// Generates the filter or pipeline of `collection` from `prompt` and returns the raw reply.
+  /// Outside the chat: no entry, history or generating state is touched. The caller owns
+  /// cancellation and timeout.
+  func mongoAssist(
+    _ target: AIMongoAssist.Target, prompt: String, database: String?, collection: String,
+    current: String
+  ) async throws -> String {
+    guard let provider = activeProvider else { throw AIClientError.missingModel }
+    let model = activeModel
+    guard !model.isEmpty else { throw AIClientError.missingModel }
+    let client = try makeClient(
+      provider, settings.config(for: provider), settings.apiKey(for: provider))
+
+    let snapshot = schemaSource()
+    let tables = snapshot.tables.filter {
+      $0.name == collection && (database == nil || $0.schema == database)
+    }
+    let request = AIChatRequest(
+      model: model,
+      system: AIPrompts.mongoAssistSystem(
+        target, databaseName: database ?? snapshot.databaseName, collection: collection,
+        schema: AISchemaContext.render(tables: tables, foreignKeys: []), current: current),
+      messages: [AIChatMessage(role: .user, text: prompt)])
+
+    var reply = ""
+    for try await event in client.stream(request) {
+      try Task.checkCancellation()
+      if case .text(let delta) = event { reply += delta }
+    }
+    // A stop that lands after the last event must not hand the reply to the caller's write
+    try Task.checkCancellation()
+    return reply
+  }
+
   // MARK: - History
 
   /// Replaces `conversations` from disk. A nil store keeps the in-memory list.
@@ -320,7 +358,8 @@ final class AIAssistantViewModel {
   /// Builds the request off the main actor: table selection and rendering are O(tables)
   nonisolated static func buildRequest(
     model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
-    history: [AIChatMessage], runsQueries: Bool, compactPrompt: Bool
+    history: [AIChatMessage], runsQueries: Bool, compactPrompt: Bool,
+    screen: AIMongoAssist.Screen? = nil
   ) async -> AIChatRequest {
     await Task.detached {
       let selected = AISchemaContext.selectTables(
@@ -331,7 +370,7 @@ final class AIAssistantViewModel {
         model: model,
         system: AIPrompts.system(
           databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
-          runsQueries: runsQueries, compact: compactPrompt),
+          runsQueries: runsQueries, compact: compactPrompt, screen: screen),
         messages: history)
     }.value
   }

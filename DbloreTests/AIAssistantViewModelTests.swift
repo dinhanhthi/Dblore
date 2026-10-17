@@ -766,4 +766,63 @@ struct AIAssistantViewModelTests {
     vm.openConversation(id: saved.id)
     #expect(vm.messages.map(\.text) == ["q"])
   }
+
+  // MARK: - MongoDB collection screen
+
+  private func mongoSnapshot() -> AISchemaSnapshot {
+    let field = [DatabaseColumn(name: "status", type: "string")]
+    return AISchemaSnapshot(
+      tables: [
+        DatabaseTable(schema: "shop", name: "orders", columns: field),
+        DatabaseTable(schema: "shop", name: "users", columns: field),
+      ],
+      foreignKeys: [], databaseName: "shop", dialect: .mongodb)
+  }
+
+  @Test("the shown collection screen reaches the chat system prompt")
+  func mongoScreenInChat() async {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client)
+    vm.schemaSource = mongoSnapshot
+    vm.mongoScreenSource = {
+      AIMongoAssist.Screen(database: "shop", collection: "orders", showsAggregations: false)
+    }
+    vm.draft = "paid orders"
+    vm.send()
+    await finish(vm)
+    let system = client.requests.first?.system ?? ""
+    #expect(system.contains("The user is viewing the collection \"shop.orders\""))
+  }
+
+  @Test("one-shot leaves the chat alone")
+  func mongoAssistOneShot() async throws {
+    let client = FakeAIChatClient(.events(["{status: ", "\"paid\"}"]))
+    let vm = makeVM(client)
+    vm.schemaSource = mongoSnapshot
+    let reply = try await vm.mongoAssist(
+      .filter, prompt: "paid orders", database: "shop", collection: "orders", current: "")
+    #expect(reply == "{status: \"paid\"}")
+    let request = try #require(client.requests.first)
+    #expect(request.system.contains("shop.orders"))
+    #expect(!request.system.contains("shop.users"))
+    #expect(request.messages.map(\.text) == ["paid orders"])
+    #expect(request.messages.map(\.role) == [.user])
+    #expect(vm.messages.isEmpty)
+    #expect(!vm.isGenerating)
+  }
+
+  @Test("a one-shot cancelled after the last event throws instead of returning")
+  func mongoAssistCancelledAtEnd() async {
+    final class Holder { var task: Task<String, Error>? }
+    let holder = Holder()
+    let client = FakeAIChatClient(.eventsThenAct([]) { holder.task?.cancel() })
+    let vm = makeVM(client)
+    vm.schemaSource = mongoSnapshot
+    let task = Task {
+      try await vm.mongoAssist(
+        .filter, prompt: "paid orders", database: "shop", collection: "orders", current: "")
+    }
+    holder.task = task
+    await #expect(throws: CancellationError.self) { try await task.value }
+  }
 }
