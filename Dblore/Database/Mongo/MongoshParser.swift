@@ -8,7 +8,8 @@ import Foundation
 /// - `show collections`, `db.getCollectionNames()`
 /// - `db.<name>`, `db.getCollection("<name>")` or `db["<name>"]`, then one method:
 ///   `find(filter?, projection?)` with `.sort(doc)`, `.skip(n)`, `.limit(n)`, `.collation(doc)`,
-///   `.hint(name or doc)`, `.maxTimeMS(n)` in any order (each at most once), `aggregate([stages])`,
+///   `.hint(name or doc)`, `.maxTimeMS(n)` in any order (each at most once),
+///   `aggregate([stages], {collation, hint, maxTimeMS}?)`,
 ///   `countDocuments(filter?, {skip, limit, collation, hint, maxTimeMS}?)`,
 ///   `distinct("field", filter?)`, `insertOne(doc)`, `insertMany([docs])`,
 ///   `updateOne`/`updateMany(filter, update, {upsert}?)`, `replaceOne(filter, replacement,
@@ -312,9 +313,42 @@ nonisolated extension MongoshParser {
       guard let argument = call[0], case .array(let stages) = argument.value else {
         throw failure("aggregate needs a pipeline array", at: call[0]?.offset ?? call.offset)
       }
-      try call.allowPositional(1)
+      try call.allowPositional(2)
       try requireDocuments(stages, argument, "Each pipeline stage must be a document")
-      return .aggregate(collection: collection, pipeline: stages)
+      return .aggregate(
+        collection: collection, pipeline: stages, options: try aggregateOptions(call[1]))
+    }
+
+    /// The aggregate options document: only collation, hint and maxTimeMS, each at most once;
+    /// any other key is refused. Missing or `{}` is `.none`.
+    private func aggregateOptions(
+      _ argument: Argument?
+    ) throws(ParseError) -> MongoCommand.CursorOptions {
+      guard let document = try optionalDocument(argument, "options"), let argument,
+        case .document(let fields) = document
+      else { return .none }
+      var options = MongoCommand.CursorOptions.none
+      var seen: Set<String> = []
+      for field in fields {
+        guard seen.insert(field.key).inserted else {
+          throw failure("The option \(field.key) can only be used once", at: argument.offset)
+        }
+        switch field.key {
+        case "collation":
+          options.collation = try requiredDocument((field.value, argument.offset), "collation")
+        case "hint": options.hint = try hint((field.value, argument.offset))
+        case "maxTimeMS":
+          switch field.value {
+          case .int32(let value) where value >= 0: options.maxTimeMS = Int(value)
+          case .int64(let value) where value >= 0: options.maxTimeMS = Int(value)
+          default:
+            throw failure("maxTimeMS needs a non-negative integer", at: argument.offset)
+          }
+        default:
+          throw failure(unsupported("aggregate option \(field.key)"), at: argument.offset)
+        }
+      }
+      return options
     }
 
     private func distinct(

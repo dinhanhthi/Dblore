@@ -431,7 +431,9 @@ struct MongoSessionTests {
         == nil)
   }
 
-  @Test("find and count options: collation and hint on the command, never a second maxTimeMS")
+  @Test(
+    "find, aggregate and count options: collation and hint on the command, never a second maxTimeMS"
+  )
   func readOptionsDocuments() throws {
     let collation = Self.reply(("locale", .string("fr")))
     let find = MongoSession.readCommand(
@@ -442,6 +444,12 @@ struct MongoSessionTests {
     #expect(find.map(\.key) == ["find", "limit", "collation", "hint"])
     #expect(find.first { $0.key == "collation" }?.value == collation)
     #expect(find.first { $0.key == "hint" }?.value == .string("a_1"))
+    let aggregate = MongoSession.readCommand(
+      .aggregate(
+        collection: "c", pipeline: [],
+        options: .init(collation: collation, hint: .string("a_1"), maxTimeMS: 500)))
+    #expect(aggregate.map(\.key) == ["aggregate", "pipeline", "cursor", "collation", "hint"])
+    #expect(aggregate.first { $0.key == "collation" }?.value == collation)
 
     func stages(_ fields: [MongoValue.Field]) -> [String] {
       guard case .array(let pipeline)? = fields.first(where: { $0.key == "pipeline" })?.value
@@ -467,7 +475,7 @@ struct MongoSessionTests {
     #expect(stages(zero) == ["$match", "$group"])
   }
 
-  @Test("explain wraps the read command uncapped, a find's maxTimeMS inside, none at the top")
+  @Test("explain wraps the read command uncapped, the user maxTimeMS inside, none at the top")
   func explainCommandDocument() throws {
     let find = MongoCommand.find(
       collection: "c", filter: nil, projection: nil, sort: nil, skip: nil, limit: nil,
@@ -486,6 +494,17 @@ struct MongoSessionTests {
     #expect(
       MongoSession.explainCommand(aggregate, verbosity: "queryPlanner")?.first?.value
         == .document(MongoSession.readCommand(aggregate)))
+    let timed = MongoCommand.aggregate(
+      collection: "c", pipeline: pipeline, options: .init(maxTimeMS: 500))
+    guard
+      case .document(let timedInner)? = MongoSession.explainCommand(
+        timed, verbosity: "queryPlanner")?.first?.value
+    else {
+      Issue.record("explain is not a document")
+      return
+    }
+    #expect(timedInner.map(\.key) == ["aggregate", "pipeline", "cursor", "maxTimeMS"])
+    #expect(timedInner.last?.value == .int64(500))
     #expect(MongoSession.explainCommand(.listCollections, verbosity: "queryPlanner") == nil)
   }
 

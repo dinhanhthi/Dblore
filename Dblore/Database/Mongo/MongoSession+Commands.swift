@@ -115,11 +115,9 @@ extension MongoSession {
     return try await withStatement { token, connection in
       switch command {
       case .find, .aggregate:
-        let userMaxTimeMS: Int? =
-          if case .find(_, _, _, _, _, _, let options) = command { options.maxTimeMS } else { nil }
         let documents = try await readCursor(
           Self.readCommand(command), cap: cap, token: token, connection: connection,
-          database: database, maxTimeMS: statementMaxTimeMS(userMaxTimeMS))
+          database: database, maxTimeMS: statementMaxTimeMS(Self.userMaxTimeMS(command)))
         let columns = MongoBSONMapping.columns(for: documents)
         return (columns, documents.map { MongoBSONMapping.row(for: $0, columns: columns) })
       case .countDocuments(let collection, let filter, let options):
@@ -145,15 +143,21 @@ extension MongoSession {
         guard let fields = Self.explainCommand(inner, verbosity: verbosity) else {
           throw MongoSessionError(message: "Only a find or an aggregate can be explained.")
         }
-        let userMaxTimeMS: Int? =
-          if case .find(_, _, _, _, _, _, let options) = inner { options.maxTimeMS } else { nil }
         let reply = try await execute(
           fields, token: token, on: connection, database: database,
-          maxTimeMS: statementMaxTimeMS(userMaxTimeMS))
+          maxTimeMS: statementMaxTimeMS(Self.userMaxTimeMS(inner)))
         return Self.explainResult(try MongoBSONMapping.document(reply))
       default:
         throw MongoSessionError(message: "Read commands return rows; run them as a query.")
       }
+    }
+  }
+
+  /// The `maxTimeMS` option of a find or an aggregate, nil for any other command.
+  private static func userMaxTimeMS(_ command: MongoCommand) -> Int? {
+    switch command {
+    case .find(_, _, _, _, _, _, let options), .aggregate(_, _, let options): options.maxTimeMS
+    default: nil
     }
   }
 
@@ -272,8 +276,8 @@ extension MongoSession {
       if let collation = options.collation { fields.append(Field("collation", collation)) }
       if let hint = options.hint { fields.append(Field("hint", hint)) }
       return fields
-    case .aggregate(let collection, let pipeline):
-      return aggregateCommand(collection: collection, pipeline: pipeline)
+    case .aggregate(let collection, let pipeline, let options):
+      return aggregateCommand(collection: collection, pipeline: pipeline, options: options)
     case .distinct(let collection, let field, let filter):
       var fields = [Field("distinct", .string(collection)), Field("key", .string(field))]
       if let filter { fields.append(Field("query", filter)) }
@@ -319,29 +323,33 @@ extension MongoSession {
   }
 
   /// `explain` of a find or aggregate (nil for any other command): the inner command exactly as
-  /// `readCommand` builds it (no row cap), with a find's user `maxTimeMS` inside it. `execute`
-  /// adds the outer `maxTimeMS` and `comment`.
+  /// `readCommand` builds it (no row cap), with the user `maxTimeMS` inside it. `execute` adds
+  /// the outer `maxTimeMS` and `comment`.
   static func explainCommand(_ command: MongoCommand, verbosity: String) -> [Field]? {
     var inner: [Field]
     switch command {
-    case .find(_, _, _, _, _, _, let options):
+    case .find(_, _, _, _, _, _, let options), .aggregate(_, _, let options):
       inner = readCommand(command)
       if let maxTimeMS = options.maxTimeMS, maxTimeMS > 0 {
         inner.append(Field("maxTimeMS", .int64(Int64(maxTimeMS))))
       }
-    case .aggregate:
-      inner = readCommand(command)
     default:
       return nil
     }
     return [Field("explain", .document(inner)), Field("verbosity", .string(verbosity))]
   }
 
-  private static func aggregateCommand(collection: String, pipeline: [MongoValue]) -> [Field] {
-    [
+  /// `collation` and `hint` from `options` when set; never `maxTimeMS` (see `readCommand`).
+  private static func aggregateCommand(
+    collection: String, pipeline: [MongoValue], options: MongoCommand.CursorOptions = .none
+  ) -> [Field] {
+    var fields = [
       Field("aggregate", .string(collection)), Field("pipeline", .array(pipeline)),
       Field("cursor", .document([])),
     ]
+    if let collation = options.collation { fields.append(Field("collation", collation)) }
+    if let hint = options.hint { fields.append(Field("hint", hint)) }
+    return fields
   }
 
   /// The write command of `command` (and the aggregate of `$out`/`$merge`); nil for reads.
@@ -361,8 +369,8 @@ extension MongoSession {
       return deleteCommand(collection, filter, limit: 1)
     case .deleteMany(let collection, let filter):
       return deleteCommand(collection, filter, limit: 0)
-    case .aggregate(let collection, let pipeline):
-      return aggregateCommand(collection: collection, pipeline: pipeline)
+    case .aggregate(let collection, let pipeline, let options):
+      return aggregateCommand(collection: collection, pipeline: pipeline, options: options)
     case .find, .countDocuments, .distinct, .listCollections, .explain:
       return nil
     }

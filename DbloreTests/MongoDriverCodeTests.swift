@@ -1,5 +1,5 @@
 // MongoDriverCodeTests.swift
-// Driver code export: key tokens of a find with every option and of an aggregate in each
+// Driver code export: key tokens of a find and of an aggregate, each with options, in every
 // language, and the imports / connection toggles plus the commands that have no export.
 
 import Foundation
@@ -51,7 +51,9 @@ struct MongoDriverCodeTests {
               "total", .document([MongoValue.Field("$sum", .string("$amount"))])),
           ]))
       ]),
-    ])
+    ],
+    options: MongoCommand.CursorOptions(
+      collation: .document([MongoValue.Field("locale", .string("fr"))]), maxTimeMS: 500))
 
   private static func tokens(_ language: MongoDriverCode.Language, _ shape: Shape) -> [String] {
     switch (language, shape) {
@@ -62,7 +64,10 @@ struct MongoDriverCodeTests {
         #"new ObjectId("\#(hex)")"#, #"new Date("2024-01-02T03:04:05.678Z")"#, trickyLiteral,
       ]
     case (.node, .aggregate):
-      return ["collection.aggregate([", #""$match": { "status": "paid" }"#, #""$group""#]
+      return [
+        "collection.aggregate([", #""$match": { "status": "paid" }"#, #""$group""#,
+        #"collation: { "locale": "fr" }"#, "maxTimeMS: 500",
+      ]
     case (.python, .find):
       return [
         "collection.find(", #"sort=[("createdAt", -1)]"#, "skip=10", "limit=5",
@@ -71,7 +76,10 @@ struct MongoDriverCodeTests {
         "datetime(2024, 1, 2, 3, 4, 5, 678000, tzinfo=timezone.utc)", trickyLiteral,
       ]
     case (.python, .aggregate):
-      return ["collection.aggregate([", #"{"$match": {"status": "paid"}}"#, #""$group""#]
+      return [
+        "collection.aggregate(", #"{"$match": {"status": "paid"}}"#, #""$group""#,
+        #"collation={"locale": "fr"}"#, "maxTimeMS=500",
+      ]
     case (.java, .find):
       return [
         "collection.find(", ".projection(", ".sort(", ".skip(10)", ".limit(5)",
@@ -83,7 +91,8 @@ struct MongoDriverCodeTests {
     case (.java, .aggregate):
       return [
         "collection.aggregate(Arrays.asList(", #"new Document("$match", new Document("status""#,
-        #"new Document("$group""#,
+        #"new Document("$group""#, #".collation(Collation.builder().locale("fr").build())"#,
+        ".maxTime(500, TimeUnit.MILLISECONDS)",
       ]
     case (.go, .find):
       return [
@@ -95,8 +104,10 @@ struct MongoDriverCodeTests {
       ]
     case (.go, .aggregate):
       return [
-        "coll.Aggregate(ctx, pipeline)", "mongo.Pipeline{", #"{Key: "$match", Value: bson.D{"#,
-        #"{Key: "$group""#,
+        "coll.Aggregate(queryCtx, pipeline, opts)", "mongo.Pipeline{",
+        #"{Key: "$match", Value: bson.D{"#, #"{Key: "$group""#, "options.Aggregate().",
+        #"SetCollation(&options.Collation{Locale: "fr"})"#,
+        "context.WithTimeout(ctx, 500*time.Millisecond)",
       ]
     case (.csharp, .find):
       return [
@@ -107,7 +118,11 @@ struct MongoDriverCodeTests {
         trickyLiteral,
       ]
     case (.csharp, .aggregate):
-      return ["collection.Aggregate(pipeline)", #"{ "$match", new BsonDocument"#, #"{ "$group""#]
+      return [
+        "collection.Aggregate(pipeline, options)", #"{ "$match", new BsonDocument"#,
+        #"{ "$group""#, "new AggregateOptions", "Collation = Collation.FromBsonDocument(",
+        "MaxTime = TimeSpan.FromMilliseconds(500)",
+      ]
     }
   }
 

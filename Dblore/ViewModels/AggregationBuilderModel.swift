@@ -104,7 +104,7 @@ final class AggregationBuilderModel: Identifiable {
   /// A builder holding the stages of an `aggregate` command, nil for any other command or when
   /// a pipeline element is not a one-key document (see `stages(from:)`).
   convenience init?(command: MongoCommand, connectionManager: DatabaseConnectionManager) {
-    guard case .aggregate(let collection, _) = command,
+    guard case .aggregate(let collection, _, _) = command,
       let stages = Self.stages(from: command)
     else { return nil }
     self.init(collection: collection, connectionManager: connectionManager)
@@ -116,7 +116,7 @@ final class AggregationBuilderModel: Identifiable {
   nonisolated static func stages(
     from command: MongoCommand
   ) -> [(operator: String, body: String)]? {
-    guard case .aggregate(_, let pipeline) = command else { return nil }
+    guard case .aggregate(_, let pipeline, _) = command else { return nil }
     var stages: [(operator: String, body: String)] = []
     for element in pipeline {
       guard case .document(let fields) = element, fields.count == 1 else { return nil }
@@ -126,10 +126,12 @@ final class AggregationBuilderModel: Identifiable {
   }
 
   /// The command of a mongosh cell that is exactly one `aggregate` the builder can open (see
-  /// `stages(from:)`), nil otherwise.
+  /// `stages(from:)`), nil otherwise. Nil too for an aggregate with options: the builder does
+  /// not hold them yet, so its whole-cell Insert would drop them.
   nonisolated static func aggregateCommand(in text: String) -> MongoCommand? {
     let pieces = MongoshSplitter.split(text)
     guard pieces.count == 1, let command = try? MongoshParser.parse(pieces[0]),
+      case .aggregate(_, _, let options) = command, options == .none,
       stages(from: command) != nil
     else { return nil }
     return command

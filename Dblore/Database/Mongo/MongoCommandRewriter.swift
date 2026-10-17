@@ -9,7 +9,8 @@ nonisolated enum MongoCommandRewriter {
   /// `find`: `limit` becomes `min(effective, maxRows + 1)`, where no limit or `limit(0)` is
   /// unlimited and a negative limit counts as its absolute value (mongosh semantics), so the
   /// result is always in `1...maxRows + 1`. `aggregate`: appends `{$limit: NumberLong(maxRows +
-  /// 1)}` unless the last stage is `$out` or `$merge`. Other commands are returned unchanged.
+  /// 1)}` unless the last stage is `$out` or `$merge`, options kept. Other commands are returned
+  /// unchanged.
   /// A negative `maxRows` counts as 0.
   static func withLimit(_ command: MongoCommand, maxRows: Int) -> MongoCommand {
     let cap = maxRows == .max ? maxRows : max(maxRows, 0) + 1
@@ -20,7 +21,7 @@ nonisolated enum MongoCommandRewriter {
       return .find(
         collection: name, filter: filter, projection: projection, sort: sort, skip: skip,
         limit: capped, options: options)
-    case .aggregate(let name, let pipeline):
+    case .aggregate(let name, let pipeline, let options):
       if let last = pipeline.last,
         MongoCommandClassifier.hasStage(last, "$out")
           || MongoCommandClassifier.hasStage(last, "$merge")
@@ -28,7 +29,7 @@ nonisolated enum MongoCommandRewriter {
         return command
       }
       let stage = MongoValue.document([MongoValue.Field("$limit", .int64(Int64(cap)))])
-      return .aggregate(collection: name, pipeline: pipeline + [stage])
+      return .aggregate(collection: name, pipeline: pipeline + [stage], options: options)
     default:
       return command
     }

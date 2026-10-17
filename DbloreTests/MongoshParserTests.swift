@@ -220,7 +220,7 @@ struct MongoshParserTests {
       ("db.c.aggregate([1])", "Each pipeline stage must be a document", "[1]"),
       (
         "db.c.aggregate([], {allowDiskUse: true})",
-        "aggregate options are not supported in the Dblore MongoDB subset", "{allow"
+        "aggregate option allowDiskUse is not supported in the Dblore MongoDB subset", "{allow"
       ),
       (
         "db.c.countDocuments({}, {limit: 1, batchSize: 2})",
@@ -322,6 +322,14 @@ struct MongoshParserTests {
       (
         .aggregate(collection: "c", pipeline: [doc(("$match", a1))]),
         "db.c.aggregate([ { $match: { a: 1 } } ])"
+      ),
+      (
+        .aggregate(
+          collection: "c", pipeline: [doc(("$match", a1))],
+          options: .init(
+            collation: doc(("locale", .string("fr"))), hint: .string("a_1"), maxTimeMS: 500)),
+        "db.c.aggregate([ { $match: { a: 1 } } ], { collation: { locale: \"fr\" }, hint: \"a_1\","
+          + " maxTimeMS: 500 })"
       ),
       (
         .countDocuments(collection: "stats", filter: nil),

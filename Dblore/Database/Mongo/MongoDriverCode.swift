@@ -4,7 +4,8 @@
 
 import Foundation
 
-/// Driver code for a `MongoCommand`. Only `find` (every cursor option) and `aggregate` export.
+/// Driver code for a `MongoCommand`. Only `find` and `aggregate` (each with every cursor option)
+/// export.
 ///
 /// Values keep their BSON type and key order (duplicate keys collapse in the languages whose map
 /// literals cannot hold them: Node.js, Python, Java, C#). Every string goes through one escaper,
@@ -40,9 +41,9 @@ nonisolated enum MongoDriverCode {
         Find(
           filter: filter, projection: projection, sort: sort, skip: skip, limit: limit,
           options: options))
-    case .aggregate(let name, let pipeline):
+    case .aggregate(let name, let pipeline, let options):
       collection = name
-      query = .aggregate(pipeline)
+      query = .aggregate(pipeline, options)
     case .countDocuments, .distinct, .insertOne, .insertMany, .updateOne, .updateMany,
       .replaceOne, .deleteOne, .deleteMany, .listCollections, .explain:
       return nil
@@ -76,7 +77,7 @@ nonisolated extension MongoDriverCode {
 
   nonisolated enum Query {
     case find(Find)
-    case aggregate([MongoValue])
+    case aggregate([MongoValue], MongoCommand.CursorOptions)
 
     /// The values printed as literals (the collation only where it is one).
     func literals(withCollation: Bool) -> [MongoValue] {
@@ -85,8 +86,9 @@ nonisolated extension MongoDriverCode {
         let collation = withCollation ? find.options.collation : nil
         return [find.filter, find.projection, find.sort, find.options.hint, collation]
           .compactMap { $0 }
-      case .aggregate(let pipeline):
-        return pipeline
+      case .aggregate(let pipeline, let options):
+        let collation = withCollation ? options.collation : nil
+        return pipeline + [options.hint, collation].compactMap { $0 }
       }
     }
   }
@@ -330,19 +332,20 @@ private nonisolated enum NodeCode {
       if let sort = find.sort { options.append("sort: \(value(sort))") }
       if let skip = find.skip { options.append("skip: \(skip)") }
       if let limit = find.limit { options.append("limit: \(limit)") }
-      if let collation = find.options.collation {
-        options.append("collation: \(value(collation))")
-      }
-      if let hint = find.options.hint { options.append("hint: \(value(hint))") }
-      if let maxTimeMS = find.options.maxTimeMS { options.append("maxTimeMS: \(maxTimeMS)") }
+      options += cursorOptions(find.options)
       let filter = find.filter.map(value) ?? "{}"
       body =
         options.isEmpty
         ? ["const cursor = collection.find(\(filter));"]
         : Code.block("const cursor = collection.find(\(filter), {", options, "});", indent: "  ")
-    case .aggregate(let pipeline):
-      body = Code.block(
-        "const cursor = collection.aggregate([", pipeline.map(value), "]);", indent: "  ")
+    case .aggregate(let pipeline, let aggregate):
+      let options = cursorOptions(aggregate)
+      let stages = pipeline.map(value)
+      body =
+        options.isEmpty
+        ? Code.block("const cursor = collection.aggregate([", stages, "]);", indent: "  ")
+        : Code.block("const cursor = collection.aggregate([", stages, "], {", indent: "  ")
+          + options.map { "  \($0)," } + ["});"]
     }
 
     var lines: [String] = []
@@ -385,6 +388,15 @@ private nonisolated enum NodeCode {
         "",
         "main().catch(console.error);",
       ]
+  }
+
+  /// The `collation`, `hint` and `maxTimeMS` entries of an options object.
+  private static func cursorOptions(_ options: MongoCommand.CursorOptions) -> [String] {
+    var entries: [String] = []
+    if let collation = options.collation { entries.append("collation: \(value(collation))") }
+    if let hint = options.hint { entries.append("hint: \(value(hint))") }
+    if let maxTimeMS = options.maxTimeMS { entries.append("maxTimeMS: \(maxTimeMS)") }
+    return entries
   }
 
   static func value(_ value: MongoValue) -> String {
@@ -446,24 +458,23 @@ private nonisolated enum PythonCode {
       if let sort = find.sort { arguments.append("sort=\(pairs(sort))") }
       if let skip = find.skip { arguments.append("skip=\(skip)") }
       if let limit = find.limit { arguments.append("limit=\(limit)") }
-      if let collation = find.options.collation {
-        arguments.append("collation=\(value(collation))")
-      }
-      if let hint = find.options.hint {
-        if case .string = hint {
-          arguments.append("hint=\(value(hint))")
-        } else {
-          arguments.append("hint=\(pairs(hint))")
-        }
-      }
-      if let maxTimeMS = find.options.maxTimeMS { arguments.append("max_time_ms=\(maxTimeMS)") }
+      arguments += cursorArguments(find.options, maxTime: "max_time_ms")
       body =
         arguments.count <= 1
         ? ["cursor = collection.find(\(arguments.joined()))"]
         : Code.block("cursor = collection.find(", arguments, ")", indent: "    ")
-    case .aggregate(let pipeline):
-      body = Code.block(
-        "cursor = collection.aggregate([", pipeline.map(value), "])", indent: "    ")
+    case .aggregate(let pipeline, let options):
+      // PyMongo passes aggregate keyword options to the command as named: `maxTimeMS`.
+      let arguments = cursorArguments(options, maxTime: "maxTimeMS")
+      if arguments.isEmpty {
+        body = Code.block(
+          "cursor = collection.aggregate([", pipeline.map(value), "])", indent: "    ")
+      } else {
+        let stages = Code.block("[", pipeline.map(value), "],", indent: "    ")
+        body =
+          ["cursor = collection.aggregate("] + Code.indented(stages, by: "    ")
+          + arguments.map { "    \($0)," } + [")"]
+      }
     }
 
     var lines: [String] = []
@@ -536,6 +547,23 @@ private nonisolated enum PythonCode {
     }
   }
 
+  /// The `collation=`, `hint=` and maxTimeMS keyword arguments, the last named `maxTime`.
+  private static func cursorArguments(
+    _ options: MongoCommand.CursorOptions, maxTime: String
+  ) -> [String] {
+    var arguments: [String] = []
+    if let collation = options.collation { arguments.append("collation=\(value(collation))") }
+    if let hint = options.hint {
+      if case .string = hint {
+        arguments.append("hint=\(value(hint))")
+      } else {
+        arguments.append("hint=\(pairs(hint))")
+      }
+    }
+    if let maxTimeMS = options.maxTimeMS { arguments.append("\(maxTime)=\(maxTimeMS)") }
+    return arguments
+  }
+
   /// A key document as the list of `(key, value)` pairs PyMongo takes for `sort` and `hint`.
   private static func pairs(_ keys: MongoValue) -> String {
     guard case .document(let fields) = keys else { return value(keys) }
@@ -557,14 +585,10 @@ private nonisolated enum JavaCode {
     var body: [String] = []
     var collationTypes: Set<String> = []
     var usesTimeUnit = false
-    switch query {
-    case .find(let find):
+    /// The `.collation`, `.hint` and `.maxTime` calls of `options` (find and aggregate iterables).
+    func optionCalls(_ options: MongoCommand.CursorOptions) -> [String] {
       var calls: [String] = []
-      if let projection = find.projection { calls.append(".projection(\(value(projection)))") }
-      if let sort = find.sort { calls.append(".sort(\(value(sort)))") }
-      if let skip = find.skip { calls.append(".skip(\(skip))") }
-      if let limit = find.limit { calls.append(".limit(\(limit))") }
-      if let collation = find.options.collation {
+      if let collation = options.collation {
         let (settings, complete) = Code.collationSettings(collation)
         if !complete {
           body.append("// Collation fields with no Collation.Builder method were left out.")
@@ -578,27 +602,39 @@ private nonisolated enum JavaCode {
         }
         calls.append(".collation(\(builder).build())")
       }
-      if let hint = find.options.hint {
+      if let hint = options.hint {
         if case .string(let name) = hint {
           calls.append(".hintString(\(string(name)))")
         } else {
           calls.append(".hint(\(value(hint)))")
         }
       }
-      if let maxTimeMS = find.options.maxTimeMS {
+      if let maxTimeMS = options.maxTimeMS {
         calls.append(".maxTime(\(maxTimeMS), TimeUnit.MILLISECONDS)")
         usesTimeUnit = true
       }
+      return calls
+    }
+    switch query {
+    case .find(let find):
+      var calls: [String] = []
+      if let projection = find.projection { calls.append(".projection(\(value(projection)))") }
+      if let sort = find.sort { calls.append(".sort(\(value(sort)))") }
+      if let skip = find.skip { calls.append(".skip(\(skip))") }
+      if let limit = find.limit { calls.append(".limit(\(limit))") }
+      calls += optionCalls(find.options)
       let filter = find.filter.map(value) ?? ""
       body += Code.chain(
         "FindIterable<Document> cursor = collection.find(\(filter))", calls, indent: "    ")
-    case .aggregate(let pipeline):
+    case .aggregate(let pipeline, let options):
+      let calls = optionCalls(options)
       let stages = pipeline.map(value)
-      body =
+      let head =
         stages.isEmpty
-        ? ["AggregateIterable<Document> cursor = collection.aggregate(Arrays.asList());"]
+        ? ["AggregateIterable<Document> cursor = collection.aggregate(Arrays.asList())"]
         : ["AggregateIterable<Document> cursor = collection.aggregate(Arrays.asList("]
-          + stages.dropLast().map { "    \($0)," } + ["    \(stages[stages.count - 1]));"]
+          + stages.dropLast().map { "    \($0)," } + ["    \(stages[stages.count - 1]))"]
+      body += head.dropLast() + Code.chain(head[head.count - 1], calls, indent: "    ")
     }
 
     var lines: [String] = []
@@ -750,14 +786,10 @@ private nonisolated enum GoCode {
     var context = "ctx"
     var usesOptions = false
     var usesTimeout = false
-    switch query {
-    case .find(let find):
+    /// The `SetCollation` and `SetHint` setters of `options` (find and aggregate builders).
+    func optionSetters(_ options: MongoCommand.CursorOptions) -> [String] {
       var setters: [String] = []
-      if let projection = find.projection { setters.append("SetProjection(\(value(projection)))") }
-      if let sort = find.sort { setters.append("SetSort(\(value(sort)))") }
-      if let skip = find.skip { setters.append("SetSkip(\(skip))") }
-      if let limit = find.limit { setters.append("SetLimit(\(limit))") }
-      if let collation = find.options.collation {
+      if let collation = options.collation {
         let (settings, complete) = Code.collationSettings(collation)
         if !complete {
           body.append("// Collation fields with no options.Collation field were left out.")
@@ -765,28 +797,47 @@ private nonisolated enum GoCode {
         let fields = settings.map { "\(fieldName($0.key)): \(argument($0.setting))" }
         setters.append("SetCollation(&options.Collation{\(fields.joined(separator: ", "))})")
       }
-      if let hint = find.options.hint { setters.append("SetHint(\(value(hint)))") }
+      if let hint = options.hint { setters.append("SetHint(\(value(hint)))") }
+      return setters
+    }
+    /// `opts := options.<builder>().` and the chained setters, when there are any.
+    func appendOptions(_ builder: String, _ setters: [String]) {
+      guard !setters.isEmpty else { return }
+      usesOptions = true
+      body.append("opts := options.\(builder)().")
+      body += setters.enumerated().map { index, setter in
+        "\t" + setter + (index == setters.count - 1 ? "" : ".")
+      }
+    }
+    /// The context deadline that stands for a `maxTimeMS` the v2 driver has no option for.
+    func appendTimeout(_ options: MongoCommand.CursorOptions, _ method: String) {
+      guard let maxTimeMS = options.maxTimeMS, maxTimeMS > 0 else { return }
+      usesTimeout = true
+      context = "queryCtx"
+      body += [
+        "// The v2 driver has no maxTimeMS \(method) option: a context deadline bounds the query.",
+        "queryCtx, cancel := context.WithTimeout(ctx, \(maxTimeMS)*time.Millisecond)",
+        "defer cancel()",
+      ]
+    }
+    switch query {
+    case .find(let find):
+      var setters: [String] = []
+      if let projection = find.projection { setters.append("SetProjection(\(value(projection)))") }
+      if let sort = find.sort { setters.append("SetSort(\(value(sort)))") }
+      if let skip = find.skip { setters.append("SetSkip(\(skip))") }
+      if let limit = find.limit { setters.append("SetLimit(\(limit))") }
+      setters += optionSetters(find.options)
       body.append("filter := \(find.filter.map(value) ?? "bson.D{}")")
-      if !setters.isEmpty {
-        usesOptions = true
-        body.append("opts := options.Find().")
-        body += setters.enumerated().map { index, setter in
-          "\t" + setter + (index == setters.count - 1 ? "" : ".")
-        }
-      }
-      if let maxTimeMS = find.options.maxTimeMS, maxTimeMS > 0 {
-        usesTimeout = true
-        context = "queryCtx"
-        body += [
-          "// The v2 driver has no maxTimeMS find option: a context deadline bounds the query.",
-          "queryCtx, cancel := context.WithTimeout(ctx, \(maxTimeMS)*time.Millisecond)",
-          "defer cancel()",
-        ]
-      }
+      appendOptions("Find", setters)
+      appendTimeout(find.options, "find")
       body.append("cursor, err := coll.Find(\(context), filter\(usesOptions ? ", opts" : ""))")
-    case .aggregate(let pipeline):
+    case .aggregate(let pipeline, let options):
       body += Code.block("pipeline := mongo.Pipeline{", pipeline.map(value), "}", indent: "\t")
-      body.append("cursor, err := coll.Aggregate(ctx, pipeline)")
+      appendOptions("Aggregate", optionSetters(options))
+      appendTimeout(options, "aggregate")
+      body.append(
+        "cursor, err := coll.Aggregate(\(context), pipeline\(usesOptions ? ", opts" : ""))")
     }
 
     var lines: [String] = []
@@ -804,8 +855,10 @@ private nonisolated enum GoCode {
       var usesMongo = target.connection
       switch query {
       case .find: usesBSON = true
-      case .aggregate(let pipeline):
-        usesBSON = usesBSON || !pipeline.isEmpty
+      case .aggregate(let pipeline, let options):
+        var hintIsDocument = false
+        if case .document? = options.hint { hintIsDocument = true }
+        usesBSON = usesBSON || !pipeline.isEmpty || hintIsDocument
         usesMongo = true
       }
       var driver: [String] = []
@@ -935,33 +988,38 @@ private nonisolated enum CSharpCode {
   static func code(_ query: Code.Query, _ target: Code.Target) -> [String] {
     var body: [String] = []
     var usesTimeSpan = false
-    switch query {
-    case .find(let find):
+    /// `var options = new <type> { … };` with the settings of `options`, false when none is set.
+    func appendOptions(_ type: String, _ options: MongoCommand.CursorOptions) -> Bool {
       var settings: [String] = []
-      if let collation = find.options.collation {
+      if let collation = options.collation {
         settings.append("Collation = Collation.FromBsonDocument(\(value(collation))),")
       }
-      if let hint = find.options.hint { settings.append("Hint = \(value(hint)),") }
-      if let maxTimeMS = find.options.maxTimeMS {
+      if let hint = options.hint { settings.append("Hint = \(value(hint)),") }
+      if let maxTimeMS = options.maxTimeMS {
         settings.append("MaxTime = TimeSpan.FromMilliseconds(\(maxTimeMS)),")
         usesTimeSpan = true
       }
-      if !settings.isEmpty {
-        body += ["var options = new FindOptions", "{"] + settings.map { "    " + $0 } + ["};"]
-      }
+      guard !settings.isEmpty else { return false }
+      body += ["var options = new \(type)", "{"] + settings.map { "    " + $0 } + ["};"]
+      return true
+    }
+    switch query {
+    case .find(let find):
+      let hasOptions = appendOptions("FindOptions", find.options)
       var calls: [String] = []
       if let projection = find.projection { calls.append(".Project(\(value(projection)))") }
       if let sort = find.sort { calls.append(".Sort(\(value(sort)))") }
       if let skip = find.skip { calls.append(".Skip(\(skip))") }
       if let limit = find.limit { calls.append(".Limit(\(limit))") }
       let filter = find.filter.map(value) ?? "new BsonDocument()"
-      let head = "var cursor = collection.Find(\(filter)\(settings.isEmpty ? "" : ", options"))"
+      let head = "var cursor = collection.Find(\(filter)\(hasOptions ? ", options" : ""))"
       body += Code.chain(head, calls, indent: "    ")
-    case .aggregate(let pipeline):
+    case .aggregate(let pipeline, let options):
       body =
         ["PipelineDefinition<BsonDocument, BsonDocument> pipeline = new BsonDocument[]", "{"]
-        + pipeline.map { "    \(value($0))," }
-        + ["};", "var cursor = collection.Aggregate(pipeline);"]
+        + pipeline.map { "    \(value($0))," } + ["};"]
+      let hasOptions = appendOptions("AggregateOptions", options)
+      body.append("var cursor = collection.Aggregate(pipeline\(hasOptions ? ", options" : ""));")
     }
 
     var lines: [String] = []

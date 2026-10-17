@@ -12,7 +12,8 @@ import Foundation
 /// (updates, `replaceOne`, deletes) keep `{}` as `.document([])`.
 /// `skip` and `limit` keep the number as written (`limit(0)` and negative limits included).
 nonisolated enum MongoCommand: Equatable, Sendable {
-  /// The find cursor methods `.collation(doc)`, `.hint(name or doc)` and `.maxTimeMS(n)`.
+  /// The find cursor methods `.collation(doc)`, `.hint(name or doc)` and `.maxTimeMS(n)`, and the
+  /// same keys of the aggregate options document.
   nonisolated struct CursorOptions: Equatable, Sendable {
     var collation: MongoValue? = nil
     var hint: MongoValue? = nil
@@ -24,7 +25,7 @@ nonisolated enum MongoCommand: Equatable, Sendable {
   case find(
     collection: String, filter: MongoValue?, projection: MongoValue?, sort: MongoValue?,
     skip: Int?, limit: Int?, options: CursorOptions = .none)
-  case aggregate(collection: String, pipeline: [MongoValue])
+  case aggregate(collection: String, pipeline: [MongoValue], options: CursorOptions = .none)
   /// `options` is the mongosh options document, nil when none is written.
   case countDocuments(collection: String, filter: MongoValue?, options: MongoValue? = nil)
   case distinct(collection: String, field: String, filter: MongoValue?)
@@ -48,7 +49,7 @@ nonisolated enum MongoCommand: Equatable, Sendable {
     switch self {
     case .explain(let command, _):
       command.collection
-    case .find(let name, _, _, _, _, _, _), .aggregate(let name, _),
+    case .find(let name, _, _, _, _, _, _), .aggregate(let name, _, _),
       .countDocuments(let name, _, _),
       .distinct(let name, _, _), .insertOne(let name, _), .insertMany(let name, _),
       .updateOne(let name, _, _, _), .updateMany(let name, _, _, _), .replaceOne(let name, _, _, _),
@@ -60,7 +61,8 @@ nonisolated enum MongoCommand: Equatable, Sendable {
   }
 
   /// Canonical mongosh text: values in mongosh notation, find chains as `.sort .skip .limit`
-  /// then `.collation .hint .maxTimeMS`, `{upsert: true}` only when set, `show collections` for
+  /// then `.collation .hint .maxTimeMS`, aggregate options as `{collation, hint, maxTimeMS}` only
+  /// when one is set, `{upsert: true}` only when set, `show collections` for
   /// `listCollections`, `.explain("<verbosity>")` always with its verbosity. A nil find or count
   /// filter is written `{}` when a projection or count options follow. `MongoshParser.parse`
   /// reads it back unchanged.
@@ -77,8 +79,17 @@ nonisolated enum MongoCommand: Equatable, Sendable {
       if let hint = options.hint { text += ".hint(\(Self.value(hint)))" }
       if let maxTimeMS = options.maxTimeMS { text += ".maxTimeMS(\(maxTimeMS))" }
       return text
-    case .aggregate(let name, let pipeline):
-      return Self.call(name, "aggregate", [.array(pipeline)])
+    case .aggregate(let name, let pipeline, let options):
+      var fields: [MongoValue.Field] = []
+      if let collation = options.collation { fields.append(.init("collation", collation)) }
+      if let hint = options.hint { fields.append(.init("hint", hint)) }
+      if let maxTimeMS = options.maxTimeMS {
+        fields.append(
+          .init(
+            "maxTimeMS", Int32(exactly: maxTimeMS).map { .int32($0) } ?? .int64(Int64(maxTimeMS))))
+      }
+      return Self.call(
+        name, "aggregate", [.array(pipeline)] + (fields.isEmpty ? [] : [.document(fields)]))
     case .countDocuments(let name, let filter, let options):
       let arguments =
         options.map { [filter ?? .document([]), $0] } ?? (filter.map { [$0] } ?? [])

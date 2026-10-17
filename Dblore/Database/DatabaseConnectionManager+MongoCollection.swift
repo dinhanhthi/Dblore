@@ -79,7 +79,7 @@ extension DatabaseConnectionManager {
     let isSample: Bool
     switch command {
     case .find(let target, _, _, _, _, _, _) where target == collection: isSample = false
-    case .aggregate(let target, _) where target == collection: isSample = true
+    case .aggregate(let target, _, _) where target == collection: isSample = true
     default:
       throw MongoSessionError(message: "The schema sample must read \(collection) only.")
     }

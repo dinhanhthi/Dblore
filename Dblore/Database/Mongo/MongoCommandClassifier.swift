@@ -42,7 +42,7 @@ nonisolated enum MongoCommandClassifier {
     switch command {
     case .find, .countDocuments, .distinct, .listCollections:
       return statement(text, kind: .read)
-    case .aggregate(_, let pipeline):
+    case .aggregate(_, let pipeline, _):
       let stages = MongoValue.array(pipeline)
       if containsKey(stages, "$out") { return statement(text, kind: .ddl, createsTable: true) }
       return statement(text, kind: containsKey(stages, "$merge") ? .dml : .read)
@@ -70,8 +70,9 @@ nonisolated enum MongoCommandClassifier {
 
   /// `text` would run JavaScript on the server: a `serverSideJavaScriptKeys` key (exact case,
   /// as the server matches operators) at any depth of any document argument (filter,
-  /// projection, sort, find collation and hint, count options, pipeline, update, document). Text
-  /// that does not parse as one command counts as JavaScript (fail closed; the classifier calls it unknown anyway).
+  /// projection, sort, find and aggregate collation and hint, count options, pipeline, update,
+  /// document). Text that does not parse as one command counts as JavaScript (fail closed; the
+  /// classifier calls it unknown anyway).
   static func usesServerSideJavaScript(_ text: String) -> Bool {
     guard let command = try? MongoshParser.parse(text) else { return true }
     return arguments(of: command).contains { value in
@@ -84,7 +85,8 @@ nonisolated enum MongoCommandClassifier {
     switch command {
     case .find(_, let filter, let projection, let sort, _, _, let options):
       [filter, projection, sort, options.collation, options.hint].compactMap { $0 }
-    case .aggregate(_, let pipeline): [.array(pipeline)]
+    case .aggregate(_, let pipeline, let options):
+      [.array(pipeline), options.collation, options.hint].compactMap { $0 }
     case .countDocuments(_, let filter, let options): [filter, options].compactMap { $0 }
     case .distinct(_, _, let filter): filter.map { [$0] } ?? []
     case .insertOne(_, let document): [document]
