@@ -875,6 +875,7 @@ struct ConnectionFormContent: View {
       RoundedRectangle(cornerRadius: CornerRadius.md)
         .fill(result.isSuccess ? Color.success.opacity(0.1) : Color.destructive.opacity(0.1))
     )
+    .modifier(ResultBannerEntrance())
   }
 
   // MARK: - Actions
@@ -1016,6 +1017,25 @@ extension ConnectionFormContent.TestResult {
   var isSuccess: Bool {
     if case .success = self { return true }
     return false
+  }
+}
+
+// MARK: - Result Banner Entrance
+
+/// Fades a test result in and lifts it 4pt into place. The banner takes its space at once, so
+/// the footer and the buttons never animate. No motion when Reduce motion is on.
+private struct ResultBannerEntrance: ViewModifier {
+  @ReduceMotion private var reduceMotion
+  @State private var isShown = false
+
+  func body(content: Content) -> some View {
+    content
+      .opacity(isShown ? 1 : 0)
+      .offset(y: isShown ? 0 : 4)
+      .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: isShown)
+      // Opt out of the app-wide animation kill switch, only for the entrance
+      .transaction(value: isShown) { $0.disablesAnimations = false }
+      .onAppear { isShown = true }
   }
 }
 
