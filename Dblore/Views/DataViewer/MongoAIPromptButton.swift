@@ -24,9 +24,8 @@ struct MongoAIPromptButton: View {
   var body: some View {
     Button(action: { isPresented.toggle() }) {
       Image(systemName: "sparkles")
-        .foregroundColor(.foregroundMuted)
     }
-    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .buttonStyle(SecondaryButtonStyle(iconOnly: true))
     .help(help)
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
       MongoAIPromptPopover(
