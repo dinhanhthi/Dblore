@@ -46,9 +46,6 @@ struct MongoAggregationsView: View {
 
   private func header(_ builder: AggregationBuilderModel) -> some View {
     HStack(spacing: Spacing.sm) {
-      if let aiAssistant {
-        MongoAIPipelineButton(assistant: aiAssistant, builder: builder, database: model.database)
-      }
       Text(stageCount(builder))
         .font(.small)
         .foregroundColor(.foregroundMuted)
@@ -60,22 +57,29 @@ struct MongoAggregationsView: View {
           .lineLimit(1)
       }
       Spacer(minLength: Spacing.sm)
-      Button("Copy") { builder.copy() }
-        .buttonStyle(GhostButtonStyle())
-        .disabled(builder.commandText == nil)
-        .help("Copy the aggregate command")
-      explainButton(builder)
-      exportButton(builder)
-      Button("Open in Query") {
-        guard let text = builder.commandText else { return }
-        openQuery?(text)
+      // Tighter than the row: the buttons carry their own padding
+      HStack(spacing: Spacing.xs) {
+        if let aiAssistant {
+          MongoAIPipelineButton(
+            assistant: aiAssistant, builder: builder, database: model.database)
+        }
+        Button("Copy") { builder.copy() }
+          .buttonStyle(SecondaryButtonStyle())
+          .disabled(builder.commandText == nil)
+          .help("Copy the aggregate command")
+        explainButton(builder)
+        exportButton(builder)
+        Button("Open in Query") {
+          guard let text = builder.commandText else { return }
+          openQuery?(text)
+        }
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(builder.commandText == nil || openQuery == nil)
+        .help(
+          builder.commandText == nil
+            ? "Fix the stage errors to open the aggregate in a query"
+            : "Open the aggregate command in a new query tab")
       }
-      .buttonStyle(PrimaryButtonStyle())
-      .disabled(builder.commandText == nil || openQuery == nil)
-      .help(
-        builder.commandText == nil
-          ? "Fix the stage errors to open the aggregate in a query"
-          : "Open the aggregate command in a new query tab")
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
@@ -90,7 +94,7 @@ struct MongoAggregationsView: View {
       guard case .success(let command) = target else { return }
       model.explain(command)
     }
-    .buttonStyle(GhostButtonStyle())
+    .buttonStyle(SecondaryButtonStyle())
     .disabled(target.command == nil || model.explainState == .running)
     .help(target.reason ?? "Explain the pipeline with execution statistics")
   }
@@ -144,7 +148,7 @@ struct MongoAggregationsView: View {
       guard case .success(let command) = target else { return }
       exportRequest = MongoExportCodeSheet.Request(command: command, database: database)
     }
-    .buttonStyle(GhostButtonStyle())
+    .buttonStyle(SecondaryButtonStyle())
     .disabled(target.command == nil)
     .help(target.reason ?? "Export the pipeline as driver code")
   }
