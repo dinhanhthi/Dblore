@@ -9,8 +9,10 @@ import CoreGraphics
 /// keeps its minimum width.
 enum SidebarRoom {
   /// Narrowest the tab content gets before its header and footer toolbars push the right
-  /// sidebar out of the window (about 576 in the data viewer)
-  static let minContentWidth: CGFloat = 580
+  /// sidebar out of the window: about 600 on a MongoDB collection's Documents (sections, + Row,
+  /// filter bar with the AI button), 460 in a notebook, 240 in a SQL table viewer. Staged changes
+  /// add Commit / Discard to the header and need more.
+  static let minContentWidth: CGFloat = 640
   /// Widest a left sidebar or the AI panel gets, as a share of the window width
   static let maxWidthFraction: CGFloat = 0.35
 

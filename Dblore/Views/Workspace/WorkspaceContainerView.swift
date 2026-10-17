@@ -388,6 +388,18 @@ struct WorkspaceContainerView: View {
     .onChange(of: workspaceManager.isLeftSidebarVisible) { _, isVisible in
       if isVisible { collapseRightSidebarsIfCrowded() }
     }
+    .modifier(
+      SidebarWidthChanges(
+        activeTabId: workspaceManager.activeTabId,
+        rightSidebarWidth: activeViewModel?.rightSidebarWidth,
+        leftSidebarWidth: workspaceManager.workspace.settings.leftSidebarWidth,
+        onRightSidebarChange: {
+          if activeViewModel?.isRightSidebarVisible == true { collapseLeftSidebarIfCrowded() }
+        },
+        onLeftSidebarChange: {
+          if workspaceManager.isLeftSidebarVisible { collapseRightSidebarsIfCrowded() }
+        })
+    )
     .onChange(of: showsWorkspaceWelcome) { _, shows in
       if shows && workspaceManager.isLeftSidebarVisible { hideAIAssistantSidebar() }
     }
@@ -446,6 +458,26 @@ struct WorkspaceContainerView: View {
     importTabID = tabID
     importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }
     isImportPresented = true
+  }
+}
+
+// MARK: - Sidebar Width Changes
+
+/// Sidebars that take more room once open: another tab's right sidebar, a right sidebar dragged
+/// wider or showing other content, and a left sidebar dragged wider. The side that changed stays
+/// open.
+private struct SidebarWidthChanges: ViewModifier {
+  let activeTabId: UUID?
+  let rightSidebarWidth: CGFloat?
+  let leftSidebarWidth: Double?
+  let onRightSidebarChange: () -> Void
+  let onLeftSidebarChange: () -> Void
+
+  func body(content: Content) -> some View {
+    content
+      .onChange(of: activeTabId) { onRightSidebarChange() }
+      .onChange(of: rightSidebarWidth) { onRightSidebarChange() }
+      .onChange(of: leftSidebarWidth) { onLeftSidebarChange() }
   }
 }
 

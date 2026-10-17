@@ -31,9 +31,14 @@ struct SidebarRoomTests {
     #expect(!R.leftSidebarFits(windowWidth: 1000, leftWidth: 300, rightWidth: 320))
   }
 
-  @Test("the 1200 default window fits a 300 left and a 320 right sidebar")
-  func defaultWindowFits() {
-    #expect(R.leftSidebarFits(windowWidth: 1200, leftWidth: 300, rightWidth: 320))
+  @Test("the 1200 default window has no room for a 300 left beside a 320 right sidebar")
+  func defaultWindowCrowds() {
+    #expect(!R.leftSidebarFits(windowWidth: 1200, leftWidth: 300, rightWidth: 320))
+  }
+
+  @Test("a 1300 window fits a 300 left and a 320 right sidebar")
+  func widerWindowFits() {
+    #expect(R.leftSidebarFits(windowWidth: 1300, leftWidth: 300, rightWidth: 320))
   }
 
   @Test("both right sidebars open count together")
