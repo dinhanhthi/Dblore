@@ -42,14 +42,18 @@ struct AggregationBuilderSheet: View {
 
   private var header: some View {
     HStack(spacing: Spacing.sm) {
-      Text("Aggregation")
-        .font(.subheading)
-        .foregroundColor(.foreground)
-      Text(model.collection)
-        .font(.monoMedium)
-        .foregroundColor(.foregroundMuted)
-        .lineLimit(1)
-        .truncationMode(.middle)
+      HStack(alignment: .firstTextBaseline, spacing: Spacing.sm) {
+        Text("Aggregation")
+          .font(.subheading)
+          .foregroundColor(.foreground)
+        Text(model.collection)
+          .font(.monoMedium)
+          .foregroundColor(.foregroundMuted)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          // Lift by half the x-height gap (15pt vs 12pt mono) so both share one optical center.
+          .alignmentGuide(.firstTextBaseline) { $0[.firstTextBaseline] + 0.8 }
+      }
       Spacer()
       Button(action: onClose) {
         Image(systemName: "xmark")
