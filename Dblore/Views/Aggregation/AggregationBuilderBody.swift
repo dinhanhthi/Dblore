@@ -3,15 +3,16 @@
 //  Dblore
 //
 //  The panes of the aggregation builder, shared by the sheet and the collection tab: the stages
-//  on the left (drag to reorder, add, remove, switch off) and the preview of the selected stage
-//  on the right (the pipeline up to it, at most 20 documents, as a document tree). The host
-//  owns the selection and its own chrome (title, Insert / Copy / Open in Query).
+//  on the left (drag to reorder, add, remove, switch off), or the pipeline as text in Text mode,
+//  and on the right the preview of the selected stage (the pipeline up to it, at most 20
+//  documents, as a document tree) or the results of the last Run. The host owns the selection,
+//  the mode, Run and its own chrome (title, Insert / Copy / Open in Query).
 //
 
 import SwiftUI
 
 struct AggregationBuilderBody: View {
-  let model: AggregationBuilderModel
+  @Bindable var model: AggregationBuilderModel
   /// The stage shown in the preview pane; set to the first stage on appear when nil, and when
   /// the stages change without it (AI replaced them, or it was removed)
   @Binding var selectedStage: AggregationBuilderModel.Stage.ID?
@@ -24,10 +25,16 @@ struct AggregationBuilderBody: View {
 
   var body: some View {
     HStack(spacing: 0) {
-      stagesPane
-        .frame(width: 440)
+      Group {
+        if model.editMode == .text {
+          textPane
+        } else {
+          stagesPane
+        }
+      }
+      .frame(width: 440)
       Divider()
-      previewPane
+      resultsPane
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .onAppear { selectedStage = selectedStage ?? model.stages.first?.id }
@@ -54,10 +61,10 @@ struct AggregationBuilderBody: View {
           ForEach(Array(model.stages.enumerated()), id: \.element.id) { index, stage in
             AggregationStageRow(
               model: model, stage: stage, number: index + 1,
-              onSelect: { selectedStage = stage.id }, fieldSource: fieldSource
+              onSelect: { select(stage.id) }, fieldSource: fieldSource
             )
             .contentShape(Rectangle())
-            .onTapGesture { selectedStage = stage.id }
+            .onTapGesture { select(stage.id) }
             .listRowBackground(
               RoundedRectangle(cornerRadius: CornerRadius.lg, style: .continuous)
                 .fill(selectedStage == stage.id ? Color.hoverFill : Color.clear)
@@ -74,7 +81,7 @@ struct AggregationBuilderBody: View {
       Divider()
       HStack {
         Button {
-          selectedStage = model.addStage()
+          select(model.addStage())
         } label: {
           Label("Add Stage", systemImage: "plus")
         }
@@ -85,7 +92,51 @@ struct AggregationBuilderBody: View {
     }
   }
 
+  /// Selects a stage and shows its preview instead of the run results
+  private func select(_ id: AggregationBuilderModel.Stage.ID) {
+    selectedStage = id
+    model.showsRunResults = false
+  }
+
+  // MARK: - Text
+
+  /// The whole pipeline as editable text. Rebuilt per model: the editor keeps the binding it
+  /// was made with.
+  private var textPane: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      PlainTextEditor(text: $model.pipelineText)
+        .id(ObjectIdentifier(model))
+        .background(Color.inputBackground)
+        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
+        .overlay(
+          HairlineBorder(
+            shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
+      Text("Disabled stages are kept as // lines")
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+      if let error = model.textError {
+        Text(error)
+          .font(.small)
+          .foregroundColor(.destructive)
+          .textSelection(.enabled)
+      }
+    }
+    .padding(Spacing.md)
+  }
+
   // MARK: - Preview
+
+  /// The run results while shown, else the stage preview (none in Text mode)
+  @ViewBuilder
+  private var resultsPane: some View {
+    if model.showsRunResults {
+      runPane
+    } else if model.editMode == .text {
+      placeholder("Run the pipeline to see its results")
+    } else {
+      previewPane
+    }
+  }
 
   private var selected: (index: Int, stage: AggregationBuilderModel.Stage)? {
     guard let selectedStage,
@@ -108,10 +159,13 @@ struct AggregationBuilderBody: View {
             .foregroundColor(.foregroundMuted)
             .lineLimit(1)
           Spacer()
-          Button("Preview") { model.preview(selected.stage.id) }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(model.previewCommand(for: selected.stage.id) == nil)
-            .help("Run the pipeline up to this stage, read-only, at most 20 documents")
+          Button("Preview") {
+            model.showsRunResults = false
+            model.preview(selected.stage.id)
+          }
+          .buttonStyle(SecondaryButtonStyle())
+          .disabled(model.previewCommand(for: selected.stage.id) == nil)
+          .help("Run the pipeline up to this stage, read-only, at most 20 documents")
         }
         previewBody(state, command: model.previewCommand(for: selected.stage.id))
       }
@@ -138,26 +192,77 @@ struct AggregationBuilderBody: View {
       Text(Self.countText(result))
         .font(.small)
         .foregroundColor(.foregroundMuted)
-      DocumentTreeView(
-        result: Self.cellResult(result, command: command), fillsAvailableHeight: true
-      )
-      .id(command)
-      .background(Color.cardHeaderBackground)
-      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
-      .overlay(
-        HairlineBorder(
-          shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
+      documentTree(result, command: command)
     case .failed(let message):
-      Text(message)
-        .font(.small)
-        .foregroundColor(.destructive)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      failure(message)
     case .notRun:
       placeholder("Not previewed yet")
     case .disabled, .writesData, .invalid:
       placeholder(state.message ?? "")
     }
+  }
+
+  // MARK: - Run results
+
+  /// The last Run of the whole pipeline; the tree is rebuilt per run, since `.running` replaces
+  /// it in between
+  private var runPane: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text("Pipeline results")
+        .font(.labelText.weight(.semibold))
+        .foregroundColor(.foreground)
+      switch model.runState {
+      case .running:
+        HStack(spacing: Spacing.sm) {
+          ProgressView().controlSize(.small)
+          Text("Running...")
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+          Button("Cancel") { model.cancelRun() }
+            .buttonStyle(SecondaryButtonStyle())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      case .done(let result, let command):
+        // Read once: in Text mode it re-parses the text
+        let current = model.commandText
+        HStack(spacing: Spacing.sm) {
+          Text(Self.runCountText(result))
+          if current != command {
+            Text("The pipeline changed since this run")
+          }
+        }
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+        documentTree(result, command: command)
+      case .failed(let message):
+        failure(message)
+      case .idle:
+        placeholder("Run the pipeline to see its results")
+      }
+    }
+    .padding(Spacing.md)
+  }
+
+  // MARK: - Shared
+
+  private func documentTree(_ result: QueryResult, command: String?) -> some View {
+    DocumentTreeView(
+      result: Self.cellResult(result, command: command), fillsAvailableHeight: true
+    )
+    .id(command)
+    .background(Color.cardHeaderBackground)
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
+    .overlay(
+      HairlineBorder(
+        shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
+  }
+
+  private func failure(_ message: String) -> some View {
+    Text(message)
+      .font(.small)
+      .foregroundColor(.destructive)
+      .textSelection(.enabled)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
   }
 
   private func placeholder(_ text: String) -> some View {
@@ -174,6 +279,13 @@ struct AggregationBuilderBody: View {
     let noun = count == 1 ? "document" : "documents"
     return count >= Int(AggregationBuilderModel.previewLimit)
       ? "\(count) \(noun) (preview limit)" : "\(count) \(noun)"
+  }
+
+  /// "N documents", noting the run limit when it cut the result.
+  private static func runCountText(_ result: QueryResult) -> String {
+    let count = result.rowCount
+    let noun = count == 1 ? "document" : "documents"
+    return result.wasLimited ? "\(count) \(noun) (run limit)" : "\(count) \(noun)"
   }
 
   private static func cellResult(_ result: QueryResult, command: String?) -> CellResult {
