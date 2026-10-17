@@ -329,6 +329,7 @@ struct HeaderView: View {
             Image(systemName: "magnifyingglass")
           }
           .buttonStyle(GhostButtonStyle(isActive: viewModel.isSearchPanelVisible, iconOnly: true))
+          .disabled(!viewModel.isSearchAvailable)
           .help("Search (⌘F)")
         } else {
           Button(action: {

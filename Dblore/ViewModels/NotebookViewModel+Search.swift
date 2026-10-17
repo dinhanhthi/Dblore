@@ -39,7 +39,10 @@ extension NotebookViewModel {
     // In editor mode, search in editorContent instead of notebook.cells
     // because editorContent is the live editing buffer
     let cellsToSearch: [NotebookCell]
-    if viewMode == .editor, let firstCell = notebook.cells.first {
+    if dataViewer != nil {
+      // A data viewer has no cell: search the loaded page under this view model's id
+      cellsToSearch = [NotebookCell(id: id, result: editorResult)]
+    } else if viewMode == .editor, let firstCell = notebook.cells.first {
       // Create a virtual cell with editorContent for searching
       var editorCell = firstCell
       editorCell.content = editorContent
@@ -255,7 +258,7 @@ extension NotebookViewModel {
     if isSearchPanelVisible {
       // Close search if already open
       closeSearch()
-    } else {
+    } else if isSearchAvailable {
       // Save current first responder before opening search (like VSCode)
       previousFirstResponder = NSApplication.shared.keyWindow?.firstResponder
 

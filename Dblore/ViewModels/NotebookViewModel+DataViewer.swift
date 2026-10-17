@@ -56,6 +56,11 @@ extension NotebookViewModel {
     isMongoDataViewer ? mongoCollectionModel : nil
   }
 
+  /// Cmd+F and the header search button: a MongoDB collection searches its Documents section only
+  var isSearchAvailable: Bool {
+    (mongoCollection?.section ?? .documents) == .documents
+  }
+
   /// Called on every `dataViewer` change: keep the model while the viewer shows the same
   /// collection (its section and indexes stay), else cancel its read and start a new one.
   func syncMongoCollectionModel() {

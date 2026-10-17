@@ -45,9 +45,12 @@ struct DataViewerView: View {
         }
       }
       // AppKit views ignore `disabled`: drop the focus so keys never reach the hidden filter
-      // field (Return would apply it) or grid
+      // field (Return would apply it) or grid. The search panel only searches the documents:
+      // close it first, as closing restores the focus it took.
       .onChange(of: hidesDocuments) { _, hidden in
-        if hidden { NSApp.keyWindow?.makeFirstResponder(nil) }
+        guard hidden else { return }
+        if viewModel.isSearchPanelVisible { viewModel.closeSearch() }
+        NSApp.keyWindow?.makeFirstResponder(nil)
       }
     }
     .background(Color.appBackground)
