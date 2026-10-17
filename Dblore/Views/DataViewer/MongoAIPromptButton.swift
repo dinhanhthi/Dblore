@@ -4,6 +4,7 @@
 //
 //  Sparkles button opening a small AI prompt popover on MongoDB collection screens. The caller's
 //  `generate` turns the prompt into a filter or pipeline; errors stay inline in the popover.
+//  `MongoAIPipelineButton` is the builder's preset (Aggregations section and builder sheet).
 //
 
 import SwiftUI
@@ -137,5 +138,33 @@ private struct MongoAIPromptPopover: View {
     .padding(Spacing.md)
     .frame(width: 360, alignment: .leading)
     .onAppear { promptFocused = true }
+  }
+}
+
+/// The AI button of an aggregation builder: replaces its stages with the pipeline generated from
+/// the prompt, its enabled stages sent as the current pipeline. Runs nothing (previews stay
+/// manual).
+struct MongoAIPipelineButton: View {
+  let assistant: AIAssistantViewModel
+  let builder: AggregationBuilderModel
+  /// Database of the collection; nil matches the collection's schema by name only
+  var database: String? = nil
+
+  var body: some View {
+    MongoAIPromptButton(
+      assistant: assistant,
+      placeholder: "Describe the pipeline, or paste a query (e.g. SQL)",
+      help: "Build the pipeline with AI"
+    ) { prompt in
+      let current = AIMongoAssist.pipelineText(
+        builder.stages.filter(\.isEnabled).map {
+          AIMongoAssist.GeneratedStage(operator: $0.operator, body: $0.body)
+        })
+      let reply = try await assistant.mongoAssist(
+        .pipeline, prompt: prompt, database: database, collection: builder.collection,
+        current: current)
+      builder.replaceStages(
+        try AIMongoAssist.stages(fromReply: reply, collection: builder.collection))
+    }
   }
 }

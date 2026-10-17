@@ -53,7 +53,8 @@ struct WorkspaceLeftSidebarContent: View {
       AggregationBuilderSheet(
         model: model, insertTarget: workspaceManager.activeViewModel,
         onClose: { aggregationBuilder = nil },
-        fieldSource: workspaceManager.autocompleteProvider)
+        fieldSource: workspaceManager.autocompleteProvider,
+        aiAssistant: workspaceManager.aiAssistant)
     }
   }
 

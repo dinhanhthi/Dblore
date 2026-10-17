@@ -30,12 +30,6 @@ struct MongoAggregationsView: View {
           model: builder, selectedStage: $selectedStage, fieldSource: fieldSource
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Stages replaced (AI popover or chat) leave a stale selection: select the first stage
-        .onChange(of: builder.stages.map(\.id)) { _, ids in
-          if selectedStage.map({ !ids.contains($0) }) ?? true {
-            selectedStage = ids.first
-          }
-        }
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -47,21 +41,7 @@ struct MongoAggregationsView: View {
   private func header(_ builder: AggregationBuilderModel) -> some View {
     HStack(spacing: Spacing.sm) {
       if let aiAssistant {
-        MongoAIPromptButton(
-          assistant: aiAssistant,
-          placeholder: "Describe the pipeline, or paste a query (e.g. SQL)",
-          help: "Build the pipeline with AI"
-        ) { prompt in
-          let current = AIMongoAssist.pipelineText(
-            builder.stages.filter(\.isEnabled).map {
-              AIMongoAssist.GeneratedStage(operator: $0.operator, body: $0.body)
-            })
-          let reply = try await aiAssistant.mongoAssist(
-            .pipeline, prompt: prompt, database: model.database, collection: model.collection,
-            current: current)
-          builder.replaceStages(
-            try AIMongoAssist.stages(fromReply: reply, collection: model.collection))
-        }
+        MongoAIPipelineButton(assistant: aiAssistant, builder: builder, database: model.database)
       }
       Text(stageCount(builder))
         .font(.small)
