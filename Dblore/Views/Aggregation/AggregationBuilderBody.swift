@@ -19,6 +19,10 @@ struct AggregationBuilderBody: View {
   /// The workspace's autocomplete source, for field names in stage bodies; nil = no completion
   var fieldSource: SQLAutocompleteProvider? = nil
 
+  /// The Text pane's editor and whether it is empty, as `HighlightedTextEditor` reports them
+  @State private var textViewRef: SQLTextView?
+  @State private var isTextEmpty = false
+
   /// Stable timestamp of every preview `CellResult`: the tree is rebuilt per preview command
   /// (`.id`), never per render
   private static let previewStamp = Date(timeIntervalSinceReferenceDate: 0)
@@ -104,13 +108,25 @@ struct AggregationBuilderBody: View {
   /// was made with.
   private var textPane: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      PlainTextEditor(text: $model.pipelineText)
-        .id(ObjectIdentifier(model))
-        .background(Color.inputBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
-        .overlay(
-          HairlineBorder(
-            shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
+      // Highlighted as mongosh, like the stage bodies; the editor takes a fixed height, so it
+      // gets the pane's
+      GeometryReader { geometry in
+        HighlightedTextEditor(
+          text: $model.pipelineText,
+          textViewRef: $textViewRef,
+          isEmpty: $isTextEmpty,
+          maxHeight: max(geometry.size.height - Spacing.xs * 2, 0),
+          dialect: .mongodb,
+          mongoQueryEditing: true
+        )
+        .padding(Spacing.xs)
+      }
+      .id(ObjectIdentifier(model))
+      .background(Color.inputBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous))
+      .overlay(
+        HairlineBorder(
+          shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
       Text("Disabled stages are kept as // lines")
         .font(.small)
         .foregroundColor(.foregroundMuted)
