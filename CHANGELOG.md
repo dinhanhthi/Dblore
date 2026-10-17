@@ -2,6 +2,34 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.8.1 (2026-10-17)
+
+### Added
+
+- **MongoDB collection screen.** A collection opened from the sidebar has Documents, Aggregations, Schema and Indexes sections next to the title. Indexes lists each index with its type, size, usage, properties and status. Schema analyzes the sampled documents, and a value can be clicked to filter by it or the schema exported. [#2ce9350a](https://github.com/dinhanhthi/Dblore/commit/2ce9350a) [#aa502481](https://github.com/dinhanhthi/Dblore/commit/aa502481) [#38da82b0](https://github.com/dinhanhthi/Dblore/commit/38da82b0) [#6b8bd1b3](https://github.com/dinhanhthi/Dblore/commit/6b8bd1b3)
+- **MongoDB filter bar.** The filter is a multi-line field that pairs brackets and quotes, wraps a selection in quotes and completes field names. A query options panel adds projection, sort, collation, hint, skip, limit and `maxTimeMS`, queries can be saved and reused, Explain shows the plan as a tree, Export Code writes the query as Node.js, Python, Java, Go or C# driver code, and Expand All / Collapse All opens every document. [#479c8dab](https://github.com/dinhanhthi/Dblore/commit/479c8dab) [#aa4a8375](https://github.com/dinhanhthi/Dblore/commit/aa4a8375) [#42555a67](https://github.com/dinhanhthi/Dblore/commit/42555a67) [#bde5e56c](https://github.com/dinhanhthi/Dblore/commit/bde5e56c) [#6b8bd1b3](https://github.com/dinhanhthi/Dblore/commit/6b8bd1b3) [#1f72a8aa](https://github.com/dinhanhthi/Dblore/commit/1f72a8aa) [#e2e82d6a](https://github.com/dinhanhthi/Dblore/commit/e2e82d6a)
+- **MongoDB aggregations.** The Aggregations section runs a pipeline built stage by stage or typed as highlighted, formattable text. A toolbar offers collation, hint and `maxTimeMS` options, Wizard templates (group and count, lookup, top N, unwind, match, bucket), saved pipelines, Explain and Export Code or Export Data. Clicking a stage opens the common operators and a double-click types any operator, and autocomplete suggests accumulators, expression operators and stage options. [#56e30ece](https://github.com/dinhanhthi/Dblore/commit/56e30ece) [#348734a4](https://github.com/dinhanhthi/Dblore/commit/348734a4) [#cfbe982b](https://github.com/dinhanhthi/Dblore/commit/cfbe982b) [#84e50cb6](https://github.com/dinhanhthi/Dblore/commit/84e50cb6) [#b26fe6d6](https://github.com/dinhanhthi/Dblore/commit/b26fe6d6) [#710f79d9](https://github.com/dinhanhthi/Dblore/commit/710f79d9) [#835995d9](https://github.com/dinhanhthi/Dblore/commit/835995d9) [#8c39aaa4](https://github.com/dinhanhthi/Dblore/commit/8c39aaa4)
+- **AI buttons on MongoDB.** The filter bar, the Aggregations section and the aggregation builder have an AI button that writes the filter or pipeline from a prompt, with Stop and Apply. [#334acd5e](https://github.com/dinhanhthi/Dblore/commit/334acd5e) [#24a52c24](https://github.com/dinhanhthi/Dblore/commit/24a52c24) [#46d7c3ca](https://github.com/dinhanhthi/Dblore/commit/46d7c3ca)
+- **mongosh options.** `find` and `countDocuments` take projection, collation, hint and `maxTimeMS` options, and Explain works on `find` and `aggregate` cells. [#ce7c22b7](https://github.com/dinhanhthi/Dblore/commit/ce7c22b7) [#bde5e56c](https://github.com/dinhanhthi/Dblore/commit/bde5e56c)
+- **Query scripts as `.js`.** In a MongoDB workspace a new query file is `Untitled.js`, and a `.sql` file is refused there (and a `.js` file elsewhere). [#05b94e2a](https://github.com/dinhanhthi/Dblore/commit/05b94e2a)
+- **Expand or collapse every nested field** of a document card from its menu. [#54f20676](https://github.com/dinhanhthi/Dblore/commit/54f20676)
+
+### Improved
+
+- **Welcome window** shows workspaces as plain folders with a badge for their database type. [#c941167f](https://github.com/dinhanhthi/Dblore/commit/c941167f)
+- **Saved secrets** (passwords, SSH credentials, AI keys, MCP token) now live in the data protection keychain, shared by Debug and Release builds; older items are copied over when read. [#c17bc881](https://github.com/dinhanhthi/Dblore/commit/c17bc881)
+- **Motion polish.** The copy icon swaps with a symbol animation, the test connection result fades in and buttons ease on press. [#b9b45a06](https://github.com/dinhanhthi/Dblore/commit/b9b45a06) [#904f4380](https://github.com/dinhanhthi/Dblore/commit/904f4380) [#1c6ee1d1](https://github.com/dinhanhthi/Dblore/commit/1c6ee1d1)
+- **MongoDB layout.** Larger collection and footer tabs, compact filter bar buttons, a stronger border on document cards and clearer popover inputs. [#5728fe0e](https://github.com/dinhanhthi/Dblore/commit/5728fe0e) [#3e221858](https://github.com/dinhanhthi/Dblore/commit/3e221858) [#37b492c8](https://github.com/dinhanhthi/Dblore/commit/37b492c8) [#56af441b](https://github.com/dinhanhthi/Dblore/commit/56af441b)
+
+### Fixed
+
+- **Left sidebar** collapses when a right sidebar opens or the window shrinks and there is no room for both, so only one side stays open. [#3ab60713](https://github.com/dinhanhthi/Dblore/commit/3ab60713) [#5af8dd6f](https://github.com/dinhanhthi/Dblore/commit/5af8dd6f) [#00a9e43a](https://github.com/dinhanhthi/Dblore/commit/00a9e43a)
+- **Cmd+F** searches the loaded page of a MongoDB collection and is disabled outside Documents. [#b9c7296d](https://github.com/dinhanhthi/Dblore/commit/b9c7296d)
+- **AI on MongoDB** drops a filter or pipeline reply that finishes after Stop, and the prompt field keeps three lines visible. [#61cd0f80](https://github.com/dinhanhthi/Dblore/commit/61cd0f80) [#400e1d72](https://github.com/dinhanhthi/Dblore/commit/400e1d72)
+- **Editors** with a fixed height fill their frame, so a click below the text focuses them. [#ace4242a](https://github.com/dinhanhthi/Dblore/commit/ace4242a)
+- **Document type badge** stays rightmost on a MongoDB card, with the hover actions to its left. [#08935c9d](https://github.com/dinhanhthi/Dblore/commit/08935c9d)
+- **Index statistics** no longer trap on overflow when summed. [#61215c4a](https://github.com/dinhanhthi/Dblore/commit/61215c4a)
+
 ## v0.8.0 (2026-10-16)
 
 ### Added

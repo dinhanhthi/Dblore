@@ -214,6 +214,11 @@
             <li><strong>Edit in place:</strong> double-click a value on a card (or a grid cell) to edit it, Return to send, Esc to cancel. Each edit runs one <code>$set</code> on that field after the Safe Mode confirmation. A double-click on an object, array or other type opens the field editor. The card header opens Row Details in the right sidebar, and a field's right-click menu has <strong>Show Details</strong>.</li>
             <li><strong>Add, duplicate, delete:</strong> in the data viewer, stage them by <code>_id</code>, preview the exact <code>insertOne</code>/<code>updateOne</code>/<code>deleteOne</code> commands, then Commit. Results whose <code>_id</code> mixes types are read-only.</li>
             <li><strong>Build Aggregation…</strong> in the collection menu builds a pipeline stage by stage, with a read-only preview of each stage.</li>
+            <li><strong>Collection sections:</strong> next to the collection title, <strong>Documents</strong>, <strong>Aggregations</strong>, <strong>Schema</strong> and <strong>Indexes</strong> switch the view. Schema analyzes the sampled documents; Indexes lists each index with its type, size, usage and status.</li>
+            <li><strong>Filter bar tools:</strong> the options button sets projection, sort, collation, hint, skip, limit and <code>maxTimeMS</code>; the bookmark button saves queries; <strong>Explain</strong> shows the plan as a tree; <strong>Export Code</strong> writes the query as Node.js, Python, Java, Go or C# driver code.</li>
+            <li><strong>Aggregations:</strong> run a pipeline from the Aggregations section, built stage by stage or typed as text, with <strong>Wizard</strong> templates, saved pipelines, Explain and Export. Click a stage for the common operators, double-click to type any operator.</li>
+            <li><strong>AI button:</strong> the filter bar and the Aggregations section write a filter or pipeline from a prompt (Stop, then Apply).</li>
+            <li><strong>Query files:</strong> a new query in a MongoDB workspace is a <code>.js</code> file; <code>.sql</code> files are refused there.</li>
             <li>MongoDB has no transactions, so writes ask before they run instead of waiting for Commit. For agents over MCP, use a user with a read-only role.</li>
 </ul>
           </section>
