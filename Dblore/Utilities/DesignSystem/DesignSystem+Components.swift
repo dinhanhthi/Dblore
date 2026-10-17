@@ -257,9 +257,8 @@ private struct BaseButtonStyleView: View {
       }
       .contentShape(iconOnly ? AnyShape(Circle()) : AnyShape(Capsule()))
       .opacity(isEnabled ? 1 : 0.5)
-      .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+      .pressScale(configuration.isPressed)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
-      .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
       .onHover { hovering in
         isHovering = hovering
       }
@@ -312,8 +311,7 @@ struct FloatingPanelButtonStyle: ButtonStyle {
         HairlineBorder(
           shape: Circle(), color: isHovering ? Color.accent.opacity(0.5) : Color.border)
       )
-      .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-      .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+      .pressScale(configuration.isPressed)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .onHover { hovering in
         isHovering = hovering
@@ -356,14 +354,37 @@ struct FloatingPanelToggleButtonStyle: ButtonStyle {
           shape: Circle(),
           color: (isHovering || isActive) ? Color.accent.opacity(0.5) : Color.border)
       )
-      .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
-      .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+      .pressScale(configuration.isPressed)
       .animation(.easeInOut(duration: 0.15), value: isHovering)
       .animation(.easeInOut(duration: 0.15), value: isActive)
       .onHover { hovering in
         isHovering = hovering
       }
       .cursor(.pointingHand)
+  }
+}
+
+// MARK: - Press Scale
+
+/// Press feedback: eases the button to 97% while held and back on release. Opts out of the
+/// app-wide animation kill switch for the press change only; the label's own changes and
+/// hover stay instant. No scale at all when Reduce motion is on, so the press never jumps.
+private struct PressScale: ViewModifier {
+  let isPressed: Bool
+  @ReduceMotion private var reduceMotion
+
+  func body(content: Content) -> some View {
+    content
+      .animation(reduceMotion ? nil : .easeOut(duration: 0.12)) {
+        $0.scaleEffect(isPressed && !reduceMotion ? 0.97 : 1.0)
+      }
+      .transaction(value: isPressed) { $0.disablesAnimations = false }
+  }
+}
+
+extension View {
+  fileprivate func pressScale(_ isPressed: Bool) -> some View {
+    modifier(PressScale(isPressed: isPressed))
   }
 }
 
