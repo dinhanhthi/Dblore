@@ -4,7 +4,7 @@
 //
 //  Export of a MongoDB `find` or `aggregate` of the collection screen (the Documents draft or the
 //  Aggregations pipeline) as driver code: a language picker, imports and connection toggles, the
-//  code, selectable, and Copy. Nothing runs.
+//  code, highlighted and selectable, and Copy. Nothing runs.
 //
 
 import AppKit
@@ -145,7 +145,7 @@ struct MongoExportCodeSheet: View {
   private func content(_ code: String?) -> some View {
     if let code {
       ScrollView([.vertical, .horizontal]) {
-        Text(code)
+        Text(DriverCodeSyntaxHighlighter.highlight(code, language: language))
           .font(.monoSmall)
           .foregroundColor(.foreground)
           .textSelection(.enabled)
