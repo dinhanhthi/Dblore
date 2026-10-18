@@ -160,6 +160,51 @@ extension WorkspaceManager {
     }
   }
 
+  /// After a drop: close the data viewer tabs of `schema`.`name` (a pinned tab stays). Their
+  /// staged edits are discarded first, pinned tabs included: they have no target any more, and a
+  /// committed insert would create the collection again.
+  func closeDataViewerTabs(schema: String, name: String) {
+    for id in dataViewerTabIds(schema: schema, name: name) {
+      viewModels[id]?.discardStaged()
+      requestCloseTab(id: id)
+    }
+  }
+
+  /// After a rename: the data viewer tabs of `schema`.`name` show `newName` (relation and title)
+  /// and read their page again. Staged edits are discarded first: they target the old name, and a
+  /// committed insert would create that collection again.
+  func renameDataViewerTabs(schema: String, from name: String, to newName: String) {
+    let ids = dataViewerTabIds(schema: schema, name: name)
+    for id in ids {
+      guard let viewModel = viewModels[id], let index = tabs.firstIndex(where: { $0.id == id })
+      else { continue }
+      viewModel.discardStaged()  // Before the copy: assigning `state` back must not restore them
+      guard var state = viewModel.dataViewer else { continue }
+      state.name = newName
+      viewModel.dataViewer = state
+      tabs[index].title = state.title
+      Task { await viewModel.loadDataViewerPage() }
+    }
+    if !ids.isEmpty { markDirtyAndScheduleAutoSave() }  // Pinned viewers persist the relation
+  }
+
+  /// After a view's pipeline changed: the data viewer tabs of `schema`.`name` read their page
+  /// again and recount (the documents changed)
+  func reloadDataViewerTabs(schema: String, name: String) {
+    for id in dataViewerTabIds(schema: schema, name: name) {
+      guard let viewModel = viewModels[id] else { continue }
+      viewModel.dataViewer?.totalRows = nil
+      Task { await viewModel.loadDataViewerPage() }
+    }
+  }
+
+  private func dataViewerTabIds(schema: String, name: String) -> [UUID] {
+    tabs.map(\.id).filter { id in
+      guard let state = viewModels[id]?.dataViewer else { return false }
+      return state.schema == schema && state.name == name
+    }
+  }
+
   private func closesAsynchronously(tabId: UUID) -> Bool {
     if viewModels[tabId]?.hasPendingStagedChanges == true { return true }
     return isResolvingPendingTransaction

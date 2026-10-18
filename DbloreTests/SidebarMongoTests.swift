@@ -1,7 +1,8 @@
 // SidebarMongoTests.swift
 // The left sidebar section model: MongoDB shows only Collections and Views with Open, Copy Name
 // and Insert find() menus (the name escaped), collections also Build Aggregation...; SQL
-// connections keep their sections and menus.
+// connections keep their sections and menus. Rename, Drop, Edit View and Duplicate only when the
+// schema may change.
 
 import Foundation
 import Testing
@@ -32,6 +33,10 @@ struct SidebarMongoTests {
     #expect(SidebarSectionModel.structureMenuTitle(for: .postgresql) != nil)
     for kind in [SidebarSectionModel.Kind.tables, .views, .functions, .procedures, .triggers] {
       #expect(SidebarSectionModel.rowActions(for: kind, name: "users", language: language).isEmpty)
+      #expect(
+        SidebarSectionModel.rowActions(
+          for: kind, name: "users", language: language, canChangeSchema: true
+        ).isEmpty)
     }
   }
 
@@ -46,6 +51,19 @@ struct SidebarMongoTests {
       collection.map(\.title) == ["Open", "Copy Name", "Insert find()", "Build Aggregation..."])
     let view = SidebarSectionModel.rowActions(for: .views, name: "orders", language: language)
     #expect(view == [.open, .copyName, find])
+  }
+
+  @Test("schema changes appear only with canChangeSchema, destructive items last")
+  func mongoSchemaRowActions() {
+    let find = SidebarSectionModel.RowAction.insert(#"db.getCollection("orders").find({})"#)
+    let collection = SidebarSectionModel.rowActions(
+      for: .tables, name: "orders", language: .mongosh, canChangeSchema: true)
+    #expect(collection == [.open, .copyName, find, .buildAggregation, .rename, .drop])
+    #expect(collection.suffix(2).map(\.title) == ["Rename…", "Drop…"])
+    let view = SidebarSectionModel.rowActions(
+      for: .views, name: "orders", language: .mongosh, canChangeSchema: true)
+    #expect(view == [.open, .copyName, find, .editDefinition, .duplicate, .drop])
+    #expect(view.suffix(3).map(\.title) == ["Edit View…", "Duplicate…", "Drop…"])
   }
 
   @Test("the inserted find escapes backslash, quote and control characters, and parses back")

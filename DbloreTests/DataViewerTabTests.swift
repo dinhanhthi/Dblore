@@ -16,6 +16,18 @@ struct DataViewerTabTests {
     WorkspaceManager(workspace: Workspace(), restoreTabs: false)
   }
 
+  /// Stages one document insert in `viewModel`'s data viewer
+  private static func stageInsert(in viewModel: NotebookViewModel) throws {
+    var set = try MongoDocumentChangeSet(
+      target: EditTarget(
+        qualifiedName: "orders", tableID: .mongodb(database: "shop", collection: "orders"),
+        primaryKeyColumns: ["_id"], name: "orders"),
+      columns: [])
+    _ = try set.stageInsert(.document([MongoValue.Field("n", .int64(1))]))
+    viewModel.dataViewer?.documentChangeSet = set
+    #expect(viewModel.hasPendingStagedChanges)
+  }
+
   @Test("First open adds one active preview tab titled with the table")
   func firstOpen() throws {
     let manager = Self.manager()
@@ -97,6 +109,44 @@ struct DataViewerTabTests {
     try await manager.saveTab(id: id)
     #expect(manager.tabs.first?.fileURL == nil)
     #expect(manager.tabs.first?.isDirty == false)
+  }
+
+  @Test("Closing the tabs of a dropped collection discards staged edits without a prompt")
+  func closeAfterDropDiscardsStaged() throws {
+    let manager = Self.manager()
+    manager.openDataViewer(schema: "shop", name: "orders", orderColumns: [])
+    let id = try #require(manager.tabs.first?.id)
+    try Self.stageInsert(in: #require(manager.viewModel(for: id)))
+
+    manager.closeDataViewerTabs(schema: "shop", name: "orders")
+    #expect(manager.tabs.isEmpty)
+  }
+
+  @Test("A pinned tab of a dropped collection stays open with nothing staged")
+  func pinnedTabAfterDropDiscardsStaged() throws {
+    let manager = Self.manager()
+    manager.openDataViewer(schema: "shop", name: "orders", orderColumns: [])
+    let id = try #require(manager.tabs.first?.id)
+    manager.setPinned(true, id: id)
+    let viewModel = try #require(manager.viewModel(for: id))
+    try Self.stageInsert(in: viewModel)
+
+    manager.closeDataViewerTabs(schema: "shop", name: "orders")
+    #expect(manager.tabs.map(\.id) == [id])
+    #expect(!viewModel.hasPendingStagedChanges)
+  }
+
+  @Test("Renaming a collection discards the staged edits of its tabs")
+  func renameDiscardsStaged() throws {
+    let manager = Self.manager()
+    manager.openDataViewer(schema: "shop", name: "orders", orderColumns: [])
+    let id = try #require(manager.tabs.first?.id)
+    let viewModel = try #require(manager.viewModel(for: id))
+    try Self.stageInsert(in: viewModel)
+
+    manager.renameDataViewerTabs(schema: "shop", from: "orders", to: "sales")
+    #expect(viewModel.dataViewer?.name == "sales")
+    #expect(!viewModel.hasPendingStagedChanges)
   }
 
   @Test("Encoded workspace keeps a pinned data viewer with its relation")

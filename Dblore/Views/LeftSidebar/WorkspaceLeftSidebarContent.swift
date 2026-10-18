@@ -13,6 +13,8 @@ import SwiftUI
 struct WorkspaceLeftSidebarContent: View {
   @Bindable var workspaceManager: WorkspaceManager
   let onImportTable: (DatabaseTable) -> Void
+  /// The collection or view change started here; the workspace container presents its form
+  @Binding var mongoAdmin: SidebarMongoAdmin?
   @State private var selectedTab: SidebarTab = .public
   @State private var publicFilter = ""
   @State private var securityFilter = ""
@@ -115,6 +117,22 @@ struct WorkspaceLeftSidebarContent: View {
 
   private var queryLanguage: DatabaseCapabilities.QueryLanguage {
     connectionDatabaseType.capabilities.queryLanguage
+  }
+
+  /// An active tab connected to MongoDB whose protection allows schema changes: the collection
+  /// and view changes run through it. Without one they are not offered and "+" is disabled.
+  private var canChangeSchema: Bool {
+    guard queryLanguage == .mongosh, let tab = workspaceManager.activeViewModel,
+      tab.connectionManager != nil, tab.connectionState == .connected,
+      tab.notebook.connectionConfig?.databaseType == .mongodb,
+      workspaceManager.schemaConnectionEpoch != nil  // A schema read since the last connect
+    else { return false }
+    return !tab.protectionPolicy.protectionLevel.blocksSchemaChanges
+  }
+
+  /// The section's "+" action, nil while the schema may not change
+  private func createAction(_ form: SidebarMongoAdmin.Form) -> (() -> Void)? {
+    canChangeSchema ? { startMongoAdmin(form) } : nil
   }
 
   /// Whether the active tab is a data viewer showing this relation
@@ -329,7 +347,9 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.tables.count,
           icon: section.icon,
-          isExpanded: true
+          isExpanded: true,
+          createTitle: SidebarSectionModel.createActionTitle(for: .tables, language: queryLanguage),
+          onCreate: createAction(.createCollection)
         ) {
           ForEach(entities.tables) { table in
             tableRow(table, showsSchema: showsSchema)
@@ -344,7 +364,9 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.views.count,
           icon: section.icon,
-          isExpanded: true
+          isExpanded: true,
+          createTitle: SidebarSectionModel.createActionTitle(for: .views, language: queryLanguage),
+          onCreate: createAction(.createView)
         ) {
           ForEach(entities.views) { view in
             viewRow(view, showsSchema: showsSchema)
@@ -442,9 +464,12 @@ struct WorkspaceLeftSidebarContent: View {
           schema: table.source.schema, table: table.source.name)
       },
       menuActions: SidebarSectionModel.rowActions(
-        for: .tables, name: table.source.name, language: queryLanguage),
+        for: .tables, name: table.source.name, language: queryLanguage,
+        canChangeSchema: canChangeSchema),
       onMenuAction: { action in
-        perform(action, name: table.source.name) { openTable(table.source) }
+        perform(action, name: table.source.name, schema: table.source.schema) {
+          openTable(table.source)
+        }
       }
     )
   }
@@ -467,9 +492,12 @@ struct WorkspaceLeftSidebarContent: View {
         // No active cell to insert into when no document is open
       },
       menuActions: SidebarSectionModel.rowActions(
-        for: .views, name: view.source.name, language: queryLanguage),
+        for: .views, name: view.source.name, language: queryLanguage,
+        canChangeSchema: canChangeSchema),
       onMenuAction: { action in
-        perform(action, name: view.source.name) { openView(view.source) }
+        perform(action, name: view.source.name, schema: view.source.schema, view: view.source) {
+          openView(view.source)
+        }
       }
     )
   }
@@ -487,9 +515,11 @@ struct WorkspaceLeftSidebarContent: View {
   }
 
   /// Runs a row menu item: Open as a row click, Copy Name to the pasteboard, Insert at the
-  /// cursor of the active cell (as favorites and history do), Build Aggregation in a sheet
+  /// cursor of the active cell (as favorites and history do), Build Aggregation in a sheet, and
+  /// the schema changes through `startMongoAdmin`. `view` is the row's view, nil for a collection.
   private func perform(
-    _ action: SidebarSectionModel.RowAction, name: String, open: () -> Void
+    _ action: SidebarSectionModel.RowAction, name: String, schema: String,
+    view: DatabaseView? = nil, open: () -> Void
   ) {
     switch action {
     case .open:
@@ -505,6 +535,30 @@ struct WorkspaceLeftSidebarContent: View {
         collection: name, connectionManager: workspaceManager.connectionManager)
       model.addStage()
       aggregationBuilder = model
+    case .rename:
+      startMongoAdmin(.rename(schema: schema, name: name))
+    case .drop:
+      startMongoAdmin(.drop(schema: schema, name: name, isView: view != nil))
+    case .duplicate:
+      if let view { startMongoAdmin(.duplicateView(view)) }
+    case .editDefinition:
+      if let view { startMongoAdmin(.editView(view)) }
+    }
+  }
+
+  /// Opens `form` with an action model on the active MongoDB tab (its connection, rules, commit
+  /// style and history); a drop asks for the typed name at once. The command is gated on the
+  /// epoch the sidebar schema was read with: a reconnect since that load (another database or
+  /// server) refuses it, and nothing starts before a load since the last connect.
+  private func startMongoAdmin(_ form: SidebarMongoAdmin.Form) {
+    guard canChangeSchema, mongoAdmin?.model.state != .running,
+      let tab = workspaceManager.activeViewModel, let manager = tab.connectionManager,
+      let epoch = workspaceManager.schemaConnectionEpoch,
+      let model = MongoAdminActionModel(tab: tab, connectionEpoch: epoch)
+    else { return }
+    mongoAdmin = SidebarMongoAdmin(model: model, manager: manager, form: form)
+    if case .drop(let schema, let name, let isView) = form {
+      Task { await model.request(.drop(collection: name), isView: isView, database: schema) }
     }
   }
 
@@ -589,5 +643,143 @@ struct WorkspaceLeftSidebarContent: View {
         .foregroundColor(.foregroundMuted)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+// MARK: - Collection and View Changes
+
+/// A collection or view change started from the sidebar: its form (a drop has none, only the
+/// confirm sheet) and the action model that runs its command
+struct SidebarMongoAdmin {
+  enum Form {
+    case createCollection
+    case createView
+    case editView(DatabaseView)
+    case duplicateView(DatabaseView)
+    case rename(schema: String, name: String)
+    case drop(schema: String, name: String, isView: Bool)
+  }
+
+  let model: MongoAdminActionModel
+  /// For the server version (New Collection)
+  let manager: DatabaseConnectionManager
+  let form: Form
+  var isFormOpen: Bool
+  /// The name the rename was sent with
+  var newName: String?
+
+  init(model: MongoAdminActionModel, manager: DatabaseConnectionManager, form: Form) {
+    self.model = model
+    self.manager = manager
+    self.form = form
+    if case .drop = form { isFormOpen = false } else { isFormOpen = true }
+  }
+}
+
+extension View {
+  /// Presents `admin`'s form and confirm sheet over the whole window (a form would be clipped
+  /// at sidebar width). Once its command is done, the data viewer tabs of a dropped collection
+  /// or view close and those of a renamed collection show the new name.
+  func sidebarMongoAdmin(
+    _ admin: Binding<SidebarMongoAdmin?>, workspaceManager: WorkspaceManager
+  ) -> some View {
+    modifier(SidebarMongoAdminPresenter(admin: admin, workspaceManager: workspaceManager))
+  }
+}
+
+private struct SidebarMongoAdminPresenter: ViewModifier {
+  @Binding var admin: SidebarMongoAdmin?
+  let workspaceManager: WorkspaceManager
+
+  private var isFormPresented: Binding<Bool> {
+    Binding(
+      get: { admin?.isFormOpen == true },
+      set: { if !$0 { admin?.isFormOpen = false } })
+  }
+
+  private var isConfirmPresented: Binding<Bool> {
+    admin.map { MongoAdminConfirmSheet.isPresented($0.model) } ?? .constant(false)
+  }
+
+  func body(content: Content) -> some View {
+    content
+      .modalOverlay(isPresented: isFormPresented) {
+        if let admin { form(admin) }
+      }
+      .sheet(isPresented: isConfirmPresented) {
+        if let model = admin?.model {
+          MongoAdminConfirmSheet(
+            model: model, databasePassword: workspaceManager.workspace.connectionConfig?.password,
+            isConnected: workspaceManager.connectionState == .connected)
+        }
+      }
+      .onChange(of: admin?.model.state) { _, state in
+        if state == .done, let admin { finish(admin) }
+      }
+  }
+
+  @ViewBuilder
+  private func form(_ admin: SidebarMongoAdmin) -> some View {
+    switch admin.form {
+    case .createCollection:
+      MongoCreateCollectionSheet(
+        model: admin.model, manager: admin.manager, isPresented: isFormPresented)
+    case .createView:
+      MongoViewEditorSheet(
+        model: admin.model, mode: .create, sources: sources, isPresented: isFormPresented)
+    case .editView(let view):
+      MongoViewEditorSheet(
+        model: admin.model, mode: .edit(view), sources: sources, isPresented: isFormPresented)
+    case .duplicateView(let view):
+      MongoViewEditorSheet(
+        model: admin.model, mode: .duplicate(of: view), sources: sources,
+        isPresented: isFormPresented)
+    case .rename(let schema, let name):
+      // Failures show in the confirm sheet, as for the other forms
+      RenameObjectSheet(
+        title: "Rename Collection", currentName: name,
+        validate: { MongoCollectionDraft.nameProblem($0) },
+        isBusy: isBusy(admin.model),
+        onRename: { newName in
+          self.admin?.newName = newName
+          Task {
+            await admin.model.request(
+              .renameCollection(collection: name, to: newName), database: schema)
+          }
+        },
+        isPresented: isFormPresented)
+    case .drop:
+      EmptyView()
+    }
+  }
+
+  /// Collections and views of the database, for the view editor's source picker
+  private var sources: [String] {
+    workspaceManager.databaseTables.map(\.name) + workspaceManager.databaseViews.map(\.name)
+  }
+
+  private func isBusy(_ model: MongoAdminActionModel) -> Bool {
+    switch model.state {
+    case .confirming, .running: true
+    case .idle, .failed, .done: false
+    }
+  }
+
+  private func finish(_ admin: SidebarMongoAdmin) {
+    switch admin.form {
+    case .drop(let schema, let name, _):
+      workspaceManager.closeDataViewerTabs(schema: schema, name: name)
+    case .rename(let schema, let name):
+      // The rename form leaves closing to its caller
+      self.admin?.isFormOpen = false
+      if let newName = admin.newName {
+        workspaceManager.renameDataViewerTabs(schema: schema, from: name, to: newName)
+      }
+    case .editView(let view):
+      workspaceManager.reloadDataViewerTabs(schema: view.schema, name: view.name)
+    case .createCollection, .createView, .duplicateView:
+      // These forms close themselves; the sidebar reloads after every command
+      break
+    }
   }
 }

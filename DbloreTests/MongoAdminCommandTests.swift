@@ -1,7 +1,7 @@
 // MongoAdminCommandTests.swift
 // The admin commands of the mongosh subset as sent: command documents (rename on admin with full
 // namespaces, the drivers' generated index name), the database writeCommand routes to and the
-// command tag of a reply
+// command tag of a reply; the index, collection and view drafts checked and round-tripped
 
 import Foundation
 import Testing
@@ -134,5 +134,82 @@ struct MongoAdminCommandTests {
   func draftRoundTrip(collection: String, draft: MongoIndexDraft) throws {
     let command = try #require(draft.command(collection: collection))
     #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+  }
+
+  // MARK: - Collection and view drafts
+
+  private static func collectionDraft(
+    _ kind: MongoCollectionDraft.Kind, _ edit: (inout MongoCollectionDraft) -> Void = { _ in }
+  ) -> MongoCollectionDraft {
+    var draft = MongoCollectionDraft()
+    draft.name = "events"
+    draft.kind = kind
+    edit(&draft)
+    return draft
+  }
+
+  @Test(
+    "The collection draft refuses a time series without a time field and capped without a size",
+    arguments: [
+      (collectionDraft(.timeSeries), "A time-series collection needs a time field"),
+      (
+        collectionDraft(.capped) { $0.cappedMax = "10" },
+        "A capped collection needs a size in bytes"
+      ),
+    ])
+  func collectionDraftRefuses(draft: MongoCollectionDraft, message: String) {
+    #expect(draft.validationMessages() == [message])
+    #expect(draft.command() == nil)
+  }
+
+  @Test(
+    "A valid collection draft renders mongosh text that parses back to the same createCollection",
+    arguments: [
+      collectionDraft(.capped) { $0.cappedSize = "2147483648" },
+      collectionDraft(.timeSeries) {
+        $0.name = "my-metrics"
+        $0.timeField = "ts"
+        $0.metaField = "sensor"
+        $0.granularity = .minutes
+        $0.expireAfterSeconds = "86400"
+      },
+    ])
+  func collectionDraftRoundTrip(draft: MongoCollectionDraft) throws {
+    let command = try #require(draft.command())
+    #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+  }
+
+  @Test("A capped size above Int32.max is sent as int64")
+  func cappedSizeInt64() throws {
+    let draft = Self.collectionDraft(.capped) { $0.cappedSize = "2147483648" }
+    let command = try #require(draft.command())
+    guard case .createCollection(_, .document(let options)?) = command else {
+      Issue.record("not a createCollection with options: \(command)")
+      return
+    }
+    #expect(options.first { $0.key == "size" }?.value == MongoValue.int64(2_147_483_648))
+  }
+
+  @Test("Editing a view sends collMod with viewOn and pipeline, which parses back")
+  func viewEditRoundTrip() throws {
+    let draft = MongoViewDraft(
+      editedName: "big_orders", name: "big_orders", source: "orders",
+      definition: "[ { $match: { n: { $gt: 1 } } } ]")
+    let command = try #require(draft.command())
+    let stage = doc(("$match", doc(("n", doc(("$gt", .int32(1)))))))
+    #expect(
+      command
+        == .collMod(
+          collection: "big_orders",
+          options: doc(("viewOn", .string("orders")), ("pipeline", .array([stage])))))
+    #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+  }
+
+  @Test("A view pipeline with $out is refused")
+  func viewDraftRefusesOut() {
+    var draft = MongoViewDraft(editedName: nil, name: "v", source: "orders", definition: nil)
+    draft.pipelineText = "[{ $match: {} }, { $out: \"copy\" }]"
+    #expect(draft.validationMessages() == ["A view pipeline cannot write: remove the $out stage"])
+    #expect(draft.command() == nil)
   }
 }

@@ -11,8 +11,10 @@
 //   flight, each with the sampling `maxTimeMS`. They are pipelined on the session's connection
 //   (the server still runs them one by one), so a load pays about one round trip, not one per
 //   collection. A time series has no badge (its count unpacks every bucket). A count that fails
-//   leaves that badge out and is logged.
-// - views: `type: "view"`, `definition` = the view's pipeline in mongosh notation.
+//   leaves that badge out and is logged. `collectionFlags` marks capped, time series and
+//   clustered collections (`options.capped`, `options.timeseries`, `options.clusteredIndex`).
+// - views: `type: "view"`, `definition` = the view's pipeline in mongosh notation, `source` =
+//   `options.viewOn`.
 // - allColumns: fields sampled from the first 200 relations by name (the rest get no columns),
 //   each with its own `maxTimeMS` (2,000 ms, or the statement timeout when shorter; the session's
 //   statement timeout is not changed). A collection samples `aggregate([{$sample: {size: 100}}])`
@@ -55,8 +57,12 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
     var isView: Bool
     /// The view's pipeline in mongosh notation; nil for a collection.
     var definition: String?
-    /// `type: "timeseries"`.
+    /// `type: "timeseries"` or `options.timeseries`.
     var isTimeseries = false
+    /// Capped, time series and clustered markers of a collection.
+    var flags: DatabaseTable.CollectionFlags = []
+    /// The view's `viewOn`; nil for a collection.
+    var source: String? = nil
   }
 
   // MARK: - SchemaIntrospector
@@ -66,14 +72,17 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
     let relations = try await Self.relations(in: mongo)
     let counts = try await Self.badgeCounts(of: Self.countedCollections(relations), in: mongo)
     return relations.filter { !$0.isView }.map {
-      DatabaseTable(schema: mongo.databaseName, name: $0.name, rowCount: counts[$0.name])
+      DatabaseTable(
+        schema: mongo.databaseName, name: $0.name, rowCount: counts[$0.name],
+        collectionFlags: $0.flags)
     }
   }
 
   func views(in session: any DatabaseSession) async throws -> [DatabaseView] {
     let mongo = try Self.mongoSession(session)
     return try await Self.relations(in: mongo).filter(\.isView).map {
-      DatabaseView(schema: mongo.databaseName, name: $0.name, definition: $0.definition)
+      DatabaseView(
+        schema: mongo.databaseName, name: $0.name, definition: $0.definition, source: $0.source)
     }
   }
 
@@ -215,19 +224,33 @@ nonisolated struct MongoSchemaIntrospector: SchemaIntrospector {
 
   /// Collections and views of `listCollections` entries: `system.*` and entries without a name
   /// left out, sorted by name. `type: "view"` is a view; anything else (`collection`,
-  /// `timeseries`) a table.
+  /// `timeseries`) a table. Collections keep their capped / time series / clustered markers,
+  /// views their `viewOn`.
   static func relations(from entries: [MongoValue]) -> [Relation] {
     entries.compactMap { entry -> Relation? in
       guard case .string(let name)? = field("name", of: entry), !name.hasPrefix("system.")
       else { return nil }
+      let options = field("options", of: entry)
+      func option(_ key: String) -> MongoValue? { options.flatMap { field(key, of: $0) } }
       guard case .string("view")? = field("type", of: entry) else {
-        let isTimeseries = field("type", of: entry) == .string("timeseries")
-        return Relation(name: name, isView: false, definition: nil, isTimeseries: isTimeseries)
+        let isTimeseries =
+          field("type", of: entry) == .string("timeseries") || option("timeseries") != nil
+        var flags: DatabaseTable.CollectionFlags = []
+        if option("capped") == .bool(true) { flags.insert(.capped) }
+        if isTimeseries { flags.insert(.timeSeries) }
+        // `clusteredIndex` is the index document or `true`.
+        if let clustered = option("clusteredIndex"), clustered != .bool(false) {
+          flags.insert(.clustered)
+        }
+        return Relation(
+          name: name, isView: false, definition: nil, isTimeseries: isTimeseries, flags: flags)
       }
-      let pipeline = field("options", of: entry).flatMap { field("pipeline", of: $0) }
+      var source: String?
+      if case .string(let viewOn)? = option("viewOn") { source = viewOn }
       return Relation(
         name: name, isView: true,
-        definition: pipeline.map { MongoRelaxedJSON.render($0, as: .mongosh) })
+        definition: option("pipeline").map { MongoRelaxedJSON.render($0, as: .mongosh) },
+        source: source)
     }
     .sorted { $0.name < $1.name }
   }

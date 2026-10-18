@@ -79,6 +79,12 @@ struct MongoAdminConfirmSheet: View {
   private var content: some View {
     switch model.state {
     case .confirming(let pending):
+      if let database = pending.database {
+        Text("In database \(database)")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .padding([.horizontal, .top], Spacing.md)
+      }
       if let name = pending.typedName, typedName == nil {
         TypedNameConfirmation(
           objectKind: pending.objectKind, name: name, confirmTitle: title, onCancel: close,
@@ -150,7 +156,7 @@ struct MongoAdminConfirmSheet: View {
     case .setIndexHidden(_, _, let hidden): return hidden ? "Hide Index" : "Unhide Index"
     case .createCollection: return "Create Collection"
     case .createView: return "Create View"
-    case .drop: return "Drop Collection"
+    case .drop: return pending.objectKind == "view" ? "Drop View" : "Drop Collection"
     case .renameCollection: return "Rename Collection"
     case .collMod: return "Modify Collection"
     }

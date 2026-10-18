@@ -47,6 +47,24 @@ struct MongoSchemaIntrospectorTests {
     #expect(relations[0].definition == nil)
   }
 
+  @Test("listCollections entries keep capped, time series and clustered markers, and viewOn")
+  func relationMarkers() throws {
+    let entries = try [
+      "{name: 'a_capped', type: 'collection', options: {capped: true, size: 4096}}",
+      "{name: 'b_series', type: 'collection', options: {timeseries: {timeField: 't'}}}",
+      "{name: 'c_clustered', type: 'collection', options: {clusteredIndex: {key: {_id: 1}, unique: true}}}",
+      "{name: 'd_clustered', type: 'collection', options: {clusteredIndex: true}}",
+      "{name: 'e_plain', type: 'collection', options: {capped: false, clusteredIndex: false}}",
+      "{name: 'f_view', type: 'view', options: {viewOn: 'a_capped', pipeline: []}}",
+    ].map(Self.parse)
+
+    let relations = Introspector.relations(from: entries)
+
+    #expect(
+      relations.map(\.flags) == [[.capped], [.timeSeries], [.clustered], [.clustered], [], []])
+    #expect(relations.map(\.source) == [nil, nil, nil, nil, nil, "a_capped"])
+  }
+
   @Test("Badge counts: the first 200 collections by name, never a view or a time series")
   func countedCollections() {
     let names = (0..<250).map { String(format: "c%03d", $0) }

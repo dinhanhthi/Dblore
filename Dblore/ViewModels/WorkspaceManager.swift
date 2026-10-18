@@ -33,6 +33,9 @@ class WorkspaceManager: Identifiable {
   var schemaLoadTask: Task<Void, Never>?
   /// Bumped by every load start and cancel: a load that is no longer the latest is superseded
   var schemaLoadGeneration = 0
+  /// The connection epoch the sidebar schema was read with; nil until a load since the last
+  /// connect assigned one. Sidebar schema changes are gated on it, so a stale list is refused.
+  var schemaConnectionEpoch: UInt64?
   /// Background auto-connect started by `load(from:)` (workspace open does not wait for it)
   var autoConnectTask: Task<Void, Never>?
 
@@ -419,6 +422,7 @@ class WorkspaceManager: Identifiable {
     activeUnrememberedSSHCredential = nil
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
+    schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
     if !isAutoConnect { await supersedeAutoConnect() }
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails

@@ -13,19 +13,31 @@ struct DatabaseTable: Identifiable, Sendable {
   var columns: [DatabaseColumn]
   var isExpanded: Bool
   var rowCount: Int?
+  /// MongoDB collection kind markers. Empty for SQL tables.
+  let collectionFlags: CollectionFlags
+
+  /// Sidebar markers of a MongoDB collection.
+  nonisolated struct CollectionFlags: OptionSet, Sendable {
+    let rawValue: UInt8
+    static let capped = CollectionFlags(rawValue: 1 << 0)
+    static let timeSeries = CollectionFlags(rawValue: 1 << 1)
+    static let clustered = CollectionFlags(rawValue: 1 << 2)
+  }
 
   nonisolated init(
     schema: String,
     name: String,
     columns: [DatabaseColumn] = [],
     isExpanded: Bool = false,
-    rowCount: Int? = nil
+    rowCount: Int? = nil,
+    collectionFlags: CollectionFlags = []
   ) {
     self.schema = schema
     self.name = name
     self.columns = columns
     self.isExpanded = isExpanded
     self.rowCount = rowCount
+    self.collectionFlags = collectionFlags
   }
 
   /// Full qualified name: schema.table
@@ -146,19 +158,23 @@ struct DatabaseView: Identifiable, Sendable {
   var columns: [DatabaseColumn]
   var isExpanded: Bool
   var definition: String?  // View definition/SQL
+  /// The MongoDB view's `viewOn` collection. Nil for SQL views.
+  let source: String?
 
   nonisolated init(
     schema: String,
     name: String,
     columns: [DatabaseColumn] = [],
     isExpanded: Bool = false,
-    definition: String? = nil
+    definition: String? = nil,
+    source: String? = nil
   ) {
     self.schema = schema
     self.name = name
     self.columns = columns
     self.isExpanded = isExpanded
     self.definition = definition
+    self.source = source
   }
 
   /// Full qualified name: schema.view

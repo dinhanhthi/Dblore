@@ -5,7 +5,8 @@
 //  Which Public tab sections the left sidebar shows for a query language, and the context
 //  menu actions of their rows. SQL connections keep their sections and menus; MongoDB shows
 //  only Collections and Views, whose rows offer Open, Copy Name and Insert find(); collections
-//  also offer Build Aggregation...
+//  also offer Build Aggregation... When the schema may change, collections add Rename and Drop,
+//  views Edit View, Duplicate and Drop.
 //
 
 import Foundation
@@ -33,6 +34,12 @@ nonisolated enum SidebarSectionModel {
     case insert(String)
     /// Opens the aggregation builder on the collection.
     case buildAggregation
+    /// Schema changes, engine-neutral. Offered only when the schema may change.
+    case rename
+    case drop
+    case duplicate
+    /// Edits a view's definition.
+    case editDefinition
 
     var title: String {
       switch self {
@@ -40,6 +47,10 @@ nonisolated enum SidebarSectionModel {
       case .copyName: "Copy Name"
       case .insert: "Insert find()"
       case .buildAggregation: "Build Aggregation..."
+      case .rename: "Rename…"
+      case .drop: "Drop…"
+      case .duplicate: "Duplicate…"
+      case .editDefinition: "Edit View…"
       }
     }
   }
@@ -79,11 +90,27 @@ nonisolated enum SidebarSectionModel {
     return type == .duckdb ? "View Structure..." : "Edit Structure..."
   }
 
-  /// Menu items of the table, collection or view row named `name`.
-  static func rowActions(for kind: Kind, name: String, language: QueryLanguage) -> [RowAction] {
+  /// The section header's create item. Nil (SQL) shows none.
+  static func createActionTitle(for kind: Kind, language: QueryLanguage) -> String? {
+    guard language == .mongosh else { return nil }
+    switch kind {
+    case .tables: return "New Collection…"
+    case .views: return "New View…"
+    case .functions, .procedures, .triggers: return nil
+    }
+  }
+
+  /// Menu items of the table, collection or view row named `name`. Without `canChangeSchema`
+  /// (the default, fail-closed) no item changes the schema; destructive items come last.
+  static func rowActions(
+    for kind: Kind, name: String, language: QueryLanguage, canChangeSchema: Bool = false
+  ) -> [RowAction] {
     guard language == .mongosh, kind == .tables || kind == .views else { return [] }
     let actions: [RowAction] = [.open, .copyName, .insert(findSnippet(collection: name))]
-    return kind == .tables ? actions + [.buildAggregation] : actions
+    if kind == .tables {
+      return actions + [.buildAggregation] + (canChangeSchema ? [.rename, .drop] : [])
+    }
+    return actions + (canChangeSchema ? [.editDefinition, .duplicate, .drop] : [])
   }
 
   /// `db.getCollection("<name>").find({})`, the name escaped as a double-quoted string.

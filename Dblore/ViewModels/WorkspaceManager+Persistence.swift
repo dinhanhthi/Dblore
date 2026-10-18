@@ -287,6 +287,8 @@ extension WorkspaceManager {
     await PerfSignpost.interval("schema.load") {
       do {
         let capabilities = (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities
+        // Read before the fetch: a reconnect meanwhile leaves an older epoch, which only refuses
+        let epoch = await connectionManager.connectionEpoch
         // Fetch basic schema info in parallel. Users, roles, functions, and procedures
         // are skipped (left empty) when this engine does not support them.
         async let tablesTask = connectionManager.fetchTables()
@@ -336,6 +338,7 @@ extension WorkspaceManager {
         databaseUsers = users
         databaseRoles = roles
         databaseForeignKeys = foreignKeys
+        schemaConnectionEpoch = epoch
 
         // Sync to tab ViewModels
         syncConnectionStateToTabs()

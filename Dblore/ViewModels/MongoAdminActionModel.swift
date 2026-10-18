@@ -33,8 +33,10 @@ final class MongoAdminActionModel {
     let text: String
     /// The exact name to type first (a drop); nil when there is no typed-name step
     let typedName: String?
-    /// Display text for the typed-name step: "collection" or "index"
+    /// Display text for the typed-name step: "collection", "view" or "index"
     let objectKind: String
+    /// The database the command runs in, shown with the confirmation; nil: not shown
+    let database: String?
     /// The Safe Mode panel follows the typed-name step
     let needsSafeModePanel: Bool
     let requiresPassword: Bool
@@ -94,8 +96,12 @@ final class MongoAdminActionModel {
   }
 
   /// Refuses on a read-only or schema-only connection; otherwise asks what the command needs
-  /// (typed name, Safe Mode panel) or sends it at once when nothing needs confirming.
-  func request(_ command: MongoAdminCommand) async {
+  /// (typed name, Safe Mode panel) or sends it at once when nothing needs confirming. `isView`:
+  /// the dropped collection is a view (the confirmation says "view"). `database`: shown with
+  /// the confirmation.
+  func request(
+    _ command: MongoAdminCommand, isView: Bool = false, database: String? = nil
+  ) async {
     guard state != .running else { return }
     runsConfirmed = false
     let text = command.render()
@@ -106,7 +112,9 @@ final class MongoAdminActionModel {
       state = .failed(reason)
       return
     }
-    let pending = Self.confirmation(for: command, text: text, commitStyle: context.commitStyle())
+    let pending = Self.confirmation(
+      for: command, text: text, commitStyle: context.commitStyle(), isView: isView,
+      database: database)
     guard pending.typedName != nil || pending.needsSafeModePanel else {
       await send(text)
       return
@@ -141,13 +149,14 @@ final class MongoAdminActionModel {
 
   /// What `command` asks before it is sent under `commitStyle`
   static func confirmation(
-    for command: MongoAdminCommand, text: String, commitStyle: CommitStyle
+    for command: MongoAdminCommand, text: String, commitStyle: CommitStyle, isView: Bool = false,
+    database: String? = nil
   ) -> Confirmation {
     let typedName: String?
     let objectKind: String
     switch command {
     case .drop(let collection):
-      (typedName, objectKind) = (collection, "collection")
+      (typedName, objectKind) = (collection, isView ? "view" : "collection")
     case .dropIndex(_, .string(let name)):
       (typedName, objectKind) = (name, "index")
     case .dropIndex(let collection, _):
@@ -159,7 +168,7 @@ final class MongoAdminActionModel {
     }
     return Confirmation(
       command: command, text: text, typedName: typedName, objectKind: objectKind,
-      needsSafeModePanel: commitStyle != .immediate,
+      database: database, needsSafeModePanel: commitStyle != .immediate,
       requiresPassword: commitStyle.requiresPassword)
   }
 

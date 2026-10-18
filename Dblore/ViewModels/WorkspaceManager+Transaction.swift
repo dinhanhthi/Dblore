@@ -337,6 +337,7 @@ extension WorkspaceManager {
     databaseUsers = []
     databaseRoles = []
     databaseForeignKeys = []
+    schemaConnectionEpoch = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

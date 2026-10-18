@@ -69,6 +69,8 @@ struct TableRowView: View {
               .foregroundColor(.foregroundSubtle)
           }
 
+          ForEach(collectionFlagTitles, id: \.self) { CollectionFlagBadge(text: $0) }
+
           Spacer()
 
           // Row count badge
@@ -140,6 +142,34 @@ struct TableRowView: View {
       }
     }
     .clipped()
+  }
+
+  /// Badges of a MongoDB collection's markers, in a fixed order
+  private var collectionFlagTitles: [String] {
+    let flags = table.collectionFlags
+    return [
+      (DatabaseTable.CollectionFlags.capped, "capped"), (.timeSeries, "time series"),
+      (.clustered, "clustered"),
+    ].filter { flags.contains($0.0) }.map(\.1)
+  }
+}
+
+/// Small marker beside a collection name (capped, time series, clustered)
+private struct CollectionFlagBadge: View {
+  let text: String
+
+  var body: some View {
+    Text(text)
+      .font(.system(.caption2))
+      .foregroundColor(.foregroundMuted)
+      .lineLimit(1)
+      .padding(.horizontal, Spacing.xs)
+      .padding(.vertical, 1)
+      .background(
+        RoundedRectangle(cornerRadius: 3)
+          .fill(Color.foregroundMuted.opacity(0.12))
+      )
+      .fixedSize()
   }
 }
 
@@ -254,13 +284,15 @@ struct ViewRowView: View {
   }
 }
 
-/// Context menu buttons for `actions`, in order. No actions renders nothing.
+/// Context menu buttons for `actions`, in order, a divider above the destructive Drop. No
+/// actions renders nothing.
 private struct RowActionButtons: View {
   let actions: [SidebarSectionModel.RowAction]
   let onAction: (SidebarSectionModel.RowAction) -> Void
 
   var body: some View {
     ForEach(actions.indices, id: \.self) { index in
+      if index > 0 && actions[index] == .drop { Divider() }
       Button(actions[index].title) { onAction(actions[index]) }
     }
   }

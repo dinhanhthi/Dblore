@@ -24,6 +24,8 @@ struct WorkspaceContainerView: View {
   /// Export SQL Dump / Copy Database File / Restore SQL Dump panel, and the tab it runs for
   @State private var backupSheet: BackupSheet?
   @State private var backupTabID: UUID?
+  /// A collection or view change started from the left sidebar
+  @State private var sidebarMongoAdmin: SidebarMongoAdmin?
 
   /// Get the active view model (if any tab is active)
   private var activeViewModel: NotebookViewModel? {
@@ -105,7 +107,8 @@ struct WorkspaceContainerView: View {
               workspaceManager: workspaceManager,
               tabBarHeight: ComponentSize.tabBarHeight,
               maxWidth: geometry.size.width * 0.35,
-              onImportTable: { requestImport(for: $0) }
+              onImportTable: { requestImport(for: $0) },
+              mongoAdmin: $sidebarMongoAdmin
             )
 
             // Main content area (tabs + content)
@@ -365,6 +368,7 @@ struct WorkspaceContainerView: View {
     .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
     .favoriteModals(workspaceManager: workspaceManager)
     .historyDetailModal(workspaceManager: workspaceManager)
+    .sidebarMongoAdmin($sidebarMongoAdmin, workspaceManager: workspaceManager)
     .commandPaletteModal(workspaceManager: workspaceManager)
     .background(HostWindowReader(reference: hostWindow))
     .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isConnectionImportPresented)
@@ -548,6 +552,7 @@ struct WorkspaceLeftSidebar: View {
   let tabBarHeight: CGFloat
   let maxWidth: CGFloat
   let onImportTable: (DatabaseTable) -> Void
+  @Binding var mongoAdmin: SidebarMongoAdmin?
 
   /// Effective sidebar width from workspace settings or app settings
   private var effectiveSidebarWidth: CGFloat {
@@ -565,7 +570,8 @@ struct WorkspaceLeftSidebar: View {
 
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
-          workspaceManager: workspaceManager, onImportTable: onImportTable)
+          workspaceManager: workspaceManager, onImportTable: onImportTable,
+          mongoAdmin: $mongoAdmin)
 
         if workspaceManager.isSchemaPaused {
           SchemaPausedFooter()
