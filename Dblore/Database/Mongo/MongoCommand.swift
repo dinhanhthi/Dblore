@@ -43,7 +43,7 @@ nonisolated enum MongoCommand: Equatable, Sendable {
   /// A find chain or an aggregate ending in `.explain(verbosity)`: `queryPlanner`,
   /// `executionStats` or `allPlansExecution`.
   indirect case explain(MongoCommand, verbosity: String)
-  /// An administration command (indexes, collections, views).
+  /// An administration command (indexes, collections, views, databases).
   case admin(MongoAdminCommand)
 
   /// The target collection (the explained command's for `explain`, the admin command's for

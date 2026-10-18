@@ -1,11 +1,13 @@
 // MongoAdminCommand.swift
-// One administration command of the Dblore mongosh subset (indexes, collections, views), as
+// One administration command of the Dblore mongosh subset (indexes, collections, views,
+// databases), as
 // `MongoCommand.admin` carries it: rendered back to canonical mongosh text and built into the
 // server command document.
 
 import Foundation
 
-/// An administration command on the connection's database. Option documents are raw
+/// An administration command on the connection's database (or, for `createDatabase` and
+/// `dropDatabase(database:)` with a name, on the named database). Option documents are raw
 /// `MongoValue` documents, nil when none is written; `collMod` stores its document without the
 /// `collMod` key (`render` and `commandDocument` put it first).
 nonisolated enum MongoAdminCommand: Equatable, Sendable {
@@ -21,24 +23,31 @@ nonisolated enum MongoAdminCommand: Equatable, Sendable {
   case drop(collection: String)
   case renameCollection(collection: String, to: String)
   case collMod(collection: String, options: MongoValue)
+  /// A new database `database`, created with its first collection (`createCollection` options).
+  case createDatabase(database: String, collection: String, options: MongoValue?)
+  /// Drops `database`, or the connection's database when nil (`db.dropDatabase()`).
+  case dropDatabase(database: String?)
 
-  /// The target collection: the one created for `createCollection` and `createView`, the
-  /// source for `renameCollection`.
+  /// The target collection: the one created for `createCollection`, `createView` and
+  /// `createDatabase`, the source for `renameCollection`, the database name for `dropDatabase`
+  /// (empty for the connection's database).
   var collection: String {
     switch self {
     case .createIndex(let name, _, _), .dropIndex(let name, _), .setIndexHidden(let name, _, _),
       .createCollection(let name, _), .createView(let name, _, _, _), .drop(let name),
-      .renameCollection(let name, _), .collMod(let name, _):
+      .renameCollection(let name, _), .collMod(let name, _), .createDatabase(_, let name, _):
       name
+    case .dropDatabase(let database):
+      database ?? ""
     }
   }
 
-  /// `drop` and `dropIndex` remove data or an index for good.
+  /// `drop`, `dropIndex` and `dropDatabase` remove data or an index for good.
   var isDestructive: Bool {
     switch self {
-    case .drop, .dropIndex: true
+    case .drop, .dropIndex, .dropDatabase: true
     case .createIndex, .setIndexHidden, .createCollection, .createView, .renameCollection,
-      .collMod:
+      .collMod, .createDatabase:
       false
     }
   }
@@ -49,17 +58,19 @@ nonisolated enum MongoAdminCommand: Equatable, Sendable {
     switch self {
     case .createIndex(_, let keys, let options): [keys] + (options.map { [$0] } ?? [])
     case .dropIndex(_, let index): [index]
-    case .createCollection(_, let options): options.map { [$0] } ?? []
+    case .createCollection(_, let options), .createDatabase(_, _, let options):
+      options.map { [$0] } ?? []
     case .createView(_, _, let pipeline, let options):
       [.array(pipeline)] + (options.map { [$0] } ?? [])
     case .collMod(_, let options): [options]
-    case .setIndexHidden, .drop, .renameCollection: []
+    case .setIndexHidden, .drop, .renameCollection, .dropDatabase: []
     }
   }
 
   /// Canonical mongosh text: the collection helpers `createIndex`, `dropIndex`, `hideIndex`,
   /// `unhideIndex`, `drop()` and `renameCollection`, the database helpers `createCollection` and
-  /// `createView`, and `db.runCommand({collMod: …})`. Options only when set.
+  /// `createView`, and `db.runCommand({collMod: …})`; `db.getSiblingDB("<db>")` then
+  /// `createCollection` or `dropDatabase()`, and `db.dropDatabase()`. Options only when set.
   func render() -> String {
     switch self {
     case .createIndex(let name, let keys, let options):
@@ -81,13 +92,19 @@ nonisolated enum MongoAdminCommand: Equatable, Sendable {
     case .collMod(let name, let options):
       return Self.databaseCall(
         "runCommand", [.document([Field("collMod", .string(name))] + Self.fields(of: options))])
+    case .createDatabase(let database, let name, let options):
+      return Self.databaseCall(
+        "createCollection", [.string(name)] + (options.map { [$0] } ?? []), in: database)
+    case .dropDatabase(let database):
+      return Self.databaseCall("dropDatabase", [], in: database)
     }
   }
 
   /// The server command and the database it runs in: `database` for every command but
   /// `renameCollection`, which runs in `admin` with `<database>.<name>` namespaces and
-  /// `dropTarget: false`. A `createIndex` without a `name` option gets the drivers' generated
-  /// name.
+  /// `dropTarget: false`, and the database commands, which run in their named database
+  /// (`dropDatabase` without a name in `database`). A `createIndex` without a `name` option gets
+  /// the drivers' generated name.
   func commandDocument(in database: String) -> (fields: [Field], database: String) {
     switch self {
     case .createIndex(let name, let keys, let options):
@@ -136,6 +153,10 @@ nonisolated enum MongoAdminCommand: Equatable, Sendable {
       )
     case .collMod(let name, let options):
       return ([Field("collMod", .string(name))] + Self.fields(of: options), database)
+    case .createDatabase(let target, let name, let options):
+      return ([Field("create", .string(name))] + (options.map(Self.fields(of:)) ?? []), target)
+    case .dropDatabase(let target):
+      return ([Field("dropDatabase", .int32(1))], target ?? database)
     }
   }
 
@@ -160,7 +181,33 @@ nonisolated enum MongoAdminCommand: Equatable, Sendable {
     return fields
   }
 
-  private static func databaseCall(_ method: String, _ arguments: [MongoValue]) -> String {
-    "db.\(method)(\(arguments.map(MongoCommand.value).joined(separator: ", ")))"
+  /// `db.<method>(…)`, or `db.getSiblingDB("<database>").<method>(…)` when `database` is set.
+  private static func databaseCall(
+    _ method: String, _ arguments: [MongoValue], in database: String? = nil
+  ) -> String {
+    let target = database.map { "db.getSiblingDB(\(MongoCommand.value(.string($0))))" } ?? "db"
+    return "\(target).\(method)(\(arguments.map(MongoCommand.value).joined(separator: ", ")))"
+  }
+}
+
+/// The names `createDatabase` and `dropDatabase` accept.
+nonisolated enum MongoDatabaseName {
+  static let maxBytes = 63
+  /// The server's own databases: never created or dropped from Dblore (any letter case).
+  static let reserved: Set<String> = ["admin", "local", "config"]
+  /// Checked as UTF-8 bytes, so a combining mark cannot hide one inside a larger character.
+  private static let forbidden: Set<UInt8> = Set("/\\. \"$*<>:|?\0".utf8)
+
+  /// Why `name` cannot be created or dropped, nil when it can.
+  static func validate(_ name: String) -> String? {
+    if name.isEmpty { return "Enter a database name" }
+    if name.utf8.count > maxBytes { return "A database name is at most \(maxBytes) bytes" }
+    if name.utf8.contains(where: forbidden.contains) {
+      return "A database name cannot contain spaces, the null character or / \\ . \" $ * < > : | ?"
+    }
+    if reserved.contains(name.lowercased()) {
+      return "The \(name) database is reserved by the server"
+    }
+    return nil
   }
 }

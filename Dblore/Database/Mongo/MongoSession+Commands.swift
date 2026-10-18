@@ -25,7 +25,8 @@
 // `AGGREGATE` (no count). Write errors come back in an `ok: 1` reply (duplicate key 11000 does not
 // throw in the driver) and are thrown as `MongoSessionError`, as are write concern errors. Admin
 // commands (`affectedRows` 0): `CREATE INDEX`, `DROP INDEX`, `HIDE INDEX`, `UNHIDE INDEX`,
-// `CREATE COLLECTION`, `CREATE VIEW`, `DROP`, `RENAME` (sent to `admin`), `COLLMOD`.
+// `CREATE COLLECTION`, `CREATE VIEW`, `DROP`, `RENAME` (sent to `admin`), `COLLMOD`,
+// `CREATE DATABASE`, `DROP DATABASE`.
 
 import BSON
 import Foundation
@@ -63,7 +64,9 @@ extension MongoSession: MongoTypedCommandSending {
   }
 
   /// The typed send (`MongoTypedCommandSending`) and the core of the text `command`: read
-  /// commands are refused before anything is sent; admin commands run in their own database.
+  /// commands are refused before anything is sent; admin commands run in their own database. A
+  /// database command whose target (the connection's database for `db.dropDatabase()`) is not
+  /// a `MongoDatabaseName` is refused too.
   func command(_ command: MongoCommand) async throws -> CommandResult {
     guard let write = Self.writeCommand(command, in: databaseName),
       MongoCommandClassifier.classify(command, summary: "").kind != .read
@@ -71,6 +74,17 @@ extension MongoSession: MongoTypedCommandSending {
       throw MongoSessionError(message: "Read commands return rows; run them as a query.")
     }
     let (fields, database) = write
+    if case .admin(let admin) = command {
+      switch admin {
+      case .createDatabase, .dropDatabase:
+        if let problem = MongoDatabaseName.validate(database) {
+          throw MongoSessionError(message: problem)
+        }
+      case .createIndex, .dropIndex, .setIndexHidden, .createCollection, .createView, .drop,
+        .renameCollection, .collMod:
+        break
+      }
+    }
     // An index build on a large collection outlasts any statement timeout: no `maxTimeMS`, and
     // Cancel (killOp by the comment) still stops it.
     let timed: Bool
@@ -103,9 +117,18 @@ extension MongoSession: MongoTypedCommandSending {
     }
   }
 
-  /// Catalog command of `MongoSchemaIntrospector` with a single reply (`count`).
-  func catalogCommand(_ fields: [Field], maxTimeMS: Int64? = nil) async throws -> MongoValue {
-    let database = databaseName
+  /// Catalog command of `MongoSchemaIntrospector` with a single reply (`count`). `database`
+  /// (default: the session's) is only given by the overview reads, which send read commands
+  /// only (`listDatabases` on `admin`, `dbStats` in a listed database); any other command aimed
+  /// at another database is refused before it is sent.
+  func catalogCommand(
+    _ fields: [Field], database: String? = nil, maxTimeMS: Int64? = nil
+  ) async throws -> MongoValue {
+    let database = database ?? databaseName
+    guard database == databaseName || ["listDatabases", "dbStats"].contains(fields.first?.key)
+    else {
+      throw MongoSessionError(message: "Only listDatabases and dbStats run in another database.")
+    }
     return try await withStatement { token, connection in
       try MongoBSONMapping.document(
         try await execute(
@@ -535,7 +558,8 @@ extension MongoSession: MongoTypedCommandSending {
   }
 
   /// The write command of `command` (and the aggregate of `$out`/`$merge`, and the admin
-  /// command) with the database it runs in: `database`, or `admin` for a rename; nil for reads.
+  /// command) with the database it runs in: `database`, `admin` for a rename, or the named
+  /// database of a database command; nil for reads.
   static func writeCommand(
     _ command: MongoCommand, in database: String = MongoSession.defaultDatabase
   ) -> (fields: [Field], database: String)? {
@@ -646,6 +670,8 @@ extension MongoSession: MongoTypedCommandSending {
     case .drop: "DROP"
     case .renameCollection: "RENAME"
     case .collMod: "COLLMOD"
+    case .createDatabase: "CREATE DATABASE"
+    case .dropDatabase: "DROP DATABASE"
     }
   }
 

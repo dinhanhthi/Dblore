@@ -81,7 +81,8 @@ struct MongoAdminConfirmSheet: View {
     switch model.state {
     case .confirming(let pending):
       if let database = pending.database {
-        Text("In database \(database)")
+        // A database command shows the database it creates or drops
+        Text(pending.objectKind == "database" ? "Database \(database)" : "In database \(database)")
           .font(.small)
           .foregroundColor(.foregroundMuted)
           .padding([.horizontal, .top], Spacing.md)
@@ -160,6 +161,8 @@ struct MongoAdminConfirmSheet: View {
     case .drop: return pending.objectKind == "view" ? "Drop View" : "Drop Collection"
     case .renameCollection: return "Rename Collection"
     case .collMod: return "Modify Collection"
+    case .createDatabase: return "Create Database"
+    case .dropDatabase: return "Drop Database"
     }
   }
 

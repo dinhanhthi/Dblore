@@ -20,6 +20,11 @@ import Foundation
 /// - Administration on the database: `db.createCollection(name, options?)`,
 ///   `db.createView(name, source, [stages], options?)` and `db.runCommand({collMod: name, …})`
 ///   (no other command).
+/// - Database commands: `db.getSiblingDB("<db>")` followed only by `createCollection(name,
+///   options?)` (a new database with its first collection) or `dropDatabase()`, and
+///   `db.dropDatabase()` (the connection's database). The database name is a string literal
+///   that `MongoDatabaseName.validate` accepts (never admin, local or config); any other use of
+///   `getSiblingDB` is refused.
 /// - A find chain or an aggregate may end with `.explain()` (`queryPlanner`) or
 ///   `.explain("queryPlanner" | "executionStats" | "allPlansExecution")`, once and last.
 ///
@@ -119,6 +124,17 @@ nonisolated extension MongoshParser {
         }
         try refuseChain()
         return .listCollections
+      case "getSiblingDB":
+        let command = try siblingDatabaseCommand(
+          Call(method: name, offset: nameStart, arguments: try parseArguments()))
+        try refuseChain()
+        return .admin(command)
+      case "dropDatabase":
+        if let extra = try parseArguments().first {
+          throw failure("dropDatabase takes no arguments", at: extra.offset)
+        }
+        try refuseChain()
+        return .admin(.dropDatabase(database: nil))
       case "createCollection", "createView", "runCommand":
         let call = Call(method: name, offset: nameStart, arguments: try parseArguments())
         let command: MongoAdminCommand
@@ -539,13 +555,55 @@ nonisolated extension MongoshParser {
     }
 
     private func createCollection(_ call: Call) throws(ParseError) -> MongoAdminCommand {
+      let (name, options) = try createCollectionArguments(call)
+      return .createCollection(name: name, options: options)
+    }
+
+    private func createCollectionArguments(
+      _ call: Call
+    ) throws(ParseError) -> (name: String, options: MongoValue?) {
       if let extra = call[2] {
         throw failure(
           "createCollection takes at most a name and an options document", at: extra.offset)
       }
       let name = try adminName(call[0], "createCollection needs a collection name string", call)
-      let options = try adminOptions(call[1], MongoshParser.createCollectionOptions)
-      return .createCollection(name: name, options: options)
+      return (name, try adminOptions(call[1], MongoshParser.createCollectionOptions))
+    }
+
+    /// `getSiblingDB("<db>")` (its arguments in `call`) then exactly `.createCollection(…)` or
+    /// `.dropDatabase()`.
+    private mutating func siblingDatabaseCommand(
+      _ call: Call
+    ) throws(ParseError) -> MongoAdminCommand {
+      guard call.arguments.count == 1, case .string(let database) = call.arguments[0].value else {
+        throw failure(
+          "getSiblingDB needs one database name string",
+          at: (call[1] ?? call[0])?.offset ?? call.offset)
+      }
+      if let problem = MongoDatabaseName.validate(database) {
+        throw failure(problem, at: call.arguments[0].offset)
+      }
+      try skipTrivia()
+      guard take(".") else {
+        throw failure(
+          "Expected .createCollection() or .dropDatabase() after getSiblingDB", at: pos)
+      }
+      let (method, methodStart) = try methodName()
+      guard method == "createCollection" || method == "dropDatabase" else {
+        throw failure(unsupported(method), at: methodStart)
+      }
+      guard peek() == UInt8(ascii: "(") else {
+        throw failure("Expected '(' after \(method)", at: pos)
+      }
+      let inner = Call(method: method, offset: methodStart, arguments: try parseArguments())
+      guard method == "createCollection" else {
+        if let extra = inner[0] {
+          throw failure("dropDatabase takes no arguments", at: extra.offset)
+        }
+        return .dropDatabase(database: database)
+      }
+      let (name, options) = try createCollectionArguments(inner)
+      return .createDatabase(database: database, collection: name, options: options)
     }
 
     private func createView(_ call: Call) throws(ParseError) -> MongoAdminCommand {

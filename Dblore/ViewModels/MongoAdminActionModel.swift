@@ -1,10 +1,10 @@
 // MongoAdminActionModel.swift
 // Runs one MongoDB administration command started from the UI (create / hide / drop an index,
-// collections, views): refuses up front on protected connections with the gate's text, asks for
-// the exact name before a drop whatever the commit style, then shows the Safe Mode panel when
-// the commit style asks for it (Review counts as Confirm: admin DDL cannot be staged), and sends
-// the rendered command through `executeGatedSequentialBatch` (which re-checks every refusal and
-// the connection epoch). History rows use source `.structure`.
+// collections, views, databases): refuses up front on protected connections with the gate's
+// text, asks for the exact name before a drop whatever the commit style, then shows the Safe Mode
+// panel when the commit style asks for it (Review counts as Confirm: admin DDL cannot be staged),
+// and sends the rendered command through `executeGatedSequentialBatch` (which re-checks every
+// refusal and the connection epoch). History rows use source `.structure`.
 
 import Foundation
 import Observation
@@ -20,6 +20,8 @@ struct MongoAdminContext {
   /// Records outcomes in History under the source the caller chose (the tab honours the History
   /// setting)
   var recordHistory: @MainActor ([QueryHistoryOutcome]) async -> Void
+  /// The connection's database, the one `db.dropDatabase()` drops; nil when unknown
+  var database: String?
 }
 
 @MainActor
@@ -88,7 +90,8 @@ final class MongoAdminActionModel {
             .resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
         },
         caller: tab.id,
-        recordHistory: { [weak tab] in await tab?.recordExecution($0, source: .structure) }),
+        recordHistory: { [weak tab] in await tab?.recordExecution($0, source: .structure) },
+        database: config.database.isEmpty ? MongoSession.defaultDatabase : config.database),
       connectionEpoch: connectionEpoch,
       onStatementsExecuted: { [weak tab] in
         onExecuted?()
@@ -99,7 +102,8 @@ final class MongoAdminActionModel {
   /// Refuses on a read-only or schema-only connection; otherwise asks what the command needs
   /// (typed name, Safe Mode panel) or sends it at once when nothing needs confirming. `isView`:
   /// the dropped collection is a view (the confirmation says "view"). `database`: shown with
-  /// the confirmation.
+  /// the confirmation (the connection's database when nil). `db.dropDatabase()` always shows and
+  /// asks for the connection's database, the one the server drops, whatever `database` says.
   func request(
     _ command: MongoAdminCommand, isView: Bool = false, database: String? = nil
   ) async {
@@ -111,6 +115,12 @@ final class MongoAdminActionModel {
       classified, policy: context.policy, dialect: .mongodb)
     {
       state = .failed(reason)
+      return
+    }
+    let dropsOwn = command == .dropDatabase(database: nil)
+    let database = dropsOwn ? context.database : database ?? context.database
+    if dropsOwn, database == nil {
+      state = .failed("The connection's database is unknown; nothing was sent.")
       return
     }
     let pending = Self.confirmation(
@@ -155,6 +165,7 @@ final class MongoAdminActionModel {
   ) -> Confirmation {
     let typedName: String?
     let objectKind: String
+    var shownDatabase = database
     switch command {
     case .drop(let collection):
       (typedName, objectKind) = (collection, isView ? "view" : "collection")
@@ -163,13 +174,20 @@ final class MongoAdminActionModel {
     case .dropIndex(let collection, _):
       // An index given by its key document: the collection name is what the user types
       (typedName, objectKind) = (collection, "collection")
+    case .dropDatabase(let name):
+      // `request` refuses a drop of the connection's database when that name is unknown
+      (typedName, objectKind) = (name ?? database ?? "", "database")
+      shownDatabase = name ?? database
+    case .createDatabase(let target, _, _):
+      (typedName, objectKind) = (nil, "database")
+      shownDatabase = target
     case .createIndex, .setIndexHidden, .createCollection, .createView, .renameCollection,
       .collMod:
       (typedName, objectKind) = (nil, "collection")
     }
     return Confirmation(
       command: command, text: text, typedName: typedName, objectKind: objectKind,
-      database: database, needsSafeModePanel: commitStyle != .immediate,
+      database: shownDatabase, needsSafeModePanel: commitStyle != .immediate,
       requiresPassword: commitStyle.requiresPassword)
   }
 

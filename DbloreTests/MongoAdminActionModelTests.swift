@@ -50,7 +50,7 @@ struct MongoAdminActionModelTests {
         recordHistory: {
           log.onRecord?()
           log.outcomes += $0
-        }),
+        }, database: config.database),
       connectionEpoch: epoch,
       onStatementsExecuted: { log.reloads += 1 })
     return (model, factory)
@@ -81,6 +81,35 @@ struct MongoAdminActionModelTests {
     #expect(factory.statements == [Self.dropItems.render()])
     #expect(log.outcomes.map(\.status) == [.success])
     #expect(log.reloads == 1)
+  }
+
+  @Test("Dropping the connection's database asks for its name under Immediate; nothing sent first")
+  func dropDatabaseNeedsTypedName() async throws {
+    let log = Log()
+    let (model, factory) = try await makeModel(commitStyle: .immediate, log: log)
+    let drop = MongoAdminCommand.dropDatabase(database: nil)
+    // A database passed by the caller never replaces the one the server drops
+    await model.request(drop, database: "other")
+    let pending = try #require(confirmation(model))
+    #expect(pending.typedName == "db")
+    #expect(pending.database == "db")
+    #expect(pending.objectKind == "database")
+    #expect(!pending.needsSafeModePanel)
+    #expect(pending.text == "db.dropDatabase()")
+
+    await model.confirm(pending, typedName: "DB")
+    #expect(factory.statements.isEmpty)
+
+    await model.confirm(pending, typedName: "db")
+    #expect(model.state == .done)
+    #expect(factory.statements == [drop.render()])
+
+    let (named, _) = try await makeModel(commitStyle: .immediate, log: log)
+    await named.request(.dropDatabase(database: "shop"))
+    let shop = try #require(confirmation(named))
+    #expect(shop.typedName == "shop")
+    #expect(shop.database == "shop")
+    #expect(shop.objectKind == "database")
   }
 
   @Test("A non-destructive command runs at once under Immediate; Review shows the panel")

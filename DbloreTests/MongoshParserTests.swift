@@ -179,7 +179,7 @@ struct MongoshParserTests {
       ("db.c.aggregate([]).sort({a: 1})", "sort", "sort"),
       ("db.c.countDocuments().limit(1)", "limit", "limit"),
       ("db.getCollectionNames().forEach(print)", "forEach", "forEach"),
-      ("db.dropDatabase()", "dropDatabase", "dropDatabase"),
+      ("db.dropAllUsers()", "dropAllUsers", "dropAllUsers"),
       ("db.c.drop().pretty()", "pretty", "pretty"),
       ("show dbs", "show dbs", "show"),
       ("use admin", "use", "use"),

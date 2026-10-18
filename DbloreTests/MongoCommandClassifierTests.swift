@@ -137,7 +137,7 @@ struct MongoCommandClassifierTests {
     #expect(MongoCommandClassifier.hasStage(.string("$out"), "$out") == false)
   }
 
-  @Test("Admin commands are DDL; only drop and dropIndex are destructive")
+  @Test("Admin commands are DDL; only drop, dropIndex and dropDatabase are destructive")
   func adminCommands() throws {
     let cases: [(String, Bool)] = [
       ("db.c.createIndex({a: 1}, {unique: true})", false), ("db.c.dropIndex(\"a_1\")", true),
@@ -146,6 +146,8 @@ struct MongoCommandClassifierTests {
       ("db.createView(\"v\", \"c\", [])", false), ("db.c.drop()", true),
       ("db.c.renameCollection(\"d\")", false),
       ("db.runCommand({collMod: \"c\", validationLevel: \"off\"})", false),
+      ("db.dropDatabase()", true), ("db.getSiblingDB(\"shop\").dropDatabase()", true),
+      ("db.getSiblingDB(\"shop\").createCollection(\"c\")", false),
     ]
     for (text, destructive) in cases {
       let statement = try classified(text)
@@ -221,7 +223,7 @@ struct MongoCommandClassifierTests {
       String(repeating: "ObjectId(", count: 5000) + "\"x\"" + String(repeating: ")", count: 5000)
     for text in [
       "db.c.find().toArray()", "db.c.find({a: })", "SELECT 1",
-      "db.dropDatabase()", "db.c.find()\ndb.d.find()", "db.c.find(); db.d.deleteMany({})",
+      "db.dropAllUsers()", "db.c.find()\ndb.d.find()", "db.c.find(); db.d.deleteMany({})",
       "db.c.insertOne({a: 1}", "db.c.find({a: \(nested)})", "db[\(nested)].find()",
     ] {
       let statement = try classified(text)
@@ -268,7 +270,7 @@ struct MongoCommandClassifierTests {
           affectsAllRows: false, touchesBrake: false, changesPrivileges: false))
     let writes = SQLStatementClassifier.summary(
       MongoCommandClassifier.classify(
-        "db.a.updateMany({}, {$set: {b: 1}})\ndb.a.aggregate([{$out: \"b\"}])\ndb.dropDatabase()"))
+        "db.a.updateMany({}, {$set: {b: 1}})\ndb.a.aggregate([{$out: \"b\"}])\ndb.dropAllUsers()"))
     #expect(
       writes
         == ClassificationSummary(

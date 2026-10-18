@@ -100,7 +100,10 @@ struct MongoGateTests {
     let config = Self.config(level: level)
     let (manager, factory) = try await connect(config)
     let policy = ProtectionPolicy(config: config)
-    for text in ["db.c.createIndex({a: 1})", "db.c.drop()"] {
+    for text in [
+      "db.c.createIndex({a: 1})", "db.c.drop()", "db.dropDatabase()",
+      "db.getSiblingDB(\"x\").dropDatabase()",
+    ] {
       await expectBlocked(text, kind: .ddl, reason: reason, manager: manager, policy: policy)
     }
     #expect(factory.statements.isEmpty)

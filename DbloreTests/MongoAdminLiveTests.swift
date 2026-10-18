@@ -4,9 +4,11 @@
 // rendered mongosh text through `executeGatedSequentialBatch`, then checked with the catalog
 // reads (`fetchMongoIndexes`, `fetchMongoCollectionInfo`). createIndex without a name gets the
 // drivers' generated name, hide / unhide, a time-series createCollection, createView, a collMod
-// validator, rename and drop. Hide / unhide and collMod need `dbAdmin` on `dblore_test`
-// (docker/mongodb/init/01-users.js). Opt-in (`.requiresMongo`), serialized; every collection has
-// a unique `admin_live_` name and is dropped before and after.
+// validator, rename and drop; a new database with its first collection, listed and dropped.
+// Hide / unhide and collMod need `dbAdmin` on `dblore_test`, the database commands `readWrite`
+// and `dbAdmin` on `dblore_test_other` (docker/mongodb/init/01-users.js, fresh volume). Opt-in
+// (`.requiresMongo`), serialized; every collection has a unique `admin_live_` name and is dropped
+// before and after; `dblore_test_other` is dropped before and after.
 
 import Foundation
 import Testing
@@ -163,6 +165,31 @@ struct MongoAdminLiveTests {
       await #expect(throws: (any Error).self) { try await info(manager, renamed) }
       try await send(.drop(collection: series), manager, epoch: epoch)
       await #expect(throws: (any Error).self) { try await info(manager, series) }
+    }
+  }
+
+  @Test(
+    "A new database with its first collection is listed with its stats, then dropped",
+    .requiresMongo)
+  func databaseLifecycle() async throws {
+    let database = "dblore_test_other"
+    let drop = MongoAdminCommand.dropDatabase(database: database)
+    try await withManager([]) { manager, epoch in
+      try await send(drop, manager, epoch: epoch)
+      do {
+        try await send(
+          .createDatabase(database: database, collection: Self.uniqueName(), options: nil),
+          manager, epoch: epoch)
+        let listed = try await manager.mongoDatabases().databases.map(\.name)
+        #expect(listed.contains(database), "\(listed)")
+        #expect((try await manager.mongoDatabaseStats(database).collections ?? 0) >= 1)
+
+        try await send(drop, manager, epoch: epoch)
+        #expect(!(try await manager.mongoDatabases().databases.map(\.name).contains(database)))
+      } catch {
+        try? await send(drop, manager, epoch: epoch)
+        throw error
+      }
     }
   }
 }
