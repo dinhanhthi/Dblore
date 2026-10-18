@@ -115,6 +115,8 @@ final class MongoCollectionModel {
   private(set) var explainState: ExplainState = .idle
   /// Filter text set by the assistant, consumed (and reset to nil) by `MongoFilterBar`.
   var pendingFilterDraft: String?
+  /// The Bulk Update / Delete form of the Documents header, shown by `DataViewerView` while set
+  var bulkWrite: MongoBulkWriteModel?
 
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
   @ObservationIgnored private var indexTask: Task<Void, Never>?

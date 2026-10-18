@@ -115,6 +115,33 @@ extension NotebookViewModel {
     return model
   }
 
+  /// Bulk Update / Delete of the Documents header: a connected MongoDB collection (not a view)
+  /// whose protection level allows data changes
+  var canBulkWriteMongoDocuments: Bool {
+    guard let state = dataViewer, mongoCollection != nil, connectionState == .connected,
+      !protectionPolicy.protectionLevel.blocksDataModifications
+    else { return false }
+    return !databaseViews.contains(where: { $0.name == state.name })
+  }
+
+  /// Opens the bulk write form on the collection shown, prefilled with the applied filter. The
+  /// header stays clickable under the form: an open form keeps its draft.
+  func openMongoBulkWrite() {
+    guard canBulkWriteMongoDocuments, let collection = mongoCollection,
+      collection.bulkWrite == nil
+    else { return }
+    collection.bulkWrite = MongoBulkWriteModel(tab: self)
+  }
+
+  /// Closes the bulk write form, stopping its preview; refused while its command runs
+  func closeMongoBulkWrite() {
+    guard let collection = mongoCollection, let model = collection.bulkWrite,
+      model.state != .running
+    else { return }
+    model.cancel()
+    collection.bulkWrite = nil
+  }
+
   /// Page and count text of `state`: the rendered `find` and `countDocuments` for MongoDB (the
   /// SQL paging and WHERE helpers never run there), else the SQL. The page is nil past the user
   /// limit (nothing to read). Nil, with the error shown, when the applied document filter or

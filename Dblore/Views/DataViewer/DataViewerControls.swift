@@ -2,8 +2,8 @@
 //  DataViewerControls.swift
 //  Dblore
 //
-//  Data viewer header controls: table title, MongoDB collection sections, + Row, and
-//  staged-change actions.
+//  Data viewer header controls: table title, MongoDB collection sections, + Row, Bulk Update /
+//  Delete, and staged-change actions.
 //  Rows-per-page, column visibility, paging, and the Grid / Chart slider sit
 //  in DataViewerPagingBar under the result table. The slider is trailing.
 //
@@ -47,6 +47,7 @@ struct DataViewerControls: View {
           if model.section == .documents {
             Divider().frame(height: 14)
             addRowButton
+            if viewModel.canBulkWriteMongoDocuments { bulkWriteButton }
           }
         } else {
           addRowButton
@@ -129,6 +130,21 @@ struct DataViewerControls: View {
     .disabled(!viewModel.stagingEnabled)
     .help(viewModel.rowStagingUnavailableReason ?? "Fill in a new row")
     .overlay { disabledStagingHelp }
+  }
+
+  /// Opens the bulk write form (hosted by `DataViewerView`, as the header is too small)
+  private var bulkWriteButton: some View {
+    Button(action: viewModel.openMongoBulkWrite) {
+      dataViewerCapsuleLabel {
+        Text("Bulk Update / Delete…")
+          .font(.system(size: 11))
+          .foregroundColor(.foreground)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .help("Update or delete every document matching a filter")
   }
 
   private func stageNewRow() {

@@ -337,36 +337,42 @@ struct MongoSessionTests {
     let collection = "c"
     let document = MongoValue.document([.init("a", .int32(1))])
     let filter = MongoValue.document([])
-    let cases: [(MongoCommand, MongoValue, String, Int)] = [
+    let cases: [(MongoCommand, MongoValue, String, Int, Int?)] = [
       (
         .insertOne(collection: collection, document: document), Self.reply(("n", .int32(1))),
-        "INSERT 1", 1
+        "INSERT 1", 1, nil
       ),
       (
         .insertMany(collection: collection, documents: [document, document]),
-        Self.reply(("n", .int32(2))), "INSERT 2", 2
+        Self.reply(("n", .int32(2))), "INSERT 2", 2, nil
       ),
       (
         .updateMany(
           collection: collection, filter: filter, update: .document([.init("$set", document)])),
-        Self.reply(("n", .int32(3)), ("nModified", .int32(0))), "UPDATE 3", 3
+        Self.reply(("n", .int32(3)), ("nModified", .int32(0))), "UPDATE 3", 3, 0
+      ),
+      // Matched and modified differ: the tag keeps the matched count.
+      (
+        .updateOne(
+          collection: collection, filter: filter, update: .document([.init("$set", document)])),
+        Self.reply(("n", .int32(4)), ("nModified", .int64(2))), "UPDATE 4", 4, 2
       ),
       (
         .replaceOne(collection: collection, filter: filter, replacement: document),
-        Self.reply(("n", .int64(1)), ("nModified", .int32(1))), "UPDATE 1", 1
+        Self.reply(("n", .int64(1)), ("nModified", .int32(1))), "UPDATE 1", 1, 1
       ),
       (
         .deleteMany(collection: collection, filter: filter), Self.reply(("n", .double(5))),
-        "DELETE 5", 5
+        "DELETE 5", 5, nil
       ),
       (
         .aggregate(collection: collection, pipeline: [.document([.init("$out", .string("x"))])]),
-        Self.reply(), "AGGREGATE", 0
+        Self.reply(), "AGGREGATE", 0, nil
       ),
     ]
-    for (command, reply, tag, rows) in cases {
+    for (command, reply, tag, rows, modified) in cases {
       let result = try MongoSession.commandResult(for: command, reply: reply)
-      #expect(result == CommandResult(affectedRows: rows, tag: tag))
+      #expect(result == CommandResult(affectedRows: rows, tag: tag, modifiedRows: modified))
     }
     let updated = CommandResult(affectedRows: 3, tag: "UPDATE 3")
     #expect(StatementRoute.commandAffectedRows(updated) == 3)

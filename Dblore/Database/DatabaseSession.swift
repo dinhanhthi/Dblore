@@ -16,6 +16,9 @@ nonisolated struct CommandResult: Sendable, Equatable {
   /// Server command tag, unchanged. The actor parses tags that `affectedRows` cannot
   /// (`MERGE n` stays in the tag text).
   var tag: String
+  /// Documents changed by a MongoDB update (`nModified`); `affectedRows` is the matched count.
+  /// Nil for every other command and engine.
+  var modifiedRows: Int? = nil
 }
 
 /// Why `DatabaseSession.closeEvents` fired. The connection actor maps this onto session loss.

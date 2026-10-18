@@ -76,6 +76,23 @@ struct DataViewerView: View {
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
       MongoDocumentEditorSheet(viewModel: viewModel, request: request)
     }
+    // Bulk Update / Delete of the Documents header: the header is too small to host the form
+    .modalOverlay(isPresented: bulkWritePresented) {
+      if let model = viewModel.mongoCollection?.bulkWrite {
+        MongoBulkWriteSheet(
+          model: model, fieldSource: viewModel.autocompleteProvider,
+          databasePassword: viewModel.notebook.connectionConfig?.password,
+          isConnected: viewModel.connectionState == .connected, isPresented: bulkWritePresented)
+      }
+    }
+  }
+
+  /// The bulk write form: shown while the collection screen holds one; closing it is refused
+  /// while its command runs
+  private var bulkWritePresented: Binding<Bool> {
+    Binding(
+      get: { viewModel.mongoCollection?.bulkWrite != nil },
+      set: { if !$0 { viewModel.closeMongoBulkWrite() } })
   }
 
   /// Saved pipelines are kept per connection and collection, as the filter bar's saved queries

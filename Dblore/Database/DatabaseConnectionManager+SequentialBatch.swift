@@ -15,12 +15,12 @@ extension DatabaseConnectionManager {
   /// (`DatabaseError.sequentialBatchRefused`). An empty batch returns `[]`.
   /// The first send error or count other than `expectedRows[i]` stops the batch:
   /// `DatabaseError.batchPartiallyApplied` (the statements before it stay applied).
-  /// Returns each statement's affected rows. `progress` gets the number of statements done after
-  /// each one (SQL dump restore).
-  func executeGatedSequentialBatch(
+  /// Returns each statement's result (MongoDB updates also carry `modifiedRows`). `progress`
+  /// gets the number of statements done after each one (SQL dump restore).
+  func executeGatedSequentialCommands(
     _ statements: [String], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil, expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)? = nil
-  ) async throws -> [Int] {
+  ) async throws -> [CommandResult] {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
@@ -55,6 +55,17 @@ extension DatabaseConnectionManager {
       statements, expectedRows: expectedRows, progress: progress)
   }
 
+  /// `executeGatedSequentialCommands`, returning each statement's affected rows.
+  func executeGatedSequentialBatch(
+    _ statements: [String], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
+    caller: UUID? = nil, expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)? = nil
+  ) async throws -> [Int] {
+    try await executeGatedSequentialCommands(
+      statements, policy: policy, connectionEpoch: epoch, caller: caller,
+      expectedRows: expectedRows, progress: progress
+    ).map(\.affectedRows)
+  }
+
   // MARK: - Private
 
   private static let sequentialTransactionOpenRefusal =
@@ -64,23 +75,23 @@ extension DatabaseConnectionManager {
   /// or was cancelled, or once a transaction was opened meanwhile (the rest would run in it).
   private func sendSequentially(
     _ statements: [String], expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)?
-  ) async throws -> [Int] {
+  ) async throws -> [CommandResult] {
     let dialect = Self.dialect(of: config)
     let epoch = connectionEpoch
     let generation = batchCancellationGeneration
-    var counts: [Int] = []
-    counts.reserveCapacity(statements.count)
+    var results: [CommandResult] = []
+    results.reserveCapacity(statements.count)
     for (index, sql) in statements.enumerated() {
       if !txState.isIdle || userTxOpen {
         throw DatabaseError.batchPartiallyApplied(
           applied: index, total: statements.count,
           reason: "A transaction was opened meanwhile; the rest would run in it")
       }
-      let rows: Int
+      let result: CommandResult
       do {
         try refuseIfSessionChanged(
           since: epoch, generation: generation, remaining: statements.count - index)
-        rows = try await affectedRows(sql: sql, binds: [])
+        result = try await commandResult(sql: sql, binds: [])
       } catch {
         let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         throw DatabaseError.batchPartiallyApplied(
@@ -89,15 +100,16 @@ extension DatabaseConnectionManager {
       if let classified = SQLStatementClassifier.classify(sql, dialect: dialect).first {
         noteSchemaChange(classified)
       }
+      let rows = result.affectedRows
       if let expected = expectedRows?[index], rows != expected {
         throw DatabaseError.batchPartiallyApplied(
           applied: index, total: statements.count,
           reason: "expected to affect \(expected) row\(expected == 1 ? "" : "s"), affected \(rows)")
       }
-      counts.append(rows)
-      progress?(counts.count)
+      results.append(result)
+      progress?(results.count)
       await batchCheckpointHook?(index)
     }
-    return counts
+    return results
   }
 }

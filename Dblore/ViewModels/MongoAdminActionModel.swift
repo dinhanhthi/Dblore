@@ -17,7 +17,8 @@ struct MongoAdminContext {
   var commitStyle: @MainActor () -> CommitStyle
   /// The tab's caller token (another tab's pending transaction refuses the command)
   var caller: UUID?
-  /// Records outcomes in History as `.structure` (the tab honours the History setting)
+  /// Records outcomes in History under the source the caller chose (the tab honours the History
+  /// setting)
   var recordHistory: @MainActor ([QueryHistoryOutcome]) async -> Void
 }
 

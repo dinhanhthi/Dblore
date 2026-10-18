@@ -20,6 +20,8 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   let errorFormatter: (@Sendable (any Error) -> String)?
   /// Affected rows of a `command` when it returns non-nil (else derived from the verb).
   let commandRows: (@Sendable (String) -> Int?)?
+  /// `modifiedRows` of a `command` (nil when unset or when it returns nil).
+  let commandModifiedRows: (@Sendable (String) -> Int?)?
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
@@ -28,7 +30,8 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     capabilities: DatabaseCapabilities, columns: [ColumnInfo] = [], rows: [[CellValue]] = [],
     slowQueries: Bool = false, failingQuery: String? = nil, openError: (any Error)? = nil,
     errorFormatter: (@Sendable (any Error) -> String)? = nil,
-    commandRows: (@Sendable (String) -> Int?)? = nil
+    commandRows: (@Sendable (String) -> Int?)? = nil,
+    commandModifiedRows: (@Sendable (String) -> Int?)? = nil
   ) {
     self.capabilities = capabilities
     self.columns = columns
@@ -38,13 +41,14 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     self.openError = openError
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
+    self.commandModifiedRows = commandModifiedRows
   }
 
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
     let session = FakeDatabaseSession(
       capabilities: capabilities, columns: columns, rows: rows, slowQueries: slowQueries,
       failingQuery: failingQuery, openError: openError, errorFormatter: errorFormatter,
-      commandRows: commandRows)
+      commandRows: commandRows, commandModifiedRows: commandModifiedRows)
     lock.lock()
     made.append(session)
     lock.unlock()
@@ -76,6 +80,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private let openError: (any Error)?
   private let errorFormatter: (@Sendable (any Error) -> String)?
   private let commandRows: (@Sendable (String) -> Int?)?
+  private let commandModifiedRows: (@Sendable (String) -> Int?)?
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let lock = NSLock()
   private var recorded: [String] = []
@@ -100,7 +105,8 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     capabilities: DatabaseCapabilities, columns: [ColumnInfo], rows: [[CellValue]],
     slowQueries: Bool, failingQuery: String? = nil, openError: (any Error)? = nil,
     errorFormatter: (@Sendable (any Error) -> String)? = nil,
-    commandRows: (@Sendable (String) -> Int?)? = nil
+    commandRows: (@Sendable (String) -> Int?)? = nil,
+    commandModifiedRows: (@Sendable (String) -> Int?)? = nil
   ) {
     self.capabilities = capabilities
     self.columns = columns
@@ -110,6 +116,7 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     self.openError = openError
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
+    self.commandModifiedRows = commandModifiedRows
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
@@ -167,10 +174,11 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     record(sql, binds: binds, query: false)
     if takeFailingCommand(sql) { throw FakeQueryError() }
-    if let rows = commandRows?(sql) {
-      return CommandResult(affectedRows: rows, tag: "FAKE \(rows)")
-    }
-    return Self.commandResult(sql)
+    var result =
+      commandRows?(sql).map { CommandResult(affectedRows: $0, tag: "FAKE \($0)") }
+      ?? Self.commandResult(sql)
+    result.modifiedRows = commandModifiedRows?(sql)
+    return result
   }
 
   /// The next `command` whose SQL contains `text` throws `FakeQueryError` (once).

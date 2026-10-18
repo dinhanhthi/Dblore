@@ -304,9 +304,14 @@ extension DatabaseConnectionManager {
   }
 
   func affectedRows(sql: String, binds: [SQLBindValue]) async throws -> Int {
+    try await commandResult(sql: sql, binds: binds).affectedRows
+  }
+
+  /// The full reply of one command (MongoDB updates also carry `modifiedRows`).
+  func commandResult(sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     let startTime = Date()
     do {
-      return try await withSession { try await $0.command(sql, binds: binds) }.affectedRows
+      return try await withSession { try await $0.command(sql, binds: binds) }
     } catch let error as DatabaseError {
       throw error
     } catch {

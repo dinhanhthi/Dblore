@@ -505,7 +505,9 @@ extension MongoSession {
     case .insertOne, .insertMany:
       return CommandResult(affectedRows: written, tag: "INSERT \(written)")
     case .updateOne, .updateMany, .replaceOne:
-      return CommandResult(affectedRows: written, tag: "UPDATE \(written)")
+      return CommandResult(
+        affectedRows: written, tag: "UPDATE \(written)",
+        modifiedRows: intValue(field("nModified", of: reply)))
     case .deleteOne, .deleteMany:
       return CommandResult(affectedRows: written, tag: "DELETE \(written)")
     case .aggregate:

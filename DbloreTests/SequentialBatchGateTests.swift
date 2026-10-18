@@ -2,6 +2,8 @@
 // `executeGatedSequentialBatch` on fake sessions: the same gate as a staged batch (epoch,
 // stricter policy, owner), refused with a transaction open or under Protected mode, then sent
 // one by one without BEGIN/COMMIT, stopping at the first failure with "Applied k of n changes".
+// `executeGatedSequentialCommands` (the same gate, returning each command's result) must refuse
+// exactly like it.
 
 import Foundation
 import Testing
@@ -18,6 +20,9 @@ struct SequentialBatchGateTests {
     "DELETE FROM t WHERE id = 3",
   ]
 
+  /// The two entry points that share the gate
+  enum Entry: CaseIterable { case batch, commands }
+
   private static func config(
     _ type: DatabaseType, level: ConnectionProtectionLevel = .none, protectedMode: Bool = false
   ) -> ConnectionConfig {
@@ -29,10 +34,12 @@ struct SequentialBatchGateTests {
 
   private func connect(
     _ type: DatabaseType, level: ConnectionProtectionLevel = .none, protectedMode: Bool = false,
-    commandRows: (@Sendable (String) -> Int?)? = nil
+    commandRows: (@Sendable (String) -> Int?)? = nil,
+    commandModifiedRows: (@Sendable (String) -> Int?)? = nil
   ) async throws -> (DatabaseConnectionManager, FakeDatabaseSessionFactory) {
     let factory = FakeDatabaseSessionFactory(
-      capabilities: type.capabilities, commandRows: commandRows)
+      capabilities: type.capabilities, commandRows: commandRows,
+      commandModifiedRows: commandModifiedRows)
     let manager = DatabaseConnectionManager(sessionFactory: factory)
     try await manager.connect(
       config: Self.config(type, level: level, protectedMode: protectedMode))
@@ -42,13 +49,20 @@ struct SequentialBatchGateTests {
   /// Runs the batch and returns the error it throws, or nil when it succeeds.
   private func refusal(
     _ manager: DatabaseConnectionManager, _ statements: [String], policy: ProtectionPolicy,
-    epoch: UInt64? = nil, caller: UUID? = nil, expectedRows: [Int]? = nil
+    epoch: UInt64? = nil, caller: UUID? = nil, expectedRows: [Int]? = nil, via entry: Entry = .batch
   ) async -> DatabaseError? {
     let current = await manager.connectionEpoch
     do {
-      _ = try await manager.executeGatedSequentialBatch(
-        statements, policy: policy, connectionEpoch: epoch ?? current, caller: caller,
-        expectedRows: expectedRows)
+      switch entry {
+      case .batch:
+        _ = try await manager.executeGatedSequentialBatch(
+          statements, policy: policy, connectionEpoch: epoch ?? current, caller: caller,
+          expectedRows: expectedRows)
+      case .commands:
+        _ = try await manager.executeGatedSequentialCommands(
+          statements, policy: policy, connectionEpoch: epoch ?? current, caller: caller,
+          expectedRows: expectedRows)
+      }
       return nil
     } catch let error as DatabaseError {
       return error
@@ -65,11 +79,11 @@ struct SequentialBatchGateTests {
 
   // MARK: - Refused before anything is sent
 
-  @Test("A stale connection epoch is refused before anything is sent")
-  func staleEpoch() async throws {
+  @Test("A stale connection epoch is refused before anything is sent", arguments: Entry.allCases)
+  func staleEpoch(entry: Entry) async throws {
     let (manager, factory) = try await connect(.mysql)
     let epoch = await manager.connectionEpoch
-    let error = await refusal(manager, dml, policy: open, epoch: epoch &+ 1)
+    let error = await refusal(manager, dml, policy: open, epoch: epoch &+ 1, via: entry)
     guard case .notEditable(let reason)? = error else {
       Issue.record("Expected notEditable, got \(String(describing: error))")
       return
@@ -78,11 +92,12 @@ struct SequentialBatchGateTests {
     #expect(factory.statements.isEmpty)
   }
 
-  @Test("A read-only caller on an unprotected connection cannot write")
-  func stricterCallerPolicy() async throws {
+  @Test("A read-only caller on an unprotected connection cannot write", arguments: Entry.allCases)
+  func stricterCallerPolicy(entry: Entry) async throws {
     let (manager, factory) = try await connect(.mysql)
     let error = await refusal(
-      manager, ["SELECT 1"] + dml, policy: ProtectionPolicy(protectionLevel: .readOnly))
+      manager, ["SELECT 1"] + dml, policy: ProtectionPolicy(protectionLevel: .readOnly),
+      via: entry)
     guard case .blockedByProtection(let index, let kind, _)? = error else {
       Issue.record("Expected blockedByProtection, got \(String(describing: error))")
       return
@@ -110,10 +125,12 @@ struct SequentialBatchGateTests {
     #expect(factory.statements.isEmpty)
   }
 
-  @Test("A DML-only MySQL batch is refused under Protected mode and nothing is sent")
-  func protectedModeRefused() async throws {
+  @Test(
+    "A DML-only MySQL batch is refused under Protected mode and nothing is sent",
+    arguments: Entry.allCases)
+  func protectedModeRefused(entry: Entry) async throws {
     let (manager, factory) = try await connect(.mysql, protectedMode: true)
-    let error = await refusal(manager, dml, policy: open)
+    let error = await refusal(manager, dml, policy: open, via: entry)
     #expect(refusedReason(error) == protectedRefusal)
     #expect(error?.errorDescription == "\(protectedRefusal) Nothing was executed.")
     #expect(factory.statements.isEmpty)
@@ -143,13 +160,13 @@ struct SequentialBatchGateTests {
     #expect(userFactory.statements.count == userSent)
   }
 
-  @Test("Another caller is refused while the app transaction is pending")
-  func ownedByAnotherCaller() async throws {
+  @Test("Another caller is refused while the app transaction is pending", arguments: Entry.allCases)
+  func ownedByAnotherCaller(entry: Entry) async throws {
     let (manager, factory) = try await connect(.mysql, protectedMode: true)
     _ = try await manager.execute(
       userSQL: "UPDATE t SET v = 1 WHERE id = 1", policy: open, caller: UUID())
     let sent = factory.statements.count
-    let error = await refusal(manager, dml, policy: open, caller: UUID())
+    let error = await refusal(manager, dml, policy: open, caller: UUID(), via: entry)
     guard case .transactionPendingInAnotherTab? = error else {
       Issue.record("Expected transactionPendingInAnotherTab, got \(String(describing: error))")
       return
@@ -229,6 +246,19 @@ struct SequentialBatchGateTests {
       commands, policy: ProtectionPolicy(config: config),
       connectionEpoch: await manager.connectionEpoch, caller: UUID(), expectedRows: [1, 1, 1])
     #expect(counts == [1, 1, 1])
+    #expect(factory.statements == commands)
+  }
+
+  @Test("MongoDB commands return the matched count and, for updates, the modified count")
+  func mongoCommandsReturnModifiedRows() async throws {
+    let (manager, factory) = try await connect(
+      .mongodb, commandRows: { _ in 3 },
+      commandModifiedRows: { $0.contains("updateMany") ? 2 : nil })
+    let commands = ["db.c.deleteMany({a: 1})", "db.c.updateMany({a: 2}, {$set: {b: 1}})"]
+    let results = try await manager.executeGatedSequentialCommands(
+      commands, policy: open, connectionEpoch: await manager.connectionEpoch, expectedRows: nil)
+    #expect(results.map(\.affectedRows) == [3, 3])
+    #expect(results.map(\.modifiedRows) == [nil, 2])
     #expect(factory.statements == commands)
   }
 }
