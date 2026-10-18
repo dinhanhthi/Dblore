@@ -86,6 +86,16 @@ extension NotebookViewModel {
       database: database, collection: state.name, connectionManager: connectionManager)
   }
 
+  /// An admin command on the indexes of the collection shown, gated by the connection epoch its
+  /// index list was read with (a reconnect since then refuses it); the list is read again once
+  /// the command ran. Nil when the tab is not connected or no list was read yet.
+  func mongoIndexAdminAction() -> MongoAdminActionModel? {
+    guard let collection = mongoCollection, let epoch = collection.indexEpoch else { return nil }
+    return MongoAdminActionModel(
+      tab: self, connectionEpoch: epoch,
+      onExecuted: { [weak collection] in collection?.refreshIndexes() })
+  }
+
   /// Page and count text of `state`: the rendered `find` and `countDocuments` for MongoDB (the
   /// SQL paging and WHERE helpers never run there), else the SQL. The page is nil past the user
   /// limit (nothing to read). Nil, with the error shown, when the applied document filter or

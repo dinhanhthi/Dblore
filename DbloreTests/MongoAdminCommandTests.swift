@@ -79,4 +79,60 @@ struct MongoAdminCommandTests {
     let drop = try MongoSession.commandResult(for: .admin(.drop(collection: "c")), reply: reply)
     #expect(drop == CommandResult(affectedRows: 0, tag: "DROP"))
   }
+
+  private static func draft(
+    _ keys: [MongoIndexDraft.Key], _ edit: (inout MongoIndexDraft) -> Void
+  ) -> MongoIndexDraft {
+    var draft = MongoIndexDraft()
+    draft.keys = keys
+    edit(&draft)
+    return draft
+  }
+
+  @Test(
+    "The index draft refuses options its keys cannot take",
+    arguments: [
+      (
+        draft([.init(field: "a"), .init(field: "b")]) { $0.ttlSeconds = "60" },
+        "TTL needs a single-field index, not a compound key"
+      ),
+      (
+        draft([.init(field: "a", kind: .wildcard)]) { $0.wildcardProjection = "{ b: 1 }" },
+        "A wildcard projection needs a $** key"
+      ),
+      (
+        draft([.init(field: "body", kind: .text)]) { $0.unique = true },
+        "A text or wildcard index cannot be unique"
+      ),
+    ])
+  func draftRefuses(draft: MongoIndexDraft, message: String) {
+    #expect(draft.validationMessages() == [message])
+    #expect(draft.command(collection: "c") == nil)
+  }
+
+  @Test(
+    "A valid index draft renders mongosh text that parses back to the same createIndex",
+    arguments: [
+      (
+        "c",
+        draft([.init(field: "a.b", kind: .descending)]) {
+          $0.name = "by_ab"
+          $0.ttlSeconds = "3600"
+          $0.partialFilter = "{ qty: { $gt: 5 } }"
+          $0.collation = "{ locale: \"fr\", strength: 2 }"
+        }
+      ),
+      (
+        "my-coll",
+        draft([.init(kind: .wildcard)]) {
+          $0.sparse = true
+          $0.wildcardProjection = "{ \"a.b\": 1, _id: 0 }"
+          $0.hidden = true
+        }
+      ),
+    ])
+  func draftRoundTrip(collection: String, draft: MongoIndexDraft) throws {
+    let command = try #require(draft.command(collection: collection))
+    #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+  }
 }

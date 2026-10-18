@@ -73,6 +73,13 @@ final class MongoCollectionModel {
   /// shows the same collection
   private(set) var aggregationModel: AggregationBuilderModel?
   private(set) var indexState: IndexState = .idle
+  /// Connection epoch the shown indexes were read with: an index change is gated by it, so a
+  /// reconnect since the read refuses it. Nil until a read finished.
+  private(set) var indexEpoch: UInt64?
+  /// Names of the index rows showing their key, kept across section switches
+  var expandedIndexes: Set<String> = []
+  /// What the server can do (hidden indexes), nil until read
+  private(set) var serverFeatures: MongoServerFeatures?
   /// Filter of the schema sample (relaxed JSON document text, blank for a random sample).
   var schemaFilter: String = ""
   private(set) var schemaState: SchemaState = .idle
@@ -84,6 +91,7 @@ final class MongoCollectionModel {
   @ObservationIgnored private var indexTask: Task<Void, Never>?
   @ObservationIgnored private var schemaTask: Task<Void, Never>?
   @ObservationIgnored private var explainTask: Task<Void, Never>?
+  @ObservationIgnored private var featuresTask: Task<Void, Never>?
   /// The report shown before the analysis in flight (`.done` or `.idle`), restored on cancel.
   @ObservationIgnored private var previousSchemaState: SchemaState = .idle
 
@@ -115,6 +123,18 @@ final class MongoCollectionModel {
   /// Read the indexes again, dropping a read in flight.
   func refreshIndexes() {
     startIndexLoad()
+  }
+
+  /// Read the server version once (cached by the session; an unknown version shows every
+  /// action).
+  func loadServerFeaturesIfNeeded() {
+    guard serverFeatures == nil, featuresTask == nil else { return }
+    let connectionManager = connectionManager
+    featuresTask = Task { [weak self] in
+      let features = await connectionManager.mongoServerVersion()
+      self?.serverFeatures = features
+      self?.featuresTask = nil
+    }
   }
 
   /// Drop the reads in flight; their results are ignored. A cancelled read can start again.
@@ -252,6 +272,7 @@ final class MongoCollectionModel {
     let database = database
     let collection = collection
     indexTask = Task { [weak self] in
+      let epoch = await connectionManager.connectionEpoch
       let state: IndexState
       do {
         state = .loaded(
@@ -262,6 +283,7 @@ final class MongoCollectionModel {
       }
       guard !Task.isCancelled, let self else { return }
       self.indexState = state
+      self.indexEpoch = epoch
       self.indexTask = nil
     }
   }

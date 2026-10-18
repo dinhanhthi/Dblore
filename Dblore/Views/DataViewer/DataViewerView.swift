@@ -50,7 +50,7 @@ struct DataViewerView: View {
                   options: viewModel.dataViewer?.documentOptions ?? MongoQueryOptions())
               })
           case .indexes:
-            MongoIndexesView(model: model)
+            MongoIndexesView(model: model, viewModel: viewModel)
           }
         }
       }

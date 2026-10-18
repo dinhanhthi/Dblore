@@ -562,6 +562,12 @@ struct MongoSessionTests {
     #expect(
       text(MongoSessionError(code: 50, codeName: "MaxTimeMSExpired", message: "time limit"))
         .hasPrefix("Statement timed out after 7s"))
+    #expect(
+      text(MongoSessionError(code: 13, codeName: "Unauthorized", message: "not authorized"))
+        .hasPrefix("Not authorized for this action: not authorized"))
+    #expect(
+      text(MongoSessionError(code: 166, codeName: "CommandNotSupportedOnView", message: "view"))
+        .hasPrefix("This is a view"))
     #expect(text(MongoError(.queryTimeout, reason: nil)).contains("client timeout"))
     #expect(text(ChannelError.ioOnClosedChannel, tls: true) == MongoSession.tlsHint)
     #expect(text(ChannelError.ioOnClosedChannel, tls: false) != MongoSession.tlsHint)
@@ -581,6 +587,21 @@ struct MongoSessionTests {
     let tlsSession = MongoSession(
       config: Self.config(uri: "mongodb://db.example.com/?tls=true", sslMode: .verifyFull))
     #expect(tlsSession.formatError(ChannelError.ioOnClosedChannel) == MongoSession.tlsHint)
+  }
+
+  @Test("buildInfo versions parse without their suffix; an unknown version enables every feature")
+  func serverVersionFeatures() {
+    #expect(MongoServerVersion("4.4.29-rc0") == MongoServerVersion(4, 4, 29))
+    #expect(MongoServerVersion("8.0") == MongoServerVersion(8, 0, 0))
+    #expect(MongoServerVersion("") == nil)
+    #expect(MongoServerVersion("v8") == nil)
+    let old = MongoServerFeatures(version: MongoServerVersion(4, 2, 25))
+    #expect(!old.hiddenIndexes && !old.timeSeries && !old.clusteredCollections)
+    let mid = MongoServerFeatures(version: MongoServerVersion(5, 2, 1))
+    #expect(mid.hiddenIndexes && mid.timeSeries && !mid.clusteredCollections)
+    #expect(MongoServerFeatures(version: MongoServerVersion(5, 3)).clusteredCollections)
+    let unknown = MongoServerFeatures(version: nil)
+    #expect(unknown.hiddenIndexes && unknown.timeSeries && unknown.clusteredCollections)
   }
 
   // MARK: - Live server

@@ -115,6 +115,28 @@ extension MongoSession {
     }
   }
 
+  /// The server version from `buildInfo`, read the first time it is asked (admin forms hide the
+  /// options the server cannot do) and cached for this session. A failure is logged and returns
+  /// nil, so the next call asks again.
+  func serverVersion() async -> MongoServerVersion? {
+    if let cached = cachedServerVersion { return cached }
+    do {
+      let reply = try await catalogCommand([Field("buildInfo", .int32(1))])
+      guard let text = Self.stringValue(Self.field("version", of: reply)),
+        let version = MongoServerVersion(text)
+      else { throw Self.unexpectedReply }
+      cachedServerVersion = version
+      return version
+    } catch {
+      // A closed form cancels the read: nothing to report
+      if !(Task.isCancelled || error is CancellationError || Self.isInterruption(error)) {
+        await AppLogger.shared.warning(
+          "MongoDB buildInfo failed: \(formatError(error))", category: "Database")
+      }
+      return nil
+    }
+  }
+
   // MARK: - Reads
 
   /// The documents of one find or aggregate as typed BSON, at most `documentCap`, as one

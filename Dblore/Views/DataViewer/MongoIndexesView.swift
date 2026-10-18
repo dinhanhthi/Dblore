@@ -3,16 +3,23 @@
 //  Dblore
 //
 //  Indexes section of a MongoDB collection screen: one table row per index (name and key,
-//  type, size, usage, properties, build status), read on first show and on Refresh. Columns a
-//  read could not fill (no privilege for the stats) show "—".
+//  type, size, usage, properties, build status), read on first show, on Refresh and after each
+//  change. Columns a read could not fill (no privilege for the stats) show "—". Create Index
+//  opens `MongoCreateIndexSheet`; each row but `_id_` has Hide / Unhide (MongoDB 4.4+) and
+//  Drop. Changes go through `MongoAdminActionModel`, whose confirm sheet shows the typed name,
+//  the Safe Mode panel and failures; a change sent without asking shows its progress here.
 //
 
 import SwiftUI
 
 struct MongoIndexesView: View {
   let model: MongoCollectionModel
+  /// The tab: connection, rules and history of the index changes
+  let viewModel: NotebookViewModel
 
-  @State private var expanded: Set<String> = []
+  /// The index change asked, running or done last; nil before the first
+  @State private var action: MongoAdminActionModel?
+  @State private var showsCreate = false
 
   fileprivate enum Width {
     static let disclosure: CGFloat = 16
@@ -22,6 +29,7 @@ struct MongoIndexesView: View {
     static let usage: CGFloat = 170
     static let properties: CGFloat = 170
     static let status: CGFloat = 84
+    static let menu: CGFloat = 20
   }
 
   var body: some View {
@@ -31,27 +39,54 @@ struct MongoIndexesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .background(Color.appBackground)
-    .onAppear { model.loadIndexesIfNeeded() }
+    .onAppear {
+      model.loadIndexesIfNeeded()
+      model.loadServerFeaturesIfNeeded()
+    }
+    .modalOverlay(isPresented: $showsCreate) {
+      if let action, let manager = viewModel.connectionManager {
+        MongoCreateIndexSheet(
+          collection: model.collection, model: action, manager: manager,
+          fieldSource: viewModel.autocompleteProvider, isPresented: $showsCreate)
+      }
+    }
+    .sheet(isPresented: confirmPresented) {
+      if let action {
+        MongoAdminConfirmSheet(
+          model: action, databasePassword: viewModel.notebook.connectionConfig?.password,
+          isConnected: viewModel.connectionState == .connected)
+      }
+    }
   }
 
   // MARK: - Header
 
   private var header: some View {
     HStack(spacing: Spacing.sm) {
-      Text(model.collection)
-        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-        .foregroundColor(.foreground)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .help(model.collection)
+      if isRunning {
+        ProgressView().controlSize(.small)
+        Text("Running...")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+      }
       Spacer(minLength: Spacing.sm)
+      Button {
+        guard let action = viewModel.mongoIndexAdminAction() else { return }
+        self.action = action
+        showsCreate = true
+      } label: {
+        Label("Create Index…", systemImage: "plus")
+      }
+      .buttonStyle(FilledSecondaryButtonStyle())
+      .disabled(!canChange)
+      .help("Create an index on \(model.collection)")
       Button {
         model.refreshIndexes()
       } label: {
         Label("Refresh", systemImage: "arrow.clockwise")
       }
       .buttonStyle(FilledSecondaryButtonStyle())
-      .disabled(isLoading)
+      .disabled(isLoading || isRunning)
       .help("Read the indexes again")
     }
     .padding(.horizontal, Spacing.md)
@@ -61,6 +96,28 @@ struct MongoIndexesView: View {
   private var isLoading: Bool {
     if case .loading = model.indexState { return true }
     return false
+  }
+
+  private var isRunning: Bool { action?.state == .running }
+
+  /// A collection's indexes are listed and no change is running
+  private var canChange: Bool {
+    guard case .loaded(.indexes) = model.indexState else { return false }
+    return !isRunning
+  }
+
+  /// Hide / Unhide need MongoDB 4.4; an unknown version shows them
+  private var showsHideToggle: Bool { model.serverFeatures?.hiddenIndexes ?? true }
+
+  private var confirmPresented: Binding<Bool> {
+    action.map(MongoAdminConfirmSheet.isPresented) ?? .constant(false)
+  }
+
+  /// Sends `command` through a new admin model (gated by the epoch of the list shown)
+  private func run(_ command: MongoAdminCommand) {
+    guard let action = viewModel.mongoIndexAdminAction() else { return }
+    self.action = action
+    Task { await action.request(command) }
   }
 
   // MARK: - States
@@ -110,10 +167,9 @@ struct MongoIndexesView: View {
   // MARK: - Table
 
   private func table(_ indexes: [MongoIndexInfo]) -> some View {
+    // The count is on the section tab
     SettingsGroupCard(title: "Indexes", background: .cardBackground, contentPadding: 0) {
-      Text("\(indexes.count)")
-        .font(.small)
-        .foregroundColor(.foregroundSubtle)
+      EmptyView()
     } content: {
       VStack(alignment: .leading, spacing: 0) {
         if indexes.isEmpty {
@@ -125,8 +181,10 @@ struct MongoIndexesView: View {
           tableHeader
         }
         ForEach(Array(indexes.enumerated()), id: \.element.id) { position, index in
-          MongoIndexRow(index: index, isExpanded: expandedBinding(index.name))
-            .structureTableRow(isFirst: position == 0)
+          MongoIndexRow(index: index, isExpanded: expandedBinding(index.name)) {
+            rowMenu(index)
+          }
+          .structureTableRow(isFirst: position == 0)
         }
       }
     }
@@ -143,24 +201,66 @@ struct MongoIndexesView: View {
       Text("Properties").frame(width: Width.properties, alignment: .leading)
         .structureColumnDivider()
       Text("Status").frame(width: Width.status, alignment: .leading).structureColumnDivider()
+      Color.clear.frame(width: Width.menu, height: 0)
     }
     .structureTableHeader()
   }
 
+  /// Hide / Unhide and Drop; the `_id_` index can be neither hidden nor dropped
+  @ViewBuilder
+  private func rowMenu(_ index: MongoIndexInfo) -> some View {
+    if index.name == "_id_" {
+      Color.clear.frame(width: Width.menu, height: 0)
+    } else {
+      Menu {
+        if showsHideToggle {
+          Button(index.isHidden ? "Unhide" : "Hide") {
+            run(
+              .setIndexHidden(
+                collection: model.collection, name: index.name, hidden: !index.isHidden))
+          }
+          Divider()
+        }
+        Button("Drop…", role: .destructive) {
+          run(.dropIndex(collection: model.collection, index: .string(index.name)))
+        }
+      } label: {
+        Image(systemName: "ellipsis")
+          .font(.system(size: 11, weight: .semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(width: Width.menu, height: Width.menu)
+          .contentShape(Rectangle())
+      }
+      .menuStyle(.button)
+      .buttonStyle(.plain)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .disabled(!canChange)
+      .help("Index actions")
+      .accessibilityLabel("Actions for \(index.name)")
+    }
+  }
+
   private func expandedBinding(_ name: String) -> Binding<Bool> {
     Binding(
-      get: { expanded.contains(name) },
+      get: { model.expandedIndexes.contains(name) },
       set: { isOn in
-        if isOn { expanded.insert(name) } else { expanded.remove(name) }
+        if isOn {
+          model.expandedIndexes.insert(name)
+        } else {
+          model.expandedIndexes.remove(name)
+        }
       })
   }
 }
 
 // MARK: - Row
 
-private struct MongoIndexRow: View {
+private struct MongoIndexRow<Actions: View>: View {
   let index: MongoIndexInfo
   @Binding var isExpanded: Bool
+  /// Trailing row menu (`Width.menu` wide)
+  @ViewBuilder let actions: () -> Actions
 
   private typealias Width = MongoIndexesView.Width
 
@@ -189,6 +289,7 @@ private struct MongoIndexRow: View {
           .frame(width: Width.properties, alignment: .leading)
         status
           .frame(width: Width.status, alignment: .leading)
+        actions()
       }
       if isExpanded {
         definition

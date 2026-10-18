@@ -116,6 +116,30 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
   }
 }
 
+/// The server version from `buildInfo` (`version`, e.g. "8.0.4" or "4.4.29-rc0"; the suffix is
+/// ignored).
+nonisolated struct MongoServerVersion: Comparable, Sendable {
+  var major: Int
+  var minor: Int
+  var patch: Int
+
+  init(_ major: Int, _ minor: Int, _ patch: Int = 0) {
+    (self.major, self.minor, self.patch) = (major, minor, patch)
+  }
+
+  /// The leading digits and dots of `text`; missing minor or patch is 0. Nil without a major.
+  init?(_ text: String) {
+    let parts = text.prefix { ("0"..."9").contains($0) || $0 == "." }
+      .split(separator: ".", omittingEmptySubsequences: false).prefix(3).map { Int($0) }
+    guard let major = parts.first ?? nil else { return nil }
+    self.init(major, parts.count > 1 ? parts[1] ?? 0 : 0, parts.count > 2 ? parts[2] ?? 0 : 0)
+  }
+
+  static func < (lhs: Self, rhs: Self) -> Bool {
+    (lhs.major, lhs.minor, lhs.patch) < (rhs.major, rhs.minor, rhs.patch)
+  }
+}
+
 /// What `MongoSession.open` connects to: driver settings plus the pool to use.
 nonisolated struct MongoConnectionPlan: Sendable {
   /// Hosts (SRV resolved), credentials, authSource, database, TLS and the first CA certificate.
@@ -167,6 +191,8 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   private var isClosed = false
   private var statementTimeoutStorage: Int
   private var documentCapStorage = MongoSession.maxBufferedDocuments
+  /// `buildInfo`'s version once read (`serverVersion()`); a failure is not cached.
+  private var serverVersionStorage: MongoServerVersion?
   /// Comment tokens of the statements in flight; true once `interrupt()` targeted them.
   private var running: [String: Bool] = [:]
   /// killOp control connections under way through the tunnel, and what waits for them to end.
@@ -207,6 +233,12 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   var documentCap: Int {
     get { lock.withLock { documentCapStorage } }
     set { lock.withLock { documentCapStorage = max(1, newValue) } }
+  }
+
+  /// The cached server version (`serverVersion()`).
+  var cachedServerVersion: MongoServerVersion? {
+    get { lock.withLock { serverVersionStorage } }
+    set { lock.withLock { serverVersionStorage = newValue } }
   }
 
   // MARK: - Open / close
@@ -695,6 +727,11 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
     default:
       let mapped = MongoSessionError(error)
       switch mapped.code {
+      // The server text stays after the mapped words (it names the action and namespace)
+      case 13:
+        text = "Not authorized for this action: \(mapped.message)"
+      case 166:
+        text = "This is a view: \(mapped.message)"
       case 18:
         text =
           "Authentication failed. Check the user name, the password and the authentication "
