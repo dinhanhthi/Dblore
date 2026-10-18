@@ -14,6 +14,12 @@ enum WorkspaceInfoTab: String, CaseIterable, Hashable {
   case connection = "Connection"
 }
 
+/// A MongoDB overview screen shown over the tabs, at workspace level like the schema visualizer
+enum MongoOverviewScreen {
+  case databases
+  case collections
+}
+
 /// Manages a single workspace with shared database connection.
 /// Replaces TabStateManager for workspace-scoped management.
 @MainActor
@@ -242,6 +248,12 @@ class WorkspaceManager: Identifiable {
   var isSchemaSearchPanelVisible: Bool = false
   var schemaSearchFocusTrigger: UUID = UUID()  // Trigger re-focus on Cmd+F
 
+  /// The MongoDB Databases or Collections screen over the tabs; nil: the tabs. Showing one
+  /// closes the schema visualizer, and the visualizer closes it.
+  var mongoOverview: MongoOverviewScreen? {
+    didSet { if mongoOverview != nil { isSchemaVisualizerActive = false } }
+  }
+
   // Schema data (shared across all tabs)
   var databaseTables: [DatabaseTable] = []
   var databaseViews: [DatabaseView] = []
@@ -411,10 +423,14 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Connection Operations
 
-  /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)` and
-  /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) may call this.
+  /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)`,
+  /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) and
+  /// `switchMongoDatabase(to:)` (same server, another database) may call this.
+  /// `savesConnection: false` leaves the recent list, its Keychain items and
+  /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
+  /// is never saved either: it shares the saved entry's key and would replace its database.
   func connectWithoutUnlockCheck(
-    config: ConnectionConfig, isAutoConnect: Bool = false
+    config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true
   ) async throws {
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
@@ -423,6 +439,7 @@ class WorkspaceManager: Identifiable {
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
+    if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
     if !isAutoConnect { await supersedeAutoConnect() }
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
@@ -442,8 +459,10 @@ class WorkspaceManager: Identifiable {
       if config.fileBookmark == nil, let bookmark = await connectionManager.config?.fileBookmark {
         config.fileBookmark = bookmark
       }
-      guard SessionManager.saveConnection(config) else {
-        throw CertificateFormError.keychainSave
+      if savesConnection, config.mongoHomeDatabase == nil {
+        guard SessionManager.saveConnection(config) else {
+          throw CertificateFormError.keychainSave
+        }
       }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
@@ -451,7 +470,9 @@ class WorkspaceManager: Identifiable {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential
       }
-      workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
+      if savesConnection {
+        workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
+      }
       editingConnectionConfig = config
       // Before `.connected`, so the footer never shows the previous connection's TLS state
       mysqlTransport = await connectionManager.mysqlTransport
@@ -780,10 +801,17 @@ class WorkspaceManager: Identifiable {
     return bookmarksChanged
   }
 
-  /// Restore a pinned data viewer tab with its original ID; its page loads once connected
+  /// Restore a pinned data viewer tab with its original ID; its page loads once connected.
+  /// A MongoDB viewer of another database than the connection's (saved before a switch) is
+  /// skipped: it would read the same collection name in the wrong database.
   func restoreDataViewer(
     tabRef: WorkspaceTabReference, ref: WorkspaceTabReference.DataViewerReference
   ) {
+    if let config = workspace.connectionConfig, config.databaseType == .mongodb,
+      ref.schema != Self.mongoDatabaseName(of: config)
+    {
+      return
+    }
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
     var state = DataViewerState(
@@ -1114,7 +1142,7 @@ class WorkspaceManager: Identifiable {
     return true
   }
 
-  private func closeTabImmediately(id: UUID) {
+  func closeTabImmediately(id: UUID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
 
     if activeTabId == id {
@@ -1517,6 +1545,7 @@ class WorkspaceManager: Identifiable {
 
   /// Show the schema visualizer
   func showSchemaVisualizer() {
+    mongoOverview = nil
     isSchemaVisualizerActive = true
 
     // Load graph if not already loaded

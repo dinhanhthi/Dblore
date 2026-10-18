@@ -20,8 +20,9 @@
 // - Credentials come from `config.username`/`config.password` (the stored URI has none); no
 //   user name means no authentication. `authMechanism` nil means `.auto` (SCRAM negotiation).
 // - authSource: the URI's `authSource`, else the TXT record's (`+srv`), else the database of the
-//   connection, else `admin` (connection string spec). A user stored in `admin` while the
-//   connection names another database therefore needs `authSource=admin` in the URI.
+//   connection (`identityDatabase`: the saved database after a database switch), else `admin`
+//   (connection string spec). A user stored in `admin` while the connection names another
+//   database therefore needs `authSource=admin` in the URI.
 // - Database: `config.database`, or `test` (mongosh's default) when empty.
 // - `replicaSet` and `readPreference` are kept in the URI but not applied: commands always go to
 //   a writable (primary) connection.
@@ -516,8 +517,8 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
     try refuseIPWithTLS(hosts, usesTLS: usesTLS)
 
     let database = config.database.isEmpty ? defaultDatabase : config.database
-    let authSource =
-      uri.authSource ?? txtAuthSource ?? (config.database.isEmpty ? "admin" : config.database)
+    let identity = config.identityDatabase
+    let authSource = uri.authSource ?? txtAuthSource ?? (identity.isEmpty ? "admin" : identity)
     var settings = ConnectionSettings(
       authentication: authentication(
         username: config.username, password: config.password, mechanism: uri.authMechanism),

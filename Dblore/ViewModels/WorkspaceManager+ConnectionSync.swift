@@ -56,7 +56,10 @@ extension WorkspaceManager {
   }
 
   /// Rename the active connection (workspace, editing copy, tabs and the recent list).
-  func renameConnection(to name: String) {
+  func renameConnection(
+    to name: String, defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) {
     let trimmed = DropdownTitle.singleLine(name).trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, var current = workspace.connectionConfig, current.name != trimmed
     else { return }
@@ -65,7 +68,11 @@ extension WorkspaceManager {
     editingConnectionConfig.name = trimmed
     markDirtyAndScheduleAutoSave()
     syncConnectionStateToTabs()
-    SessionManager.saveConnection(current)
+    // A switched MongoDB connection renames its saved entry, which keeps the home database
+    SessionManager.saveConnection(
+      current.mongoHomeDatabase == nil
+        ? current : Self.switchedMongoConfig(current, to: current.identityDatabase),
+      defaults: defaults, passwords: passwords)
   }
 
   // MARK: - Connect (weakening needs the Safe Mode unlock)
@@ -92,17 +99,26 @@ extension WorkspaceManager {
   )
     -> Bool
   {
-    func normalized(_ value: String) -> String {
-      value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
+    isSameServer(lhs, rhs) && normalized(lhs.database) == normalized(rhs.database)
+  }
+
+  /// Engine, host, port and username match (strings trimmed, case-insensitive)
+  nonisolated private static func isSameServer(
+    _ lhs: ConnectionConfig, _ rhs: ConnectionConfig
+  )
+    -> Bool
+  {
     func normalizedHost(_ value: String) -> String {
       let host = normalized(value)
       return host.hasSuffix(".") ? String(host.dropLast()) : host
     }
     return lhs.databaseType == rhs.databaseType && lhs.port == rhs.port
       && normalizedHost(lhs.host) == normalizedHost(rhs.host)
-      && normalized(lhs.database) == normalized(rhs.database)
       && normalized(lhs.username) == normalized(rhs.username)
+  }
+
+  nonisolated private static func normalized(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
   }
 
   /// The single connect entry point. Connecting replaces the current connection, so a pending
@@ -121,6 +137,14 @@ extension WorkspaceManager {
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
   ) async throws {
     lastUnlockConnectError = nil
+    // The pin of a switched MongoDB connection holds on its own server only (Reconnect,
+    // auto-connect, a new window); a form connect to another server or user is a new connection
+    var config = config
+    if config.mongoHomeDatabase != nil,
+      workspace.connectionConfig.map({ !Self.isSameServer($0, config) }) ?? true
+    {
+      config.mongoHomeDatabase = nil
+    }
     if !isAutoConnect { await supersedeAutoConnect() }
     guard
       await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)

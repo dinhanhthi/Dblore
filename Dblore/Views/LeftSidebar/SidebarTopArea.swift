@@ -25,6 +25,22 @@ struct WorkspaceSidebarTopArea: View {
       Spacer()
 
       HStack(spacing: Spacing.sm) {
+        // MongoDB Databases screen, toggled like the schema visualizer button
+        if workspaceManager.isMongoWorkspace && workspaceManager.connectionState.isConnected {
+          let showsDatabases = workspaceManager.mongoOverview == .databases
+          Button {
+            workspaceManager.mongoOverview = showsDatabases ? nil : .databases
+          } label: {
+            Image(systemName: "cylinder.split.1x2")
+              .foregroundColor(showsDatabases ? .accent : .foregroundMuted)
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .controlSize(.small)
+          .blockDoubleClickZoom()
+          .help(showsDatabases ? "Close Databases" : "Show Databases")
+          .accessibilityLabel("Databases")
+        }
+
         if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
           // Expand/Collapse all button
           Button {

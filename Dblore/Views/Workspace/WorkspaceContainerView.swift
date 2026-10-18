@@ -33,9 +33,11 @@ struct WorkspaceContainerView: View {
     return workspaceManager.viewModel(for: activeTabId)
   }
 
-  /// Whether the content area shows `WorkspaceWelcomeView` (no tab and no schema visualizer)
+  /// Whether the content area shows `WorkspaceWelcomeView` (no tab, no schema visualizer and no
+  /// MongoDB overview screen)
   private var showsWorkspaceWelcome: Bool {
-    !workspaceManager.isSchemaVisualizerActive && activeViewModel == nil
+    !workspaceManager.isSchemaVisualizerActive && workspaceManager.mongoOverview == nil
+      && activeViewModel == nil
   }
 
   /// Hides the AI assistant only in its sidebar mode: the floating bubble takes no width
@@ -140,6 +142,12 @@ struct WorkspaceContainerView: View {
               if workspaceManager.isSchemaVisualizerActive {
                 // Schema visualizer at workspace level (overlays everything)
                 WorkspaceSchemaVisualizerContent(workspaceManager: workspaceManager)
+              } else if let screen = workspaceManager.mongoOverview {
+                // MongoDB Databases / Collections at workspace level (over the tabs)
+                switch screen {
+                case .databases: MongoDatabasesView(workspaceManager: workspaceManager)
+                case .collections: MongoCollectionsView(workspaceManager: workspaceManager)
+                }
               } else if let activeTabId = workspaceManager.activeTabId,
                 let viewModel = workspaceManager.viewModel(for: activeTabId)
               {
@@ -262,7 +270,8 @@ struct WorkspaceContainerView: View {
         }
 
         FooterView(
-          viewModel: workspaceManager.isSchemaVisualizerActive ? nil : activeViewModel,
+          viewModel: workspaceManager.isSchemaVisualizerActive
+            || workspaceManager.mongoOverview != nil ? nil : activeViewModel,
           connectionState: workspaceManager.connectionState,
           connectionConfig: workspaceManager.workspace.connectionConfig,
           transport: workspaceManager.mysqlTransport

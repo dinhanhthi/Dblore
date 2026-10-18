@@ -338,6 +338,7 @@ extension WorkspaceManager {
     databaseRoles = []
     databaseForeignKeys = []
     schemaConnectionEpoch = nil
+    mongoOverview = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

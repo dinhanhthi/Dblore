@@ -360,6 +360,16 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   /// MongoDB connection string rebuilt by `MongoURIParser` from allow-listed fields only: never
   /// userinfo or unknown options. TLS lives in `sslMode`.
   var mongoURI: String?
+  /// Database of the saved connection after a MongoDB database switch (nil: never switched).
+  /// Keychain identities and the default authSource use it, so they stay those of the saved
+  /// connection.
+  var mongoHomeDatabase: String?
+
+  /// The database part of the connection's Keychain identity: the pin (MongoDB only), else
+  /// `database`.
+  nonisolated var identityDatabase: String {
+    databaseType == .mongodb ? mongoHomeDatabase ?? database : database
+  }
 
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
@@ -377,6 +387,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case fileBookmark, readOnlyFile
     // MongoDB connection string (absent on other engines and on older connections)
     case mongoURI
+    // Identity pin of a switched MongoDB connection (absent unless switched)
+    case mongoHomeDatabase
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -429,6 +441,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     readOnlyFile =
       try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? (databaseType == .duckdb)
     mongoURI = try container.decodeIfPresent(String.self, forKey: .mongoURI)
+    mongoHomeDatabase = try container.decodeIfPresent(String.self, forKey: .mongoHomeDatabase)
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -479,6 +492,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encodeIfPresent(fileBookmark, forKey: .fileBookmark)
     try container.encode(readOnlyFile, forKey: .readOnlyFile)
     try container.encodeIfPresent(mongoURI, forKey: .mongoURI)
+    try container.encodeIfPresent(mongoHomeDatabase, forKey: .mongoHomeDatabase)
   }
 
   nonisolated init(

@@ -56,7 +56,8 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
 
 /// The one formula for a connection's Keychain identity: the password key and the client
 /// certificate account. Only engines with a `DatabaseType.keychainScope` (MySQL) carry the engine;
-/// PostgreSQL, SQLite and DuckDB keep the legacy strings byte for byte.
+/// PostgreSQL, SQLite and DuckDB keep the legacy strings byte for byte. The database part is
+/// `identityDatabase`, so a switched MongoDB connection keeps the items of the saved one.
 nonisolated enum ConnectionKeychainKey {
   /// `host:port:database:username` for an engine without a scope; a length-prefixed account
   /// with the scope first otherwise, so colons in a field never make it equal a legacy key.
@@ -70,12 +71,12 @@ nonisolated enum ConnectionKeychainKey {
   static func password(for config: ConnectionConfig) -> String {
     password(
       scope: config.databaseType.keychainScope, host: config.host, port: config.port,
-      database: config.database, username: config.username)
+      database: config.identityDatabase, username: config.username)
   }
 
   /// Length-prefixed account; the scope is an extra leading part only when the engine has one.
   static func certificateAccount(for config: ConnectionConfig) -> String {
-    let parts = [config.host, String(config.port), config.database, config.username]
+    let parts = [config.host, String(config.port), config.identityDatabase, config.username]
     return KeychainAccount.v2((config.databaseType.keychainScope.map { [$0] } ?? []) + parts)
   }
 }
