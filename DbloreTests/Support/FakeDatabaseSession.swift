@@ -22,6 +22,13 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   let commandRows: (@Sendable (String) -> Int?)?
   /// `modifiedRows` of a `command` (nil when unset or when it returns nil).
   let commandModifiedRows: (@Sendable (String) -> Int?)?
+  /// Result of a typed `command(_: MongoCommand)` when set (else derived from the command).
+  let typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)?
+  /// The typed command at this index (0-based, per session) throws `typedError`.
+  let failTypedAt: Int?
+  let typedError: any Error
+  /// What `writeLimits()` returns.
+  let writeLimits: MongoWriteLimits
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
@@ -31,7 +38,10 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     slowQueries: Bool = false, failingQuery: String? = nil, openError: (any Error)? = nil,
     errorFormatter: (@Sendable (any Error) -> String)? = nil,
     commandRows: (@Sendable (String) -> Int?)? = nil,
-    commandModifiedRows: (@Sendable (String) -> Int?)? = nil
+    commandModifiedRows: (@Sendable (String) -> Int?)? = nil,
+    typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)? = nil,
+    failTypedAt: Int? = nil, typedError: any Error = FakeQueryError(),
+    writeLimits: MongoWriteLimits = .fallback
   ) {
     self.capabilities = capabilities
     self.columns = columns
@@ -42,13 +52,19 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
     self.commandModifiedRows = commandModifiedRows
+    self.typedCommandResult = typedCommandResult
+    self.failTypedAt = failTypedAt
+    self.typedError = typedError
+    self.writeLimits = writeLimits
   }
 
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
     let session = FakeDatabaseSession(
       capabilities: capabilities, columns: columns, rows: rows, slowQueries: slowQueries,
       failingQuery: failingQuery, openError: openError, errorFormatter: errorFormatter,
-      commandRows: commandRows, commandModifiedRows: commandModifiedRows)
+      commandRows: commandRows, commandModifiedRows: commandModifiedRows,
+      typedCommandResult: typedCommandResult, failTypedAt: failTypedAt, typedError: typedError,
+      writeLimits: writeLimits)
     lock.lock()
     made.append(session)
     lock.unlock()
@@ -65,11 +81,17 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   var statements: [String] {
     sessions.flatMap(\.statements)
   }
+
+  /// Typed commands that reached any session, in the order they were sent.
+  var typedCommands: [MongoCommand] {
+    sessions.flatMap(\.typedCommands)
+  }
 }
 
 /// One scripted connection. `query`, `command`, and `openCursor` record the text and binds
-/// they were given. FETCH and CLOSE record no binds.
-final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
+/// they were given. FETCH and CLOSE record no binds. Typed MongoDB commands are recorded apart
+/// (`typedCommands`).
+final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
   let closeEvents: AsyncStream<SessionCloseReason>
 
@@ -81,11 +103,16 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
   private let errorFormatter: (@Sendable (any Error) -> String)?
   private let commandRows: (@Sendable (String) -> Int?)?
   private let commandModifiedRows: (@Sendable (String) -> Int?)?
+  private let typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)?
+  private let failTypedAt: Int?
+  private let typedError: any Error
+  private let limits: MongoWriteLimits
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let lock = NSLock()
   private var recorded: [String] = []
   private var recordedBinds: [[SQLBindValue]] = []
   private var queriesRecorded: [String] = []
+  private var typedRecorded: [MongoCommand] = []
   private var didEmitClose = false
   private var slowContinuation: CheckedContinuation<Void, Error>?
   private var startedContinuation: CheckedContinuation<Void, Never>?
@@ -106,7 +133,10 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     slowQueries: Bool, failingQuery: String? = nil, openError: (any Error)? = nil,
     errorFormatter: (@Sendable (any Error) -> String)? = nil,
     commandRows: (@Sendable (String) -> Int?)? = nil,
-    commandModifiedRows: (@Sendable (String) -> Int?)? = nil
+    commandModifiedRows: (@Sendable (String) -> Int?)? = nil,
+    typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)? = nil,
+    failTypedAt: Int? = nil, typedError: any Error = FakeQueryError(),
+    writeLimits: MongoWriteLimits = .fallback
   ) {
     self.capabilities = capabilities
     self.columns = columns
@@ -117,6 +147,10 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
     self.commandModifiedRows = commandModifiedRows
+    self.typedCommandResult = typedCommandResult
+    self.failTypedAt = failTypedAt
+    self.typedError = typedError
+    limits = writeLimits
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
@@ -138,6 +172,13 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     return queriesRecorded
+  }
+
+  /// Typed commands sent, in order (a failing one included).
+  var typedCommands: [MongoCommand] {
+    lock.lock()
+    defer { lock.unlock() }
+    return typedRecorded
   }
 
   func open() async throws {
@@ -180,6 +221,23 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     result.modifiedRows = commandModifiedRows?(sql)
     return result
   }
+
+  /// Records `command`; the one at `failTypedAt` throws `typedError`. Inserts count their
+  /// documents, admin commands 0, any other write 1, unless `typedCommandResult` is set.
+  func command(_ command: MongoCommand) async throws -> CommandResult {
+    let index = recordTyped(command)
+    if index == failTypedAt { throw typedError }
+    if let typedCommandResult { return typedCommandResult(command) }
+    let rows: Int
+    switch command {
+    case .insertMany(_, let documents): rows = documents.count
+    case .admin: rows = 0
+    default: rows = 1
+    }
+    return CommandResult(affectedRows: rows, tag: "FAKE \(rows)")
+  }
+
+  func writeLimits() async -> MongoWriteLimits { limits }
 
   /// The next `command` whose SQL contains `text` throws `FakeQueryError` (once).
   func failNextCommand(containing text: String) {
@@ -334,6 +392,14 @@ final class FakeDatabaseSession: DatabaseSession, @unchecked Sendable {
     recordedBinds.append(binds)
     if query { queriesRecorded.append(sql) }
     lock.unlock()
+  }
+
+  /// Records `command` and returns its index.
+  private func recordTyped(_ command: MongoCommand) -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    typedRecorded.append(command)
+    return typedRecorded.count - 1
   }
 
   private func rowSource() -> SessionRowSource {

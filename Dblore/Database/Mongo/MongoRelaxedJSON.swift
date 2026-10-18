@@ -45,9 +45,15 @@ nonisolated enum MongoRelaxedJSON {
     var errorDescription: String? { message }
   }
 
-  static func parse(_ text: String) throws(ParseError) -> MongoValue {
-    guard text.utf8.count <= maxInputBytes else {
-      throw ParseError(message: "The text is larger than 1 MiB", offset: 0)
+  /// `maxBytes` is the input limit in UTF-8 bytes; restore and import raise it to the server's
+  /// maxBsonObjectSize for one document line. Every other caller keeps `maxInputBytes`.
+  static func parse(
+    _ text: String, maxBytes: Int = maxInputBytes
+  ) throws(ParseError) -> MongoValue {
+    guard text.utf8.count <= maxBytes else {
+      let limit =
+        maxBytes % 1_048_576 == 0 ? "\(maxBytes / 1_048_576) MiB" : "\(maxBytes) bytes"
+      throw ParseError(message: "The text is larger than \(limit)", offset: 0)
     }
     var parser = Parser(text: text)
     return try parser.parseAll()

@@ -68,7 +68,7 @@ extension DatabaseConnectionManager {
 
   // MARK: - Private
 
-  private static let sequentialTransactionOpenRefusal =
+  static let sequentialTransactionOpenRefusal =
     "Commit or roll back the open transaction first, then run these changes."
 
   /// Send each statement on its own. Stops at the first failure, once the connection changed

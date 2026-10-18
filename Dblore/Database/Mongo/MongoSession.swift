@@ -193,6 +193,8 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   private var documentCapStorage = MongoSession.maxBufferedDocuments
   /// `buildInfo`'s version once read (`serverVersion()`); a failure is not cached.
   private var serverVersionStorage: MongoServerVersion?
+  /// `hello`'s write limits once read (`writeLimits()`); a failure is not cached.
+  private var writeLimitsStorage: MongoWriteLimits?
   /// Comment tokens of the statements in flight; true once `interrupt()` targeted them.
   private var running: [String: Bool] = [:]
   /// killOp control connections under way through the tunnel, and what waits for them to end.
@@ -239,6 +241,12 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   var cachedServerVersion: MongoServerVersion? {
     get { lock.withLock { serverVersionStorage } }
     set { lock.withLock { serverVersionStorage = newValue } }
+  }
+
+  /// The cached server write limits (`writeLimits()`).
+  var cachedWriteLimits: MongoWriteLimits? {
+    get { lock.withLock { writeLimitsStorage } }
+    set { lock.withLock { writeLimitsStorage = newValue } }
   }
 
   // MARK: - Open / close

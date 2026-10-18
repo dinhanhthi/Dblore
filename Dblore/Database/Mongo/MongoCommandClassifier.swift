@@ -36,10 +36,12 @@ nonisolated enum MongoCommandClassifier {
     guard let command = try? MongoshParser.parse(text) else {
       return statement(text, kind: .unknown)
     }
-    return classify(command, text: text)
+    return classify(command, summary: text)
   }
 
-  private static func classify(_ command: MongoCommand, text: String) -> ClassifiedStatement {
+  /// Classify an already-built command (typed writes that skip the parser). `summary` becomes the
+  /// statement text shown in confirmations and history. Same mapping as the text entry points.
+  static func classify(_ command: MongoCommand, summary text: String) -> ClassifiedStatement {
     switch command {
     case .find, .countDocuments, .distinct, .listCollections:
       return statement(text, kind: .read)
@@ -52,7 +54,7 @@ nonisolated enum MongoCommandClassifier {
     case .updateMany(_, let filter, _, _), .deleteMany(_, let filter):
       return statement(text, kind: .dml, affectsAllRows: filter == .document([]))
     case .explain(let inner, _):
-      return statement(text, kind: classify(inner, text: text).kind == .read ? .read : .unknown)
+      return statement(text, kind: classify(inner, summary: text).kind == .read ? .read : .unknown)
     case .admin(let admin):
       return statement(text, kind: .ddl, isDestructive: admin.isDestructive)
     }
