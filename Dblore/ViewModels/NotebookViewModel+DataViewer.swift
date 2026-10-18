@@ -96,6 +96,25 @@ extension NotebookViewModel {
       onExecuted: { [weak collection] in collection?.refreshIndexes() })
   }
 
+  /// A `collMod` of the validation rules of the collection shown, gated by the connection epoch
+  /// its rules were read with; the rules (and the draft) are read again once the command
+  /// succeeded, so a refused edit stays in the editor. Nil when the tab is not connected or no
+  /// rules were read yet.
+  func mongoValidationAdminAction() -> MongoAdminActionModel? {
+    guard let collection = mongoCollection, let epoch = collection.validationEpoch else {
+      return nil
+    }
+    // `onExecuted` also runs after a failure; the model sets its state first
+    weak var action: MongoAdminActionModel?
+    let model = MongoAdminActionModel(
+      tab: self, connectionEpoch: epoch,
+      onExecuted: { [weak collection] in
+        if action?.state == .done { collection?.refreshValidation() }
+      })
+    action = model
+    return model
+  }
+
   /// Page and count text of `state`: the rendered `find` and `countDocuments` for MongoDB (the
   /// SQL paging and WHERE helpers never run there), else the SQL. The page is nil past the user
   /// limit (nothing to read). Nil, with the error shown, when the applied document filter or

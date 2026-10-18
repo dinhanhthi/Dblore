@@ -143,6 +143,16 @@ struct MongoRelaxedJSONTests {
     #expect(parseError("NumberDecimal(1.5)") != nil)
   }
 
+  @Test("Long, as current mongosh prints int64, is an alias of NumberLong")
+  func longAlias() throws {
+    let big: Int64 = 9_007_199_254_740_993
+    for text in ["'9007199254740993'", #""9007199254740993""#, "9007199254740993"] {
+      #expect(try parse("Long(\(text))") == .int64(big), "\(text)")
+      #expect(try parse("Long(\(text))") == parse("NumberLong(\(text))"), "\(text)")
+    }
+    #expect(parseError("Long(1.5)") != nil)
+  }
+
   @Test("mongosh helpers: Timestamp, BinData, RegExp, regex literal, MinKey, MaxKey")
   func mongoshOtherHelpers() throws {
     #expect(try parse("Timestamp(1700000000, 3)") == .timestamp(t: 1_700_000_000, i: 3))

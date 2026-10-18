@@ -1,7 +1,8 @@
 // MongoAdminCommandTests.swift
 // The admin commands of the mongosh subset as sent: command documents (rename on admin with full
 // namespaces, the drivers' generated index name), the database writeCommand routes to and the
-// command tag of a reply; the index, collection and view drafts checked and round-tripped
+// command tag of a reply; the index, collection and view drafts and the validation rules checked
+// and round-tripped
 
 import Foundation
 import Testing
@@ -203,6 +204,89 @@ struct MongoAdminCommandTests {
           collection: "big_orders",
           options: doc(("viewOn", .string("orders")), ("pipeline", .array([stage])))))
     #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+  }
+
+  // MARK: - Validation rules
+
+  /// Hand-built: an int64 above Int32.max and nested `properties`.
+  private static func handBuiltRules() -> MongoValidationRules {
+    let field = { (key: String, value: MongoValue) in MongoValue.Field(key, value) }
+    let nested = MongoValue.document([
+      field("bsonType", .string("object")),
+      field(
+        "properties", .document([field("b", .document([field("bsonType", .string("string"))]))])),
+    ])
+    let schema = MongoValue.document([
+      field("bsonType", .string("object")),
+      field("required", .array([.string("a")])),
+      field(
+        "properties",
+        .document([
+          field(
+            "a",
+            .document([field("bsonType", .string("long")), field("minimum", .int64(3_000_000_000))])
+          ),
+          field("nested", nested),
+        ])),
+    ])
+    return MongoValidationRules(
+      validator: .document([field("$jsonSchema", schema)]), level: .moderate, action: .warn)
+  }
+
+  /// From a sampled report with a nested document.
+  private static func sampledRules() throws -> MongoValidationRules {
+    let documents = try ["{a: 1, nested: {b: 'x'}}", "{a: 2, nested: {b: 'y', c: true}}"].map {
+      try MongoRelaxedJSON.parse($0)
+    }
+    let report = MongoSchemaAnalyzer.analyze(documents, calendar: Calendar(identifier: .gregorian))
+    return MongoValidationRules(
+      validator: try MongoValidationRules.fromSample(report), level: .off, action: .errorAndLog)
+  }
+
+  @Test(
+    "Validation rules render as collMod that parses back, and their editor text reads back",
+    arguments: [false, true])
+  func validationRulesRoundTrip(sampled: Bool) throws {
+    let rules = sampled ? try Self.sampledRules() : Self.handBuiltRules()
+    guard case .document(let top) = rules.validator, case .document(let schema)? = top.first?.value,
+      !schema.isEmpty
+    else {
+      Issue.record("no $jsonSchema document: \(rules.validator)")
+      return
+    }
+    let command = rules.command(collection: "orders")
+    #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+    #expect(
+      try MongoValidationRules(
+        validatorText: rules.validatorText, level: rules.level, action: rules.action) == rules,
+      "\(rules.validatorText)")
+    guard case .collMod(_, let options) = command else {
+      Issue.record("not collMod: \(command)")
+      return
+    }
+    #expect(MongoValidationRules(options: options) == rules)
+  }
+
+  @Test(
+    "A validator with server-side JavaScript is refused; a plain $jsonSchema is accepted",
+    arguments: [
+      ("{ $where: \"this.a > 1\" }", false),
+      (
+        "{ $expr: { $function: { body: \"function() { return true }\", args: [], lang: \"js\" } } }",
+        false
+      ),
+      ("{ $jsonSchema: { required: [\"name\"] } }", true),
+    ])
+  func validatorRefusesServerSideJavaScript(text: String, isAccepted: Bool) {
+    let result = Result { () throws(MongoRelaxedJSON.ParseError) in
+      try MongoValidationRules(validatorText: text, level: .strict, action: .error)
+    }
+    switch result {
+    case .success: #expect(isAccepted, "\(text)")
+    case .failure(let error):
+      #expect(!isAccepted, "\(text): \(error.message)")
+      #expect(error.message == "Server-side JavaScript is not allowed in a validator")
+    }
   }
 
   @Test("A view pipeline with $out is refused")

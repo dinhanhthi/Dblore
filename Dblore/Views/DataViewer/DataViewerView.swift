@@ -35,7 +35,7 @@ struct DataViewerView: View {
             EmptyView()
           case .aggregations:
             MongoAggregationsView(
-              model: model, openQuery: openQuery,
+              model: model, viewModel: viewModel, openQuery: openQuery,
               fieldSource: viewModel.autocompleteProvider,
               database: MongoExportCodeSheet.database(for: viewModel), aiAssistant: aiAssistant,
               runLimit: viewModel.dataViewer?.pageSize ?? 100,
@@ -51,6 +51,8 @@ struct DataViewerView: View {
               })
           case .indexes:
             MongoIndexesView(model: model, viewModel: viewModel)
+          case .validation:
+            MongoValidationView(model: model, viewModel: viewModel)
           }
         }
       }

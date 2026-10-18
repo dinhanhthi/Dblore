@@ -50,7 +50,7 @@ struct DataViewerSearchTests {
     let viewModel = makeViewModel(databaseType: .mongodb)
     let model = try #require(viewModel.mongoCollection)
     #expect(viewModel.isSearchAvailable)
-    for section in [MongoCollectionModel.Section.aggregations, .schema, .indexes] {
+    for section in MongoCollectionModel.Section.allCases where section != .documents {
       model.section = section
       #expect(!viewModel.isSearchAvailable)
     }

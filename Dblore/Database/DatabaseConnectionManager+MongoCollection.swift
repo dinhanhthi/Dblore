@@ -10,6 +10,9 @@
 // leaves their columns nil (see `MongoIndexInfo.merge`). Commands run in the session's database
 // (`MongoSession.databaseName`, the data viewer's `schema` on MongoDB).
 //
+// Collection info: `listCollections` filtered by name, for the Validation tab. Views answer
+// `type: "view"` (no code 166 here); a missing namespace is an error.
+//
 // Schema sample: the mongosh text of `MongoSchemaAnalyzer.sampleCommand` (refused before
 // anything is sent when it uses server-side JavaScript) is parsed back with `MongoshParser`, so
 // the command sent is exactly the text that passed the check; anything but a `find` or
@@ -27,6 +30,16 @@ nonisolated enum MongoIndexesResult: Equatable, Sendable {
   case indexes([MongoIndexInfo])
   /// The namespace is a view: views have no indexes.
   case view
+}
+
+/// The `listCollections` entry of one namespace.
+nonisolated struct MongoCollectionInfo: Equatable, Sendable {
+  /// `collection`, `view` or `timeseries`
+  var type: String
+  /// The entry's `options` document (`validator`, `validationLevel`, …); empty when none
+  var options: MongoValue
+
+  var isView: Bool { type == "view" }
 }
 
 /// What the connected MongoDB server can do, for the admin forms.
@@ -96,6 +109,35 @@ extension DatabaseConnectionManager {
       let collStats = try? await mongo.catalogDocuments(
         MongoIndexInfo.collStatsCommand(collection: collection), cap: Self.mongoCollStatsCap)
       return .indexes(MongoIndexInfo.merge(indexes: indexes, stats: stats, collStats: collStats))
+    }
+  }
+
+  /// The type and options of `collection`. `database`, when given, must be the session's
+  /// database.
+  func fetchMongoCollectionInfo(
+    database: String?, collection: String
+  ) async throws -> MongoCollectionInfo {
+    try await fetchCatalog("collection info") { session in
+      guard let mongo = session as? MongoSession else {
+        throw MongoSessionError(message: "Collection info needs a MongoDB session.")
+      }
+      if let database, database != mongo.databaseName {
+        throw MongoSessionError(
+          message: "This connection reads database \(mongo.databaseName), not \(database).")
+      }
+      let command = [
+        MongoValue.Field("listCollections", .int32(1)),
+        MongoValue.Field("filter", .document([MongoValue.Field("name", .string(collection))])),
+        MongoValue.Field("cursor", .document([])),
+      ]
+      guard case .document(let entry)? = try await mongo.catalogDocuments(command, cap: 1).first
+      else {
+        throw MongoSessionError(message: "The collection \(collection) was not found.")
+      }
+      let value = { (key: String) in entry.first { $0.key == key }?.value }
+      var type = "collection"
+      if case .string(let text)? = value("type") { type = text }
+      return MongoCollectionInfo(type: type, options: value("options") ?? .document([]))
     }
   }
 

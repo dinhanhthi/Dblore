@@ -17,6 +17,8 @@ import SwiftUI
 struct MongoViewEditorSheet: View {
   enum Mode {
     case create
+    /// A new view on `source` starting from `pipeline` (Create View of the aggregation builder)
+    case createFrom(source: String, pipeline: [MongoValue])
     case edit(DatabaseView)
     case duplicate(of: DatabaseView)
   }
@@ -47,6 +49,10 @@ struct MongoViewEditorSheet: View {
       switch mode {
       case .create:
         MongoViewDraft(editedName: nil, name: "", source: sources.first ?? "", definition: nil)
+      case .createFrom(let source, let pipeline):
+        MongoViewDraft(
+          editedName: nil, name: "", source: source,
+          definition: MongoRelaxedJSON.render(.array(pipeline), as: .mongosh, indented: true))
       case .edit(let view):
         MongoViewDraft(
           editedName: view.name, name: view.name, source: view.source ?? "",
@@ -69,7 +75,7 @@ struct MongoViewEditorSheet: View {
 
   private var title: String {
     switch mode {
-    case .create: "New View"
+    case .create, .createFrom: "New View"
     case .edit: "Edit View"
     case .duplicate: "Duplicate View"
     }

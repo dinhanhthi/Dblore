@@ -9,10 +9,11 @@ import Foundation
 ///
 /// Accepted syntax: JSON plus unquoted keys (`[A-Za-z_$][A-Za-z0-9_$]*`), single-quoted strings,
 /// trailing commas, `//` and `/* */` comments, `Infinity`/`-Infinity`/`NaN`, regex literals
-/// `/pattern/flags`, the mongosh helpers `ObjectId`, `ISODate`, `new Date`, `NumberLong`,
-/// `NumberInt`, `NumberDecimal`, `Timestamp`, `BinData`, `RegExp`, `MinKey`, `MaxKey`, and the
-/// canonical Extended JSON wrappers (`$oid`, `$date`, `$numberLong`, ...). A wrapper is recognised
-/// only when the object has exactly the wrapper's keys; any other object is a plain document.
+/// `/pattern/flags`, the mongosh helpers `ObjectId`, `ISODate`, `new Date`, `NumberLong` (alias
+/// `Long`), `NumberInt`, `NumberDecimal`, `Timestamp`, `BinData`, `RegExp`, `MinKey`, `MaxKey`,
+/// and the canonical Extended JSON wrappers (`$oid`, `$date`, `$numberLong`, ...). A wrapper is
+/// recognised only when the object has exactly the wrapper's keys; any other object is a plain
+/// document.
 ///
 /// Number typing: an integer literal is int32 when it fits, else int64, else double; a literal
 /// with a fraction or an exponent is a double. mongosh reads every plain number as a double;
@@ -341,8 +342,8 @@ nonisolated extension MongoRelaxedJSON {
     }
 
     private static let helperNames: Set<String> = [
-      "ObjectId", "ISODate", "NumberLong", "NumberInt", "NumberDecimal", "Timestamp", "BinData",
-      "RegExp", "MinKey", "MaxKey",
+      "ObjectId", "ISODate", "NumberLong", "Long", "NumberInt", "NumberDecimal", "Timestamp",
+      "BinData", "RegExp", "MinKey", "MaxKey",
     ]
 
     /// Recursive through helper arguments, so the conversion lives in `helper(_:_:at:)`: one
@@ -409,7 +410,7 @@ nonisolated extension MongoRelaxedJSON.Parser {
     case "new Date": return try newDate(arguments, at: start)
     case "ObjectId": return try objectId(arguments, at: start)
     case "ISODate": return try isoDate(arguments, at: start)
-    case "NumberLong": return try numberLong(arguments, at: start)
+    case "NumberLong", "Long": return try numberLong(name, arguments, at: start)
     case "NumberInt": return try numberInt(arguments, at: start)
     case "NumberDecimal": return try numberDecimal(arguments, at: start)
     case "Timestamp": return try timestamp(arguments, at: start)
@@ -473,16 +474,17 @@ nonisolated extension MongoRelaxedJSON.Parser {
       "new Date needs an ISO 8601 string or integer milliseconds", at: argument.offset)
   }
 
+  /// `name` is `NumberLong` or `Long` (current mongosh prints int64 as `Long('n')`).
   private func numberLong(
-    _ arguments: [Argument], at start: Int
+    _ name: String, _ arguments: [Argument], at start: Int
   )
     throws(MongoRelaxedJSON.ParseError) -> MongoValue
   {
-    let argument = try onlyArgument(arguments, "NumberLong", at: start)
+    let argument = try onlyArgument(arguments, name, at: start)
     if let value = argument.value.integer ?? argument.value.integerText.flatMap({ Int64($0) }) {
       return .int64(value)
     }
-    throw failure("NumberLong needs a 64-bit integer", at: argument.offset)
+    throw failure("\(name) needs a 64-bit integer", at: argument.offset)
   }
 
   private func numberInt(

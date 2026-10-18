@@ -15,8 +15,9 @@ nonisolated enum TestMongoDatabase {
   static let port = Int(env["TEST_MONGO_PORT"] ?? "27018") ?? 27018
   static let tlsPort = Int(env["TEST_MONGO_TLS_PORT"] ?? "27019") ?? 27019
   static let database = env["TEST_MONGO_DB"] ?? "dblore_test"
-  /// Defaults to `dblore_test`: SCRAM-SHA-256 only, readWrite on `dblore_test` plus
-  /// clusterMonitor (serverStatus); currentOp `$ownOps` and killOp of its own ops need no role.
+  /// Defaults to `dblore_test`: SCRAM-SHA-256 only, readWrite and dbAdmin (collMod) on
+  /// `dblore_test` plus clusterMonitor (serverStatus); currentOp `$ownOps` and killOp of its own
+  /// ops need no role.
   static let username = env["TEST_MONGO_USER"] ?? "dblore_test"
   static let password = env["TEST_MONGO_PASSWORD"] ?? "dblore123"
 

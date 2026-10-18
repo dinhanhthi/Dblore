@@ -7,14 +7,18 @@
 //  the results of a Run) under a header. Its left side holds icon buttons: AI, Copy, the Export
 //  menu (driver code, or the documents as JSON or CSV), saved pipelines, the template Wizard and
 //  the aggregate options, then a status line (why the pipeline is blocked, or how an export went).
-//  Its right side holds the Stages | Text picker, Explain, Run and Open in Query. Previews, Run
-//  and Export Data read through the gate with a read-only policy (`AggregationBuilderModel`).
+//  Its right side holds the Stages | Text picker, Explain, Run, Open in Query and Create View
+//  (`MongoViewEditorSheet` on this collection with the enabled stages; hidden when the tab is not
+//  connected or its protection blocks schema changes). Previews, Run and Export Data read through
+//  the gate with a read-only policy (`AggregationBuilderModel`).
 //
 
 import SwiftUI
 
 struct MongoAggregationsView: View {
   let model: MongoCollectionModel
+  /// The tab: connection, rules and history of Create View
+  let viewModel: NotebookViewModel
   /// Opens a new query tab holding the command; nil disables Open in Query
   var openQuery: ((String) -> Void)? = nil
   /// The workspace's autocomplete source, for field names in stage bodies; nil = no completion
@@ -35,6 +39,10 @@ struct MongoAggregationsView: View {
   /// The read of the Export Data in flight; it ends when the save panel opens, so Cancel only
   /// shows while it runs (a Cancel cannot close the panel)
   @State private var exportRead: Task<Void, Never>?
+  /// Create View: the command of the form opened last and the pipeline it starts from
+  @State private var viewAction: MongoAdminActionModel?
+  @State private var viewPipeline: [MongoValue] = []
+  @State private var showsCreateView = false
 
   private typealias EditMode = AggregationBuilderModel.EditMode
 
@@ -59,6 +67,14 @@ struct MongoAggregationsView: View {
     .sheet(item: $exportRequest) { request in
       MongoExportCodeSheet(request: request)
     }
+    .modalOverlay(isPresented: $showsCreateView) {
+      if let viewAction {
+        MongoViewEditorSheet(
+          model: viewAction, mode: .createFrom(source: model.collection, pipeline: viewPipeline),
+          sources: viewModel.databaseTables.map(\.name) + viewModel.databaseViews.map(\.name),
+          isPresented: $showsCreateView)
+      }
+    }
   }
 
   // MARK: - Header
@@ -75,6 +91,8 @@ struct MongoAggregationsView: View {
     let code: AggregationBuilderModel.PipelineTarget
     /// Export Data: reads, so a writing stage blocks it
     let data: AggregationBuilderModel.PipelineTarget
+    /// Create View: a writing stage passes here, the view form refuses it with its reason
+    let view: AggregationBuilderModel.PipelineTarget
   }
 
   private func header(_ builder: AggregationBuilderModel) -> some View {
@@ -85,7 +103,8 @@ struct MongoAggregationsView: View {
       run: builder.runTarget,
       explain: builder.explainTarget,
       code: builder.pipeline(verb: "export"),
-      data: builder.exportTarget)
+      data: builder.exportTarget,
+      view: builder.pipeline(verb: "create a view from"))
     let isText = builder.editMode == .text
     return HStack(spacing: Spacing.sm) {
       // Tighter than the row: the buttons carry their own padding
@@ -125,10 +144,21 @@ struct MongoAggregationsView: View {
         .disabled(targets.commandText == nil || openQuery == nil)
         .help(targets.blocked ?? "Open the aggregate command in a new query tab")
         .frame(height: MongoQueryField.styledLineHeight)
+        if canCreateView {
+          createViewButton(targets.view)
+        }
       }
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
+    // On its own node: the export sheet is on the root
+    .sheet(isPresented: viewConfirmPresented) {
+      if let viewAction {
+        MongoAdminConfirmSheet(
+          model: viewAction, databasePassword: viewModel.notebook.connectionConfig?.password,
+          isConnected: viewModel.connectionState == .connected)
+      }
+    }
   }
 
   private func copyButton(_ builder: AggregationBuilderModel, _ targets: Targets) -> some View {
@@ -328,6 +358,48 @@ struct MongoAggregationsView: View {
         : target.reason ?? "Run the pipeline and show up to \(runLimit.formatted()) documents"
     )
     .frame(height: MongoQueryField.styledLineHeight)
+  }
+}
+
+// MARK: - Create View
+
+extension MongoAggregationsView {
+  /// A connected tab whose protection allows schema changes
+  private var canCreateView: Bool {
+    viewModel.connectionManager != nil && viewModel.connectionState == .connected
+      && !viewModel.protectionPolicy.protectionLevel.blocksSchemaChanges
+  }
+
+  private var viewConfirmPresented: Binding<Bool> {
+    viewAction.map(MongoAdminConfirmSheet.isPresented) ?? .constant(false)
+  }
+
+  /// Opens the view form on this collection with the enabled stages
+  private func createViewButton(_ target: AggregationBuilderModel.PipelineTarget) -> some View {
+    Button("Create View…") {
+      guard case .success(.aggregate(_, let pipeline, _)) = target else { return }
+      startCreateView(pipeline)
+    }
+    .buttonStyle(SecondaryButtonStyle())
+    .disabled(target.command == nil || viewAction?.state == .running)
+    .help(target.reason ?? "Create a view of \(model.collection) with this pipeline")
+    .frame(height: MongoQueryField.styledLineHeight)
+  }
+
+  /// The command is gated on the connection epoch read at the click (nothing records the epoch
+  /// the pipeline was built under): a reconnect while the form is open refuses it. A create
+  /// cannot hit a wrong existing object.
+  private func startCreateView(_ pipeline: [MongoValue]) {
+    guard let manager = viewModel.connectionManager else { return }
+    Task {
+      let epoch = await manager.connectionEpoch
+      guard let action = MongoAdminActionModel(tab: viewModel, connectionEpoch: epoch) else {
+        return
+      }
+      viewAction = action
+      viewPipeline = pipeline
+      showsCreateView = true
+    }
   }
 }
 

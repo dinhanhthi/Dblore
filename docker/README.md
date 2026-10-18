@@ -70,7 +70,7 @@ the password `dblore123`. The root user is `root` / `dblore123`.
 
 | User | Roles | Login |
 |------|-------|-------|
-| `dblore_test` | `readWrite` on `dblore_test`, `clusterMonitor` | SCRAM-SHA-256 |
+| `dblore_test` | `readWrite` and `dbAdmin` (collMod) on `dblore_test`, `clusterMonitor` | SCRAM-SHA-256 |
 | `dblore_reader` | `read` on `dblore_test` | SCRAM-SHA-256 |
 | `dblore_sha1` | `readWrite` on `dblore_test` | SCRAM-SHA-1 |
 

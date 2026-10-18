@@ -3,7 +3,8 @@
 //  Dblore
 //
 //  One MongoDB collection screen of a data viewer tab: the selected section, the aggregation
-//  builder, the indexes, read on demand, and the schema analysis of a document sample. Lives on
+//  builder, the indexes and the validation rules, read on demand, and the schema analysis of a
+//  document sample. Lives on
 //  `NotebookViewModel` (not in `DataViewerState`, which is Equatable and feeds the page load
 //  key) and is replaced when the viewer shows another collection.
 //
@@ -20,6 +21,7 @@ final class MongoCollectionModel {
     case aggregations
     case schema
     case indexes
+    case validation
 
     var id: String { rawValue }
 
@@ -29,6 +31,7 @@ final class MongoCollectionModel {
       case .aggregations: "Aggregations"
       case .schema: "Schema"
       case .indexes: "Indexes"
+      case .validation: "Validation"
       }
     }
   }
@@ -37,6 +40,22 @@ final class MongoCollectionModel {
     case idle
     case loading
     case loaded(MongoIndexesResult)
+    /// User-facing error text
+    case failed(String)
+  }
+
+  enum ValidationState: Equatable {
+    case idle
+    case loading
+    case loaded(MongoCollectionInfo)
+    /// User-facing error text
+    case failed(String)
+  }
+
+  /// Generate from Sample of the Validation section
+  enum ValidationSampleState: Equatable {
+    case idle
+    case sampling
     /// User-facing error text
     case failed(String)
   }
@@ -80,6 +99,16 @@ final class MongoCollectionModel {
   var expandedIndexes: Set<String> = []
   /// What the server can do (hidden indexes), nil until read
   private(set) var serverFeatures: MongoServerFeatures?
+  private(set) var validationState: ValidationState = .idle
+  /// Connection epoch the shown rules were read with (see `indexEpoch`). Nil until a read
+  /// finished.
+  private(set) var validationEpoch: UInt64?
+  /// The rules being edited, kept across section switches; reset to the collection's rules on
+  /// each read
+  var validatorDraft: String = ""
+  var validationLevelDraft: MongoValidationRules.Level = .strict
+  var validationActionDraft: MongoValidationRules.Action = .error
+  private(set) var validationSampleState: ValidationSampleState = .idle
   /// Filter of the schema sample (relaxed JSON document text, blank for a random sample).
   var schemaFilter: String = ""
   private(set) var schemaState: SchemaState = .idle
@@ -92,6 +121,8 @@ final class MongoCollectionModel {
   @ObservationIgnored private var schemaTask: Task<Void, Never>?
   @ObservationIgnored private var explainTask: Task<Void, Never>?
   @ObservationIgnored private var featuresTask: Task<Void, Never>?
+  @ObservationIgnored private var validationTask: Task<Void, Never>?
+  @ObservationIgnored private var validationSampleTask: Task<Void, Never>?
   /// The report shown before the analysis in flight (`.done` or `.idle`), restored on cancel.
   @ObservationIgnored private var previousSchemaState: SchemaState = .idle
 
@@ -125,6 +156,63 @@ final class MongoCollectionModel {
     startIndexLoad()
   }
 
+  /// Read the validation rules once: only while nothing was loaded or tried yet.
+  func loadValidationIfNeeded() {
+    guard case .idle = validationState else { return }
+    startValidationLoad()
+  }
+
+  /// Read the validation rules again, dropping a read in flight; the draft is reset to them.
+  func refreshValidation() {
+    startValidationLoad()
+  }
+
+  /// Sample the whole collection (random, no filter), analyze it and put its `$jsonSchema` in
+  /// the validator draft, dropping a sample in flight. Runs off the main actor like
+  /// `analyzeSchema`; the Schema section's report is left alone. A cancelled or superseded
+  /// sample never writes the draft.
+  func generateValidatorFromSample() {
+    validationSampleTask?.cancel()
+    validationSampleState = .sampling
+    let connectionManager = connectionManager
+    let database = database
+    let collection = collection
+    validationSampleTask = Task { [weak self] in
+      let validator: MongoValue
+      do {
+        let documents = try await connectionManager.sampleMongoDocuments(
+          database: database, collection: collection, filterText: "")
+        try Task.checkCancellation()
+        let report = await Task.detached(priority: .userInitiated) {
+          PerfSignpost.interval("mongo.validation.sample") {
+            MongoSchemaAnalyzer.analyze(documents, calendar: .current)
+          }
+        }.value
+        validator = try MongoValidationRules.fromSample(report)
+      } catch {
+        guard !Task.isCancelled, let self else { return }
+        self.validationSampleState = .failed(error.localizedDescription)
+        self.validationSampleTask = nil
+        return
+      }
+      guard !Task.isCancelled, let self else { return }
+      self.validatorDraft =
+        MongoValidationRules(
+          validator: validator, level: self.validationLevelDraft,
+          action: self.validationActionDraft
+        ).validatorText
+      self.validationSampleState = .idle
+      self.validationSampleTask = nil
+    }
+  }
+
+  /// Drop the sample in flight; the draft is unchanged.
+  func cancelValidationSample() {
+    validationSampleTask?.cancel()
+    validationSampleTask = nil
+    validationSampleState = .idle
+  }
+
   /// Read the server version once (cached by the session; an unknown version shows every
   /// action).
   func loadServerFeaturesIfNeeded() {
@@ -142,6 +230,10 @@ final class MongoCollectionModel {
     indexTask?.cancel()
     indexTask = nil
     if case .loading = indexState { indexState = .idle }
+    validationTask?.cancel()
+    validationTask = nil
+    if case .loading = validationState { validationState = .idle }
+    cancelValidationSample()
     cancelSchemaAnalysis()
     cancelExplain()
   }
@@ -285,6 +377,36 @@ final class MongoCollectionModel {
       self.indexState = state
       self.indexEpoch = epoch
       self.indexTask = nil
+    }
+  }
+
+  /// Like `startIndexLoad`; a successful read resets the draft to the collection's rules.
+  private func startValidationLoad() {
+    validationTask?.cancel()
+    validationState = .loading
+    let connectionManager = connectionManager
+    let database = database
+    let collection = collection
+    validationTask = Task { [weak self] in
+      let epoch = await connectionManager.connectionEpoch
+      let state: ValidationState
+      do {
+        state = .loaded(
+          try await connectionManager.fetchMongoCollectionInfo(
+            database: database, collection: collection))
+      } catch {
+        state = .failed(error.localizedDescription)
+      }
+      guard !Task.isCancelled, let self else { return }
+      if case .loaded(let info) = state {
+        let rules = MongoValidationRules(options: info.options)
+        self.validatorDraft = rules.validatorText
+        self.validationLevelDraft = rules.level
+        self.validationActionDraft = rules.action
+      }
+      self.validationState = state
+      self.validationEpoch = epoch
+      self.validationTask = nil
     }
   }
 }

@@ -2,7 +2,8 @@
 //  MongoCollectionTabBar.swift
 //  Dblore
 //
-//  Sections of a MongoDB collection screen (Documents, Aggregations, Schema, Indexes), shown in
+//  Sections of a MongoDB collection screen (Documents, Aggregations, Schema, Indexes,
+//  Validation), shown in
 //  the data viewer header next to the collection title, with the counts already known: the
 //  documents total of the loaded page and the indexes once read.
 //
@@ -67,6 +68,8 @@ struct MongoCollectionTabBar: View {
     case .indexes:
       guard case .loaded(.indexes(let indexes)) = model.indexState else { return nil }
       return indexes.count
+    case .validation:
+      return nil
     }
   }
 }
