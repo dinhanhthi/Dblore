@@ -14,9 +14,17 @@ import Foundation
 ///   `distinct("field", filter?)`, `insertOne(doc)`, `insertMany([docs])`,
 ///   `updateOne`/`updateMany(filter, update, {upsert}?)`, `replaceOne(filter, replacement,
 ///   {upsert}?)`, `deleteOne`/`deleteMany(filter)`.
+/// - Administration on a collection: `createIndex(keys, options?)`, `dropIndex(name or keys)`
+///   (never `"*"`), `hideIndex(name)`, `unhideIndex(name)`, `drop()`,
+///   `renameCollection(newName)` (no dropTarget argument).
+/// - Administration on the database: `db.createCollection(name, options?)`,
+///   `db.createView(name, source, [stages], options?)` and `db.runCommand({collMod: name, …})`
+///   (no other command).
 /// - A find chain or an aggregate may end with `.explain()` (`queryPlanner`) or
 ///   `.explain("queryPlanner" | "executionStats" | "allPlansExecution")`, once and last.
 ///
+/// Admin option documents are allow-listed per command: any other top-level key, so every `$`
+/// key and generic command argument (`$db`, `lsid`, `writeConcern`, `maxTimeMS`, …), is refused.
 /// Whitespace, `//` and `/* */` comments and one trailing `;` are allowed. Any other method,
 /// including `.toArray()` and `.pretty()`, fails with "<method> is not supported in the Dblore
 /// MongoDB subset". Errors are `MongoRelaxedJSON.ParseError` with a UTF-16 offset into the text.
@@ -33,7 +41,26 @@ nonisolated enum MongoshParser {
 
   fileprivate static let collectionMethods: Set<String> = [
     "find", "aggregate", "countDocuments", "distinct", "insertOne", "insertMany", "updateOne",
-    "updateMany", "replaceOne", "deleteOne", "deleteMany",
+    "updateMany", "replaceOne", "deleteOne", "deleteMany", "createIndex", "dropIndex", "hideIndex",
+    "unhideIndex", "drop", "renameCollection",
+  ]
+
+  /// The `createIndex` index spec options.
+  fileprivate static let createIndexOptions: Set<String> = [
+    "name", "unique", "sparse", "expireAfterSeconds", "partialFilterExpression",
+    "wildcardProjection", "collation", "hidden", "weights", "default_language",
+    "language_override", "2dsphereIndexVersion",
+  ]
+
+  fileprivate static let createCollectionOptions: Set<String> = [
+    "capped", "size", "max", "clusteredIndex", "collation", "timeseries", "expireAfterSeconds",
+    "validator", "validationLevel", "validationAction",
+  ]
+
+  /// The `collMod` keys after the leading `collMod: name`.
+  fileprivate static let collModOptions: Set<String> = [
+    "index", "validator", "validationLevel", "validationAction", "viewOn", "pipeline",
+    "expireAfterSeconds",
   ]
 
   fileprivate static func unsupported(_ name: String) -> String {
@@ -92,6 +119,16 @@ nonisolated extension MongoshParser {
         }
         try refuseChain()
         return .listCollections
+      case "createCollection", "createView", "runCommand":
+        let call = Call(method: name, offset: nameStart, arguments: try parseArguments())
+        let command: MongoAdminCommand
+        switch name {
+        case "createCollection": command = try createCollection(call)
+        case "createView": command = try createView(call)
+        default: command = try collMod(call)
+        }
+        try refuseChain()
+        return .admin(command)
       default:
         throw failure(unsupported(name), at: nameStart)
       }
@@ -173,7 +210,8 @@ nonisolated extension MongoshParser {
       case "insertMany": command = try insertMany(on: collection, call)
       case "updateOne", "updateMany": command = try update(on: collection, call)
       case "replaceOne": command = try replaceOne(on: collection, call)
-      default: command = try delete(on: collection, call)
+      case "deleteOne", "deleteMany": command = try delete(on: collection, call)
+      default: command = .admin(try collectionAdmin(on: collection, call))
       }
       try refuseChain()
       return command
@@ -441,6 +479,153 @@ nonisolated extension MongoshParser {
       return call.method == "deleteOne"
         ? .deleteOne(collection: collection, filter: argument.value)
         : .deleteMany(collection: collection, filter: argument.value)
+    }
+
+    // MARK: Admin
+
+    /// createIndex, dropIndex, hideIndex, unhideIndex, drop or renameCollection.
+    private func collectionAdmin(
+      on collection: String, _ call: Call
+    ) throws(ParseError) -> MongoAdminCommand {
+      switch call.method {
+      case "createIndex":
+        if let extra = call[2] {
+          throw failure(
+            "createIndex takes at most a key document and an options document", at: extra.offset)
+        }
+        guard let keys = try optionalDocument(call[0], "index key") else {
+          throw failure("createIndex needs a key document", at: call[0]?.offset ?? call.offset)
+        }
+        let options = try adminOptions(call[1], MongoshParser.createIndexOptions)
+        return .createIndex(collection: collection, keys: keys, options: options)
+      case "dropIndex":
+        guard call.arguments.count == 1 else {
+          throw failure(
+            "dropIndex needs one index name or key document", at: call[1]?.offset ?? call.offset)
+        }
+        let argument = call.arguments[0]
+        switch argument.value {
+        case .string("*"):
+          throw failure(
+            "dropIndex(\"*\") is not supported: drop one index at a time", at: argument.offset)
+        case .string(let name) where !name.isEmpty: break
+        case .document(let fields) where !fields.isEmpty: break
+        default:
+          throw failure("dropIndex needs an index name or a key document", at: argument.offset)
+        }
+        return .dropIndex(collection: collection, index: argument.value)
+      case "hideIndex", "unhideIndex":
+        guard call.arguments.count == 1, case .string(let name) = call.arguments[0].value,
+          !name.isEmpty
+        else {
+          throw failure(
+            "\(call.method) needs an index name string", at: call[0]?.offset ?? call.offset)
+        }
+        return .setIndexHidden(
+          collection: collection, name: name, hidden: call.method == "hideIndex")
+      case "drop":
+        if let extra = call[0] { throw failure("drop takes no arguments", at: extra.offset) }
+        return .drop(collection: collection)
+      default:
+        if let extra = call[1] {
+          throw failure(
+            "renameCollection takes only the new name (dropTarget is not supported)",
+            at: extra.offset)
+        }
+        let target = try adminName(
+          call[0], "renameCollection needs the new collection name string", call)
+        return .renameCollection(collection: collection, to: target)
+      }
+    }
+
+    private func createCollection(_ call: Call) throws(ParseError) -> MongoAdminCommand {
+      if let extra = call[2] {
+        throw failure(
+          "createCollection takes at most a name and an options document", at: extra.offset)
+      }
+      let name = try adminName(call[0], "createCollection needs a collection name string", call)
+      let options = try adminOptions(call[1], MongoshParser.createCollectionOptions)
+      return .createCollection(name: name, options: options)
+    }
+
+    private func createView(_ call: Call) throws(ParseError) -> MongoAdminCommand {
+      if let extra = call[4] {
+        throw failure(
+          "createView takes at most a name, a source, a pipeline and an options document",
+          at: extra.offset)
+      }
+      let name = try adminName(call[0], "createView needs a view name string", call)
+      let source = try adminName(call[1], "createView needs a source collection name string", call)
+      guard let argument = call[2], case .array(let stages) = argument.value else {
+        throw failure("createView needs a pipeline array", at: call[2]?.offset ?? call.offset)
+      }
+      try requireDocuments(stages, argument, "Each pipeline stage must be a document")
+      let options = try adminOptions(call[3], ["collation"])
+      return .createView(name: name, source: source, pipeline: stages, options: options)
+    }
+
+    /// `runCommand({collMod: "<name>", …})`: the only command `runCommand` accepts. The stored
+    /// options leave out the leading `collMod` key.
+    private func collMod(_ call: Call) throws(ParseError) -> MongoAdminCommand {
+      guard call.arguments.count == 1, case .document(let fields) = call.arguments[0].value else {
+        throw failure(
+          "runCommand needs one command document",
+          at: call[1]?.offset ?? call[0]?.offset ?? call.offset)
+      }
+      let argument = call.arguments[0]
+      guard let first = fields.first, first.key == "collMod" else {
+        throw failure(
+          "runCommand only supports collMod in the Dblore MongoDB subset", at: argument.offset)
+      }
+      guard case .string(let name) = first.value else {
+        throw failure("collMod needs a collection name string", at: argument.offset)
+      }
+      guard !name.isEmpty else {
+        throw failure("The collection name must not be empty", at: argument.offset)
+      }
+      let options = Array(fields.dropFirst())
+      try checkOptionKeys(options, MongoshParser.collModOptions, seen: ["collMod"], argument)
+      return .collMod(collection: name, options: .document(options))
+    }
+
+    /// A non-empty name string argument.
+    private func adminName(
+      _ argument: Argument?, _ message: String, _ call: Call
+    ) throws(ParseError) -> String {
+      guard let argument, case .string(let name) = argument.value else {
+        throw failure(message, at: argument?.offset ?? call.offset)
+      }
+      guard !name.isEmpty else {
+        throw failure("The collection name must not be empty", at: argument.offset)
+      }
+      return name
+    }
+
+    /// An admin options document as written, nil when missing or empty. Only the `allowed` keys,
+    /// each at most once; nested values are not checked here.
+    private func adminOptions(
+      _ argument: Argument?, _ allowed: Set<String>
+    ) throws(ParseError) -> MongoValue? {
+      guard let options = try optionalDocument(argument, "options"), let argument,
+        case .document(let fields) = options
+      else { return nil }
+      try checkOptionKeys(fields, allowed, seen: [], argument)
+      return options
+    }
+
+    private func checkOptionKeys(
+      _ fields: [MongoValue.Field], _ allowed: Set<String>, seen: Set<String>,
+      _ argument: Argument
+    ) throws(ParseError) {
+      var seen = seen
+      for field in fields {
+        guard seen.insert(field.key).inserted else {
+          throw failure("The option \(field.key) can only be used once", at: argument.offset)
+        }
+        guard allowed.contains(field.key) else {
+          throw failure(unsupported("The option \(field.key)"), at: argument.offset)
+        }
+      }
     }
 
     // MARK: Argument checks

@@ -1,8 +1,9 @@
 // MongoSession+Commands.swift
 // The commands MongoSession sends for each mongosh-subset command. Every command document is
 // built as a `MongoValue` and encoded by `MongoBSONMapping.bsonDocument` (byte exact, and the
-// O(n) array writer for insertMany), then carries `comment: "dblore:<uuid>"`, `maxTimeMS` and the
-// connection's implicit `lsid` (without it a getMore fails with code 13 and the cursor leaks).
+// O(n) array writer for insertMany), then carries `comment: "dblore:<uuid>"`, `maxTimeMS` (not on
+// `createIndexes`) and the connection's implicit `lsid` (without it a getMore fails with code 13
+// and the cursor leaks).
 //
 // Result shapes (`query`):
 // - find / aggregate: one row per document, columns from `MongoBSONMapping.columns` (`_id` first;
@@ -21,7 +22,9 @@
 // `command` tags: `INSERT n`, `UPDATE n` (updateOne/Many and replaceOne, n = matched, upserts
 // included), `DELETE n`; `affectedRows` is n. `$out`/`$merge` aggregates run here with tag
 // `AGGREGATE` (no count). Write errors come back in an `ok: 1` reply (duplicate key 11000 does not
-// throw in the driver) and are thrown as `MongoSessionError`, as are write concern errors.
+// throw in the driver) and are thrown as `MongoSessionError`, as are write concern errors. Admin
+// commands (`affectedRows` 0): `CREATE INDEX`, `DROP INDEX`, `HIDE INDEX`, `UNHIDE INDEX`,
+// `CREATE COLLECTION`, `CREATE VIEW`, `DROP`, `RENAME` (sent to `admin`), `COLLMOD`.
 
 import BSON
 import Foundation
@@ -52,18 +55,23 @@ extension MongoSession {
     return SessionRowSource(columns: columns, rows: stream)
   }
 
-  /// Runs one write (or `$out`/`$merge` aggregate) and returns its tag.
+  /// Runs one write, `$out`/`$merge` aggregate or admin command and returns its tag.
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     guard binds.isEmpty else { throw MongoSessionError.bindsRefused }
     let command = try MongoshParser.parse(sql)
-    guard let fields = Self.writeCommand(command),
+    guard let write = Self.writeCommand(command, in: databaseName),
       MongoCommandClassifier.classifyStatement(sql)?.kind != .read
     else {
       throw MongoSessionError(message: "Read commands return rows; run them as a query.")
     }
-    let database = databaseName
+    let (fields, database) = write
+    // An index build on a large collection outlasts any statement timeout: no `maxTimeMS`, and
+    // Cancel (killOp by the comment) still stops it.
+    let timed: Bool
+    if case .admin(.createIndex) = command { timed = false } else { timed = true }
     return try await withStatement { token, connection in
-      let reply = try await execute(fields, token: token, on: connection, database: database)
+      let reply = try await execute(
+        fields, token: token, on: connection, database: database, statementTimeout: timed)
       if case .aggregate = command {
         // `$out`/`$merge` return an empty first batch; close a cursor the server kept anyway.
         if let cursor = reply["cursor"] as? Document, let id = Self.int(cursor["id"]), id != 0 {
@@ -260,15 +268,17 @@ extension MongoSession {
     try? await cursor.close()
   }
 
-  /// Sends `fields` plus `comment`, `maxTimeMS` (the statement timeout unless given) and `lsid`;
-  /// throws the error of an `ok: 0` reply.
+  /// Sends `fields` plus `comment`, `maxTimeMS` (the statement timeout unless given; none at all
+  /// when `statementTimeout` is false) and `lsid`; throws the error of an `ok: 0` reply.
   func execute(
     _ fields: [Field], token: String, on connection: MongoConnection, database: String,
-    maxTimeMS: Int64? = nil
+    maxTimeMS: Int64? = nil, statementTimeout: Bool = true
   ) async throws -> Document {
     let timeout = maxTimeMS ?? self.maxTimeMS
     let document = try MongoBSONMapping.bsonDocument(
-      .document(fields + [Field("comment", .string(token)), Field("maxTimeMS", .int64(timeout))])
+      .document(
+        fields + [Field("comment", .string(token))]
+          + (statementTimeout ? [Field("maxTimeMS", .int64(timeout))] : []))
     )
     let reply = try await connection.execute(
       document, namespace: MongoNamespace(to: "$cmd", inDatabase: database),
@@ -386,28 +396,35 @@ extension MongoSession {
     return fields
   }
 
-  /// The write command of `command` (and the aggregate of `$out`/`$merge`); nil for reads.
-  static func writeCommand(_ command: MongoCommand) -> [Field]? {
+  /// The write command of `command` (and the aggregate of `$out`/`$merge`, and the admin
+  /// command) with the database it runs in: `database`, or `admin` for a rename; nil for reads.
+  static func writeCommand(
+    _ command: MongoCommand, in database: String = MongoSession.defaultDatabase
+  ) -> (fields: [Field], database: String)? {
+    let fields: [Field]
     switch command {
     case .insertOne(let collection, let document):
-      return insertCommand(collection, [document])
+      fields = insertCommand(collection, [document])
     case .insertMany(let collection, let documents):
-      return insertCommand(collection, documents)
+      fields = insertCommand(collection, documents)
     case .updateOne(let collection, let filter, let update, let upsert):
-      return updateCommand(collection, filter, update, upsert: upsert, multi: false)
+      fields = updateCommand(collection, filter, update, upsert: upsert, multi: false)
     case .updateMany(let collection, let filter, let update, let upsert):
-      return updateCommand(collection, filter, update, upsert: upsert, multi: true)
+      fields = updateCommand(collection, filter, update, upsert: upsert, multi: true)
     case .replaceOne(let collection, let filter, let replacement, let upsert):
-      return updateCommand(collection, filter, replacement, upsert: upsert, multi: false)
+      fields = updateCommand(collection, filter, replacement, upsert: upsert, multi: false)
     case .deleteOne(let collection, let filter):
-      return deleteCommand(collection, filter, limit: 1)
+      fields = deleteCommand(collection, filter, limit: 1)
     case .deleteMany(let collection, let filter):
-      return deleteCommand(collection, filter, limit: 0)
+      fields = deleteCommand(collection, filter, limit: 0)
     case .aggregate(let collection, let pipeline, let options):
-      return aggregateCommand(collection: collection, pipeline: pipeline, options: options)
+      fields = aggregateCommand(collection: collection, pipeline: pipeline, options: options)
+    case .admin(let admin):
+      return admin.commandDocument(in: database)
     case .find, .countDocuments, .distinct, .listCollections, .explain:
       return nil
     }
+    return (fields, database)
   }
 
   private static func insertCommand(_ collection: String, _ documents: [MongoValue]) -> [Field] {
@@ -473,6 +490,22 @@ extension MongoSession {
       return CommandResult(affectedRows: 0, tag: "AGGREGATE")
     case .find, .countDocuments, .distinct, .listCollections, .explain:
       throw MongoSessionError(message: "Read commands return rows; run them as a query.")
+    case .admin(let admin):
+      return CommandResult(affectedRows: 0, tag: adminTag(admin))
+    }
+  }
+
+  /// The tag of an admin command (its reply has no count).
+  private static func adminTag(_ command: MongoAdminCommand) -> String {
+    switch command {
+    case .createIndex: "CREATE INDEX"
+    case .dropIndex: "DROP INDEX"
+    case .setIndexHidden(_, _, let hidden): hidden ? "HIDE INDEX" : "UNHIDE INDEX"
+    case .createCollection: "CREATE COLLECTION"
+    case .createView: "CREATE VIEW"
+    case .drop: "DROP"
+    case .renameCollection: "RENAME"
+    case .collMod: "COLLMOD"
     }
   }
 

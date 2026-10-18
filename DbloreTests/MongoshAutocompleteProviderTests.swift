@@ -66,7 +66,7 @@ struct MongoshAutocompleteProviderTests {
       DatabaseTable(schema: "shop", name: $0)
     }
     let texts = MongoshAutocompleteProvider.suggestions(
-      for: "db.getC", at: 7, tables: tables
+      for: "db.", at: 3, tables: tables
     ).map(\.text)
     for name in MongoshAutocompleteProvider.databaseMethods {
       let completion = "db.getCollection(\"\(name)\")"
@@ -82,13 +82,13 @@ struct MongoshAutocompleteProviderTests {
     let methods = suggest("db.users.|").map { String($0.dropFirst("db.users.".count)) }
     #expect(Set(methods) == Set(MongoshAutocompleteProvider.collectionMethods))
     #expect(suggest("db.users.UPD|") == ["db.users.updateMany", "db.users.updateOne"])
-    #expect(suggest("db.getCollection(\"a.b\").c|") == [".countDocuments"])
+    #expect(suggest("db.getCollection(\"a.b\").c|") == [".countDocuments", ".createIndex"])
     #expect(suggest("db[\"a.b\"].del|") == ["db[\"a.b\"].deleteMany", "db[\"a.b\"].deleteOne"])
   }
 
   @Test("Every offered method is one the parser accepts")
   func methodsMatchParserSubset() {
-    #expect(MongoshAutocompleteProvider.collectionMethods.count == 11)
+    #expect(MongoshAutocompleteProvider.collectionMethods.count == 17)
     for method in MongoshAutocompleteProvider.collectionMethods {
       do {
         _ = try MongoshParser.parse("db.c.\(method)()")

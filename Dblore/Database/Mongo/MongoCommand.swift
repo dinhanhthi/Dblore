@@ -43,11 +43,16 @@ nonisolated enum MongoCommand: Equatable, Sendable {
   /// A find chain or an aggregate ending in `.explain(verbosity)`: `queryPlanner`,
   /// `executionStats` or `allPlansExecution`.
   indirect case explain(MongoCommand, verbosity: String)
+  /// An administration command (indexes, collections, views).
+  case admin(MongoAdminCommand)
 
-  /// The target collection (the explained command's for `explain`), nil for `listCollections`.
+  /// The target collection (the explained command's for `explain`, the admin command's for
+  /// `admin`), nil for `listCollections`.
   var collection: String? {
     switch self {
     case .explain(let command, _):
+      command.collection
+    case .admin(let command):
       command.collection
     case .find(let name, _, _, _, _, _, _), .aggregate(let name, _, _),
       .countDocuments(let name, _, _),
@@ -114,10 +119,12 @@ nonisolated enum MongoCommand: Equatable, Sendable {
       return "show collections"
     case .explain(let command, let verbosity):
       return "\(command.render()).explain(\(Self.value(.string(verbosity))))"
+    case .admin(let command):
+      return command.render()
     }
   }
 
-  private static func value(_ value: MongoValue) -> String {
+  static func value(_ value: MongoValue) -> String {
     MongoRelaxedJSON.render(value, as: .mongosh)
   }
 
@@ -125,12 +132,12 @@ nonisolated enum MongoCommand: Equatable, Sendable {
     upsert ? [.document([MongoValue.Field("upsert", .bool(true))])] : []
   }
 
-  private static func call(_ name: String, _ method: String, _ arguments: [MongoValue]) -> String {
+  static func call(_ name: String, _ method: String, _ arguments: [MongoValue]) -> String {
     "\(access(name)).\(method)(\(arguments.map(value).joined(separator: ", ")))"
   }
 
   /// `db.name` for a plain name that is not a database method, else `db.getCollection("…")`.
-  private static func access(_ name: String) -> String {
+  static func access(_ name: String) -> String {
     let bytes = Array(name.utf8)
     let isPlain =
       bytes.first.map(isASCIILetter) == true

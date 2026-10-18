@@ -9,9 +9,9 @@ import Foundation
 
 /// mongosh completions, from one forward pass over the text before the cursor (at most
 /// `maxScan` UTF-16 units back, starting at a line start) with a bracket stack:
-/// - after `db.` (top level): collections and `getCollection`/`getCollectionNames`. A name that
-///   is not a plain identifier, or is a database method name, is inserted as
-///   `getCollection("<name>")`;
+/// - after `db.` (top level): collections and the database methods (`getCollection`,
+///   `getCollectionNames`, `createCollection`, `createView`, `runCommand`). A name that is not a
+///   plain identifier, or is a database method name, is inserted as `getCollection("<name>")`;
 /// - inside the string of `db.getCollection("` or `db["` (or `'`): collection names, escaped for
 ///   that quote so the string ends where it did;
 /// - after `db.<collection>.`: the parser's collection methods; after `find(...)`: the unused
@@ -47,9 +47,12 @@ enum MongoshAutocompleteProvider {
   /// The collection methods `MongoshParser` accepts
   static let collectionMethods = [
     "find", "aggregate", "countDocuments", "distinct", "insertOne", "insertMany", "updateOne",
-    "updateMany", "replaceOne", "deleteOne", "deleteMany",
+    "updateMany", "replaceOne", "deleteOne", "deleteMany", "createIndex", "dropIndex", "hideIndex",
+    "unhideIndex", "drop", "renameCollection",
   ]
-  static let databaseMethods = ["getCollection", "getCollectionNames"]
+  static let databaseMethods = [
+    "getCollection", "getCollectionNames", "createCollection", "createView", "runCommand",
+  ]
   static let chainMethods = [
     "sort", "limit", "skip", "collation", "hint", "maxTimeMS", "explain",
   ]
@@ -183,7 +186,9 @@ enum MongoshAutocompleteProvider {
         isPlainIdentifier($0) && !databaseMethods.contains($0)
           ? $0 : "getCollection(\(quoted($0)))"
       }
-        + keywords(databaseMethods, "Database method")
+        + keywords(databaseMethods.filter { $0 != "runCommand" }, "Database method")
+        // The parser takes only `runCommand({collMod: …})`
+        + keywords(["runCommand"], "Database method, {collMod: …} only")
     case .collectionName(let quote):
       return collections(tables) { escaped($0, quote: quote) }
     case .method:

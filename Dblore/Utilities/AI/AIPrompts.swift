@@ -131,6 +131,7 @@ nonisolated enum AIPrompts {
     - db.c.replaceOne(filter, replacement, options)
     - db.c.deleteOne(filter), db.c.deleteMany(filter)
     - show collections, db.getCollectionNames()
+    - Administration: db.c.createIndex(keys, options), db.c.dropIndex("index_name" or keys), db.c.hideIndex("index_name"), db.c.unhideIndex("index_name"), db.c.drop(), db.c.renameCollection("new_name"), db.createCollection("name", options), db.createView("name", "source", [stage, ...], options), db.runCommand({collMod: "c", ...}) (no other command). Never propose drop, dropIndex or renameCollection unless the user asks for it.
     - Filters, projections and options may be left out, except the filter of updateOne, updateMany, replaceOne, deleteOne and deleteMany. The only update and replace option is {upsert: true}; countDocuments options are skip, limit, collation, hint and maxTimeMS.
     - Values are relaxed JSON (unquoted keys, single-quoted strings) with ObjectId("..."), ISODate("..."), NumberLong("...") and NumberDecimal("...").
     - Not supported: findOne, .toArray(), .pretty(), any other method or helper, and any JavaScript (variables, functions, loops, expressions).

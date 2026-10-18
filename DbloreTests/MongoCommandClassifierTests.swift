@@ -137,6 +137,39 @@ struct MongoCommandClassifierTests {
     #expect(MongoCommandClassifier.hasStage(.string("$out"), "$out") == false)
   }
 
+  @Test("Admin commands are DDL; only drop and dropIndex are destructive")
+  func adminCommands() throws {
+    let cases: [(String, Bool)] = [
+      ("db.c.createIndex({a: 1}, {unique: true})", false), ("db.c.dropIndex(\"a_1\")", true),
+      ("db.c.dropIndex({a: 1})", true), ("db.c.hideIndex(\"a_1\")", false),
+      ("db.c.unhideIndex(\"a_1\")", false), ("db.createCollection(\"d\")", false),
+      ("db.createView(\"v\", \"c\", [])", false), ("db.c.drop()", true),
+      ("db.c.renameCollection(\"d\")", false),
+      ("db.runCommand({collMod: \"c\", validationLevel: \"off\"})", false),
+    ]
+    for (text, destructive) in cases {
+      let statement = try classified(text)
+      #expect(statement.kind == .ddl, "\(text)")
+      #expect(statement.isDestructive == destructive, "\(text)")
+      #expect(!statement.isReadOnlySafe, "\(text)")
+      #expect(!statement.affectsAllRows && !statement.createsTable, "\(text)")
+      expectQuietFlags(statement)
+    }
+  }
+
+  @Test("Server-side JavaScript in an index partial filter or a view pipeline is found")
+  func javaScriptInAdminCommands() {
+    #expect(
+      MongoCommandClassifier.usesServerSideJavaScript(
+        "db.c.createIndex({a: 1}, {partialFilterExpression: {$where: \"1\"}})"))
+    #expect(
+      MongoCommandClassifier.usesServerSideJavaScript(
+        "db.createView(\"v\", \"c\", [{$match: {$where: \"1\"}}])"))
+    #expect(
+      !MongoCommandClassifier.usesServerSideJavaScript(
+        "db.c.createIndex({a: 1}, {partialFilterExpression: {a: {$gt: 1}}})"))
+  }
+
   @Test("An explain is a read only when the explained command is one, never a write")
   func explain() throws {
     for text in [
@@ -187,7 +220,7 @@ struct MongoCommandClassifierTests {
     let nested =
       String(repeating: "ObjectId(", count: 5000) + "\"x\"" + String(repeating: ")", count: 5000)
     for text in [
-      "db.c.drop()", "db.c.find().toArray()", "db.c.find({a: })", "SELECT 1",
+      "db.c.find().toArray()", "db.c.find({a: })", "SELECT 1",
       "db.dropDatabase()", "db.c.find()\ndb.d.find()", "db.c.find(); db.d.deleteMany({})",
       "db.c.insertOne({a: 1}", "db.c.find({a: \(nested)})", "db[\(nested)].find()",
     ] {
@@ -220,7 +253,7 @@ struct MongoCommandClassifierTests {
       """
     let statements = MongoCommandClassifier.classify(cell)
     #expect(statements.map(\.text) == MongoshSplitter.split(cell))
-    #expect(statements.map(\.kind) == [.read, .dml, .dml, .unknown])
+    #expect(statements.map(\.kind) == [.read, .dml, .dml, .ddl])
     #expect(statements.map(\.affectsAllRows) == [false, false, true, false])
   }
 
@@ -235,7 +268,7 @@ struct MongoCommandClassifierTests {
           affectsAllRows: false, touchesBrake: false, changesPrivileges: false))
     let writes = SQLStatementClassifier.summary(
       MongoCommandClassifier.classify(
-        "db.a.updateMany({}, {$set: {b: 1}})\ndb.a.aggregate([{$out: \"b\"}])\ndb.a.drop()"))
+        "db.a.updateMany({}, {$set: {b: 1}})\ndb.a.aggregate([{$out: \"b\"}])\ndb.dropDatabase()"))
     #expect(
       writes
         == ClassificationSummary(

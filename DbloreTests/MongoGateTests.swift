@@ -90,6 +90,22 @@ struct MongoGateTests {
     #expect(factory.statements == writes)
   }
 
+  @Test(
+    "Admin commands are blocked on read-only and schema-only connections before anything is sent",
+    arguments: [
+      (ConnectionProtectionLevel.readOnly, "not allowed on a read-only connection"),
+      (.schemaOnly, "blocked on a schema-protected connection"),
+    ])
+  func adminCommandsBlocked(level: ConnectionProtectionLevel, reason: String) async throws {
+    let config = Self.config(level: level)
+    let (manager, factory) = try await connect(config)
+    let policy = ProtectionPolicy(config: config)
+    for text in ["db.c.createIndex({a: 1})", "db.c.drop()"] {
+      await expectBlocked(text, kind: .ddl, reason: reason, manager: manager, policy: policy)
+    }
+    #expect(factory.statements.isEmpty)
+  }
+
   @Test("Protected mode is ignored: a write is sent on its own, no transaction opens")
   func protectedModeIgnored() async throws {
     let config = Self.config(protectedMode: true)
@@ -287,6 +303,7 @@ struct MongoGateTests {
     #expect(
       StatementRoute.route(for: try classify("db.c.aggregate([{$out: \"x\"}])"), dialect: .mongodb)
         == .command)
+    #expect(StatementRoute.route(for: try classify("db.c.drop()"), dialect: .mongodb) == .command)
     #expect(!DatabaseConnectionManager.usesCursor(find, dialect: .mongodb))
     #expect(!DatabaseConnectionManager.readsToEndAtCap(find, databaseType: .mongodb))
     #expect(!DatabaseType.mongodb.capabilities.supportsServerCursor)

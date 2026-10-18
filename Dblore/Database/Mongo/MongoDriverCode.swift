@@ -45,7 +45,7 @@ nonisolated enum MongoDriverCode {
       collection = name
       query = .aggregate(pipeline, options)
     case .countDocuments, .distinct, .insertOne, .insertMany, .updateOne, .updateMany,
-      .replaceOne, .deleteOne, .deleteMany, .listCollections, .explain:
+      .replaceOne, .deleteOne, .deleteMany, .listCollections, .explain, .admin:
       return nil
     }
     let target = Target(

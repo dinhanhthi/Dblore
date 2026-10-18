@@ -44,6 +44,8 @@ nonisolated struct ClassifiedStatement: Sendable, Equatable {
   let changesPrivileges: Bool
   /// SELECT ... INTO / WITH ... SELECT ... INTO (creates a table like CREATE TABLE AS)
   let createsTable: Bool
+  /// Removes data or an index for good (MongoDB `drop`, `dropIndex`); false for SQL
+  var isDestructive: Bool = false
 
   /// True only for statements that cannot modify anything: reads and plain EXPLAIN of a
   /// recognized statement.

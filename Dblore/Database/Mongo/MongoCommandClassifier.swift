@@ -12,7 +12,8 @@ import Foundation
 /// `$out`/`$merge` are reads; inserts, updates, `replaceOne`, deletes and an `aggregate` with
 /// `$merge` are DML; an `aggregate` with `$out` is DDL that creates a table; an `explain` is a
 /// read when the explained command is one, otherwise unknown (never a write, so a writing
-/// pipeline is refused rather than confirmed); text that does not parse is unknown.
+/// pipeline is refused rather than confirmed); administration commands (indexes, collections,
+/// views) are DDL, `drop` and `dropIndex` destructive; text that does not parse is unknown.
 /// `$out`/`$merge` count as a key at any depth of the pipeline (fail closed). No statement is
 /// non-transactional (Schema-only lets DML run), none has RETURNING, and none touches session
 /// brakes or privileges.
@@ -52,6 +53,8 @@ nonisolated enum MongoCommandClassifier {
       return statement(text, kind: .dml, affectsAllRows: filter == .document([]))
     case .explain(let inner, _):
       return statement(text, kind: classify(inner, text: text).kind == .read ? .read : .unknown)
+    case .admin(let admin):
+      return statement(text, kind: .ddl, isDestructive: admin.isDestructive)
     }
   }
 
@@ -71,8 +74,9 @@ nonisolated enum MongoCommandClassifier {
   /// `text` would run JavaScript on the server: a `serverSideJavaScriptKeys` key (exact case,
   /// as the server matches operators) at any depth of any document argument (filter,
   /// projection, sort, find and aggregate collation and hint, count options, pipeline, update,
-  /// document). Text that does not parse as one command counts as JavaScript (fail closed; the
-  /// classifier calls it unknown anyway).
+  /// document, and an admin command's keys, options and view pipeline, so a partial filter or a
+  /// validator too). Text that does not parse as one command counts as JavaScript (fail closed;
+  /// the classifier calls it unknown anyway).
   static func usesServerSideJavaScript(_ text: String) -> Bool {
     guard let command = try? MongoshParser.parse(text) else { return true }
     return arguments(of: command).contains { value in
@@ -97,6 +101,7 @@ nonisolated enum MongoCommandClassifier {
     case .deleteOne(_, let filter), .deleteMany(_, let filter): [filter]
     case .listCollections: []
     case .explain(let command, _): arguments(of: command)
+    case .admin(let admin): admin.documentArguments
     }
   }
 
@@ -112,11 +117,12 @@ nonisolated enum MongoCommandClassifier {
   }
 
   private static func statement(
-    _ text: String, kind: StatementKind, affectsAllRows: Bool = false, createsTable: Bool = false
+    _ text: String, kind: StatementKind, affectsAllRows: Bool = false, createsTable: Bool = false,
+    isDestructive: Bool = false
   ) -> ClassifiedStatement {
     ClassifiedStatement(
       text: text, kind: kind, hasReturning: false, hasTopLevelReturning: false,
       affectsAllRows: affectsAllRows, nonTransactional: false, resetsSessionBrakes: false,
-      changesPrivileges: false, createsTable: createsTable)
+      changesPrivileges: false, createsTable: createsTable, isDestructive: isDestructive)
   }
 }

@@ -124,4 +124,12 @@ struct ReadOnlyQueryGuardTests {
     }
     #expect(try ReadOnlyQueryGuard.check("db.c.find({where: 1})", dialect: .mongodb).count == 1)
   }
+
+  /// The MCP and AI read tools run their MongoDB text through this check.
+  @Test(arguments: ["db.c.drop()", "db.runCommand({collMod: \"c\", validationLevel: \"off\"})"])
+  func mongoAdminCommandsAreRefused(text: String) {
+    #expect(throws: ReadOnlyQueryGuard.Refusal.notRead) {
+      try ReadOnlyQueryGuard.check(text, dialect: .mongodb)
+    }
+  }
 }

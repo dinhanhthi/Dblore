@@ -169,7 +169,6 @@ struct MongoshParserTests {
   func refusals() {
     let cases: [(text: String, name: String, at: String)] = [
       ("db.c.findOne({a: x})", "findOne", "findOne"),
-      ("db.c.drop()", "drop", "drop"),
       ("db.c.remove({})", "remove", "remove"),
       ("db.c.bulkWrite([])", "bulkWrite", "bulkWrite"),
       ("db.c.count()", "count", "count"),
@@ -181,7 +180,7 @@ struct MongoshParserTests {
       ("db.c.countDocuments().limit(1)", "limit", "limit"),
       ("db.getCollectionNames().forEach(print)", "forEach", "forEach"),
       ("db.dropDatabase()", "dropDatabase", "dropDatabase"),
-      ("db.runCommand({ping: 1})", "runCommand", "runCommand"),
+      ("db.c.drop().pretty()", "pretty", "pretty"),
       ("show dbs", "show dbs", "show"),
       ("use admin", "use", "use"),
       ("rs.status()", "rs", "rs"),
@@ -280,6 +279,30 @@ struct MongoshParserTests {
       ("db[\"😀\"].find({a: x})", "Unknown identifier x", "x}"),
       ("db.c.find(/* x", "Unterminated comment", "/*"),
       ("show", "Expected what to show, such as show collections", "$end"),
+      (
+        "db.runCommand({ping: 1})", "runCommand only supports collMod in the Dblore MongoDB subset",
+        "{ping"
+      ),
+      (
+        "db.runCommand({validator: {}, collMod: \"c\"})",
+        "runCommand only supports collMod in the Dblore MongoDB subset", "{validator"
+      ),
+      (
+        "db.c.renameCollection(\"d\", true)",
+        "renameCollection takes only the new name (dropTarget is not supported)", "true"
+      ),
+      (
+        "db.c.dropIndex(\"*\")", "dropIndex(\"*\") is not supported: drop one index at a time",
+        "\"*\""
+      ),
+      (
+        "db.runCommand({collMod: \"c\", $db: \"admin\"})",
+        "The option $db is not supported in the Dblore MongoDB subset", "{collMod"
+      ),
+      (
+        "db.createCollection(\"c\", {writeConcern: {w: 0}})",
+        "The option writeConcern is not supported in the Dblore MongoDB subset", "{writeConcern"
+      ),
     ]
     for item in cases {
       let error = parseError(item.text)
@@ -392,6 +415,38 @@ struct MongoshParserTests {
       (find("$cmd"), "db.getCollection(\"$cmd\").find()"),
       (find("getCollection"), "db.getCollection(\"getCollection\").find()"),
       (find("x\"y"), "db.getCollection(\"x\\\"y\").find()"),
+      (
+        .admin(
+          .createIndex(
+            collection: "c", keys: doc(("a", .int32(1)), ("b", .int32(-1))),
+            options: doc(("unique", .bool(true)), ("partialFilterExpression", a1)))),
+        "db.c.createIndex({ a: 1, b: -1 }, { unique: true, partialFilterExpression: { a: 1 } })"
+      ),
+      (.admin(.dropIndex(collection: "c", index: .string("a_1"))), "db.c.dropIndex(\"a_1\")"),
+      (
+        .admin(.setIndexHidden(collection: "c", name: "a_1", hidden: true)),
+        "db.c.hideIndex(\"a_1\")"
+      ),
+      (
+        .admin(.setIndexHidden(collection: "c", name: "a_1", hidden: false)),
+        "db.c.unhideIndex(\"a_1\")"
+      ),
+      (
+        .admin(
+          .createCollection(
+            name: "logs", options: doc(("capped", .bool(true)), ("size", .int32(4096))))),
+        "db.createCollection(\"logs\", { capped: true, size: 4096 })"
+      ),
+      (
+        .admin(.createView(name: "v", source: "c", pipeline: [doc(("$match", a1))], options: nil)),
+        "db.createView(\"v\", \"c\", [ { $match: { a: 1 } } ])"
+      ),
+      (.admin(.drop(collection: "c")), "db.c.drop()"),
+      (.admin(.renameCollection(collection: "c", to: "d")), "db.c.renameCollection(\"d\")"),
+      (
+        .admin(.collMod(collection: "c", options: doc(("validationLevel", .string("moderate"))))),
+        "db.runCommand({ collMod: \"c\", validationLevel: \"moderate\" })"
+      ),
     ]
     for (command, text) in cases {
       #expect(command.render() == text)
@@ -423,7 +478,7 @@ struct MongoshParserTests {
 
   private func randomCommand(rng: inout SplitMix64) -> MongoCommand {
     let name = Self.collections.randomElement(using: &rng)!
-    switch Int.random(in: 0..<12, using: &rng) {
+    switch Int.random(in: 0..<13, using: &rng) {
     case 0:
       let filter = optionalDocument(rng: &rng)
       return .find(
@@ -461,8 +516,58 @@ struct MongoshParserTests {
         upsert: Bool.random(using: &rng))
     case 9: return .deleteOne(collection: name, filter: document(rng: &rng))
     case 10: return .deleteMany(collection: name, filter: document(rng: &rng))
+    case 11: return .admin(adminCommand(name, rng: &rng))
     default: return .listCollections
     }
+  }
+
+  private static let createIndexOptions = ["name", "unique", "partialFilterExpression", "hidden"]
+  private static let createCollectionOptions = ["capped", "size", "validator", "validationLevel"]
+  private static let collModOptions = ["validator", "validationLevel", "expireAfterSeconds"]
+
+  private func adminCommand(_ name: String, rng: inout SplitMix64) -> MongoAdminCommand {
+    let other = Self.collections.randomElement(using: &rng)!
+    switch Int.random(in: 0..<8, using: &rng) {
+    case 0:
+      return .createIndex(
+        collection: name, keys: nonEmptyDocument(rng: &rng),
+        options: adminOptions(Self.createIndexOptions, rng: &rng))
+    case 1:
+      let index: MongoValue =
+        Bool.random(using: &rng) ? .string(other) : nonEmptyDocument(rng: &rng)
+      return .dropIndex(collection: name, index: index)
+    case 2:
+      return .setIndexHidden(collection: name, name: other, hidden: Bool.random(using: &rng))
+    case 3:
+      return .createCollection(
+        name: name, options: adminOptions(Self.createCollectionOptions, rng: &rng))
+    case 4:
+      let count = Int.random(in: 0..<3, using: &rng)
+      return .createView(
+        name: name, source: other,
+        pipeline: (0..<count).map { _ in
+          .document([MongoValue.Field(Self.stages.randomElement(using: &rng)!, document(rng: &rng))]
+          )
+        },
+        options: adminOptions(["collation"], rng: &rng))
+    case 5: return .drop(collection: name)
+    case 6: return .renameCollection(collection: name, to: other)
+    default:
+      return .collMod(
+        collection: name, options: adminOptions(Self.collModOptions, rng: &rng) ?? .document([]))
+    }
+  }
+
+  /// Nil or a non-empty document of distinct `allowed` keys (an empty one parses back as nil).
+  private func adminOptions(_ allowed: [String], rng: inout SplitMix64) -> MongoValue? {
+    let keys = allowed.filter { _ in Bool.random(using: &rng) }
+    guard !keys.isEmpty else { return nil }
+    return .document(keys.map { MongoValue.Field($0, value(rng: &rng, depth: 0)) })
+  }
+
+  private func nonEmptyDocument(rng: inout SplitMix64) -> MongoValue {
+    let value = document(rng: &rng)
+    return value == .document([]) ? doc(("a", .int32(1))) : value
   }
 
   /// Nil or a non-empty document (an empty one parses back as nil).
