@@ -23,64 +23,39 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 
 ## Features
 
-- **Connections**: PostgreSQL with SSL, client certificates and SSH tunnels; import
-  connections from DBeaver, TablePlus, DataGrip, `.pgpass` or a URI
-- **MySQL and MariaDB**: TCP with TLS and client certificates, or through an SSH tunnel;
-  queries, schema tree, autocomplete, Safe Mode and Protected mode, history, export, staged
-  edits by primary key, foreign-key lookup, CSV import, routine and trigger source, EXPLAIN
-  (a plan tree on MySQL, a table on MariaDB) and cancel. Only the Verify CA and Verify Full
-  SSL modes check the server certificate
-- **MongoDB**: connect with a `mongodb://` or `mongodb+srv://` string or the form (SCRAM
-  login, TLS, SSH tunnel to a single host); write commands in a subset of the mongosh
-  syntax (find, aggregate, count, distinct, insert, update, replace and delete) with
-  highlighting and autocomplete; browse results as a grid or as document cards, with nested
-  fields that expand and values you edit in place with a double-click; filter a
-  collection in the data viewer, build an aggregation stage by stage with a preview of each
-  stage, and stage document edits by `_id` that run one by one after Safe Mode confirmation
-- **Notebooks**: `.dblore` notebooks that mix SQL cells with inline results, like Jupyter
-  for your databases; or plain `.sql` files in a classic editor
-- **Markdown notes**: jot a quick `.md` note in the workspace without saving it first
-  (written to disk only on Cmd+S), and toggle between the source and an editable preview
-- **SQL editor and execution**: syntax highlighting and table- and column-aware
-  autocompletion; run a cell, the query at the cursor or all cells, cancel running
-  queries, and see row count and execution time per result; bind named `:name`
-  parameters; find any command with `Cmd+K`
-- **SQL dump and restore**: export a PostgreSQL, MySQL/MariaDB or SQLite database (all
-  tables or some, with or without data) as a `.sql` file read in one snapshot, restore a
-  Dblore dump of up to 64 MiB after every statement is checked, or copy an open SQLite
-  database into one file
-- **Results grid**: sort, resize and search columns, paginate, edit values inline, inspect
-  a cell with a JSON viewer, follow foreign keys, add a row from a form, color values by
-  type, pin a result to compare re-runs, and export to Excel, CSV, JSON, Markdown, PDF,
-  TSV or SQL `INSERT`
-- **Import data**: CSV, TSV and JSON into a new or existing table, with a preview,
-  column mapping and type overrides
-- **Table data viewer**: open any table or view from the sidebar to browse and edit its
-  data without writing a query
-- **Schema browser and visualizer**: tables, columns and types in the sidebar, and a
-  canvas of tables with foreign-key lines; view the source of functions and triggers
-- **Structure editor**: "Edit Structure..." on a table adds, alters, renames and drops
-  columns, indexes and keys on PostgreSQL and MySQL, with a preview of the exact SQL that
-  runs. SQLite gets only the ALTERs it supports (add column; rename and drop column on newer
-  SQLite versions; create and drop index); DuckDB is view-only
-- **Safe Mode**: protection levels, confirmation before destructive statements, and a
-  Commit / Rollback banner for pending transactions, with Touch ID to unlock, and a
-  commit style (Immediate, Confirm, Review or Password)
-- **AI assistant**: chat panel (`Cmd+L`) that writes SQL (mongosh commands on MongoDB)
-  from plain-language questions and explains or fixes queries. Works with Anthropic,
-  OpenAI, OpenRouter, Ollama, LM Studio, `mlx_lm.server` or any OpenAI-compatible endpoint
-  (bring your own API key).
-  Only schema metadata is sent automatically; query text and errors are sent only when
-  you confirm, row data is never sent on its own, and generated SQL does not run unless
-  you turn on "Run read-only queries" (off by default): then a single read-only statement
-  runs and only you see the rows. Point it at a local model (Qwen3.5 or Gemma 4 on-device,
-  Ollama, LM Studio) for fully local use. Detach it into a floating, resizable bubble at
-  the bottom of the window, or pick the default in Settings > AI > Panel
-- **MCP server**: let AI agents such as Claude Code or Cursor read your databases through a
-  read-only server on `127.0.0.1`. Off by default; only the connections you allow in
-  Settings > MCP are exposed, every query is checked and run read-only, and queries are
-  recorded in History. On MongoDB agents run single read commands in the mongosh subset;
-  MongoDB has no read-only session, so give that connection a user with a read-only role
+- **Notebooks and SQL editor**: `.dblore` notebooks with inline results, plain `.sql` tabs
+  and quick Markdown notes, in one tidy workspace
+- **Schema browser**: tables, columns and types, a quick filter and a canvas with foreign-key
+  lines
+- **Structure editor**: add, change and drop columns, indexes and keys, with a preview of the
+  exact SQL that runs
+- **Results grid**: sort, search, filter, edit values inline, add rows from a form, follow
+  foreign keys, inspect cells as JSON and pin a result to compare re-runs
+- **Charts**: switch any result between grid and chart
+- **Import and export**: import CSV, TSV and JSON; export to Excel, CSV, JSON, Markdown, PDF,
+  TSV and SQL `INSERT`
+- **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB or SQLite database to a `.sql`
+  file and restore it
+- **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
+  transactions, Touch ID to unlock
+- **AI assistant**: write, explain and fix queries with your own key or a local model.
+  Nothing runs unless you allow read-only queries, and row values are never sent
+- **MCP server**: let AI agents read the connections you allow, read-only and on this Mac
+  only. Off by default
+- **Keyboard-first**: run cells and queries without leaving the keys, and find any command
+  with `Cmd+K`
+
+[All features](https://dblore.dinhanhthi.com/features.html)
+
+## Databases
+
+- **PostgreSQL**: SSL, client certificates, SSH tunnels, read-only mode, and import from
+  DBeaver, TablePlus, DataGrip, `.pgpass` or a URI
+- **MySQL and MariaDB**: TLS, client certificates, SSH tunnels, staged edits by primary key
+  and an EXPLAIN plan tree on MySQL
+- **MongoDB**: mongosh commands, editable document cards, a collection screen with filter,
+  schema and indexes, and an aggregation builder
+- **SQLite**: open a file and work with it like a server connection
 
 ## Plugins
 
@@ -127,64 +102,9 @@ finish.
 
 ### Local databases
 
-Ready-made Docker servers to connect the app to. Run the commands from the repository root.
-Data stays in Docker volumes until `docker compose -f <file> down -v`. Test suites and CI:
+Ready-made Docker servers (PostgreSQL, MySQL/MariaDB, MongoDB and an SSH tunnel stack) to
+connect the app to and run the integration tests against. Ports, logins and setup:
 [docker/README.md](docker/README.md).
-
-All at once (the certificate and key scripts are needed once):
-
-```sh
-cp -n docker/postgresql/.env.example docker/postgresql/.env
-docker/postgresql/scripts/gen-mtls-certs.sh
-docker/postgresql/scripts/gen-ssh-fixtures.sh
-docker/mongodb/scripts/gen-mongo-tls.sh
-for f in docker/postgresql/docker-compose{,.test,.mtls,.ssh}.yml docker/mysql/docker-compose.test.yml; do
-  docker compose -f "$f" up -d --wait
-done
-docker compose -f docker/mongodb/docker-compose.test.yml --profile tls up -d --wait
-```
-
-One at a time:
-
-- **PostgreSQL dev (sample data)**: `cp -n docker/postgresql/.env.example docker/postgresql/.env`,
-  then `docker compose -f docker/postgresql/docker-compose.yml up -d --wait`.
-  Connect: `postgresql://dblore:dblore123@localhost:5433/dblore`
-- **PostgreSQL test**: `docker compose -f docker/postgresql/docker-compose.test.yml up -d --wait`.
-  Connect: `localhost:5435`, user `dblore_test`, password `dblore123`, database `dblore_test`
-- **PostgreSQL mTLS**: `docker/postgresql/scripts/gen-mtls-certs.sh`, then
-  `docker compose -f docker/postgresql/docker-compose.mtls.yml up -d --wait`.
-  Connect: `localhost:5436`, user `dblore_mtls`, password `dblore123`, database `dblore_mtls`,
-  SSL Verify Full with CA `docker/postgresql/data/mtls/ca.crt` and client certificate
-  `client.crt` / key `client.key` from the same folder
-- **MySQL 8.4 and MariaDB 11.4**: `docker compose -f docker/mysql/docker-compose.test.yml up -d --wait`.
-  Connect: `localhost:3307` (MySQL) or `localhost:3308` (MariaDB), user `root` (or
-  `dblore_test`), password `dblore123`, database `dblore_test`. For TLS, run
-  `docker/mysql/scripts/gen-mysql-tls.sh`, recreate the containers with `--force-recreate`,
-  then use SSL Verify Full with CA `docker/mysql/data/tls/ca.crt`
-- **MongoDB 8.0**: `docker compose -f docker/mongodb/docker-compose.test.yml up -d --wait`.
-  Connect: `mongodb://root:dblore123@localhost:27018/?authSource=admin`
-- **MongoDB TLS**: `docker/mongodb/scripts/gen-mongo-tls.sh`, then
-  `docker compose -f docker/mongodb/docker-compose.test.yml --profile tls up -d --wait`.
-  Connect: `mongodb://root:dblore123@localhost:27019/?authSource=admin&tls=true`, CA
-  `docker/mongodb/tls/ca.crt`
-- **SSH tunnel stack**: `docker/postgresql/scripts/gen-ssh-fixtures.sh`, then
-  `docker compose -f docker/postgresql/docker-compose.ssh.yml up -d --wait`. SSH:
-  `localhost:2222`, user `dblore`, password `dblore-ssh-123` (or the keys in
-  `docker/postgresql/data/ssh/`); `localhost:2223` has an RSA-only host key, which the app
-  refuses. Targets behind the tunnel:
-  - PostgreSQL: host `postgres`, port `5432`, user, password and database `dblore_ssh` / `dblore123` / `dblore_ssh`,
-    SSL Disable (its certificate is self-signed)
-  - MySQL: host `mysql-ssh`, port `3306`, user, password and database `dblore_ssh` / `dblore123` / `dblore_ssh`
-  - MongoDB: host `mongo-ssh`, port `27017`, user `root`, password `dblore123`, Auth Source `admin`
-
-For more MongoDB data, load MongoDB's sample datasets into the `27018` server:
-
-```sh
-curl -o /tmp/sampledata.archive https://atlas-education.s3.amazonaws.com/sampledata.archive
-docker cp /tmp/sampledata.archive dblore-mongo-test:/tmp/sampledata.archive
-docker exec dblore-mongo-test mongorestore -u root -p dblore123 --authenticationDatabase admin \
-  --archive=/tmp/sampledata.archive --drop
-```
 
 ## Contributing
 
