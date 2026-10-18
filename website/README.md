@@ -17,7 +17,7 @@ Open http://localhost:8080.
 - `tokens.css`: design tokens (OKLCH colors, Geist fonts, spacing). `styles.css`: layout and components.
 - `site.js`: theme toggle (the saved theme is applied by an inline script in each `<head>`).
 - The app version in each page header (`.version-badge`) is read at runtime from the same-origin `appcast.xml` (highest build number) by `site.js`; the static `v0.4.0` in each page is only a fallback for no-JS, local preview or fetch failure, so no hand edit is needed on release.
-- `logo.png`, `poster.jpg`, `screenshots/`: images (screenshots are the clean captures in `assets/screenshots/` with a database/feature ribbon added by `docs/showcase/source/label-shots.py`). `og.jpg`: the 1200×630 social card (`og:image`), rendered from `docs/showcase/source/og.html`. `CNAME`: custom domain. `.nojekyll`: disables Jekyll.
+- `logo.png`, `poster.jpg`, `screenshots/`: images (screenshots are the clean captures in `docs/showcase/source/clean-shots/` with a database/feature ribbon added by `docs/showcase/source/label-shots.py`). `og.jpg`: the 1200×630 social card (`og:image`), rendered from `docs/showcase/source/og.html`. `CNAME`: custom domain. `.nojekyll`: disables Jekyll.
 
 ## Feature catalog maintenance
 
