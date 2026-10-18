@@ -33,7 +33,7 @@ Thanks for your interest — contributions are welcome!
        upstream repo, never to a floating branch.
 
      If your change touches database code, also run the integration tests against the
-     test PostgreSQL container (`docker/README.md`, "Integration Test Database"):
+     test PostgreSQL container (`docker/README.md`, "Integration tests"):
 
      ```bash
      docker compose -f docker/postgresql/docker-compose.test.yml up -d
@@ -43,8 +43,8 @@ Thanks for your interest — contributions are welcome!
        -skipPackagePluginValidation -skipMacroValidation
      ```
 
-     The MongoDB suites are opt-in. Start `docker/mongodb` (`docker/README.md`, "MongoDB
-     Test Databases") and put `TEST_RUNNER_MONGO_TESTS=1` in front of the integration test
+     The MongoDB suites are opt-in. Start `docker/mongodb` (`docker/README.md`, "MongoDB"
+     and "Integration tests") and put `TEST_RUNNER_MONGO_TESTS=1` in front of the integration test
      command above (`xcodebuild` passes it to the tests as `MONGO_TESTS`; either form turns
      the gate on). The TLS suites also need `TEST_RUNNER_MONGO_TLS_TESTS=1`
      (`MONGO_TLS_TESTS`), the certificates from `docker/mongodb/scripts/gen-mongo-tls.sh` and
