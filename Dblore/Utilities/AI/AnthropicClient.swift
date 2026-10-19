@@ -16,21 +16,65 @@ nonisolated struct AnthropicClient: AIChatClient {
     urlRequest.httpMethod = "POST"
     applyHeaders(&urlRequest, apiKey: apiKey)
     urlRequest.setValue("application/json", forHTTPHeaderField: "content-type")
-    let body: [String: Any] = [
+    var body: [String: Any] = [
       "model": request.model,
       "system": request.system,
-      "messages": request.messages.map { ["role": $0.role.rawValue, "content": $0.text] },
+      "messages": request.messages.map(messageObject),
       "max_tokens": request.maxTokens,
       "stream": true,
     ]
+    if !request.tools.isEmpty {
+      body["tools"] = request.tools.map {
+        ["name": $0.name, "description": $0.description, "input_schema": $0.parametersObject]
+      }
+    }
     urlRequest.httpBody = try? JSONSerialization.data(withJSONObject: body)
     return urlRequest
+  }
+
+  /// A text-only message keeps a string `content`; one with tool blocks sends a block array,
+  /// `tool_result` blocks first as the Messages API requires
+  private static func messageObject(_ message: AIChatMessage) -> [String: Any] {
+    guard message.hasToolBlocks else {
+      return ["role": message.role.rawValue, "content": message.text]
+    }
+    let results = message.blocks.filter { block in
+      if case .toolResult = block { return true }
+      return false
+    }
+    let others = message.blocks.filter { block in
+      if case .toolResult = block { return false }
+      return true
+    }
+    let content = (results + others).compactMap { block -> [String: Any]? in
+      switch block {
+      case .text(let text):
+        return text.isEmpty ? nil : ["type": "text", "text": text]
+      case .toolUse(let call):
+        // `inputJSON` is the canonical object the parser validated. A stored call that does not
+        // parse back is dropped rather than sent as a different call; the provider then refuses
+        // its unmatched `tool_result`.
+        guard
+          let input = try? JSONSerialization.jsonObject(with: Data(call.inputJSON.utf8))
+            as? [String: Any],
+          JSONSerialization.isValidJSONObject(input)
+        else { return nil }
+        return ["type": "tool_use", "id": call.id, "name": call.name, "input": input]
+      case .toolResult(let result):
+        var object: [String: Any] = [
+          "type": "tool_result", "tool_use_id": result.id, "content": result.content,
+        ]
+        if result.isError { object["is_error"] = true }
+        return object
+      }
+    }
+    return ["role": message.role.rawValue, "content": content]
   }
 
   func stream(_ request: AIChatRequest) -> AsyncThrowingStream<AIStreamEvent, Error> {
     AIClientFactory.streamLines(
       Self.makeRequest(request, baseURL: baseURL, apiKey: apiKey), session: session,
-      parser: AISSEParser(wire: .anthropicMessages))
+      parser: AISSEParser(wire: .anthropicMessages, toolNames: Set(request.tools.map(\.name))))
   }
 
   /// `GET /models` -> `{"data":[{"id":...}], "has_more":...}`; 404 falls back to the built-in list

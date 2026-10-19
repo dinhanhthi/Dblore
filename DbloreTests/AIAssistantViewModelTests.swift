@@ -483,6 +483,8 @@ struct AIAssistantViewModelTests {
     #expect(decoded.queryResult == nil)
     #expect(decoded.isRunning == nil)
     #expect(decoded.queryOutcome == nil)
+    #expect(decoded.toolCalls == nil)
+    #expect(decoded.toolResults == nil)
 
     // Chats saved while the AI could read results carry `sharedWithModel`, now ignored
     let shared = #"""
@@ -502,6 +504,31 @@ struct AIAssistantViewModelTests {
     var expected = entry
     expected.queryResult?.rows = []
     #expect(try JSONDecoder().decode(AIChatEntry.self, from: data) == expected)
+  }
+
+  @Test("tool calls and results round-trip on a chat entry, the signature kept unchanged")
+  func chatEntryToolCoding() throws {
+    var entry = AIChatEntry(id: UUID(), role: .assistant, text: "", isError: false)
+    entry.toolCalls = [
+      AIToolCall(id: "call_1", name: "list_tables", inputJSON: "{}", signature: "c2ln"),
+      AIToolCall(id: "call_2", name: "describe_table", inputJSON: #"{"table":"users"}"#),
+    ]
+    entry.toolResults = [AIToolResult(id: "call_1", content: "users", isError: false)]
+    let data = try JSONEncoder().encode(entry)
+    #expect(try JSONDecoder().decode(AIChatEntry.self, from: data) == entry)
+
+    let plain = AIChatEntry(id: UUID(), role: .user, text: "hi", isError: false)
+    let json = String(decoding: try JSONEncoder().encode(plain), as: UTF8.self)
+    #expect(!json.contains("toolCalls") && !json.contains("toolResults"))
+  }
+
+  @Test("a chat message's text joins its text blocks only")
+  func chatMessageText() {
+    let call = AIToolCall(id: "call_1", name: "list_tables", inputJSON: "{}")
+    let message = AIChatMessage(
+      role: .assistant, blocks: [.text("Let me "), .toolUse(call), .text("look.")])
+    #expect(message.text == "Let me look.")
+    #expect(AIChatMessage(role: .user, text: "hi").blocks == [.text("hi")])
   }
 
   // MARK: - Query runs

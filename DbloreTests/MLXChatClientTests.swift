@@ -43,6 +43,35 @@ struct MLXChatClientTests {
     #expect(MLXChatClient.chatMessages(for: request).map(\.role) == [.user])
   }
 
+  @Test("a request never sends tools or tool blocks: text blocks only, system unchanged")
+  func noToolCatalog() {
+    let tool = AIToolSpec(
+      name: "run_read_query", description: "Run one read-only query",
+      parameters: .object(["type": .string("object")]))
+    let call = AIToolCall(id: "c1", name: "run_read_query", inputJSON: #"{"sql":"SELECT 1"}"#)
+    var request = AIChatRequest(
+      model: "qwen3.5-2b", system: "compact rules",
+      messages: [
+        AIChatMessage(role: .user, text: "count?"),
+        AIChatMessage(role: .assistant, blocks: [.text("Checking."), .toolUse(call)]),
+        AIChatMessage(
+          role: .user,
+          blocks: [
+            .toolResult(AIToolResult(id: "c1", content: "42 rows", isError: false)),
+            .text("thanks"),
+          ]),
+      ])
+    request.tools = [tool]
+    let mapped = MLXChatClient.chatMessages(for: request)
+    #expect(mapped.map(\.role) == [.system, .user, .assistant, .user])
+    #expect(mapped.map(\.content) == ["compact rules", "count?", "Checking.", "thanks"])
+    for message in mapped {
+      #expect(!message.content.contains("run_read_query"))
+      #expect(!message.content.contains("Run one read-only query"))
+      #expect(!message.content.contains("42 rows"))
+    }
+  }
+
   @Test("enable_thinking false only for Qwen3 ids")
   func thinkingContext() {
     let qwen = MLXChatClient.additionalContext(forModel: "qwen3.5-4b")

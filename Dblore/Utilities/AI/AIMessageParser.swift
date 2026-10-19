@@ -1,5 +1,6 @@
 // AIMessageParser.swift
-// Splits assistant markdown into text and fenced code segments; read-only check for Insert
+// Splits assistant markdown into text and fenced code segments; read-only check for Insert;
+// reads text-protocol tool calls
 
 import Foundation
 
@@ -89,6 +90,59 @@ nonisolated enum AIMessageParser {
       }
     }
     return nil
+  }
+
+  /// The text-protocol tool call (`AITextToolProtocol`) of the first closed ```tool block; nil
+  /// when there is none or it is still streaming (unclosed). Later tool blocks are ignored. The
+  /// block is untrusted model output: it must be at most `AISSEParser.maxToolInputBytes`, one
+  /// JSON object with exactly the keys `tool` (a name in `toolNames`) and `arguments` (an
+  /// object), otherwise it throws and nothing runs. `JSONSerialization` tolerates trailing commas,
+  /// so `inputJSON` is the arguments re-serialized (sorted keys), never the raw text; a
+  /// non-finite number (`-1e999` parses to -inf) is refused. The call gets a local id.
+  static func toolCall(
+    in markdown: String, toolNames: Set<String>, id: String = UUID().uuidString
+  ) throws(AIStreamError) -> AIToolCall? {
+    var codeLines: [Substring] = []
+    var isTool = false
+    var inCode = false
+    for line in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      if inCode {
+        if trimmed == fence {
+          if isTool {
+            return try textToolCall(codeLines.joined(separator: "\n"), toolNames: toolNames, id: id)
+          }
+          codeLines = []
+          inCode = false
+        } else {
+          codeLines.append(line)
+        }
+      } else if trimmed.hasPrefix(fence) {
+        let language = trimmed.dropFirst(fence.count).split(separator: " ").first
+        isTool = language?.lowercased() == AITextToolProtocol.fenceLanguage
+        inCode = true
+      }
+    }
+    return nil
+  }
+
+  private static func textToolCall(
+    _ body: String, toolNames: Set<String>, id: String
+  ) throws(AIStreamError) -> AIToolCall {
+    guard body.utf8.count <= AISSEParser.maxToolInputBytes else {
+      throw .invalidToolCall("The model sent tool arguments over 64 KiB.")
+    }
+    guard let object = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any],
+      Set(object.keys) == ["tool", "arguments"], let name = object["tool"] as? String,
+      let arguments = object["arguments"] as? [String: Any],
+      JSONSerialization.isValidJSONObject(arguments),
+      let data = try? JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys]),
+      let inputJSON = String(data: data, encoding: .utf8)
+    else { throw .invalidToolCall("The model sent a malformed tool call.") }
+    guard toolNames.contains(name) else {
+      throw .invalidToolCall("The model called a tool that was not offered.")
+    }
+    return AIToolCall(id: id, name: name, inputJSON: inputJSON)
   }
 
   /// Language (first info token) and run marker (second token "run" on a language runnable on

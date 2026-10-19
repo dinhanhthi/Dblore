@@ -117,6 +117,8 @@ extension AIAssistantViewModel {
           append(delta, to: id)
         case .loadingModel:
           isLoadingModel = true
+        case .toolCall, .stop:
+          break  // Tool turns are not offered yet
         }
       }
     } catch {

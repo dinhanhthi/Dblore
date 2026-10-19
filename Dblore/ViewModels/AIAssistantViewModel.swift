@@ -25,6 +25,10 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
   /// Set on a Review or Optimize question: the request a retry sends again (the answer can be
   /// gone, removed while still empty)
   var askedReview: AIReviewRequest? = nil
+  /// Tools the model called in this assistant turn
+  var toolCalls: [AIToolCall]? = nil
+  /// Answers the app sent back for tool calls
+  var toolResults: [AIToolResult]? = nil
 
   enum QueryOutcome: String, Codable {
     /// The database (or the connection) returned an error
