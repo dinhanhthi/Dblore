@@ -207,8 +207,8 @@ struct MongoImportSheet: View {
           sectionTitle("Inferred")
           sectionTitle("Import as")
         }
-        ForEach(model.columns.indices, id: \.self) { index in
-          let column = model.columns[index]
+        // Elements, not subscripts: a stale row of a longer column list must not index the new one
+        ForEach(Array(model.columns.enumerated()), id: \.offset) { index, column in
           GridRow(alignment: .center) {
             Text(column.path)
               .font(.monoMedium)
@@ -242,8 +242,8 @@ struct MongoImportSheet: View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       sectionTitle("Preview (first \(previewTexts.count) documents)")
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        ForEach(previewTexts.indices, id: \.self) { index in
-          Text(verbatim: previewTexts[index])
+        ForEach(Array(previewTexts.enumerated()), id: \.offset) { index, text in
+          Text(verbatim: text)
             .font(.mono)
             .foregroundColor(.foreground)
             .textSelection(.enabled)
