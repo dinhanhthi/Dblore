@@ -237,13 +237,12 @@ struct AIAssistantPanel: View {
   }
 
   private var emptyState: some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text(emptyStateText)
-        .font(.labelText)
-        .foregroundColor(.foregroundMuted)
-    }
-    .padding(Spacing.md)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    Text(emptyStateText)
+      .font(.labelText)
+      .foregroundColor(.foregroundMuted)
+      .multilineTextAlignment(.center)
+      .padding(Spacing.xl)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   /// Discloses whether read-only queries run
