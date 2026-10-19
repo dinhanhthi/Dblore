@@ -339,11 +339,14 @@ extension WorkspaceManager {
     databaseForeignKeys = []
     schemaConnectionEpoch = nil
     mongoOverview = nil
-    // The Export and Import forms belong to the closed connection: stop them and close them
+    // The Export, Import and backup forms belong to the closed connection: stop them and close
+    // them
     mongoExport?.dismiss()
     mongoExport = nil
     mongoImport?.model.dismiss()
     mongoImport = nil
+    mongoBackup?.model.dismiss()
+    mongoBackup = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

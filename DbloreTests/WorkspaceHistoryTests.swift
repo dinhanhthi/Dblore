@@ -218,6 +218,12 @@ struct WorkspaceHistoryTests {
     #expect(QueryHistoryEntry.isLabelText("Restore SQL dump: 7 statements"))
     #expect(QueryHistoryEntry.isLabelText("Restore SQL dump: 1 statement"))
     #expect(QueryHistoryEntry.isLabelText("COMMIT (2 statements)"))
+    #expect(QueryHistoryEntry.isLabelText("MongoDB backup of shop: 3 collections, 120 documents"))
+    #expect(QueryHistoryEntry.isLabelText("Restore MongoDB backup: 1 collection, 1 document"))
+    #expect(!QueryHistoryEntry.isLabelText("MongoDB backup of shop: 3 tables, 120 rows"))
+    #expect(!QueryHistoryEntry.isLabelText("Restore MongoDB backup: 1,200 documents"))
+    #expect(
+      !QueryHistoryEntry.isLabelText("Restore MongoDB backup: 1 collection, 1 document; x"))
     #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop"))
     #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop: 3 tables"))
     #expect(!QueryHistoryEntry.isLabelText("SQL dump of shop: x tables, 1 rows"))

@@ -8,10 +8,12 @@
 // Indexes: `listIndexes` errors propagate, except on a view (`CommandNotSupportedOnView`, 166),
 // which answers `.view`. `$indexStats` and `$collStats` need their own privileges: a failure
 // leaves their columns nil (see `MongoIndexInfo.merge`). Commands run in the session's database
-// (`MongoSession.databaseName`, the data viewer's `schema` on MongoDB).
+// (`MongoSession.databaseName`, the data viewer's `schema` on MongoDB). Index specs: the raw
+// `listIndexes` documents alone, for the backup writer (a view has none).
 //
 // Collection info: `listCollections` filtered by name, for the Validation tab. Views answer
-// `type: "view"` (no code 166 here); a missing namespace is an error.
+// `type: "view"` (no code 166 here); a missing namespace is an error. Existing names: one
+// `listCollections` filtered by `name: {$in: …}` (`nameOnly`), for the restore's collision check.
 //
 // Schema sample: the mongosh text of `MongoSchemaAnalyzer.sampleCommand` (refused before
 // anything is sent when it uses server-side JavaScript) is parsed back with `MongoshParser`, so
@@ -109,6 +111,60 @@ extension DatabaseConnectionManager {
       let collStats = try? await mongo.catalogDocuments(
         MongoIndexInfo.collStatsCommand(collection: collection), cap: Self.mongoCollStatsCap)
       return .indexes(MongoIndexInfo.merge(indexes: indexes, stats: stats, collStats: collStats))
+    }
+  }
+
+  /// The `listIndexes` specs of `collection` as the server returns them (every index option
+  /// kept), for a backup; empty for a view. `database`, when given, must be the session's
+  /// database.
+  func fetchMongoIndexSpecs(database: String?, collection: String) async throws -> [MongoValue] {
+    try await fetchCatalog("indexes") { session in
+      guard let mongo = session as? MongoSession else {
+        throw MongoSessionError(message: "Indexes need a MongoDB session.")
+      }
+      if let database, database != mongo.databaseName {
+        throw MongoSessionError(
+          message: "This connection reads database \(mongo.databaseName), not \(database).")
+      }
+      do {
+        return try await mongo.catalogDocuments(
+          MongoIndexInfo.listIndexesCommand(collection: collection), cap: Self.mongoIndexCap)
+      } catch let error as MongoSessionError
+        where error.code == 166 || error.codeName == "CommandNotSupportedOnView"
+      {
+        return []
+      }
+    }
+  }
+
+  /// The names among `names` that exist in the session's database (collections and views).
+  /// `database`, when given, must be the session's database.
+  func fetchMongoExistingNames(_ names: [String], database: String?) async throws -> Set<String> {
+    guard !names.isEmpty else { return [] }
+    return try await fetchCatalog("collection names") { session in
+      guard let mongo = session as? MongoSession else {
+        throw MongoSessionError(message: "Collection names need a MongoDB session.")
+      }
+      if let database, database != mongo.databaseName {
+        throw MongoSessionError(
+          message: "This connection reads database \(mongo.databaseName), not \(database).")
+      }
+      let filter = MongoValue.document([
+        MongoValue.Field(
+          "name", .document([MongoValue.Field("$in", .array(names.map(MongoValue.string)))]))
+      ])
+      let command = [
+        MongoValue.Field("listCollections", .int32(1)), MongoValue.Field("filter", filter),
+        MongoValue.Field("nameOnly", .bool(true)), MongoValue.Field("cursor", .document([])),
+      ]
+      let entries = try await mongo.catalogDocuments(command, cap: names.count)
+      return Set(
+        entries.compactMap { entry -> String? in
+          guard case .document(let fields) = entry,
+            case .string(let name)? = fields.first(where: { $0.key == "name" })?.value
+          else { return nil }
+          return name
+        })
     }
   }
 

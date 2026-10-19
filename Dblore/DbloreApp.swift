@@ -711,10 +711,12 @@ struct TabCommands: Commands {
       Button("Import Data...") { openTableImportAction?() }
         .disabled(openTableImportAction == nil)
 
-      Button("Export SQL Dump...") { openSQLDumpAction?() }
+      // MongoDB has its own backup file: same actions, its own titles
+      let isMongo = WorkspaceWindowManager.shared.activeWorkspaceManager?.isMongoWorkspace == true
+      Button(isMongo ? "Back Up Database..." : "Export SQL Dump...") { openSQLDumpAction?() }
         .disabled(openSQLDumpAction == nil)
 
-      Button("Restore SQL Dump...") { openSQLRestoreAction?() }
+      Button(isMongo ? "Restore Backup..." : "Restore SQL Dump...") { openSQLRestoreAction?() }
         .disabled(openSQLRestoreAction == nil)
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }

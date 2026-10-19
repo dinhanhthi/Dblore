@@ -458,8 +458,15 @@ struct WorkspaceContainerView: View {
   }
 
   /// Connected to an engine with a SQL dump (the file copy: SQLite only); the sheet runs for the
-  /// active tab, or a new SQL file when none is open
+  /// active tab, or a new SQL file when none is open. MongoDB (no SQL dump): Back Up Database and
+  /// Restore Backup (`WorkspaceManager.mongoBackup`), no file copy.
   private func backupAction(_ sheet: BackupSheet) -> (() -> Void)? {
+    if workspaceManager.isMongoWorkspace {
+      guard sheet != .fileCopy, workspaceManager.canBackUpMongo else { return nil }
+      return { [workspaceManager] in
+        workspaceManager.openMongoBackup(sheet == .restore ? .restore : .backup)
+      }
+    }
     guard workspaceManager.connectionState.isConnected,
       let type = workspaceManager.workspace.connectionConfig?.databaseType,
       type.capabilities.supportsSQLDump, sheet != .fileCopy || type == .sqlite
@@ -510,7 +517,8 @@ private enum BackupSheet {
 
 /// Export SQL Dump, Copy Database File and Restore SQL Dump in the right side panel. The panel
 /// stays open while the sheet works, unless the sheet's tab closes: then the sheet (which stops
-/// its work) and the panel go away.
+/// its work) and the panel go away. Also the MongoDB Back Up Database and Restore Backup panel
+/// (`WorkspaceManager.mongoBackup`, cleared with its work stopped on tab close and disconnect).
 private struct BackupPanel: ViewModifier {
   let workspaceManager: WorkspaceManager
   @Binding var sheet: BackupSheet?
@@ -523,12 +531,43 @@ private struct BackupPanel: ViewModifier {
     tabID.map { id in workspaceManager.tabs.contains { $0.id == id } } ?? false
   }
 
+  /// The MongoDB backup or restore panel; closing it is refused while a file panel is open or
+  /// the work runs (its Cancel stops it)
+  private var isMongoPresented: Binding<Bool> {
+    Binding(
+      get: { workspaceManager.mongoBackup != nil },
+      set: {
+        guard !$0, let model = workspaceManager.mongoBackup?.model, !model.isBusy else { return }
+        model.dismiss()
+        workspaceManager.mongoBackup = nil
+      })
+  }
+
   func body(content: Content) -> some View {
     content
       .onChange(of: isTabOpen) { _, isOpen in
         guard !isOpen, sheet != nil else { return }
         isBusy = false
         sheet = nil
+      }
+      .sidePanelOverlay(isPresented: isMongoPresented, width: SQLDumpSheet.panelWidth) {
+        if let request = workspaceManager.mongoBackup {
+          switch request.kind {
+          case .backup:
+            MongoBackupSheet(
+              model: request.model,
+              // `system.` collections are never backed up
+              collections: workspaceManager.databaseTables.map(\.name)
+                .filter { !$0.hasPrefix("system.") },
+              views: workspaceManager.databaseViews.map(\.name), isPresented: isMongoPresented)
+          case .restore:
+            MongoRestoreSheet(
+              model: request.model,
+              databasePassword: workspaceManager.workspace.connectionConfig?.password,
+              isConnected: workspaceManager.connectionState == .connected,
+              isPresented: isMongoPresented)
+          }
+        }
       }
       .sidePanelOverlay(
         isPresented: Binding(

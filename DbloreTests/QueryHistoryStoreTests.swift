@@ -659,6 +659,23 @@ struct QueryHistoryStoreTests {
     #expect(restore([.trigger: 1], total: 1).sql == "Restore SQL dump: 1 statement")
     #expect(restore([.trigger: 1], total: 1).kind == .schema)
     #expect(restore([.data: 4, .sessionSetting: 1], total: 5).kind == .write)
+
+    let backup = QueryHistoryEntry.mongoBackupSummary(
+      database: "shop", collections: 3, documents: 120, config: config, workspaceID: nil,
+      workspaceName: nil, durationMs: 9, status: .success, errorMessage: nil)
+    #expect(backup.sql == "MongoDB backup of shop: 3 collections, 120 documents")
+    #expect(backup.source == .dump)
+    #expect(backup.kind == .read)
+    #expect(backup.rowCount == 120)
+    let mongoRestore = QueryHistoryEntry.mongoRestoreSummary(
+      collections: 1, documents: 1, config: config, workspaceID: nil, workspaceName: nil,
+      durationMs: 3, status: .error, errorMessage: "Stopped")
+    #expect(mongoRestore.sql == "Restore MongoDB backup: 1 collection, 1 document")
+    #expect(mongoRestore.source == .restore)
+    #expect(mongoRestore.kind == .schema)
+    #expect(mongoRestore.status == .error)
+    #expect(QueryHistoryEntry.isLabelText(backup.sql))
+    #expect(QueryHistoryEntry.isLabelText(mongoRestore.sql))
   }
 
   @Test("Dump and restore rows read back with their source and index their badges")

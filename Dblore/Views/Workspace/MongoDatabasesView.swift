@@ -7,9 +7,10 @@
 //  size, data size, collections and indexes, sortable by any column, the current one marked.
 //  Create Database asks for the name and a first collection (a database exists once it holds
 //  one), then offers to switch to it. A row switches to its database, or drops it after the typed
-//  name (never admin, local or config). Changes go through `MongoOverviewModel`'s
-//  `MongoAdminActionModel`, whose confirm sheet shows the typed name, the Safe Mode panel and
-//  failures. The header, table and placeholder below are shared with `MongoCollectionsView`.
+//  name (never admin, local or config); the current one opens the Back Up Database panel.
+//  Changes go through `MongoOverviewModel`'s `MongoAdminActionModel`, whose confirm sheet shows
+//  the typed name, the Safe Mode panel and failures. The header, table and placeholder below
+//  are shared with `MongoCollectionsView`.
 //
 
 import SwiftUI
@@ -173,20 +174,24 @@ struct MongoDatabasesView: View {
     }
   }
 
-  /// Switch to, and Drop Database (not admin, local or config; only when schema changes are
-  /// allowed); nothing for the current system database
+  /// Switch to, Back Up (the current database only) and Drop Database (not admin, local or
+  /// config; only when schema changes are allowed)
   @ViewBuilder
   private func rowMenu(_ row: MongoOverviewModel.Row) -> some View {
     let canDrop = model.canChangeSchema && !row.isSystem
-    if row.isCurrent && !canDrop {
+    let canBackUp = row.isCurrent && workspaceManager.canBackUpMongo
+    if row.isCurrent && !canDrop && !canBackUp {
       Color.clear.frame(width: MongoOverviewWidth.menu, height: 0)
     } else {
       MongoOverviewRowMenu(name: row.name) {
         if !row.isCurrent {
           Button("Switch to \(row.name)") { switchTo(row.name) }
         }
+        if canBackUp {
+          Button("Back Up…") { workspaceManager.openMongoBackup(.backup) }
+        }
         if canDrop {
-          if !row.isCurrent { Divider() }
+          if !row.isCurrent || canBackUp { Divider() }
           Button("Drop Database…", role: .destructive) {
             Task { await model.dropDatabase(row) }
           }

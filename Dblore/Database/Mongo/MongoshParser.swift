@@ -50,14 +50,15 @@ nonisolated enum MongoshParser {
     "unhideIndex", "drop", "renameCollection",
   ]
 
-  /// The `createIndex` index spec options.
-  fileprivate static let createIndexOptions: Set<String> = [
+  /// The `createIndex` index spec options (also what a backup restore keeps of an index spec).
+  static let createIndexOptions: Set<String> = [
     "name", "unique", "sparse", "expireAfterSeconds", "partialFilterExpression",
     "wildcardProjection", "collation", "hidden", "weights", "default_language",
     "language_override", "2dsphereIndexVersion",
   ]
 
-  fileprivate static let createCollectionOptions: Set<String> = [
+  /// The `createCollection` options (also what a backup restore keeps of a collection's options).
+  static let createCollectionOptions: Set<String> = [
     "capped", "size", "max", "clusteredIndex", "collation", "timeseries", "expireAfterSeconds",
     "validator", "validationLevel", "validationAction",
   ]

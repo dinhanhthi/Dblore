@@ -265,6 +265,9 @@ class WorkspaceManager: Identifiable {
   var mongoExport: MongoExportModel?
   /// The Import form (File menu or a collection row; shown by the sidebar's presenter)
   var mongoImport: MongoImportRequest?
+  /// The Back Up Database or Restore Backup panel (File menu, Databases screen; shown by the
+  /// container's backup panel)
+  var mongoBackup: MongoBackupRequest?
 
   /// An import form and what it was opened for
   struct MongoImportRequest {
@@ -273,6 +276,18 @@ class WorkspaceManager: Identifiable {
     let tabID: UUID
     /// The collection picked first; nil: the first of the sidebar's collections
     let collection: String?
+  }
+
+  /// A backup or restore panel and the tab it runs through
+  struct MongoBackupRequest {
+    enum Kind {
+      case backup, restore
+    }
+
+    let model: MongoBackupModel
+    /// The tab it runs through (connection, rules, history); closing it stops the work
+    let tabID: UUID
+    let kind: Kind
   }
 
   // Schema data (shared across all tabs)
@@ -682,6 +697,24 @@ class WorkspaceManager: Identifiable {
       let model = MongoImportModel(tab: tab, connectionEpoch: epoch)
     else { return }
     mongoImport = MongoImportRequest(model: model, tabID: tabID, collection: collection)
+  }
+
+  /// Back Up Database / Restore Backup (File menu, Databases screen) on MongoDB: connected and
+  /// a schema read since the last connect (the checklist's collections and the epoch the work is
+  /// gated on). A restore on a read-only connection opens and says why it is refused.
+  var canBackUpMongo: Bool {
+    connectionState.isConnected && isMongoWorkspace && schemaConnectionEpoch != nil
+  }
+
+  /// Opens the MongoDB backup or restore panel through the active tab, or a new query tab when
+  /// none is open, gated on the epoch the sidebar's collections were read under
+  func openMongoBackup(_ kind: MongoBackupRequest.Kind) {
+    guard canBackUpMongo, mongoBackup == nil, let epoch = schemaConnectionEpoch else { return }
+    let tabID = activeTabId ?? newSQLFile()
+    guard let tab = viewModel(for: tabID),
+      let model = MongoBackupModel(tab: tab, connectionEpoch: epoch)
+    else { return }
+    mongoBackup = MongoBackupRequest(model: model, tabID: tabID, kind: kind)
   }
 
   /// Appends a clean editor-mode SQL tab (object source tabs) without selecting it
@@ -1198,6 +1231,11 @@ class WorkspaceManager: Identifiable {
     if mongoImport?.tabID == id {
       mongoImport?.model.dismiss()
       mongoImport = nil
+    }
+    // A backup or restore runs through its tab too
+    if mongoBackup?.tabID == id {
+      mongoBackup?.model.dismiss()
+      mongoBackup = nil
     }
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
