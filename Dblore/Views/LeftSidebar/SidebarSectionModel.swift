@@ -6,8 +6,8 @@
 //  menu actions of their rows. SQL connections keep their sections and menus; MongoDB shows
 //  only Collections and Views, whose rows offer Open, Copy Name and Insert find(); collections
 //  also offer Build Aggregation..., then both Export Collection... (a read, so also on read-only
-//  connections). When the schema may change, collections add Rename and Drop, views Edit View,
-//  Duplicate and Drop.
+//  connections). Collections add Import Documents... when the connection takes writes. When the
+//  schema may change, collections add Rename and Drop, views Edit View, Duplicate and Drop.
 //
 
 import Foundation
@@ -37,6 +37,8 @@ nonisolated enum SidebarSectionModel {
     case buildAggregation
     /// Exports the collection or view as Extended JSON or CSV. A read: never schema-changing.
     case exportCollection
+    /// Imports a JSON, NDJSON or CSV file into the collection. Offered only when import is allowed.
+    case importDocuments
     /// Schema changes, engine-neutral. Offered only when the schema may change.
     case rename
     case drop
@@ -51,6 +53,7 @@ nonisolated enum SidebarSectionModel {
       case .insert: "Insert find()"
       case .buildAggregation: "Build Aggregation..."
       case .exportCollection: "Export Collection..."
+      case .importDocuments: "Import Documents..."
       case .rename: "Rename…"
       case .drop: "Drop…"
       case .duplicate: "Duplicate…"
@@ -105,14 +108,17 @@ nonisolated enum SidebarSectionModel {
   }
 
   /// Menu items of the table, collection or view row named `name`. Without `canChangeSchema`
-  /// (the default, fail-closed) no item changes the schema; destructive items come last.
+  /// (the default, fail-closed) no item changes the schema, without `canImportDocuments` (the
+  /// default) no collection offers an import; destructive items come last.
   static func rowActions(
-    for kind: Kind, name: String, language: QueryLanguage, canChangeSchema: Bool = false
+    for kind: Kind, name: String, language: QueryLanguage, canChangeSchema: Bool = false,
+    canImportDocuments: Bool = false
   ) -> [RowAction] {
     guard language == .mongosh, kind == .tables || kind == .views else { return [] }
     let actions: [RowAction] = [.open, .copyName, .insert(findSnippet(collection: name))]
     if kind == .tables {
       return actions + [.buildAggregation, .exportCollection]
+        + (canImportDocuments ? [.importDocuments] : [])
         + (canChangeSchema ? [.rename, .drop] : [])
     }
     return actions + [.exportCollection]

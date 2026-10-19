@@ -635,7 +635,7 @@ extension MongoSession: MongoTypedCommandSending {
       throw MongoSessionError(
         code: intValue(field("code", of: first)),
         codeName: stringValue(field("codeName", of: first)),
-        message: message)
+        message: message, written: written)
     }
     if let concern = field("writeConcernError", of: reply) {
       throw MongoSessionError(

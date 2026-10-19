@@ -446,7 +446,13 @@ struct WorkspaceContainerView: View {
     }
   }
 
+  /// Import Data: the MongoDB Import form (the table import never opens for MongoDB), else the
+  /// table import
   private var importAction: (() -> Void)? {
+    if workspaceManager.isMongoWorkspace {
+      guard workspaceManager.canImportDocuments else { return nil }
+      return { [workspaceManager] in workspaceManager.openMongoImport(collection: nil) }
+    }
     guard workspaceManager.canImportData else { return nil }
     return { requestImport() }
   }

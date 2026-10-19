@@ -326,7 +326,7 @@ final class MongoBulkWriteModel {
           previewCount: pending.count))
     } catch {
       let message: String
-      if case DatabaseError.batchPartiallyApplied(_, _, let reason) = error {
+      if case DatabaseError.batchPartiallyApplied(_, _, let reason, _) = error {
         // One command: "Applied 0 of 1 changes" adds nothing to the server's reason
         message = reason
       } else if case DatabaseError.notEditable = error {

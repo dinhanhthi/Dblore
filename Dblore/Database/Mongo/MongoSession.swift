@@ -66,6 +66,8 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
   var code: Int?
   var codeName: String?
   var message: String
+  /// A write error: the documents written before it (`n` of the reply)
+  var written: Int?
 
   var errorDescription: String? {
     guard let code else { return message }
@@ -78,10 +80,11 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
   static let cursorUnsupported = MongoSessionError(
     message: "Server-side cursors are not supported on MongoDB.")
 
-  init(code: Int? = nil, codeName: String? = nil, message: String) {
+  init(code: Int? = nil, codeName: String? = nil, message: String, written: Int? = nil) {
     self.code = code
     self.codeName = codeName.map { Self.sanitized($0, limit: 100) }
     self.message = Self.sanitized(message, limit: Self.maxMessageLength)
+    self.written = written
   }
 
   /// An `ok: 0` reply or a write error: `code`, `codeName`, `errmsg`.

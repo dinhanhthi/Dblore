@@ -32,7 +32,7 @@ nonisolated enum JSONRowsReader {
 
     init(
       rowLimit: Int? = nil, maxCells: Int = 1_000_000,
-      maxRows: Int = 100_000, maxFieldsPerObject: Int = 10_000
+      maxRows: Int = DelimitedTextReader.maxImportRows, maxFieldsPerObject: Int = 10_000
     ) {
       self.rowLimit = rowLimit
       self.maxCells = max(maxCells, 0)

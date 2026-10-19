@@ -780,7 +780,7 @@ nonisolated extension MongoRelaxedJSON {
 // MARK: - ISO 8601 dates
 
 /// ISO 8601 text to and from epoch milliseconds, UTC, years 0000-9999 (proleptic Gregorian).
-private nonisolated enum MongoDateText {
+nonisolated enum MongoDateText {
   /// Earliest and latest instants with a four-digit year.
   static let fourDigitYears: ClosedRange<Int64> = -62_167_219_200_000...253_402_300_799_999
   private static let millisPerDay: Int64 = 86_400_000

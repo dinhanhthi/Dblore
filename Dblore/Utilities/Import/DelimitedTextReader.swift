@@ -25,6 +25,10 @@ nonisolated enum DelimitedTextError: Error, LocalizedError, Equatable, Sendable 
 
 /// Preview table. Every row has one string per column. A missing field is empty.
 nonisolated enum DelimitedTextReader {
+  /// Import limits shared by every import (SQL tables and MongoDB collections).
+  static let maxImportFileBytes = 256 * 1_024 * 1_024
+  static let maxImportRows = 100_000
+
   nonisolated struct Options: Sendable, Equatable {
     var delimiter: Character?
     var hasHeader: Bool
@@ -37,7 +41,7 @@ nonisolated enum DelimitedTextReader {
 
     init(
       delimiter: Character? = nil, hasHeader: Bool = true, rowLimit: Int? = nil,
-      maxCells: Int = 1_000_000, maxRows: Int = 100_000,
+      maxCells: Int = 1_000_000, maxRows: Int = DelimitedTextReader.maxImportRows,
       maxFieldCharacters: Int = 8 * 1_024 * 1_024, encoding: String.Encoding? = nil
     ) {
       self.delimiter = delimiter

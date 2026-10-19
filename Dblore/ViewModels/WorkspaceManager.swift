@@ -68,6 +68,14 @@ class WorkspaceManager: Identifiable {
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
   }
 
+  /// Import Documents (File menu, collection row) on MongoDB: connected, not read-only, and a
+  /// schema read since the last connect (the collections listed and the epoch the import is
+  /// gated on). `supportsDataImport` stays false: the table import never opens for MongoDB.
+  var canImportDocuments: Bool {
+    connectionState.isConnected && isMongoWorkspace && schemaConnectionEpoch != nil
+      && workspace.connectionConfig?.protectionLevel.blocksDataModifications == false
+  }
+
   /// The workspace connection runs mongosh: script tabs are ".js" queries
   var isMongoWorkspace: Bool {
     workspace.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
@@ -255,6 +263,17 @@ class WorkspaceManager: Identifiable {
   }
   /// The Export form of a sidebar collection or view (shown by the sidebar's presenter)
   var mongoExport: MongoExportModel?
+  /// The Import form (File menu or a collection row; shown by the sidebar's presenter)
+  var mongoImport: MongoImportRequest?
+
+  /// An import form and what it was opened for
+  struct MongoImportRequest {
+    let model: MongoImportModel
+    /// The tab it runs through (connection, rules, history); closing it stops the import
+    let tabID: UUID
+    /// The collection picked first; nil: the first of the sidebar's collections
+    let collection: String?
+  }
 
   // Schema data (shared across all tabs)
   var databaseTables: [DatabaseTable] = []
@@ -651,6 +670,18 @@ class WorkspaceManager: Identifiable {
 
     selectTab(id: tab.id)
     return tab.id
+  }
+
+  /// Opens the MongoDB Import form through the active tab, or a new query tab when none is open
+  /// (as the table import does). Gated on the epoch the sidebar's collections were read under: a
+  /// reconnect since then refuses every batch. `collection` is picked first.
+  func openMongoImport(collection: String?) {
+    guard canImportDocuments, mongoImport == nil, let epoch = schemaConnectionEpoch else { return }
+    let tabID = activeTabId ?? newSQLFile()
+    guard let tab = viewModel(for: tabID),
+      let model = MongoImportModel(tab: tab, connectionEpoch: epoch)
+    else { return }
+    mongoImport = MongoImportRequest(model: model, tabID: tabID, collection: collection)
   }
 
   /// Appends a clean editor-mode SQL tab (object source tabs) without selecting it
@@ -1163,6 +1194,11 @@ class WorkspaceManager: Identifiable {
       closedTabs.append(ClosedTab(fileURL: url, index: index, bookmark: tabBookmarks[id]))
     }
     tabs.remove(at: index)
+    // An import runs through its tab: stop it and close its form
+    if mongoImport?.tabID == id {
+      mongoImport?.model.dismiss()
+      mongoImport = nil
+    }
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
     notebookDocuments.removeValue(forKey: id)

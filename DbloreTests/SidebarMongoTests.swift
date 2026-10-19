@@ -70,6 +70,56 @@ struct SidebarMongoTests {
     #expect(view.suffix(3).map(\.title) == ["Edit View…", "Duplicate…", "Drop…"])
   }
 
+  @Test("Import Documents shows only on collection rows when import is allowed, before Rename")
+  func mongoImportRowAction() {
+    let find = SidebarSectionModel.RowAction.insert(#"db.getCollection("orders").find({})"#)
+    // Fail-closed default: disconnected or read-only connections pass false
+    #expect(
+      !SidebarSectionModel.rowActions(for: .tables, name: "orders", language: .mongosh)
+        .contains(.importDocuments))
+    let collection = SidebarSectionModel.rowActions(
+      for: .tables, name: "orders", language: .mongosh, canChangeSchema: true,
+      canImportDocuments: true)
+    #expect(
+      collection == [
+        .open, .copyName, find, .buildAggregation, .exportCollection, .importDocuments, .rename,
+        .drop,
+      ])
+    #expect(SidebarSectionModel.RowAction.importDocuments.title == "Import Documents...")
+    let view = SidebarSectionModel.rowActions(
+      for: .views, name: "orders", language: .mongosh, canImportDocuments: true)
+    #expect(!view.contains(.importDocuments))
+    #expect(
+      SidebarSectionModel.rowActions(
+        for: .tables, name: "users", language: .sql, canImportDocuments: true
+      ).isEmpty)
+  }
+
+  @Test("import is allowed on a connected MongoDB workspace with a schema read, not read-only")
+  @MainActor
+  func canImportDocuments() {
+    var config = ConnectionConfig(
+      databaseType: .mongodb, host: "fake", port: 27017, database: "db", username: "u",
+      sslMode: .disable)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false)
+    manager.schemaConnectionEpoch = 1
+    #expect(!manager.canImportDocuments)  // disconnected
+    manager.connectionState = .connected
+    #expect(manager.canImportDocuments)
+    manager.schemaConnectionEpoch = nil
+    #expect(!manager.canImportDocuments)  // no schema read since the connect
+    manager.schemaConnectionEpoch = 1
+    config.protectionLevel = .schemaOnly
+    manager.workspace.connectionConfig = config
+    #expect(manager.canImportDocuments)
+    config.protectionLevel = .readOnly
+    manager.workspace.connectionConfig = config
+    #expect(!manager.canImportDocuments)
+    // The table import stays off for MongoDB
+    #expect(!manager.canImportData)
+  }
+
   @Test("the inserted find escapes backslash, quote and control characters, and parses back")
   func findSnippetEscapesName() throws {
     let name = "a\"b\\c\nd\te\u{1}f.g"

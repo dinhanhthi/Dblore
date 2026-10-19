@@ -402,7 +402,7 @@ struct MongoSessionTests {
     } throws: { error in
       guard let error = error as? MongoSessionError else { return false }
       return error.code == 11000 && error.message.hasPrefix("E11000 duplicate key")
-        && error.message.hasSuffix("(1 written before the error)")
+        && error.message.hasSuffix("(1 written before the error)") && error.written == 1
     }
     let concern = Self.reply(
       ("n", .int32(1)),

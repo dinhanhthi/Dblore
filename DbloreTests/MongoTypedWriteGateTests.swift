@@ -21,11 +21,12 @@ struct MongoTypedWriteGateTests {
 
   private func connect(
     level: ConnectionProtectionLevel = .none, failTypedAt: Int? = nil,
+    typedError: any Error = FakeQueryError(),
     errorFormatter: (@Sendable (any Error) -> String)? = nil
   ) async throws -> (DatabaseConnectionManager, FakeDatabaseSessionFactory) {
     let factory = FakeDatabaseSessionFactory(
       capabilities: DatabaseType.mongodb.capabilities, errorFormatter: errorFormatter,
-      failTypedAt: failTypedAt)
+      failTypedAt: failTypedAt, typedError: typedError)
     let manager = DatabaseConnectionManager(sessionFactory: factory)
     try await manager.connect(
       config: ConnectionConfig(
@@ -115,7 +116,7 @@ struct MongoTypedWriteGateTests {
     let (manager, factory) = try await connect(failTypedAt: 1)
     let commands = [Self.insert(1), Self.insert(2), Self.insert(3)]
     let error = await refusal(manager, commands, policy: open)
-    guard case .batchPartiallyApplied(let applied, let total, let reason)? = error else {
+    guard case .batchPartiallyApplied(let applied, let total, let reason, _)? = error else {
       Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
       return
     }
@@ -130,12 +131,26 @@ struct MongoTypedWriteGateTests {
     let (manager, _) = try await connect(
       failTypedAt: 0, errorFormatter: { _ in "formatted by the session" })
     let error = await refusal(manager, [Self.insert(1)], policy: open)
-    guard case .batchPartiallyApplied(let applied, _, let reason)? = error else {
+    guard case .batchPartiallyApplied(let applied, _, let reason, _)? = error else {
       Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
       return
     }
     #expect(applied == 0)
     #expect(reason == "Query failed: formatted by the session")
+  }
+
+  @Test("A failing insert's written count reaches the partial-batch error")
+  func writtenCountSurvivesGate() async throws {
+    let (manager, _) = try await connect(
+      failTypedAt: 0,
+      typedError: MongoSessionError(code: 11000, message: "duplicate key", written: 3))
+    let error = await refusal(manager, [Self.insert(1)], policy: open)
+    guard case .batchPartiallyApplied(let applied, _, _, let written)? = error else {
+      Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
+      return
+    }
+    #expect(applied == 0)
+    #expect(written == 3)
   }
 
   @Test("A streamed read refuses a $out aggregate and a write before anything is sent")

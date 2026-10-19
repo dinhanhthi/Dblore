@@ -57,6 +57,13 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// The session's write limits (`MongoTypedCommandSending.writeLimits()`); `.fallback` when
+  /// not connected to MongoDB.
+  func mongoWriteLimits() async -> MongoWriteLimits {
+    guard let typed = session as? any MongoTypedCommandSending else { return .fallback }
+    return await typed.writeLimits()
+  }
+
   // MARK: - Private
 
   /// A short statement text for the classification: an insert's documents are never rendered.
@@ -93,9 +100,11 @@ extension DatabaseConnectionManager {
           since: epoch, generation: generation, remaining: commands.count - index)
         result = try await typedCommandResult(command)
       } catch {
+        let failure = error as? TypedSendFailure
+        let error = failure?.error ?? error
         let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         throw DatabaseError.batchPartiallyApplied(
-          applied: index, total: commands.count, reason: reason)
+          applied: index, total: commands.count, reason: reason, written: failure?.written)
       }
       noteSchemaChange(classified[index])
       let rows = result.affectedRows
@@ -111,7 +120,14 @@ extension DatabaseConnectionManager {
     return results
   }
 
-  /// `commandResult(sql:binds:)` for one typed command: driver errors get the session's text.
+  /// A driver error in the session's text, with the documents a failing write wrote before it
+  private struct TypedSendFailure: Error {
+    let error: DatabaseError
+    let written: Int?
+  }
+
+  /// `commandResult(sql:binds:)` for one typed command: driver errors get the session's text
+  /// (`TypedSendFailure`).
   private func typedCommandResult(_ command: MongoCommand) async throws -> CommandResult {
     let startTime = Date()
     do {
@@ -124,7 +140,9 @@ extension DatabaseConnectionManager {
     } catch let error as DatabaseError {
       throw error
     } catch {
-      throw queryFailure(error, query: Self.typedSummary(of: command), startTime: startTime)
+      throw TypedSendFailure(
+        error: queryFailure(error, query: Self.typedSummary(of: command), startTime: startTime),
+        written: (error as? MongoSessionError)?.written)
     }
   }
 }
