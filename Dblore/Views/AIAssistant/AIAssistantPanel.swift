@@ -193,16 +193,15 @@ struct AIAssistantPanel: View {
       ForEach(configuredProviders, id: \.self) { kind in
         Section(kind.displayName) {
           ForEach(models(for: kind), id: \.self) { model in
-            Button {
-              assistant.providerOverride = kind
-              assistant.modelOverride = model
-            } label: {
-              if kind == assistant.activeProvider && model == assistant.activeModel {
-                Label(model, systemImage: "checkmark")
-              } else {
-                Text(model)
-              }
-            }
+            // Toggle renders the native menu checkmark on the active model
+            Toggle(
+              model,
+              isOn: Binding(
+                get: { kind == assistant.activeProvider && model == assistant.activeModel },
+                set: { _ in
+                  assistant.providerOverride = kind
+                  assistant.modelOverride = model
+                }))
           }
         }
       }

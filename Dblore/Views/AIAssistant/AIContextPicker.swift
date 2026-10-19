@@ -219,15 +219,9 @@ struct AIContextPicker<Accessory: View>: View {
 
   @ViewBuilder
   private func menuItems(for list: [DatabaseTable]) -> some View {
-    Button {
-      selected = []
-    } label: {
-      if selected.isEmpty {
-        Label("Auto (relevant tables)", systemImage: "checkmark")
-      } else {
-        Text("Auto (relevant tables)")
-      }
-    }
+    Toggle(
+      "Auto (relevant tables)",
+      isOn: Binding(get: { selected.isEmpty }, set: { _ in selected = [] }))
     Divider()
     ForEach(list) { table in
       Toggle(
