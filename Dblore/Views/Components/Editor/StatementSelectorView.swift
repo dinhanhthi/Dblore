@@ -84,28 +84,18 @@ struct StatementSelectorView: View {
       Menu {
         ForEach(statementResults.indices, id: \.self) { index in
           let statementResult = statementResults[index]
-          Button(action: {
-            onSelect(index)
-          }) {
-            HStack {
-              // Combined text: "Result N • query text (truncated)"
-              let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
-              let queryLabel = Text(truncateQuery(statementResult.queryText))
-                .font(.system(size: 11, design: .monospaced))
-              Text("\(resultLabel)\(queryLabel)")
-                .lineLimit(1)
-
-              Spacer()
-
-              // Checkmark for selected item
-              if index == selectedIndex {
-                Image(systemName: "checkmark")
-                  .font(.system(size: 10))
-                  .foregroundColor(.accentColor)
-              }
-            }
+          // Toggle renders the native menu checkmark on the selected item
+          Toggle(
+            isOn: Binding(get: { index == selectedIndex }, set: { _ in onSelect(index) })
+          ) {
+            // Combined text: "Result N • query text (truncated)"
+            let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
+            let queryLabel = Text(truncateQuery(statementResult.queryText))
+              .font(.system(size: 11, design: .monospaced))
+            Text("\(resultLabel)\(queryLabel)")
+              .lineLimit(1)
           }
-          .id(statementResult.id)  // Force Button to recreate when data changes
+          .id(statementResult.id)  // Force the item to recreate when data changes
         }
       } label: {
         HStack {

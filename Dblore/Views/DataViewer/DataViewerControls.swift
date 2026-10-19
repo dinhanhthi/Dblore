@@ -342,14 +342,11 @@ struct DataViewerPagingBar: View {
   private func pageSizeMenu(state: DataViewerState) -> some View {
     Menu {
       ForEach(DataViewerState.pageSizes, id: \.self) { size in
-        Button(action: { Task { await viewModel.setPageSize(size) } }) {
-          HStack {
-            Text("\(size) rows")
-            if size == state.pageSize {
-              Image(systemName: "checkmark")
-            }
-          }
-        }
+        Toggle(
+          "\(size) rows",
+          isOn: Binding(
+            get: { size == state.pageSize },
+            set: { _ in Task { await viewModel.setPageSize(size) } }))
       }
     } label: {
       dataViewerCapsuleLabel {

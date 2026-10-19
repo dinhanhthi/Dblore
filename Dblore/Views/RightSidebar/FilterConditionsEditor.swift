@@ -76,13 +76,11 @@ struct FilterConditionsEditor: View {
 
       Menu {
         ForEach(FilterOperator.allCases, id: \.self) { op in
-          Button(action: { condition.wrappedValue.op = op }) {
-            if op == condition.wrappedValue.op {
-              Label(op.displayName, systemImage: "checkmark")
-            } else {
-              Text(op.displayName)
-            }
-          }
+          Toggle(
+            op.displayName,
+            isOn: Binding(
+              get: { op == condition.wrappedValue.op },
+              set: { _ in condition.wrappedValue.op = op }))
         }
       } label: {
         Text(condition.wrappedValue.op.displayName)

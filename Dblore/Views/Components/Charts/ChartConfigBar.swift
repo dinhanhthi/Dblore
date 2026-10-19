@@ -186,13 +186,8 @@ struct ChartConfigBar: View {
   )
     -> some View
   {
-    Button(action: action) {
-      if selected {
-        Label(title, systemImage: "checkmark")
-      } else {
-        Text(title)
-      }
-    }
+    // Toggle renders the native menu checkmark on the selected choice
+    Toggle(title, isOn: Binding(get: { selected }, set: { _ in action() }))
   }
 
   private func kindTitle(_ kind: ChartKind) -> String {
@@ -235,16 +230,8 @@ struct ChartConfigBar: View {
   @ViewBuilder
   private func yToggle(_ name: String) -> some View {
     let on = spec.yColumns.contains(name)
-    Button {
-      toggleY(name)
-    } label: {
-      if on {
-        Label(name, systemImage: "checkmark")
-      } else {
-        Text(name)
-      }
-    }
-    .disabled(!on && spec.yColumns.count >= Self.maxYColumns)
+    Toggle(name, isOn: Binding(get: { on }, set: { _ in toggleY(name) }))
+      .disabled(!on && spec.yColumns.count >= Self.maxYColumns)
   }
 
   private func toggleY(_ name: String) {

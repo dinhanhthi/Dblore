@@ -255,15 +255,9 @@ struct CapsuleDropdown<Option: Hashable>: View {
   var body: some View {
     Menu {
       ForEach(options, id: \.self) { option in
-        Button {
-          onSelect(option)
-        } label: {
-          if isSelected(option) {
-            Label(optionTitle(option), systemImage: "checkmark")
-          } else {
-            Text(optionTitle(option))
-          }
-        }
+        Toggle(
+          optionTitle(option),
+          isOn: Binding(get: { isSelected(option) }, set: { _ in onSelect(option) }))
       }
     } label: {
       HStack(spacing: Spacing.xs) {

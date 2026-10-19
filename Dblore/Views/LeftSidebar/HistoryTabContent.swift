@@ -112,27 +112,16 @@ struct HistoryTabContent: View {
   }
 
   private func scopeButton(_ scope: HistoryScope, title: String) -> some View {
-    Button {
-      historyList.scope = scope
-    } label: {
-      if historyList.scope == scope {
-        Label(title, systemImage: "checkmark")
-      } else {
-        Text(title)
-      }
-    }
+    Toggle(
+      title,
+      isOn: Binding(get: { historyList.scope == scope }, set: { _ in historyList.scope = scope }))
   }
 
   private func statusButton(_ status: QueryHistoryEntry.Status?, title: String) -> some View {
-    Button {
-      historyList.status = status
-    } label: {
-      if historyList.status == status {
-        Label(title, systemImage: "checkmark")
-      } else {
-        Text(title)
-      }
-    }
+    Toggle(
+      title,
+      isOn: Binding(
+        get: { historyList.status == status }, set: { _ in historyList.status = status }))
   }
 
   @ViewBuilder

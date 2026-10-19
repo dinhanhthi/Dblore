@@ -123,15 +123,8 @@ struct StructureConstraintsSection: View {
   private var kindMenu: some View {
     Menu {
       ForEach(NewKind.allCases) { kind in
-        Button {
-          newKind = kind
-        } label: {
-          if kind == newKind {
-            Label(kind.rawValue, systemImage: "checkmark")
-          } else {
-            Text(kind.rawValue)
-          }
-        }
+        Toggle(
+          kind.rawValue, isOn: Binding(get: { kind == newKind }, set: { _ in newKind = kind }))
       }
     } label: {
       HStack(spacing: Spacing.xs) {
