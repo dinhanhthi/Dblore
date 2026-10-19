@@ -5,12 +5,12 @@
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
 //  collection (`AggregationBuilderBody`: stages or the pipeline as text, per-stage previews and
 //  the results of a Run) under a header. Its left side holds icon buttons: AI, Copy, the Export
-//  menu (driver code, or the documents as JSON or CSV), saved pipelines, the template Wizard and
-//  the aggregate options, then a status line (why the pipeline is blocked, or how an export went).
+//  menu (driver code, or the documents through the export sheet), saved pipelines, the template
+//  Wizard and the aggregate options, then a status line (why the pipeline is blocked).
 //  Its right side holds the Stages | Text picker, Explain, Run, Open in Query and Create View
 //  (`MongoViewEditorSheet` on this collection with the enabled stages; hidden when the tab is not
-//  connected or its protection blocks schema changes). Previews, Run and Export Data read through
-//  the gate with a read-only policy (`AggregationBuilderModel`).
+//  connected or its protection blocks schema changes). Previews and Run read through the gate with
+//  a read-only policy (`AggregationBuilderModel`); Export Data streams through `MongoExportModel`.
 //
 
 import SwiftUI
@@ -36,9 +36,6 @@ struct MongoAggregationsView: View {
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
   @State private var exportRequest: MongoExportCodeSheet.Request?
   @State private var showsOptions = false
-  /// The read of the Export Data in flight; it ends when the save panel opens, so Cancel only
-  /// shows while it runs (a Cancel cannot close the panel)
-  @State private var exportRead: Task<Void, Never>?
   /// Create View: the command of the form opened last and the pipeline it starts from
   @State private var viewAction: MongoAdminActionModel?
   @State private var viewPipeline: [MongoValue] = []
@@ -117,7 +114,7 @@ struct MongoAggregationsView: View {
           .frame(height: MongoQueryField.styledLineHeight)
         }
         copyButton(builder, targets)
-        exportMenu(builder, targets)
+        exportMenu(targets)
         MongoSavedPipelinesButton(
           builder: builder, store: savedPipelineStore, key: savedPipelineKey
         )
@@ -196,7 +193,7 @@ struct MongoAggregationsView: View {
 
   // MARK: - Status
 
-  /// The stage count (Stages mode) or why the pipeline is blocked, then the export status
+  /// The stage count (Stages mode) or why the pipeline is blocked
   private func status(
     _ builder: AggregationBuilderModel, _ targets: Targets, isText: Bool
   ) -> some View {
@@ -206,24 +203,6 @@ struct MongoAggregationsView: View {
       } else if !isText {
         // In Text mode the stages are those of the text only once Stages takes it back
         statusText(stageCount(builder))
-      }
-      switch builder.exportState {
-      case .idle:
-        EmptyView()
-      case .running:
-        statusText("Exporting…")
-        if exportRead != nil {
-          Button("Cancel") {
-            builder.cancelExport()
-            exportRead = nil
-          }
-          .buttonStyle(GhostButtonStyle())
-          .help("Stop reading the documents to export")
-        }
-      case .failed(let message):
-        statusText(message)
-      case .finished(let note):
-        if let note { statusText(note) }
       }
     }
   }
@@ -243,21 +222,17 @@ struct MongoAggregationsView: View {
 
   // MARK: - Export
 
-  /// Export Code opens the driver code sheet; Export Data reads the documents and asks where
-  /// to save them. One export at a time, so reads never stack.
-  private func exportMenu(_ builder: AggregationBuilderModel, _ targets: Targets) -> some View {
-    let isExporting: Bool
-    if case .running = builder.exportState { isExporting = true } else { isExporting = false }
-    let canExportData = targets.data.command != nil && !isExporting
+  /// Export Code opens the driver code sheet; Export Data opens the export sheet (hosted by
+  /// `DataViewerView`) on the pipeline. One export sheet at a time.
+  private func exportMenu(_ targets: Targets) -> some View {
+    let canExportData = targets.data.command != nil && model.export == nil
     return Menu {
       Button("Export Code…") {
         guard case .success(let command) = targets.code else { return }
         exportRequest = MongoExportCodeSheet.Request(command: command, database: database)
       }
       .disabled(targets.code.command == nil)
-      Button("Export Data as JSON…") { exportData(builder, .json) }
-        .disabled(!canExportData)
-      Button("Export Data as CSV…") { exportData(builder, .csv) }
+      Button("Export Data…") { openExport(targets.data) }
         .disabled(!canExportData)
       // Menu items show no tooltip: a disabled line says why the data does not export
       if let reason = targets.data.reason, targets.code.command != nil {
@@ -276,15 +251,14 @@ struct MongoAggregationsView: View {
     .frame(height: MongoQueryField.styledLineHeight)
   }
 
-  private func exportData(
-    _ builder: AggregationBuilderModel, _ format: AggregationBuilderModel.DataExportFormat
-  ) {
-    guard let task = builder.exportData(format) else { return }
-    exportRead = task
-    Task {
-      await task.value
-      if exportRead == task { exportRead = nil }
-    }
+  /// The export sheet with the pipeline as its only source (no document cap)
+  private func openExport(_ target: AggregationBuilderModel.PipelineTarget) {
+    guard case .success(let pipeline) = target, model.export == nil,
+      let manager = viewModel.connectionManager
+    else { return }
+    model.export = MongoExportModel(
+      collection: model.collection, database: model.database, pipeline: pipeline,
+      connectionManager: manager, caller: viewModel.id)
   }
 
   // MARK: - Mode, Explain and Run

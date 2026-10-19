@@ -5,9 +5,9 @@
 // text, the aggregate options (collation, maxTimeMS), the Text mode (the whole pipeline as one
 // mongosh array, disabled stages as `//` lines), and the effective pipeline: the `aggregate` of
 // the enabled stages and options that Insert as Cell, Copy, Explain, Run and Export use (in Text
-// mode, those of the text). Run and Export Data send that pipeline through the gate read-only,
-// never one that writes (`$out`/`$merge`); Export Data renders the documents off the main actor
-// and saves them as JSON or CSV. A saved pipeline restores its stages, collation and maxTimeMS.
+// mode, those of the text). Run sends that pipeline through the gate read-only, never one that
+// writes (`$out`/`$merge`); Export Data hands the same read pipeline to the export sheet
+// (`MongoExportModel`). A saved pipeline restores its stages, collation and maxTimeMS.
 // A builder opens empty on a collection or from a cell holding exactly one `aggregate`.
 
 import AppKit
@@ -104,30 +104,6 @@ final class AggregationBuilderModel: Identifiable {
     case failed(String)
   }
 
-  /// The file Export Data writes.
-  enum DataExportFormat {
-    case json
-    case csv
-
-    var fileExtension: String {
-      switch self {
-      case .json: "json"
-      case .csv: "csv"
-      }
-    }
-  }
-
-  /// The last Export Data of the whole pipeline.
-  enum ExportState {
-    case idle
-    /// Reading and rendering the documents, or the save panel is open
-    case running(DataExportFormat)
-    /// Refused before sending (with the reason) or failed on the server
-    case failed(String)
-    /// The file is saved; `note` says when it holds only the first documents
-    case finished(note: String?)
-  }
-
   /// How the pipeline is edited: one editor per stage, or the whole pipeline as text.
   enum EditMode {
     case stages
@@ -170,10 +146,6 @@ final class AggregationBuilderModel: Identifiable {
   /// cleared by `preview(_:)`. The views own the stage selection and clear it on a selection.
   var showsRunResults = false
   @ObservationIgnored private var runTask: Task<Void, Never>?
-  private(set) var exportState = ExportState.idle
-  @ObservationIgnored private var exportTask: Task<Void, Never>?
-  /// The export the save panel answers for: a cancelled or superseded one never sets the state
-  @ObservationIgnored private var exportToken: UUID?
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
 
   init(collection: String, connectionManager: DatabaseConnectionManager) {
@@ -767,91 +739,6 @@ final class AggregationBuilderModel: Identifiable {
     if case .running = runState { runState = .idle }
   }
 
-  // MARK: - Export Data
-
-  /// The most documents Export Data writes: the session row cap's upper bound.
-  static let exportDocumentLimit = SessionBrakeLimits.rowCapRange.upperBound
-
-  /// Reads the documents of `exportTarget` through the gate with a read-only policy (at most
-  /// `exportDocumentLimit`), renders them as `format` off the main actor, then asks where to save
-  /// them (`<collection>.json` / `.csv`), dropping an export in flight. Nil, nothing sent, when
-  /// the pipeline is blocked or writes (`exportState` is `.failed` with the reason). A cancelled
-  /// or superseded export never writes its state; a cancelled save panel goes back to idle.
-  @discardableResult
-  func exportData(_ format: DataExportFormat) -> Task<Void, Never>? {
-    cancelExport()
-    let command: MongoCommand
-    switch exportTarget {
-    case .success(let value): command = value
-    case .blocked(let reason):
-      exportState = .failed(reason)
-      return nil
-    }
-    exportState = .running(format)
-    let text = command.render()
-    let manager = connectionManager
-    let filename = "\(collection).\(format.fileExtension)"
-    let token = UUID()
-    exportToken = token
-    let task = Task { [weak self] in
-      let content: String
-      let truncated: Bool
-      do {
-        let read = try await manager.executeMongoDocuments(
-          userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly),
-          maxRows: Self.exportDocumentLimit)
-        try Task.checkCancellation()
-        let documents = read.documents
-        content = await Task.detached(priority: .userInitiated) {
-          Self.render(documents, as: format)
-        }.value
-        try Task.checkCancellation()
-        truncated = read.truncated
-      } catch {
-        guard !Task.isCancelled, let self, self.exportToken == token else { return }
-        self.exportState = .failed(error.localizedDescription)
-        self.exportTask = nil
-        return
-      }
-      guard !Task.isCancelled, let self, self.exportToken == token else { return }
-      self.exportTask = nil
-      DataExporter.saveFile(
-        content: content, defaultFilename: filename, allowedFileTypes: [format.fileExtension]
-      ) { [weak self] saved in
-        guard let self, self.exportToken == token else { return }
-        self.exportToken = nil
-        let note = "Exported the first \(Self.exportDocumentLimit.formatted()) documents"
-        self.exportState = saved ? .finished(note: truncated ? note : nil) : .idle
-      }
-    }
-    exportTask = task
-    return task
-  }
-
-  /// Drops the export in flight; nothing is saved or shown for it.
-  func cancelExport() {
-    exportTask?.cancel()
-    exportTask = nil
-    exportToken = nil
-    if case .running = exportState { exportState = .idle }
-  }
-
-  /// The documents as indented relaxed Extended JSON (one array), or as CSV with one column per
-  /// top-level field (`MongoBSONMapping`).
-  nonisolated private static func render(
-    _ documents: [MongoValue], as format: DataExportFormat
-  ) -> String {
-    switch format {
-    case .json:
-      return MongoRelaxedJSON.render(.array(documents), as: .relaxedExtendedJSON, indented: true)
-    case .csv:
-      let columns = MongoBSONMapping.columns(for: documents)
-      let rows = documents.map { MongoBSONMapping.row(for: $0, columns: columns) }
-      return DataExporter.toCSV(
-        result: CellResult(columns: columns, rows: rows, rowCount: rows.count))
-    }
-  }
-
   // MARK: - Saved pipelines
 
   /// The stages as a saved pipeline holds them. In Text mode, call `showStages()` first.
@@ -873,7 +760,6 @@ final class AggregationBuilderModel: Identifiable {
     editMode = .stages
     textError = nil
     cancelRun()
-    cancelExport()
     runState = .idle
     showsRunResults = false
     cancelStalePreviews()

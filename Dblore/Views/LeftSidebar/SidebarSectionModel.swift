@@ -5,8 +5,9 @@
 //  Which Public tab sections the left sidebar shows for a query language, and the context
 //  menu actions of their rows. SQL connections keep their sections and menus; MongoDB shows
 //  only Collections and Views, whose rows offer Open, Copy Name and Insert find(); collections
-//  also offer Build Aggregation... When the schema may change, collections add Rename and Drop,
-//  views Edit View, Duplicate and Drop.
+//  also offer Build Aggregation..., then both Export Collection... (a read, so also on read-only
+//  connections). When the schema may change, collections add Rename and Drop, views Edit View,
+//  Duplicate and Drop.
 //
 
 import Foundation
@@ -34,6 +35,8 @@ nonisolated enum SidebarSectionModel {
     case insert(String)
     /// Opens the aggregation builder on the collection.
     case buildAggregation
+    /// Exports the collection or view as Extended JSON or CSV. A read: never schema-changing.
+    case exportCollection
     /// Schema changes, engine-neutral. Offered only when the schema may change.
     case rename
     case drop
@@ -47,6 +50,7 @@ nonisolated enum SidebarSectionModel {
       case .copyName: "Copy Name"
       case .insert: "Insert find()"
       case .buildAggregation: "Build Aggregation..."
+      case .exportCollection: "Export Collection..."
       case .rename: "Rename…"
       case .drop: "Drop…"
       case .duplicate: "Duplicate…"
@@ -108,9 +112,11 @@ nonisolated enum SidebarSectionModel {
     guard language == .mongosh, kind == .tables || kind == .views else { return [] }
     let actions: [RowAction] = [.open, .copyName, .insert(findSnippet(collection: name))]
     if kind == .tables {
-      return actions + [.buildAggregation] + (canChangeSchema ? [.rename, .drop] : [])
+      return actions + [.buildAggregation, .exportCollection]
+        + (canChangeSchema ? [.rename, .drop] : [])
     }
-    return actions + (canChangeSchema ? [.editDefinition, .duplicate, .drop] : [])
+    return actions + [.exportCollection]
+      + (canChangeSchema ? [.editDefinition, .duplicate, .drop] : [])
   }
 
   /// `db.getCollection("<name>").find({})`, the name escaped as a double-quoted string.

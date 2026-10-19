@@ -87,6 +87,12 @@ struct DataViewerView: View {
           isConnected: viewModel.connectionState == .connected, isPresented: bulkWritePresented)
       }
     }
+    // Export of the Documents header, hosted here for the same reason
+    .modalOverlay(isPresented: exportPresented) {
+      if let model = viewModel.mongoCollection?.export {
+        MongoExportSheet(model: model, isPresented: exportPresented)
+      }
+    }
   }
 
   /// The bulk write form: shown while the collection screen holds one; closing it is refused
@@ -95,6 +101,20 @@ struct DataViewerView: View {
     Binding(
       get: { viewModel.mongoCollection?.bulkWrite != nil },
       set: { if !$0 { viewModel.closeMongoBulkWrite() } })
+  }
+
+  /// The Export form: shown while the collection screen holds one; closing it is refused
+  /// while an export runs (its Cancel stops it)
+  private var exportPresented: Binding<Bool> {
+    Binding(
+      get: { viewModel.mongoCollection?.export != nil },
+      set: {
+        guard !$0, let collection = viewModel.mongoCollection, let model = collection.export,
+          !model.isRunning
+        else { return }
+        model.dismiss()
+        collection.export = nil
+      })
   }
 
   /// Saved pipelines are kept per connection and collection, as the filter bar's saved queries

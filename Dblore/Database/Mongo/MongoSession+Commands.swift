@@ -228,9 +228,10 @@ extension MongoSession: MongoTypedCommandSending {
   /// getMore, so it would cut a long read); its comment token lets Cancel (killOp) stop it, and
   /// a cancelled task stops it between batches. The cursor is closed on every exit (error,
   /// cancel, `onPage` throwing). Anything but a find or an aggregate the typed classifier marks
-  /// as a read is refused before anything is sent.
+  /// as a read is refused before anything is sent. `token` (unique per call) is the comment
+  /// token `interrupt(token:)` stops.
   func streamDocuments(
-    _ command: MongoCommand, pageSize: Int,
+    _ command: MongoCommand, pageSize: Int, token: String? = nil,
     onPage: @Sendable ([MongoValue]) async throws -> Void
   ) async throws -> Int {
     let isDocumentRead: Bool
@@ -247,7 +248,7 @@ extension MongoSession: MongoTypedCommandSending {
     }
     let batchSize = min(max(pageSize, 1), 10_000)
     let database = databaseName
-    return try await withStatement { token, connection in
+    return try await withStatement(token: token) { token, connection in
       try await streamCursor(
         Self.readCommand(command), batchSize: batchSize, token: token, connection: connection,
         database: database, onPage: onPage)
@@ -259,6 +260,8 @@ extension MongoSession: MongoTypedCommandSending {
     _ fields: [Field], batchSize: Int, token: String, connection: MongoConnection,
     database: String, onPage: @Sendable ([MongoValue]) async throws -> Void
   ) async throws -> Int {
+    // A cancel that landed before the token was registered: nothing is sent
+    try Task.checkCancellation()
     let reply = try await execute(
       fields, token: token, on: connection, database: database, statementTimeout: false)
     guard let cursorReply = reply["cursor"] as? Document, let id = Self.int(cursorReply["id"])

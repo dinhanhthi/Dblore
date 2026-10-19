@@ -589,13 +589,23 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
 
   // MARK: - Statements in flight and cancel
 
-  /// Runs `body` as one statement with a fresh comment token. A failure after `interrupt()` (or
-  /// a server interrupt, 11601) becomes `DatabaseError.queryCancelled`.
+  /// Runs `body` as one statement with a fresh comment token (or `token`, unique per statement,
+  /// for `interrupt(token:)`). A failure after `interrupt()` (or a server interrupt, 11601)
+  /// becomes `DatabaseError.queryCancelled`.
   func withStatement<T>(
+    token given: String? = nil,
     _ body: (_ token: String, _ connection: MongoConnection) async throws -> T
   ) async throws -> T {
-    let token = "dblore:\(UUID().uuidString)"
-    lock.withLock { running[token] = false }
+    let token = given ?? "dblore:\(UUID().uuidString)"
+    // A token already in flight is refused: its entry is not reset nor removed by this one
+    let registered = lock.withLock {
+      guard running[token] == nil else { return false }
+      running[token] = false
+      return true
+    }
+    guard registered else {
+      throw MongoSessionError(message: "A statement with this token is already running.")
+    }
     defer { _ = lock.withLock { running.removeValue(forKey: token) } }
     do {
       let connection = try await nextConnection()
@@ -629,15 +639,26 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   /// `queryCancelled`; the session stays open. Over SSH, nothing is dialed once the session
   /// closed, and `close()` waits for a control connection under way before closing the tunnel.
   func interrupt() async {
+    await interrupt(where: { _ in true })
+  }
+
+  /// killOp of the statement run with `token` only, if it is still running: the other
+  /// statements (other tabs) and the batch cancellation state are untouched.
+  func interrupt(token: String) async {
+    await interrupt(where: { $0 == token })
+  }
+
+  private func interrupt(where selects: (String) -> Bool) async {
     let (tokens, plan, tunnel) = lock.withLock {
       () -> ([String], MongoConnectionPlan?, (any SSHTunneling)?) in
-      for token in running.keys { running[token] = true }
-      guard !running.isEmpty, let planStorage else { return ([], nil, nil) }
-      guard planStorage.usesTunnel else { return (Array(running.keys), planStorage, nil) }
+      let selected = running.keys.filter(selects)
+      for token in selected { running[token] = true }
+      guard !selected.isEmpty, let planStorage else { return ([], nil, nil) }
+      guard planStorage.usesTunnel else { return (selected, planStorage, nil) }
       guard let tunnelStorage else { return ([], nil, nil) }
       // A tunnel is returned only with a control dial counted, which the defer below ends.
       controlDials += 1
-      return (Array(running.keys), planStorage, tunnelStorage)
+      return (selected, planStorage, tunnelStorage)
     }
     guard !tokens.isEmpty, let plan else { return }
     defer { if tunnel != nil { endControlDial() } }

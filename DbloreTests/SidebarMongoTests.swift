@@ -46,11 +46,13 @@ struct SidebarMongoTests {
     let find = SidebarSectionModel.RowAction.insert(#"db.getCollection("orders").find({})"#)
     let collection = SidebarSectionModel.rowActions(
       for: .tables, name: "orders", language: language)
-    #expect(collection == [.open, .copyName, find, .buildAggregation])
+    #expect(collection == [.open, .copyName, find, .buildAggregation, .exportCollection])
     #expect(
-      collection.map(\.title) == ["Open", "Copy Name", "Insert find()", "Build Aggregation..."])
+      collection.map(\.title) == [
+        "Open", "Copy Name", "Insert find()", "Build Aggregation...", "Export Collection...",
+      ])
     let view = SidebarSectionModel.rowActions(for: .views, name: "orders", language: language)
-    #expect(view == [.open, .copyName, find])
+    #expect(view == [.open, .copyName, find, .exportCollection])
   }
 
   @Test("schema changes appear only with canChangeSchema, destructive items last")
@@ -58,11 +60,13 @@ struct SidebarMongoTests {
     let find = SidebarSectionModel.RowAction.insert(#"db.getCollection("orders").find({})"#)
     let collection = SidebarSectionModel.rowActions(
       for: .tables, name: "orders", language: .mongosh, canChangeSchema: true)
-    #expect(collection == [.open, .copyName, find, .buildAggregation, .rename, .drop])
+    #expect(
+      collection == [.open, .copyName, find, .buildAggregation, .exportCollection, .rename, .drop])
     #expect(collection.suffix(2).map(\.title) == ["Rename…", "Drop…"])
     let view = SidebarSectionModel.rowActions(
       for: .views, name: "orders", language: .mongosh, canChangeSchema: true)
-    #expect(view == [.open, .copyName, find, .editDefinition, .duplicate, .drop])
+    #expect(
+      view == [.open, .copyName, find, .exportCollection, .editDefinition, .duplicate, .drop])
     #expect(view.suffix(3).map(\.title) == ["Edit View…", "Duplicate…", "Drop…"])
   }
 

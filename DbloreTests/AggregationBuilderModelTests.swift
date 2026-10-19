@@ -466,12 +466,13 @@ struct AggregationBuilderModelTests {
       #expect(message == reason)
       #expect(model.showsRunResults)
 
-      #expect(model.exportData(.json) == nil)
-      guard case .failed(let exportMessage) = model.exportState else {
-        Issue.record("\(name) export should be refused")
-        continue
-      }
-      #expect(exportMessage.contains("not exported"))
+      #expect(model.exportTarget.reason?.contains("not exported") == true)
+      // The export sheet refuses the same pipeline before any read
+      let pipeline = try #require(model.pipeline(verb: "export").command)
+      let export = MongoExportModel(
+        collection: "users", database: nil, pipeline: pipeline, connectionManager: manager)
+      #expect(export.refusal?.contains("not exported") == true)
+      #expect(!export.canExport)
     }
     #expect(factory.statements.isEmpty)
     await manager.disconnect()

@@ -253,6 +253,8 @@ class WorkspaceManager: Identifiable {
   var mongoOverview: MongoOverviewScreen? {
     didSet { if mongoOverview != nil { isSchemaVisualizerActive = false } }
   }
+  /// The Export form of a sidebar collection or view (shown by the sidebar's presenter)
+  var mongoExport: MongoExportModel?
 
   // Schema data (shared across all tabs)
   var databaseTables: [DatabaseTable] = []
@@ -1161,7 +1163,8 @@ class WorkspaceManager: Identifiable {
       closedTabs.append(ClosedTab(fileURL: url, index: index, bookmark: tabBookmarks[id]))
     }
     tabs.remove(at: index)
-    viewModels.removeValue(forKey: id)
+    // Stops the collection screen's reads and a running export of the tab
+    viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
     notebookDocuments.removeValue(forKey: id)
     editorDocuments.removeValue(forKey: id)
     tabBookmarks.removeValue(forKey: id)

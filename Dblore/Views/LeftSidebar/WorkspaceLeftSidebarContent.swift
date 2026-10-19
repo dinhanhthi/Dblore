@@ -515,8 +515,9 @@ struct WorkspaceLeftSidebarContent: View {
   }
 
   /// Runs a row menu item: Open as a row click, Copy Name to the pasteboard, Insert at the
-  /// cursor of the active cell (as favorites and history do), Build Aggregation in a sheet, and
-  /// the schema changes through `startMongoAdmin`. `view` is the row's view, nil for a collection.
+  /// cursor of the active cell (as favorites and history do), Build Aggregation in a sheet,
+  /// Export Collection in the export form, and the schema changes through `startMongoAdmin`.
+  /// `view` is the row's view, nil for a collection.
   private func perform(
     _ action: SidebarSectionModel.RowAction, name: String, schema: String,
     view: DatabaseView? = nil, open: () -> Void
@@ -535,6 +536,15 @@ struct WorkspaceLeftSidebarContent: View {
         collection: name, connectionManager: workspaceManager.connectionManager)
       model.addStage()
       aggregationBuilder = model
+    case .exportCollection:
+      // A read: no active tab or schema-change permission needed. The schema load's epoch
+      // keeps a reconnect since then from exporting another database's namesake.
+      guard workspaceManager.mongoExport == nil,
+        let epoch = workspaceManager.schemaConnectionEpoch
+      else { return }
+      workspaceManager.mongoExport = MongoExportModel(
+        collection: name, database: schema, connectionManager: workspaceManager.connectionManager,
+        connectionEpoch: epoch)
     case .rename:
       startMongoAdmin(.rename(schema: schema, name: name))
     case .drop:
@@ -679,7 +689,8 @@ struct SidebarMongoAdmin {
 extension View {
   /// Presents `admin`'s form and confirm sheet over the whole window (a form would be clipped
   /// at sidebar width). Once its command is done, the data viewer tabs of a dropped collection
-  /// or view close and those of a renamed collection show the new name.
+  /// or view close and those of a renamed collection show the new name. Also presents the
+  /// Export form of a row (`WorkspaceManager.mongoExport`).
   func sidebarMongoAdmin(
     _ admin: Binding<SidebarMongoAdmin?>, workspaceManager: WorkspaceManager
   ) -> some View {
@@ -697,6 +708,18 @@ private struct SidebarMongoAdminPresenter: ViewModifier {
       set: { if !$0 { admin?.isFormOpen = false } })
   }
 
+  /// The Export form of a collection or view row; closing it is refused while an export runs
+  /// (its Cancel stops it)
+  private var isExportPresented: Binding<Bool> {
+    Binding(
+      get: { workspaceManager.mongoExport != nil },
+      set: {
+        guard !$0, let model = workspaceManager.mongoExport, !model.isRunning else { return }
+        model.dismiss()
+        workspaceManager.mongoExport = nil
+      })
+  }
+
   private var isConfirmPresented: Binding<Bool> {
     admin.map { MongoAdminConfirmSheet.isPresented($0.model) } ?? .constant(false)
   }
@@ -705,6 +728,11 @@ private struct SidebarMongoAdminPresenter: ViewModifier {
     content
       .modalOverlay(isPresented: isFormPresented) {
         if let admin { form(admin) }
+      }
+      .modalOverlay(isPresented: isExportPresented) {
+        if let model = workspaceManager.mongoExport {
+          MongoExportSheet(model: model, isPresented: isExportPresented)
+        }
       }
       .sheet(isPresented: isConfirmPresented) {
         if let model = admin?.model {

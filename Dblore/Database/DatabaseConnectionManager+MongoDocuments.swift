@@ -94,10 +94,12 @@ extension DatabaseConnectionManager {
   /// (`DatabaseError.blockedByProtection`) and be a read, and the command must be a find or an
   /// aggregate (no `$out`/`$merge`), all before anything is sent; then the same entry checks.
   /// `caller` and `expectedEpoch` work as in `execute`. A Cancel or a reconnect is also checked
-  /// before each page; an error thrown by `onPage` is rethrown unchanged.
+  /// before each page; an error thrown by `onPage` is rethrown unchanged. `statementToken`
+  /// (unique per call) lets `interruptMongoStatement(token:)` stop this read alone.
   func streamMongoDocuments(
     _ command: MongoCommand, policy: ProtectionPolicy, pageSize: Int, caller: UUID? = nil,
-    expectedEpoch: UInt64? = nil, onPage: @escaping @Sendable ([MongoValue]) async throws -> Void
+    expectedEpoch: UInt64? = nil, statementToken: String? = nil,
+    onPage: @escaping @Sendable ([MongoValue]) async throws -> Void
   ) async throws -> Int {
     try await PerfSignpost.interval("mongo.streamDocuments") {
       let effective = effectivePolicy(for: policy)
@@ -153,7 +155,8 @@ extension DatabaseConnectionManager {
           guard let mongo = current as? MongoSession else {
             throw MongoSessionError(message: "Reading documents needs a MongoDB session.")
           }
-          return try await mongo.streamDocuments(command, pageSize: pageSize, onPage: pages)
+          return try await mongo.streamDocuments(
+            command, pageSize: pageSize, token: statementToken, onPage: pages)
         }
       } catch {
         if let cancelled = cancelError(since: epoch, generation: cancelGeneration) {
@@ -164,6 +167,13 @@ extension DatabaseConnectionManager {
         throw queryFailure(error, query: summary, startTime: startTime)
       }
     }
+  }
+
+  /// killOp of the `streamMongoDocuments` read run with `token` only, if it still runs: unlike
+  /// `cancelRunningStatement`, other tabs' statements and scripts are untouched.
+  func interruptMongoStatement(token: String) async {
+    guard let mongo = session as? MongoSession else { return }
+    await mongo.interrupt(token: token)
   }
 }
 

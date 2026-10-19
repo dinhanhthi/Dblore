@@ -3,7 +3,7 @@
 //  Dblore
 //
 //  Data viewer header controls: table title, MongoDB collection sections, + Row, Bulk Update /
-//  Delete, and staged-change actions.
+//  Delete, Export, and staged-change actions.
 //  Rows-per-page, column visibility, paging, and the Grid / Chart slider sit
 //  in DataViewerPagingBar under the result table. The slider is trailing.
 //
@@ -48,6 +48,7 @@ struct DataViewerControls: View {
             Divider().frame(height: 14)
             addRowButton
             if viewModel.canBulkWriteMongoDocuments { bulkWriteButton }
+            exportButton(model)
           }
         } else {
           addRowButton
@@ -145,6 +146,36 @@ struct DataViewerControls: View {
     .linkPointer()
     .fixedSize()
     .help("Update or delete every document matching a filter")
+  }
+
+  /// Opens the Export form (hosted by `DataViewerView`): the applied query when a filter or
+  /// options are set, else the whole collection. A read: offered on read-only connections too.
+  private func exportButton(_ collection: MongoCollectionModel) -> some View {
+    Button(action: { openExport(collection) }) {
+      dataViewerCapsuleLabel {
+        Text("Export...")
+          .font(.system(size: 11))
+          .foregroundColor(viewModel.connectionState == .connected ? .foreground : .foregroundMuted)
+      }
+    }
+    .buttonStyle(.plain)
+    .linkPointer()
+    .fixedSize()
+    .disabled(viewModel.connectionState != .connected)
+    .help("Export the documents as Extended JSON or CSV")
+  }
+
+  private func openExport(_ collection: MongoCollectionModel) {
+    guard collection.export == nil, let manager = viewModel.connectionManager,
+      let state = viewModel.dataViewer
+    else { return }
+    let wholeCollection = MongoCommand.find(
+      collection: state.name, filter: nil, projection: nil, sort: nil, skip: nil, limit: nil)
+    // A filter or options that do not parse export nothing but the whole collection
+    let query = (try? state.userQuery()).flatMap { $0 == wholeCollection ? nil : $0 }
+    collection.export = MongoExportModel(
+      collection: state.name, database: collection.database, query: query,
+      connectionManager: manager, caller: viewModel.id)
   }
 
   private func stageNewRow() {

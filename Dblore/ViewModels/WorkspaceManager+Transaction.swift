@@ -339,6 +339,9 @@ extension WorkspaceManager {
     databaseForeignKeys = []
     schemaConnectionEpoch = nil
     mongoOverview = nil
+    // The sidebar's Export form belongs to the closed connection: stop it and close the form
+    mongoExport?.dismiss()
+    mongoExport = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()
