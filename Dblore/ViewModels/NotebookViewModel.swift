@@ -215,6 +215,10 @@ class NotebookViewModel {
   @ObservationIgnored var integerPrimaryKeyHasDefault: [String: Bool] = [:]
   /// Grid / Chart for the data viewer. The paging bar draws it; the grid reads it.
   var dataViewerDisplayMode: ResultDisplayMode = .grid
+  /// Relaxed / Canonical in the data viewer's JSON view, kept across pages, sort and filter
+  var mongoJSONFormat = MongoRelaxedJSON.Format.relaxedExtendedJSON
+  /// Bumped by Cmd+F in the JSON view: it opens the text view's find bar
+  var mongoJSONFindRequest = 0
   /// The filter bar's last Expand All / Collapse All for the data viewer's Documents view
   var documentExpansionRequest: DocumentTreeExpansionRequest?
   /// Collection screen of a MongoDB data viewer (section, indexes). Kept in step with

@@ -153,6 +153,29 @@ struct SavedFilterStoreTests {
     defaults.removePersistentDomain(forName: name)
   }
 
+  @Test("A view preference round-trips per collection; unknown values read as grid and 100")
+  func mongoViewPreferencePerCollection() {
+    let store = makeStore()
+    let config = ConnectionConfig(databaseType: .mongodb, host: "h", port: 27017, database: "db")
+    let users = SavedFilterStore.key(for: config, schema: "db", name: "users")
+    let orders = SavedFilterStore.key(for: config, schema: "db", name: "orders")
+    let json = MongoViewPreference(mode: .json, pageSize: 250)
+    store.saveMongoViewPreference(json, for: users)
+    store.saveMongoViewPreference(MongoViewPreference(mode: .documents, pageSize: 50), for: orders)
+    #expect(store.mongoViewPreference(for: users) == json)
+    #expect(store.mongoViewPreference(for: users)?.mode == .json)
+    #expect(store.mongoViewPreference(for: orders)?.mode == .documents)
+    #expect(store.mongoViewPreference(for: orders)?.pageSize == 50)
+    #expect(
+      store.mongoViewPreference(for: SavedFilterStore.key(for: config, schema: "db", name: "x"))
+        == nil)
+
+    store.saveMongoViewPreference(
+      MongoViewPreference(displayMode: "bogus", pageSize: 7), for: users)
+    #expect(store.mongoViewPreference(for: users)?.mode == .grid)
+    #expect(store.mongoViewPreference(for: users)?.pageSize == 100)
+  }
+
   @Test("A condition saved without the empty-string flag still decodes")
   func decodesConditionWithoutEmptyStringFlag() throws {
     let name = "ace.thi.Dblore.tests.savedFilters.\(UUID().uuidString)"

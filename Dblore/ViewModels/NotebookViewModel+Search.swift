@@ -258,6 +258,9 @@ extension NotebookViewModel {
     if isSearchPanelVisible {
       // Close search if already open
       closeSearch()
+    } else if isMongoDataViewer, dataViewerDisplayMode == .json, isSearchAvailable {
+      // The JSON view searches its text with the find bar; the grid search has nothing to match
+      mongoJSONFindRequest += 1
     } else if isSearchAvailable {
       // Save current first responder before opening search (like VSCode)
       previousFirstResponder = NSApplication.shared.keyWindow?.firstResponder

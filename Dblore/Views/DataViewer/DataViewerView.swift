@@ -73,6 +73,8 @@ struct DataViewerView: View {
       }
     }
     .background(Color.appBackground)
+    // A MongoDB collection remembers its view mode (Chart excepted) and page size
+    .onChange(of: viewModel.dataViewerDisplayMode) { viewModel.saveMongoViewPreference() }
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
       MongoDocumentEditorSheet(viewModel: viewModel, request: request)
     }

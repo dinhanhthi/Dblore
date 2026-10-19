@@ -406,9 +406,12 @@ nonisolated struct DocumentTreeModel: Sendable {
     return segments.joined(separator: ".")
   }
 
-  /// The whole document the row belongs to, as canonical Extended JSON.
-  func copyDocumentText(_ id: DocumentTreeNodeID) -> String? {
-    documents[safe: id.document].map { MongoRelaxedJSON.render($0, as: .canonicalExtendedJSON) }
+  /// The whole document the row belongs to, as canonical Extended JSON by default (or mongosh
+  /// text: `ObjectId("...")`, `ISODate("...")`).
+  func copyDocumentText(
+    _ id: DocumentTreeNodeID, format: MongoRelaxedJSON.Format = .canonicalExtendedJSON
+  ) -> String? {
+    documents[safe: id.document].map { MongoRelaxedJSON.render($0, as: format) }
   }
 
   // MARK: - Helpers

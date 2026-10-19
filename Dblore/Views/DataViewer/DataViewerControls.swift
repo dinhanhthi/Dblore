@@ -293,8 +293,8 @@ struct DataViewerPagingBar: View {
     }
   }
 
-  /// Same rule as the in-grid picker: a loaded page, with Documents for a MongoDB collection and
-  /// Chart when it can be plotted. One tab hides the picker.
+  /// Same rule as the in-grid picker: a loaded page, with Documents and JSON for a MongoDB
+  /// collection and Chart when it can be plotted. One tab hides the picker.
   private var displayTabs: [ResultDisplayMode] {
     guard let result = viewModel.editorResult, result.error == nil else { return [] }
     let showingRows =
@@ -304,7 +304,8 @@ struct DataViewerPagingBar: View {
     guard showingRows else { return [] }
     return ResultDisplayMode.tabs(
       chartable: ChartSpec.suggested(for: ChartQueryResult.make(result)) != nil,
-      documents: viewModel.sqlDialect == .mongodb)
+      documents: viewModel.sqlDialect == .mongodb,
+      json: viewModel.sqlDialect == .mongodb)
   }
 
   private func pageSizeMenu(state: DataViewerState) -> some View {

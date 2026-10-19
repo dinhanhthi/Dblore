@@ -728,6 +728,7 @@ class WorkspaceManager: Identifiable {
         viewModel.editorResult = nil
         viewModel.editorStatementResults = []
         viewModel.dataViewerDisplayMode = .grid
+        viewModel.applyMongoViewPreference()
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -738,6 +739,7 @@ class WorkspaceManager: Identifiable {
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
     viewModel.dataViewer = state
+    viewModel.applyMongoViewPreference()
     if let filter {
       viewModel.filterDraft = filter
     }
@@ -818,6 +820,7 @@ class WorkspaceManager: Identifiable {
       schema: ref.schema, name: ref.name, orderColumns: ref.orderColumns)
     state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
     viewModel.dataViewer = state
+    viewModel.applyMongoViewPreference()
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }

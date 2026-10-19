@@ -112,6 +112,13 @@ nonisolated enum LocalDataJSON {
     return count
   }
 
+  /// Entries of a top-level JSON object
+  static func keyCount(_ data: Data?) -> Int {
+    guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? NSDictionary
+    else { return 0 }
+    return object.count
+  }
+
   static func tabCount(_ data: Data?) -> Int {
     guard let data, let object = try? JSONSerialization.jsonObject(with: data) as? NSDictionary,
       let tabs = object["tabs"] as? NSArray
@@ -336,30 +343,46 @@ nonisolated struct SavedFiltersLocalDataProvider: LocalDataProvider {
     client = LocalDefaultsClient(defaults: defaults, domainName: domainName)
   }
 
+  /// Export file name of each stored key
+  private static var files: [(String, WritableKeyPath<SavedFilterStore.Snapshot, Data?>)] {
+    [
+      ("savedFilters.json", \.filters),
+      ("savedHighlights.json", \.highlights),
+      ("savedMongoQueries.json", \.mongoQueries),
+      ("savedMongoPipelines.json", \.mongoPipelines),
+      ("mongoViewPreferences.json", \.mongoViewPreferences),
+    ]
+  }
+
   func summary() async -> LocalDataSummary {
     let stored = SavedFilterStore.storedData(
       defaults: client.defaults, domainName: client.domainName)
-    let bytes = Int64((stored.filters?.count ?? 0) + (stored.highlights?.count ?? 0))
+    let bytes = Int64(Self.files.reduce(0) { $0 + (stored[keyPath: $1.1]?.count ?? 0) })
     let count =
       LocalDataJSON.keyedArrayCount(stored.filters)
       + LocalDataJSON.keyedArrayCount(stored.highlights)
+      + LocalDataJSON.keyedArrayCount(stored.mongoQueries)
+      + LocalDataJSON.keyedArrayCount(stored.mongoPipelines)
+      + LocalDataJSON.keyCount(stored.mongoViewPreferences)
     return LocalDataSummary(bytes: bytes, itemCount: count, location: nil)
   }
 
   func export(to folder: URL) async throws {
     let stored = SavedFilterStore.exportSnapshot(
       defaults: client.defaults, domainName: client.domainName)
-    try LocalDataFiles.write(stored.filters, named: "savedFilters.json", to: folder)
-    try LocalDataFiles.write(stored.highlights, named: "savedHighlights.json", to: folder)
+    for (name, path) in Self.files {
+      try LocalDataFiles.write(stored[keyPath: path], named: name, to: folder)
+    }
   }
 
+  /// A file missing from the export (older exports have only the first two) clears its key
   func importData(from folder: URL) async throws {
+    var snapshot = SavedFilterStore.Snapshot()
+    for (name, path) in Self.files {
+      snapshot[keyPath: path] = LocalDataFiles.read(named: name, from: folder)
+    }
     SavedFilterStore.replace(
-      filters: LocalDataFiles.read(named: "savedFilters.json", from: folder),
-      highlights: LocalDataFiles.read(named: "savedHighlights.json", from: folder),
-      defaults: client.defaults,
-      domainName: client.domainName
-    )
+      with: snapshot, defaults: client.defaults, domainName: client.domainName)
     LocalDataNotifications.post(category)
   }
 

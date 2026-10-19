@@ -236,6 +236,10 @@ struct DocumentTreeView: View {
         DocumentCardAction(
           title: "Copy Document as Extended JSON", systemImage: "doc.on.clipboard"
         ) { copy(.document, node: header) })
+      actions.append(
+        DocumentCardAction(
+          title: "Copy Document as mongosh", systemImage: "chevron.left.forwardslash.chevron.right"
+        ) { copy(.mongoshDocument, node: header) })
     }
     guard !isStale else { return actions }
     if let onDuplicate {
@@ -309,6 +313,7 @@ struct DocumentTreeView: View {
       case .value: model.copyValueText(node.id)
       case .path: model.copyPathText(node.id)
       case .document: model.copyDocumentText(node.id)
+      case .mongoshDocument: model.copyDocumentText(node.id, format: .mongosh)
       }
     guard let text else { return }
     NSPasteboard.general.clearContents()
@@ -475,7 +480,7 @@ private struct DocumentCardHeader: View {
 /// badge; or a "show more" link.
 private struct DocumentTreeRow: View {
   enum CopyAction {
-    case value, path, document
+    case value, path, document, mongoshDocument
   }
 
   let node: DocumentTreeNode
@@ -530,6 +535,7 @@ private struct DocumentTreeRow: View {
       Button("Copy Path") { onCopy(.path) }
     }
     Button("Copy Document as Extended JSON") { onCopy(.document) }
+    Button("Copy Document as mongosh") { onCopy(.mongoshDocument) }
     if let onShowDetails {
       Button("Show Details", action: onShowDetails)
     }

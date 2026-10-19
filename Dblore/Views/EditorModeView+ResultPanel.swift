@@ -368,6 +368,10 @@ struct EditorResultGridView: View {
       ) {
         if showsDocuments {
           documentCards
+        } else if showsJSON {
+          MongoJSONDocumentsView(
+            result: result, format: $viewModel.mongoJSONFormat,
+            findRequest: viewModel.mongoJSONFindRequest)
         } else {
           resultGrid
         }
@@ -418,6 +422,11 @@ struct EditorResultGridView: View {
   /// The Documents view replaces the grid for a MongoDB result
   private var showsDocuments: Bool {
     viewModel.sqlDialect == .mongodb && displayMode?.wrappedValue == .documents
+  }
+
+  /// The JSON text replaces the grid for a MongoDB result (data viewer tabs only)
+  private var showsJSON: Bool {
+    viewModel.sqlDialect == .mongodb && displayMode?.wrappedValue == .json
   }
 
   /// Staged rows drawn on the grid: the SQL change set, else the data viewer's staged MongoDB
