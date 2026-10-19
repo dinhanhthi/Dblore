@@ -400,4 +400,12 @@ struct AISSEParserTests {
         ], tools: ["get_weather"])
     }
   }
+
+  /// The ChatGPT route uses the text protocol (no native tools), so the Responses wire has no
+  /// function-call handling: its events are ignored even when the name was offered.
+  @Test("responses function_call events never become tool calls", arguments: [[], ["get_weather"]])
+  func responsesFunctionCallIgnored(tools: Set<String>) throws {
+    let out = try run(.responses, stream: F.responsesFunctionCallStream, tools: tools)
+    #expect(out == [.done])
+  }
 }

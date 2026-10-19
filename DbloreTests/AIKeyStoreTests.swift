@@ -36,4 +36,24 @@ struct AIKeyStoreTests {
   func accountNaming() {
     #expect(AIKeyStoreFactory.apiKeyAccount("openAI") == "apikey.openAI")
   }
+
+  @Test("Gemini key is saved under service ace.thi.dblore.ai, account apikey.gemini")
+  @MainActor
+  func geminiKeyAccount() {
+    #expect(KeychainAIKeyStore.serviceName == "ace.thi.dblore.ai")
+    let account = AIKeyStoreFactory.apiKeyAccount("gemini")
+    #expect(account == "apikey.gemini")
+
+    let store = InMemoryAIKeyStore()
+    let defaults = UserDefaults(suiteName: "ai-keystore-\(UUID().uuidString)")!
+    let settings = AISettings(defaults: defaults, keyStore: store)
+
+    #expect(settings.setAPIKey("gemini-test-key", for: .gemini))
+    #expect(store.load(account: account) == "gemini-test-key")
+    #expect(settings.apiKey(for: .gemini) == "gemini-test-key")
+
+    settings.setAPIKey("", for: .gemini)
+    #expect(store.load(account: account) == nil)
+    #expect(settings.apiKey(for: .gemini) == nil)
+  }
 }

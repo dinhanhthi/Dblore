@@ -7,6 +7,7 @@ nonisolated struct AnthropicClient: AIChatClient {
   let baseURL: URL
   let apiKey: String
   var session: URLSession = .shared
+  var supportsNativeTools: Bool { true }
 
   /// Required by the Messages API (docs.anthropic.com, verified 2026-09)
   static let apiVersion = "2023-06-01"

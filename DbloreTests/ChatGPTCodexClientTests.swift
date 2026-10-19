@@ -71,6 +71,58 @@ struct ChatGPTCodexClientTests {
     #expect(second == ["type": "output_text", "text": "hello"])
   }
 
+  /// JSONSerialization key order changes per process, so the body is compared in a sorted-key
+  /// form: every key, value, type and nesting must match the text-only body sent before tools.
+  @Test("text-only request body is unchanged")
+  func textOnlyBodyPinned() throws {
+    let urlRequest = ChatGPTCodexClient.makeRequest(
+      request(), baseURL: base, accessToken: "tok", accountID: "acct-1")
+    let body = try #require(urlRequest.httpBody)
+    let object = try JSONSerialization.jsonObject(with: body)
+    let sorted = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    #expect(
+      String(decoding: sorted, as: UTF8.self)
+        == #"{"input":[{"content":[{"text":"hi","type":"input_text"}],"role":"user","type":"message"},{"content":[{"text":"hello","type":"output_text"}],"role":"assistant","type":"message"}],"instructions":"Be brief.","model":"gpt-5.1","store":false,"stream":true}"#
+    )
+  }
+
+  @Test("tools and tool blocks are never sent: text blocks only, tool-only turns dropped")
+  func toolsIgnored() throws {
+    var request = request()
+    request.tools = [
+      AIToolSpec(name: "get_weather", description: "Weather", parameters: .object([:]))
+    ]
+    let call = AIToolCall(id: "call_1", name: "get_weather", inputJSON: #"{"location":"Paris"}"#)
+    request.messages += [
+      AIChatMessage(role: .assistant, blocks: [.text("Checking."), .toolUse(call)]),
+      AIChatMessage(
+        role: .user,
+        blocks: [.toolResult(AIToolResult(id: "call_1", content: "18 C", isError: false))]),
+      AIChatMessage(role: .user, blocks: [.text("Thanks")]),
+    ]
+    let urlRequest = ChatGPTCodexClient.makeRequest(
+      request, baseURL: base, accessToken: "tok", accountID: "acct-1")
+    let body = try #require(urlRequest.httpBody)
+    let json = try #require(try JSONSerialization.jsonObject(with: body) as? [String: Any])
+    #expect(json["tools"] == nil)
+    #expect(json["tool_choice"] == nil)
+    let input = try #require(json["input"] as? [[String: Any]])
+    #expect(input.allSatisfy { $0["type"] as? String == "message" })
+    let texts = input.compactMap { ($0["content"] as? [[String: String]])?.first?["text"] }
+    #expect(texts == ["hi", "hello", "Checking.", "Thanks"])
+    let raw = String(decoding: body, as: UTF8.self)
+    #expect(!raw.contains("function_call"))
+    #expect(!raw.contains("call_1"))
+  }
+
+  @Test("the client reports no native tool support, so tools go through the text protocol")
+  func noNativeTools() throws {
+    let made = try AIClientFactory.make(
+      kind: .chatGPT, config: AIProviderConfig(baseURL: "", model: "m"), apiKey: nil,
+      session: AIStubURLProtocol.makeSession())
+    #expect(!made.supportsNativeTools)
+  }
+
   @Test("account header is omitted when the account id is unknown")
   func noAccountHeader() {
     let urlRequest = ChatGPTCodexClient.makeRequest(

@@ -139,6 +139,9 @@ actor ChatGPTTokenProvider {
 nonisolated struct ChatGPTCodexClient: AIChatClient {
   let tokenProvider: ChatGPTTokenProvider
   var session: URLSession = .shared
+  /// Function-call streaming is not documented for the ChatGPT-plan route: tools go through the
+  /// text protocol, and `request.tools` and tool blocks are never sent
+  var supportsNativeTools: Bool { false }
 
   /// Fixed: bearer and account headers are only ever sent to this host
   static let baseURL = URL(string: "https://chatgpt.com/backend-api/codex")!
@@ -153,7 +156,9 @@ nonisolated struct ChatGPTCodexClient: AIChatClient {
     applyHeaders(&urlRequest, accessToken: accessToken, accountID: accountID)
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     urlRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-    let input: [[String: Any]] = request.messages.map { message in
+    // Text blocks only: a turn holding nothing but tool blocks is dropped
+    let messages = request.messages.filter { !($0.hasToolBlocks && $0.text.isEmpty) }
+    let input: [[String: Any]] = messages.map { message in
       let contentType = message.role == .user ? "input_text" : "output_text"
       return [
         "type": "message", "role": message.role.rawValue,

@@ -8,6 +8,7 @@ nonisolated enum AIWire: String, Codable, Sendable {
   case anthropicMessages
   case chatCompletions
   case responses
+  case geminiGenerateContent
 }
 
 nonisolated enum AIEndpointError: LocalizedError, Sendable, Equatable {
@@ -17,6 +18,7 @@ nonisolated enum AIEndpointError: LocalizedError, Sendable, Equatable {
   case credentialsNotAllowed
   case missingHost
   case insecureRemoteHTTP
+  case invalidModel
 
   var errorDescription: String? {
     switch self {
@@ -33,6 +35,8 @@ nonisolated enum AIEndpointError: LocalizedError, Sendable, Equatable {
     case .insecureRemoteHTTP:
       return
         "Plain http:// is only allowed for localhost, private-network IP addresses and .local hosts. Use https://."
+    case .invalidModel:
+      return "The model name is not valid."
     }
   }
 }
@@ -77,7 +81,30 @@ nonisolated enum AIEndpoint: Sendable {
     case .chatCompletions: return base.appendingPathComponent("chat/completions")
     case .anthropicMessages: return base.appendingPathComponent("messages")
     case .responses: return base.appendingPathComponent("responses")
+    // Gemini URLs carry the model: see `geminiStreamURL`
+    case .geminiGenerateContent: return base
     }
+  }
+
+  /// `<base>/models/<model>:streamGenerateContent?alt=sse`. The model id may carry the `models/`
+  /// prefix; it must be a plain id (letters, digits, `.`, `_`, `-`, starting with a letter or
+  /// digit) so it can never add a path segment, a query or a fragment.
+  static func geminiStreamURL(base: URL, model: String) throws(AIEndpointError) -> URL {
+    guard let id = geminiModelID(model),
+      var components = URLComponents(url: base, resolvingAgainstBaseURL: false)
+    else { throw .invalidModel }
+    components.path = trimSlashes(components.path) + "/models/\(id):streamGenerateContent"
+    components.queryItems = [URLQueryItem(name: "alt", value: "sse")]
+    guard let url = components.url else { throw .invalidModel }
+    return url
+  }
+
+  /// The bare Gemini model id (`models/` prefix removed), or nil when it is not a plain id
+  static func geminiModelID(_ raw: String) -> String? {
+    let id = raw.hasPrefix("models/") ? String(raw.dropFirst("models/".count)) : raw
+    guard id.range(of: #"\A[A-Za-z0-9][A-Za-z0-9._-]*\z"#, options: .regularExpression) != nil
+    else { return nil }
+    return id
   }
 
   static func modelsURL(base: URL) -> URL {

@@ -7,6 +7,7 @@ nonisolated struct OpenAICompatibleClient: AIChatClient {
   let baseURL: URL
   let apiKey: String
   var session: URLSession = .shared
+  var supportsNativeTools: Bool { true }
 
   /// Ollama's default OpenAI-compatible endpoint
   static let ollamaBaseURL = URL(string: "http://127.0.0.1:11434/v1")!

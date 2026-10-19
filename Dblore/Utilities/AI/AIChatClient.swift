@@ -93,6 +93,9 @@ nonisolated protocol AIChatClient: Sendable {
   func listModels() async throws -> [String]
   /// Like `listModels`, also reporting whether the built-in fallback list was used
   func listModelsResult() async throws -> AIModelListResult
+  /// True when the wire streams tool calls natively; false: the caller falls back to the text
+  /// protocol (on-device gets no tools at all, decided by provider kind)
+  var supportsNativeTools: Bool { get }
 }
 
 nonisolated struct AIModelListResult: Sendable, Equatable {
@@ -102,6 +105,8 @@ nonisolated struct AIModelListResult: Sendable, Equatable {
 }
 
 extension AIChatClient {
+  nonisolated var supportsNativeTools: Bool { false }
+
   func listModelsResult() async throws -> AIModelListResult {
     AIModelListResult(models: try await listModels(), isFallback: false)
   }
@@ -131,6 +136,7 @@ nonisolated enum AIClientFactory {
     case .anthropicMessages: return AnthropicClient(baseURL: base, apiKey: key, session: session)
     case .chatCompletions:
       return OpenAICompatibleClient(baseURL: base, apiKey: key, session: session)
+    case .geminiGenerateContent: return GeminiClient(baseURL: base, apiKey: key, session: session)
     case .responses: throw AIClientError.invalidEndpoint("Unsupported provider.")
     }
   }

@@ -5,12 +5,13 @@ import Foundation
 import Observation
 
 nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
-  case anthropic, openAI, openRouter, ollama, lmStudio, mlxServer, custom, chatGPT, localMLX
+  case anthropic, openAI, gemini, openRouter, ollama, lmStudio, mlxServer, custom, chatGPT, localMLX
 
   var displayName: String {
     switch self {
     case .anthropic: return "Anthropic"
     case .openAI: return "OpenAI"
+    case .gemini: return "Google Gemini"
     case .openRouter: return "OpenRouter"
     case .ollama: return "Ollama"
     case .lmStudio: return "LM Studio"
@@ -25,6 +26,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     switch self {
     case .anthropic: return .anthropicMessages
     case .chatGPT: return .responses
+    case .gemini: return .geminiGenerateContent
     default: return .chatCompletions
     }
   }
@@ -33,6 +35,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     switch self {
     case .anthropic: return "https://api.anthropic.com/v1"
     case .openAI: return "https://api.openai.com/v1"
+    case .gemini: return "https://generativelanguage.googleapis.com/v1beta"
     case .openRouter: return "https://openrouter.ai/api/v1"
     case .ollama: return "http://127.0.0.1:11434/v1"
     case .lmStudio: return "http://127.0.0.1:1234/v1"
@@ -45,7 +48,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
 
   var requiresAPIKey: Bool {
     switch self {
-    case .anthropic, .openAI, .openRouter: return true
+    case .anthropic, .openAI, .gemini, .openRouter: return true
     case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT, .localMLX: return false
     }
   }
@@ -55,6 +58,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     switch self {
     case .anthropic: return ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-1"]
     case .openAI: return ["gpt-4.1", "gpt-4.1-mini", "gpt-4o"]
+    case .gemini: return ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"]
     case .openRouter:
       return ["anthropic/claude-sonnet-4.5", "openai/gpt-4.1", "google/gemini-2.5-pro"]
     case .chatGPT: return ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"]
