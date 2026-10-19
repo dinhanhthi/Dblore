@@ -358,6 +358,9 @@ class WorkspaceManager: Identifiable {
       guard let self else { throw AIAssistantViewModel.QueryRunError.notConnected }
       return try await self.runAIQuery(sql)
     }
+    aiAssistant.queryContextSource = { [weak self] statement, plan in
+      try await self?.aiQueryContext(statement: statement, plan: plan) ?? ""
+    }
     aiAccessSource = { [weak self] in
       self.flatMap { Self.aiAccessContext(for: $0.workspace.connectionConfig) }
     }

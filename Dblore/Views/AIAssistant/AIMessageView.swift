@@ -30,6 +30,10 @@ struct AIMessageView: View {
   var mongoCollection: String? = nil
   /// Fills the filter bar or the Aggregations builder of `mongoCollection`; never runs
   var onMongoAction: ((AIMongoAssist.BlockAction) -> Void)? = nil
+  /// True while this entry's reply streams: a review answer shows as text until it is complete
+  var isStreaming = false
+  /// Applies a review answer's SQL to where it was reviewed (never runs); nil disables Apply
+  var onApplyReview: ((AIReviewRequest, String) -> NotebookViewModel.AIReviewApplyResult)? = nil
 
   @State private var isHovering = false
   @State private var isEditing = false
@@ -44,6 +48,10 @@ struct AIMessageView: View {
       // A result is its own bordered card: no bubble around it, no actions on it
       if let result = entry.queryResult {
         AIQueryResultCard(result: result)
+      } else if let review = entry.review, !entry.isError, !isStreaming, !entry.text.isEmpty {
+        AIReviewCardView(
+          request: review, text: entry.text,
+          onApply: onApplyReview.map { apply in { apply(review, $0) } })
       } else {
         bubble
       }
@@ -599,7 +607,7 @@ private struct AICodeBlock: View {
 
 /// Compact bordered action on the code-block header, with a hover fill that
 /// contrasts against `cardHeaderBackground`.
-private struct AICodeActionButtonStyle: ButtonStyle {
+struct AICodeActionButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     AICodeActionButton(configuration: configuration)
   }

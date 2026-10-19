@@ -300,7 +300,9 @@ struct AIAssistantPanel: View {
                 ? { assistant.retry(from: entry.id, editedText: $0) } : nil,
               firstRunLabel: firstRunLabel(after: index, in: messages),
               mongoCollection: activeTab?.mongoCollection?.collection,
-              onMongoAction: mongoActionHandler)
+              onMongoAction: mongoActionHandler,
+              isStreaming: assistant.isGenerating && index == messages.count - 1,
+              onApplyReview: reviewApplyHandler)
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }
@@ -353,6 +355,13 @@ struct AIAssistantPanel: View {
     return { activeTab.insertAISQL($0) }
   }
 
+  private var reviewApplyHandler:
+    ((AIReviewRequest, String) -> NotebookViewModel.AIReviewApplyResult)?
+  {
+    guard let activeTab else { return nil }
+    return { activeTab.applyAIReview($0, sql: $1) }
+  }
+
   /// Fills the filter bar or the Aggregations builder of the viewed collection (never runs)
   private var mongoActionHandler: ((AIMongoAssist.BlockAction) -> Void)? {
     guard let model = activeTab?.mongoCollection else { return nil }
@@ -372,6 +381,11 @@ struct AIAssistantPanel: View {
 
   private var canFixError: Bool {
     currentSQL != nil && lastError != nil && !assistant.needsSetup
+  }
+
+  private var canReview: Bool {
+    !assistant.needsSetup
+      && AIAssistantViewModel.offersReview(in: activeTab, dialect: assistant.sqlDialect)
   }
 
   private var footer: some View {
@@ -422,7 +436,7 @@ struct AIAssistantPanel: View {
   }
 
   private var quickActions: some View {
-    HStack(spacing: Spacing.xs) {
+    AIFlowLayout(spacing: Spacing.xs) {
       if canExplain {
         Button("Explain query") {
           if let sql = currentSQL {
@@ -441,6 +455,14 @@ struct AIAssistantPanel: View {
         }
         .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
+      }
+      if canReview, let activeTab {
+        Button("Review query") { assistant.review(.review, in: activeTab) }
+          .buttonStyle(AIChipButtonStyle())
+          .disabled(assistant.isGenerating)
+        Button("Optimize query") { assistant.review(.optimize, in: activeTab) }
+          .buttonStyle(AIChipButtonStyle())
+          .disabled(assistant.isGenerating)
       }
     }
   }

@@ -20,6 +20,11 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
   /// The SQL of a query that could not run: a `.failed` entry is saved with it and without the
   /// database error (`AIConversationStore.save`)
   var querySQL: String? = nil
+  /// Set on the answer to a Review or Optimize request: what was reviewed and where Apply writes
+  var review: AIReviewRequest? = nil
+  /// Set on a Review or Optimize question: the request a retry sends again (the answer can be
+  /// gone, removed while still empty)
+  var askedReview: AIReviewRequest? = nil
 
   enum QueryOutcome: String, Codable {
     /// The database (or the connection) returned an error
@@ -95,6 +100,7 @@ final class AIAssistantViewModel {
       if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         draftHoldsConnectionText = false
         draftSessionKey = nil
+        pendingReview = nil
         if privateNote == .draftHeld { privateNote = .messageOnly }
         if privateNote == .draftFromOtherConnection { privateNote = nil }
       }
@@ -106,6 +112,8 @@ final class AIAssistantViewModel {
   /// `AIAccessGate.sessionKey` of the connection the Explain or Fix text came from; it is sent
   /// only while that connection is the current one
   @ObservationIgnored private var draftSessionKey: String?
+  /// The Review or Optimize request the draft was filled with; it goes with the draft
+  @ObservationIgnored var pendingReview: PendingReview?
   /// Session key at the last `connectionDidChange()`
   @ObservationIgnored private var connectionSessionKey: String?
   var isGenerating = false
@@ -142,6 +150,9 @@ final class AIAssistantViewModel {
   @ObservationIgnored var dialectSource: (() -> SQLDialect)?
   /// Runs one read-only statement the assistant asked for; nil means not connected
   @ObservationIgnored var queryRunner: ((String) async throws -> QueryResult)?
+  /// Catalog-only context of a reviewed statement with the shown plan, read when a Review or
+  /// Optimize turn the gate allows is sent; "" sends none. Nil means not connected.
+  @ObservationIgnored var queryContextSource: ((String, ExplainPlan?) async throws -> String)?
   /// The connection's AI access, read on user actions (send, retry, live answer, one-shot),
   /// never from a view body. Nil without a connection: nothing to protect.
   @ObservationIgnored var aiAccessSource: () -> AIAccessContext? = { nil }
@@ -253,14 +264,18 @@ final class AIAssistantViewModel {
         return
       }
     }
+    // Emptying the draft drops the pending review; a draft rewritten without the filled SQL is
+    // no review
+    let review = pendingReview.flatMap { $0.isFilled(in: question) ? $0 : nil }
     draft = ""
-    submit(question: question, access: access)
+    submit(question: question, access: access, review: review)
   }
 
   /// Restarts the conversation from a user message: that question and everything after it
   /// are dropped, then the question (or `editedText` when given) is sent with the current
   /// provider, model and tables. The draft is left alone. On a connection private to AI nothing
   /// is dropped or sent: the stored message may hold Explain or Fix text. Returns true when sent.
+  /// A retried Review or Optimize question is sent without the EXPLAIN plan.
   @discardableResult
   func retry(from id: UUID, editedText: String? = nil) -> Bool {
     guard let index = messages.firstIndex(where: { $0.id == id }),
@@ -277,9 +292,16 @@ final class AIAssistantViewModel {
       privateNote = .retryHeld
       return false
     }
+    // A Review or Optimize question keeps its request while it still holds the SQL, as in
+    // `send()`; conversations saved before `askedReview` have it only on the answer, read
+    // before `stop()` removes an empty one
+    let next = messages.indices.contains(index + 1) ? messages[index + 1] : nil
+    let request = messages[index].askedReview ?? (next?.role == .assistant ? next?.review : nil)
+    let review = request.map { PendingReview(request: $0, plan: nil) }
+      .flatMap { $0.isFilled(in: question) ? $0 : nil }
     stop()
     messages.removeSubrange(index...)
-    submit(question: question, access: access)
+    submit(question: question, access: access, review: review)
     return true
   }
 
@@ -348,14 +370,18 @@ final class AIAssistantViewModel {
     privateNote = nil
   }
 
-  private func submit(question: String, access: AccessCheck) {
+  private func submit(question: String, access: AccessCheck, review: PendingReview? = nil) {
     guard let provider = activeProvider else { return }
     privateNote = access.decision == .denied ? .messageOnly : nil
-    messages.append(AIChatEntry(id: UUID(), role: .user, text: question, isError: false))
+    messages.append(
+      AIChatEntry(
+        id: UUID(), role: .user, text: question, isError: false, askedReview: review?.request))
     saveConversation()
 
     let entryId = UUID()
-    messages.append(AIChatEntry(id: entryId, role: .assistant, text: "", isError: false))
+    messages.append(
+      AIChatEntry(
+        id: entryId, role: .assistant, text: "", isError: false, review: review?.request))
 
     let model = activeModel
     let client: any AIChatClient
@@ -374,7 +400,7 @@ final class AIAssistantViewModel {
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
       compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource(),
-      access: access.context)
+      access: access.context, review: review)
     let history = makeHistory()
     isGenerating = true
     generation += 1
@@ -408,7 +434,12 @@ final class AIAssistantViewModel {
     fillDraft(AIPrompts.fixError(sql: sql, error: error), sessionKey: sessionKey)
   }
 
-  private func fillDraft(_ prompt: String, sessionKey: String?) {
+  /// A Review or Optimize fill sets `pendingReview` after this; any other fill drops it
+  func fillDraft(_ prompt: String, sessionKey: String?) {
+    // A pending review's prompt is replaced, never joined: one review per draft (Apply writes
+    // to the last target only), and no review text in an Explain or Fix request
+    if pendingReview != nil { draft = "" }
+    pendingReview = nil
     // Text of two connections never shares one draft
     if draftHoldsConnectionText && draftSessionKey != sessionKey { draft = "" }
     draft =
@@ -424,6 +455,7 @@ final class AIAssistantViewModel {
     messages = []
     conversationId = UUID()
     privateNote = nil
+    pendingReview = nil
   }
 
   func openConversation(id: UUID) {
@@ -534,7 +566,7 @@ final class AIAssistantViewModel {
   nonisolated static func buildRequest(
     model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
     history: [AIChatMessage], runsQueries: Bool, compactPrompt: Bool,
-    screen: AIMongoAssist.Screen? = nil, rules: String = ""
+    screen: AIMongoAssist.Screen? = nil, review: String? = nil, rules: String = ""
   ) async -> AIChatRequest {
     await Task.detached {
       let selected = AISchemaContext.selectTables(
@@ -545,7 +577,8 @@ final class AIAssistantViewModel {
         model: model,
         system: AIPrompts.system(
           databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
-          runsQueries: runsQueries, compact: compactPrompt, screen: screen, rules: rules),
+          runsQueries: runsQueries, compact: compactPrompt, screen: screen, review: review,
+          rules: rules),
         messages: history)
     }.value
   }

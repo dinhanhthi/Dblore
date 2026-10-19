@@ -23,6 +23,8 @@ extension AIAssistantViewModel {
     var screen: AIMongoAssist.Screen? = nil
     /// The connection's AI access read at send time; nil without a connection
     var access: AIAccessContext? = nil
+    /// The Review or Optimize request the question was filled with
+    var review: PendingReview? = nil
   }
 
   /// Refused before the query reached the database: no `queryRunner` (the workspace has no
@@ -52,13 +54,21 @@ extension AIAssistantViewModel {
 
   /// Streams the reply into `entryId`; when "Run read-only queries" was on at send time and still
   /// is, runs the reply's ```sql run block once and stops, unless `token` went stale. Only a
-  /// connection the gate allows sends its schema, MongoDB screen, rules and earlier messages, and
-  /// runs queries; otherwise the request carries the new question and the dialect only.
+  /// connection the gate allows sends its schema, MongoDB screen, rules, earlier messages and the
+  /// catalog of a reviewed statement, and runs queries (never on a review turn); otherwise the
+  /// request carries the new question and the dialect only.
   func runTurn(
     _ context: TurnContext, history: [AIChatMessage], entryId: UUID, token: Int
   ) async {
     let allowed =
       context.access.map { $0.decision(settings: settings.configuration) == .allowed } ?? true
+    let review: String?
+    do {
+      review = try await reviewContext(context.review, allowed: allowed)
+    } catch {
+      return  // Stopped while the catalog was read
+    }
+    let runsQueries = context.runsQueries && review == nil
     let snapshot =
       allowed
       ? context.snapshot
@@ -69,11 +79,11 @@ extension AIAssistantViewModel {
       explicit: allowed ? context.explicit : [], snapshot: snapshot,
       // Earlier turns may hold table names, SQL or filters from when the connection was allowed
       history: allowed ? history : [AIChatMessage(role: .user, text: context.question)],
-      runsQueries: allowed && context.runsQueries, compactPrompt: context.compactPrompt,
-      screen: allowed ? context.screen : nil,
+      runsQueries: allowed && runsQueries, compactPrompt: context.compactPrompt,
+      screen: allowed ? context.screen : nil, review: review,
       rules: allowed ? context.access?.config.aiRules ?? "" : "")
     guard await streamReply(request, from: context.client, into: entryId),
-      allowed, context.runsQueries, settings.configuration.runsQueries,
+      allowed, runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,
       let sql = AIMessageParser.runQuery(in: reply, dialect: context.dialect)
     else { return }
