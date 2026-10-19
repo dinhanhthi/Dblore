@@ -13,6 +13,16 @@ nonisolated enum AIAccessPolicy: String, Codable, Sendable {
   case askOncePerSession
   /// Nothing from this connection reaches a model
   case never
+
+  /// The label every policy picker shows
+  var title: String {
+    switch self {
+    case .useDefault: "Use default"
+    case .always: "Always"
+    case .askOncePerSession: "Ask once per session"
+    case .never: "Never"
+    }
+  }
 }
 
 /// Decides whether AI features may use a connection. Session approvals are kept in memory
@@ -76,9 +86,9 @@ nonisolated final class AIAccessGate: Sendable {
   }
 }
 
-/// What AI features read for an open connection: its config (with the saved connection's rules
-/// when one matches) and the policy of every saved row of its identity. Ask
-/// `decision(settings:)`, so the strictest of the live and saved policies wins.
+/// What AI features read for an open connection: its config (its rules combined with the saved
+/// connection's, `WorkspaceManager.combinedAIRules`) and the policy of every saved row of its
+/// identity. Ask `decision(settings:)`, so the strictest of the live and saved policies wins.
 nonisolated struct AIAccessContext: Sendable {
   let config: ConnectionConfig
   let savedPolicies: [AIAccessPolicy]

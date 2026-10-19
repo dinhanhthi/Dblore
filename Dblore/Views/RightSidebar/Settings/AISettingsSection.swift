@@ -581,32 +581,72 @@ struct AISettingsSection: View {
   }
 }
 
-/// What the assistant may send and run: the "Run read-only queries" switch and what it shares.
+/// What the assistant may send and run: the default connection access, result rows, and the
+/// "Run read-only queries" switch.
 struct AIPrivacyCard: View {
   @Bindable var settings: AISettings
 
   private var runsQueries: Bool { settings.configuration.runsQueries }
 
+  /// A global "use default" has nothing to follow and asks, so it shows as ask
+  private var defaultAccess: AIAccessPolicy {
+    let access = settings.configuration.defaultConnectionAccess
+    return access == .useDefault ? .askOncePerSession : access
+  }
+
   var body: some View {
     SettingsGroupCard(title: "Privacy") {
-      SettingsToggle(
-        title: "Run read-only queries", isOn: $settings.configuration.runsQueries
-      ) {
-        VStack(alignment: .leading, spacing: Spacing.xs) {
-          helpText(help)
-          if runsQueries {
-            helpText(
-              "Only a single read-only statement runs; anything else is refused and shown as SQL.")
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        defaultAccessRow
+        Divider()
+        SettingsToggle(
+          title: "Send result rows to AI", isOn: $settings.configuration.sendsResultRows
+        ) {
+          helpText(
+            "At most 50 rows, 20 columns and 200 characters per cell. Rows from connections set to Never are never sent."
+          )
+        }
+        Divider()
+        SettingsToggle(
+          title: "Run read-only queries", isOn: $settings.configuration.runsQueries
+        ) {
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            helpText(help)
+            if runsQueries {
+              helpText(
+                "Only a single read-only statement runs; anything else is refused and shown as SQL."
+              )
+            }
           }
         }
       }
     }
   }
 
+  private var defaultAccessRow: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text("Default AI access for connections")
+        .font(.bodyText)
+        .foregroundColor(.foregroundMuted)
+
+      CapsuleDropdown(
+        title: defaultAccess.title,
+        width: 200,
+        accessibilityLabel: "Default AI access for connections",
+        options: [AIAccessPolicy.always, .askOncePerSession, .never],
+        optionTitle: \.title,
+        isSelected: { $0 == defaultAccess },
+        onSelect: { settings.configuration.defaultConnectionAccess = $0 }
+      )
+
+      helpText("Each connection can override this in its connection form.")
+    }
+  }
+
   private var help: String {
     runsQueries
-      ? "AI writes a read-only query, the app runs it and shows the rows to you. Row values are never sent to the AI."
-      : "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
+      ? "AI writes a read-only query, the app runs it and shows the rows to you. The rows reach the AI only when Send result rows to AI is on."
+      : "Schema (table/column names, types, keys) is sent. Row data is sent only when Send result rows to AI is on. AI never runs queries."
   }
 
   private func helpText(_ text: String) -> some View {

@@ -5,6 +5,10 @@ import Foundation
 
 /// Builds schema context for the AI assistant.
 /// Privacy: only structure (names, types, constraints) is ever rendered, never row counts or values.
+/// An EXPLAIN plan joins it only through `AIQueryContext.render`, from the parsed plan model:
+/// structure only, with planner cost and width kept, and no rows, conditions or literals because
+/// only whitelisted model fields are rendered. Planner cost derives from table statistics and is a
+/// deliberate, documented residual.
 nonisolated enum AISchemaContext {
 
   private static let fallbackCount = 20
@@ -104,6 +108,73 @@ nonisolated enum AISchemaContext {
     let remaining = tables.count - rendered.count
     if remaining > 0 { lines.append("-- … and \(remaining) more tables") }
     return lines.joined(separator: "\n")
+  }
+
+  /// One block per fetched table: its column line, then its primary key, its indexes (except
+  /// the one backing the primary key) and its foreign keys. Raw server expressions (defaults,
+  /// checks, comments, index predicates and expression keys) are left out, so no literal
+  /// reaches the prompt (an EXPLAIN plan joined by `AIQueryContext.render` renders whitelisted
+  /// plan fields only). Whole blocks are cut at `budgetChars`.
+  static func render(structures: [TableStructure], budgetChars: Int = 12_000) -> String {
+    var lines: [String] = []
+    var used = 0
+    var renderedCount = 0
+
+    for structure in structures {
+      let block = structureLines(structure)
+      let size = block.reduce(0) { $0 + $1.count + 1 }
+      if used + size > budgetChars { break }
+      lines += block
+      used += size
+      renderedCount += 1
+    }
+
+    let remaining = structures.count - renderedCount
+    if remaining > 0 { lines.append("-- … and \(remaining) more tables") }
+    return lines.joined(separator: "\n")
+  }
+
+  private static func structureLines(_ structure: TableStructure) -> [String] {
+    let name = "\(structure.schema).\(structure.name)"
+    var primaryKey: [String] = []
+    var unique: Set<String> = []
+    var foreignKeys: [String] = []
+    for constraint in structure.constraints {
+      switch constraint.kind {
+      case .primaryKey:
+        primaryKey = constraint.columns
+      case .unique where constraint.columns.count == 1:
+        unique.insert(constraint.columns[0])
+      case .foreignKey(let target):
+        foreignKeys.append(
+          "FK \(name)(\(constraint.columns.joined(separator: ", "))) -> "
+            + "\(target.schema).\(target.table)(\(target.columns.joined(separator: ", ")))")
+      default:
+        break
+      }
+    }
+    let table = DatabaseTable(
+      schema: structure.schema, name: structure.name,
+      columns: structure.columns.map {
+        DatabaseColumn(
+          name: $0.name, type: $0.dataType, isNullable: $0.isNullable,
+          isPrimaryKey: primaryKey.contains($0.name), isUnique: unique.contains($0.name))
+      })
+
+    var lines = [tableLine(table)]
+    if !primaryKey.isEmpty { lines.append("PK \(name)(\(primaryKey.joined(separator: ", ")))") }
+    for index in structure.indexes where !index.isPrimary {
+      let keys = index.keys.map { key -> String in
+        if case .column(let column) = key { return column }
+        return "(expression)"
+      }
+      var line = "INDEX \(index.name) ON \(name)(\(keys.joined(separator: ", ")))"
+      if index.isUnique { line += " UNIQUE" }
+      if let method = index.method { line += " USING \(method)" }
+      if index.isPartial { line += " PARTIAL" }
+      lines.append(line)
+    }
+    return lines + foreignKeys
   }
 
   private static func tableLine(_ table: DatabaseTable) -> String {

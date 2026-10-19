@@ -370,7 +370,43 @@ struct WorkspaceAIAccessSyncTests {
       let settings = AIConfiguration(
         activeProvider: nil, configs: [:], defaultConnectionAccess: global)
       #expect(context.decision(settings: settings) == .denied)
-      #expect(context.config.aiRules == "Saved rules.")
+      #expect(context.config.aiRules == "Saved rules.\n\nForm rules.")
+    }
+  }
+
+  @Test("Saved and live rules are both sent, saved first, within the rules limit")
+  func savedAndLiveRulesCombine() {
+    let saved = String(repeating: "s", count: 1_500)
+    let combined = WorkspaceManager.combinedAIRules(
+      saved: saved, live: String(repeating: "l", count: 1_500))
+    #expect(combined.count == ConnectionConfig.aiRulesLimit)
+    #expect(combined.hasPrefix(saved + "\n\nl"))
+    #expect(WorkspaceManager.combinedAIRules(saved: "Same.", live: "Same.") == "Same.")
+    #expect(WorkspaceManager.combinedAIRules(saved: "", live: "Live.") == "Live.")
+    #expect(WorkspaceManager.combinedAIRules(saved: nil, live: "Live.") == "Live.")
+
+    // Live rules that extend the saved ones (Remember off) are sent once, the edit kept
+    let long = String(repeating: "r", count: 1_990)
+    let extended = long + "\nNew."
+    #expect(WorkspaceManager.combinedAIRules(saved: long, live: extended) == extended)
+    // Saved rules that already hold the live ones are sent once
+    #expect(WorkspaceManager.combinedAIRules(saved: "A.\n\nB.", live: "B.") == "A.\n\nB.")
+  }
+
+  @Test("Only the exact saved row's rules are sent; a variant row still counts for the policy")
+  func exactRowRulesOnly() throws {
+    try Self.withDefaults { defaults in
+      var variant = Self.config(.never, rules: "Variant rules.")
+      variant.host = "prod.example.com"
+      #expect(
+        SessionManager.saveConnection(variant, defaults: defaults, passwords: NoPasswordStore()))
+      var live = variant
+      live.host = "PROD.example.com"
+      live.aiRules = "Live."
+      live.rememberConnection = false
+      let context = try #require(WorkspaceManager.aiAccessContext(for: live, defaults: defaults))
+      #expect(context.config.aiRules == "Live.")
+      #expect(context.savedPolicies == [.never])
     }
   }
 

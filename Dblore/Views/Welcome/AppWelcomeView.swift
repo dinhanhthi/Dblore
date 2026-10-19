@@ -233,15 +233,18 @@ struct AppWelcomeView: View {
     isShowingConnectionSidebar = true
   }
 
-  /// Connect creates a workspace. Save updates the recent card that was opened.
-  private func submitConnectionForm(_ config: ConnectionConfig) async throws {
+  /// Connect creates a workspace. Save updates the recent card that was opened; unless the AI
+  /// fields were edited it keeps the saved row's AI policy and rules, so a stale form copy never
+  /// loosens a policy another window saved meanwhile.
+  private func submitConnectionForm(_ config: ConnectionConfig, aiFieldsEdited: Bool) async throws {
     if let id = editingConnectionId {
-      guard recentManager.replaceConnection(id: id, with: config) else {
+      let row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
+      guard recentManager.replaceConnection(id: id, with: row) else {
         throw CertificateFormError.keychainSave
       }
       return
     }
-    try await connectAndCreateWorkspaceForWelcome(config)
+    try await connectAndCreateWorkspaceForWelcome(config, aiFieldsEdited: aiFieldsEdited)
   }
 
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
@@ -254,11 +257,13 @@ struct AppWelcomeView: View {
     .withTrustPrompt()
   }
 
-  private func connectAndCreateWorkspaceForWelcome(_ config: ConnectionConfig) async throws {
+  private func connectAndCreateWorkspaceForWelcome(
+    _ config: ConnectionConfig, aiFieldsEdited: Bool
+  ) async throws {
     let windowManager = WorkspaceWindowManager.shared
     let manager = windowManager.newWorkspace(connection: config)
     do {
-      try await manager.connect(config: config)
+      try await manager.connect(config: config, aiFieldsEdited: aiFieldsEdited)
       isShowingConnectionSidebar = false
       onWorkspaceSelected?(manager.id)
     } catch {

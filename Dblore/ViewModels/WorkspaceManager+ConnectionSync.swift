@@ -131,21 +131,33 @@ extension WorkspaceManager {
     return config
   }
 
-  /// What AI features read for the live `config`: the saved connection's rules when one
-  /// matches, and the policy of every saved row of its identity (they share session approvals),
-  /// so no stale or variant row loosens a stricter one.
+  /// What AI features read for the live `config`: the exact saved row's rules combined with the
+  /// live ones (`combinedAIRules`; a variant row's rules are not sent), and the policy of every
+  /// saved row of its identity (they share session approvals), so no stale or variant row
+  /// loosens a stricter one.
   static func aiAccessContext(
     for config: ConnectionConfig?, defaults: UserDefaults = .standard
   ) -> AIAccessContext? {
     guard var config else { return nil }
-    let saved = savedMatches(
-      for: config,
-      in: SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore()))
-    if let rules = saved.first?.aiRules { config.aiRules = rules }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    let saved = savedMatches(for: config, in: history)
+    config.aiRules = combinedAIRules(
+      saved: exactSavedEntry(for: config, in: history)?.config.aiRules, live: config.aiRules)
     // Prompt builders read this copy: no secret reaches them
     config.password = ""
     config.mongoURI = nil
     return AIAccessContext(config: config, savedPolicies: saved.map(\.aiAccess), gate: .shared)
+  }
+
+  /// The rules sent once: live when it holds the saved rules (e.g. a saved row's rules extended
+  /// with Remember off), saved when it holds the live ones, else both (saved first, a blank line,
+  /// then live); at most `ConnectionConfig.aiRulesLimit`.
+  static func combinedAIRules(saved: String?, live: String) -> String {
+    let saved = saved ?? ""
+    if live.isEmpty { return saved }
+    if saved.isEmpty || live.contains(saved) { return ConnectionConfig.clampedAIRules(live) }
+    if saved.contains(live) { return saved }
+    return ConnectionConfig.clampedAIRules(saved + "\n\n" + live)
   }
 
   /// Rename the active connection (workspace, editing copy, tabs and the recent list).

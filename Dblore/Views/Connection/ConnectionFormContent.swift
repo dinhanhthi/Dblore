@@ -19,8 +19,9 @@ struct ConnectionFormContent: View {
   /// Callback to test connection - returns true if successful
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
 
-  /// Callback to connect - called when user clicks Connect button
-  var onConnect: ((ConnectionConfig) async throws -> Void)?
+  /// Callback to connect - called when user clicks Connect button. The flag is true only when
+  /// the user changed the AI policy or rules in this form (see `aiFieldsEdited`).
+  var onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)?
 
   /// Callback when connection is successful (optional, for closing sidebar etc.)
   var onConnectionSuccess: (() -> Void)?
@@ -88,6 +89,9 @@ struct ConnectionFormContent: View {
   /// Auth method of the credential stored under `sshOriginalConfig`'s account (nil = none).
   @State var sshStoredMethod: SSHTunnelConfig.AuthMethod?
 
+  /// AI policy and rules the form was seeded with (`seedAIFields`).
+  @State var aiSeed = ConnectionAIDraft()
+
   // Connection history
   @State private var connectionHistory: [ConnectionHistoryEntry] = []
   @State private var selectedHistoryId: UUID?
@@ -134,7 +138,7 @@ struct ConnectionFormContent: View {
   init(
     connectionConfig: Binding<ConnectionConfig>,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
-    onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
+    onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)? = nil,
     onConnectionSuccess: (() -> Void)? = nil,
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
@@ -231,6 +235,11 @@ struct ConnectionFormContent: View {
               safetySection()
             }
           }
+
+          sectionCard {
+            sectionTitle("AI")
+            aiSection()
+          }
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -247,6 +256,8 @@ struct ConnectionFormContent: View {
         restoreCertificateDraft()
         restoreSSHDraft()
         refreshSQLiteFileBookmark()
+        // After the Recent row load above, which replaces the form's values
+        seedAIFields()
       }
       .onReceive(
         NotificationCenter.default.publisher(for: .localDataChanged).receive(on: RunLoop.main),
@@ -297,6 +308,7 @@ struct ConnectionFormContent: View {
           isBlankForm: Self.isBlankForm(connectionConfig))
         {
           restoreSSHDraft()
+          seedAIFields()
         }
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
         // path string without the user picking a different connection.
@@ -585,6 +597,7 @@ struct ConnectionFormContent: View {
     seenDraftGeneration = draftGeneration
     fieldsEngine = connectionConfig.databaseType
     selectedHistoryId = nil
+    seedAIFields()
   }
 
   func setFieldsEngine(_ type: DatabaseType) {
@@ -970,6 +983,7 @@ struct ConnectionFormContent: View {
     }
 
     isConnecting = true
+    let aiFieldsEdited = aiFieldsEdited
     let scopedMaterial = certificateMaterialForOperation(config).map {
       ClientCertificateStoreFactory.ScopedMaterial(
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
@@ -986,7 +1000,7 @@ struct ConnectionFormContent: View {
       do {
         try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
           try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-            try await onConnectCallback(config)
+            try await onConnectCallback(config, aiFieldsEdited)
           }
         }
         connectionConfig.clientCertificate = config.clientCertificate
@@ -995,6 +1009,7 @@ struct ConnectionFormContent: View {
         // Restores the draft from the submitted tunnel (and drops the typed secret).
         connectionConfig.sshTunnel = config.sshTunnel
         restoreSSHDraft()
+        aiSeed = ConnectionAIDraft(config: config)
         isConnecting = false
         onConnectionSuccess?()
       } catch WorkspaceConnectError.unlockRequired {

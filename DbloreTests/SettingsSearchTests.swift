@@ -23,4 +23,12 @@ struct SettingsSearchTests {
     #expect(titles(matches, in: .shortcuts).contains("Toggle Word Wrap"))
   }
 
+  @Test("the AI privacy settings are found by their keywords")
+  func aiPrivacySettings() {
+    #expect(
+      titles(Tab.search("privacy default ask never"), in: .ai).first
+        == "Default AI access for connections")
+    #expect(titles(Tab.search("results rows"), in: .ai).first == "Send result rows to AI")
+  }
+
 }

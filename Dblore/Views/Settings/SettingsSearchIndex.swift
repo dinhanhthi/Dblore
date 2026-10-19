@@ -158,9 +158,19 @@ extension SettingsModal.SettingsTab {
             "Runs fully on this Mac (Apple Silicon). Nothing leaves your computer. Model downloads come from Hugging Face."
         ),
         .init(
-          card: "Privacy", title: "Privacy",
+          card: "Privacy", title: "Default AI access for connections",
           detail:
-            "Only schema (table/column names, types, keys) is sent — never row data. AI never runs queries."
+            "Always, Ask once per session, Never. Each connection can override this in its connection form."
+        ),
+        .init(
+          card: "Privacy", title: "Send result rows to AI",
+          detail:
+            "Off by default. Query results: at most 50 rows, 20 columns and 200 characters per cell. Rows from connections set to Never are never sent."
+        ),
+        .init(
+          card: "Privacy", title: "Run read-only queries",
+          detail:
+            "AI writes a read-only query, the app runs it and shows the rows to you. Only a single read-only statement runs. The rows reach the AI only when Send result rows to AI is on."
         ),
       ]
     case .results:
