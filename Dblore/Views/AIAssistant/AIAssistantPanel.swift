@@ -302,7 +302,8 @@ struct AIAssistantPanel: View {
               mongoCollection: activeTab?.mongoCollection?.collection,
               onMongoAction: mongoActionHandler,
               isStreaming: assistant.isGenerating && index == messages.count - 1,
-              onApplyReview: reviewApplyHandler)
+              onApplyReview: reviewApplyHandler,
+              onRunProposal: assistant.proposalRunner)
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }

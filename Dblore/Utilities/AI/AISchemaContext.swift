@@ -179,7 +179,7 @@ nonisolated enum AISchemaContext {
 
   /// Catalog names and types come from the server and can hold newlines or control characters
   /// (quoted identifiers), so each rendered line is flattened before it reaches the prompt.
-  private static func oneLine(_ line: String) -> String {
+  static func oneLine(_ line: String) -> String {
     String(
       line.map { character in
         character.isNewline

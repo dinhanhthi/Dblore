@@ -175,6 +175,8 @@ nonisolated enum AIClientFactory {
           for delta in try parser.consume(line: "") {
             if yield(delta, continuation) { return }
           }
+          // No terminal event: a tool call still being assembled is an error, not dropped
+          try parser.endOfBody()
           continuation.finish()
         } catch is CancellationError {
           continuation.finish()

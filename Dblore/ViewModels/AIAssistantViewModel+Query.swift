@@ -1,7 +1,7 @@
 // AIAssistantViewModel+Query.swift
-// The turn of one question: stream a reply; when its ```sql run block passes the read-only
-// guard, run it once on the connection and show the rows to the user. The model is not called
-// again and never sees the rows.
+// The turn of one question. A turn that offers tools runs the tool loop (`+Tools`). Otherwise:
+// stream a reply; when its ```sql run block passes the read-only guard, run it once on the
+// connection and show the rows to the user. The model is not called again and never sees the rows.
 
 import Foundation
 
@@ -23,8 +23,20 @@ extension AIAssistantViewModel {
     var screen: AIMongoAssist.Screen? = nil
     /// The connection's AI access read at send time; nil without a connection
     var access: AIAccessContext? = nil
+    /// `AIAccessGate.sessionKey` of `access`: tools run only while the connection still has it,
+    /// and proposals and tool entries are stamped with it
+    var sessionKey: String? = nil
+    /// The connection's database at send time on MongoDB (blank: the session's default), nil
+    /// elsewhere: a database switch keeps `sessionKey`, so tools run only while it still matches
+    /// and proposals are stamped with it
+    var mongoDatabase: String? = nil
     /// The Review or Optimize request the question was filled with
     var review: PendingReview? = nil
+    /// The turn may offer the AI tools (not on-device, a tool runner and a connection); the gate
+    /// and a review turn still take them away
+    var offersTools = false
+    /// Key of a local OpenAI-compatible server that may refuse native tools (`toolEndpoint`)
+    var toolEndpoint: String? = nil
   }
 
   /// Refused before the query reached the database: no `queryRunner` (the workspace has no
@@ -56,7 +68,8 @@ extension AIAssistantViewModel {
   /// is, runs the reply's ```sql run block once and stops, unless `token` went stale. Only a
   /// connection the gate allows sends its schema, MongoDB screen, rules, earlier messages and the
   /// catalog of a reviewed statement, and runs queries (never on a review turn); otherwise the
-  /// request carries the new question and the dialect only.
+  /// request carries the new question and the dialect only. A turn that offers tools (allowed,
+  /// no review, `offersTools`) runs the tool loop instead, without run blocks.
   func runTurn(
     _ context: TurnContext, history: [AIChatMessage], entryId: UUID, token: Int
   ) async {
@@ -69,6 +82,9 @@ extension AIAssistantViewModel {
       return  // Stopped while the catalog was read
     }
     let runsQueries = context.runsQueries && review == nil
+    let tools =
+      allowed && review == nil && context.offersTools
+      ? AITools.specs(runsQueries: runsQueries, isMongo: context.dialect == .mongodb) : []
     let snapshot =
       allowed
       ? context.snapshot
@@ -81,7 +97,11 @@ extension AIAssistantViewModel {
       history: allowed ? history : [AIChatMessage(role: .user, text: context.question)],
       runsQueries: allowed && runsQueries, compactPrompt: context.compactPrompt,
       screen: allowed ? context.screen : nil, review: review,
-      rules: allowed ? context.access?.config.aiRules ?? "" : "")
+      rules: allowed ? context.access?.config.aiRules ?? "" : "", tools: !tools.isEmpty)
+    guard tools.isEmpty else {
+      await runToolLoop(request, tools: tools, context: context, entryId: entryId, token: token)
+      return
+    }
     guard await streamReply(request, from: context.client, into: entryId),
       allowed, runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,
@@ -166,7 +186,7 @@ extension AIAssistantViewModel {
 
   /// The app refused the query before it reached the server: the guard, no connection, another
   /// tab's pending transaction or the read-only gate
-  private static func isRefusedBeforeServer(_ failure: Error?) -> Bool {
+  static func isRefusedBeforeServer(_ failure: Error?) -> Bool {
     guard let failure else { return false }
     switch failure {
     case is ReadOnlyQueryGuard.Refusal, is QueryRunError,

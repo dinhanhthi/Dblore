@@ -21,9 +21,11 @@ extension WorkspaceManager {
       }
   }
 
-  /// Runs `sql` under a read-only policy, reading at most `modelRowCap + 1` rows so a cut
-  /// result is visible. `ReadOnlyQueryGuard` checks it again for the live connection's dialect
-  /// (the connection may have changed since the reply was asked for); a refusal is not recorded.
+  /// Runs `sql` under a read-only policy, reading at most `maxRows + 1` rows so a cut result is
+  /// visible. `timeoutSeconds` caps the read-only session's statement timeout (a shorter one of
+  /// the connection is kept); DuckDB keeps the workspace session's. `ReadOnlyQueryGuard` checks
+  /// it again for the live connection's dialect (the connection may have changed since the reply
+  /// was asked for); a refusal is not recorded.
   /// The guard only classifies (a function it does not know may still write), so PostgreSQL,
   /// MySQL, SQLite and MongoDB queries run on a read-only session of their own
   /// (`runOnReadOnlySession`; MongoDB: a plain session that runs reads only, after the guard
@@ -31,7 +33,9 @@ extension WorkspaceManager {
   /// transactions are neither joined nor read. DuckDB runs on the workspace session. Refused
   /// unless the AI access gate allows the connection. Records History on success and failure,
   /// then rethrows.
-  func runAIQuery(_ sql: String) async throws -> QueryResult {
+  func runAIQuery(
+    _ sql: String, maxRows: Int = AIAssistantViewModel.modelRowCap, timeoutSeconds: Int? = nil
+  ) async throws -> QueryResult {
     guard connectionState.isConnected, let config = workspace.connectionConfig else {
       throw AIAssistantViewModel.QueryRunError.notConnected
     }
@@ -50,9 +54,10 @@ extension WorkspaceManager {
         // `caller` nil: refused while a tab owns a pending transaction.
         result = try await connectionManager.execute(
           userSQL: sql, policy: ProtectionPolicy(protectionLevel: .readOnly),
-          maxRows: AIAssistantViewModel.modelRowCap + 1, caller: nil)
+          maxRows: maxRows + 1, caller: nil)
       } else {
-        result = try await runOnReadOnlySession(sql)
+        result = try await runOnReadOnlySession(
+          sql, maxRows: maxRows, timeoutSeconds: timeoutSeconds)
       }
       scheduleAIHistory(
         sql, config: config, started: started, rowCount: result.rowCount, status: .success,
@@ -71,9 +76,17 @@ extension WorkspaceManager {
   /// read-only, MongoDB on a plain session that runs reads only), connected like the workspace session (its config, unremembered certificate and
   /// SSH secret, host-key policy), then closed. A failed connect throws `.readSessionFailed`,
   /// without the server's text.
-  private func runOnReadOnlySession(_ sql: String) async throws -> QueryResult {
-    guard let config = await connectionManager.config else {
+  private func runOnReadOnlySession(
+    _ sql: String, maxRows: Int, timeoutSeconds: Int?
+  ) async throws -> QueryResult {
+    guard var config = await connectionManager.config else {
       throw AIAssistantViewModel.QueryRunError.notConnected
+    }
+    if let timeoutSeconds {
+      // 0 or less means the default brake, which can be longer
+      config.statementTimeoutSeconds = min(
+        SessionBrakeLimits.clampStatementTimeout(config.statementTimeoutSeconds ?? timeoutSeconds),
+        timeoutSeconds)
     }
     let manager = DatabaseConnectionManager(
       sessionFactory: MCPReadOnlySessionFactory(
@@ -91,7 +104,7 @@ extension WorkspaceManager {
     do {
       let result = try await manager.execute(
         userSQL: sql, policy: ProtectionPolicy(protectionLevel: .readOnly),
-        maxRows: AIAssistantViewModel.modelRowCap + 1)
+        maxRows: maxRows + 1)
       await manager.disconnect()
       return result
     } catch {

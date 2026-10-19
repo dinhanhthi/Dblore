@@ -1,7 +1,7 @@
 // AIAssistantViewModel.swift
 // Workspace-level chat state for the AI SQL assistant. Schema is sent; with "Run read-only
-// queries" on, the read-only query of a ```sql run block runs (see `+Query`) and its rows are
-// shown to the user only, never sent to the model. Other SQL is never executed.
+// queries" on, the read-only query of a ```sql run block (on-device) or of a run_read_query tool
+// call (see `+Tools`) runs and its rows are shown to the user. Other SQL is never executed.
 
 import Foundation
 import Observation
@@ -25,10 +25,15 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
   /// Set on a Review or Optimize question: the request a retry sends again (the answer can be
   /// gone, removed while still empty)
   var askedReview: AIReviewRequest? = nil
-  /// Tools the model called in this assistant turn
+  /// The tool call this entry shows (one per entry, see `+Tools`); replayed as text, never run
   var toolCalls: [AIToolCall]? = nil
-  /// Answers the app sent back for tool calls
+  /// The answer the app sent back for `toolCalls`, as saved (never rows or server errors)
   var toolResults: [AIToolResult]? = nil
+  /// Set on the entry of a propose_sql call: what the proposal card shows. Never runs by itself.
+  var proposal: AIProposal? = nil
+  /// `AIAccessGate.sessionKey` of the connection a tool entry ran on; later turns replay it only
+  /// on that connection
+  var toolSessionKey: String? = nil
 
   enum QueryOutcome: String, Codable {
     /// The database (or the connection) returned an error
@@ -36,6 +41,18 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
     /// Refused before the database: guard refusal or no connection
     case refused
   }
+}
+
+/// A statement the model proposed (propose_sql) for the user to run, insert or copy. Saved
+/// chats are plain JSON, so every field is untrusted when read back (see `AIProposalCheck`).
+struct AIProposal: Codable, Equatable {
+  let sql: String
+  let reason: String
+  /// `AIAccessGate.sessionKey` of the connection it was proposed for; Run refuses any other
+  /// connection, and a proposal without one (older chats)
+  var sessionKey: String? = nil
+  /// Database of that connection: the target of a MongoDB `db.dropDatabase()` the card names
+  var database: String? = nil
 }
 
 /// Structure-only snapshot of the connected database, read at send time
@@ -120,6 +137,8 @@ final class AIAssistantViewModel {
   @ObservationIgnored var pendingReview: PendingReview?
   /// Session key at the last `connectionDidChange()`
   @ObservationIgnored private var connectionSessionKey: String?
+  /// Session key of the tool turn in flight; nil when none runs
+  @ObservationIgnored private var toolTurnSessionKey: String?
   var isGenerating = false
   /// True while an on-device model is being loaded into memory (before the first token)
   var isLoadingModel = false
@@ -154,6 +173,20 @@ final class AIAssistantViewModel {
   @ObservationIgnored var dialectSource: (() -> SQLDialect)?
   /// Runs one read-only statement the assistant asked for; nil means not connected
   @ObservationIgnored var queryRunner: ((String) async throws -> QueryResult)?
+  /// Runs a proposal the user approved with Run (`WorkspaceManager.runAIProposal`), with the
+  /// name typed into the card; nil disables Run. Nothing else runs a proposal.
+  @ObservationIgnored var proposalRunner:
+    ((AIProposal, _ confirmedName: String?) -> WorkspaceManager.AIProposalRunOutcome)?
+  /// Runs one tool call of a turn sent for the dialect, connection session key and MongoDB
+  /// database, with "Run read-only queries" and "Send result rows" as read at call time
+  /// (`WorkspaceManager.runAITool`); nil offers no tools
+  @ObservationIgnored var toolRunner:
+    (
+      (
+        AIToolCall, SQLDialect, _ sessionKey: String?, _ mongoDatabase: String?,
+        _ runsQueries: Bool, _ sendsResultRows: Bool
+      ) async -> WorkspaceManager.AIToolOutcome
+    )?
   /// Catalog-only context of a reviewed statement with the shown plan, read when a Review or
   /// Optimize turn the gate allows is sent; "" sends none. Nil means not connected.
   @ObservationIgnored var queryContextSource: ((String, ExplainPlan?) async throws -> String)?
@@ -360,10 +393,11 @@ final class AIAssistantViewModel {
 
   /// The workspace connected, switched or disconnected: notes about the old connection go. On
   /// another connection (session key) a draft holding Explain or Fix text of the old one goes,
-  /// and so do the picked tables. A reconnect or a MongoDB database switch keeps the same key. A
-  /// hand-typed draft stays.
+  /// and so do the picked tables, and a tool turn in flight stops. A reconnect or a MongoDB
+  /// database switch keeps the same key. A hand-typed draft stays.
   func connectionDidChange() {
     let key = Self.sessionKey(aiAccessSource())
+    if let turnKey = toolTurnSessionKey, turnKey != key { stop() }
     if draftHoldsConnectionText && draftSessionKey != key { draft = "" }
     if key != connectionSessionKey {
       selectedTableNames = []
@@ -404,9 +438,15 @@ final class AIAssistantViewModel {
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
       compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource(),
-      access: access.context, review: review)
+      access: access.context, sessionKey: Self.sessionKey(access.context),
+      mongoDatabase: sqlDialect == .mongodb ? access.context?.config.database : nil,
+      review: review,
+      // On-device models get no tools; without a connection there is nothing to read
+      offersTools: provider != .localMLX && toolRunner != nil && access.context != nil,
+      toolEndpoint: Self.toolEndpoint(provider, settings.config(for: provider)))
     let history = makeHistory()
     isGenerating = true
+    toolTurnSessionKey = context.offersTools ? context.sessionKey : nil
     generation += 1
     let token = generation
     generationTask = Task { [weak self] in
@@ -421,6 +461,7 @@ final class AIAssistantViewModel {
     generationTask = nil
     generation += 1
     isGenerating = false
+    toolTurnSessionKey = nil
     isLoadingModel = false
     removeEmptyAssistantEntries()
     saveConversation()
@@ -553,15 +594,21 @@ final class AIAssistantViewModel {
   // MARK: - Helpers
 
   /// History of the conversation (which already ends with the new question). Query results and
-  /// errors are placeholders (`historyMessage`); running queries are left out.
+  /// errors are placeholders (`historyMessage`), tool entries of the current connection text
+  /// (`toolHistoryMessages`); running queries are left out.
   func makeHistory() -> [AIChatMessage] {
+    let key = Self.sessionKey(aiAccessSource())
     let sent =
       messages
       .filter {
-        !$0.isError && $0.isRunning != true && (!$0.text.isEmpty || $0.queryResult != nil)
+        !$0.isError && $0.isRunning != true
+          && (!$0.text.isEmpty || $0.queryResult != nil || $0.toolCalls != nil)
       }
       .suffix(Self.historyLimit)
-      .map(Self.historyMessage(for:))
+      .flatMap {
+        $0.toolCalls != nil
+          ? Self.toolHistoryMessages(for: $0, sessionKey: key) : [Self.historyMessage(for: $0)]
+      }
       .drop(while: { $0.role == .assistant })  // Anthropic requires the first message to be user
     return Array(sent)
   }
@@ -570,7 +617,8 @@ final class AIAssistantViewModel {
   nonisolated static func buildRequest(
     model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
     history: [AIChatMessage], runsQueries: Bool, compactPrompt: Bool,
-    screen: AIMongoAssist.Screen? = nil, review: String? = nil, rules: String = ""
+    screen: AIMongoAssist.Screen? = nil, review: String? = nil, rules: String = "",
+    tools: Bool = false
   ) async -> AIChatRequest {
     await Task.detached {
       let selected = AISchemaContext.selectTables(
@@ -582,7 +630,7 @@ final class AIAssistantViewModel {
         system: AIPrompts.system(
           databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
           runsQueries: runsQueries, compact: compactPrompt, screen: screen, review: review,
-          rules: rules),
+          rules: rules, tools: tools),
         messages: history)
     }.value
   }
@@ -610,6 +658,7 @@ final class AIAssistantViewModel {
   private func finishGeneration(_ token: Int) {
     guard token == generation else { return }
     isGenerating = false
+    toolTurnSessionKey = nil
     isLoadingModel = false
     generationTask = nil
     removeEmptyAssistantEntries()

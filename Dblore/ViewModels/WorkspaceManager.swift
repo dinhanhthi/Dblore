@@ -358,6 +358,21 @@ class WorkspaceManager: Identifiable {
       guard let self else { throw AIAssistantViewModel.QueryRunError.notConnected }
       return try await self.runAIQuery(sql)
     }
+    aiAssistant.toolRunner = {
+      [weak self] call, dialect, sessionKey, mongoDatabase, runsQueries, sendsResultRows in
+      guard let self else {
+        return AIToolOutcome(
+          result: AIToolResult(
+            id: call.id, content: AITools.errorContent(.notConnected), isError: true))
+      }
+      return await self.runAITool(
+        call, dialect: dialect, sessionKey: sessionKey, mongoDatabase: mongoDatabase,
+        runsQueries: runsQueries, sendsResultRows: sendsResultRows)
+    }
+    aiAssistant.proposalRunner = { [weak self] proposal, confirmedName in
+      self?.runAIProposal(proposal, confirmedName: confirmedName)
+        ?? .refused("Not connected to a database.")
+    }
     aiAssistant.queryContextSource = { [weak self] statement, plan in
       try await self?.aiQueryContext(statement: statement, plan: plan) ?? ""
     }

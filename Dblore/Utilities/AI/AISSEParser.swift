@@ -231,10 +231,16 @@ nonisolated struct AISSEParser: Sendable {
 
   /// The end of the stream; a tool call still being assembled was cut off
   private func endStream() throws(AIStreamError) -> [AIStreamDelta] {
+    try endOfBody()
+    return [.done]
+  }
+
+  /// The response body ended, with or without a terminal event (`[DONE]`, `message_stop`): a
+  /// tool call still being assembled was cut off
+  func endOfBody() throws(AIStreamError) {
     guard pendingTools.isEmpty else {
       throw .invalidToolCall("The model's tool call was cut off.")
     }
-    return [.done]
   }
 
   private static func anthropicStopReason(_ reason: String) -> AIStopReason {

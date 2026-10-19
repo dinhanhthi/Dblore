@@ -27,7 +27,7 @@ extension WorkspaceManager {
     return schemaConnectionEpoch == epoch && isAIAllowed() ? context : ""
   }
 
-  private func isAIAllowed() -> Bool {
+  func isAIAllowed() -> Bool {
     aiAccessSource()?.decision(settings: aiAssistant.settings.configuration) == .allowed
   }
 }

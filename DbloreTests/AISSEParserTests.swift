@@ -389,6 +389,17 @@ struct AISSEParserTests {
     }
   }
 
+  @Test("end of body without a terminal event refuses a pending tool call")
+  func bodyEndsWithPendingToolCall() throws {
+    var parser = AISSEParser(wire: .chatCompletions, toolNames: ["get_weather"])
+    _ = try parser.consume(line: chatToolLine(index: 0, arguments: "{}"))
+    _ = try parser.consume(line: "")
+    #expect(throws: AIStreamError.invalidToolCall("The model's tool call was cut off.")) {
+      try parser.endOfBody()
+    }
+    try AISSEParser(wire: .chatCompletions).endOfBody()
+  }
+
   @Test("anthropic message_stop with a pending tool call is refused")
   func anthropicCutOffToolCall() {
     #expect(throws: AIStreamError.invalidToolCall("The model's tool call was cut off.")) {

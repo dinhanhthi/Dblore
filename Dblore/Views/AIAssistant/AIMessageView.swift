@@ -3,7 +3,7 @@
 //  Dblore
 //
 //  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge,
-//  or the result card of a query the app ran for the assistant
+//  the result card of a query the app ran for the assistant, or a proposal card
 //
 
 import AppKit
@@ -34,6 +34,9 @@ struct AIMessageView: View {
   var isStreaming = false
   /// Applies a review answer's SQL to where it was reviewed (never runs); nil disables Apply
   var onApplyReview: ((AIReviewRequest, String) -> NotebookViewModel.AIReviewApplyResult)? = nil
+  /// Runs a proposal after the user pressed Run on its card (`WorkspaceManager.runAIProposal`);
+  /// nil disables Run
+  var onRunProposal: ((AIProposal, String?) -> WorkspaceManager.AIProposalRunOutcome)? = nil
 
   @State private var isHovering = false
   @State private var isEditing = false
@@ -48,6 +51,10 @@ struct AIMessageView: View {
       // A result is its own bordered card: no bubble around it, no actions on it
       if let result = entry.queryResult {
         AIQueryResultCard(result: result)
+      } else if let proposal = entry.proposal {
+        // The entry's text is only the history placeholder of the proposal
+        AIProposalCardView(
+          proposal: proposal, dialect: dialect, onInsert: onInsert, onRun: onRunProposal)
       } else if let review = entry.review, !entry.isError, !isStreaming, !entry.text.isEmpty {
         AIReviewCardView(
           request: review, text: entry.text,

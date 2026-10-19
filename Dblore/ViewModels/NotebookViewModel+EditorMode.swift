@@ -35,7 +35,15 @@ extension NotebookViewModel {
       return
     }
 
-    guard let query = query, !query.isEmpty, !isEditorQueryRunning else { return }
+    guard let query = query, !query.isEmpty else { return }
+    await runUserEditorQuery(query)
+  }
+
+  /// Runs `query` as a typed editor run: the protection check, missing parameters and the
+  /// Safe Mode confirmation, then the gate in `executeEditorQuery`. Also how an AI proposal the
+  /// user approved runs (`WorkspaceManager.runAIProposal`), so it gets no other path.
+  func runUserEditorQuery(_ query: String) async {
+    guard !isEditorQueryRunning else { return }
     guard connectionState == .connected else {
       showToast("Not connected to database", type: .error)
       return
