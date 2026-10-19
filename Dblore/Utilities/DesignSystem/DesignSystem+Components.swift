@@ -32,13 +32,8 @@ enum ButtonStyleVariant {
       // Same fill as `filledSecondary`; the red border and label carry the danger
       return Color.controlBackground
     case .ghost:
-      if isPressed {
-        return Color.cellBackgroundHover
-      } else if isHovering {
-        return Color.hoverFill
-      } else {
-        return Color.clear
-      }
+      // `cellBackgroundHover` vanishes on the light `appBackground`
+      return isPressed || isHovering ? Color.hoverFill : Color.clear
     }
   }
 

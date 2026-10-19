@@ -1282,7 +1282,7 @@ struct WorkspaceTitleBarTabsView: View {
         .contentShape(Circle())
         .background {
           Circle()
-            .fill(isHoveringNewTabButton ? Color.cellBackgroundHover : Color.clear)
+            .fill(isHoveringNewTabButton ? Color.hoverFill : Color.clear)
         }
         .animation(.easeInOut(duration: 0.15), value: isHoveringNewTabButton)
         .onHover { isHoveringNewTabButton = $0 }
