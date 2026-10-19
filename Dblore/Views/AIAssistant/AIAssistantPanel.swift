@@ -23,18 +23,6 @@ struct AIAssistantPanel: View {
   @State private var showHistory = false
   @State private var retryEntryId: UUID?
 
-  private static let examples = [
-    "Top 10 customers by order total",
-    "Which tables reference the users table?",
-    "Rows created in the last 7 days",
-  ]
-
-  private static let mongoExamples = [
-    "Orders over 100 placed this month",
-    "Count documents by status",
-    "Documents missing an email field",
-  ]
-
   private var isMongo: Bool { assistant.sqlDialect == .mongodb }
 
   private static var isComposing: Bool {
@@ -253,16 +241,6 @@ struct AIAssistantPanel: View {
       Text(emptyStateText)
         .font(.labelText)
         .foregroundColor(.foregroundMuted)
-      ForEach(isMongo ? Self.mongoExamples : Self.examples, id: \.self) { example in
-        Button {
-          assistant.draft = example
-          composerFocused = true
-        } label: {
-          Text(example)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(AIChipButtonStyle())
-      }
     }
     .padding(Spacing.md)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
