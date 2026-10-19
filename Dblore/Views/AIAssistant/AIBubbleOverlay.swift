@@ -109,7 +109,7 @@ struct AIBubbleOverlay: View {
     .clipShape(RoundedRectangle(cornerRadius: CornerRadius.xxl))
     .overlay(
       HairlineBorder(
-        shape: RoundedRectangle(cornerRadius: CornerRadius.xxl), color: .border.opacity(0.5))
+        shape: RoundedRectangle(cornerRadius: CornerRadius.xxl), color: .borderStrong)
     )
     .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
     .background {
