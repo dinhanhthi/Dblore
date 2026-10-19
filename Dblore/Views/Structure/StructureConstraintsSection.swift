@@ -50,7 +50,7 @@ struct StructureConstraintsSection: View {
         } else {
           header
         }
-        ForEach(Array(model.workingConstraints.enumerated()), id: \.offset) { position, item in
+        ForEach(Array(model.workingConstraints.enumerated()), id: \.element.id) { position, item in
           StructureConstraintRow(model: model, item: item, isEditable: isEditable)
             .structureTableRow(isFirst: position == 0)
         }

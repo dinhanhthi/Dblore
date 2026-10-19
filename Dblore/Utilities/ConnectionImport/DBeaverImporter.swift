@@ -6,16 +6,15 @@
 //  plus the optional encrypted `credentials-config.json`. Both files are external input: sizes are
 //  bounded, decrypted content is never logged, and warnings never carry secret values.
 //
-//  Format (DBeaver source, dbeaver/dbeaver on GitHub):
-//  - `DefaultValueEncryptor`: AES/CBC/PKCS5Padding, the 16-byte IV is written before the
-//    ciphertext. `BaseProjectImpl.LOCAL_KEY_CACHE` is the static key.
-//  - `DataSourceParser`: secrets map `{ id: { "#connection": {user, password},
+//  Format:
+//  - `credentials-config.json`: AES/CBC/PKCS5Padding with a fixed static key, the 16-byte IV is
+//    written before the ciphertext.
+//  - Decrypted secrets: `{ id: { "#connection": {user, password},
 //    "network/<handlerId>": {user, password} } }`; handlers may also store user/password inline.
-//  - `SSHConstants`: `authType` is PASSWORD, PUBLIC_KEY or AGENT. `PostgreConstants.PROP_SSL_MODE`
-//    is `sslMode` on the `postgre_ssl` handler.
-//  - MySQL plugin: provider `mysql` for every driver (`mysql8`, `mysql5`, `mysql3`, `mysql_ndb`,
-//    `mariaDB`). `MySQLConstants.HANDLER_SSL` is `mysql_ssl`, with the booleans `ssl.require` and
-//    `ssl.verify.server`; `MySQLDataSource.initSSL` turns them into Connector/J settings.
+//  - SSH handlers: `authType` is PASSWORD, PUBLIC_KEY or AGENT. The `postgre_ssl` handler keeps
+//    the SSL mode in `sslMode`.
+//  - MySQL: provider `mysql` for every driver (`mysql8`, `mysql5`, `mysql3`, `mysql_ndb`,
+//    `mariaDB`). The `mysql_ssl` handler has the booleans `ssl.require` and `ssl.verify.server`.
 //
 
 import CommonCrypto
@@ -33,7 +32,7 @@ nonisolated enum DBeaverImporter {
   static let secretsFileName = "credentials-config.json"
   static let unreadableSecretsWarning = "Saved passwords could not be read."
 
-  /// DBeaver's published static key (`BaseProjectImpl.LOCAL_KEY_CACHE`).
+  /// The fixed static key of `credentials-config.json`.
   private static let key: [UInt8] = [
     0xba, 0xbb, 0x4a, 0x9f, 0x77, 0x4a, 0xb8, 0x53, 0xc9, 0x6c, 0x2d, 0x65, 0x3d, 0xfe, 0x54, 0x4a,
   ]
@@ -270,9 +269,10 @@ nonisolated enum DBeaverImporter {
     }
   }
 
-  /// Mirrors `MySQLDataSource.initSSL`: Connector/J maps `verifyServerCertificate` to VERIFY_CA
-  /// and `requireSSL` to REQUIRED; MariaDB's driver requires TLS and verifies the host unless
-  /// it trusts the server certificate. No enabled handler keeps the app default.
+  /// Maps the `mysql_ssl` booleans as the JDBC drivers read them: Connector/J maps
+  /// `verifyServerCertificate` to VERIFY_CA and `requireSSL` to REQUIRED; MariaDB's driver
+  /// requires TLS and verifies the host unless it trusts the server certificate. No enabled
+  /// handler keeps the app default.
   private static func mysqlSSLMode(
     handlers: [String: Any], isMariaDB: Bool, warnings: inout [String]
   ) -> SSLMode {

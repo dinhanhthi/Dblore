@@ -86,7 +86,7 @@ enum AIPanelMode: String, CaseIterable {
   }
 }
 
-/// Safe Mode levels for query protection (similar to TablePlus)
+/// Safe Mode levels for query protection
 /// Higher levels provide more protection against accidental data modification
 enum SafeMode: Int, Codable, CaseIterable, Sendable {
   /// No confirmations - execute all queries immediately

@@ -97,9 +97,17 @@ final class StructureEditorModel {
     var state: StagedState
   }
 
-  struct WorkingConstraint: Equatable {
+  /// A loaded constraint by its position, or one added in this session by its content and
+  /// occurrence: unchanged when an earlier row is dropped or removed (the sheet keys its rows by it)
+  enum ConstraintRowID: Hashable {
+    case loaded(Int)
+    case added(TableStructure.Constraint, occurrence: Int)
+  }
+
+  struct WorkingConstraint: Identifiable, Equatable {
     var constraint: TableStructure.Constraint
     var state: StagedState
+    var id: ConstraintRowID
   }
 
   static let duckDBMessage = "DuckDB tables can only be viewed"
@@ -427,16 +435,21 @@ final class StructureEditorModel {
   }
 
   var workingConstraints: [WorkingConstraint] {
-    let loaded = (structure?.constraints ?? []).map { constraint in
+    let loaded = (structure?.constraints ?? []).enumerated().map { position, constraint in
       let dropped = constraint.name.map {
         changes.contains(.dropConstraint(name: $0, kind: Self.kind(of: constraint)))
       }
       return WorkingConstraint(
-        constraint: constraint, state: dropped == true ? .dropped : .unchanged)
+        constraint: constraint, state: dropped == true ? .dropped : .unchanged,
+        id: .loaded(position))
     }
+    var occurrences: [TableStructure.Constraint: Int] = [:]
     let added = changes.compactMap { change -> WorkingConstraint? in
       guard case .addConstraint(let constraint) = change else { return nil }
-      return WorkingConstraint(constraint: constraint, state: .added)
+      let occurrence = occurrences[constraint, default: 0]
+      occurrences[constraint] = occurrence + 1
+      return WorkingConstraint(
+        constraint: constraint, state: .added, id: .added(constraint, occurrence: occurrence))
     }
     return loaded + added
   }

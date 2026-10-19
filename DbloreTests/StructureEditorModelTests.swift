@@ -237,6 +237,24 @@ struct StructureEditorModelTests {
     #expect(model.workingColumns.last?.rowID == before[3])
   }
 
+  @Test("Constraint rows keep distinct ids when an earlier row is dropped or removed")
+  func constraintRowIDsAreStable() async throws {
+    let model = makeModel(FakeStructureDatabase(structure: Self.items))
+    await model.load()
+    let first = TableStructure.Constraint(name: "name_unique", kind: .unique, columns: ["name"])
+    let second = TableStructure.Constraint(name: "id_check", kind: .check("id > 0"), columns: [])
+    model.addConstraint(first)
+    model.addConstraint(second)
+    let before = model.workingConstraints.map(\.id)
+    #expect(Set(before).count == 3)
+
+    // Staging a drop on the loaded row keeps its id; removing an added row keeps the others
+    model.dropConstraint(Self.items.constraints[0])
+    model.dropConstraint(first)
+    #expect(model.workingConstraints.map(\.state) == [.dropped, .added])
+    #expect(model.workingConstraints.map(\.id) == [before[0], before[2]])
+  }
+
   @Test("A builder error shows inline and disables Apply")
   func builderErrorDisablesApply() async throws {
     let model = makeModel(FakeStructureDatabase(structure: Self.items))

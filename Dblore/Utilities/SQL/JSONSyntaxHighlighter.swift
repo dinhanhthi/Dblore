@@ -185,18 +185,23 @@ enum JSONSyntaxHighlighter {
 
 struct HighlightedJSONText: View {
   let json: String
+  /// Cache `json` whatever its size: only for a parent that clears the cache when it closes
+  var cachesAnySize = false
 
   /// Last highlighted JSON and its text: parents re-render with the same JSON (sidebar
   /// animation, copy feedback), and tokenizing plus building the text is O(size)
-  private static var lastHighlight: (json: String, text: AttributedString)?
+  static var lastHighlight: (json: String, text: AttributedString)?
+  /// Highlighted JSON above this many UTF-8 bytes is not cached unless `cachesAnySize`: nothing
+  /// clears the cache for cell info, so a multi-MB jsonb cell would stay for the process lifetime
+  static let maxCachedBytes = 1_000_000
 
   var body: some View {
-    Text(Self.attributedString(for: json))
+    Text(Self.attributedString(for: json, cachesAnySize: cachesAnySize))
       .font(.mono)
       .textSelection(.enabled)
   }
 
-  private static func attributedString(for json: String) -> AttributedString {
+  static func attributedString(for json: String, cachesAnySize: Bool = false) -> AttributedString {
     if let lastHighlight, lastHighlight.json == json { return lastHighlight.text }
     var result = AttributedString()
 
@@ -206,7 +211,7 @@ struct HighlightedJSONText: View {
       result.append(attributed)
     }
 
-    lastHighlight = (json, result)
+    if cachesAnySize || json.utf8.count <= maxCachedBytes { lastHighlight = (json, result) }
     return result
   }
 }

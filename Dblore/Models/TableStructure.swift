@@ -74,14 +74,14 @@ nonisolated struct TableStructure: Sendable, Equatable {
     }
   }
 
-  struct Constraint: Sendable, Equatable {
+  struct Constraint: Sendable, Hashable {
     /// Nil when the engine does not name it (SQLite primary and foreign keys)
     var name: String?
     var kind: Kind
     /// Constrained columns in key order. Empty for a table-level check.
     var columns: [String]
 
-    enum Kind: Sendable, Equatable {
+    enum Kind: Sendable, Hashable {
       case primaryKey
       /// A unique constraint. Its backing index has the same name where the engine has one.
       case unique
@@ -91,7 +91,7 @@ nonisolated struct TableStructure: Sendable, Equatable {
     }
   }
 
-  struct ForeignKeyReference: Sendable, Equatable {
+  struct ForeignKeyReference: Sendable, Hashable {
     var schema: String
     var table: String
     /// Matches `Constraint.columns` position by position

@@ -1,8 +1,7 @@
 // PerformanceBenchmarkTests.swift
-// Baseline benchmarks (Debug). Each test records a median through PerfReport.
-// Scaling checks compare two measurements from the same run, so a slow CI runner
-// does not fail the suite. Absolute ceilings stay only where the slack is huge
-// (ReDoS under 1 s, a 100 KB autocomplete under 5 ms).
+// Adversarial-input checks (Debug): the SQL highlighter scans unterminated comments, quotes
+// and long digit runs in linear time. The absolute ceiling (under 1 s) leaves huge slack, so
+// a slow CI runner does not fail the suite. Timings are asserted, not recorded in PerfReport.
 
 import AppKit
 import Foundation
