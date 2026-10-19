@@ -91,6 +91,40 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.rowCapOverride == nil)
     #expect(decoded.fileBookmark == nil)
     #expect(decoded.readOnlyFile == false)
+    #expect(decoded.aiAccess == .useDefault)
+    #expect(decoded.aiRules == "")
+  }
+
+  @Test("AI access and rules round-trip; an unknown policy decodes as use default")
+  func aiAccessCoding() throws {
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    config.aiAccess = .askOncePerSession
+    config.aiRules = "Never send the users table."
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+    #expect(decoded.aiAccess == .askOncePerSession)
+    #expect(decoded.aiRules == "Never send the users table.")
+    #expect(decoded == config)
+
+    var object = try encodedObject(config)
+    object["aiAccess"] = "fromTheFuture"
+    let unknown = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(unknown.aiAccess == .useDefault)
+  }
+
+  @Test("AI rules are clamped to 2,000 characters on decode and on set")
+  func aiRulesClamp() throws {
+    let long = String(repeating: "a", count: 2_500)
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    config.aiRules = long
+    #expect(config.aiRules.count == 2_000)
+
+    var object = try encodedObject(config)
+    object["aiRules"] = long
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.aiRules.count == 2_000)
   }
 
   @Test("SQLite config round-trips the file path, bookmark, and read-only flag")

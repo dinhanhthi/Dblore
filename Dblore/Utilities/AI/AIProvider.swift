@@ -74,20 +74,28 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
   /// The assistant runs the read-only query of a ```sql run block and shows the rows to the
   /// user only; they never reach the model
   var runsQueries: Bool
+  /// Policy of a connection left on "use default". `.always` keeps the behavior from before
+  /// per-connection policies.
+  var defaultConnectionAccess: AIAccessPolicy
+  /// Whether result rows may be sent to the model (off: the model sees the query only)
+  var sendsResultRows: Bool
 
   static let empty = AIConfiguration(activeProvider: nil, configs: [:])
 
   init(
     activeProvider: AIProviderKind?, configs: [AIProviderKind: AIProviderConfig],
-    runsQueries: Bool = false
+    runsQueries: Bool = false, defaultConnectionAccess: AIAccessPolicy = .always,
+    sendsResultRows: Bool = false
   ) {
     self.activeProvider = activeProvider
     self.configs = configs
     self.runsQueries = runsQueries
+    self.defaultConnectionAccess = defaultConnectionAccess
+    self.sendsResultRows = sendsResultRows
   }
 
   private enum CodingKeys: String, CodingKey {
-    case activeProvider, configs, runsQueries
+    case activeProvider, configs, runsQueries, defaultConnectionAccess, sendsResultRows
   }
 
   // A dictionary with enum keys encodes as a flat array by default; use string keys instead
@@ -102,6 +110,12 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
         AIProviderKind(rawValue: key).map { ($0, value) }
       })
     runsQueries = try container.decodeIfPresent(Bool.self, forKey: .runsQueries) ?? false
+    // Absent before per-connection policies: keep the original behavior. An unknown value
+    // (e.g. from a newer version) asks (fail closed).
+    let rawAccess = try container.decodeIfPresent(String.self, forKey: .defaultConnectionAccess)
+    defaultConnectionAccess =
+      rawAccess.map { AIAccessPolicy(rawValue: $0) ?? .askOncePerSession } ?? .always
+    sendsResultRows = try container.decodeIfPresent(Bool.self, forKey: .sendsResultRows) ?? false
   }
 
   func encode(to encoder: Encoder) throws {
@@ -110,6 +124,8 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     let raw = Dictionary(uniqueKeysWithValues: configs.map { ($0.key.rawValue, $0.value) })
     try container.encode(raw, forKey: .configs)
     try container.encode(runsQueries, forKey: .runsQueries)
+    try container.encode(defaultConnectionAccess, forKey: .defaultConnectionAccess)
+    try container.encode(sendsResultRows, forKey: .sendsResultRows)
   }
 }
 

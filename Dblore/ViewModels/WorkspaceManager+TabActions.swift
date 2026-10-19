@@ -136,12 +136,25 @@ extension WorkspaceManager {
     requestCloseTab(id: tabId)
   }
 
+  /// The manager of the window a tab moves to, with this window's connection config as is: the
+  /// init treats a config as an opened file's and drops its AI rules without a saved match, but
+  /// this one is the trusted in-memory copy (AI features still apply the saved policy).
+  func makeNewWindowManager() -> WorkspaceManager {
+    let config = workspace.connectionConfig
+    let newManager = makeWindowManager(config)
+    if let config {
+      newManager.workspace.connectionConfig = config
+      newManager.editingConnectionConfig = config
+    }
+    return newManager
+  }
+
   /// Move a tab to a new window of the same connection, connecting it when this one is connected
   func moveTabToNewWindow(id: UUID, dropPoint: NSPoint? = nil) async {
     guard canMoveToNewWindow(tabId: id) else { return }
     let config = workspace.connectionConfig
     let previousActive = WorkspaceWindowManager.shared.activeWorkspaceId
-    let newManager = makeWindowManager(config)
+    let newManager = makeNewWindowManager()
     do {
       try await transfer(tabId: id, into: newManager)
     } catch {

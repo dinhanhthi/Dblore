@@ -364,6 +364,19 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   /// Keychain identities and the default authSource use it, so they stay those of the saved
   /// connection.
   var mongoHomeDatabase: String?
+  /// Whether AI features may use this connection (`.useDefault` follows the AI settings).
+  var aiAccess: AIAccessPolicy
+  /// Instructions sent to the model with this connection's context, at most `aiRulesLimit`
+  /// characters.
+  var aiRules: String {
+    didSet { aiRules = Self.clampedAIRules(aiRules) }
+  }
+
+  nonisolated static let aiRulesLimit = 2_000
+
+  nonisolated static func clampedAIRules(_ rules: String) -> String {
+    rules.count > aiRulesLimit ? String(rules.prefix(aiRulesLimit)) : rules
+  }
 
   /// The database part of the connection's Keychain identity: the pin (MongoDB only), else
   /// `database`.
@@ -389,6 +402,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case mongoURI
     // Identity pin of a switched MongoDB connection (absent unless switched)
     case mongoHomeDatabase
+    // AI access policy and rules (absent on connections saved before them)
+    case aiAccess, aiRules
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -442,6 +457,11 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       try container.decodeIfPresent(Bool.self, forKey: .readOnlyFile) ?? (databaseType == .duckdb)
     mongoURI = try container.decodeIfPresent(String.self, forKey: .mongoURI)
     mongoHomeDatabase = try container.decodeIfPresent(String.self, forKey: .mongoHomeDatabase)
+    // An unknown policy (e.g. from a newer version) follows the AI settings
+    let rawAccess = try container.decodeIfPresent(String.self, forKey: .aiAccess)
+    aiAccess = rawAccess.flatMap(AIAccessPolicy.init(rawValue:)) ?? .useDefault
+    aiRules = Self.clampedAIRules(
+      try container.decodeIfPresent(String.self, forKey: .aiRules) ?? "")
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -493,6 +513,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encode(readOnlyFile, forKey: .readOnlyFile)
     try container.encodeIfPresent(mongoURI, forKey: .mongoURI)
     try container.encodeIfPresent(mongoHomeDatabase, forKey: .mongoHomeDatabase)
+    try container.encode(aiAccess, forKey: .aiAccess)
+    try container.encode(aiRules, forKey: .aiRules)
   }
 
   nonisolated init(
@@ -540,6 +562,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     self.rowCapOverride = rowCapOverride
     self.fileBookmark = fileBookmark
     self.readOnlyFile = readOnlyFile ?? (databaseType == .duckdb)
+    self.aiAccess = .useDefault
+    self.aiRules = ""
   }
 
   /// A copy with every timeout filled in: the connection's own override, else `global`.

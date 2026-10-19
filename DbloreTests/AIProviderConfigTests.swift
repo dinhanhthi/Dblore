@@ -51,6 +51,23 @@ struct AIProviderConfigTests {
     #expect(try JSONDecoder().decode(AIConfiguration.self, from: data).runsQueries)
   }
 
+  @Test("Connection access: absent is always, unknown asks; rows default to off; round-trip")
+  func connectionAccessCoding() throws {
+    let old = #"{"activeProvider":"ollama","configs":{"ollama":{"baseURL":"u","model":"m"}}}"#
+    let legacy = try JSONDecoder().decode(AIConfiguration.self, from: Data(old.utf8))
+    #expect(legacy.defaultConnectionAccess == .always)
+    #expect(legacy.sendsResultRows == false)
+    let future = #"{"configs":{},"defaultConnectionAccess":"fromTheFuture"}"#
+    let unknown = try JSONDecoder().decode(AIConfiguration.self, from: Data(future.utf8))
+    #expect(unknown.defaultConnectionAccess == .askOncePerSession)
+
+    let config = AIConfiguration(
+      activeProvider: nil, configs: [:], defaultConnectionAccess: .never, sendsResultRows: true)
+    let decoded = try JSONDecoder().decode(
+      AIConfiguration.self, from: try JSONEncoder().encode(config))
+    #expect(decoded == config)
+  }
+
   @Test("corrupt JSON falls back to empty")
   func corruptJSON() {
     let suite = UserDefaults(suiteName: "AIProviderConfigTests-\(UUID())")!

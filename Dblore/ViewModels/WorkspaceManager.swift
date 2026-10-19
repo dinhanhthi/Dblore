@@ -58,6 +58,10 @@ class WorkspaceManager: Identifiable {
   /// Where the AI Assistant's queries are recorded
   @ObservationIgnored var aiHistoryRecorder: any QueryHistoryRecording =
     NotebookViewModel.defaultHistoryRecorder()
+  /// The connection config AI features read, the saved connection's policy and the gate they
+  /// ask; nil without a connection. Decodes the saved list per call: call it on user actions,
+  /// not per keystroke or from view bodies.
+  @ObservationIgnored var aiAccessSource: () -> AIAccessContext? = { nil }
   var connectionState: ConnectionState = .disconnected
   var editingConnectionConfig: ConnectionConfig
 
@@ -89,6 +93,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningConnect: ConnectionConfig?
   var pendingWeakeningCertificate: ClientCertificateMaterial?
   var pendingWeakeningSSHCredential: SSHStoredCredential?
+  /// The held connect's `aiFieldsEdited` (see `connect(config:…, aiFieldsEdited:)`)
+  var pendingWeakeningAIFieldsEdited = false
   /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
   /// plugin, see `presentConnectErrorIfActionable`), shown inline in the form.
   /// Cleared by the next connect attempt and when the form goes away.
@@ -316,6 +322,9 @@ class WorkspaceManager: Identifiable {
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
+    // An opened file's AI policy never weakens the saved one
+    var workspace = workspace
+    workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -337,6 +346,9 @@ class WorkspaceManager: Identifiable {
     aiAssistant.queryRunner = { [weak self] sql in
       guard let self else { throw AIAssistantViewModel.QueryRunError.notConnected }
       return try await self.runAIQuery(sql)
+    }
+    aiAccessSource = { [weak self] in
+      self.flatMap { Self.aiAccessContext(for: $0.workspace.connectionConfig) }
     }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
     historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }
@@ -465,8 +477,11 @@ class WorkspaceManager: Identifiable {
   /// `savesConnection: false` leaves the recent list, its Keychain items and
   /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
   /// is never saved either: it shares the saved entry's key and would replace its database.
+  /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
+  /// unless `aiFieldsEdited`.
   func connectWithoutUnlockCheck(
-    config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true
+    config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
+    aiFieldsEdited: Bool = false
   ) async throws {
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
@@ -496,6 +511,7 @@ class WorkspaceManager: Identifiable {
         config.fileBookmark = bookmark
       }
       if savesConnection, config.mongoHomeDatabase == nil {
+        if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
         guard SessionManager.saveConnection(config) else {
           throw CertificateFormError.keychainSave
         }
