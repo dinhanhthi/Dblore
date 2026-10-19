@@ -87,7 +87,7 @@ nonisolated enum AISchemaContext {
     var rendered: [DatabaseTable] = []
 
     for table in tables {
-      let line = tableLine(table)
+      let line = oneLine(tableLine(table))
       if used + line.count + 1 > budgetChars { break }
       lines.append(line)
       used += line.count + 1
@@ -97,9 +97,9 @@ nonisolated enum AISchemaContext {
     let names = Set(rendered.map { qualified($0) })
     for fk in foreignKeys
     where names.contains(source(fk)) && names.contains(target(fk)) {
-      let line =
+      let line = oneLine(
         "FK \(source(fk))(\(fk.sourceColumns.joined(separator: ", "))) -> "
-        + "\(target(fk))(\(fk.targetColumns.joined(separator: ", ")))"
+          + "\(target(fk))(\(fk.targetColumns.joined(separator: ", ")))")
       if used + line.count + 1 > budgetChars { break }
       lines.append(line)
       used += line.count + 1
@@ -121,7 +121,7 @@ nonisolated enum AISchemaContext {
     var renderedCount = 0
 
     for structure in structures {
-      let block = structureLines(structure)
+      let block = structureLines(structure).map(oneLine)
       let size = block.reduce(0) { $0 + $1.count + 1 }
       if used + size > budgetChars { break }
       lines += block
@@ -175,6 +175,20 @@ nonisolated enum AISchemaContext {
       lines.append(line)
     }
     return lines + foreignKeys
+  }
+
+  /// Catalog names and types come from the server and can hold newlines or control characters
+  /// (quoted identifiers), so each rendered line is flattened before it reaches the prompt.
+  private static func oneLine(_ line: String) -> String {
+    String(
+      line.map { character in
+        character.isNewline
+          || character.unicodeScalars.contains {
+            [.control, .format, .lineSeparator, .paragraphSeparator]
+              .contains($0.properties.generalCategory)
+          }
+          ? " " : character
+      })
   }
 
   private static func tableLine(_ table: DatabaseTable) -> String {
