@@ -4,9 +4,9 @@
 //
 //  The panes of the aggregation builder, shared by the sheet and the collection tab: the stages
 //  on the left (drag to reorder, add, remove, switch off), or the pipeline as text in Text mode,
-//  and on the right the preview of the selected stage (the pipeline up to it, at most 20
-//  documents, as a document tree) or the results of the last Run. The host owns the selection,
-//  the mode, Run and its own chrome (title, Insert / Copy / Open in Query).
+//  and on the right the preview of the selected stage (the pipeline up to it, at most
+//  `previewLimit` documents, as a document tree) or the results of the last Run. The host owns
+//  the selection, the mode, Run and its own chrome (title, Insert / Copy / Open in Query).
 //
 
 import SwiftUI
@@ -193,7 +193,8 @@ struct AggregationBuilderBody: View {
           }
           .buttonStyle(SecondaryButtonStyle())
           .disabled(model.previewCommand(for: selected.stage.id) == nil)
-          .help("Run the pipeline up to this stage, read-only, at most 20 documents")
+          .help(
+            "Run the pipeline up to this stage, read-only, at most \(model.previewLimit) documents")
         }
         previewBody(state, command: model.previewCommand(for: selected.stage.id))
       }
@@ -217,7 +218,7 @@ struct AggregationBuilderBody: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     case .loaded(let result):
-      Text(Self.countText(result))
+      Text(Self.countText(result, limit: model.previewLimit))
         .font(.small)
         .foregroundColor(.foregroundMuted)
       documentTree(result, command: command)
@@ -301,11 +302,11 @@ struct AggregationBuilderBody: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  /// "N documents", noting the preview limit when it was reached.
-  static func countText(_ result: QueryResult) -> String {
+  /// "N documents", noting the preview limit `limit` when it was reached.
+  static func countText(_ result: QueryResult, limit: Int) -> String {
     let count = result.rowCount
     let noun = count == 1 ? "document" : "documents"
-    return count >= Int(AggregationBuilderModel.previewLimit)
+    return count >= limit
       ? "\(count) \(noun) (preview limit)" : "\(count) \(noun)"
   }
 

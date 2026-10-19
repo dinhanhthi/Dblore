@@ -172,6 +172,39 @@ struct MongoSSHTunnelLifecycleTests {
     await server.stop()
   }
 
+  @Test("interrupt(token:) kills only the statement run with that token")
+  func scopedInterrupt() async throws {
+    let server = try await FakeMongoServer.start()
+    let config = Self.config("scoped")
+    Self.saveCredential(for: config)
+    let factory = EchoSSHTunnelFactory(targetPort: server.port)
+    let session = Self.session(config, factory: factory)
+    try await session.open()
+    let find = MongoCommand.find(
+      collection: "c", filter: nil, projection: nil, sort: nil, skip: nil, limit: nil)
+    let stream = Task {
+      try await session.streamDocuments(find, pageSize: 100, token: "dblore:export") { _ in }
+    }
+    #expect(await Self.eventually { server.commands.contains { $0.name == "find" } })
+    // Another token: nothing is flagged, nothing is dialed.
+    await session.interrupt(token: "dblore:other")
+    let tunnel = try #require(factory.tunnels.first)
+    #expect(tunnel.opens.count == 1)
+    #expect(!server.commands.contains { $0.name == "killOp" })
+    await session.interrupt(token: "dblore:export")
+    let error = await Self.failure { _ = try await stream.value }
+    guard case .queryCancelled(_, _, let kept)? = error as? DatabaseError else {
+      Issue.record("Expected queryCancelled, got \(String(describing: error))")
+      await session.close()
+      await server.stop()
+      return
+    }
+    #expect(kept)
+    #expect(server.commands.contains { $0.name == "killOp" })
+    await session.close()
+    await server.stop()
+  }
+
   @Test("Cancel after close never dials the server around the closed tunnel")
   func killOpAfterCloseStaysInTunnel() async throws {
     let server = try await FakeMongoServer.start()

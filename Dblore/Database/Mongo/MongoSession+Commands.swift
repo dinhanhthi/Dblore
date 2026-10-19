@@ -2,8 +2,8 @@
 // The commands MongoSession sends for each mongosh-subset command. Every command document is
 // built as a `MongoValue` and encoded by `MongoBSONMapping.bsonDocument` (byte exact, and the
 // O(n) array writer for insertMany), then carries `comment: "dblore:<uuid>"`, `maxTimeMS` (not on
-// `createIndexes`) and the connection's implicit `lsid` (without it a getMore fails with code 13
-// and the cursor leaks).
+// `createIndexes` or a streamed read) and the connection's implicit `lsid` (without it a getMore
+// fails with code 13 and the cursor leaks).
 //
 // Result shapes (`query`):
 // - find / aggregate: one row per document, columns from `MongoBSONMapping.columns` (`_id` first;
@@ -16,7 +16,8 @@
 //   indented relaxed Extended JSON.
 // Reads are buffered before rows stream, so the columns are known first. The manager already
 // caps reads at `maxRows + 1`; the session also stops at `documentCap` (100,001 by default) and
-// closes the cursor, so a find without a limit cannot buffer a whole collection. Every cursor is
+// closes the cursor, so a find without a limit cannot buffer a whole collection; only
+// `streamDocuments` (export / backup) reads without a cap, page by page. Every cursor is
 // closed explicitly (killCursors) on every early exit; `for try await … break` would leak it.
 //
 // `command` tags: `INSERT n`, `UPDATE n` (updateOne/Many and replaceOne, n = matched, upserts
@@ -24,14 +25,15 @@
 // `AGGREGATE` (no count). Write errors come back in an `ok: 1` reply (duplicate key 11000 does not
 // throw in the driver) and are thrown as `MongoSessionError`, as are write concern errors. Admin
 // commands (`affectedRows` 0): `CREATE INDEX`, `DROP INDEX`, `HIDE INDEX`, `UNHIDE INDEX`,
-// `CREATE COLLECTION`, `CREATE VIEW`, `DROP`, `RENAME` (sent to `admin`), `COLLMOD`.
+// `CREATE COLLECTION`, `CREATE VIEW`, `DROP`, `RENAME` (sent to `admin`), `COLLMOD`,
+// `CREATE DATABASE`, `DROP DATABASE`.
 
 import BSON
 import Foundation
 import MongoClient
 import MongoKitten
 
-extension MongoSession {
+extension MongoSession: MongoTypedCommandSending {
   typealias Field = MongoValue.Field
 
   // MARK: - DatabaseSession statements
@@ -58,13 +60,31 @@ extension MongoSession {
   /// Runs one write, `$out`/`$merge` aggregate or admin command and returns its tag.
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     guard binds.isEmpty else { throw MongoSessionError.bindsRefused }
-    let command = try MongoshParser.parse(sql)
+    return try await command(try MongoshParser.parse(sql))
+  }
+
+  /// The typed send (`MongoTypedCommandSending`) and the core of the text `command`: read
+  /// commands are refused before anything is sent; admin commands run in their own database. A
+  /// database command whose target (the connection's database for `db.dropDatabase()`) is not
+  /// a `MongoDatabaseName` is refused too.
+  func command(_ command: MongoCommand) async throws -> CommandResult {
     guard let write = Self.writeCommand(command, in: databaseName),
-      MongoCommandClassifier.classifyStatement(sql)?.kind != .read
+      MongoCommandClassifier.classify(command, summary: "").kind != .read
     else {
       throw MongoSessionError(message: "Read commands return rows; run them as a query.")
     }
     let (fields, database) = write
+    if case .admin(let admin) = command {
+      switch admin {
+      case .createDatabase, .dropDatabase:
+        if let problem = MongoDatabaseName.validate(database) {
+          throw MongoSessionError(message: problem)
+        }
+      case .createIndex, .dropIndex, .setIndexHidden, .createCollection, .createView, .drop,
+        .renameCollection, .collMod:
+        break
+      }
+    }
     // An index build on a large collection outlasts any statement timeout: no `maxTimeMS`, and
     // Cancel (killOp by the comment) still stops it.
     let timed: Bool
@@ -97,9 +117,18 @@ extension MongoSession {
     }
   }
 
-  /// Catalog command of `MongoSchemaIntrospector` with a single reply (`count`).
-  func catalogCommand(_ fields: [Field], maxTimeMS: Int64? = nil) async throws -> MongoValue {
-    let database = databaseName
+  /// Catalog command of `MongoSchemaIntrospector` with a single reply (`count`). `database`
+  /// (default: the session's) is only given by the overview reads, which send read commands
+  /// only (`listDatabases` on `admin`, `dbStats` in a listed database); any other command aimed
+  /// at another database is refused before it is sent.
+  func catalogCommand(
+    _ fields: [Field], database: String? = nil, maxTimeMS: Int64? = nil
+  ) async throws -> MongoValue {
+    let database = database ?? databaseName
+    guard database == databaseName || ["listDatabases", "dbStats"].contains(fields.first?.key)
+    else {
+      throw MongoSessionError(message: "Only listDatabases and dbStats run in another database.")
+    }
     return try await withStatement { token, connection in
       try MongoBSONMapping.document(
         try await execute(
@@ -107,9 +136,10 @@ extension MongoSession {
     }
   }
 
-  /// `hello` on `admin` (the probe).
-  func hello() async throws {
-    _ = try await withStatement { token, connection in
+  /// `hello` on `admin` (the probe, and the write limits).
+  @discardableResult
+  func hello() async throws -> Document {
+    try await withStatement { token, connection in
       try await execute(
         [Field("hello", .int32(1))], token: token, on: connection, database: "admin")
     }
@@ -134,6 +164,32 @@ extension MongoSession {
           "MongoDB buildInfo failed: \(formatError(error))", category: "Database")
       }
       return nil
+    }
+  }
+
+  /// `maxBsonObjectSize`, `maxMessageSizeBytes` and `maxWriteBatchSize` from one `hello`, read
+  /// the first time they are asked (the insert batcher sizes its batches by them) and cached for
+  /// this session. A failure is logged and returns `.fallback`, so the next call asks again.
+  func writeLimits() async -> MongoWriteLimits {
+    if let cached = cachedWriteLimits { return cached }
+    do {
+      let reply = try await hello()
+      let limit = { (key: String) in Self.int(reply[key]).flatMap { $0 > 0 ? $0 : nil } }
+      guard let bson = limit("maxBsonObjectSize"), let message = limit("maxMessageSizeBytes"),
+        let batch = limit("maxWriteBatchSize")
+      else { throw Self.unexpectedReply }
+      // Capped: a server reply never sizes a batch past 1 GiB or 1,000,000 statements.
+      let limits = MongoWriteLimits(
+        maxBsonObjectSize: min(bson, 1 << 30), maxMessageSizeBytes: min(message, 1 << 30),
+        maxWriteBatchSize: min(batch, 1_000_000))
+      cachedWriteLimits = limits
+      return limits
+    } catch {
+      if !(Task.isCancelled || error is CancellationError || Self.isInterruption(error)) {
+        await AppLogger.shared.warning(
+          "MongoDB hello failed: \(formatError(error))", category: "Database")
+      }
+      return .fallback
     }
   }
 
@@ -162,6 +218,84 @@ extension MongoSession {
       try await readDocuments(
         command, cap: cap, token: token, connection: connection, database: database)
     }
+  }
+
+  /// Every document of one find or aggregate, handed to `onPage` one cursor batch at a time
+  /// (getMore batches of `pageSize`, clamped to 1...10,000; the first batch is the server's
+  /// default size), with no document cap; returns how many were delivered. For the export /
+  /// backup UI only, through `DatabaseConnectionManager.streamMongoDocuments`: never wire it to
+  /// MCP, AI tools or query cells. One statement with no `maxTimeMS` (it counts over every
+  /// getMore, so it would cut a long read); its comment token lets Cancel (killOp) stop it, and
+  /// a cancelled task stops it between batches. The cursor is closed on every exit (error,
+  /// cancel, `onPage` throwing). Anything but a find or an aggregate the typed classifier marks
+  /// as a read is refused before anything is sent. `token` (unique per call) is the comment
+  /// token `interrupt(token:)` stops.
+  func streamDocuments(
+    _ command: MongoCommand, pageSize: Int, token: String? = nil,
+    onPage: @Sendable ([MongoValue]) async throws -> Void
+  ) async throws -> Int {
+    let isDocumentRead: Bool
+    switch command {
+    case .find, .aggregate:
+      isDocumentRead = MongoCommandClassifier.classify(command, summary: "").kind == .read
+    default:
+      isDocumentRead = false
+    }
+    guard isDocumentRead else {
+      throw MongoSessionError(
+        message: "Only read commands return documents: a find, or an aggregate without "
+          + "$out/$merge.")
+    }
+    let batchSize = min(max(pageSize, 1), 10_000)
+    let database = databaseName
+    return try await withStatement(token: token) { token, connection in
+      try await streamCursor(
+        Self.readCommand(command), batchSize: batchSize, token: token, connection: connection,
+        database: database, onPage: onPage)
+    }
+  }
+
+  /// `readCursor` without a cap or `maxTimeMS`, each non-empty batch handed to `onPage`.
+  private func streamCursor(
+    _ fields: [Field], batchSize: Int, token: String, connection: MongoConnection,
+    database: String, onPage: @Sendable ([MongoValue]) async throws -> Void
+  ) async throws -> Int {
+    // A cancel that landed before the token was registered: nothing is sent
+    try Task.checkCancellation()
+    let reply = try await execute(
+      fields, token: token, on: connection, database: database, statementTimeout: false)
+    guard let cursorReply = reply["cursor"] as? Document, let id = Self.int(cursorReply["id"])
+    else { throw Self.unexpectedReply }
+    let cursor =
+      id == 0
+      ? nil
+      : makeCursor(id: Int64(id), cursor: cursorReply, connection: connection, database: database)
+    var delivered = 0
+    do {
+      let first = try Self.firstBatch(of: cursorReply)
+      if !first.isEmpty {
+        try await onPage(first)
+        delivered += first.count
+      }
+      if let cursor {
+        // The cursor starts with an empty batch: the first one was handed out above.
+        _ = try await cursor.getMore(batchSize: 0)
+        while !cursor.isDrained {
+          try Task.checkCancellation()
+          let page = try await cursor.getMore(batchSize: batchSize).map {
+            try MongoBSONMapping.document($0)
+          }
+          guard !page.isEmpty else { continue }
+          try await onPage(page)
+          delivered += page.count
+        }
+      }
+    } catch {
+      if let cursor { await Self.close(cursor) }
+      throw error
+    }
+    if let cursor { await Self.close(cursor) }
+    return delivered
   }
 
   /// The find / aggregate branch of `read` and `readDocuments`, inside their statement.
@@ -241,15 +375,14 @@ extension MongoSession {
   ) async throws -> [MongoValue] {
     let reply = try await execute(
       fields, token: token, on: connection, database: database, maxTimeMS: maxTimeMS)
-    guard let cursorReply = reply["cursor"] as? Document, let id = Self.int(cursorReply["id"]),
-      let batch = cursorReply["firstBatch"] as? Document,
-      case .array(let first) = try MongoBSONMapping.document(batch)
+    guard let cursorReply = reply["cursor"] as? Document, let id = Self.int(cursorReply["id"])
     else { throw Self.unexpectedReply }
-    var documents = Array(first.prefix(cap))
-    guard id != 0 else { return documents }
+    guard id != 0 else { return Array(try Self.firstBatch(of: cursorReply).prefix(cap)) }
     let cursor = makeCursor(
       id: Int64(id), cursor: cursorReply, connection: connection, database: database)
+    var documents: [MongoValue] = []
     do {
+      documents = Array(try Self.firstBatch(of: cursorReply).prefix(cap))
       // The cursor starts with an empty batch: the first one was decoded above.
       _ = try await cursor.getMore(batchSize: 0)
       while !cursor.isDrained, documents.count < cap {
@@ -264,6 +397,15 @@ extension MongoSession {
     }
     await Self.close(cursor)
     return documents
+  }
+
+  /// The decoded `firstBatch` of a cursor reply. Decoded once the cursor is made, so a reply
+  /// that cannot be read still has its cursor closed.
+  private static func firstBatch(of cursorReply: Document) throws -> [MongoValue] {
+    guard let batch = cursorReply["firstBatch"] as? Document,
+      case .array(let first) = try MongoBSONMapping.document(batch)
+    else { throw unexpectedReply }
+    return first
   }
 
   /// `MongoCursor` over a reply's cursor id and namespace (`db.collection`), with an empty first
@@ -419,7 +561,8 @@ extension MongoSession {
   }
 
   /// The write command of `command` (and the aggregate of `$out`/`$merge`, and the admin
-  /// command) with the database it runs in: `database`, or `admin` for a rename; nil for reads.
+  /// command) with the database it runs in: `database`, `admin` for a rename, or the named
+  /// database of a database command; nil for reads.
   static func writeCommand(
     _ command: MongoCommand, in database: String = MongoSession.defaultDatabase
   ) -> (fields: [Field], database: String)? {
@@ -492,7 +635,7 @@ extension MongoSession {
       throw MongoSessionError(
         code: intValue(field("code", of: first)),
         codeName: stringValue(field("codeName", of: first)),
-        message: message)
+        message: message, written: written)
     }
     if let concern = field("writeConcernError", of: reply) {
       throw MongoSessionError(
@@ -530,6 +673,8 @@ extension MongoSession {
     case .drop: "DROP"
     case .renameCollection: "RENAME"
     case .collMod: "COLLMOD"
+    case .createDatabase: "CREATE DATABASE"
+    case .dropDatabase: "DROP DATABASE"
     }
   }
 

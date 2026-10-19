@@ -431,7 +431,7 @@ extension NotebookViewModel {
         source: batch.historySource)
       showToast(message, type: .error)
       failure = message
-      if case DatabaseError.batchPartiallyApplied(let applied, _, _) = error, applied > 0 {
+      if case DatabaseError.batchPartiallyApplied(let applied, _, _, _) = error, applied > 0 {
         await refreshAfterDocumentBatch(batch, applied: applied)
       }
     }

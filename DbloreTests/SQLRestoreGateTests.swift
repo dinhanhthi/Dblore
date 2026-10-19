@@ -1057,7 +1057,8 @@ struct SQLRestoreGateTests {
     session.failNextCommand(containing: "VALUES ('1')")
     let log = ProgressLog()
     let error = await restoreError(manager, script, progress: { log.append($0) })
-    guard case .batchPartiallyApplied(let applied, let total, _)? = error as? DatabaseError else {
+    guard case .batchPartiallyApplied(let applied, let total, _, _)? = error as? DatabaseError
+    else {
       Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
       return
     }
@@ -1321,7 +1322,7 @@ extension SQLRestoreGateTests {
         + " REFERENCES `parent` (`id`)) ENGINE=InnoDB /*!40101 DEFAULT CHARSET=utf8mb4 */;"
       let failing = Self.mysqlScript([child, "INSERT INTO `missing` VALUES ('1');"])
       let error = await restoreError(manager, failing)
-      guard case .batchPartiallyApplied(let applied, _, _)? = error as? DatabaseError else {
+      guard case .batchPartiallyApplied(let applied, _, _, _)? = error as? DatabaseError else {
         Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
         throw error ?? CancellationError()
       }

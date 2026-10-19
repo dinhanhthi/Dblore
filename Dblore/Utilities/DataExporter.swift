@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// Utility for exporting query results to various formats
 enum DataExporter {
 
-  /// Export result to CSV format. Nonisolated: Export Data builds large files off the main actor
+  /// Export result to CSV format. Nonisolated: a pure function, callable from any isolation
   nonisolated static func toCSV(
     result: CellResult, includeHeader: Bool = true, quote: ExportQuote = .ifNeeded
   ) -> String {
@@ -508,7 +508,7 @@ enum DataExporter {
     }
   }
 
-  private nonisolated static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
+  nonisolated static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
     switch quote {
     case .always:
       return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""

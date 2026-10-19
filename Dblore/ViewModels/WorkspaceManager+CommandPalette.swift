@@ -24,6 +24,9 @@ private enum CommandPaletteAction: String, CaseIterable {
   case commit = "commit"
   case rollback = "rollback"
   case queryDuckDBFile = "query-duckdb-file"
+  case showMongoDatabases = "show-mongo-databases"
+  case showMongoCollections = "show-mongo-collections"
+  case switchMongoDatabase = "switch-mongo-database"
 
   var title: String {
     switch self {
@@ -42,6 +45,9 @@ private enum CommandPaletteAction: String, CaseIterable {
     case .commit: "Commit"
     case .rollback: "Roll Back"
     case .queryDuckDBFile: "Query Parquet/CSV File..."
+    case .showMongoDatabases: "Show Databases"
+    case .showMongoCollections: "Show Collections"
+    case .switchMongoDatabase: "Switch Database..."
     }
   }
 
@@ -95,8 +101,10 @@ extension WorkspaceManager {
       openDataViewer(
         schema: schema, name: name, orderColumns: palettePrimaryKeyNames(schema: schema, name: name)
       )
+      mongoOverview = nil  // The opened tab shows, not the overview screen
     case .view(let schema, let name):
       openDataViewer(schema: schema, name: name, orderColumns: [])
+      mongoOverview = nil
     case .function(_, let name, _):
       guard canInsertPaletteText() else { return false }
       activeViewModel?.insertTextIntoSelectedCell(name)
@@ -107,6 +115,7 @@ extension WorkspaceManager {
       openObjectSource(object)
     case .tab(let id, _):
       selectTab(id: id)
+      mongoOverview = nil
     case .favorite(let id, let name, let sql):
       guard canInsertPaletteText() else { return false }
       insertFavorite(FavoriteStatement(id: id, name: name, sql: sql))
@@ -123,9 +132,21 @@ extension WorkspaceManager {
     return true
   }
 
-  /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not).
+  /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not). The MongoDB
+  /// overview screens only for a connected MongoDB workspace.
   private func paletteActions() -> [CommandPaletteAction] {
-    CommandPaletteAction.allCases.filter { $0 != .queryDuckDBFile || duckDBFileQueryConfig != nil }
+    CommandPaletteAction.allCases.filter {
+      switch $0 {
+      case .queryDuckDBFile: duckDBFileQueryConfig != nil
+      case .showMongoDatabases, .showMongoCollections, .switchMongoDatabase:
+        canShowMongoOverview
+      default: true
+      }
+    }
+  }
+
+  private var canShowMongoOverview: Bool {
+    isMongoWorkspace && connectionState.isConnected
   }
 
   /// One View Source row per function, procedure and trigger in the loaded schema
@@ -192,6 +213,13 @@ extension WorkspaceManager {
       guard duckDBFileQueryConfig != nil, !connectionState.isConnecting, canInsertPaletteText()
       else { return false }
       Task { await queryDuckDBFile() }
+    case .showMongoDatabases, .switchMongoDatabase:
+      // The Databases screen is the switcher: its rows switch the database
+      guard canShowMongoOverview else { return false }
+      mongoOverview = .databases
+    case .showMongoCollections:
+      guard canShowMongoOverview else { return false }
+      mongoOverview = .collections
     }
     return true
   }
@@ -224,7 +252,9 @@ extension WorkspaceManager {
   /// Notebook: the Cell menu posts `.runAllCells`, and that handler shows "Run all cells?"
   /// before `runAllCells()`. Editor: the same Run as the Query menu.
   private func runPaletteAll() -> Bool {
-    guard let viewModel = activeViewModel, !isSchemaVisualizerActive else { return false }
+    guard let viewModel = activeViewModel, !isSchemaVisualizerActive, mongoOverview == nil else {
+      return false
+    }
     if viewModel.viewMode == .notebook {
       NotificationCenter.default.post(name: .runAllCells, object: nil)
       return true
@@ -234,7 +264,8 @@ extension WorkspaceManager {
 
   /// Query menu Run. `runEditorQuery` reloads a data viewer and runs a SQL file.
   private func runPaletteEditor() -> Bool {
-    guard !isSchemaVisualizerActive, activeViewModel?.viewMode == .editor else { return false }
+    guard !isSchemaVisualizerActive, mongoOverview == nil, activeViewModel?.viewMode == .editor
+    else { return false }
     NotificationCenter.default.post(name: .runEditorQuery, object: nil)
     return true
   }

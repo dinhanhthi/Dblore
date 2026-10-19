@@ -5,12 +5,14 @@
 //  Aggregate options of the MongoDB Aggregations section, shown below its header: Collation as a
 //  mongosh field and maxTimeMS as a number field. It edits the builder's options directly; the
 //  header names an option that does not parse, as it blocks Copy, Run and the other actions.
+//  Preview documents sets the global stage preview size (`AppSettings.mongoPreviewDocumentCount`).
 //
 
 import SwiftUI
 
 struct MongoAggregationOptionsPanel: View {
   @Bindable var builder: AggregationBuilderModel
+  @Bindable private var appSettings = AppSettings.shared
 
   /// Width of the number field
   private static let numberWidth: CGFloat = 80
@@ -38,6 +40,22 @@ struct MongoAggregationOptionsPanel: View {
             .frame(width: Self.numberWidth)
             .help("Server time limit in milliseconds, capped by the statement timeout")
             .accessibilityLabel("maxTimeMS")
+          Spacer(minLength: 0)
+        }
+      }
+      GridRow(alignment: .center) {
+        label("Preview documents")
+        HStack(spacing: Spacing.sm) {
+          Picker("", selection: $appSettings.mongoPreviewDocumentCount) {
+            ForEach(AppSettings.mongoPreviewDocumentCounts, id: \.self) { count in
+              Text(count.formatted()).tag(count)
+            }
+          }
+          .pickerStyle(.menu)
+          .labelsHidden()
+          .fixedSize()
+          .help("Documents each stage preview shows, for every collection")
+          .accessibilityLabel("Preview documents")
           Spacer(minLength: 0)
         }
       }

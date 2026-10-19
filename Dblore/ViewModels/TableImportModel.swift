@@ -272,7 +272,7 @@ final class TableImportModel {
     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
-    let maxBytes = 256 * 1_024 * 1_024
+    let maxBytes = DelimitedTextReader.maxImportFileBytes
     guard try handle.seekToEnd() <= maxBytes else { throw TableImportError.fileTooLarge }
     try handle.seek(toOffset: 0)
     var data = Data()

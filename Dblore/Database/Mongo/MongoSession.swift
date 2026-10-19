@@ -20,8 +20,9 @@
 // - Credentials come from `config.username`/`config.password` (the stored URI has none); no
 //   user name means no authentication. `authMechanism` nil means `.auto` (SCRAM negotiation).
 // - authSource: the URI's `authSource`, else the TXT record's (`+srv`), else the database of the
-//   connection, else `admin` (connection string spec). A user stored in `admin` while the
-//   connection names another database therefore needs `authSource=admin` in the URI.
+//   connection (`identityDatabase`: the saved database after a database switch), else `admin`
+//   (connection string spec). A user stored in `admin` while the connection names another
+//   database therefore needs `authSource=admin` in the URI.
 // - Database: `config.database`, or `test` (mongosh's default) when empty.
 // - `replicaSet` and `readPreference` are kept in the URI but not applied: commands always go to
 //   a writable (primary) connection.
@@ -65,6 +66,8 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
   var code: Int?
   var codeName: String?
   var message: String
+  /// A write error: the documents written before it (`n` of the reply)
+  var written: Int?
 
   var errorDescription: String? {
     guard let code else { return message }
@@ -77,10 +80,11 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
   static let cursorUnsupported = MongoSessionError(
     message: "Server-side cursors are not supported on MongoDB.")
 
-  init(code: Int? = nil, codeName: String? = nil, message: String) {
+  init(code: Int? = nil, codeName: String? = nil, message: String, written: Int? = nil) {
     self.code = code
     self.codeName = codeName.map { Self.sanitized($0, limit: 100) }
     self.message = Self.sanitized(message, limit: Self.maxMessageLength)
+    self.written = written
   }
 
   /// An `ok: 0` reply or a write error: `code`, `codeName`, `errmsg`.
@@ -193,6 +197,8 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   private var documentCapStorage = MongoSession.maxBufferedDocuments
   /// `buildInfo`'s version once read (`serverVersion()`); a failure is not cached.
   private var serverVersionStorage: MongoServerVersion?
+  /// `hello`'s write limits once read (`writeLimits()`); a failure is not cached.
+  private var writeLimitsStorage: MongoWriteLimits?
   /// Comment tokens of the statements in flight; true once `interrupt()` targeted them.
   private var running: [String: Bool] = [:]
   /// killOp control connections under way through the tunnel, and what waits for them to end.
@@ -239,6 +245,12 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   var cachedServerVersion: MongoServerVersion? {
     get { lock.withLock { serverVersionStorage } }
     set { lock.withLock { serverVersionStorage = newValue } }
+  }
+
+  /// The cached server write limits (`writeLimits()`).
+  var cachedWriteLimits: MongoWriteLimits? {
+    get { lock.withLock { writeLimitsStorage } }
+    set { lock.withLock { writeLimitsStorage = newValue } }
   }
 
   // MARK: - Open / close
@@ -508,8 +520,8 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
     try refuseIPWithTLS(hosts, usesTLS: usesTLS)
 
     let database = config.database.isEmpty ? defaultDatabase : config.database
-    let authSource =
-      uri.authSource ?? txtAuthSource ?? (config.database.isEmpty ? "admin" : config.database)
+    let identity = config.identityDatabase
+    let authSource = uri.authSource ?? txtAuthSource ?? (identity.isEmpty ? "admin" : identity)
     var settings = ConnectionSettings(
       authentication: authentication(
         username: config.username, password: config.password, mechanism: uri.authMechanism),
@@ -580,13 +592,23 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
 
   // MARK: - Statements in flight and cancel
 
-  /// Runs `body` as one statement with a fresh comment token. A failure after `interrupt()` (or
-  /// a server interrupt, 11601) becomes `DatabaseError.queryCancelled`.
+  /// Runs `body` as one statement with a fresh comment token (or `token`, unique per statement,
+  /// for `interrupt(token:)`). A failure after `interrupt()` (or a server interrupt, 11601)
+  /// becomes `DatabaseError.queryCancelled`.
   func withStatement<T>(
+    token given: String? = nil,
     _ body: (_ token: String, _ connection: MongoConnection) async throws -> T
   ) async throws -> T {
-    let token = "dblore:\(UUID().uuidString)"
-    lock.withLock { running[token] = false }
+    let token = given ?? "dblore:\(UUID().uuidString)"
+    // A token already in flight is refused: its entry is not reset nor removed by this one
+    let registered = lock.withLock {
+      guard running[token] == nil else { return false }
+      running[token] = false
+      return true
+    }
+    guard registered else {
+      throw MongoSessionError(message: "A statement with this token is already running.")
+    }
     defer { _ = lock.withLock { running.removeValue(forKey: token) } }
     do {
       let connection = try await nextConnection()
@@ -620,15 +642,26 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   /// `queryCancelled`; the session stays open. Over SSH, nothing is dialed once the session
   /// closed, and `close()` waits for a control connection under way before closing the tunnel.
   func interrupt() async {
+    await interrupt(where: { _ in true })
+  }
+
+  /// killOp of the statement run with `token` only, if it is still running: the other
+  /// statements (other tabs) and the batch cancellation state are untouched.
+  func interrupt(token: String) async {
+    await interrupt(where: { $0 == token })
+  }
+
+  private func interrupt(where selects: (String) -> Bool) async {
     let (tokens, plan, tunnel) = lock.withLock {
       () -> ([String], MongoConnectionPlan?, (any SSHTunneling)?) in
-      for token in running.keys { running[token] = true }
-      guard !running.isEmpty, let planStorage else { return ([], nil, nil) }
-      guard planStorage.usesTunnel else { return (Array(running.keys), planStorage, nil) }
+      let selected = running.keys.filter(selects)
+      for token in selected { running[token] = true }
+      guard !selected.isEmpty, let planStorage else { return ([], nil, nil) }
+      guard planStorage.usesTunnel else { return (selected, planStorage, nil) }
       guard let tunnelStorage else { return ([], nil, nil) }
       // A tunnel is returned only with a control dial counted, which the defer below ends.
       controlDials += 1
-      return (Array(running.keys), planStorage, tunnelStorage)
+      return (selected, planStorage, tunnelStorage)
     }
     guard !tokens.isEmpty, let plan else { return }
     defer { if tunnel != nil { endControlDial() } }

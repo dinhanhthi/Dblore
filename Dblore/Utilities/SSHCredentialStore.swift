@@ -80,7 +80,7 @@ nonisolated enum SSHCredentialStoreFactory {
     guard let tunnel = config.sshTunnel else { return nil }
     return account(
       databaseType: config.databaseType, host: config.host, port: config.port,
-      database: config.database, username: config.username,
+      database: config.identityDatabase, username: config.username,
       sshHost: tunnel.host, sshPort: tunnel.port, sshUsername: tunnel.username)
   }
 }

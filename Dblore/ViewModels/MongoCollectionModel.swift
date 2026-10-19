@@ -117,6 +117,8 @@ final class MongoCollectionModel {
   var pendingFilterDraft: String?
   /// The Bulk Update / Delete form of the Documents header, shown by `DataViewerView` while set
   var bulkWrite: MongoBulkWriteModel?
+  /// The Export form of the Documents header, shown by `DataViewerView` while set
+  var export: MongoExportModel?
 
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
   @ObservationIgnored private var indexTask: Task<Void, Never>?
@@ -227,8 +229,10 @@ final class MongoCollectionModel {
     }
   }
 
-  /// Drop the reads in flight; their results are ignored. A cancelled read can start again.
+  /// Drop the reads in flight; their results are ignored. A cancelled read can start again. An
+  /// export is stopped too (no file left), and one whose save panel is open does not start.
   func cancel() {
+    export?.dismiss()
     indexTask?.cancel()
     indexTask = nil
     if case .loading = indexState { indexState = .idle }

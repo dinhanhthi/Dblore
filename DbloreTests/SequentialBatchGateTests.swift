@@ -205,7 +205,7 @@ struct SequentialBatchGateTests {
     let (manager, factory) = try await connect(
       .mysql, commandRows: { $0.contains("id = 2") ? 0 : nil })
     let error = await refusal(manager, dml, policy: open, expectedRows: [1, 1, 1])
-    guard case .batchPartiallyApplied(let applied, let total, let reason)? = error else {
+    guard case .batchPartiallyApplied(let applied, let total, let reason, _)? = error else {
       Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
       return
     }
@@ -222,7 +222,7 @@ struct SequentialBatchGateTests {
     let (manager, factory) = try await connect(.mysql)
     factory.sessions.last?.failNextCommand(containing: "id = 2")
     let error = await refusal(manager, dml, policy: open)
-    guard case .batchPartiallyApplied(let applied, let total, let reason)? = error else {
+    guard case .batchPartiallyApplied(let applied, let total, let reason, _)? = error else {
       Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
       return
     }

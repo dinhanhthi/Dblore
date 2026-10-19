@@ -6,12 +6,16 @@ const admin = db.getSiblingDB("admin");
 // currentOp({$ownOps: true}) and killOp of its own ops need no extra role;
 // clusterMonitor adds read-only serverStatus (metrics.cursor.open). dbAdmin adds collMod
 // (hide / unhide an index, validator changes), which readWrite does not grant.
+// readWrite + dbAdmin on dblore_test_other: the live tests create and drop that whole
+// database (create with its first collection, dropDatabase).
 admin.createUser({
   user: "dblore_test",
   pwd: "dblore123",
   roles: [
     { role: "readWrite", db: "dblore_test" },
     { role: "dbAdmin", db: "dblore_test" },
+    { role: "readWrite", db: "dblore_test_other" },
+    { role: "dbAdmin", db: "dblore_test_other" },
     { role: "clusterMonitor", db: "admin" },
   ],
   mechanisms: ["SCRAM-SHA-256"],

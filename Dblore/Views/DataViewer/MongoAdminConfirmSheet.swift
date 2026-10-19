@@ -5,7 +5,8 @@
 //  Confirmation of one MongoDB administration command (`MongoAdminActionModel`): the typed-name
 //  step of a drop first, then the Safe Mode panel with the exact mongosh text that is sent. The
 //  panel is only built once the name matches, so its Touch ID prompt cannot skip the typed name.
-//  Then the running and failed states; the sheet closes once the command is done.
+//  Then the running and failed states; the sheet closes once the command is done. A pipeline
+//  write ("Run $out" / "Run $merge") shows its target collection above the same steps.
 //  `MongoBulkWriteConfirmSheet` does the same for a bulk update or delete, with its count line.
 //
 
@@ -81,9 +82,17 @@ struct MongoAdminConfirmSheet: View {
     switch model.state {
     case .confirming(let pending):
       if let database = pending.database {
-        Text("In database \(database)")
+        // A database command shows the database it creates or drops
+        Text(pending.objectKind == "database" ? "Database \(database)" : "In database \(database)")
           .font(.small)
           .foregroundColor(.foregroundMuted)
+          .padding([.horizontal, .top], Spacing.md)
+      }
+      if case .pipelineWrite(let target, let isOut, let replacesExisting) = pending.action {
+        Text(Self.targetLine(target: target, isOut: isOut, replacesExisting: replacesExisting))
+          .font(.bodyText)
+          .foregroundColor(replacesExisting ? .destructive : .foreground)
+          .fixedSize(horizontal: false, vertical: true)
           .padding([.horizontal, .top], Spacing.md)
       }
       if let name = pending.typedName, typedName == nil {
@@ -148,10 +157,23 @@ struct MongoAdminConfirmSheet: View {
 
   // MARK: - Helpers
 
+  /// What a pipeline write does to its target
+  private static func targetLine(target: String, isOut: Bool, replacesExisting: Bool) -> String {
+    if replacesExisting { return "Replaces every document of collection \(target)" }
+    return isOut
+      ? "Writes the results to collection \(target)"
+      : "Merges the results into collection \(target)"
+  }
+
   /// The command's action, as the sheet title and the destructive button title
   private var title: String {
     guard case .confirming(let pending) = model.state else { return "MongoDB Command" }
-    switch pending.command {
+    let command: MongoAdminCommand
+    switch pending.action {
+    case .pipelineWrite(_, let isOut, _): return isOut ? "Run $out" : "Run $merge"
+    case .admin(let admin): command = admin
+    }
+    switch command {
     case .createIndex: return "Create Index"
     case .dropIndex: return "Drop Index"
     case .setIndexHidden(_, _, let hidden): return hidden ? "Hide Index" : "Unhide Index"
@@ -160,6 +182,8 @@ struct MongoAdminConfirmSheet: View {
     case .drop: return pending.objectKind == "view" ? "Drop View" : "Drop Collection"
     case .renameCollection: return "Rename Collection"
     case .collMod: return "Modify Collection"
+    case .createDatabase: return "Create Database"
+    case .dropDatabase: return "Drop Database"
     }
   }
 

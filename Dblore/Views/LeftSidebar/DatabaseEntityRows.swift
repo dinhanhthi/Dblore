@@ -154,8 +154,9 @@ struct TableRowView: View {
   }
 }
 
-/// Small marker beside a collection name (capped, time series, clustered)
-private struct CollectionFlagBadge: View {
+/// Small marker beside a collection name (capped, time series, clustered), also used by the
+/// MongoDB overview screens (view, current database)
+struct CollectionFlagBadge: View {
   let text: String
 
   var body: some View {

@@ -82,17 +82,37 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
   }
 
   /// `isLabel` for callers with only the text: a transaction summary or the text of a dump
-  /// ("SQL dump of <db>: n tables, m rows") or restore ("Restore SQL dump: n statements") row.
+  /// ("SQL dump of <db>: n tables, m rows", "MongoDB backup of <db>: n collections,
+  /// m documents") or restore ("Restore SQL dump: n statements", "Restore MongoDB backup:
+  /// n collections, m documents") row.
   nonisolated static func isLabelText(_ sql: String) -> Bool {
     if isTransactionSummary(sql) { return true }
     let restorePrefix = "Restore SQL dump: "
     if sql.hasPrefix(restorePrefix) {
       return isCount(sql.dropFirst(restorePrefix.count), "statement")
     }
-    guard sql.hasPrefix("SQL dump of "), let colon = sql.range(of: ": ", options: .backwards)
-    else { return false }
-    let counts = sql[colon.upperBound...].split(separator: ", ", omittingEmptySubsequences: false)
-    return counts.count == 2 && isCount(counts[0], "table") && isCount(counts[1], "row")
+    let mongoRestorePrefix = "Restore MongoDB backup: "
+    if sql.hasPrefix(mongoRestorePrefix) {
+      return areCounts(sql.dropFirst(mongoRestorePrefix.count), "collection", "document")
+    }
+    let nouns: (String, String)
+    if sql.hasPrefix("SQL dump of ") {
+      nouns = ("table", "row")
+    } else if sql.hasPrefix("MongoDB backup of ") {
+      nouns = ("collection", "document")
+    } else {
+      return false
+    }
+    guard let colon = sql.range(of: ": ", options: .backwards) else { return false }
+    return areCounts(sql[colon.upperBound...], nouns.0, nouns.1)
+  }
+
+  /// "n <first>s, m <second>s"
+  private nonisolated static func areCounts(
+    _ text: Substring, _ first: String, _ second: String
+  ) -> Bool {
+    let counts = text.split(separator: ", ", omittingEmptySubsequences: false)
+    return counts.count == 2 && isCount(counts[0], first) && isCount(counts[1], second)
   }
 
   /// "n noun" or "n nouns", with n in ASCII digits.
@@ -133,6 +153,35 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
       workspaceID: workspaceID, workspaceName: workspaceName, durationMs: durationMs,
       rowCount: nil, status: status, errorMessage: errorMessage, source: .restore,
       kind: restore.changesSchema ? .schema : .write)
+  }
+
+  /// The one row a MongoDB backup records: "MongoDB backup of <db>: n collections,
+  /// m documents", a read. Counts are what was written, so a cancelled or failed backup shows
+  /// how far it got.
+  nonisolated static func mongoBackupSummary(
+    database: String, collections: Int, documents: Int, config: ConnectionConfig,
+    workspaceID: UUID?, workspaceName: String?, durationMs: Int, status: Status,
+    errorMessage: String?
+  ) -> QueryHistoryEntry {
+    summary(
+      "MongoDB backup of \(database): \(counted(collections, "collection")), "
+        + counted(documents, "document"), config: config, workspaceID: workspaceID,
+      workspaceName: workspaceName, durationMs: durationMs, rowCount: documents, status: status,
+      errorMessage: errorMessage, source: .dump, kind: .read)
+  }
+
+  /// The one row a MongoDB restore records: "Restore MongoDB backup: n collections,
+  /// m documents" (the collections restored and documents inserted), a schema change (it
+  /// creates collections).
+  nonisolated static func mongoRestoreSummary(
+    collections: Int, documents: Int, config: ConnectionConfig, workspaceID: UUID?,
+    workspaceName: String?, durationMs: Int, status: Status, errorMessage: String?
+  ) -> QueryHistoryEntry {
+    summary(
+      "Restore MongoDB backup: \(counted(collections, "collection")), "
+        + counted(documents, "document"), config: config, workspaceID: workspaceID,
+      workspaceName: workspaceName, durationMs: durationMs, rowCount: documents, status: status,
+      errorMessage: errorMessage, source: .restore, kind: .schema)
   }
 
   private nonisolated static func counted(_ count: Int, _ noun: String) -> String {

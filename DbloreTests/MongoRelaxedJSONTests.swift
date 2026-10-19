@@ -306,6 +306,17 @@ struct MongoRelaxedJSONTests {
     #expect(parseError("\"" + String(repeating: "é", count: limit / 2) + "\"") != nil)
   }
 
+  @Test("parse(maxBytes:) accepts a document over 1 MiB that parse(_:) refuses")
+  func perCallSizeLimit() throws {
+    let text = "{a: \"" + String(repeating: "x", count: MongoRelaxedJSON.maxInputBytes) + "\"}"
+    #expect(
+      try MongoRelaxedJSON.parse(text, maxBytes: 2 * 1_048_576)
+        == doc(("a", .string(String(repeating: "x", count: MongoRelaxedJSON.maxInputBytes)))))
+    let error = parseError(text)
+    #expect(error?.message == "The text is larger than 1 MiB")
+    #expect(error?.offset == 0)
+  }
+
   // MARK: - Rendering
 
   @Test("The three renderers on one document")

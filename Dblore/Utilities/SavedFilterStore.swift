@@ -73,13 +73,43 @@ extension SavedMongoPipeline.Stage {
   }
 }
 
-/// Saved table filters, highlights, MongoDB queries and pipelines per connection and table, stored
-/// as JSON in UserDefaults
+/// View mode and page size of a MongoDB data viewer, remembered per collection. Chart is never
+/// stored: it belongs to one result.
+struct MongoViewPreference: Codable, Equatable {
+  var displayMode: String
+  var pageSize: Int
+
+  /// The stored mode: Documents or JSON, anything else (an unknown name) reads as Grid
+  var mode: ResultDisplayMode {
+    switch displayMode {
+    case "documents": .documents
+    case "json": .json
+    default: .grid
+    }
+  }
+}
+
+extension MongoViewPreference {
+  /// Grid and Chart store as "grid"
+  init(mode: ResultDisplayMode, pageSize: Int) {
+    let name: String
+    switch mode {
+    case .documents: name = "documents"
+    case .json: name = "json"
+    case .grid, .chart: name = "grid"
+    }
+    self.init(displayMode: name, pageSize: pageSize)
+  }
+}
+
+/// Saved table filters, highlights, MongoDB queries and pipelines, and MongoDB view preferences
+/// per connection and table, stored as JSON in UserDefaults
 final class SavedFilterStore {
   private nonisolated static let storageKey = "ace.thi.dblore.savedFilters"
   private nonisolated static let highlightStorageKey = "ace.thi.dblore.savedHighlights"
   private nonisolated static let mongoQueryStorageKey = "ace.thi.dblore.savedMongoQueries"
   private nonisolated static let mongoPipelineStorageKey = "ace.thi.dblore.savedMongoPipelines"
+  private nonisolated static let mongoViewStorageKey = "ace.thi.dblore.mongoViewPreferences"
 
   private let defaults: UserDefaults
 
@@ -193,57 +223,83 @@ final class SavedFilterStore {
     store(all, Self.mongoPipelineStorageKey)
   }
 
+  /// The view remembered for a MongoDB collection, nil when none was saved. Read sanitized: an
+  /// unknown mode reads as Grid, a page size the picker does not offer as the default 100.
+  func mongoViewPreference(for key: String) -> MongoViewPreference? {
+    let all: [String: MongoViewPreference] = load(Self.mongoViewStorageKey)
+    guard let stored = all[key] else { return nil }
+    let pageSize = DataViewerState.pageSizes.contains(stored.pageSize) ? stored.pageSize : 100
+    return MongoViewPreference(mode: stored.mode, pageSize: pageSize)
+  }
+
+  func saveMongoViewPreference(_ preference: MongoViewPreference, for key: String) {
+    var all: [String: MongoViewPreference] = load(Self.mongoViewStorageKey)
+    all[key] = preference
+    store(all, Self.mongoViewStorageKey)
+  }
+
   private func load<T: Decodable>(
     _ storageKey: String = SavedFilterStore.storageKey
-  ) -> [String: [T]] {
+  ) -> [String: T] {
     guard let data = defaults.data(forKey: storageKey),
-      let all = try? JSONDecoder().decode([String: [T]].self, from: data)
+      let all = try? JSONDecoder().decode([String: T].self, from: data)
     else { return [:] }
     return all
   }
 
   private func store<T: Encodable>(
-    _ all: [String: [T]], _ storageKey: String = SavedFilterStore.storageKey
+    _ all: [String: T], _ storageKey: String = SavedFilterStore.storageKey
   ) {
     guard let data = try? JSONEncoder().encode(all) else { return }
     defaults.set(data, forKey: storageKey)
   }
 
-  nonisolated static func storedData(
-    defaults: UserDefaults, domainName: String
-  ) -> (
-    filters: Data?, highlights: Data?
-  ) {
-    let domain = defaults.persistentDomain(forName: domainName) ?? [:]
-    return (domain[storageKey] as? Data, domain[highlightStorageKey] as? Data)
+  /// The five stored keys as raw JSON, nil where nothing is saved
+  nonisolated struct Snapshot: Equatable {
+    var filters: Data?
+    var highlights: Data?
+    var mongoQueries: Data?
+    var mongoPipelines: Data?
+    var mongoViewPreferences: Data?
   }
 
-  nonisolated static func exportSnapshot(
-    defaults: UserDefaults, domainName: String
-  ) -> (
-    filters: Data?, highlights: Data?
-  ) {
+  nonisolated static func storedData(defaults: UserDefaults, domainName: String) -> Snapshot {
+    let domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    return Snapshot(
+      filters: domain[storageKey] as? Data,
+      highlights: domain[highlightStorageKey] as? Data,
+      mongoQueries: domain[mongoQueryStorageKey] as? Data,
+      mongoPipelines: domain[mongoPipelineStorageKey] as? Data,
+      mongoViewPreferences: domain[mongoViewStorageKey] as? Data)
+  }
+
+  nonisolated static func exportSnapshot(defaults: UserDefaults, domainName: String) -> Snapshot {
     storedData(defaults: defaults, domainName: domainName)
   }
 
+  /// Writes every key of `snapshot`; a nil value removes that key
   nonisolated static func replace(
-    filters: Data?, highlights: Data?, defaults: UserDefaults, domainName: String
+    with snapshot: Snapshot, defaults: UserDefaults, domainName: String
   ) {
     var domain = defaults.persistentDomain(forName: domainName) ?? [:]
-    if let filters {
-      domain[storageKey] = filters
-    } else {
-      domain.removeValue(forKey: storageKey)
-    }
-    if let highlights {
-      domain[highlightStorageKey] = highlights
-    } else {
-      domain.removeValue(forKey: highlightStorageKey)
+    let values: [(String, Data?)] = [
+      (storageKey, snapshot.filters),
+      (highlightStorageKey, snapshot.highlights),
+      (mongoQueryStorageKey, snapshot.mongoQueries),
+      (mongoPipelineStorageKey, snapshot.mongoPipelines),
+      (mongoViewStorageKey, snapshot.mongoViewPreferences),
+    ]
+    for (key, data) in values {
+      if let data {
+        domain[key] = data
+      } else {
+        domain.removeValue(forKey: key)
+      }
     }
     defaults.setPersistentDomain(domain, forName: domainName)
   }
 
   nonisolated static func clearAll(defaults: UserDefaults, domainName: String) {
-    replace(filters: nil, highlights: nil, defaults: defaults, domainName: domainName)
+    replace(with: Snapshot(), defaults: defaults, domainName: domainName)
   }
 }

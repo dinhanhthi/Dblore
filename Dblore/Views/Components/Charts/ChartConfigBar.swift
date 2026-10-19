@@ -13,20 +13,22 @@ nonisolated enum ResultDisplayMode: Hashable, Sendable {
   case grid
   /// MongoDB results only: the document cards.
   case documents
+  /// MongoDB data viewer only: the page as Extended JSON text.
+  case json
   case chart
 
   /// The mode a result shows. `stored` was picked for the result of timestamp `stamp`: Chart
-  /// belongs to that result (a new one reads as Grid), Documents stays for later results.
+  /// belongs to that result (a new one reads as Grid), Documents and JSON stay for later results.
   static func shown(
     stored: ResultDisplayMode, stamp: Date?, resultTimestamp: Date
   ) -> ResultDisplayMode {
-    stamp == resultTimestamp || stored == .documents ? stored : .grid
+    stamp == resultTimestamp || stored == .documents || stored == .json ? stored : .grid
   }
 
-  /// Picker tabs: Documents for MongoDB results, Chart when a chart can be suggested. A single
-  /// tab means no picker.
-  static func tabs(chartable: Bool, documents: Bool) -> [ResultDisplayMode] {
-    [.grid] + (documents ? [.documents] : []) + (chartable ? [.chart] : [])
+  /// Picker tabs: Documents for MongoDB results, JSON where the caller asks for it, Chart when a
+  /// chart can be suggested. A single tab means no picker.
+  static func tabs(chartable: Bool, documents: Bool, json: Bool = false) -> [ResultDisplayMode] {
+    [.grid] + (documents ? [.documents] : []) + (json ? [.json] : []) + (chartable ? [.chart] : [])
   }
 
   /// `tabs`, nil when they make no picker. Put it last in an `if` condition list: `chartable`
@@ -37,7 +39,7 @@ nonisolated enum ResultDisplayMode: Hashable, Sendable {
   }
 }
 
-/// Grid / Documents / Chart control. Same capsule as the sidebar, sized to the Explain menu:
+/// Grid / Documents / JSON / Chart control. Same capsule as the sidebar, sized to the Explain menu:
 /// 11pt label plus `Spacing.xs` vertical padding measures 22pt. Notebook query-bar
 /// icon buttons use this height so the slider and those buttons match.
 struct ResultDisplayPicker: View {
@@ -49,7 +51,7 @@ struct ResultDisplayPicker: View {
 
   static let height: CGFloat = 22
   private static let largeHeight: CGFloat = 26
-  /// Grid / Chart width; a picker with Documents gives every tab the wider share.
+  /// Grid / Chart width; a picker with Documents or JSON gives every tab the wider share.
   private static let width: CGFloat = 132
   private static let documentsTabWidth: CGFloat = 76
   private static let largeWidth: CGFloat = 144
@@ -70,18 +72,23 @@ struct ResultDisplayPicker: View {
         .lineLimit(1)
     }
     .frame(
-      width: tabs.contains(.documents)
+      width: hasMongoTabs
         ? (large ? Self.largeDocumentsTabWidth : Self.documentsTabWidth) * CGFloat(tabs.count)
         : (large ? Self.largeWidth : Self.width)
     )
     .fixedSize()
-    .accessibilityLabel(tabs.contains(.documents) ? "Result view" : "Grid or chart")
+    .accessibilityLabel(hasMongoTabs ? "Result view" : "Grid or chart")
+  }
+
+  private var hasMongoTabs: Bool {
+    tabs.contains(.documents) || tabs.contains(.json)
   }
 
   private static func title(_ mode: ResultDisplayMode) -> String {
     switch mode {
     case .grid: "Grid"
     case .documents: "Documents"
+    case .json: "JSON"
     case .chart: "Chart"
     }
   }

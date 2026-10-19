@@ -150,6 +150,24 @@ struct AggregationBuilderModelTests {
     await manager.disconnect()
   }
 
+  @Test("The preview count setting sets the preview's $limit and the gate's maxRows")
+  func previewDocumentCount() async throws {
+    let (manager, factory) = try await Self.connected()
+    let model = AggregationBuilderModel(
+      collection: "users", connectionManager: manager, previewDocumentCount: { 50 })
+    let id = model.addStage(operator: "$match", body: "{a: 1}")
+    #expect(
+      model.previewCommand(for: id)
+        == "db.users.aggregate([ { $match: { a: 1 } }, { $limit: 50 } ])")
+    await model.preview(id)?.value
+    // The gate's cap rewrite appends maxRows + 1 (50 + 1)
+    #expect(
+      factory.statements == [
+        #"db.users.aggregate([ { $match: { a: 1 } }, { $limit: 50 }, { $limit: NumberLong("51") } ])"#
+      ])
+    await manager.disconnect()
+  }
+
   @Test("$out, $merge and every later stage are never previewed")
   func writesNotPreviewed() async throws {
     let (manager, factory) = try await Self.connected()
@@ -201,7 +219,7 @@ struct AggregationBuilderModelTests {
       let text = MongoCommand.aggregate(collection: "users", pipeline: [match, write, limit])
         .render()
       do {
-        _ = try await AggregationBuilderModel.runPreview(text, on: manager)
+        _ = try await AggregationBuilderModel.runPreview(text, maxRows: 20, on: manager)
         Issue.record("\(text) should be refused")
       } catch DatabaseError.blockedByProtection(let index, let kind, _) {
         #expect(index == 0)
@@ -466,13 +484,60 @@ struct AggregationBuilderModelTests {
       #expect(message == reason)
       #expect(model.showsRunResults)
 
-      #expect(model.exportData(.json) == nil)
-      guard case .failed(let exportMessage) = model.exportState else {
-        Issue.record("\(name) export should be refused")
+      #expect(model.exportTarget.reason?.contains("not exported") == true)
+      // The export sheet refuses the same pipeline before any read
+      let pipeline = try #require(model.pipeline(verb: "export").command)
+      let export = MongoExportModel(
+        collection: "users", database: nil, pipeline: pipeline, connectionManager: manager)
+      #expect(export.refusal?.contains("not exported") == true)
+      #expect(!export.canExport)
+    }
+    #expect(factory.statements.isEmpty)
+    await manager.disconnect()
+  }
+
+  @Test("writeTarget reads the $out and $merge targets and refuses another database")
+  func writeTargets() async throws {
+    let (manager, factory) = try await Self.connected()
+    let forms: [(String, String, Bool)] = [
+      ("$out", #""copy""#, true),
+      ("$out", #"{db: "db", coll: "copy", timeseries: {timeField: "t"}}"#, true),
+      ("$merge", #""copy""#, false),
+      ("$merge", #"{into: "copy", on: "_id"}"#, false),
+      ("$merge", #"{into: {db: "db", coll: "copy"}}"#, false),
+    ]
+    for (name, body, isOut) in forms {
+      let (model, ids) = Self.model(manager, [("$match", "{a: 1}"), (name, body)])
+      let target = try #require(model.writeTarget(database: "db", collections: ["copy"])).get()
+      #expect(target.collection == "copy", "\(body)")
+      #expect(target.exists)
+      #expect(target.isOut == isOut)
+      #expect(target.kind == (isOut ? .ddl : .dml))
+      #expect(target.text == model.pipeline(verb: "run").command?.render())
+      #expect(try model.writeTarget(database: "db", collections: [])?.get().exists == false)
+      // Preview still never sends a writing pipeline
+      #expect(model.preview(ids[1]) == nil)
+    }
+
+    let refusals: [(String, String, String)] = [
+      ("$out", #"{db: "other", coll: "copy"}"#, "Write to this database only"),
+      ("$merge", #"{into: {db: "other", coll: "copy"}}"#, "Write to this database only"),
+      ("$out", #""system.copy""#, "Names starting with system. are reserved"),
+    ]
+    for (name, body, message) in refusals {
+      let (model, _) = Self.model(manager, [(name, body)])
+      let result = try #require(model.writeTarget(database: "db", collections: []))
+      guard case .failure(let error) = result else {
+        Issue.record("\(body) should be refused")
         continue
       }
-      #expect(exportMessage.contains("not exported"))
+      #expect(error.message == message)
     }
+
+    // No write target when the last enabled stage reads (a disabled $out included)
+    let (model, ids) = Self.model(manager, [("$match", "{a: 1}"), ("$out", #""copy""#)])
+    model.setEnabled(false, for: ids[1])
+    #expect(model.writeTarget(database: "db", collections: []) == nil)
     #expect(factory.statements.isEmpty)
     await manager.disconnect()
   }

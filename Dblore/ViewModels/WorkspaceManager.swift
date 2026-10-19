@@ -14,6 +14,12 @@ enum WorkspaceInfoTab: String, CaseIterable, Hashable {
   case connection = "Connection"
 }
 
+/// A MongoDB overview screen shown over the tabs, at workspace level like the schema visualizer
+enum MongoOverviewScreen {
+  case databases
+  case collections
+}
+
 /// Manages a single workspace with shared database connection.
 /// Replaces TabStateManager for workspace-scoped management.
 @MainActor
@@ -60,6 +66,14 @@ class WorkspaceManager: Identifiable {
   var canImportData: Bool {
     connectionState.isConnected
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
+  }
+
+  /// Import Documents (File menu, collection row) on MongoDB: connected, not read-only, and a
+  /// schema read since the last connect (the collections listed and the epoch the import is
+  /// gated on). `supportsDataImport` stays false: the table import never opens for MongoDB.
+  var canImportDocuments: Bool {
+    connectionState.isConnected && isMongoWorkspace && schemaConnectionEpoch != nil
+      && workspace.connectionConfig?.protectionLevel.blocksDataModifications == false
   }
 
   /// The workspace connection runs mongosh: script tabs are ".js" queries
@@ -242,6 +256,40 @@ class WorkspaceManager: Identifiable {
   var isSchemaSearchPanelVisible: Bool = false
   var schemaSearchFocusTrigger: UUID = UUID()  // Trigger re-focus on Cmd+F
 
+  /// The MongoDB Databases or Collections screen over the tabs; nil: the tabs. Showing one
+  /// closes the schema visualizer, and the visualizer closes it.
+  var mongoOverview: MongoOverviewScreen? {
+    didSet { if mongoOverview != nil { isSchemaVisualizerActive = false } }
+  }
+  /// The Export form of a sidebar collection or view (shown by the sidebar's presenter)
+  var mongoExport: MongoExportModel?
+  /// The Import form (File menu or a collection row; shown by the sidebar's presenter)
+  var mongoImport: MongoImportRequest?
+  /// The Back Up Database or Restore Backup panel (File menu, Databases screen; shown by the
+  /// container's backup panel)
+  var mongoBackup: MongoBackupRequest?
+
+  /// An import form and what it was opened for
+  struct MongoImportRequest {
+    let model: MongoImportModel
+    /// The tab it runs through (connection, rules, history); closing it stops the import
+    let tabID: UUID
+    /// The collection picked first; nil: the first of the sidebar's collections
+    let collection: String?
+  }
+
+  /// A backup or restore panel and the tab it runs through
+  struct MongoBackupRequest {
+    enum Kind {
+      case backup, restore
+    }
+
+    let model: MongoBackupModel
+    /// The tab it runs through (connection, rules, history); closing it stops the work
+    let tabID: UUID
+    let kind: Kind
+  }
+
   // Schema data (shared across all tabs)
   var databaseTables: [DatabaseTable] = []
   var databaseViews: [DatabaseView] = []
@@ -411,10 +459,14 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Connection Operations
 
-  /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)` and
-  /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) may call this.
+  /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)`,
+  /// `completePendingWeakeningConnect()` (after the Safe Mode unlock) and
+  /// `switchMongoDatabase(to:)` (same server, another database) may call this.
+  /// `savesConnection: false` leaves the recent list, its Keychain items and
+  /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
+  /// is never saved either: it shares the saved entry's key and would replace its database.
   func connectWithoutUnlockCheck(
-    config: ConnectionConfig, isAutoConnect: Bool = false
+    config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true
   ) async throws {
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
@@ -423,6 +475,7 @@ class WorkspaceManager: Identifiable {
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
+    if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
     if !isAutoConnect { await supersedeAutoConnect() }
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
@@ -442,8 +495,10 @@ class WorkspaceManager: Identifiable {
       if config.fileBookmark == nil, let bookmark = await connectionManager.config?.fileBookmark {
         config.fileBookmark = bookmark
       }
-      guard SessionManager.saveConnection(config) else {
-        throw CertificateFormError.keychainSave
+      if savesConnection, config.mongoHomeDatabase == nil {
+        guard SessionManager.saveConnection(config) else {
+          throw CertificateFormError.keychainSave
+        }
       }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
@@ -451,7 +506,9 @@ class WorkspaceManager: Identifiable {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential
       }
-      workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
+      if savesConnection {
+        workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
+      }
       editingConnectionConfig = config
       // Before `.connected`, so the footer never shows the previous connection's TLS state
       mysqlTransport = await connectionManager.mysqlTransport
@@ -630,6 +687,36 @@ class WorkspaceManager: Identifiable {
     return tab.id
   }
 
+  /// Opens the MongoDB Import form through the active tab, or a new query tab when none is open
+  /// (as the table import does). Gated on the epoch the sidebar's collections were read under: a
+  /// reconnect since then refuses every batch. `collection` is picked first.
+  func openMongoImport(collection: String?) {
+    guard canImportDocuments, mongoImport == nil, let epoch = schemaConnectionEpoch else { return }
+    let tabID = activeTabId ?? newSQLFile()
+    guard let tab = viewModel(for: tabID),
+      let model = MongoImportModel(tab: tab, connectionEpoch: epoch)
+    else { return }
+    mongoImport = MongoImportRequest(model: model, tabID: tabID, collection: collection)
+  }
+
+  /// Back Up Database / Restore Backup (File menu, Databases screen) on MongoDB: connected and
+  /// a schema read since the last connect (the checklist's collections and the epoch the work is
+  /// gated on). A restore on a read-only connection opens and says why it is refused.
+  var canBackUpMongo: Bool {
+    connectionState.isConnected && isMongoWorkspace && schemaConnectionEpoch != nil
+  }
+
+  /// Opens the MongoDB backup or restore panel through the active tab, or a new query tab when
+  /// none is open, gated on the epoch the sidebar's collections were read under
+  func openMongoBackup(_ kind: MongoBackupRequest.Kind) {
+    guard canBackUpMongo, mongoBackup == nil, let epoch = schemaConnectionEpoch else { return }
+    let tabID = activeTabId ?? newSQLFile()
+    guard let tab = viewModel(for: tabID),
+      let model = MongoBackupModel(tab: tab, connectionEpoch: epoch)
+    else { return }
+    mongoBackup = MongoBackupRequest(model: model, tabID: tabID, kind: kind)
+  }
+
   /// Appends a clean editor-mode SQL tab (object source tabs) without selecting it
   func appendEditorTab(_ tab: TabItem, content: String) -> NotebookViewModel {
     let cell = NotebookCell(cellType: .sql, content: "")
@@ -707,6 +794,7 @@ class WorkspaceManager: Identifiable {
         viewModel.editorResult = nil
         viewModel.editorStatementResults = []
         viewModel.dataViewerDisplayMode = .grid
+        viewModel.applyMongoViewPreference()
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -717,6 +805,7 @@ class WorkspaceManager: Identifiable {
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
     viewModel.dataViewer = state
+    viewModel.applyMongoViewPreference()
     if let filter {
       viewModel.filterDraft = filter
     }
@@ -780,16 +869,24 @@ class WorkspaceManager: Identifiable {
     return bookmarksChanged
   }
 
-  /// Restore a pinned data viewer tab with its original ID; its page loads once connected
+  /// Restore a pinned data viewer tab with its original ID; its page loads once connected.
+  /// A MongoDB viewer of another database than the connection's (saved before a switch) is
+  /// skipped: it would read the same collection name in the wrong database.
   func restoreDataViewer(
     tabRef: WorkspaceTabReference, ref: WorkspaceTabReference.DataViewerReference
   ) {
+    if let config = workspace.connectionConfig, config.databaseType == .mongodb,
+      ref.schema != Self.mongoDatabaseName(of: config)
+    {
+      return
+    }
     let viewModel = createViewModel(for: DbloreNotebook(cells: [], documentType: .script))
     viewModel.viewMode = .editor
     var state = DataViewerState(
       schema: ref.schema, name: ref.name, orderColumns: ref.orderColumns)
     state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
     viewModel.dataViewer = state
+    viewModel.applyMongoViewPreference()
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }
@@ -1114,7 +1211,7 @@ class WorkspaceManager: Identifiable {
     return true
   }
 
-  private func closeTabImmediately(id: UUID) {
+  func closeTabImmediately(id: UUID) {
     guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
 
     if activeTabId == id {
@@ -1130,7 +1227,18 @@ class WorkspaceManager: Identifiable {
       closedTabs.append(ClosedTab(fileURL: url, index: index, bookmark: tabBookmarks[id]))
     }
     tabs.remove(at: index)
-    viewModels.removeValue(forKey: id)
+    // An import runs through its tab: stop it and close its form
+    if mongoImport?.tabID == id {
+      mongoImport?.model.dismiss()
+      mongoImport = nil
+    }
+    // A backup or restore runs through its tab too
+    if mongoBackup?.tabID == id {
+      mongoBackup?.model.dismiss()
+      mongoBackup = nil
+    }
+    // Stops the collection screen's reads and a running export of the tab
+    viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
     notebookDocuments.removeValue(forKey: id)
     editorDocuments.removeValue(forKey: id)
     tabBookmarks.removeValue(forKey: id)
@@ -1517,6 +1625,7 @@ class WorkspaceManager: Identifiable {
 
   /// Show the schema visualizer
   func showSchemaVisualizer() {
+    mongoOverview = nil
     isSchemaVisualizerActive = true
 
     // Load graph if not already loaded

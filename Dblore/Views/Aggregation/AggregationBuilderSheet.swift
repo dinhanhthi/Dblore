@@ -4,8 +4,8 @@
 //
 //  The aggregation builder of a MongoDB collection: the stages on the left (drag to reorder,
 //  add, remove, switch off), the preview of the selected stage on the right (the pipeline up to
-//  it, at most 20 documents, as a document tree), Insert / Copy of the whole `aggregate`, and an
-//  AI button that builds the stages from a prompt.
+//  it, at most `previewLimit` documents, as a document tree), Insert / Copy of the whole
+//  `aggregate`, and an AI button that builds the stages from a prompt.
 //  Previews run read-only through the gate (`AggregationBuilderModel`); stages that write are
 //  never previewed.
 //

@@ -11,6 +11,9 @@
 // `runUserStatements` (connection epoch, Commit / Rollback in progress, the transaction's
 // owner, Cancel). A capped Mongo read never resets the session
 // (`cappedReadResetsSession` is false), so there is no `resetSessionIfCapped` step.
+//
+// `streamMongoDocuments` is the uncapped sibling for export / backup: a typed find or aggregate,
+// the same gate and entry checks, every document handed out page by page.
 
 import Foundation
 
@@ -82,4 +85,99 @@ extension DatabaseConnectionManager {
     }
     return (Array(documents.prefix(max(maxRows, 0))), documents.count > max(maxRows, 0))
   }
+
+  /// Every document of one typed find or aggregate, handed to `onPage` a cursor batch at a time
+  /// (`MongoSession.streamDocuments`: no document cap, no `maxTimeMS`, Cancel stops it); returns
+  /// how many were delivered. An unbounded read: for the export / backup UI only, never wire it
+  /// to MCP, AI tools or query cells. Authorized like `executeMongoDocuments`: the typed
+  /// classification must pass the stricter of `policy` and the connection's protection
+  /// (`DatabaseError.blockedByProtection`) and be a read, and the command must be a find or an
+  /// aggregate (no `$out`/`$merge`), all before anything is sent; then the same entry checks.
+  /// `caller` and `expectedEpoch` work as in `execute`. A Cancel or a reconnect is also checked
+  /// before each page; an error thrown by `onPage` is rethrown unchanged. `statementToken`
+  /// (unique per call) lets `interruptMongoStatement(token:)` stop this read alone.
+  func streamMongoDocuments(
+    _ command: MongoCommand, policy: ProtectionPolicy, pageSize: Int, caller: UUID? = nil,
+    expectedEpoch: UInt64? = nil, statementToken: String? = nil,
+    onPage: @escaping @Sendable ([MongoValue]) async throws -> Void
+  ) async throws -> Int {
+    try await PerfSignpost.interval("mongo.streamDocuments") {
+      let effective = effectivePolicy(for: policy)
+      let summary = command.render()
+      let statement = MongoCommandClassifier.classify(command, summary: summary)
+      if case .blocked(let index, let kind, let reason) = Self.evaluate(
+        [statement], policy: effective, dialect: .mongodb)
+      {
+        throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
+      }
+      guard statement.kind == .read else {
+        throw MongoSessionError(
+          message: "Only a read returns documents; writes and $out/$merge pipelines run as "
+            + "commands.")
+      }
+      switch command {
+      case .find, .aggregate: break
+      default: throw MongoSessionError(message: "Only a find or an aggregate returns documents.")
+      }
+
+      // Entry checks of `executeMongoDocuments`, in the same order
+      guard session != nil else { throw DatabaseError.notConnected }
+      if let expectedEpoch, expectedEpoch != connectionEpoch {
+        throw DatabaseError.sessionChanged(skippedStatements: 1)
+      }
+      try refuseIfConnectionClosed()
+      try refuseIfEnding()
+      try refuseIfOwnedByAnotherCaller(caller)
+      try refuseIfAborted()
+      // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
+      commitGuard.inFlight += 1
+      defer { commitGuard.inFlight -= 1 }
+      let epoch = connectionEpoch
+      let cancelGeneration = batchCancellationGeneration
+      try await adoptUserTransactionIfNeeded(
+        protectedMode: effective.protectedMode, caller: caller)
+      await scriptCheckpointHook?(.beforeStatement(caller: caller, index: 0))
+      try refuseIfSessionChanged(since: epoch, generation: cancelGeneration, remaining: 1)
+      try refuseIfOwnedByAnotherCaller(caller)
+      guard session is MongoSession else {
+        throw MongoSessionError(message: "Reading documents needs a MongoDB session.")
+      }
+
+      // killOp only stops a command in flight: a Cancel while `onPage` runs is caught here.
+      let pages: @Sendable ([MongoValue]) async throws -> Void = { page in
+        try await self.refuseIfSessionChanged(
+          since: epoch, generation: cancelGeneration, remaining: 1)
+        do { try await onPage(page) } catch { throw PageHandlerFailure(error: error) }
+      }
+      let startTime = Date()
+      do {
+        return try await withSession { current in
+          guard let mongo = current as? MongoSession else {
+            throw MongoSessionError(message: "Reading documents needs a MongoDB session.")
+          }
+          return try await mongo.streamDocuments(
+            command, pageSize: pageSize, token: statementToken, onPage: pages)
+        }
+      } catch {
+        if let cancelled = cancelError(since: epoch, generation: cancelGeneration) {
+          throw cancelled
+        }
+        if let failure = error as? PageHandlerFailure { throw failure.error }
+        if error is CancellationError || error is DatabaseError { throw error }
+        throw queryFailure(error, query: summary, startTime: startTime)
+      }
+    }
+  }
+
+  /// killOp of the `streamMongoDocuments` read run with `token` only, if it still runs: unlike
+  /// `cancelRunningStatement`, other tabs' statements and scripts are untouched.
+  func interruptMongoStatement(token: String) async {
+    guard let mongo = session as? MongoSession else { return }
+    await mongo.interrupt(token: token)
+  }
+}
+
+/// An error of the caller's `onPage`, rethrown unchanged (it is not a query failure).
+private struct PageHandlerFailure: Error {
+  let error: any Error
 }

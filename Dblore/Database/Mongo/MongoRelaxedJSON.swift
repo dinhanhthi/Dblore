@@ -45,9 +45,15 @@ nonisolated enum MongoRelaxedJSON {
     var errorDescription: String? { message }
   }
 
-  static func parse(_ text: String) throws(ParseError) -> MongoValue {
-    guard text.utf8.count <= maxInputBytes else {
-      throw ParseError(message: "The text is larger than 1 MiB", offset: 0)
+  /// `maxBytes` is the input limit in UTF-8 bytes; restore and import raise it to the server's
+  /// maxBsonObjectSize for one document line. Every other caller keeps `maxInputBytes`.
+  static func parse(
+    _ text: String, maxBytes: Int = maxInputBytes
+  ) throws(ParseError) -> MongoValue {
+    guard text.utf8.count <= maxBytes else {
+      let limit =
+        maxBytes % 1_048_576 == 0 ? "\(maxBytes / 1_048_576) MiB" : "\(maxBytes) bytes"
+      throw ParseError(message: "The text is larger than \(limit)", offset: 0)
     }
     var parser = Parser(text: text)
     return try parser.parseAll()
@@ -774,7 +780,7 @@ nonisolated extension MongoRelaxedJSON {
 // MARK: - ISO 8601 dates
 
 /// ISO 8601 text to and from epoch milliseconds, UTC, years 0000-9999 (proleptic Gregorian).
-private nonisolated enum MongoDateText {
+nonisolated enum MongoDateText {
   /// Earliest and latest instants with a four-digit year.
   static let fourDigitYears: ClosedRange<Int64> = -62_167_219_200_000...253_402_300_799_999
   private static let millisPerDay: Int64 = 86_400_000

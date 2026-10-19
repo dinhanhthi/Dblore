@@ -198,6 +198,7 @@ extension NotebookViewModel {
     guard dataViewer != nil else { return }
     dataViewer?.pageSize = size
     dataViewer?.page = 1
+    saveMongoViewPreference()
     await loadDataViewerPage()
   }
 
@@ -299,6 +300,30 @@ extension NotebookViewModel {
   private var savedFilterKey: String? {
     guard let state = dataViewer, let config = notebook.connectionConfig else { return nil }
     return SavedFilterStore.key(for: config, schema: state.schema, name: state.name)
+  }
+
+  /// Apply the view mode and page size remembered for a MongoDB collection; call it before the
+  /// first load, so the first page is read with the stored size. Other viewers are untouched.
+  func applyMongoViewPreference() {
+    guard isMongoDataViewer, let key = savedFilterKey,
+      let preference = savedFilterStore.mongoViewPreference(for: key)
+    else { return }
+    dataViewer?.pageSize = preference.pageSize
+    dataViewerDisplayMode = preference.mode
+  }
+
+  /// Remember the view mode and page size of a MongoDB data viewer for its collection. Chart is
+  /// not remembered: the mode stored before it stays. Nothing is written while the view matches
+  /// what reads back (no entry reads as Grid with 100 rows).
+  func saveMongoViewPreference() {
+    guard isMongoDataViewer, let state = dataViewer, let key = savedFilterKey else { return }
+    let stored =
+      savedFilterStore.mongoViewPreference(for: key)
+      ?? MongoViewPreference(mode: .grid, pageSize: 100)
+    let mode = dataViewerDisplayMode == .chart ? stored.mode : dataViewerDisplayMode
+    let preference = MongoViewPreference(mode: mode, pageSize: state.pageSize)
+    guard preference != stored else { return }
+    savedFilterStore.saveMongoViewPreference(preference, for: key)
   }
 
   func refreshSavedFilters() {

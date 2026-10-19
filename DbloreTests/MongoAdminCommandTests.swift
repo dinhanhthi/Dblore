@@ -2,7 +2,8 @@
 // The admin commands of the mongosh subset as sent: command documents (rename on admin with full
 // namespaces, the drivers' generated index name), the database writeCommand routes to and the
 // command tag of a reply; the index, collection and view drafts and the validation rules checked
-// and round-tripped
+// and round-tripped; the database commands (the only getSiblingDB forms accepted, the refusals and
+// the session's reserved-database guard)
 
 import Foundation
 import Testing
@@ -286,6 +287,91 @@ struct MongoAdminCommandTests {
     case .failure(let error):
       #expect(!isAccepted, "\(text): \(error.message)")
       #expect(error.message == "Server-side JavaScript is not allowed in a validator")
+    }
+  }
+
+  // MARK: - Database commands
+
+  @Test(
+    "The three database command forms parse to their typed command and render back",
+    arguments: [
+      (
+        "db.getSiblingDB(\"shop\").createCollection(\"c\", {capped: true, size: 4096})",
+        MongoAdminCommand.createDatabase(
+          database: "shop", collection: "c",
+          options: .document([.init("capped", .bool(true)), .init("size", .int32(4096))]))
+      ),
+      ("db.getSiblingDB(\"shop\").dropDatabase()", .dropDatabase(database: "shop")),
+      ("db.dropDatabase()", .dropDatabase(database: nil)),
+      ("db /*a*/ .getSiblingDB( \"x\" ) // c\n.dropDatabase()", .dropDatabase(database: "x")),
+    ])
+  func databaseCommandRoundTrip(text: String, command: MongoAdminCommand) throws {
+    #expect(try MongoshParser.parse(text) == .admin(command))
+    #expect(try MongoshParser.parse(command.render()) == .admin(command), "\(command.render())")
+  }
+
+  @Test("Database commands run in their named database, dropDatabase() in the connection's")
+  func databaseCommandRouting() throws {
+    let create = try #require(
+      MongoSession.writeCommand(
+        .admin(.createDatabase(database: "shop", collection: "c", options: nil)), in: "db"))
+    #expect(create.database == "shop")
+    #expect(create.fields == [.init("create", .string("c"))])
+    let drop = try #require(
+      MongoSession.writeCommand(.admin(.dropDatabase(database: "shop")), in: "db"))
+    #expect(drop.database == "shop")
+    #expect(drop.fields == [.init("dropDatabase", .int32(1))])
+    let current = try #require(
+      MongoSession.writeCommand(.admin(.dropDatabase(database: nil)), in: "db"))
+    #expect(current.database == "db")
+  }
+
+  @Test(
+    "getSiblingDB is refused except before createCollection or dropDatabase on a valid name",
+    arguments: [
+      ("db.getSiblingDB(\"x\").c.find()", nil),
+      ("db.getSiblingDB(\"x\")[\"c\"].find()", nil),
+      ("db.getSiblingDB(\"x\").dropDatabase().c.find()", nil),
+      ("db.getSiblingDB(\"x\").createCollection(\"c\").find()", nil),
+      ("db.getSiblingDB(\"x\")", nil),
+      ("db.getSiblingDB(\"x\").getSiblingDB(\"y\").dropDatabase()", nil),
+      ("db.getSiblingDB(name).dropDatabase()", nil),
+      ("db.getSiblingDB(\"admin\").dropDatabase()", "reserved"),
+      ("db.getSiblingDB(\"\\u0061dmin\").dropDatabase()", "reserved"),
+      ("db.getSiblingDB(\"Local\").dropDatabase()", "reserved"),
+      ("db.getSiblingDB(\"config\").createCollection(\"c\")", "reserved"),
+      ("db.getSiblingDB(\"a.b\").dropDatabase()", nil),
+      ("db.getSiblingDB(\"x\").createCollection(\"c\", {writeConcern: {w: 0}})", nil),
+      ("db.runCommand({dropDatabase: 1})", nil),
+    ] as [(String, String?)])
+  func databaseCommandRefused(text: String, reason: String?) {
+    do {
+      let command = try MongoshParser.parse(text)
+      Issue.record("\(text) parsed as \(command)")
+    } catch {
+      if let reason { #expect(error.message.contains(reason), "\(text): \(error.message)") }
+    }
+  }
+
+  @Test(
+    "The session refuses a typed database command on a reserved name, before sending",
+    arguments: [
+      ("admin", .dropDatabase(database: nil)),
+      ("local", .dropDatabase(database: nil)),
+      ("config", .dropDatabase(database: nil)),
+      ("db", .createDatabase(database: "admin", collection: "c", options: nil)),
+      ("db", .dropDatabase(database: "CONFIG")),
+    ] as [(String, MongoAdminCommand)])
+  func sessionRefusesReservedDrop(database: String, command: MongoAdminCommand) async {
+    let session = MongoSession(
+      config: ConnectionConfig(
+        databaseType: .mongodb, host: "localhost", port: 27017, database: database,
+        username: "u", sslMode: .disable))
+    do {
+      _ = try await session.command(.admin(command))
+      Issue.record("\(command) in \(database) was not refused")
+    } catch {
+      #expect((error as? MongoSessionError)?.message.contains("reserved") == true, "\(error)")
     }
   }
 

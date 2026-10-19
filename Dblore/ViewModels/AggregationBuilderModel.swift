@@ -5,9 +5,11 @@
 // text, the aggregate options (collation, maxTimeMS), the Text mode (the whole pipeline as one
 // mongosh array, disabled stages as `//` lines), and the effective pipeline: the `aggregate` of
 // the enabled stages and options that Insert as Cell, Copy, Explain, Run and Export use (in Text
-// mode, those of the text). Run and Export Data send that pipeline through the gate read-only,
-// never one that writes (`$out`/`$merge`); Export Data renders the documents off the main actor
-// and saves them as JSON or CSV. A saved pipeline restores its stages, collation and maxTimeMS.
+// mode, those of the text). Run sends that pipeline through the gate read-only, never one that
+// writes (`$out`/`$merge`); Export Data hands the same read pipeline to the export sheet
+// (`MongoExportModel`). `writeTarget` reads where a pipeline ending in `$out`/`$merge` writes, for
+// `MongoAdminActionModel.requestPipelineWrite`. A saved pipeline restores its stages, collation
+// and maxTimeMS.
 // A builder opens empty on a collection or from a cell holding exactly one `aggregate`.
 
 import AppKit
@@ -94,6 +96,19 @@ final class AggregationBuilderModel: Identifiable {
     }
   }
 
+  /// A pipeline whose last enabled stage writes: `$out` replaces (or creates) `collection`,
+  /// `$merge` merges into it.
+  struct WriteTarget: Equatable {
+    let collection: String
+    /// In the collections the caller listed: an `$out` replaces it
+    let exists: Bool
+    let isOut: Bool
+    /// The gate classifier's kind of `text`: `.ddl` for `$out`, `.dml` for `$merge`
+    let kind: StatementKind
+    /// The `aggregate` that is sent
+    let text: String
+  }
+
   /// The last Run of the whole pipeline.
   enum RunState {
     case idle
@@ -104,38 +119,11 @@ final class AggregationBuilderModel: Identifiable {
     case failed(String)
   }
 
-  /// The file Export Data writes.
-  enum DataExportFormat {
-    case json
-    case csv
-
-    var fileExtension: String {
-      switch self {
-      case .json: "json"
-      case .csv: "csv"
-      }
-    }
-  }
-
-  /// The last Export Data of the whole pipeline.
-  enum ExportState {
-    case idle
-    /// Reading and rendering the documents, or the save panel is open
-    case running(DataExportFormat)
-    /// Refused before sending (with the reason) or failed on the server
-    case failed(String)
-    /// The file is saved; `note` says when it holds only the first documents
-    case finished(note: String?)
-  }
-
   /// How the pipeline is edited: one editor per stage, or the whole pipeline as text.
   enum EditMode {
     case stages
     case text
   }
-
-  /// Documents a preview shows: the `{$limit: 20}` stage appended to each preview prefix.
-  nonisolated static let previewLimit: Int32 = 20
 
   /// Operators whose value is not a document. Any other `$` operator takes a document.
   static let bodyKinds: [String: BodyKind] = [
@@ -170,15 +158,26 @@ final class AggregationBuilderModel: Identifiable {
   /// cleared by `preview(_:)`. The views own the stage selection and clear it on a selection.
   var showsRunResults = false
   @ObservationIgnored private var runTask: Task<Void, Never>?
-  private(set) var exportState = ExportState.idle
-  @ObservationIgnored private var exportTask: Task<Void, Never>?
-  /// The export the save panel answers for: a cancelled or superseded one never sets the state
-  @ObservationIgnored private var exportToken: UUID?
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
+  /// Documents a preview shows, read at each preview (the setting may change meanwhile)
+  @ObservationIgnored private let previewDocumentCount: () -> Int
 
-  init(collection: String, connectionManager: DatabaseConnectionManager) {
+  /// `previewDocumentCount`: the preview size, the global setting unless a test injects one
+  init(
+    collection: String, connectionManager: DatabaseConnectionManager,
+    previewDocumentCount: @escaping () -> Int = { AppSettings.shared.mongoPreviewDocumentCount }
+  ) {
     self.collection = collection
     self.connectionManager = connectionManager
+    self.previewDocumentCount = previewDocumentCount
+  }
+
+  /// Documents a preview shows: the `{$limit: n}` stage appended to each preview prefix. A new
+  /// count changes every preview text, so cached previews of the old count are not shown.
+  /// Clamped to the setting's range, whatever the source says.
+  var previewLimit: Int {
+    let counts = AppSettings.mongoPreviewDocumentCounts
+    return min(max(previewDocumentCount(), counts.min() ?? 1), counts.max() ?? 1)
   }
 
   /// A builder holding the stages, collation and maxTimeMS of an `aggregate` command, nil for
@@ -385,6 +384,86 @@ final class AggregationBuilderModel: Identifiable {
       return .blocked("A stage writes data ($out or $merge): such a pipeline is not \(refusal)")
     }
     return target
+  }
+
+  /// The write target when the last enabled stage is `$out` or `$merge`, nil otherwise (a read
+  /// pipeline goes through `runTarget`). Refused when the pipeline is blocked, the target is not
+  /// `"name"` / `{db, coll}` (`$merge`: `{into: ...}`) with each key once, it is in another
+  /// database than `database` (nil: unknown, so any named database is refused), or its name
+  /// fails `MongoCollectionDraft.nameProblem`. `collections`: the workspace's collections and
+  /// views. A write stage anywhere but last is left to the parser and the server.
+  func writeTarget(
+    database: String?, collections: Set<String>
+  ) -> Result<WriteTarget, StageError>? {
+    guard case .success(let draft) = draft(),
+      let last = draft.stages.last(where: \.isEnabled)
+    else { return nil }
+    let name = last.operator.trimmingCharacters(in: .whitespaces)
+    guard name == "$out" || name == "$merge" else { return nil }
+    let refuse = { (message: String) in
+      Result<WriteTarget, StageError>.failure(StageError(message: message, offset: nil))
+    }
+    let command: MongoCommand
+    switch effectivePipeline(draft, verb: "run") {
+    case .success(let value): command = value
+    case .blocked(let reason): return refuse(reason)
+    }
+    guard case .aggregate(_, let pipeline, _) = command,
+      case .document(let stage)? = pipeline.last, stage.count == 1,
+      let target = Self.writeTarget(of: stage[0].value, isOut: name == "$out")
+    else {
+      return refuse("The \(name) target must be a collection name or {db, coll}")
+    }
+    if let named = target.database, named != database {
+      return refuse("Write to this database only")
+    }
+    if let problem = MongoCollectionDraft.nameProblem(target.collection) {
+      return refuse(problem)
+    }
+    let text = command.render()
+    return .success(
+      WriteTarget(
+        collection: target.collection, exists: collections.contains(target.collection),
+        isOut: name == "$out",
+        kind: MongoCommandClassifier.classifyStatement(text)?.kind ?? .unknown,
+        text: text))
+  }
+
+  /// The database (nil when not named) and collection of an `$out` / `$merge` value; nil when
+  /// it is no such form or a document repeats a key (the server reads the last one).
+  private static func writeTarget(
+    of value: MongoValue, isOut: Bool
+  ) -> (database: String?, collection: String)? {
+    switch value {
+    case .string(let collection):
+      return (nil, collection)
+    case .document(let fields) where isOut:
+      return namespace(fields)
+    case .document(let fields):
+      guard Set(fields.map(\.key)).count == fields.count,
+        let into = fields.first(where: { $0.key == "into" })?.value
+      else { return nil }
+      if case .string(let collection) = into { return (nil, collection) }
+      if case .document(let inner) = into { return namespace(inner) }
+      return nil
+    default:
+      return nil
+    }
+  }
+
+  /// `{db, coll}` (other keys such as `timeseries` are the server's): `coll` a string, `db` a
+  /// string when present, no key repeated.
+  private static func namespace(
+    _ fields: [MongoValue.Field]
+  ) -> (database: String?, collection: String)? {
+    guard Set(fields.map(\.key)).count == fields.count,
+      case .string(let collection)? = fields.first(where: { $0.key == "coll" })?.value
+    else { return nil }
+    switch fields.first(where: { $0.key == "db" })?.value {
+    case nil: return (nil, collection)
+    case .string(let database)?: return (database, collection)
+    default: return nil
+    }
   }
 
   /// `pipeline(verb:)` without the enabled-stage check: no enabled stage is an empty pipeline.
@@ -629,7 +708,7 @@ final class AggregationBuilderModel: Identifiable {
     case blocked(PreviewState)
   }
 
-  /// The preview command of stage `id`: the enabled stages up to it, then `{$limit: 20}`.
+  /// The preview command of stage `id`: the enabled stages up to it, then `{$limit: previewLimit}`.
   /// Blocked when the stage is off, when it or an earlier enabled stage writes, or has an error.
   private func plan(for id: Stage.ID) -> Plan {
     guard let index = stages.firstIndex(where: { $0.id == id }) else {
@@ -653,7 +732,9 @@ final class AggregationBuilderModel: Identifiable {
         return .blocked(.invalid("Stage \(number) has an error"))
       }
     }
-    let limit = MongoValue.document([MongoValue.Field("$limit", .int32(Self.previewLimit))])
+    let limit = MongoValue.document([
+      MongoValue.Field("$limit", .int32(Int32(clamping: previewLimit)))
+    ])
     return .command(
       MongoCommand.aggregate(collection: collection, pipeline: pipeline + [limit]).render())
   }
@@ -686,11 +767,12 @@ final class AggregationBuilderModel: Identifiable {
     if let running = inFlight[text] { return running.task }
     failures[text] = nil
     let manager = connectionManager
+    let limit = previewLimit
     let token = UUID()
     let task = Task { [weak self] in
       let outcome: Result<QueryResult, any Error>
       do {
-        outcome = .success(try await Self.runPreview(text, on: manager))
+        outcome = .success(try await Self.runPreview(text, maxRows: limit, on: manager))
       } catch {
         outcome = .failure(error)
       }
@@ -703,11 +785,10 @@ final class AggregationBuilderModel: Identifiable {
   /// Sends a preview command through the gate with a read-only policy (never the connection's),
   /// so a write that got into it is refused before anything is sent.
   nonisolated static func runPreview(
-    _ text: String, on manager: DatabaseConnectionManager
+    _ text: String, maxRows: Int, on manager: DatabaseConnectionManager
   ) async throws -> QueryResult {
     try await manager.execute(
-      userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly),
-      maxRows: Int(previewLimit))
+      userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly), maxRows: maxRows)
   }
 
   private func finishPreview(
@@ -767,91 +848,6 @@ final class AggregationBuilderModel: Identifiable {
     if case .running = runState { runState = .idle }
   }
 
-  // MARK: - Export Data
-
-  /// The most documents Export Data writes: the session row cap's upper bound.
-  static let exportDocumentLimit = SessionBrakeLimits.rowCapRange.upperBound
-
-  /// Reads the documents of `exportTarget` through the gate with a read-only policy (at most
-  /// `exportDocumentLimit`), renders them as `format` off the main actor, then asks where to save
-  /// them (`<collection>.json` / `.csv`), dropping an export in flight. Nil, nothing sent, when
-  /// the pipeline is blocked or writes (`exportState` is `.failed` with the reason). A cancelled
-  /// or superseded export never writes its state; a cancelled save panel goes back to idle.
-  @discardableResult
-  func exportData(_ format: DataExportFormat) -> Task<Void, Never>? {
-    cancelExport()
-    let command: MongoCommand
-    switch exportTarget {
-    case .success(let value): command = value
-    case .blocked(let reason):
-      exportState = .failed(reason)
-      return nil
-    }
-    exportState = .running(format)
-    let text = command.render()
-    let manager = connectionManager
-    let filename = "\(collection).\(format.fileExtension)"
-    let token = UUID()
-    exportToken = token
-    let task = Task { [weak self] in
-      let content: String
-      let truncated: Bool
-      do {
-        let read = try await manager.executeMongoDocuments(
-          userSQL: text, policy: ProtectionPolicy(protectionLevel: .readOnly),
-          maxRows: Self.exportDocumentLimit)
-        try Task.checkCancellation()
-        let documents = read.documents
-        content = await Task.detached(priority: .userInitiated) {
-          Self.render(documents, as: format)
-        }.value
-        try Task.checkCancellation()
-        truncated = read.truncated
-      } catch {
-        guard !Task.isCancelled, let self, self.exportToken == token else { return }
-        self.exportState = .failed(error.localizedDescription)
-        self.exportTask = nil
-        return
-      }
-      guard !Task.isCancelled, let self, self.exportToken == token else { return }
-      self.exportTask = nil
-      DataExporter.saveFile(
-        content: content, defaultFilename: filename, allowedFileTypes: [format.fileExtension]
-      ) { [weak self] saved in
-        guard let self, self.exportToken == token else { return }
-        self.exportToken = nil
-        let note = "Exported the first \(Self.exportDocumentLimit.formatted()) documents"
-        self.exportState = saved ? .finished(note: truncated ? note : nil) : .idle
-      }
-    }
-    exportTask = task
-    return task
-  }
-
-  /// Drops the export in flight; nothing is saved or shown for it.
-  func cancelExport() {
-    exportTask?.cancel()
-    exportTask = nil
-    exportToken = nil
-    if case .running = exportState { exportState = .idle }
-  }
-
-  /// The documents as indented relaxed Extended JSON (one array), or as CSV with one column per
-  /// top-level field (`MongoBSONMapping`).
-  nonisolated private static func render(
-    _ documents: [MongoValue], as format: DataExportFormat
-  ) -> String {
-    switch format {
-    case .json:
-      return MongoRelaxedJSON.render(.array(documents), as: .relaxedExtendedJSON, indented: true)
-    case .csv:
-      let columns = MongoBSONMapping.columns(for: documents)
-      let rows = documents.map { MongoBSONMapping.row(for: $0, columns: columns) }
-      return DataExporter.toCSV(
-        result: CellResult(columns: columns, rows: rows, rowCount: rows.count))
-    }
-  }
-
   // MARK: - Saved pipelines
 
   /// The stages as a saved pipeline holds them. In Text mode, call `showStages()` first.
@@ -873,7 +869,6 @@ final class AggregationBuilderModel: Identifiable {
     editMode = .stages
     textError = nil
     cancelRun()
-    cancelExport()
     runState = .idle
     showsRunResults = false
     cancelStalePreviews()

@@ -78,7 +78,8 @@ struct OpenTableImportActionKey: FocusedValueKey {
 }
 
 /// Export SQL Dump, Restore SQL Dump, Copy Database File (File menu): nil unless the workspace
-/// is connected to an engine with `supportsSQLDump` (the file copy: SQLite only)
+/// is connected to an engine with `supportsSQLDump` (the file copy: SQLite only). On MongoDB the
+/// first two are Back Up Database and Restore Backup (`WorkspaceManager.canBackUpMongo`).
 struct OpenSQLDumpActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }

@@ -70,7 +70,7 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
     case .connectionHistory: "Saved database connections, without passwords"
     case .recentItems: "Workspaces and files you opened recently"
     case .openTabs: "Tabs restored at the next launch. Open tabs stay until you quit."
-    case .savedFilters: "Filters and highlights saved for tables"
+    case .savedFilters: "Filters, highlights, MongoDB queries and view modes saved for tables"
     case .schemaLayout: "Positions of tables on the schema diagram"
     case .aiChats: "Conversations with the AI assistant"
     case .aiSettings: "Provider and model choices, without API keys"

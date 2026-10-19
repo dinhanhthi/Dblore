@@ -5,12 +5,15 @@
 //  Aggregations section of a MongoDB collection screen: the aggregation builder of the
 //  collection (`AggregationBuilderBody`: stages or the pipeline as text, per-stage previews and
 //  the results of a Run) under a header. Its left side holds icon buttons: AI, Copy, the Export
-//  menu (driver code, or the documents as JSON or CSV), saved pipelines, the template Wizard and
-//  the aggregate options, then a status line (why the pipeline is blocked, or how an export went).
+//  menu (driver code, or the documents through the export sheet), saved pipelines, the template
+//  Wizard and the aggregate options, then a status line (why the pipeline is blocked).
 //  Its right side holds the Stages | Text picker, Explain, Run, Open in Query and Create View
 //  (`MongoViewEditorSheet` on this collection with the enabled stages; hidden when the tab is not
-//  connected or its protection blocks schema changes). Previews, Run and Export Data read through
-//  the gate with a read-only policy (`AggregationBuilderModel`).
+//  connected or its protection blocks schema changes). Previews and Run read through the gate with
+//  a read-only policy (`AggregationBuilderModel`); Export Data streams through `MongoExportModel`.
+//  A pipeline ending in `$out` / `$merge` swaps Run for "Run $out..." / "Run $merge..."
+//  (`MongoAdminActionModel.requestPipelineWrite`; hidden, with the reason, when the connection's
+//  rules refuse it); once written, the status line says "Wrote to <target>" with Show <target>.
 //
 
 import SwiftUI
@@ -36,13 +39,15 @@ struct MongoAggregationsView: View {
   @State private var selectedStage: AggregationBuilderModel.Stage.ID?
   @State private var exportRequest: MongoExportCodeSheet.Request?
   @State private var showsOptions = false
-  /// The read of the Export Data in flight; it ends when the save panel opens, so Cancel only
-  /// shows while it runs (a Cancel cannot close the panel)
-  @State private var exportRead: Task<Void, Never>?
   /// Create View: the command of the form opened last and the pipeline it starts from
   @State private var viewAction: MongoAdminActionModel?
   @State private var viewPipeline: [MongoValue] = []
   @State private var showsCreateView = false
+  /// Run $out / $merge: the action of the last write and the collection it writes to
+  @State private var writeAction: MongoAdminActionModel?
+  @State private var writtenTarget: String?
+  /// A write is being asked or sent at once: a second click must not send it again
+  @State private var startsWrite = false
 
   private typealias EditMode = AggregationBuilderModel.EditMode
 
@@ -93,10 +98,22 @@ struct MongoAggregationsView: View {
     let data: AggregationBuilderModel.PipelineTarget
     /// Create View: a writing stage passes here, the view form refuses it with its reason
     let view: AggregationBuilderModel.PipelineTarget
+    /// A pipeline ending in `$out` / `$merge`: where it writes, or why it may not; nil: a read
+    let write: Result<AggregationBuilderModel.WriteTarget, AggregationBuilderModel.StageError>?
+    /// Why the tab's rules refuse `write` (the request re-checks under the connection's)
+    let writeRefusal: String?
   }
 
   private func header(_ builder: AggregationBuilderModel) -> some View {
     let commandText = builder.commandText
+    let write = builder.writeTarget(
+      database: database,
+      collections: Set(viewModel.databaseTables.map(\.name) + viewModel.databaseViews.map(\.name)))
+    var writeRefusal: String?
+    if case .success(let target) = write {
+      writeRefusal = MongoAdminActionModel.pipelineWriteRefusal(
+        text: target.text, policy: viewModel.protectionPolicy)
+    }
     let targets = Targets(
       commandText: commandText,
       blocked: commandText == nil ? builder.pipeline(verb: "copy or open").reason : nil,
@@ -104,7 +121,8 @@ struct MongoAggregationsView: View {
       explain: builder.explainTarget,
       code: builder.pipeline(verb: "export"),
       data: builder.exportTarget,
-      view: builder.pipeline(verb: "create a view from"))
+      view: builder.pipeline(verb: "create a view from"),
+      write: write, writeRefusal: writeRefusal)
     let isText = builder.editMode == .text
     return HStack(spacing: Spacing.sm) {
       // Tighter than the row: the buttons carry their own padding
@@ -117,7 +135,7 @@ struct MongoAggregationsView: View {
           .frame(height: MongoQueryField.styledLineHeight)
         }
         copyButton(builder, targets)
-        exportMenu(builder, targets)
+        exportMenu(targets)
         MongoSavedPipelinesButton(
           builder: builder, store: savedPipelineStore, key: savedPipelineKey
         )
@@ -135,7 +153,11 @@ struct MongoAggregationsView: View {
       HStack(spacing: Spacing.xs) {
         modePicker(builder)
         explainButton(targets.explain)
-        runButton(builder, targets.run)
+        if let write = targets.write {
+          writeRunButton(write, refusal: targets.writeRefusal)
+        } else {
+          runButton(builder, targets.run)
+        }
         Button("Open in Query") {
           guard let text = targets.commandText else { return }
           openQuery?(text)
@@ -148,9 +170,19 @@ struct MongoAggregationsView: View {
           createViewButton(targets.view)
         }
       }
+      // Not on the header node, which hosts the Create View confirmation
+      .sheet(isPresented: writeConfirmPresented) {
+        if let writeAction {
+          MongoAdminConfirmSheet(
+            model: writeAction, databasePassword: viewModel.notebook.connectionConfig?.password,
+            isConnected: viewModel.connectionState == .connected)
+        }
+      }
     }
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.sm)
+    // "Wrote to <target>" belongs to the pipeline that wrote it
+    .onChange(of: commandText) { writtenTarget = nil }
     // On its own node: the export sheet is on the root
     .sheet(isPresented: viewConfirmPresented) {
       if let viewAction {
@@ -196,34 +228,22 @@ struct MongoAggregationsView: View {
 
   // MARK: - Status
 
-  /// The stage count (Stages mode) or why the pipeline is blocked, then the export status
+  /// The stage count (Stages mode) or why the pipeline is blocked
   private func status(
     _ builder: AggregationBuilderModel, _ targets: Targets, isText: Bool
   ) -> some View {
     HStack(spacing: Spacing.sm) {
       if let blocked = targets.blocked {
         statusText(blocked)
+      } else if case .failure(let error) = targets.write {
+        statusText(error.message)
+      } else if let refusal = targets.writeRefusal {
+        statusText(refusal)
+      } else if writeAction?.state == .done, let writtenTarget {
+        written(writtenTarget)
       } else if !isText {
         // In Text mode the stages are those of the text only once Stages takes it back
         statusText(stageCount(builder))
-      }
-      switch builder.exportState {
-      case .idle:
-        EmptyView()
-      case .running:
-        statusText("Exporting…")
-        if exportRead != nil {
-          Button("Cancel") {
-            builder.cancelExport()
-            exportRead = nil
-          }
-          .buttonStyle(GhostButtonStyle())
-          .help("Stop reading the documents to export")
-        }
-      case .failed(let message):
-        statusText(message)
-      case .finished(let note):
-        if let note { statusText(note) }
       }
     }
   }
@@ -243,21 +263,17 @@ struct MongoAggregationsView: View {
 
   // MARK: - Export
 
-  /// Export Code opens the driver code sheet; Export Data reads the documents and asks where
-  /// to save them. One export at a time, so reads never stack.
-  private func exportMenu(_ builder: AggregationBuilderModel, _ targets: Targets) -> some View {
-    let isExporting: Bool
-    if case .running = builder.exportState { isExporting = true } else { isExporting = false }
-    let canExportData = targets.data.command != nil && !isExporting
+  /// Export Code opens the driver code sheet; Export Data opens the export sheet (hosted by
+  /// `DataViewerView`) on the pipeline. One export sheet at a time.
+  private func exportMenu(_ targets: Targets) -> some View {
+    let canExportData = targets.data.command != nil && model.export == nil
     return Menu {
       Button("Export Code…") {
         guard case .success(let command) = targets.code else { return }
         exportRequest = MongoExportCodeSheet.Request(command: command, database: database)
       }
       .disabled(targets.code.command == nil)
-      Button("Export Data as JSON…") { exportData(builder, .json) }
-        .disabled(!canExportData)
-      Button("Export Data as CSV…") { exportData(builder, .csv) }
+      Button("Export Data…") { openExport(targets.data) }
         .disabled(!canExportData)
       // Menu items show no tooltip: a disabled line says why the data does not export
       if let reason = targets.data.reason, targets.code.command != nil {
@@ -276,15 +292,14 @@ struct MongoAggregationsView: View {
     .frame(height: MongoQueryField.styledLineHeight)
   }
 
-  private func exportData(
-    _ builder: AggregationBuilderModel, _ format: AggregationBuilderModel.DataExportFormat
-  ) {
-    guard let task = builder.exportData(format) else { return }
-    exportRead = task
-    Task {
-      await task.value
-      if exportRead == task { exportRead = nil }
-    }
+  /// The export sheet with the pipeline as its only source (no document cap)
+  private func openExport(_ target: AggregationBuilderModel.PipelineTarget) {
+    guard case .success(let pipeline) = target, model.export == nil,
+      let manager = viewModel.connectionManager
+    else { return }
+    model.export = MongoExportModel(
+      collection: model.collection, database: model.database, pipeline: pipeline,
+      connectionManager: manager, caller: viewModel.id)
   }
 
   // MARK: - Mode, Explain and Run
@@ -400,6 +415,93 @@ extension MongoAggregationsView {
       viewPipeline = pipeline
       showsCreateView = true
     }
+  }
+}
+
+// MARK: - Run $out / $merge
+
+extension MongoAggregationsView {
+  private var writeConfirmPresented: Binding<Bool> {
+    writeAction.map(MongoAdminConfirmSheet.isPresented) ?? .constant(false)
+  }
+
+  /// "Run $out..." / "Run $merge..." in place of Run; a refused target leaves Run disabled with
+  /// the reason. Absent when the tab's rules refuse the write (the status line says why).
+  @ViewBuilder
+  private func writeRunButton(
+    _ write: Result<AggregationBuilderModel.WriteTarget, AggregationBuilderModel.StageError>,
+    refusal: String?
+  ) -> some View {
+    switch write {
+    case .failure(let error):
+      Button("Run") {}
+        .buttonStyle(PrimaryButtonStyle())
+        .disabled(true)
+        .help(error.message)
+        .frame(height: MongoQueryField.styledLineHeight)
+    case .success(let target) where refusal == nil:
+      Button(target.isOut ? "Run $out…" : "Run $merge…") {
+        startWrite(target)
+      }
+      .buttonStyle(PrimaryButtonStyle())
+      .disabled(
+        viewModel.connectionManager == nil || viewModel.connectionState != .connected
+          || startsWrite || writeAction?.state == .running
+      )
+      .help(Self.writeHelp(target))
+      .frame(height: MongoQueryField.styledLineHeight)
+    case .success:
+      EmptyView()
+    }
+  }
+
+  private static func writeHelp(_ target: AggregationBuilderModel.WriteTarget) -> String {
+    guard target.isOut else {
+      return "Merge the pipeline results into collection \(target.collection)"
+    }
+    return target.exists
+      ? "Replace collection \(target.collection) with the pipeline results"
+      : "Write the pipeline results to collection \(target.collection)"
+  }
+
+  /// Asks for the write on the connection epoch read at the click, like Create View: the
+  /// action checks whether an `$out` target exists live, so the collection list may be stale.
+  private func startWrite(_ target: AggregationBuilderModel.WriteTarget) {
+    guard !startsWrite, let manager = viewModel.connectionManager else { return }
+    startsWrite = true
+    Task {
+      defer { startsWrite = false }
+      let epoch = await manager.connectionEpoch
+      guard let action = MongoAdminActionModel(tab: viewModel, connectionEpoch: epoch) else {
+        return
+      }
+      writeAction = action
+      writtenTarget = target.collection
+      await action.requestPipelineWrite(
+        text: target.text, target: target.collection, replacesExisting: target.exists,
+        isOut: target.isOut)
+    }
+  }
+
+  /// "Wrote to <target>" (the server returns no count) and the button opening it
+  private func written(_ target: String) -> some View {
+    HStack(spacing: Spacing.sm) {
+      statusText("Wrote to \(target)")
+      Button("Show \(target)") { show(target) }
+        .buttonStyle(SecondaryButtonStyle())
+        .disabled(viewModel.onOpenDataViewer == nil)
+        .help("Open collection \(target) in a data viewer")
+        .frame(height: MongoQueryField.styledLineHeight)
+    }
+  }
+
+  /// Opens `collection` in a data viewer, as a sidebar click does
+  private func show(_ collection: String) {
+    let table = viewModel.databaseTables.first {
+      $0.schema == database && $0.name == collection
+    }
+    viewModel.onOpenDataViewer?(
+      database, collection, table?.columns.filter(\.isPrimaryKey).map(\.name) ?? [], nil)
   }
 }
 

@@ -136,7 +136,7 @@ struct LocalDataProvidersTests {
     expectUnrelated(suite)
   }
 
-  @Test("Saved filters and highlights round-trip")
+  @Test("Saved filters, highlights, Mongo queries, pipelines and view preferences round-trip")
   func savedFilters() async throws {
     let suite = makeSuite()
     setUnrelated(suite)
@@ -152,23 +152,39 @@ struct LocalDataProvidersTests {
     store.save(filter, named: "open", for: key)
     store.saveHighlight(
       TableHighlight(filter: filter, color: .yellow, style: .cell), named: "paint", for: key)
-    let filters = data(forKey: "ace.thi.dblore.savedFilters", suite: suite)
-    let highlights = data(forKey: "ace.thi.dblore.savedHighlights", suite: suite)
+    store.saveMongoQuery(filter: "{a: 1}", options: .init(), named: "q", for: key)
+    store.saveMongoPipeline(
+      stages: [SavedMongoPipeline.Stage(operator: "$match", body: "{}", isEnabled: true)],
+      options: .init(), named: "p", for: key)
+    store.saveMongoViewPreference(MongoViewPreference(mode: .json, pageSize: 250), for: key)
+    let keys = [
+      "ace.thi.dblore.savedFilters", "ace.thi.dblore.savedHighlights",
+      "ace.thi.dblore.savedMongoQueries", "ace.thi.dblore.savedMongoPipelines",
+      "ace.thi.dblore.mongoViewPreferences",
+    ]
+    let saved = keys.map { data(forKey: $0, suite: suite) }
+    #expect(saved.allSatisfy { $0 != nil })
     let provider = SavedFiltersLocalDataProvider(defaults: suite.defaults, domainName: suite.name)
 
     let summary = await provider.summary()
-    #expect(summary.itemCount == 2)
-    #expect(summary.bytes > 0)
+    #expect(summary.itemCount == 5)
+    #expect(summary.bytes == Int64(saved.reduce(0) { $0 + ($1?.count ?? 0) }))
     #expect(summary.location == nil)
 
     try await expectRoundTrip(provider, category: .savedFilters) {
-      #expect(data(forKey: "ace.thi.dblore.savedFilters", suite: suite) == nil)
-      #expect(data(forKey: "ace.thi.dblore.savedHighlights", suite: suite) == nil)
+      #expect(keys.allSatisfy { data(forKey: $0, suite: suite) == nil })
     } afterImport: {
-      #expect(data(forKey: "ace.thi.dblore.savedFilters", suite: suite) == filters)
-      #expect(data(forKey: "ace.thi.dblore.savedHighlights", suite: suite) == highlights)
+      #expect(keys.map { data(forKey: $0, suite: suite) } == saved)
     }
     expectUnrelated(suite)
+
+    // An export made before the MongoDB files existed still imports
+    let older = try makeFolder()
+    defer { remove(older) }
+    try saved[0]!.write(to: older.appendingPathComponent("savedFilters.json"))
+    try await provider.importData(from: older)
+    #expect(data(forKey: keys[0], suite: suite) == saved[0])
+    #expect(keys.dropFirst().allSatisfy { data(forKey: $0, suite: suite) == nil })
   }
 
   @Test("Schema diagram positions round-trip")

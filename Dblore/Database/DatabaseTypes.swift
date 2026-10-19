@@ -85,8 +85,9 @@ enum DatabaseError: LocalizedError {
   /// A batch sent one by one without a transaction was refused before anything was sent
   case sequentialBatchRefused(String)
   /// Statement `applied + 1` of `total` of a batch sent one by one (no transaction) failed or
-  /// affected an unexpected row count; the `applied` before it stay
-  case batchPartiallyApplied(applied: Int, total: Int, reason: String)
+  /// affected an unexpected row count; the `applied` before it stay. `written`: the documents a
+  /// failing MongoDB insert wrote before its error (typed gate only)
+  case batchPartiallyApplied(applied: Int, total: Int, reason: String, written: Int? = nil)
   /// Commit refused before COMMIT was sent: a statement of the transaction is still running, or
   /// the pending list changed since the confirmation was shown (nothing was committed)
   case commitRefusedTransactionChanged
@@ -180,7 +181,7 @@ enum DatabaseError: LocalizedError {
         + "\(reason). MySQL commits each change, so the applied ones stay."
     case .sequentialBatchRefused(let reason):
       return "\(reason) Nothing was executed."
-    case .batchPartiallyApplied(let applied, let total, let reason):
+    case .batchPartiallyApplied(let applied, let total, let reason, _):
       return "Applied \(applied) of \(total) changes: \(reason)"
     case .queryCancelled(let pendingCount, let userTxRolledBack, let connectionKept):
       return Self.cancelMessage(
