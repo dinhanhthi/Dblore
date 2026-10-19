@@ -165,7 +165,7 @@ struct AggregationStageRow: View {
         .textSelection(.enabled)
     } else {
       let state = model.previewState(for: stage.id)
-      if let text = Self.caption(state) {
+      if let text = Self.caption(state, limit: model.previewLimit) {
         Text(text)
           .font(.small)
           .foregroundColor(.foregroundMuted)
@@ -174,12 +174,13 @@ struct AggregationStageRow: View {
     }
   }
 
-  /// One-line preview state under the editor, nil when not previewed yet.
-  static func caption(_ state: AggregationBuilderModel.PreviewState) -> String? {
+  /// One-line preview state under the editor (`limit`: the preview size), nil when not
+  /// previewed yet.
+  static func caption(_ state: AggregationBuilderModel.PreviewState, limit: Int) -> String? {
     switch state {
     case .notRun: nil
     case .loading: "Previewing..."
-    case .loaded(let result): AggregationBuilderBody.countText(result)
+    case .loaded(let result): AggregationBuilderBody.countText(result, limit: limit)
     case .failed: "Preview failed"
     case .disabled, .writesData, .invalid: state.message
     }

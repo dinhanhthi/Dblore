@@ -337,6 +337,7 @@ class AppSettings {
     static let mcpPort = "app.settings.mcpPort"
     static let mcpAllowedConnectionIDs = "app.settings.mcpAllowedConnectionIDs"
     static let mcpRowCap = "app.settings.mcpRowCap"
+    static let mongoPreviewDocumentCount = "app.settings.mongoPreviewDocumentCount"
   }
 
   /// Seconds a query must run before it notifies, when none is stored.
@@ -877,6 +878,25 @@ class AppSettings {
     }
   }
 
+  // MARK: - MongoDB
+
+  /// Choices and default of the documents an aggregation stage preview shows
+  static let mongoPreviewDocumentCounts = [10, 20, 50, 100]
+  static let defaultMongoPreviewDocumentCount = 20
+
+  /// Documents an aggregation stage preview shows, one of `mongoPreviewDocumentCounts`
+  /// (any other value goes back to the default).
+  /// Default: 20
+  var mongoPreviewDocumentCount: Int = AppSettings.defaultMongoPreviewDocumentCount {
+    didSet {
+      guard Self.mongoPreviewDocumentCounts.contains(mongoPreviewDocumentCount) else {
+        mongoPreviewDocumentCount = Self.defaultMongoPreviewDocumentCount
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(mongoPreviewDocumentCount, forKey: Keys.mongoPreviewDocumentCount)
+    }
+  }
+
   // MARK: - Safe Mode Unlock (forwarded to SafeModeAuthenticator: Keychain + Touch ID)
 
   private var safeModeAuth: SafeModeAuthenticator { .shared }
@@ -1176,6 +1196,14 @@ class AppSettings {
       mcpRowCap = defaults.integer(forKey: Keys.mcpRowCap)
     }
 
+    if defaults.object(forKey: Keys.mongoPreviewDocumentCount) != nil {
+      // didSet does not run in init: an unknown stored value goes back to the default here
+      let count = defaults.integer(forKey: Keys.mongoPreviewDocumentCount)
+      mongoPreviewDocumentCount =
+        Self.mongoPreviewDocumentCounts.contains(count)
+        ? count : Self.defaultMongoPreviewDocumentCount
+    }
+
     // Load Safe Mode setting
     let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
     if defaults.object(forKey: Keys.safeMode) != nil,
@@ -1243,6 +1271,7 @@ class AppSettings {
     mcpPort = Self.defaultMCPPort
     mcpAllowedConnectionIDs = []
     mcpRowCap = Self.defaultMCPRowCap
+    mongoPreviewDocumentCount = Self.defaultMongoPreviewDocumentCount
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()

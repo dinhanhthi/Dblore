@@ -34,7 +34,9 @@ struct MongoAdminActionModelTests {
 
   private func makeModel(
     commitStyle: CommitStyle, level: ConnectionProtectionLevel = .none,
-    protectedMode: Bool = false, reconnectAfterRead: Bool = false, log: Log
+    protectedMode: Bool = false, reconnectAfterRead: Bool = false,
+    policy: ProtectionPolicy? = nil, existing: Set<String> = [], existingFails: Bool = false,
+    log: Log
   ) async throws -> (MongoAdminActionModel, FakeDatabaseSessionFactory) {
     let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.mongodb.capabilities)
     let manager = DatabaseConnectionManager(sessionFactory: factory)
@@ -45,12 +47,17 @@ struct MongoAdminActionModelTests {
     if reconnectAfterRead { try await manager.connect(config: config) }
     let model = MongoAdminActionModel(
       context: MongoAdminContext(
-        manager: manager, policy: ProtectionPolicy(config: config),
+        manager: manager, policy: policy ?? ProtectionPolicy(config: config),
         commitStyle: { commitStyle }, caller: nil,
         recordHistory: {
           log.onRecord?()
           log.outcomes += $0
-        }, database: config.database),
+        }, database: config.database,
+        // The live existence check of an `$out` target (the fake is no MongoSession)
+        existingNames: { _, names, _ in
+          if existingFails { throw CancellationError() }
+          return existing.intersection(names)
+        }),
       connectionEpoch: epoch,
       onStatementsExecuted: { log.reloads += 1 })
     return (model, factory)
@@ -224,6 +231,140 @@ struct MongoAdminActionModelTests {
 
     await model.confirm(second)
     #expect(factory.statements == [other.render()])
+  }
+
+  // MARK: - Pipeline writes ($out / $merge)
+
+  private static let outText = MongoCommand.aggregate(
+    collection: "items", pipeline: [.document([.init("$out", .string("copy"))])]
+  ).render()
+  private static let mergeText = MongoCommand.aggregate(
+    collection: "items",
+    pipeline: [.document([.init("$merge", .document([.init("into", .string("copy"))]))])]
+  ).render()
+
+  @Test(
+    "$out over an existing collection sends nothing before the exact name, even under Immediate")
+  func outOverExistingNeedsTypedName() async throws {
+    let log = Log()
+    let (model, factory) = try await makeModel(commitStyle: .immediate, log: log)
+    await model.requestPipelineWrite(
+      text: Self.outText, target: "copy", replacesExisting: true, isOut: true)
+    let pending = try #require(confirmation(model))
+    #expect(pending.typedName == "copy")
+    #expect(pending.objectKind == "collection")
+    #expect(!pending.needsSafeModePanel)
+    #expect(pending.text == Self.outText)
+
+    await model.confirm(pending, typedName: "Copy")
+    await model.confirm(pending)
+    #expect(factory.statements.isEmpty)
+
+    await model.confirm(pending, typedName: "copy")
+    #expect(model.state == .done)
+    #expect(factory.statements == [Self.outText])
+    #expect(log.outcomes.map(\.status) == [.success])
+    #expect(log.reloads == 1)
+    // A finished write is never sent again by a late answer
+    await model.confirm(pending, typedName: "copy")
+    #expect(factory.statements.count == 1)
+
+    // Under Confirm the Safe Mode panel follows the typed name
+    let (confirm, _) = try await makeModel(commitStyle: .confirm, log: log)
+    await confirm.requestPipelineWrite(
+      text: Self.outText, target: "copy", replacesExisting: true, isOut: true)
+    let both = try #require(confirmation(confirm))
+    #expect(both.typedName == "copy")
+    #expect(both.needsSafeModePanel)
+  }
+
+  @Test("$out into a target the live check finds asks for the typed name; the list was stale")
+  func outOverLiveExistingNeedsTypedName() async throws {
+    let log = Log()
+    let (model, factory) = try await makeModel(
+      commitStyle: .immediate, existing: ["copy"], log: log)
+    await model.requestPipelineWrite(
+      text: Self.outText, target: "copy", replacesExisting: false, isOut: true)
+    let pending = try #require(confirmation(model))
+    #expect(pending.typedName == "copy")
+    #expect(pending.action == .pipelineWrite(target: "copy", isOut: true, replacesExisting: true))
+    #expect(factory.statements.isEmpty)
+  }
+
+  @Test("A failed live check of the $out target refuses the write; nothing is sent")
+  func outLiveCheckFailureRefuses() async throws {
+    let log = Log()
+    let (model, factory) = try await makeModel(
+      commitStyle: .immediate, existingFails: true, log: log)
+    await model.requestPipelineWrite(
+      text: Self.outText, target: "copy", replacesExisting: false, isOut: true)
+    #expect(model.state == .failed("Could not check whether copy exists; nothing was sent."))
+    #expect(factory.statements.isEmpty)
+    #expect(log.outcomes.isEmpty)
+  }
+
+  @Test("$merge under Confirm holds at the Safe Mode panel; nothing is sent until confirmed")
+  func mergeHoldsForSafeMode() async throws {
+    let log = Log()
+    let (model, factory) = try await makeModel(commitStyle: .confirm, log: log)
+    await model.requestPipelineWrite(
+      text: Self.mergeText, target: "copy", replacesExisting: true, isOut: false)
+    let pending = try #require(confirmation(model))
+    #expect(pending.typedName == nil)
+    #expect(pending.needsSafeModePanel)
+    #expect(factory.statements.isEmpty)
+
+    await model.confirm(pending)
+    #expect(model.state == .done)
+    #expect(factory.statements == [Self.mergeText])
+  }
+
+  @Test(
+    "Schema-only (the connection's rules) refuses $out before any prompt and lets $merge through")
+  func schemaOnlyRefusesOut() async throws {
+    let log = Log()
+    // The tab's policy allows everything: the refusal must come from the connection's rules
+    let (model, factory) = try await makeModel(
+      commitStyle: .confirm, level: .schemaOnly, policy: ProtectionPolicy(protectionLevel: .none),
+      log: log)
+    for replacesExisting in [true, false] {
+      await model.requestPipelineWrite(
+        text: Self.outText, target: "copy", replacesExisting: replacesExisting, isOut: true)
+      guard case .failed = model.state else {
+        Issue.record("Expected failed, got \(model.state)")
+        return
+      }
+    }
+    await model.requestPipelineWrite(
+      text: Self.mergeText, target: "copy", replacesExisting: false, isOut: false)
+    let pending = try #require(confirmation(model))
+    #expect(factory.statements.isEmpty)
+    await model.confirm(pending)
+    #expect(factory.statements == [Self.mergeText])
+  }
+
+  @Test("Read-only and Protected mode refuse a pipeline write before any prompt")
+  func protectedRefusesPipelineWrite() async throws {
+    let log = Log()
+    let (readOnly, sent) = try await makeModel(commitStyle: .confirm, level: .readOnly, log: log)
+    let (protected, factory) = try await makeModel(
+      commitStyle: .confirm,
+      policy: ProtectionPolicy(protectionLevel: .none, protectedMode: true), log: log)
+    for model in [readOnly, protected] {
+      await model.requestPipelineWrite(
+        text: Self.mergeText, target: "copy", replacesExisting: false, isOut: false)
+      guard case .failed = model.state else {
+        Issue.record("Expected failed, got \(model.state)")
+        continue
+      }
+    }
+    #expect(
+      protected.state
+        == .failed(
+          "MongoDB has no transactions, so Protected mode cannot hold this change. Use Confirm."))
+    #expect(sent.statements.isEmpty)
+    #expect(factory.statements.isEmpty)
+    #expect(log.reloads == 0)
   }
 
   @Test(
