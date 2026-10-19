@@ -9,8 +9,13 @@ import Testing
 @Suite("Notebook ViewModel AI Bridge Tests")
 @MainActor
 struct NotebookViewModelAITests {
+  private static let config = ConnectionConfig(host: "h", database: "d")
+  /// Error results are offered to Fix only on the connection they came from
+  private static let key = AIAccessGate.sessionKey(for: config)
+
   private func makeViewModel(contents: [String] = ["SELECT 1", "SELECT 2"]) -> NotebookViewModel {
     let viewModel = NotebookViewModel()
+    viewModel.notebook.connectionConfig = Self.config
     viewModel.notebook.cells = contents.map { NotebookCell(cellType: .sql, content: $0) }
     viewModel.selectedCellId = nil
     return viewModel
@@ -48,7 +53,8 @@ struct NotebookViewModelAITests {
     viewModel.selectedCellId = viewModel.notebook.cells[0].id
     #expect(viewModel.aiLastError == nil)
 
-    viewModel.notebook.cells[0].result = CellResult(error: "relation \"x\" does not exist")
+    viewModel.notebook.cells[0].result = CellResult(
+      error: "relation \"x\" does not exist", aiSessionKey: Self.key)
     #expect(viewModel.aiLastError == "relation \"x\" does not exist")
   }
 
@@ -58,7 +64,9 @@ struct NotebookViewModelAITests {
     viewModel.selectedCellId = viewModel.notebook.cells[0].id
     viewModel.notebook.cells[0].statementResults = [
       StatementResult(queryText: "a", result: CellResult(), statementIndex: 0),
-      StatementResult(queryText: "b", result: CellResult(error: "boom"), statementIndex: 1),
+      StatementResult(
+        queryText: "b", result: CellResult(error: "boom", aiSessionKey: Self.key), statementIndex: 1
+      ),
     ]
     viewModel.notebook.cells[0].selectedStatementIndex = 1
     #expect(viewModel.aiLastError == "boom")
@@ -80,10 +88,12 @@ struct NotebookViewModelAITests {
     let viewModel = makeViewModel()
     viewModel.viewMode = .editor
     #expect(viewModel.aiLastError == nil)
-    viewModel.editorResult = CellResult(error: "legacy")
+    viewModel.editorResult = CellResult(error: "legacy", aiSessionKey: Self.key)
     #expect(viewModel.aiLastError == "legacy")
     viewModel.editorStatementResults = [
-      StatementResult(queryText: "a", result: CellResult(error: "first"), statementIndex: 0)
+      StatementResult(
+        queryText: "a", result: CellResult(error: "first", aiSessionKey: Self.key),
+        statementIndex: 0)
     ]
     #expect(viewModel.aiLastError == "first")
   }

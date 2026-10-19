@@ -188,6 +188,10 @@ struct CellResult: Codable, Sendable {
   var skippedStatements: [String] = []
   /// Session-only: queued cells cancelled because this result reset the session
   var skippedQueuedCells = 0
+  /// Session-only: `AIAccessGate.sessionKey` of the connection an error result came from, read
+  /// before the query was sent. The AI Fix action offers the error only while the tab is on that
+  /// connection; nil (a file, an unstamped result) never is.
+  var aiSessionKey: String? = nil
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
@@ -207,7 +211,8 @@ struct CellResult: Codable, Sendable {
     primaryKeyColumns: [String] = [],
     affectedRows: Int? = nil,
     editTarget: EditTarget? = nil,
-    lookupRelation: LookupRelation? = nil
+    lookupRelation: LookupRelation? = nil,
+    aiSessionKey: String? = nil
   ) {
     self.columns = columns
     self.rows = rows
@@ -222,11 +227,13 @@ struct CellResult: Codable, Sendable {
     self.affectedRows = affectedRows
     self.editTarget = editTarget
     self.lookupRelation = lookupRelation
+    self.aiSessionKey = aiSessionKey
   }
 
-  /// Creates an error result
+  /// Creates an error result of the connection `aiSessionKey` (see `aiSessionKey`)
   nonisolated static func errorResult(
-    _ message: String, executionTime: TimeInterval = 0, sourceQuery: String? = nil
+    _ message: String, executionTime: TimeInterval = 0, sourceQuery: String? = nil,
+    aiSessionKey: String?
   )
     -> CellResult
   {
@@ -234,7 +241,8 @@ struct CellResult: Codable, Sendable {
       executionTime: executionTime,
       timestamp: Date(),
       error: message,
-      sourceQuery: sourceQuery
+      sourceQuery: sourceQuery,
+      aiSessionKey: aiSessionKey
     )
   }
 }

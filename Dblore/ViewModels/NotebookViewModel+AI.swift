@@ -53,17 +53,25 @@ extension NotebookViewModel {
     return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
   }
 
-  /// Error of the selected statement (else the whole result) in the editor or selected cell
+  /// `AIAccessGate.sessionKey` of the tab's connection, stamped on its error results
+  var aiSessionKey: String? {
+    notebook.connectionConfig.map(AIAccessGate.sessionKey(for:))
+  }
+
+  /// Error of the selected statement (else the whole result) in the editor or selected cell.
+  /// Nil when it came from another connection than the tab's (a switch since it ran, a file).
   var aiLastError: String? {
     if viewMode == .markdown || isReadOnlySource { return nil }
     let error: String?
+    let key = aiSessionKey
     if viewMode == .editor {
       error = Self.aiError(
-        statements: editorStatementResults, index: selectedStatementIndex, result: editorResult)
+        statements: editorStatementResults, index: selectedStatementIndex, result: editorResult,
+        key: key)
     } else if let cell = aiSelectedCell {
       error = Self.aiError(
         statements: cell.statementResults, index: cell.selectedStatementIndex,
-        result: cell.result)
+        result: cell.result, key: key)
     } else {
       error = nil
     }
@@ -85,10 +93,12 @@ extension NotebookViewModel {
   }
 
   private static func aiError(
-    statements: [StatementResult], index: Int, result: CellResult?
+    statements: [StatementResult], index: Int, result: CellResult?, key: String?
   ) -> String? {
-    let statementError =
-      statements.indices.contains(index) ? statements[index].result.error : nil
-    return statementError ?? result?.error
+    let statement = statements.indices.contains(index) ? statements[index].result : nil
+    guard let failed = [statement, result].compactMap({ $0 }).first(where: { $0.error != nil }),
+      let key, failed.aiSessionKey == key
+    else { return nil }
+    return failed.error
   }
 }

@@ -174,7 +174,7 @@ struct ExecutionQueueTests {
     var releaseFirst: CheckedContinuation<Void, Never>?
     var releaseSecond: CheckedContinuation<Void, Never>?
     var executed: [UUID] = []
-    let done = CellResult.errorResult("done")
+    let done = CellResult.errorResult("done", aiSessionKey: nil)
 
     let queue = ExecutionQueue { task in
       if task.cellId == first {
@@ -218,7 +218,7 @@ struct ExecutionQueueTests {
     let third = UUID()
     var releaseFirst: CheckedContinuation<Void, Never>?
     var executed: [UUID] = []
-    let done = CellResult.errorResult("done")
+    let done = CellResult.errorResult("done", aiSessionKey: nil)
 
     let queue = ExecutionQueue { task in
       if task.cellId == first {

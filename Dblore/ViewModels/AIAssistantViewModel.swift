@@ -42,6 +42,44 @@ struct AISchemaSnapshot: Sendable {
 
 @MainActor @Observable
 final class AIAssistantViewModel {
+  /// A turn waiting for "Allow AI for <connection> this session"
+  struct PendingApproval {
+    let connectionName: String
+    fileprivate let context: AIAccessContext
+    /// Repeats the held send, which asks the gate again
+    fileprivate let resume: @MainActor () -> Void
+  }
+
+  /// Why the gate stopped a one-shot request: nothing was sent
+  enum AIAccessError: LocalizedError, Equatable {
+    case denied
+    case needsApproval
+    /// The collection is not one the current connection's loaded schema lists
+    case otherConnection
+
+    var errorDescription: String? {
+      switch self {
+      case .denied: "AI access is off for this connection."
+      case .needsApproval: "Allow AI for this connection first."
+      case .otherConnection: "This tab belongs to a different connection. Reload it first."
+      }
+    }
+  }
+
+  /// What the footer says about a connection that is private to AI
+  enum PrivateNote: Equatable {
+    /// Only the new message was sent, without schema or earlier messages
+    case messageOnly
+    /// The draft holds Explain or Fix text from the connection, so it was not sent
+    case draftHeld
+    /// The draft holds Explain or Fix text from another connection, so it was not sent
+    case draftFromOtherConnection
+    /// Retry and Edit are off: the stored message may hold Explain or Fix text
+    case retryHeld
+  }
+
+  typealias AccessCheck = (context: AIAccessContext?, decision: AIAccessGate.Decision)
+
   private static let historyLimit = 20
   private static let conversationLimit = 100
   private static let titleLength = 80
@@ -52,7 +90,24 @@ final class AIAssistantViewModel {
   /// Saved conversations of the workspace, most recently updated first
   private(set) var conversations: [AIConversation] = []
   private(set) var conversationId = UUID()
-  var draft = ""
+  var draft = "" {
+    didSet {
+      if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        draftHoldsConnectionText = false
+        draftSessionKey = nil
+        if privateNote == .draftHeld { privateNote = .messageOnly }
+        if privateNote == .draftFromOtherConnection { privateNote = nil }
+      }
+    }
+  }
+  /// The draft holds Explain or Fix text (query, server error) of the connection: it is not sent
+  /// while the connection is private to AI. Cleared when the draft is emptied or sent.
+  @ObservationIgnored private var draftHoldsConnectionText = false
+  /// `AIAccessGate.sessionKey` of the connection the Explain or Fix text came from; it is sent
+  /// only while that connection is the current one
+  @ObservationIgnored private var draftSessionKey: String?
+  /// Session key at the last `connectionDidChange()`
+  @ObservationIgnored private var connectionSessionKey: String?
   var isGenerating = false
   /// True while an on-device model is being loaded into memory (before the first token)
   var isLoadingModel = false
@@ -77,11 +132,23 @@ final class AIAssistantViewModel {
   @ObservationIgnored var schemaSource: () -> AISchemaSnapshot = { .empty }
   /// The MongoDB collection screen of the active tab, read at send time; nil elsewhere
   @ObservationIgnored var mongoScreenSource: () -> AIMongoAssist.Screen? = { nil }
+  /// True when the current connection's loaded schema lists the collection (database nil: any);
+  /// a tab can still show a collection of the previous connection
+  @ObservationIgnored var isCurrentMongoCollection:
+    (_ database: String?, _ collection: String) ->
+      Bool = { _, _ in false }
   /// Reads only the connection's dialect, so a view body does not collect the whole schema.
   /// Nil falls back to `schemaSource`.
   @ObservationIgnored var dialectSource: (() -> SQLDialect)?
   /// Runs one read-only statement the assistant asked for; nil means not connected
   @ObservationIgnored var queryRunner: ((String) async throws -> QueryResult)?
+  /// The connection's AI access, read on user actions (send, retry, live answer, one-shot),
+  /// never from a view body. Nil without a connection: nothing to protect.
+  @ObservationIgnored var aiAccessSource: () -> AIAccessContext? = { nil }
+  /// A send held until the user allows AI for the connection this session
+  private(set) var pendingApproval: PendingApproval?
+  /// The connection of the last send is private to AI; nil when it was not
+  private(set) var privateNote: PrivateNote?
   /// Dialect of the connected database (read-only badge on SQL replies)
   var sqlDialect: SQLDialect { dialectSource?() ?? schemaSource().dialect }
   /// nil keeps conversations in memory only
@@ -173,28 +240,117 @@ final class AIAssistantViewModel {
 
   func send() {
     let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !isGenerating, !question.isEmpty, activeProvider != nil else { return }
+    guard !isGenerating, !question.isEmpty, activeProvider != nil,
+      let access = admitTurn(resume: { [weak self] in self?.send() })
+    else { return }
+    if draftHoldsConnectionText {
+      if access.decision == .denied {
+        privateNote = .draftHeld
+        return
+      }
+      if draftSessionKey != Self.sessionKey(access.context) {
+        privateNote = .draftFromOtherConnection
+        return
+      }
+    }
     draft = ""
-    submit(question: question)
+    submit(question: question, access: access)
   }
 
   /// Restarts the conversation from a user message: that question and everything after it
   /// are dropped, then the question (or `editedText` when given) is sent with the current
-  /// provider, model and tables. The draft is left alone.
-  func retry(from id: UUID, editedText: String? = nil) {
+  /// provider, model and tables. The draft is left alone. On a connection private to AI nothing
+  /// is dropped or sent: the stored message may hold Explain or Fix text. Returns true when sent.
+  @discardableResult
+  func retry(from id: UUID, editedText: String? = nil) -> Bool {
     guard let index = messages.firstIndex(where: { $0.id == id }),
       messages[index].role == .user, activeProvider != nil
-    else { return }
+    else { return false }
     let question = (editedText ?? messages[index].text)
       .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !question.isEmpty else { return }
+    guard !question.isEmpty,
+      let access = admitTurn(resume: { [weak self] in
+        self?.retry(from: id, editedText: editedText)
+      })
+    else { return false }
+    if access.decision == .denied {
+      privateNote = .retryHeld
+      return false
+    }
     stop()
     messages.removeSubrange(index...)
-    submit(question: question)
+    submit(question: question, access: access)
+    return true
   }
 
-  private func submit(question: String) {
+  // MARK: - AI access
+
+  /// The connection's AI access and the gate's decision. Decodes the saved list: call it on a
+  /// user action only.
+  func aiAccessCheck() -> AccessCheck {
+    guard let context = aiAccessSource() else { return (nil, .allowed) }
+    return (context, context.decision(settings: settings.configuration))
+  }
+
+  func approveForSession(_ context: AIAccessContext) {
+    context.gate.approveForSession(AIAccessGate.sessionKey(for: context.config))
+  }
+
+  private static func sessionKey(_ context: AIAccessContext?) -> String? {
+    context.map { AIAccessGate.sessionKey(for: $0.config) }
+  }
+
+  /// The connection's name, else host/database (as History labels it)
+  static func connectionName(_ config: ConnectionConfig) -> String {
+    let name = config.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? "\(config.host)/\(config.database)" : name
+  }
+
+  /// Asks the gate for a send. Needs approval: holds `resume` for Allow and returns nil, so
+  /// nothing is sent and the draft stays.
+  private func admitTurn(resume: @escaping @MainActor () -> Void) -> AccessCheck? {
+    let check = aiAccessCheck()
+    guard check.decision == .needsApproval, let context = check.context else {
+      pendingApproval = nil
+      return check
+    }
+    pendingApproval = PendingApproval(
+      connectionName: Self.connectionName(context.config), context: context, resume: resume)
+    return nil
+  }
+
+  /// Allows the held connection for this session, then sends the held turn
+  func allowPendingTurn() {
+    guard let pending = pendingApproval else { return }
+    pendingApproval = nil
+    approveForSession(pending.context)
+    pending.resume()
+  }
+
+  /// Not now: drops the held send; the draft stays
+  func dismissPendingTurn() {
+    pendingApproval = nil
+  }
+
+  /// The workspace connected, switched or disconnected: notes about the old connection go. On
+  /// another connection (session key) a draft holding Explain or Fix text of the old one goes,
+  /// and so do the picked tables. A reconnect or a MongoDB database switch keeps the same key. A
+  /// hand-typed draft stays.
+  func connectionDidChange() {
+    let key = Self.sessionKey(aiAccessSource())
+    if draftHoldsConnectionText && draftSessionKey != key { draft = "" }
+    if key != connectionSessionKey {
+      selectedTableNames = []
+      viewerTableName = nil
+    }
+    connectionSessionKey = key
+    pendingApproval = nil
+    privateNote = nil
+  }
+
+  private func submit(question: String, access: AccessCheck) {
     guard let provider = activeProvider else { return }
+    privateNote = access.decision == .denied ? .messageOnly : nil
     messages.append(AIChatEntry(id: UUID(), role: .user, text: question, isError: false))
     saveConversation()
 
@@ -217,7 +373,8 @@ final class AIAssistantViewModel {
     let context = TurnContext(
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
-      compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource())
+      compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource(),
+      access: access.context)
     let history = makeHistory()
     isGenerating = true
     generation += 1
@@ -229,6 +386,7 @@ final class AIAssistantViewModel {
   }
 
   func stop() {
+    pendingApproval = nil
     generationTask?.cancel()
     generationTask = nil
     generation += 1
@@ -239,19 +397,25 @@ final class AIAssistantViewModel {
   }
 
   /// Query text and error messages can contain row values, so these only fill the draft;
-  /// the user reviews it and presses Send.
-  func explain(sql: String) {
-    fillDraft(AIPrompts.explain(sql: sql))
+  /// the user reviews it and presses Send. `sessionKey` is the `AIAccessGate.sessionKey` of the
+  /// connection the text came from (the tab's, stamped on its error), not the workspace's: a
+  /// tab can lag behind a switch. Nil (unstamped) is held at send while connected.
+  func explain(sql: String, sessionKey: String?) {
+    fillDraft(AIPrompts.explain(sql: sql), sessionKey: sessionKey)
   }
 
-  func fixError(sql: String, error: String) {
-    fillDraft(AIPrompts.fixError(sql: sql, error: error))
+  func fixError(sql: String, error: String, sessionKey: String?) {
+    fillDraft(AIPrompts.fixError(sql: sql, error: error), sessionKey: sessionKey)
   }
 
-  private func fillDraft(_ prompt: String) {
+  private func fillDraft(_ prompt: String, sessionKey: String?) {
+    // Text of two connections never shares one draft
+    if draftHoldsConnectionText && draftSessionKey != sessionKey { draft = "" }
     draft =
       draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       ? prompt : draft + "\n\n" + prompt
+    draftHoldsConnectionText = true
+    draftSessionKey = sessionKey
   }
 
   /// The current conversation is already saved, so this only starts an empty one
@@ -259,6 +423,7 @@ final class AIAssistantViewModel {
     stop()
     messages = []
     conversationId = UUID()
+    privateNote = nil
   }
 
   func openConversation(id: UUID) {
@@ -268,6 +433,7 @@ final class AIAssistantViewModel {
     // A query still running when the app quit never finished
     messages = conversation.messages.filter { $0.isRunning != true }
     conversationId = id
+    privateNote = nil
   }
 
   func deleteConversation(id: UUID) {
@@ -280,7 +446,8 @@ final class AIAssistantViewModel {
 
   /// Generates the filter or pipeline of `collection` from `prompt` and returns the raw reply.
   /// Outside the chat: no entry, history or generating state is touched. The caller owns
-  /// cancellation and timeout.
+  /// cancellation and timeout. Throws `AIAccessError` before anything is sent unless the gate
+  /// allows the connection and the collection is the current connection's.
   func mongoAssist(
     _ target: AIMongoAssist.Target, prompt: String, database: String?, collection: String,
     current: String
@@ -288,6 +455,14 @@ final class AIAssistantViewModel {
     guard let provider = activeProvider else { throw AIClientError.missingModel }
     let model = activeModel
     guard !model.isEmpty else { throw AIClientError.missingModel }
+    switch aiAccessCheck().decision {
+    case .allowed: break
+    case .needsApproval: throw AIAccessError.needsApproval
+    case .denied: throw AIAccessError.denied
+    }
+    guard isCurrentMongoCollection(database, collection) else {
+      throw AIAccessError.otherConnection
+    }
     let client = try makeClient(
       provider, settings.config(for: provider), settings.apiKey(for: provider))
 
@@ -359,7 +534,7 @@ final class AIAssistantViewModel {
   nonisolated static func buildRequest(
     model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
     history: [AIChatMessage], runsQueries: Bool, compactPrompt: Bool,
-    screen: AIMongoAssist.Screen? = nil
+    screen: AIMongoAssist.Screen? = nil, rules: String = ""
   ) async -> AIChatRequest {
     await Task.detached {
       let selected = AISchemaContext.selectTables(
@@ -370,7 +545,7 @@ final class AIAssistantViewModel {
         model: model,
         system: AIPrompts.system(
           databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
-          runsQueries: runsQueries, compact: compactPrompt, screen: screen),
+          runsQueries: runsQueries, compact: compactPrompt, screen: screen, rules: rules),
         messages: history)
     }.value
   }

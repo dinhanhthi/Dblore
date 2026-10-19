@@ -327,6 +327,7 @@ extension WorkspaceManager {
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry
     invalidateEditTargetsInTabs()
+    aiAssistant.connectionDidChange()
 
     // Clear schema
     databaseTables = []

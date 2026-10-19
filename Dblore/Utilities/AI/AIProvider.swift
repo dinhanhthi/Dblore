@@ -134,7 +134,7 @@ final class AISettings {
   static let shared = AISettings(
     defaults: AppSettings.sharedDefaults, keyStore: AIKeyStoreFactory.shared)
 
-  private static let defaultsKey = "app.settings.aiConfiguration"
+  private nonisolated static let defaultsKey = "app.settings.aiConfiguration"
 
   var configuration: AIConfiguration {
     didSet { persist() }
@@ -157,6 +157,14 @@ final class AISettings {
     } else {
       configuration = .empty
     }
+  }
+
+  /// The configuration saved in `defaults`, read from any isolation: `.empty` when none is
+  /// saved, nil when the saved value cannot be decoded.
+  nonisolated static func savedConfiguration(in defaults: UserDefaults) -> AIConfiguration? {
+    guard let stored = defaults.object(forKey: defaultsKey) else { return .empty }
+    guard let data = stored as? Data else { return nil }
+    return try? JSONDecoder().decode(AIConfiguration.self, from: data)
   }
 
   private func persist() {

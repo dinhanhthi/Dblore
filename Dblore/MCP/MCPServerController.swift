@@ -241,10 +241,11 @@ final class MCPServerController {
     recorder: any QueryHistoryRecording
   ) -> MCPToolService {
     MCPToolService(
-      connections: {
-        await allowedEntries(settings: settings, savedConnections: savedConnections)
-      },
+      // Every saved row: their AI policies tighten an allowlisted one of the same identity. The
+      // service lists and uses allowlisted ids only.
+      connections: { await MainActor.run { savedConnections() } },
       allowlist: { await MainActor.run { settings.mcpAllowedConnectionIDs } },
+      aiSettings: { AISettings.savedConfiguration(in: AppSettings.sharedDefaults) },
       source: MCPSQLReadSource(pool: pool),
       recorder: MCPNotifyingHistoryRecorder(inner: recorder),
       historyEnabled: { await MainActor.run { settings.historyEnabled } },

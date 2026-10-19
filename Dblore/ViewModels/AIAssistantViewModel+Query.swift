@@ -21,6 +21,8 @@ extension AIAssistantViewModel {
     let dialect: SQLDialect
     /// MongoDB collection screen shown at send time
     var screen: AIMongoAssist.Screen? = nil
+    /// The connection's AI access read at send time; nil without a connection
+    var access: AIAccessContext? = nil
   }
 
   /// Refused before the query reached the database: no `queryRunner` (the workspace has no
@@ -30,6 +32,8 @@ extension AIAssistantViewModel {
     case notConnected
     case connectionChanged
     case readSessionFailed
+    /// The gate does not allow AI on the connection (off, or not allowed this session)
+    case accessNotAllowed
 
     var errorDescription: String? {
       switch self {
@@ -39,21 +43,37 @@ extension AIAssistantViewModel {
       case .readSessionFailed:
         "Could not open a read-only session to this connection. "
           + "Nothing was sent to the database."
+      case .accessNotAllowed:
+        "AI access to this connection is off or not allowed this session. "
+          + "Nothing was sent to the database."
       }
     }
   }
 
   /// Streams the reply into `entryId`; when "Run read-only queries" was on at send time and still
-  /// is, runs the reply's ```sql run block once and stops, unless `token` went stale
+  /// is, runs the reply's ```sql run block once and stops, unless `token` went stale. Only a
+  /// connection the gate allows sends its schema, MongoDB screen, rules and earlier messages, and
+  /// runs queries; otherwise the request carries the new question and the dialect only.
   func runTurn(
     _ context: TurnContext, history: [AIChatMessage], entryId: UUID, token: Int
   ) async {
+    let allowed =
+      context.access.map { $0.decision(settings: settings.configuration) == .allowed } ?? true
+    let snapshot =
+      allowed
+      ? context.snapshot
+      : AISchemaSnapshot(
+        tables: [], foreignKeys: [], databaseName: nil, dialect: context.snapshot.dialect)
     let request = await Self.buildRequest(
-      model: context.model, question: context.question, explicit: context.explicit,
-      snapshot: context.snapshot, history: history, runsQueries: context.runsQueries,
-      compactPrompt: context.compactPrompt, screen: context.screen)
+      model: context.model, question: context.question,
+      explicit: allowed ? context.explicit : [], snapshot: snapshot,
+      // Earlier turns may hold table names, SQL or filters from when the connection was allowed
+      history: allowed ? history : [AIChatMessage(role: .user, text: context.question)],
+      runsQueries: allowed && context.runsQueries, compactPrompt: context.compactPrompt,
+      screen: allowed ? context.screen : nil,
+      rules: allowed ? context.access?.config.aiRules ?? "" : "")
     guard await streamReply(request, from: context.client, into: entryId),
-      context.runsQueries, settings.configuration.runsQueries,
+      allowed, context.runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,
       let sql = AIMessageParser.runQuery(in: reply, dialect: context.dialect)
     else { return }
@@ -97,8 +117,9 @@ extension AIAssistantViewModel {
   }
 
   /// Runs `sql` behind a "Running query…" placeholder, which then holds the result or, on
-  /// failure (guard refusal, no connection, a connection changed to another dialect, database
-  /// error), the error and the SQL. Once `token` went stale the entries are left untouched.
+  /// failure (guard refusal, no connection, a connection changed to another dialect or no
+  /// longer allowed for AI, database error), the error and the SQL. Once `token` went stale
+  /// the entries are left untouched.
   private func runQuery(_ sql: String, context: TurnContext, token: Int) async {
     let id = UUID()
     messages.append(
@@ -108,6 +129,8 @@ extension AIAssistantViewModel {
     do {
       let dialect = sqlDialect
       guard dialect == context.dialect else { throw QueryRunError.connectionChanged }
+      // The connection or its policy can change while answering: ask again before running
+      guard aiAccessCheck().decision == .allowed else { throw QueryRunError.accessNotAllowed }
       _ = try ReadOnlyQueryGuard.check(sql, dialect: dialect, refuseFileAccess: true)
       guard let queryRunner else { throw QueryRunError.notConnected }
       result = try await queryRunner(sql)

@@ -64,7 +64,8 @@ extension NotebookViewModel {
     guard !missing.isEmpty else { return nil }
     let message = DatabaseError.missingParameters(missing).localizedDescription
     if let cellId, let index = notebook.cells.firstIndex(where: { $0.id == cellId }) {
-      notebook.cells[index].result = .errorResult(message, sourceQuery: script)
+      notebook.cells[index].result = .errorResult(
+        message, sourceQuery: script, aiSessionKey: aiSessionKey)
       notebook.cells[index].statementResults = []
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
@@ -80,7 +81,7 @@ extension NotebookViewModel {
     editorStatementResults = []
     selectedStatementIndex = 0
     totalExecutionTime = 0
-    editorResult = .errorResult(message, sourceQuery: script)
+    editorResult = .errorResult(message, sourceQuery: script, aiSessionKey: aiSessionKey)
     rightSidebarContent = .parameters
     isRightSidebarVisible = true
     return message

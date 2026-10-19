@@ -1,18 +1,21 @@
 // MCPToolService.swift
 // The MCP tools, as plain Swift calls the JSON-RPC layer maps to tools/list and tools/call.
 // Connection-scoped tools check the allowlist first: an unknown, malformed or not-allowlisted
-// id gets the same refusal. run_query sends exactly one statement the connection's dialect
-// classifies as `.read` and, on PostgreSQL, that calls no `postgresSideEffectFunctions` function;
-// on MongoDB (mongosh subset), one read command (no `$out`/`$merge`) without server-side
-// JavaScript (`$where`, `$function`, `$accumulator`, code values) (`ReadOnlyQueryGuard`; refused
-// before sending otherwise, whatever the app's Safe Mode), then the manager's read-only gate and
-// the read-only session apply (MongoDB has no read-only transaction: `MongoSession.query` runs
-// reads only). Rows stop at `max_rows` (default `defaultMaxRows`, the row cap setting, else 200;
-// at most 1000); the session's statement timeout is 30 s (the pool's brake; `maxTimeMS` on
-// MongoDB).
-// Every run_query with a statement, after the allowlist, is recorded in History as `.mcp` while
-// History is on; a statement that carries a password is recorded with its string literals
-// redacted (`redactingStrings`) and no error text.
+// id gets the same refusal. Then the AI access gate (`AIAccessGate`) on the strictest policy of
+// every saved row of the connection's identity (`AIAccessGate.sessionKey`), allowlisted or not:
+// Never gets that same refusal (and is not listed); Ask once per session without an
+// approval from the app is refused (MCP never approves); unreadable AI settings ask. run_query
+// sends exactly one statement the connection's dialect classifies as `.read` and, on
+// PostgreSQL, that calls no `postgresSideEffectFunctions` function; on MongoDB (mongosh subset),
+// one read command (no `$out`/`$merge`) without server-side JavaScript (`$where`, `$function`,
+// `$accumulator`, code values) (`ReadOnlyQueryGuard`; refused before sending otherwise, whatever
+// the app's Safe Mode), then the manager's read-only gate and the read-only session apply
+// (MongoDB has no read-only transaction: `MongoSession.query` runs reads only). Rows stop at
+// `max_rows` (default `defaultMaxRows`, the row cap setting, else 200; at most 1000); the
+// session's statement timeout is 30 s (the pool's brake; `maxTimeMS` on MongoDB).
+// Every run_query with a statement, after the allowlist and the gate, is recorded in History as
+// `.mcp` while History is on; a statement that carries a password is recorded with its string
+// literals redacted (`redactingStrings`) and no error text.
 // Errors never show the connection's host, user, database or file: a failed connect is a
 // generic message, server text is scrubbed (`scrub`).
 // Connections are reached only through `MCPReadSource` (one SQL implementation, the pool).
@@ -64,6 +67,7 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
   case unknownTool
   case missingArgument(String)
   case connectionNotAvailable
+  case aiAccessNotApproved
   case emptyStatement
   case multipleStatements
   case notRead
@@ -78,6 +82,7 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .missingArgument(let name): "Missing or invalid argument: \(name)."
     case .connectionNotAvailable:
       "No connection with this id is available to MCP. Call list_connections for the ids."
+    case .aiAccessNotApproved: "Allow AI access to this connection in Dblore first."
     case .emptyStatement: "The SQL is empty."
     case .multipleStatements: "run_query takes exactly one SQL statement."
     case .notRead:
@@ -107,10 +112,12 @@ nonisolated struct MCPToolResult: Sendable, Equatable {
 }
 
 nonisolated struct MCPToolService: Sendable {
-  /// Saved connections, without passwords
+  /// Every saved connection, allowlisted or not (their policies apply), without passwords
   typealias Connections = @Sendable () async -> [ConnectionHistoryEntry]
   /// Ids of the saved connections MCP may use
   typealias Allowlist = @Sendable () async -> Set<UUID>
+  /// The app's AI settings; nil when they cannot be read
+  typealias AISettingsReader = @Sendable () async -> AIConfiguration?
 
   static let defaultMaxRows = 200
   static let maxRowsLimit = 1_000
@@ -167,6 +174,8 @@ nonisolated struct MCPToolService: Sendable {
 
   private let connections: Connections
   private let allowlist: Allowlist
+  private let aiSettings: AISettingsReader
+  private let gate: AIAccessGate
   private let source: any MCPReadSource
   private let recorder: any QueryHistoryRecording
   private let historyEnabled: @Sendable () async -> Bool
@@ -175,12 +184,15 @@ nonisolated struct MCPToolService: Sendable {
 
   init(
     connections: @escaping Connections, allowlist: @escaping Allowlist,
-    source: any MCPReadSource, recorder: any QueryHistoryRecording,
-    historyEnabled: @escaping @Sendable () async -> Bool,
-    defaultMaxRows: @escaping @Sendable () async -> Int = { Self.defaultMaxRows }
+    aiSettings: @escaping AISettingsReader, source: any MCPReadSource,
+    recorder: any QueryHistoryRecording, historyEnabled: @escaping @Sendable () async -> Bool,
+    defaultMaxRows: @escaping @Sendable () async -> Int = { Self.defaultMaxRows },
+    gate: AIAccessGate = .shared
   ) {
     self.connections = connections
     self.allowlist = allowlist
+    self.aiSettings = aiSettings
+    self.gate = gate
     self.source = source
     self.recorder = recorder
     self.historyEnabled = historyEnabled
@@ -221,14 +233,19 @@ nonisolated struct MCPToolService: Sendable {
 
   private func listConnections() async -> String {
     let allowed = await allowlist()
-    let listed = await connections()
+    let settings = await readAISettings()
+    let saved = await connections()
+    let listed =
+      saved
       .filter { allowed.contains($0.id) }
+      .filter { decision(for: $0, saved: saved, settings: settings) != .denied }
       .map { (id: $0.id, name: Self.label(of: $0.config), engine: $0.config.databaseType.rawValue) }
       .sorted { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
     return MCPResultEncoder.encodeConnections(listed)
   }
 
-  /// The allowlist check every connection-scoped tool starts with.
+  /// The allowlist and AI access checks every connection-scoped tool starts with. Only an
+  /// allowlisted entry is returned; every saved row of its identity tightens the decision.
   private func allowedEntry(
     _ arguments: [String: JSONValue]
   ) async throws
@@ -237,10 +254,33 @@ nonisolated struct MCPToolService: Sendable {
     guard let raw = Self.string(arguments["connection_id"]) else {
       throw MCPToolError.missingArgument("connection_id")
     }
+    let saved = await connections()
     guard let id = UUID(uuidString: raw), await allowlist().contains(id),
-      let entry = await connections().first(where: { $0.id == id })
+      let entry = saved.first(where: { $0.id == id })
     else { throw MCPToolError.connectionNotAvailable }
-    return entry
+    switch decision(for: entry, saved: saved, settings: await readAISettings()) {
+    case .allowed: return entry
+    case .needsApproval: throw MCPToolError.aiAccessNotApproved
+    case .denied: throw MCPToolError.connectionNotAvailable
+    }
+  }
+
+  /// The gate's decision on `entry` with the policy of every saved row of its identity, so no
+  /// looser row (allowlisted or not) opens a connection another row keeps private.
+  private func decision(
+    for entry: ConnectionHistoryEntry, saved: [ConnectionHistoryEntry], settings: AIConfiguration
+  ) -> AIAccessGate.Decision {
+    let key = AIAccessGate.sessionKey(for: entry.config)
+    let policies = saved.filter { AIAccessGate.sessionKey(for: $0.config) == key }
+      .map(\.config.aiAccess)
+    return gate.decision(for: entry.config, settings: settings, savedPolicies: policies)
+  }
+
+  /// The AI settings, or when unreadable a default that asks (fail closed).
+  private func readAISettings() async -> AIConfiguration {
+    await aiSettings()
+      ?? AIConfiguration(
+        activeProvider: nil, configs: [:], defaultConnectionAccess: .askOncePerSession)
   }
 
   private func runQuery(

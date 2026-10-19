@@ -20,8 +20,9 @@ struct AIMessageView: View {
   let dialect: SQLDialect
   /// Restarts the conversation from this entry; nil hides the button
   var onRetry: (() -> Void)?
-  /// Restarts the conversation from this entry with edited text; nil hides the button
-  var onEdit: ((String) -> Void)?
+  /// Restarts the conversation from this entry with edited text and returns true when sent
+  /// (a refused edit stays open); nil hides the button
+  var onEdit: ((String) -> Bool)?
   /// Label of this entry's first ```sql run block ("Ran", "Failed" or "Not run"); other run
   /// blocks are "Not run". nil while the reply streams: no label yet.
   var firstRunLabel: String? = "Not run"
@@ -121,8 +122,7 @@ struct AIMessageView: View {
       HStack(spacing: Spacing.sm) {
         Button("Cancel") { isEditing = false }
         Button("Send") {
-          isEditing = false
-          onEdit?(editText)
+          if onEdit?(editText) == true { isEditing = false }
         }
         .disabled(!canSendEdit)
       }

@@ -39,7 +39,8 @@ struct MCPMongoLiveTests {
     let id = entry.id
     let pool = MCPConnectionPool(entry: { $0 == id ? saved : nil })
     let service = MCPToolService(
-      connections: { [entry] }, allowlist: { [id] }, source: MCPSQLReadSource(pool: pool),
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool),
       recorder: history, historyEnabled: { true })
     let call: Call = { tool, arguments in
       await service.call(

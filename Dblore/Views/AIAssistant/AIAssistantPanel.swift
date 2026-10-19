@@ -376,6 +376,13 @@ struct AIAssistantPanel: View {
 
   private var footer: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
+      if let pending = assistant.pendingApproval {
+        approvalPrompt(pending)
+      } else if let note = assistant.privateNote {
+        Label(Self.privateNoteText(note), systemImage: "lock")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+      }
       if activeTab?.isReadOnlySource == true, !assistant.needsSetup {
         readOnlySourceQuickActions
       } else if canExplain || canFixError {
@@ -398,11 +405,29 @@ struct AIAssistantPanel: View {
     .padding(Spacing.md)
   }
 
+  private static func privateNoteText(_ note: AIAssistantViewModel.PrivateNote) -> String {
+    switch note {
+    case .messageOnly:
+      "This connection is private to AI: only your new message is sent, without schema or "
+        + "earlier messages."
+    case .draftHeld:
+      "This draft holds query or error text from a connection that is private to AI. "
+        + "Clear it to ask a general question."
+    case .draftFromOtherConnection:
+      "This draft holds query or error text from another connection, so it was not sent. "
+        + "Clear it to ask about this connection."
+    case .retryHeld:
+      "Retry is off while this connection is private to AI. Type a new question instead."
+    }
+  }
+
   private var quickActions: some View {
     HStack(spacing: Spacing.xs) {
       if canExplain {
         Button("Explain query") {
-          if let sql = currentSQL { assistant.explain(sql: sql) }
+          if let sql = currentSQL {
+            assistant.explain(sql: sql, sessionKey: activeTab?.aiSessionKey)
+          }
         }
         .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
@@ -410,11 +435,29 @@ struct AIAssistantPanel: View {
       if canFixError {
         Button("Fix error") {
           if let sql = currentSQL, let error = lastError {
-            assistant.fixError(sql: sql, error: error)
+            // `aiLastError` only offers an error stamped with the tab's key
+            assistant.fixError(sql: sql, error: error, sessionKey: activeTab?.aiSessionKey)
           }
         }
         .buttonStyle(AIChipButtonStyle())
         .disabled(assistant.isGenerating)
+      }
+    }
+  }
+
+  /// Nothing is sent until the user allows the connection for this session
+  private func approvalPrompt(_ pending: AIAssistantViewModel.PendingApproval) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      Text("Allow AI for \(pending.connectionName) this session?")
+        .font(.small)
+        .foregroundColor(.foreground)
+        .fixedSize(horizontal: false, vertical: true)
+      HStack(spacing: Spacing.xs) {
+        Spacer()
+        Button("Not now") { assistant.dismissPendingTurn() }
+          .buttonStyle(GhostButtonStyle())
+        Button("Allow") { assistant.allowPendingTurn() }
+          .buttonStyle(PrimaryButtonStyle())
       }
     }
   }

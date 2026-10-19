@@ -10,21 +10,26 @@ nonisolated enum AIPrompts {
 
   /// System prompt for the connection's query language: MongoDB gets the mongosh subset prompt
   /// and never a SQL one; every other dialect is a SQL engine. `screen` (the collection screen
-  /// shown) only reaches the MongoDB prompt.
+  /// shown) only reaches the MongoDB prompt. Non-empty `rules` (the connection's AI rules, only
+  /// when AI may read the connection) end the prompt in their own labelled section.
   static func system(
     databaseName: String?, schema: String, dialect: SQLDialect = .postgresql,
-    runsQueries: Bool = false, compact: Bool = false, screen: AIMongoAssist.Screen? = nil
+    runsQueries: Bool = false, compact: Bool = false, screen: AIMongoAssist.Screen? = nil,
+    rules: String = ""
   ) -> String {
-    switch dialect {
-    case .mongodb:
-      mongoSystem(
-        databaseName: databaseName, schema: schema, runsQueries: runsQueries, compact: compact,
-        screen: screen)
-    default:
-      sqlSystem(
-        databaseName: databaseName, schema: schema, dialect: dialect, runsQueries: runsQueries,
-        compact: compact)
-    }
+    let prompt =
+      switch dialect {
+      case .mongodb:
+        mongoSystem(
+          databaseName: databaseName, schema: schema, runsQueries: runsQueries, compact: compact,
+          screen: screen)
+      default:
+        sqlSystem(
+          databaseName: databaseName, schema: schema, dialect: dialect, runsQueries: runsQueries,
+          compact: compact)
+      }
+    let rules = rules.trimmingCharacters(in: .whitespacesAndNewlines)
+    return rules.isEmpty ? prompt : prompt + "\n\nConnection rules (from the user):\n" + rules
   }
 
   private static func sqlSystem(

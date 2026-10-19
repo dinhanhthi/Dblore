@@ -205,6 +205,24 @@ struct AIPromptsTests {
     #expect(filter.contains("one filter document"))
   }
 
+  @Test(
+    "Connection rules are a labelled section of the full and compact prompts, absent when empty",
+    arguments: zip([SQLDialect.postgresql, .postgresql, .mongodb], [false, true, true]))
+  func connectionRulesSection(dialect: SQLDialect, compact: Bool) {
+    let rules = "Never read the payments table."
+    let prompt = AIPrompts.system(
+      databaseName: "shop", schema: "t(id)", dialect: dialect, compact: compact, rules: rules)
+    #expect(prompt.hasSuffix("Connection rules (from the user):\n\(rules)"))
+    #expect(
+      prompt.hasPrefix(
+        AIPrompts.system(databaseName: "shop", schema: "t(id)", dialect: dialect, compact: compact)
+      ))
+
+    let empty = AIPrompts.system(
+      databaseName: "shop", schema: "t(id)", dialect: dialect, compact: compact, rules: "  \n")
+    #expect(!empty.contains("Connection rules"))
+  }
+
   @Test func queryShownPlaceholderContainsRowCount() {
     #expect(AIPrompts.queryShownPlaceholder(rowCount: 7).contains("7 row"))
   }

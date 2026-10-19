@@ -9,6 +9,18 @@
 import Foundation
 
 extension WorkspaceManager {
+  /// A tab can still show a collection of the previous connection: the AI screen context and
+  /// one-shot use only one the loaded schema of this connection lists (database nil: any)
+  func aiListsMongoCollection(database: String?, collection: String) -> Bool {
+    guard schemaConnectionEpoch != nil else { return false }
+    return databaseTables.contains {
+      $0.name == collection && (database == nil || $0.schema == database)
+    }
+      || databaseViews.contains {
+        $0.name == collection && (database == nil || $0.schema == database)
+      }
+  }
+
   /// Runs `sql` under a read-only policy, reading at most `modelRowCap + 1` rows so a cut
   /// result is visible. `ReadOnlyQueryGuard` checks it again for the live connection's dialect
   /// (the connection may have changed since the reply was asked for); a refusal is not recorded.
@@ -16,14 +28,18 @@ extension WorkspaceManager {
   /// MySQL, SQLite and MongoDB queries run on a read-only session of their own
   /// (`runOnReadOnlySession`; MongoDB: a plain session that runs reads only, after the guard
   /// refused server-side JavaScript), never the workspace's: no write commits, and the tabs'
-  /// transactions are neither joined nor read. DuckDB runs on the workspace session. Records
-  /// History on success and failure, then rethrows.
+  /// transactions are neither joined nor read. DuckDB runs on the workspace session. Refused
+  /// unless the AI access gate allows the connection. Records History on success and failure,
+  /// then rethrows.
   func runAIQuery(_ sql: String) async throws -> QueryResult {
     guard connectionState.isConnected, let config = workspace.connectionConfig else {
       throw AIAssistantViewModel.QueryRunError.notConnected
     }
     _ = try ReadOnlyQueryGuard.check(
       sql, dialect: config.databaseType.dialect, refuseFileAccess: true)
+    // Only a connection the gate allows runs AI queries (not recorded, like a guard refusal)
+    guard aiAccessSource()?.decision(settings: aiAssistant.settings.configuration) == .allowed
+    else { throw AIAssistantViewModel.QueryRunError.accessNotAllowed }
     let started = ContinuousClock.now
     do {
       let result: QueryResult

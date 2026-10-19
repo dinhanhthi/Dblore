@@ -334,12 +334,23 @@ class WorkspaceManager: Identifiable {
     aiAssistant.schemaSource = { [weak self] in
       guard let self else { return .empty }
       let name = self.workspace.connectionConfig?.database
+      // From a connect until its schema lands the arrays may hold the previous connection's
+      let isLoaded = self.schemaConnectionEpoch != nil
       return AISchemaSnapshot(
-        tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
+        tables: isLoaded ? self.databaseTables : [],
+        foreignKeys: isLoaded ? self.databaseForeignKeys : [],
         databaseName: name?.isEmpty == false ? name : nil,
         dialect: self.workspace.connectionConfig?.databaseType.dialect ?? .postgresql)
     }
-    aiAssistant.mongoScreenSource = { [weak self] in self?.activeViewModel?.aiMongoScreen }
+    aiAssistant.mongoScreenSource = { [weak self] in
+      guard let self, let screen = self.activeViewModel?.aiMongoScreen,
+        self.aiListsMongoCollection(database: screen.database, collection: screen.collection)
+      else { return nil }
+      return screen
+    }
+    aiAssistant.isCurrentMongoCollection = { [weak self] in
+      self?.aiListsMongoCollection(database: $0, collection: $1) ?? false
+    }
     aiAssistant.dialectSource = { [weak self] in
       self?.workspace.connectionConfig?.databaseType.dialect ?? .postgresql
     }
@@ -350,6 +361,7 @@ class WorkspaceManager: Identifiable {
     aiAccessSource = { [weak self] in
       self.flatMap { Self.aiAccessContext(for: $0.workspace.connectionConfig) }
     }
+    aiAssistant.aiAccessSource = { [weak self] in self?.aiAccessSource() }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
     historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }
     historyList.connectionKey = { [weak self] in self?.activeHistoryConnectionKey }
@@ -518,6 +530,7 @@ class WorkspaceManager: Identifiable {
       }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
+      aiAssistant.connectionDidChange()
       if !config.rememberConnection {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential

@@ -82,6 +82,8 @@ extension NotebookViewModel {
     // A confirmed run passes the binds captured with the dialog. Nil reads the live values.
     if boundParameters == nil, refuseMissingParameters(query, cellId: nil) != nil { return }
     let parameters = boundParameters ?? boundParameterValues(for: query, cellId: nil)
+    // Before the query is sent: an error that lands after a switch stays the old connection's
+    let aiSessionKey = self.aiSessionKey
 
     let startTime = Date()
     let notifyStart = ContinuousClock.now
@@ -206,7 +208,8 @@ extension NotebookViewModel {
       editorResult = CellResult.errorResult(
         error.localizedDescription,
         executionTime: executionTime,
-        sourceQuery: query
+        sourceQuery: query,
+        aiSessionKey: aiSessionKey
       )
       recordFailure(error, sql: query, duration: executionTime, source: source)
       completion = Self.isCancellation(error) ? nil : .failed
