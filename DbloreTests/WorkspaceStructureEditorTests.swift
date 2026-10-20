@@ -32,7 +32,7 @@ struct WorkspaceStructureEditorTests {
     workspace.openStructureEditor(schema: "main", table: "items")
     let model = try #require(workspace.structureEditor)
     #expect(workspace.activeViewModel != nil)
-    await waitUntil { model.loadState == .loaded }
+    #expect(await waitUntil { model.loadState == .loaded })
     #expect(model.workingColumns.map(\.column.name) == ["id"])
 
     model.addColumn(
@@ -40,9 +40,10 @@ struct WorkspaceStructureEditorTests {
         name: "note", type: "TEXT", isNullable: true, defaultExpression: nil))
     await model.apply()
     #expect(model.applyError == nil)
-    await waitUntil {
-      workspace.databaseTables.first { $0.name == "items" }?.columns.count == 2
-    }
+    #expect(
+      await waitUntil {
+        workspace.databaseTables.first { $0.name == "items" }?.columns.count == 2
+      })
     #expect(
       workspace.databaseTables.first { $0.name == "items" }?.columns.map(\.name) == [
         "id", "note",
@@ -63,7 +64,7 @@ struct WorkspaceStructureEditorTests {
 
     workspace.openStructureEditor(schema: "main", table: "items")
     let model = try #require(workspace.structureEditor)
-    await waitUntil { model.loadState == .loaded }
+    #expect(await waitUntil { model.loadState == .loaded })
     model.addColumn(
       StructureChange.NewColumn(
         name: "note", type: "TEXT", isNullable: true, defaultExpression: nil))
@@ -90,7 +91,7 @@ struct WorkspaceStructureEditorTests {
 
     workspace.openStructureEditor(schema: "main", table: "items")
     let model = try #require(workspace.structureEditor)
-    await waitUntil { model.loadState == .loaded }
+    #expect(await waitUntil { model.loadState == .loaded })
     model.addColumn(
       StructureChange.NewColumn(
         name: "note", type: "TEXT", isNullable: true, defaultExpression: nil))
@@ -100,7 +101,7 @@ struct WorkspaceStructureEditorTests {
     #expect(!workspace.pendingTransaction.isIdle)
 
     #expect(await workspace.rollback())
-    await waitUntil { model.disabledReason == nil }
+    #expect(await waitUntil { model.disabledReason == nil })
     #expect(model.disabledReason == nil)
     #expect(model.workingColumns.map(\.column.name) == ["id"])
     #expect(model.resultMessage == nil)
@@ -117,14 +118,14 @@ struct WorkspaceStructureEditorTests {
 
     workspace.openStructureEditor(schema: "main", table: "items")
     let model = try #require(workspace.structureEditor)
-    await waitUntil { model.loadState == .loaded }
+    #expect(await waitUntil { model.loadState == .loaded })
     model.renameTable(to: "goods")
     await model.apply()
     #expect(model.applyError == nil)
 
     #expect(workspace.structureEditor === model)
     #expect(model.table == "goods")
-    await waitUntil { model.loadState == .loaded }
+    #expect(await waitUntil { model.loadState == .loaded })
     #expect(model.structure?.name == "goods")
     #expect(workspace.viewModel(for: viewerID)?.dataViewer?.name == "goods")
     #expect(workspace.tabs.first { $0.id == viewerID }?.title == "goods")
@@ -140,13 +141,15 @@ struct WorkspaceStructureEditorTests {
     defer { Task { await workspace.connectionManager.disconnect() } }
     workspace.openDataViewer(schema: "main", name: "items", orderColumns: [])
     let viewerID = try #require(workspace.tabs.first?.id)
+    // Commit is refused while the viewer's page or count read is in flight
+    try #require(await waitUntil { Self.viewerLoaded(workspace, viewerID) })
     workspace.openStructureEditor(schema: "main", table: "items")
     let model = try #require(workspace.structureEditor)
-    await waitUntil { model.loadState == .loaded }
+    try #require(await waitUntil { model.loadState == .loaded })
 
     model.renameTable(to: "goods")
     await model.apply()
-    await waitUntil { !workspace.pendingTransaction.isIdle }
+    #expect(!workspace.pendingTransaction.isIdle)
     #expect(model.table == "items")
     #expect(workspace.viewModel(for: viewerID)?.dataViewer?.name == "items")
 
@@ -154,7 +157,8 @@ struct WorkspaceStructureEditorTests {
     #expect(await workspace.confirmCommit())
     #expect(model.table == "goods")
     #expect(workspace.viewModel(for: viewerID)?.dataViewer?.name == "goods")
-    await waitUntil { model.structure?.name == "goods" && model.disabledReason == nil }
+    #expect(
+      await waitUntil { model.structure?.name == "goods" && model.disabledReason == nil })
     #expect(model.structure?.name == "goods")
     #expect(model.disabledReason == nil)
   }
@@ -172,21 +176,24 @@ struct WorkspaceStructureEditorTests {
     workspace.openStructureEditor(schema: "main", table: "items")
     let model = try #require(workspace.structureEditor)
 
-    func dropPending() async {
-      await waitUntil { model.loadState == .loaded && model.disabledReason == nil }
+    // Commit and Rollback are refused while the viewer's page or count read is in flight
+    func dropPending() async throws {
+      try #require(await waitUntil { Self.viewerLoaded(workspace, viewerID) })
+      try #require(
+        await waitUntil { model.loadState == .loaded && model.disabledReason == nil })
       model.requestDropTable()
       await model.confirmDropTable(typedName: "items")
-      await waitUntil { !workspace.pendingTransaction.isIdle }
+      #expect(!workspace.pendingTransaction.isIdle)
     }
 
-    await dropPending()
+    try await dropPending()
     #expect(model.resultMessage == StructureEditorModel.pendingMessage)
     #expect(workspace.tabs.contains { $0.id == viewerID })
     #expect(await workspace.rollback())
     #expect(workspace.tabs.contains { $0.id == viewerID })
     #expect(workspace.structureEditor === model)
 
-    await dropPending()
+    try await dropPending()
     workspace.requestCommit()
     #expect(await workspace.confirmCommit())
     #expect(!workspace.tabs.contains { $0.id == viewerID })
@@ -225,14 +232,22 @@ struct WorkspaceStructureEditorTests {
     return workspace
   }
 
+  /// The data viewer tab's first page and row count were read (neither is in flight any more)
+  private static func viewerLoaded(_ workspace: WorkspaceManager, _ id: UUID) -> Bool {
+    guard let viewer = workspace.viewModel(for: id) else { return false }
+    return viewer.dataViewer?.totalRows != nil && !viewer.isEditorQueryRunning
+  }
+
+  /// Polls `condition` until it holds; false on timeout (generous: the full suite runs slowly)
   private func waitUntil(
-    _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(10)
-  ) async {
+    _ condition: @MainActor () -> Bool, timeout: Duration = .seconds(30)
+  ) async -> Bool {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
     while clock.now < deadline {
-      if condition() { return }
+      if condition() { return true }
       try? await Task.sleep(for: .milliseconds(20))
     }
+    return condition()
   }
 }
