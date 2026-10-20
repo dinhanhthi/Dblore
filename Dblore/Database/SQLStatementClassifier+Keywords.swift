@@ -129,9 +129,11 @@ nonisolated extension SQLStatementClassifier {
   /// `POSTGRES_SCAN_PUSHDOWN`, `POSTGRES_QUERY`, `POSTGRES_EXECUTE`, `POSTGRES_ATTACH`,
   /// `MYSQL_SCAN`, `MYSQL_QUERY`, `MYSQL_EXECUTE`, ...), and the sqlite, iceberg and delta
   /// extensions open other databases or remote tables (`SQLITE_SCAN`, `SQLITE_ATTACH`,
-  /// `ICEBERG_SCAN`, `ICEBERG_METADATA`, `ICEBERG_SNAPSHOTS`, `DELTA_SCAN`, ...).
+  /// `ICEBERG_SCAN`, `ICEBERG_METADATA`, `ICEBERG_SNAPSHOTS`, `DELTA_SCAN`, ...). `JSON_EXECUTE`
+  /// (`JSON_EXECUTE_SERIALIZED_SQL`) runs SQL serialized into a string, which the classifier
+  /// cannot see either.
   static let duckdbSideEffectFunctionPrefixes: [String] = [
-    "POSTGRES_", "MYSQL_", "SQLITE_", "ICEBERG_", "DELTA_",
+    "POSTGRES_", "MYSQL_", "SQLITE_", "ICEBERG_", "DELTA_", "JSON_EXECUTE",
   ]
 
   /// Restore only (`SQLRestorePlan.isDumpSchema`), on top of `duckdbSideEffectFunctions` and
