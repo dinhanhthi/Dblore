@@ -73,6 +73,54 @@ struct ProtectedTransactionTests {
 
   // MARK: - Protected ON
 
+  @Test("A failed Data Rewind read does not abort the transaction; Commit marks entries committed")
+  func rewindCaptureFailureKeepsTransaction() async throws {
+    let table = "p21_rewind_capture"
+    let (manager, observer) = try await setUp(table)
+    let storeURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-rewind-pg-\(UUID().uuidString).sqlite")
+    defer {
+      for suffix in ["", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: storeURL.path + suffix)
+      }
+    }
+    let store = try RewindStore(url: storeURL)
+    let recorder = RewindRecorder(store: store)
+    await manager.setRewindRecorder(recorder)
+    let resolved = try #require(try await manager.fetchEditTable(tableName: "public.\(table)"))
+    let target = EditTarget(
+      qualifiedName: resolved.qualifiedName, tableID: resolved.resolvedTableRef,
+      primaryKeyColumns: resolved.primaryKeyColumns, connectionEpoch: resolved.connectionEpoch,
+      updateOnly: resolved.updateOnly, schema: resolved.schema, name: resolved.name)
+    let step = RewindPlan.Step(operation: .update, keyBefore: [.int(1)], keyAfter: [.int(1)])
+    let good = RewindPlan(
+      target: target,
+      columns: [RewindColumn(name: "id", typeName: "int4"), .init(name: "v", typeName: "int4")],
+      editKind: .inline, steps: [step])
+    var bad = good
+    bad.columns.append(RewindColumn(name: "nope", typeName: "int4"))
+    for (value, plan) in [("20", good), ("30", bad)] {
+      let edit = try CellUpdateStatement.make(
+        qualifiedName: target.qualifiedName, columnName: "v", newValue: value,
+        primaryKeyColumns: ["id"], rowData: ["id": .int(1)], updateOnly: target.updateOnly)
+      _ = try await manager.executeGatedUpdate(
+        edit, policy: open, connectionEpoch: target.connectionEpoch, rewind: plan)
+    }
+    #expect(!(await isAborted(manager)))
+
+    try await manager.commitAppTransaction(
+      expectedGeneration: await manager.transactionStatus().generation)
+    #expect(try await value(observer, table) == .int(30))
+    await recorder.flushed()
+    let entries = try store.entries(connectionKey: nil)
+    #expect(entries.map(\.notCaptured) == [true, false])
+    #expect(entries.allSatisfy { $0.state == .committed })
+    let captured = try #require(try store.rows(entryID: entries[1].id).first)
+    #expect(captured.before == ["id": "1", "v": "10"])
+    #expect(captured.after == ["id": "1", "v": "20"])
+    await tearDown(table, manager, observer)
+  }
+
   @Test("UPDATE then Rollback: row unchanged, state back to idle")
   func updateThenRollback() async throws {
     let table = "p1_tx_rollback"

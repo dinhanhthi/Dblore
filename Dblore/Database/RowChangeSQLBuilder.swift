@@ -37,6 +37,14 @@ nonisolated enum RowChangeSQLBuilder {
     }
   }
 
+  /// The Data Rewind step of each statement `statements(for:...)` returns, in the same order.
+  /// An INSERT is read back only when its values hold every key column (D4).
+  static func rewindSteps(
+    for set: RowChangeSet, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
+  ) -> [RewindPlan.Step] {
+    drafts(for: set, target: target, columns: columns, dialect: dialect).compactMap(\.rewindStep)
+  }
+
   static func previewText(
     for set: RowChangeSet, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
   ) -> String {
@@ -55,21 +63,28 @@ nonisolated enum RowChangeSQLBuilder {
     // Without a key a WHERE would match every row: no UPDATE or DELETE (no ctid-style edits).
     let keyed = !target.primaryKeyColumns.isEmpty
     for row in set.deletes where keyed {
-      result.append(delete(row, relation: relation, only: only, target: target, dialect: dialect))
+      var draft = delete(row, relation: relation, only: only, target: target, dialect: dialect)
+      draft.rewindStep = RewindPlan.Step(operation: .delete, keyBefore: row.values, keyAfter: nil)
+      result.append(draft)
     }
     for (row, changes) in set.edits where keyed {
-      if let update = update(
+      if var update = update(
         row, changes: changes, originals: set.originals[row] ?? [:], relation: relation,
         only: only, target: target, columns: columns, dialect: dialect)
       {
+        update.rewindStep = RewindPlan.Step(
+          operation: .update, keyBefore: row.values, keyAfter: row.values)
         result.append(update)
       }
     }
     for insert in set.inserts {
-      result.append(
-        insertStatement(
-          insert.values, relation: relation, columns: columns,
-          generated: target.generatedColumns, dialect: dialect))
+      var draft = insertStatement(
+        insert.values, relation: relation, columns: columns,
+        generated: target.generatedColumns, dialect: dialect)
+      draft.rewindStep = RewindPlan.Step(
+        operation: .insert, keyBefore: nil,
+        keyAfter: insertedKey(insert.values, target: target, columns: columns))
+      result.append(draft)
     }
     return result
   }
@@ -124,6 +139,23 @@ nonisolated enum RowChangeSQLBuilder {
       draft.rowCheck = RowExistenceCheck(sql: bound.sql, values: bound.values)
     }
     return draft
+  }
+
+  /// The key an INSERT of `values` writes, or nil when a key column is left to the database:
+  /// missing, NULL, generated, or not a column the INSERT sends.
+  private static func insertedKey(
+    _ values: [String: CellValue], target: EditTarget, columns: [ColumnInfo]
+  ) -> [CellValue]? {
+    let sent = Set(columns.map(\.name))
+    var key: [CellValue] = []
+    for column in target.primaryKeyColumns {
+      guard let value = values[column], sent.contains(column),
+        !target.generatedColumns.contains(column)
+      else { return nil }
+      if case .null = value { return nil }
+      key.append(value)
+    }
+    return key.isEmpty ? nil : key
   }
 
   /// True when `original` is loaded and binds the same text as `value` (the server would
@@ -196,6 +228,8 @@ private nonisolated struct StatementDraft {
   private var segments: [Segment] = []
   /// The row check of a MySQL UPDATE (`BoundStatement.rowCheck`)
   var rowCheck: RowExistenceCheck? = nil
+  /// What Data Rewind reads around this statement (`RowChangeSQLBuilder.rewindSteps`)
+  var rewindStep: RewindPlan.Step? = nil
 
   mutating func text(_ text: String) {
     segments.append(.text(text))

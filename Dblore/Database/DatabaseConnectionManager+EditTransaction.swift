@@ -5,6 +5,8 @@
 // A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement.
 // MySQL counts changed rows (CLIENT_FOUND_ROWS is off): an UPDATE with a row check that
 // affects 0 rows counts as 1 when a locking read still finds the row (a same-value write).
+// A `RewindPlan` adds the Data Rewind reads around each statement (`+Rewind.swift`); without
+// one the statements sent are unchanged.
 
 import Foundation
 
@@ -23,10 +25,12 @@ extension DatabaseConnectionManager {
   /// it as pending. When the edit fails or does not update exactly one row it is undone with
   /// `ROLLBACK TO SAVEPOINT`: the transaction and its other pending changes stay intact (not
   /// aborted), nothing is recorded, and a transaction opened by this edit alone is rolled back.
+  /// With `rewind`, the entry is recorded pending after RELEASE (Commit decides).
   /// - Throws: `DatabaseError.editRowCountMismatch(rolledBack: true)`; the edit's error; a
   ///   savepoint failure (the transaction then follows `transactionFailure`).
   func runProtectedEdit(
-    _ statement: CellUpdateStatement, classified: ClassifiedStatement?, caller: UUID?
+    _ statement: CellUpdateStatement, classified: ClassifiedStatement?, caller: UUID?,
+    rewind: RewindPlan? = nil
   ) async throws -> Int {
     try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
     let opens = txState.isIdle
@@ -36,9 +40,10 @@ extension DatabaseConnectionManager {
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
+    var capture = startRewindCapture(rewind, statementCount: 1)
     let rows: Int
     do {
-      rows = try await sendEdit(statement)
+      rows = try await sendEdit(statement, capture: &capture)
     } catch {
       throw await undoEdit(error, openedHere: opens)
     }
@@ -51,6 +56,7 @@ extension DatabaseConnectionManager {
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
+    recordRewind(capture, committed: false)
     if let classified {
       recordPending(
         StatementSummary(
@@ -64,20 +70,31 @@ extension DatabaseConnectionManager {
   /// rolled back. With a user transaction open (`userTxOpen`): no nested BEGIN, the edit runs
   /// inside it and a row count other than 1 is reported WITHOUT rolling back the user's
   /// transaction (the user decides; an edit error leaves it aborted on the server, as any failing
-  /// statement would).
+  /// statement would). With `rewind`, the entry is recorded committed after the app's COMMIT,
+  /// or pending inside the user's transaction (the user's COMMIT / ROLLBACK decides).
   /// - Throws: `DatabaseError.editRowCountMismatch`; the edit or COMMIT error.
-  func runUnprotectedEdit(_ statement: CellUpdateStatement) async throws -> Int {
+  func runUnprotectedEdit(
+    _ statement: CellUpdateStatement, rewind: RewindPlan? = nil
+  ) async throws -> Int {
+    var capture = startRewindCapture(rewind, statementCount: 1)
     if userTxOpen {
-      let rows = try await sendEdit(statement)
+      let rows: Int
+      do {
+        rows = try await sendEdit(statement, capture: &capture)
+      } catch {
+        discardUserEntriesIfLost(capture)
+        throw error
+      }
       guard rows == 1 else {
         throw DatabaseError.editRowCountMismatch(updated: rows, rolledBack: false)
       }
+      recordRewind(capture, committed: false)
       return rows
     }
     _ = try await sendTransactionControl(appOwnedBeginSQL)
     let rows: Int
     do {
-      rows = try await sendEdit(statement)
+      rows = try await sendEdit(statement, capture: &capture)
     } catch {
       _ = try? await sendTransactionControl("ROLLBACK")
       throw error
@@ -91,6 +108,7 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "The server rolled back the edit instead of saving it.")
     }
+    recordRewind(capture, committed: true)
     return rows
   }
 
@@ -103,24 +121,28 @@ extension DatabaseConnectionManager {
   /// back (a COMMIT that fails is followed by ROLLBACK). Unprotected with a user transaction
   /// already open: use a savepoint so a failed chunk cannot leave earlier chunks committable.
   /// `progress` gets the number of statements done after each one (SQL dump restore).
+  /// `rewind` (one step per statement) records the Data Rewind entry after RELEASE / COMMIT:
+  /// committed after the app's own COMMIT, else pending until the transaction ends.
   func runStagedBatch(
     _ statements: [BoundStatement], caller: UUID?, protectedMode: Bool,
-    cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil
+    cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil,
+    rewind: RewindPlan? = nil
   ) async throws -> [Int] {
     if protectedMode {
       return try await runProtectedBatch(
         statements, caller: caller, cancellationGeneration: cancellationGeneration,
-        progress: progress)
+        progress: progress, rewind: rewind)
     }
     return try await runUnprotectedBatch(
-      statements, cancellationGeneration: cancellationGeneration, progress: progress)
+      statements, cancellationGeneration: cancellationGeneration, progress: progress,
+      rewind: rewind)
   }
 
   // MARK: - Private
 
   private func runProtectedBatch(
     _ statements: [BoundStatement], caller: UUID?, cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?
+    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?
   ) async throws -> [Int] {
     try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
     let opens = txState.isIdle
@@ -130,11 +152,12 @@ extension DatabaseConnectionManager {
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
+    var capture = startRewindCapture(rewind, statementCount: statements.count)
     let counts: [Int]
     do {
       counts = try await applyBatch(
         statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-        progress: progress)
+        progress: progress, capture: &capture)
       try refuseCancelledBatch(since: cancellationGeneration)
     } catch {
       throw await undoBatch(error, openedHere: opens)
@@ -145,26 +168,30 @@ extension DatabaseConnectionManager {
       throw await transactionFailure(error, openedHere: opens)
     }
     recordBatch(statements, counts: counts)
+    recordRewind(capture, committed: false)
     noteSchemaSQL(statements)
     return counts
   }
 
   private func runUnprotectedBatch(
     _ statements: [BoundStatement], cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?
+    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?
   ) async throws -> [Int] {
+    var capture = startRewindCapture(rewind, statementCount: statements.count)
     if userTxOpen {
       _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
       let counts: [Int]
       do {
         counts = try await applyBatch(
           statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-          progress: progress)
+          progress: progress, capture: &capture)
         try refuseCancelledBatch(since: cancellationGeneration)
       } catch {
+        discardUserEntriesIfLost(capture)
         throw await undoBatch(error, openedHere: false)
       }
       _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+      recordRewind(capture, committed: false)
       noteSchemaSQL(statements)
       return counts
     }
@@ -173,7 +200,7 @@ extension DatabaseConnectionManager {
     do {
       counts = try await applyBatch(
         statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-        progress: progress)
+        progress: progress, capture: &capture)
       try refuseCancelledBatch(since: cancellationGeneration)
     } catch {
       _ = try? await sendTransactionControl("ROLLBACK")
@@ -193,15 +220,17 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "The server rolled back the batch instead of saving it.")
     }
+    recordRewind(capture, committed: true)
     noteSchemaSQL(statements)
     return counts
   }
 
   /// Send each statement and check its expected affected rows when set. The caller owns the
-  /// transaction. `rolledBack` is only the flag on the thrown error.
+  /// transaction. `rolledBack` is only the flag on the thrown error. With a `capture`, each
+  /// statement's row is read right before and right after it.
   private func applyBatch(
     _ statements: [BoundStatement], rolledBack: Bool, cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?
+    progress: (@Sendable (Int) -> Void)?, capture: inout RewindCapture?
   ) async throws -> [Int] {
     var counts: [Int] = []
     counts.reserveCapacity(statements.count)
@@ -209,6 +238,8 @@ extension DatabaseConnectionManager {
       try refuseCancelledBatch(since: cancellationGeneration)
       let rows: Int
       do {
+        // A capture read that throws lost the transaction: fail as the statement would
+        try await captureBefore(index, into: &capture)
         rows = try await sendBound(statement)
       } catch {
         try refuseCancelledBatch(since: cancellationGeneration)
@@ -223,12 +254,33 @@ extension DatabaseConnectionManager {
         throw Self.batchStatementFailed(
           index, sql: statement.sql, reason: reason, rolledBack: rolledBack)
       }
+      do {
+        try await captureAfter(index, into: &capture)
+      } catch {
+        throw Self.batchStatementFailed(
+          index, sql: statement.sql, underlying: error, rolledBack: rolledBack)
+      }
       // SQLite's sqlite3_changes64 can retain the previous DML count after CREATE TABLE.
       let isDDL = classification(of: statement)?.kind == .ddl
       counts.append(statement.expectedRows == nil && isDDL ? 0 : rows)
       progress?(counts.count)
     }
     return counts
+  }
+
+  /// Inside the user's transaction, a capture read that lost it (MySQL rolls it back whole on
+  /// a deadlock) took the earlier statements with it: their Data Rewind entries are discarded,
+  /// so the user's later COMMIT (answered OK with no transaction left) cannot commit them.
+  private func discardUserEntriesIfLost(_ capture: RewindCapture?) {
+    if capture?.transactionLost == true { closeRewindEntries(as: .discarded) }
+  }
+
+  /// The same for the edit's own statement: a MySQL deadlock (ER_LOCK_DEADLOCK) rolls the
+  /// user's transaction back whole. A lock wait timeout (1205) undoes the statement alone.
+  /// Checked on the raw error: the thrown `DatabaseError` keeps only its text.
+  private func discardUserEntriesIfRolledBack(_ error: Error) {
+    guard userTxOpen, (error as? MySQLSessionError)?.code == 1213 else { return }
+    closeRewindEntries(as: .discarded)
   }
 
   private func refuseCancelledBatch(since generation: UInt64) throws {
@@ -273,9 +325,15 @@ extension DatabaseConnectionManager {
   }
 
   /// Send the app-built UPDATE (values as bind parameters) and return the command tag row count.
-  private func sendEdit(_ statement: CellUpdateStatement) async throws -> Int {
+  /// With a `capture`, the row is read right before and, when one row was updated, right after.
+  private func sendEdit(
+    _ statement: CellUpdateStatement, capture: inout RewindCapture?
+  ) async throws -> Int {
+    try await captureBefore(0, into: &capture)
     let rows = try await affectedRows(sql: statement.sql, binds: statement.binds)
-    return try await confirmedRows(rows, check: statement.rowCheck)
+    let confirmed = try await confirmedRows(rows, check: statement.rowCheck)
+    if confirmed == 1 { try await captureAfter(0, into: &capture) }
+    return confirmed
   }
 
   private func sendBound(_ statement: BoundStatement) async throws -> Int {
@@ -299,6 +357,7 @@ extension DatabaseConnectionManager {
     } catch let error as DatabaseError {
       throw error
     } catch {
+      discardUserEntriesIfRolledBack(error)
       throw queryFailure(error, query: check.sql, startTime: startTime)
     }
   }
@@ -315,6 +374,7 @@ extension DatabaseConnectionManager {
     } catch let error as DatabaseError {
       throw error
     } catch {
+      discardUserEntriesIfRolledBack(error)
       throw queryFailure(error, query: sql, startTime: startTime)
     }
   }

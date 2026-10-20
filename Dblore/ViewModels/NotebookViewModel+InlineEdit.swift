@@ -217,14 +217,19 @@ extension NotebookViewModel {
   /// True if `target` is still the edit target of a result currently shown for `cellId`
   /// (notebook cell) or of the editor (`cellId == nil`): same generation, not a re-run.
   func isLiveEditTarget(_ target: EditTarget, cellId: UUID?) -> Bool {
+    liveResult(of: target, cellId: cellId) != nil
+  }
+
+  /// The result shown for `cellId` (nil: the editor) whose edit target is `target`
+  private func liveResult(of target: EditTarget, cellId: UUID?) -> CellResult? {
     let results: [CellResult]
     if let cellId {
-      guard let cell = notebook.cells.first(where: { $0.id == cellId }) else { return false }
+      guard let cell = notebook.cells.first(where: { $0.id == cellId }) else { return nil }
       results = [cell.result].compactMap { $0 } + cell.statementResults.map(\.result)
     } else {
       results = [editorResult].compactMap { $0 } + editorStatementResults.map(\.result)
     }
-    return results.contains { $0.editTarget == target }
+    return results.first { $0.editTarget == target }
   }
 
   /// Input text to bind for an edited value. Nil is an explicit NULL. A NULL cell left empty
@@ -352,9 +357,16 @@ extension NotebookViewModel {
       return
     }
 
+    let step = RewindPlan.inlineStep(
+      assignments: assignments, primaryKeyColumns: target.primaryKeyColumns, rowData: rowData)
     let edit = PendingInlineEdit(
       statement: statement, columnNames: columnNames, tableName: target.qualifiedName,
-      cellId: cellId, connectionManager: connectionManager)
+      cellId: cellId, connectionManager: connectionManager,
+      rewindPlan: RewindPlan.make(
+        target: target, resultColumns: liveResult(of: target, cellId: cellId)?.columns ?? [],
+        editKind: .inline, steps: step.map { [$0] } ?? [],
+        engine: notebook.connectionConfig?.databaseType,
+        enabled: historySettings.rewindEnabled))
 
     // Confirm and password ask before anything is sent. Review and immediate do not.
     if resolvedCommitStyle().confirmsWrites,
@@ -411,7 +423,7 @@ extension NotebookViewModel {
         edit.statement,
         policy: protectionPolicy,
         connectionEpoch: target.connectionEpoch, caller: id,
-        commitImmediately: resolvedCommitStyle() != .review)
+        commitImmediately: resolvedCommitStyle() != .review, rewind: edit.rewindPlan)
       scheduleHistory(
         [
           QueryHistoryOutcome(

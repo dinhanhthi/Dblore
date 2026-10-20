@@ -29,6 +29,9 @@ struct PendingStagedBatch: Sendable {
   /// MongoDB staged commit: what each command sends, so the applied ones leave the staged set
   /// by identity. Nil for an inline edit.
   var mongoStagedChanges: MongoStagedChanges? = nil
+  /// Data Rewind reads for a staged commit (`historySource` `.dataViewerEdit` only; an import
+  /// never sends one)
+  var rewindPlan: RewindPlan? = nil
 
   struct MongoInlineEdit: Sendable {
     /// The notebook cell to re-run, nil for the editor or the data viewer
@@ -287,7 +290,7 @@ extension NotebookViewModel {
     do {
       let counts = try await connectionManager.executeGatedBatch(
         batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
-        caller: id)
+        caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil)
       if batch.historySource == .dataViewerEdit { dataViewer?.changeSet = nil }
       // The page reloads with the same key, so a redo would target rows this batch changed
       if dataViewer != nil { undoManager.removeAllActions() }
@@ -506,7 +509,13 @@ extension NotebookViewModel {
       statements: statements,
       preview: RowChangeSQLBuilder.previewText(
         for: set, target: target, columns: columns, dialect: stagingDialect),
-      connectionEpoch: target.connectionEpoch)
+      connectionEpoch: target.connectionEpoch,
+      rewindPlan: RewindPlan.make(
+        target: target, resultColumns: columns, editKind: .staged,
+        steps: RowChangeSQLBuilder.rewindSteps(
+          for: set, target: target, columns: columns, dialect: stagingDialect),
+        engine: notebook.connectionConfig?.databaseType,
+        enabled: historySettings.rewindEnabled))
   }
 
   /// Applies `body` to the current set, creating one for `stagedEditTarget` when needed.

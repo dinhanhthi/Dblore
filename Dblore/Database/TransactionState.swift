@@ -176,6 +176,29 @@ nonisolated enum ProtectedTransactionRules {
     return first == "COMMIT" || first == "END"
   }
 
+  /// A user `ROLLBACK` / `ABORT` that ends the transaction (not `ROLLBACK TO SAVEPOINT`), with
+  /// or without `AND CHAIN`.
+  static func rolledBackUserTransaction(
+    _ statement: ClassifiedStatement, dialect: SQLDialect = .postgresql
+  ) -> Bool {
+    guard statement.kind == .tcl else { return false }
+    let words = SQLTokenizer(dialect: dialect).tokens(statement.text).map { $0.keyword ?? "" }
+    guard let first = words.first, first == "ROLLBACK" || first == "ABORT" else { return false }
+    return !words.contains("TO")
+  }
+
+  /// MySQL: a `BEGIN` / `START TRANSACTION` commits the open transaction before it starts the
+  /// next one. PostgreSQL warns and keeps the open transaction; SQLite refuses the statement.
+  static func beginCommitsOpenTransaction(
+    _ statement: ClassifiedStatement, dialect: SQLDialect
+  ) -> Bool {
+    guard dialect == .mysql, statement.kind == .tcl else { return false }
+    let words = SQLTokenizer(dialect: dialect).tokens(statement.text)
+      .filter { $0.kind == .word }.compactMap(\.keyword)
+    let first = words.first ?? ""
+    return first == "BEGIN" || (first == "START" && words.dropFirst().first == "TRANSACTION")
+  }
+
   /// Statements that may change the schema (fail closed: DDL, also under EXPLAIN ANALYZE,
   /// utility and unrecognized statements) invalidate the cached inline edit tables.
   static func invalidatesEditTables(_ statement: ClassifiedStatement) -> Bool {

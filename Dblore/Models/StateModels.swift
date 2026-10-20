@@ -207,6 +207,8 @@ struct PendingInlineEdit: Equatable, Sendable {
   let tableName: String
   let cellId: UUID?
   let connectionManager: DatabaseConnectionManager
+  /// Data Rewind reads around the UPDATE, nil when nothing is recorded
+  var rewindPlan: RewindPlan? = nil
 
   static func == (lhs: PendingInlineEdit, rhs: PendingInlineEdit) -> Bool {
     lhs.statement == rhs.statement && lhs.columnNames == rhs.columnNames
