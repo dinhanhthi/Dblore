@@ -56,14 +56,14 @@ actor QueryHistoryStore {
     }
   }
 
-  /// Finishes the version-2 to version-4 migrations on this actor. A failure is logged and
+  /// Finishes the version-2 to version-5 migrations on this actor. A failure is logged and
   /// rethrown; the file stays on its version and the process keeps running. SQLITE_BUSY or
   /// SQLITE_LOCKED (another connection held the file past the busy timeout) is not stored, so the
   /// next call tries again. Any other error is stored and later calls rethrow it without another
   /// attempt, so history stays unavailable for the session.
   private func prepare() throws {
     if let migrationError { throw migrationError }
-    guard database.userVersion < 4 else { return }
+    guard database.userVersion < 5 else { return }
     do {
       try Self.migrate(database)
     } catch {
@@ -250,7 +250,7 @@ actor QueryHistoryStore {
   /// Version 1 creates the original table. Version 2 adds `kind` and backfills it in one
   /// transaction. If that fails, the file stays on version 1 with no second table. Version 3
   /// indexes the row's source and kind badges (`tags`), so "AI Assistant" finds those rows.
-  /// Version 4 rebuilds `tags` with the dump and restore sources.
+  /// Version 4 rebuilds `tags` with the dump and restore sources, version 5 with rewind.
   private static func migrate(_ database: SQLiteHandle) throws {
     if database.userVersion < 1 {
       try createVersion1(database)
@@ -263,6 +263,9 @@ actor QueryHistoryStore {
     }
     if database.userVersion < 4 {
       try rebuildTags(database, version: 4)
+    }
+    if database.userVersion < 5 {
+      try rebuildTags(database, version: 5)
     }
   }
 

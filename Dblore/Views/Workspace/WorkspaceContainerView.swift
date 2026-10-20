@@ -371,6 +371,7 @@ struct WorkspaceContainerView: View {
     .modifier(
       BackupPanel(workspaceManager: workspaceManager, sheet: $backupSheet, tabID: backupTabID)
     )
+    .modifier(DataRewindPanel(workspaceManager: workspaceManager))
     .favoriteFormPanel(workspaceManager: workspaceManager)
     .pendingTransactionDetailsModal(workspaceManager: workspaceManager)
     // Right sidebars above run the full window height, like the content

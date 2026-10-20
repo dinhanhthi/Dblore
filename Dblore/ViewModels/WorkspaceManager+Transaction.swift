@@ -358,6 +358,8 @@ extension WorkspaceManager {
     mongoImport = nil
     mongoBackup?.model.dismiss()
     mongoBackup = nil
+    dataRewind?.model.sheetDisappeared()
+    dataRewind = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

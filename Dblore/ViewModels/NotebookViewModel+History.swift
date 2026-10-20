@@ -14,6 +14,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
   case dataViewerEdit
   case dataImport
   case structure
+  case rewind
   case `internal`
 
   var stored: QueryHistoryEntry.Source? {
@@ -23,6 +24,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
     case .dataViewerEdit: .dataViewerEdit
     case .dataImport: .dataImport
     case .structure: .structure
+    case .rewind: .rewind
     case .internal: nil
     }
   }

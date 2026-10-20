@@ -249,11 +249,11 @@ struct QueryHistoryStoreTests {
       #expect(empty.userVersion == 0)
     }
     let store = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
     #expect(try await store.fileSize() > 0)
     #expect(try await store.count() == 0)
     let reopened = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
     #expect(try await reopened.count() == 0)
   }
 
@@ -284,7 +284,7 @@ struct QueryHistoryStoreTests {
 
     let store = try QueryHistoryStore(url: url)
     let loaded = try await store.search(text: "", scope: .all, limit: 50, offset: 0)
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
     let info = try SQLiteHandle(url: url)
     let tables = try info.prepare(
       "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'history'")
@@ -334,12 +334,13 @@ struct QueryHistoryStoreTests {
     let store = try QueryHistoryStore(url: url)
     let found = try await store.search(text: "AI Assistant", scope: .all, limit: 10, offset: 0)
     #expect(found.map(\.sql) == ["SELECT 1"])
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
   }
 
   @Test(
-    "A v3 file rebuilds its tags, so dump and restore rows get their badges and keep their data")
-  func version3MigratesTagsToVersion4() async throws {
+    "A v3 file rebuilds its tags, so dump, restore and rewind rows get their badges and keep their data"
+  )
+  func version3MigratesTagsToCurrentVersion() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let key = "PostgreSQL|h|5432|d|u"
@@ -349,6 +350,7 @@ struct QueryHistoryStoreTests {
         (sql: "nightly backup of shop", key: key, source: "dump", kind: "read"),
         (sql: "seven statements back", key: key, source: "restore", kind: "schema"),
         (sql: "UPDATE t SET a = 1", key: key, source: "editor", kind: "write"),
+        (sql: "UPDATE t SET a = 0", key: key, source: "rewind", kind: "write"),
       ])
     func tags(_ database: SQLiteHandle) throws -> [String?] {
       let statement = try database.prepare("SELECT tags FROM history ORDER BY id")
@@ -356,18 +358,25 @@ struct QueryHistoryStoreTests {
       while try statement.step() { found.append(statement.columnText(0)) }
       return found
     }
-    // The v3 mapping frozen in the file has no dump or restore case
-    #expect(try tags(SQLiteHandle(url: url)) == ["Editor Read", "Editor Schema", "Editor Write"])
+    // The v3 mapping frozen in the file has no dump, restore or rewind case
+    #expect(
+      try tags(SQLiteHandle(url: url)) == [
+        "Editor Read", "Editor Schema", "Editor Write", "Editor Write",
+      ])
 
     let store = try QueryHistoryStore(url: url)
     let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
-    #expect(try tags(SQLiteHandle(url: url)) == ["Dump Read", "Restore Schema", "Editor Write"])
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(
+      try tags(SQLiteHandle(url: url)) == [
+        "Dump Read", "Restore Schema", "Editor Write", "Rewind Write",
+      ])
     #expect(
       rows.map {
         "\($0.sql)|\($0.source.rawValue)|\($0.kind?.rawValue ?? "nil")|\($0.connectionKey)"
       }
         == [
+          "UPDATE t SET a = 0|rewind|write|\(key)",
           "UPDATE t SET a = 1|editor|write|\(key)",
           "seven statements back|restore|schema|\(key)",
           "nightly backup of shop|dump|read|\(key)",
@@ -378,7 +387,8 @@ struct QueryHistoryStoreTests {
     #expect(try await found("Dump") == ["nightly backup of shop"])
     #expect(try await found("Restore") == ["seven statements back"])
     #expect(try await found("Editor") == ["UPDATE t SET a = 1"])
-    #expect(try await found("UPDATE") == ["UPDATE t SET a = 1"])
+    #expect(try await found("Rewind") == ["UPDATE t SET a = 0"])
+    #expect(try await found("UPDATE").sorted() == ["UPDATE t SET a = 0", "UPDATE t SET a = 1"])
 
     // The triggers index new rows with the new tags
     try await store.record(
@@ -387,8 +397,8 @@ struct QueryHistoryStoreTests {
         kind: .read))
     #expect(try await found("Dump").sorted() == ["another copy", "nightly backup of shop"])
     let reopened = try QueryHistoryStore(url: url)
-    #expect(try await reopened.count() == 4)
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try await reopened.count() == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
   }
 
   @Test("A v1 backfill classifies MySQL and DuckDB keys with their own dialect")
@@ -472,7 +482,7 @@ struct QueryHistoryStoreTests {
 
     let entries = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
     #expect(entries.map(\.kind) == [.write])
-    #expect(try SQLiteHandle(url: url).userVersion == 4)
+    #expect(try SQLiteHandle(url: url).userVersion == 5)
   }
 
   @Test("writesOnly keeps kind write in search and count, and NULL is not a write")

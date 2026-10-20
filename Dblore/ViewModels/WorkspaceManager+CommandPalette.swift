@@ -27,6 +27,7 @@ private enum CommandPaletteAction: String, CaseIterable {
   case showMongoDatabases = "show-mongo-databases"
   case showMongoCollections = "show-mongo-collections"
   case switchMongoDatabase = "switch-mongo-database"
+  case dataRewind = "data-rewind"
 
   var title: String {
     switch self {
@@ -48,6 +49,7 @@ private enum CommandPaletteAction: String, CaseIterable {
     case .showMongoDatabases: "Show Databases"
     case .showMongoCollections: "Show Collections"
     case .switchMongoDatabase: "Switch Database..."
+    case .dataRewind: "Data Rewind..."
     }
   }
 
@@ -133,13 +135,15 @@ extension WorkspaceManager {
   }
 
   /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not). The MongoDB
-  /// overview screens only for a connected MongoDB workspace.
+  /// overview screens only for a connected MongoDB workspace. Data Rewind only where edits are
+  /// recorded (`canOpenDataRewind`).
   private func paletteActions() -> [CommandPaletteAction] {
     CommandPaletteAction.allCases.filter {
       switch $0 {
       case .queryDuckDBFile: duckDBFileQueryConfig != nil
       case .showMongoDatabases, .showMongoCollections, .switchMongoDatabase:
         canShowMongoOverview
+      case .dataRewind: canOpenDataRewind
       default: true
       }
     }
@@ -220,6 +224,9 @@ extension WorkspaceManager {
     case .showMongoCollections:
       guard canShowMongoOverview else { return false }
       mongoOverview = .collections
+    case .dataRewind:
+      guard canOpenDataRewind else { return false }
+      openDataRewind()
     }
     return true
   }

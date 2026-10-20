@@ -14,6 +14,7 @@ struct WorkspaceCommands: Commands {
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
   @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
+  @FocusedValue(\.openDataRewindAction) private var openDataRewindAction
 
   var body: some Commands {
     // Sidebar toggle commands - only show when no document is open
@@ -55,6 +56,13 @@ struct WorkspaceCommands: Commands {
       }
       .keyboardShortcut("k", modifiers: .command)
       .disabled(openCommandPaletteAction == nil)
+
+      Button {
+        openDataRewindAction?()
+      } label: {
+        Label("Data Rewind...", systemImage: "clock.arrow.circlepath")
+      }
+      .disabled(openDataRewindAction == nil)
     }
   }
 }
@@ -74,6 +82,12 @@ struct OpenCommandPaletteActionKey: FocusedValueKey {
 }
 
 struct OpenTableImportActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// Data Rewind (View menu): nil unless the workspace is connected to an engine that records
+/// data viewer edits (`WorkspaceManager.canOpenDataRewind`)
+struct OpenDataRewindActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
@@ -106,6 +120,11 @@ extension FocusedValues {
   var openTableImportAction: (() -> Void)? {
     get { self[OpenTableImportActionKey.self] }
     set { self[OpenTableImportActionKey.self] = newValue }
+  }
+
+  var openDataRewindAction: (() -> Void)? {
+    get { self[OpenDataRewindActionKey.self] }
+    set { self[OpenDataRewindActionKey.self] = newValue }
   }
 
   var openSQLDumpAction: (() -> Void)? {

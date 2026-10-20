@@ -192,10 +192,11 @@ extension DatabaseConnectionManager {
   /// row. Returns those counts (all 1s). Under Protected mode the batch joins the app
   /// transaction (`runStagedBatch`); otherwise it commits on its own or runs in the user's
   /// open transaction. `rewind` (one step per statement) reads each row for Data Rewind around
-  /// its statement; nil sends the same statements as before.
+  /// its statement; nil sends the same statements as before. `rewinding`: the Data Rewind entries
+  /// this batch undoes (a rewind's own batch), marked rewound once it is committed (D5).
   func executeGatedBatch(
     _ statements: [BoundStatement], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil, rewind: RewindPlan? = nil
+    caller: UUID? = nil, rewind: RewindPlan? = nil, rewinding: [Int64] = []
   ) async throws -> [Int] {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
@@ -220,7 +221,7 @@ extension DatabaseConnectionManager {
     let cancellationGeneration = batchCancellationGeneration
     return try await runStagedBatch(
       statements, caller: caller, protectedMode: effective.protectedMode,
-      cancellationGeneration: cancellationGeneration, rewind: rewind)
+      cancellationGeneration: cancellationGeneration, rewind: rewind, rewinding: rewinding)
   }
 
   /// Throws `DatabaseError.notEditable` when the connected engine has no grid edits

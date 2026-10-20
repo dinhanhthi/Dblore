@@ -170,9 +170,22 @@ extension DatabaseConnectionManager {
   }
 
   /// The transaction holding this connection's pending entries ended: `state` committed or
-  /// discarded; nil leaves them pending, unconfirmed (lost during Commit).
+  /// discarded; nil leaves them pending, unconfirmed (lost during Commit). Entries a rewind
+  /// undid in it become rewound only when it committed.
   func closeRewindEntries(as state: RewindEntry.State?) {
     rewindRecorder?.close(scope: rewindScope, as: state)
+  }
+
+  /// A rewind's own batch went through (RELEASE / COMMIT): `ids` are rewound now after the
+  /// app's own COMMIT, else when the transaction it joined commits (`closeRewindEntries`).
+  func recordRewound(_ ids: [Int64], committed: Bool) {
+    guard !ids.isEmpty else { return }
+    activeRewindRecorder()?.markRewound(ids, scope: committed ? nil : rewindScope)
+  }
+
+  /// The recorder the Data Rewind sheet reads, or nil when the store cannot be opened
+  func dataRewindRecorder() -> RewindRecorder? {
+    activeRewindRecorder()
   }
 
   /// `rewindRecorder`, taking `RewindRecorder.shared` on first use (never under the test host;

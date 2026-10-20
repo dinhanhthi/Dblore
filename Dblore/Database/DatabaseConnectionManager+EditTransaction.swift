@@ -15,6 +15,8 @@ extension DatabaseConnectionManager {
   static let editSavepoint = "dblore_edit"
   /// App-owned savepoint around one staged batch (not reused for a single-cell edit)
   static let batchSavepoint = "dblore_batch"
+  /// Start of a batch failure's reason when a statement affected another row count
+  static let unexpectedRowCountReason = "expected to affect "
 
   func setBatchCheckpointHook(_ hook: (@Sendable (Int) async -> Void)?) {
     batchCheckpointHook = hook
@@ -122,27 +124,28 @@ extension DatabaseConnectionManager {
   /// already open: use a savepoint so a failed chunk cannot leave earlier chunks committable.
   /// `progress` gets the number of statements done after each one (SQL dump restore).
   /// `rewind` (one step per statement) records the Data Rewind entry after RELEASE / COMMIT:
-  /// committed after the app's own COMMIT, else pending until the transaction ends.
+  /// committed after the app's own COMMIT, else pending until the transaction ends. The
+  /// `rewinding` entries become rewound at the same points (`recordRewound`).
   func runStagedBatch(
     _ statements: [BoundStatement], caller: UUID?, protectedMode: Bool,
     cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil,
-    rewind: RewindPlan? = nil
+    rewind: RewindPlan? = nil, rewinding: [Int64] = []
   ) async throws -> [Int] {
     if protectedMode {
       return try await runProtectedBatch(
         statements, caller: caller, cancellationGeneration: cancellationGeneration,
-        progress: progress, rewind: rewind)
+        progress: progress, rewind: rewind, rewinding: rewinding)
     }
     return try await runUnprotectedBatch(
       statements, cancellationGeneration: cancellationGeneration, progress: progress,
-      rewind: rewind)
+      rewind: rewind, rewinding: rewinding)
   }
 
   // MARK: - Private
 
   private func runProtectedBatch(
     _ statements: [BoundStatement], caller: UUID?, cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?
+    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64]
   ) async throws -> [Int] {
     try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
     let opens = txState.isIdle
@@ -169,13 +172,14 @@ extension DatabaseConnectionManager {
     }
     recordBatch(statements, counts: counts)
     recordRewind(capture, committed: false)
+    recordRewound(rewinding, committed: false)
     noteSchemaSQL(statements)
     return counts
   }
 
   private func runUnprotectedBatch(
     _ statements: [BoundStatement], cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?
+    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64]
   ) async throws -> [Int] {
     var capture = startRewindCapture(rewind, statementCount: statements.count)
     if userTxOpen {
@@ -192,6 +196,7 @@ extension DatabaseConnectionManager {
       }
       _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
       recordRewind(capture, committed: false)
+      recordRewound(rewinding, committed: false)
       noteSchemaSQL(statements)
       return counts
     }
@@ -221,6 +226,7 @@ extension DatabaseConnectionManager {
         "The server rolled back the batch instead of saving it.")
     }
     recordRewind(capture, committed: true)
+    recordRewound(rewinding, committed: true)
     noteSchemaSQL(statements)
     return counts
   }
@@ -250,7 +256,8 @@ extension DatabaseConnectionManager {
       try refuseCancelledBatch(since: cancellationGeneration)
       if let expected = statement.expectedRows, rows != expected {
         let reason =
-          "expected to affect \(expected) row\(expected == 1 ? "" : "s"), affected \(rows)"
+          Self.unexpectedRowCountReason
+          + "\(expected) row\(expected == 1 ? "" : "s"), affected \(rows)"
         throw Self.batchStatementFailed(
           index, sql: statement.sql, reason: reason, rolledBack: rolledBack)
       }

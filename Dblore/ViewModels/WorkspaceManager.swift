@@ -279,6 +279,8 @@ class WorkspaceManager: Identifiable {
   /// The Back Up Database or Restore Backup panel (File menu, Databases screen; shown by the
   /// container's backup panel)
   var mongoBackup: MongoBackupRequest?
+  /// The Data Rewind panel (View menu, command palette; shown by the container)
+  var dataRewind: DataRewindRequest?
 
   /// An import form and what it was opened for
   struct MongoImportRequest {
@@ -299,6 +301,12 @@ class WorkspaceManager: Identifiable {
     /// The tab it runs through (connection, rules, history); closing it stops the work
     let tabID: UUID
     let kind: Kind
+  }
+
+  /// The Data Rewind panel and the tab it runs through (connection, rules, history)
+  struct DataRewindRequest {
+    let model: DataRewindModel
+    let tabID: UUID
   }
 
   // Schema data (shared across all tabs)
@@ -777,6 +785,21 @@ class WorkspaceManager: Identifiable {
       let model = MongoBackupModel(tab: tab, connectionEpoch: epoch)
     else { return }
     mongoBackup = MongoBackupRequest(model: model, tabID: tabID, kind: kind)
+  }
+
+  /// Data Rewind (View menu, command palette): connected to an engine that records data viewer
+  /// edits (not DuckDB, not MongoDB)
+  var canOpenDataRewind: Bool {
+    connectionState.isConnected
+      && workspace.connectionConfig?.databaseType.supportsDataRewind == true
+  }
+
+  /// Opens the Data Rewind panel through the active tab, or a new query tab when none is open
+  func openDataRewind() {
+    guard canOpenDataRewind, dataRewind == nil else { return }
+    let tabID = activeTabId ?? newSQLFile()
+    guard let tab = viewModel(for: tabID) else { return }
+    dataRewind = DataRewindRequest(model: DataRewindModel(viewModel: tab), tabID: tabID)
   }
 
   /// Appends a clean editor-mode SQL tab (object source tabs) without selecting it
@@ -1303,6 +1326,10 @@ class WorkspaceManager: Identifiable {
     if mongoBackup?.tabID == id {
       mongoBackup?.model.dismiss()
       mongoBackup = nil
+    }
+    if dataRewind?.tabID == id {
+      dataRewind?.model.sheetDisappeared()
+      dataRewind = nil
     }
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()

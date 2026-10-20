@@ -1,6 +1,7 @@
 // RewindRecorder.swift
 // Writes Data Rewind entries off the connection actor, one at a time in call order, and keeps
-// which pending entries still wait for their transaction to end.
+// which pending entries, and which entries a rewind undid, still wait for their transaction to
+// end.
 
 import Foundation
 
@@ -16,6 +17,9 @@ nonisolated final class RewindRecorder: @unchecked Sendable {
   private let queue = DispatchQueue(label: "ace.thi.dblore.rewind", qos: .utility)
   /// Pending entry ids by scope, waiting for COMMIT or ROLLBACK. Touched on `queue` only.
   private var open: [UUID: [Int64]] = [:]
+  /// Entries a rewind undid inside a transaction still open, by scope: they become rewound
+  /// once it commits and stay as they were otherwise (D5). Touched on `queue` only.
+  private var rewinding: [UUID: [Int64]] = [:]
 
   init(store: RewindStore) {
     self.store = store
@@ -39,13 +43,35 @@ nonisolated final class RewindRecorder: @unchecked Sendable {
 
   /// The transaction of `scope` ended: its open entries become `state` (committed or
   /// discarded). Nil leaves them pending, unconfirmed (the connection went during Commit).
+  /// Entries a rewind undid in the same transaction become rewound when it committed, and
+  /// keep their state otherwise.
   func close(scope: UUID, as state: RewindEntry.State?) {
     queue.async { [self] in
+      if let ids = rewinding.removeValue(forKey: scope), state == .committed {
+        setState(.rewound, ids: ids)
+      }
       guard let ids = open.removeValue(forKey: scope), let state else { return }
-      do {
-        try store.setState(state, ids: ids)
-      } catch {
-        Self.log("Data Rewind entries not marked \(state.rawValue)", error)
+      setState(state, ids: ids)
+    }
+  }
+
+  /// A rewind batch undid `ids`: rewound now when its own COMMIT returned (no `scope`), else
+  /// once the transaction of `scope` commits (`close(scope:as:)`).
+  func markRewound(_ ids: [Int64], scope: UUID?) {
+    queue.async { [self] in
+      guard let scope else {
+        setState(.rewound, ids: ids)
+        return
+      }
+      rewinding[scope, default: []].append(contentsOf: ids)
+    }
+  }
+
+  /// Entries a rewind undid in a transaction still open, after every call queued before
+  func rewindingEntryIDs() async -> Set<Int64> {
+    await withCheckedContinuation { continuation in
+      queue.async { [self] in
+        continuation.resume(returning: Set(rewinding.values.joined()))
       }
     }
   }
@@ -65,6 +91,15 @@ nonisolated final class RewindRecorder: @unchecked Sendable {
   func flushed() async {
     await withCheckedContinuation { continuation in
       queue.async { continuation.resume() }
+    }
+  }
+
+  /// On `queue`: a failed change is logged
+  private func setState(_ state: RewindEntry.State, ids: [Int64]) {
+    do {
+      try store.setState(state, ids: ids)
+    } catch {
+      Self.log("Data Rewind entries not marked \(state.rawValue)", error)
     }
   }
 
