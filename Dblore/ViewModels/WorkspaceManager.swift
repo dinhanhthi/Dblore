@@ -234,6 +234,9 @@ class WorkspaceManager: Identifiable {
 
   /// Table shown in the structure editor panel. Nil hides it.
   var structureEditor: StructureEditorModel?
+  /// Renames and drops waiting in the Protected mode transaction: applied to the open tabs on
+  /// Commit, dropped on any other end
+  @ObservationIgnored var pendingTableChanges: [StructureEditorModel.TableChange] = []
 
   // MARK: - Command Palette
 

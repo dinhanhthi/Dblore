@@ -1,8 +1,9 @@
 // StructureChange.swift
 // One edit the structure editor makes to a loaded `TableStructure`. `StructureDDLBuilder` turns a
 // list of them into DDL. Every column, constraint and index name is a name as loaded (or as added
-// by `addColumn`): renames run after every other change. Type text and DEFAULT / CHECK
-// expressions are typed by the user and written into the SQL as they are, after validation.
+// by `addColumn`): renames run after every other change, and the table rename runs last. Type
+// text and DEFAULT / CHECK expressions are typed by the user and written into the SQL as they
+// are, after validation. A table comment is written as a string literal.
 
 import Foundation
 
@@ -21,6 +22,10 @@ nonisolated enum StructureChange: Sendable, Equatable {
   case dropConstraint(name: String, kind: ConstraintKind)
   case createIndex(NewIndex)
   case dropIndex(name: String)
+  /// The table's new name, in the same schema / database
+  case renameTable(newName: String)
+  /// Nil (or empty) removes the comment
+  case setTableComment(String?)
 
   struct NewColumn: Sendable, Equatable {
     var name: String

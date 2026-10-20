@@ -106,6 +106,96 @@ struct WorkspaceStructureEditorTests {
     #expect(model.resultMessage == nil)
   }
 
+  @Test("A rename retargets the open structure editor and the table's data viewer tab")
+  func renameRetargetsTabs() async throws {
+    let url = try Self.makeDatabase()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let workspace = try await Self.connectedWorkspace(Self.config(url: url))
+    defer { Task { await workspace.connectionManager.disconnect() } }
+    workspace.openDataViewer(schema: "main", name: "items", orderColumns: [])
+    let viewerID = try #require(workspace.tabs.first?.id)
+
+    workspace.openStructureEditor(schema: "main", table: "items")
+    let model = try #require(workspace.structureEditor)
+    await waitUntil { model.loadState == .loaded }
+    model.renameTable(to: "goods")
+    await model.apply()
+    #expect(model.applyError == nil)
+
+    #expect(workspace.structureEditor === model)
+    #expect(model.table == "goods")
+    await waitUntil { model.loadState == .loaded }
+    #expect(model.structure?.name == "goods")
+    #expect(workspace.viewModel(for: viewerID)?.dataViewer?.name == "goods")
+    #expect(workspace.tabs.first { $0.id == viewerID }?.title == "goods")
+  }
+
+  @Test("A pending rename retargets the editor and the data viewer tab on Commit")
+  func pendingRenameRetargetsOnCommit() async throws {
+    let url = try Self.makeDatabase()
+    defer { try? FileManager.default.removeItem(at: url) }
+    var config = Self.config(url: url)
+    config.protectedMode = true
+    let workspace = try await Self.connectedWorkspace(config)
+    defer { Task { await workspace.connectionManager.disconnect() } }
+    workspace.openDataViewer(schema: "main", name: "items", orderColumns: [])
+    let viewerID = try #require(workspace.tabs.first?.id)
+    workspace.openStructureEditor(schema: "main", table: "items")
+    let model = try #require(workspace.structureEditor)
+    await waitUntil { model.loadState == .loaded }
+
+    model.renameTable(to: "goods")
+    await model.apply()
+    await waitUntil { !workspace.pendingTransaction.isIdle }
+    #expect(model.table == "items")
+    #expect(workspace.viewModel(for: viewerID)?.dataViewer?.name == "items")
+
+    workspace.requestCommit()
+    #expect(await workspace.confirmCommit())
+    #expect(model.table == "goods")
+    #expect(workspace.viewModel(for: viewerID)?.dataViewer?.name == "goods")
+    await waitUntil { model.structure?.name == "goods" && model.disabledReason == nil }
+    #expect(model.structure?.name == "goods")
+    #expect(model.disabledReason == nil)
+  }
+
+  @Test("A pending drop keeps the table's tabs open until Commit; after Rollback they stay")
+  func pendingDropClosesTabsOnCommit() async throws {
+    let url = try Self.makeDatabase()
+    defer { try? FileManager.default.removeItem(at: url) }
+    var config = Self.config(url: url)
+    config.protectedMode = true
+    let workspace = try await Self.connectedWorkspace(config)
+    defer { Task { await workspace.connectionManager.disconnect() } }
+    workspace.openDataViewer(schema: "main", name: "items", orderColumns: [])
+    let viewerID = try #require(workspace.tabs.first?.id)
+    workspace.openStructureEditor(schema: "main", table: "items")
+    let model = try #require(workspace.structureEditor)
+
+    func dropPending() async {
+      await waitUntil { model.loadState == .loaded && model.disabledReason == nil }
+      model.requestDropTable()
+      await model.confirmDropTable(typedName: "items")
+      await waitUntil { !workspace.pendingTransaction.isIdle }
+    }
+
+    await dropPending()
+    #expect(model.resultMessage == StructureEditorModel.pendingMessage)
+    #expect(workspace.tabs.contains { $0.id == viewerID })
+    #expect(await workspace.rollback())
+    #expect(workspace.tabs.contains { $0.id == viewerID })
+    #expect(workspace.structureEditor === model)
+
+    await dropPending()
+    workspace.requestCommit()
+    #expect(await workspace.confirmCommit())
+    #expect(!workspace.tabs.contains { $0.id == viewerID })
+    #expect(workspace.structureEditor == nil)
+    let tables = try await workspace.connectionManager.executeInternal(
+      "SELECT name FROM sqlite_master WHERE type = 'table'")
+    #expect(tables.rows.isEmpty)
+  }
+
   private static func makeDatabase() throws -> URL {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("dblore-structure-workspace-\(UUID().uuidString).sqlite")

@@ -474,6 +474,101 @@ struct StructureEditorModelTests {
     #expect(history.outcomes.map(\.status) == [.error])
   }
 
+  // MARK: - Table rename, comment and drop
+
+  @Test("Table name and comment stage at most one change each; the loaded value removes it")
+  func tableNameAndCommentStageOnce() async throws {
+    var commented = Self.items
+    commented.comment = "stock"
+    let model = makeModel(FakeStructureDatabase(structure: commented))
+    await model.load()
+
+    model.renameTable(to: "goods")
+    model.renameTable(to: "wares")
+    model.setTableComment("all")
+    model.setTableComment("every item")
+    model.rename(.loaded("name"), to: "title")
+    #expect(
+      model.changes == [
+        .renameTable(newName: "wares"), .setTableComment("every item"),
+        .renameColumn(column: "name", newName: "title"),
+      ])
+    #expect(model.workingTableName == "wares")
+    #expect(model.workingComment == "every item")
+    // The table rename is sent last
+    #expect(model.previewStatements.last == "ALTER TABLE \"public\".\"items\" RENAME TO \"wares\"")
+
+    model.renameTable(to: "items")
+    model.setTableComment("stock")
+    #expect(model.changes == [.renameColumn(column: "name", newName: "title")])
+    #expect(model.workingTableName == "items")
+    #expect(model.workingComment == "stock")
+
+    // A blank comment removes it
+    model.setTableComment("  ")
+    #expect(model.changes.last == .setTableComment(nil))
+  }
+
+  @Test("Drop Table needs the exact name, sends the drop DDL and reports the dropped table")
+  func dropTableNeedsTypedName() async throws {
+    let database = FakeStructureDatabase(structure: Self.items)
+    let history = HistoryLog()
+    let model = makeModel(database, commitStyle: { .confirm }, history: history)
+    var reported: [(StructureEditorModel.TableChange, Bool)] = []
+    model.onTableChange = { reported.append(($0, $1)) }
+    await model.load()
+    #expect(model.dropStatements == ["DROP TABLE \"public\".\"items\""])
+
+    model.requestDropTable()
+    #expect(model.isConfirmingDrop)
+    await model.confirmDropTable(typedName: "item")
+    #expect(model.pendingConfirmation == nil)
+    await model.confirmDropTable(typedName: "items")
+    #expect(!model.isConfirmingDrop)
+    // Safe Mode (confirm style) still asks before anything is sent
+    #expect(model.confirmsDrop)
+    #expect(model.pendingConfirmation?.count == 1)
+    #expect(await database.sent.isEmpty)
+    await model.confirmApply()
+
+    #expect(await database.sent == [["DROP TABLE \"public\".\"items\""]])
+    #expect(reported.map(\.0) == [.dropped(schema: "public", table: "items")])
+    #expect(reported.map(\.1) == [false])
+    #expect(history.outcomes.map(\.status) == [.success])
+    // The table is gone: no reload
+    #expect(await database.loads == 1)
+  }
+
+  @Test("A rename retargets the editor; a pending one waits for the commit")
+  func renameRetargetsEditor() async throws {
+    let database = FakeStructureDatabase(structure: Self.items)
+    let model = makeModel(database)
+    var reported: [(StructureEditorModel.TableChange, Bool)] = []
+    model.onTableChange = { reported.append(($0, $1)) }
+    await model.load()
+    model.renameTable(to: "goods")
+    await model.apply()
+    #expect(model.table == "goods")
+    #expect(await database.loadedTables == ["items", "goods"])
+    #expect(reported.map(\.0) == [.renamed(schema: "public", from: "items", to: "goods")])
+    #expect(reported.map(\.1) == [false])
+
+    let pendingDatabase = FakeStructureDatabase(structure: Self.items)
+    await pendingDatabase.setOutcome(pending: true, insideUserTransaction: false)
+    let pending = makeModel(pendingDatabase)
+    var pendingReported: [Bool] = []
+    pending.onTableChange = { pendingReported.append($1) }
+    await pending.load()
+    pending.renameTable(to: "goods")
+    await pending.apply()
+    #expect(pending.table == "items")
+    #expect(pending.resultMessage == StructureEditorModel.pendingMessage)
+    #expect(pendingReported == [true])
+    pending.tableRenamed(to: "goods")
+    await pending.transactionEnded()
+    #expect(await pendingDatabase.loadedTables == ["items", "goods"])
+  }
+
   @Test("A refused or rolled-back change keeps the staged changes and shows the error")
   func failureKeepsStagedChanges() async throws {
     let database = FakeStructureDatabase(structure: Self.items)
@@ -513,6 +608,7 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   private var applyGate: CheckedContinuation<Void, Never>?
   private var insideUserTransaction = false
   private(set) var loads = 0
+  private(set) var loadedTables: [String] = []
   private(set) var sent: [[String]] = []
 
   init(structure: TableStructure, state: StructureEditorConnectionState = .init()) {
@@ -537,6 +633,7 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
 
   func fetchTableStructure(schema: String, table: String) async throws -> TableStructure {
     loads += 1
+    loadedTables.append(table)
     if let loadError { throw loadError }
     return structure
   }

@@ -16,6 +16,9 @@ nonisolated struct TableStructure: Sendable, Equatable {
   /// Every index, including the ones that back a primary key or unique constraint
   var indexes: [Index]
   var constraints: [Constraint]
+  /// PostgreSQL / MySQL table comment. Nil when none (an empty MySQL comment) and on SQLite and
+  /// DuckDB.
+  var comment: String? = nil
 
   struct Column: Sendable, Equatable {
     /// 1-based position in the table

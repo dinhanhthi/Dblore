@@ -217,6 +217,44 @@ struct SchemaChangeGateTests {
     await manager.disconnect()
   }
 
+  @Test("SQLite table drop and rename go through the gate: pending under Protected mode")
+  func sqliteTableDropAndRenameThroughGate() async throws {
+    let (manager, url) = try await connectSQLite()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let epoch = await manager.connectionEpoch
+    let structure = try await manager.fetchTableStructure(schema: "main", table: "t")
+    let engine = StructureDDLBuilder.Engine.sqlite(libraryVersion: SQLiteLibraryVersion.current)
+    let drop = try StructureDDLBuilder.dropTable(structure, engine: engine)
+    let rename = try StructureDDLBuilder.build(
+      changes: [.renameTable(newName: "u")], structure: structure, engine: engine)
+
+    let refused = await #expect(throws: DatabaseError.self) {
+      _ = try await manager.executeGatedSchemaChange(
+        drop, policy: ProtectionPolicy(protectionLevel: .schemaOnly), connectionEpoch: epoch)
+    }
+    #expect(isBlockedByProtection(refused))
+
+    let dropped = try await manager.executeGatedSchemaChange(
+      drop, policy: protected, connectionEpoch: epoch)
+    #expect(dropped.pending)
+    try await manager.rollbackAppTransaction()
+    #expect(try await columnNames(manager) == ["id"])
+
+    let renamed = try await manager.executeGatedSchemaChange(
+      rename, policy: protected, connectionEpoch: epoch)
+    #expect(renamed.pending)
+    try await manager.commitAppTransaction(
+      expectedGeneration: await manager.transactionStatus().generation)
+    let names = try await manager.executeInternal(
+      "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+    #expect(
+      names.rows.compactMap { row -> String? in
+        if case .string(let name) = row.first { return name }
+        return nil
+      } == ["u"])
+    await manager.disconnect()
+  }
+
   @Test("SQLite outside Protected mode rolls back every statement when one fails")
   func sqliteUnprotectedAtomic() async throws {
     let (manager, url) = try await connectSQLite()

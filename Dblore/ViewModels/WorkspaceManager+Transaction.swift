@@ -83,6 +83,10 @@ extension WorkspaceManager {
   func applyTransactionState(_ state: TransactionState, originTabId: UUID?) {
     // A load discarded during the transaction is retried once it ended
     let endedTransaction = state.isIdle && !pendingTransaction.isIdle
+    // A Commit resolves the pending table changes itself once it succeeded
+    if endedTransaction, pendingTransaction.endingKind != .commit {
+      resolvePendingTableChanges(committed: false)
+    }
     defer {
       if endedTransaction, connectionState == .connected, databaseTables.isEmpty {
         startSchemaLoad()
@@ -179,6 +183,8 @@ extension WorkspaceManager {
     do {
       try await connectionManager.commitAppTransaction(expectedGeneration: expectedGeneration)
       await refreshPendingTransaction()
+      // Before the editor's reload runs: it reads a renamed table under its new name
+      resolvePendingTableChanges(committed: true)
       await refreshSchemaAfterStatements()
       showTransactionToast(
         "Committed \(Self.statements(summary.statementCount))", type: .success)
@@ -188,6 +194,8 @@ extension WorkspaceManager {
       return true
     } catch {
       await refreshPendingTransaction()
+      // A failed Commit that ended the transaction rolled the changes back
+      if pendingTransaction.isIdle { resolvePendingTableChanges(committed: false) }
       showTransactionToast(error.localizedDescription, type: .error)
       return false
     }
@@ -324,6 +332,8 @@ extension WorkspaceManager {
     // After the session closed: the picked files belong to that connection
     releaseDuckDBFileAccess()
     await refreshPendingTransaction()
+    // A rename or drop queued before the transaction mirror caught up never commits now
+    pendingTableChanges = []
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry
     invalidateEditTargetsInTabs()

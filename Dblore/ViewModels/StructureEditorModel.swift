@@ -3,7 +3,9 @@
 // front why it cannot be edited, stages changes as `[StructureChange]` with a derived working
 // view, previews exactly the DDL `StructureDDLBuilder` returns, asks Safe Mode before sending,
 // and applies the previewed strings through `executeGatedSchemaChange` (which re-checks every
-// refusal). History rows use source `.structure`.
+// refusal). History rows use source `.structure`. The table rename and comment are staged like
+// any other change (at most one of each); Drop Table is sent on its own after the user typed the
+// table name, through the same Safe Mode step and gate.
 
 import Foundation
 import Observation
@@ -110,6 +112,12 @@ final class StructureEditorModel {
     var id: ConstraintRowID
   }
 
+  /// A table-level change that reached the server (pending: waits for Commit / Rollback)
+  enum TableChange: Equatable {
+    case renamed(schema: String, from: String, to: String)
+    case dropped(schema: String, table: String)
+  }
+
   static let duckDBMessage = "DuckDB tables can only be viewed"
   static let readOnlyMessage = "This connection is read-only"
   static let schemaOnlyMessage = "This connection blocks schema changes"
@@ -123,9 +131,11 @@ final class StructureEditorModel {
   static let appliedMessage = "Applied"
   static let pendingMessage = "Pending until you commit"
   static let insideTransactionMessage = "Applied inside your open transaction; commit to keep it"
+  static let droppedMessage = "Table dropped"
 
   let schema: String
-  let table: String
+  /// The loaded table; follows a rename once it is applied (or committed)
+  private(set) var table: String
   private(set) var loadState = LoadState.idle
   private(set) var structure: TableStructure?
   /// Why the table cannot be edited (the sheet is view-only), or nil
@@ -143,8 +153,15 @@ final class StructureEditorModel {
   private(set) var applyError: String?
   /// `applyError` reports a MySQL change that stopped part way (some statements committed)
   private(set) var applyPartiallyFailed = false
+  /// The typed-name step of Drop Table is shown
+  private(set) var isConfirmingDrop = false
+  /// The Safe Mode step asks about the drop (not the staged changes)
+  private(set) var confirmsDrop = false
   /// Called after a change reached the server (to reload the sidebar schema)
   @ObservationIgnored var onApplied: (@MainActor () async -> Void)?
+  /// Called when a rename or drop reached the server, before `onApplied` (the workspace
+  /// retargets or closes the table's tabs, at once or on Commit when pending)
+  @ObservationIgnored var onTableChange: (@MainActor (TableChange, _ pending: Bool) -> Void)?
   /// Toast for Apply results and new preview errors (the panel shows it over itself). The
   /// workspace routes it to the tab's toast; nothing by default.
   @ObservationIgnored var toastPresenter: @MainActor (String, ToastMessage.ToastType) -> Void = {
@@ -185,6 +202,42 @@ final class StructureEditorModel {
   var canApply: Bool {
     disabledReason == nil && loadState == .loaded && !isApplying && previewError == nil
       && !previewStatements.isEmpty
+  }
+
+  /// PostgreSQL and MySQL store table comments (SQLite has none, DuckDB is view-only)
+  var supportsTableComment: Bool {
+    switch context.databaseType {
+    case .postgresql, .mysql: true
+    case .sqlite, .duckdb, .mongodb: false
+    }
+  }
+
+  /// The staged new name, or the loaded one
+  var workingTableName: String {
+    for change in changes.reversed() {
+      if case .renameTable(let newName) = change { return newName }
+    }
+    return table
+  }
+
+  /// The staged comment, or the loaded one
+  var workingComment: String? {
+    for change in changes.reversed() {
+      if case .setTableComment(let text) = change { return text }
+    }
+    return structure?.comment
+  }
+
+  /// Exactly the strings Drop Table sends; empty when the table cannot be dropped here
+  var dropStatements: [String] {
+    guard let structure, let engine else { return [] }
+    return (try? StructureDDLBuilder.dropTable(structure, engine: engine)) ?? []
+  }
+
+  /// Editable, loaded, nothing staged (Discard first) and nothing on its way
+  var canDropTable: Bool {
+    disabledReason == nil && loadState == .loaded && !isApplying && changes.isEmpty
+      && !dropStatements.isEmpty
   }
 
   // MARK: - Load
@@ -324,6 +377,59 @@ final class StructureEditorModel {
     stage { $0.removeAll { Self.columnName(of: $0) == name } }
   }
 
+  // MARK: - Staging the table
+
+  /// Stages the table rename (replacing an earlier one); the loaded name takes it back
+  func renameTable(to newName: String) {
+    stage { changes in
+      changes.removeAll(where: Self.isTableRename)
+      if newName != table { changes.append(.renameTable(newName: newName)) }
+    }
+  }
+
+  /// Stages the comment (replacing an earlier one); blank removes it, the loaded text takes the
+  /// change back
+  func setTableComment(_ text: String?) {
+    let value = text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil
+    stage { changes in
+      changes.removeAll(where: Self.isTableComment)
+      if value != structure?.comment { changes.append(.setTableComment(value)) }
+    }
+  }
+
+  // MARK: - Drop Table
+
+  /// Shows the typed-name step
+  func requestDropTable() {
+    guard canDropTable else { return }
+    cancelConfirmation()
+    isConfirmingDrop = true
+  }
+
+  func cancelDropTable() {
+    isConfirmingDrop = false
+  }
+
+  /// The user typed `typedName`: checked again, then Safe Mode is asked when the commit style
+  /// confirms writes (the sheet then calls `confirmApply`); otherwise the drop is sent
+  func confirmDropTable(typedName: String) async {
+    guard isConfirmingDrop, TypedNameConfirmation.matches(typedName, name: table), canDropTable
+    else { return }
+    isConfirmingDrop = false
+    let statements = dropStatements
+    if askSafeMode(statements) {
+      confirmsDrop = true
+      return
+    }
+    await send(statements, dropping: true)
+  }
+
+  /// A pending rename was committed: the editor follows the new name (the reload after the
+  /// transaction ended reads it)
+  func tableRenamed(to newName: String) {
+    table = newName
+  }
+
   // MARK: - Staging indexes and constraints
 
   func addIndex(_ index: StructureChange.NewIndex) {
@@ -461,37 +567,59 @@ final class StructureEditorModel {
   func apply() async {
     guard canApply else { return }
     let statements = previewStatements
-    let dialect = context.databaseType.dialect
-    let commitStyle = context.commitStyle()
-    let classified = statements.flatMap { SQLStatementClassifier.classify($0, dialect: dialect) }
-    if let listed = NotebookViewModel.statementsNeedingConfirmation(
-      classified, commitStyle: commitStyle, dialect: dialect)
-    {
-      confirmedStatements = statements
-      confirmationRequiresPassword = commitStyle.requiresPassword
-      pendingConfirmation = listed
-      return
-    }
-    await send(statements)
+    if askSafeMode(statements) { return }
+    await send(statements, dropping: false)
   }
 
-  /// Sends the statements Safe Mode showed, unless the preview changed meanwhile
+  /// Sends the statements Safe Mode showed, unless the preview (or the table) changed meanwhile
   func confirmApply() async {
     let statements = confirmedStatements
+    let dropping = confirmsDrop
     cancelConfirmation()
-    guard let statements, statements == previewStatements, canApply else { return }
-    await send(statements)
+    guard let statements else { return }
+    if dropping {
+      guard statements == dropStatements, canDropTable else { return }
+    } else {
+      guard statements == previewStatements, canApply else { return }
+    }
+    await send(statements, dropping: dropping)
   }
 
   func cancelConfirmation() {
     pendingConfirmation = nil
     confirmedStatements = nil
     confirmationRequiresPassword = false
+    confirmsDrop = false
   }
 
   // MARK: - Private
 
-  private func send(_ statements: [String]) async {
+  /// Arms the Safe Mode step for `statements` when the connection's commit style confirms
+  /// writes. True when it asks (nothing is sent until `confirmApply`).
+  private func askSafeMode(_ statements: [String]) -> Bool {
+    let dialect = context.databaseType.dialect
+    let commitStyle = context.commitStyle()
+    let classified = statements.flatMap { SQLStatementClassifier.classify($0, dialect: dialect) }
+    guard
+      let listed = NotebookViewModel.statementsNeedingConfirmation(
+        classified, commitStyle: commitStyle, dialect: dialect)
+    else { return false }
+    confirmedStatements = statements
+    confirmationRequiresPassword = commitStyle.requiresPassword
+    pendingConfirmation = listed
+    return true
+  }
+
+  /// The rename or drop `statements` carry, once they reached the server
+  private func tableChange(dropping: Bool) -> TableChange? {
+    if dropping { return .dropped(schema: schema, table: table) }
+    guard case .renameTable(let newName) = changes.last(where: Self.isTableRename) else {
+      return nil
+    }
+    return .renamed(schema: schema, from: table, to: newName)
+  }
+
+  private func send(_ statements: [String], dropping: Bool) async {
     isApplying = true
     resultMessage = nil
     applyError = nil
@@ -507,6 +635,7 @@ final class StructureEditorModel {
           sql: sql, duration: result.duration, rowCount: nil, status: .success, errorMessage: nil)
       ])
       isApplying = false
+      let tableChange = tableChange(dropping: dropping)
       clearChanges()
       if result.pending {
         // Catalog reads are paused until Commit / Rollback: keep the loaded structure
@@ -514,11 +643,25 @@ final class StructureEditorModel {
         disabledReason = Self.pausedMessage
         rebuildPreview()
         toastPresenter(Self.pendingMessage, .warning)
+        if let tableChange { onTableChange?(tableChange, true) }
+      } else if dropping {
+        // The table is gone: nothing to read again
+        let message =
+          result.insideUserTransaction ? Self.insideTransactionMessage : Self.droppedMessage
+        resultMessage = message
+        disabledReason = Self.droppedMessage
+        rebuildPreview()
+        toastPresenter(message, result.insideUserTransaction ? .warning : .success)
+        if let tableChange { onTableChange?(tableChange, false) }
       } else {
         let message =
           result.insideUserTransaction ? Self.insideTransactionMessage : Self.appliedMessage
         resultMessage = message
         toastPresenter(message, result.insideUserTransaction ? .warning : .success)
+        if let tableChange, case .renamed(_, _, let newName) = tableChange {
+          table = newName
+          onTableChange?(tableChange, false)
+        }
         await load()
       }
       await onApplied?()
@@ -564,6 +707,7 @@ final class StructureEditorModel {
   private func stage(_ edit: (inout [StructureChange]) -> Void) {
     guard canStage else { return }
     cancelConfirmation()
+    isConfirmingDrop = false
     edit(&changes)
     rebuildPreview()
   }
@@ -623,6 +767,14 @@ final class StructureEditorModel {
   /// MySQL shows `COLUMN_TYPE` (`int unsigned`), the others their display type
   private static func displayedType(_ column: TableStructure.Column) -> String {
     column.columnType ?? column.dataType
+  }
+
+  private static func isTableRename(_ change: StructureChange) -> Bool {
+    if case .renameTable = change { true } else { false }
+  }
+
+  private static func isTableComment(_ change: StructureChange) -> Bool {
+    if case .setTableComment = change { true } else { false }
   }
 
   private static func isRenameChange(_ change: StructureChange) -> Bool {
@@ -687,7 +839,8 @@ final class StructureEditorModel {
       .setNotNull(let column), .dropNotNull(let column), .renameColumn(let column, _),
       .dropColumn(let column):
       column
-    case .addColumn, .addConstraint, .dropConstraint, .createIndex, .dropIndex:
+    case .addColumn, .addConstraint, .dropConstraint, .createIndex, .dropIndex, .renameTable,
+      .setTableComment:
       nil
     }
   }
@@ -716,7 +869,8 @@ final class StructureEditorModel {
     case .dropColumn:
       row.state = .dropped
       return
-    case .addColumn, .addConstraint, .dropConstraint, .createIndex, .dropIndex:
+    case .addColumn, .addConstraint, .dropConstraint, .createIndex, .dropIndex, .renameTable,
+      .setTableComment:
       return
     }
     row.editedFields.insert(field)

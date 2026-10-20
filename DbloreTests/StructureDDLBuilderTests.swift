@@ -1,7 +1,8 @@
 // StructureDDLBuilderTests.swift
 // StructureDDLBuilder: exact DDL per engine and change kind, PostgreSQL statement order, MySQL
 // full-definition restating and version/flavor choices, SQLite version gates and refusals,
-// DuckDB refusal, and rejection of injected names and expressions.
+// DuckDB refusal, rejection of injected names and expressions, and table rename (always last),
+// table comment literals and DROP TABLE.
 
 import Foundation
 import Testing
@@ -136,9 +137,17 @@ struct StructureDDLBuilderTests {
             .addConstraint(Constraint(name: "positive", kind: .check("price > 0"), columns: [])),
             .renameColumn(column: "name", newName: "title"),
             Self.index("name_idx", ["name"]), .dropIndex(name: "old_idx"),
+            .setTableComment(#"it's a\b"#), .renameTable(newName: "goods"),
           ], Self.postgres, .postgresql)
       ),
-      (.mysql, try build(columnChanges, Self.mysql, .mysql(Self.mysql80))),
+      (.postgresql, try StructureDDLBuilder.dropTable(Self.postgres, engine: .postgresql)),
+      (
+        .mysql,
+        try build(
+          columnChanges + [.setTableComment(#"it's a\b"#), .renameTable(newName: "sales")],
+          Self.mysql, .mysql(Self.mysql80))
+      ),
+      (.mysql, try StructureDDLBuilder.dropTable(Self.mysql, engine: .mysql(Self.mysql80))),
       (
         .sqlite,
         try build(
@@ -146,7 +155,12 @@ struct StructureDDLBuilderTests {
             Self.newColumn("note", "TEXT", default: "'x'"),
             .renameColumn(column: "tag", newName: "label"), .dropColumn(column: "body"),
             Self.index("body_idx", ["body"]), .dropIndex(name: "notes_tag"),
+            .renameTable(newName: "memo"),
           ], Self.sqlite, .sqlite(libraryVersion: 3_035_000))
+      ),
+      (
+        .sqlite,
+        try StructureDDLBuilder.dropTable(Self.sqlite, engine: .sqlite(libraryVersion: 3_035_000))
       ),
     ]
     for (type, statements) in built {
@@ -225,6 +239,10 @@ struct StructureDDLBuilderTests {
         #"CREATE UNIQUE INDEX "items_name_idx" ON "public"."items" USING btree ("name")"#
       ),
       (.dropIndex(name: "items_name_idx"), #"DROP INDEX "public"."items_name_idx""#),
+      // The new name is bare: the table stays in its schema
+      (.renameTable(newName: "goods"), #"ALTER TABLE "public"."items" RENAME TO "goods""#),
+      (.setTableComment("it's"), #"COMMENT ON TABLE "public"."items" IS 'it''s'"#),
+      (.setTableComment(nil), #"COMMENT ON TABLE "public"."items" IS NULL"#),
     ] as [(StructureChange, String)])
   func postgresChange(change: StructureChange, expected: String) throws {
     #expect(try build([change], Self.postgres, .postgresql) == [expected])
@@ -409,6 +427,8 @@ struct StructureDDLBuilderTests {
         "ADD UNIQUE INDEX `i` (`title`) USING BTREE"
       ),
       (.dropIndex(name: "i"), "DROP INDEX `i`"),
+      (.setTableComment("it's"), "COMMENT = 'it''s'"),
+      (.setTableComment(nil), "COMMENT = ''"),
     ] as [(StructureChange, String)])
   func mysqlChange(change: StructureChange, expected: String) throws {
     #expect(
@@ -636,6 +656,7 @@ struct StructureDDLBuilderTests {
         #"CREATE UNIQUE INDEX "main"."notes_body" ON "notes" ("body")"#
       ),
       (.dropIndex(name: "notes_tag"), #"DROP INDEX "main"."notes_tag""#),
+      (.renameTable(newName: "memo"), #"ALTER TABLE "main"."notes" RENAME TO "memo""#),
     ] as [(StructureChange, String)])
   func sqliteChange(change: StructureChange, expected: String) throws {
     #expect(try build([change], Self.sqlite, .sqlite(libraryVersion: 3_035_000)) == [expected])
@@ -690,10 +711,84 @@ struct StructureDDLBuilderTests {
       .dropNotNull(column: "id"),
       .addConstraint(Constraint(name: nil, kind: .unique, columns: ["body"])),
       .dropConstraint(name: "u_unique", kind: .unique),
+      .setTableComment("note"),
     ] as [StructureChange])
   func sqliteUnsupported(change: StructureChange) {
     #expect(throws: StructureDDLError.self) {
       try build([change], Self.sqlite, .sqlite(libraryVersion: 3_045_000))
+    }
+  }
+
+  // MARK: - Table
+
+  @Test("The table rename runs last, after every change written against the loaded name")
+  func tableRenameLast() throws {
+    #expect(
+      try build(
+        [
+          .renameTable(newName: "goods"), .renameColumn(column: "name", newName: "title"),
+          .setTableComment("x"), Self.newColumn("note", "text"),
+        ], Self.postgres, .postgresql) == [
+          #"ALTER TABLE "public"."items" ADD COLUMN "note" text"#,
+          #"ALTER TABLE "public"."items" RENAME COLUMN "name" TO "title""#,
+          #"COMMENT ON TABLE "public"."items" IS 'x'"#,
+          #"ALTER TABLE "public"."items" RENAME TO "goods""#,
+        ])
+    // MySQL runs the statements one by one: the ALTER must still name the loaded table
+    #expect(
+      try build(
+        [.renameTable(newName: "sales"), .setTableComment("x"), .dropColumn(column: "total")],
+        Self.mysql, .mysql(Self.mysql80)) == [
+          "ALTER TABLE `shop`.`orders` DROP COLUMN `total`, COMMENT = 'x'",
+          "RENAME TABLE `shop`.`orders` TO `shop`.`sales`",
+        ])
+    #expect(
+      try build([.renameTable(newName: "sales")], Self.mysql, .mysql(Self.mysql80)) == [
+        "RENAME TABLE `shop`.`orders` TO `shop`.`sales`"
+      ])
+    #expect(
+      try build(
+        [.renameTable(newName: "memo"), .renameColumn(column: "body", newName: "text")],
+        Self.sqlite, .sqlite(libraryVersion: 3_035_000)) == [
+          #"ALTER TABLE "main"."notes" RENAME COLUMN "body" TO "text""#,
+          #"ALTER TABLE "main"."notes" RENAME TO "memo""#,
+        ])
+  }
+
+  @Test("Table comments: quotes doubled, backslashes escaped, newlines kept, NUL refused")
+  func tableCommentLiteral() throws {
+    let text = "a'b\\c\nd"
+    #expect(
+      try build([.setTableComment(text)], Self.postgres, .postgresql) == [
+        "COMMENT ON TABLE \"public\".\"items\" IS E'a''b\\\\c\nd'"
+      ])
+    #expect(
+      try build([.setTableComment(text)], Self.mysql, .mysql(Self.mysql80)) == [
+        "ALTER TABLE `shop`.`orders` COMMENT = 'a''b\\\\c\nd'"
+      ])
+    #expect(throws: StructureDDLError.self) {
+      try build([.setTableComment("a\u{0}b")], Self.postgres, .postgresql)
+    }
+    #expect(throws: StructureDDLError.self) {
+      try build([.setTableComment("a\u{0}b")], Self.mysql, .mysql(Self.mysql80))
+    }
+  }
+
+  @Test("DROP TABLE names the schema-qualified table; DuckDB is view-only")
+  func dropTable() throws {
+    #expect(
+      try StructureDDLBuilder.dropTable(Self.postgres, engine: .postgresql) == [
+        #"DROP TABLE "public"."items""#
+      ])
+    #expect(
+      try StructureDDLBuilder.dropTable(Self.mysql, engine: .mysql(Self.mysql80)) == [
+        "DROP TABLE `shop`.`orders`"
+      ])
+    #expect(
+      try StructureDDLBuilder.dropTable(Self.sqlite, engine: .sqlite(libraryVersion: 3_035_000))
+        == [#"DROP TABLE "main"."notes""#])
+    #expect(throws: StructureDDLError.self) {
+      try StructureDDLBuilder.dropTable(Self.postgres, engine: .duckdb)
     }
   }
 

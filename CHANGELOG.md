@@ -14,6 +14,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Slash commands and @mentions** in the AI panel: `/explain`, `/fix`, `/review`, `/optimize` and your own commands with `{{query}}`, `{{selection}}`, `{{schema}}` and `{{error}}` placeholders; `@table:`, `@query`, `@results` and `@favorite:` attach context, following the connection's AI access setting.
 - **Connection color and group.** Give a connection a color and a group in its form; the Connections list on the welcome screen and the Recent connections menu group them, and the footer shows the connection's color.
 - **Several highlight rules at once.** Highlight cells or rows with as many rules as you need (a cell rule wins over a row rule), switch each one on or off, and mark saved rules Active to apply them whenever the table opens.
+- **Rename, comment and drop tables** from the structure editor. Drop asks for the table name and shows the exact statement first; under Review the change waits for Commit, and open tabs follow a rename or close after a drop. Table comments are read and edited on PostgreSQL and MySQL.
 
 ### Fixed
 

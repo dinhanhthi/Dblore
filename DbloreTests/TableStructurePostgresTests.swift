@@ -1,6 +1,6 @@
 // TableStructurePostgresTests.swift
 // PostgresSchemaIntrospector.tableStructure against the docker test database (TEST_DB_*, port
-// 5435): identity, serial and generated columns, comments, composite and constraint-backed
+// 5435): identity, serial and generated columns, table and column comments, composite and constraint-backed
 // indexes, expression and partial indexes, a cross-schema multi-column foreign key with actions,
 // a check, and names that need quoting. Each test creates two schemas of its own, dropped on
 // every path.
@@ -23,6 +23,7 @@ struct TableStructurePostgresTests {
       let table = try await introspector.tableStructure(
         schema: schema, table: Self.table, in: session)
       #expect(table.schema == schema && table.name == Self.table)
+      #expect(table.comment == "it's the table")
       #expect(table.tableID == .postgresql(oid: try await oid(schema, Self.table, session)))
       #expect(table.columns.map(\.name) == ["id", "bd", "s", "name", "g", "pa", "pb"])
       let byName = Dictionary(uniqueKeysWithValues: table.columns.map { ($0.name, $0) })
@@ -171,6 +172,7 @@ struct TableStructurePostgresTests {
       )
       """,
       "COMMENT ON COLUMN \(t).name IS 'the name'",
+      "COMMENT ON TABLE \(t) IS 'it''s the table'",
       "CREATE INDEX ix_expr ON \(t) (lower(name), pa)",
       "CREATE INDEX ix_part ON \(t) USING hash (pa) WHERE pa > 10",
       "CREATE INDEX ix_incl ON \(t) (pa) INCLUDE (pb)",
