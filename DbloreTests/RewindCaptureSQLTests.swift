@@ -25,7 +25,8 @@ struct RewindCaptureSQLTests {
       target: Self.target("public.events", keys: ["id"], updateOnly: false),
       columns: [Self.column("id", "int8")], keyValues: [.int(1)], engine: .postgresql)
     #expect(
-      partitioned.sql == "SELECT 'v' || \"id\"::text FROM public.events WHERE \"id\" = $1 FOR UPDATE")
+      partitioned.sql
+        == "SELECT 'v' || \"id\"::text FROM public.events WHERE \"id\" = $1 FOR UPDATE")
 
     // ColumnInfo spells MySQL types in upper case; byte keys go through UNHEX like the edit
     let mysql = try RewindCaptureSQL.selectStatement(
@@ -54,10 +55,12 @@ struct RewindCaptureSQLTests {
       [.string("v"), .null, .string("vNULL")], columns: columns, engine: .postgresql)
     let expected: RewindImage = ["a": "", "b": nil, "c": "NULL"]
     #expect(image == expected)
-    #expect(try RewindCaptureSQL.bind(image["a"] ?? nil, column: columns[0], engine: .postgresql)
-      == RewindBind(form: .plain, value: .text("")))
-    #expect(try RewindCaptureSQL.bind(image["b"] ?? nil, column: columns[1], engine: .postgresql)
-      == RewindBind(form: .plain, value: .null))
+    #expect(
+      try RewindCaptureSQL.bind(image["a"] ?? nil, column: columns[0], engine: .postgresql)
+        == RewindBind(form: .plain, value: .text("")))
+    #expect(
+      try RewindCaptureSQL.bind(image["b"] ?? nil, column: columns[1], engine: .postgresql)
+        == RewindBind(form: .plain, value: .null))
     #expect(throws: RewindCaptureError.unexpectedValue(column: "a")) {
       try RewindCaptureSQL.image([.string("x")], columns: [columns[0]], engine: .postgresql)
     }

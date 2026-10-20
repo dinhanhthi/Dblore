@@ -157,8 +157,9 @@ nonisolated enum RewindCaptureSQL {
       // Scalars, not characters: a combining mark after the prefix joins it in one character
       return String(text.unicodeScalars.dropFirst())
     case (.mysql, .string(let text)):
-      guard !SQLDumpDataRenderer.isMySQLHexType(column.typeName)
-        || SQLDumpDataRenderer.isHex(text[...])
+      guard
+        !SQLDumpDataRenderer.isMySQLHexType(column.typeName)
+          || SQLDumpDataRenderer.isHex(text[...])
       else { throw RewindCaptureError.unexpectedValue(column: column.name) }
       return text
     case (.sqlite, .string(let text)) where SQLDumpDataRenderer.isSQLiteLiteral(text):

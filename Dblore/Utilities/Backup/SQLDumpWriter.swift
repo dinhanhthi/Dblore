@@ -107,7 +107,9 @@ nonisolated enum SQLDumpSelection {
     output.tables = input.tables.filter {
       chosen.contains(Name(schema: $0.structure.schema, name: $0.structure.name))
     }
-    output.indexes = input.indexes.filter { chosen.contains(Name(schema: $0.schema, name: $0.table)) }
+    output.indexes = input.indexes.filter {
+      chosen.contains(Name(schema: $0.schema, name: $0.table))
+    }
     if output.tables.count < input.tables.count { output.views = [] }
     return output
   }

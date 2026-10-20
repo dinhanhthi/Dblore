@@ -252,8 +252,8 @@ private struct RewindRetentionControls: View {
       Text(
         "Up to \(DataByteCount.text(RewindStore.defaultMaxBytes)) of row data is kept; the oldest edits go first."
       )
-        .font(.bodyText)
-        .foregroundColor(.foregroundSubtle)
+      .font(.bodyText)
+      .foregroundColor(.foregroundSubtle)
 
       Button("Delete", action: onDelete)
         .buttonStyle(DangerButtonStyle())

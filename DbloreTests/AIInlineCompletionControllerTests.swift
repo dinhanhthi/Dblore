@@ -78,7 +78,7 @@ nonisolated private final class FakeInlineClient: AIChatClient, @unchecked Senda
     try #require(await waitUntil { self.pending == count })
     let pending = waiters
     waiters = []
-    pending.forEach { $0.resume() }
+    for waiter in pending { waiter.resume() }
   }
 }
 

@@ -783,7 +783,8 @@ nonisolated enum SQLDumpDDL {
     var inserts: [TableInsert] = []
     for table in input.tables {
       let structure = table.structure
-      pre.append(try duckdbDefinition(table.sql, heads: [["CREATE", "TABLE"]], name: structure.name))
+      pre.append(
+        try duckdbDefinition(table.sql, heads: [["CREATE", "TABLE"]], name: structure.name))
       let generated = duckdbGeneratedColumns(table.sql, columns: structure.columns.map(\.name))
       inserts.append(
         TableInsert(

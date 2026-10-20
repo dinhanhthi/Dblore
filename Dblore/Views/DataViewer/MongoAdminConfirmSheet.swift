@@ -114,14 +114,14 @@ struct MongoAdminConfirmSheet: View {
           onCancel: close,
           onConfirm: { [model, typedName] in
             await model.confirm(pending, typedName: typedName ?? "")
-          }
-        ) {
-          Text(verbatim: pending.text)
-            .font(.mono)
-            .foregroundColor(.foreground)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+          },
+          details: {
+            Text(verbatim: pending.text)
+              .font(.mono)
+              .foregroundColor(.foreground)
+              .textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+          })
       }
     case .running:
       HStack(spacing: Spacing.sm) {
@@ -291,10 +291,8 @@ struct MongoBulkWriteConfirmSheet: View {
           onCancel: close,
           onConfirm: { [model, typedName] in
             await model.confirm(pending, typedName: typedName ?? "")
-          }
-        ) {
-          commandText(pending)
-        }
+          },
+          details: { commandText(pending) })
       } else {
         inlineConfirm(pending)
       }
