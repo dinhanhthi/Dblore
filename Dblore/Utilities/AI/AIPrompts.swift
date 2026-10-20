@@ -415,7 +415,7 @@ nonisolated enum AIPrompts {
   }
 
   /// Fenced block whose fence is longer than any backtick run in the content (min 3)
-  private static func fenced(_ text: String, info: String) -> String {
+  static func fenced(_ text: String, info: String) -> String {
     var longest = 0
     var run = 0
     for character in text {

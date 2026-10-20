@@ -37,4 +37,10 @@ struct SettingsSearchTests {
     #expect(titles(Tab.search("inline on-device"), in: .ai).first == "Suggest SQL as you type")
   }
 
+  @Test("the slash commands setting is found by its keywords")
+  func aiSlashCommands() {
+    #expect(titles(Tab.search("slash"), in: .ai).first == "Custom slash commands")
+    #expect(titles(Tab.search("template placeholder"), in: .ai).first == "Custom slash commands")
+  }
+
 }

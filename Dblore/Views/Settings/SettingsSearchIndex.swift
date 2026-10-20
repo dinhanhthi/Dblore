@@ -163,6 +163,11 @@ extension SettingsModal.SettingsTab {
             "Off by default. Ghost text after the caret in SQL query tabs and notebook cells: Tab accepts, Esc dismisses. Provider and model, Same as chat. On-device keeps your SQL on this Mac."
         ),
         .init(
+          card: "Slash commands", title: "Custom slash commands",
+          detail:
+            "Type / in the AI composer: /explain, /fix, /review, /optimize. Add, edit or delete your own commands with a template; the placeholders {{query}}, {{selection}}, {{schema}} and {{error}} are filled in on this Mac."
+        ),
+        .init(
           card: "Privacy", title: "Default AI access for connections",
           detail:
             "Always, Ask once per session, Never. Each connection can override this in its connection form."

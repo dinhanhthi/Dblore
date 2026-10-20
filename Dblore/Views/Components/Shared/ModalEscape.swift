@@ -18,10 +18,14 @@ final class ModalDismissRegistry {
   private final class Entry {
     /// `NSWindow` does not support weak references reliably, so identity is stored instead.
     var windowID: ObjectIdentifier?
+    /// Off while the view lets Escape through (its own popup closes first). The entry keeps
+    /// its place in the order, so a modal opened above it stays on top.
+    var isEnabled: Bool
     var dismiss: () -> Void
 
-    init(windowID: ObjectIdentifier?, dismiss: @escaping () -> Void) {
+    init(windowID: ObjectIdentifier?, isEnabled: Bool, dismiss: @escaping () -> Void) {
       self.windowID = windowID
+      self.isEnabled = isEnabled
       self.dismiss = dismiss
     }
   }
@@ -37,14 +41,17 @@ final class ModalDismissRegistry {
     self.monitorsEvents = monitorsEvents
   }
 
-  func upsert(id: UUID, window: NSWindow?, dismiss: @escaping () -> Void) {
+  func upsert(
+    id: UUID, window: NSWindow?, isEnabled: Bool = true, dismiss: @escaping () -> Void
+  ) {
     let windowID = window.map(ObjectIdentifier.init)
     if let entry = entries[id] {
       entry.windowID = windowID
+      entry.isEnabled = isEnabled
       entry.dismiss = dismiss
       return
     }
-    entries[id] = Entry(windowID: windowID, dismiss: dismiss)
+    entries[id] = Entry(windowID: windowID, isEnabled: isEnabled, dismiss: dismiss)
     order.append(id)
     installMonitorIfNeeded()
   }
@@ -78,11 +85,13 @@ final class ModalDismissRegistry {
   }
 
   /// Dismisses the top modal in `window`. A second Escape while that dismiss is
-  /// in flight is swallowed so it does not fall through to the editor.
+  /// in flight is swallowed so it does not fall through to the editor. A disabled
+  /// top modal lets Escape through untouched.
   @discardableResult
   func handleEscape(in window: NSWindow) -> Bool {
     let windowID = ObjectIdentifier(window)
     guard let id = order.last(where: { entries[$0]?.windowID == windowID }) else { return false }
+    guard entries[id]?.isEnabled == true else { return false }
     if !dismissing.contains(id), let dismiss = entries[id]?.dismiss {
       dismissing.insert(id)
       dismiss()
@@ -103,10 +112,12 @@ final class ModalDismissRegistry {
 
 /// Invisible view that registers the presented modal for Escape.
 struct ModalEscapeCatcher: NSViewRepresentable {
+  /// False lets Escape through while keeping the modal's place in the Escape order.
+  var isEnabled = true
   var dismiss: () -> Void
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(dismiss: dismiss)
+    Coordinator(isEnabled: isEnabled, dismiss: dismiss)
   }
 
   func makeNSView(context: Context) -> ModalEscapeAnchor {
@@ -116,6 +127,7 @@ struct ModalEscapeCatcher: NSViewRepresentable {
   }
 
   func updateNSView(_ nsView: ModalEscapeAnchor, context: Context) {
+    context.coordinator.isEnabled = isEnabled
     context.coordinator.dismiss = dismiss
     context.coordinator.bind(to: nsView)
   }
@@ -127,18 +139,22 @@ struct ModalEscapeCatcher: NSViewRepresentable {
   @MainActor
   final class Coordinator {
     let id = UUID()
+    var isEnabled: Bool
     var dismiss: () -> Void
 
-    init(dismiss: @escaping () -> Void) {
+    init(isEnabled: Bool, dismiss: @escaping () -> Void) {
+      self.isEnabled = isEnabled
       self.dismiss = dismiss
     }
 
     func bind(to view: ModalEscapeAnchor) {
       view.onWindowChange = { [weak self] window in
         guard let self else { return }
-        ModalDismissRegistry.shared.upsert(id: self.id, window: window, dismiss: self.dismiss)
+        ModalDismissRegistry.shared.upsert(
+          id: self.id, window: window, isEnabled: self.isEnabled, dismiss: self.dismiss)
       }
-      ModalDismissRegistry.shared.upsert(id: id, window: view.window, dismiss: dismiss)
+      ModalDismissRegistry.shared.upsert(
+        id: id, window: view.window, isEnabled: isEnabled, dismiss: dismiss)
     }
 
     func unbind() {

@@ -277,7 +277,8 @@ extension NotebookViewModel {
               sourceQuery: tuple.queryText,
               tableName: nil,
               primaryKeyColumns: [],
-              affectedRows: tuple.result.affectedRows
+              affectedRows: tuple.result.affectedRows,
+              aiSessionKey: aiSessionKey
             ).withCapInfo(from: tuple.result),
             statementIndex: index
           )
@@ -324,7 +325,8 @@ extension NotebookViewModel {
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: queryResult.affectedRows,
           editTarget: target,
-          lookupRelation: lookup
+          lookupRelation: lookup,
+          aiSessionKey: aiSessionKey
         ).withCapInfo(from: queryResult)
 
         carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)

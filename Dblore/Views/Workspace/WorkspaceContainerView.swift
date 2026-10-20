@@ -899,6 +899,11 @@ struct WorkspaceTabContentView: View {
           return event
         }
 
+        // The AI composer's `/` or `@` popup closes itself on Escape
+        if workspaceManager.aiAssistant.composerSuggestionsShown {
+          return event
+        }
+
         // Priority 0: If search panel is open, close it
         if self.viewModel.isSearchPanelVisible {
           Task { @MainActor [viewModel] in

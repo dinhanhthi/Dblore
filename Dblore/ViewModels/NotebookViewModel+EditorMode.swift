@@ -136,7 +136,8 @@ extension NotebookViewModel {
                 primaryKeyColumns: target?.primaryKeyColumns ?? [],
                 affectedRows: tuple.result.affectedRows,
                 editTarget: target,
-                lookupRelation: lookup
+                lookupRelation: lookup,
+                aiSessionKey: aiSessionKey
               ).withCapInfo(from: tuple.result),
               statementIndex: index
             ))
@@ -192,7 +193,8 @@ extension NotebookViewModel {
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: result.affectedRows,
           editTarget: target,
-          lookupRelation: lookup
+          lookupRelation: lookup,
+          aiSessionKey: aiSessionKey
         ).withCapInfo(from: result)
 
         editorResult = cellResult

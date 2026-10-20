@@ -188,9 +188,9 @@ struct CellResult: Codable, Sendable {
   var skippedStatements: [String] = []
   /// Session-only: queued cells cancelled because this result reset the session
   var skippedQueuedCells = 0
-  /// Session-only: `AIAccessGate.sessionKey` of the connection an error result came from, read
-  /// before the query was sent. The AI Fix action offers the error only while the tab is on that
-  /// connection; nil (a file, an unstamped result) never is.
+  /// Session-only: `AIAccessGate.sessionKey` of the connection a result came from, read before
+  /// the query was sent. The AI Fix action offers an error, and `@results` a result, only while
+  /// the tab is on that connection; nil (a file, an unstamped result) never is.
   var aiSessionKey: String? = nil
 
   private enum CodingKeys: String, CodingKey {

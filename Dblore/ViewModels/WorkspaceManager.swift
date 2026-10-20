@@ -376,6 +376,11 @@ class WorkspaceManager: Identifiable {
     aiAssistant.queryContextSource = { [weak self] statement, plan in
       try await self?.aiQueryContext(statement: statement, plan: plan) ?? ""
     }
+    aiAssistant.activeTabSource = { [weak self] in self?.activeViewModel }
+    aiAssistant.tableStructureSource = { [weak self] name, sessionKey in
+      await self?.aiMentionTable(name, sessionKey: sessionKey)
+    }
+    aiAssistant.favoritesSource = { [weak self] in self?.workspace.favorites.items ?? [] }
     aiAccessSource = { [weak self] in
       self.flatMap { Self.aiAccessContext(for: $0.workspace.connectionConfig) }
     }

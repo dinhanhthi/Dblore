@@ -37,6 +37,10 @@ extension AIAssistantViewModel {
     var offersTools = false
     /// Key of a local OpenAI-compatible server that may refuse native tools (`toolEndpoint`)
     var toolEndpoint: String? = nil
+    /// The question's @mentions; empty unless the gate allowed the connection at send time
+    var mentions: [AIMention] = []
+    /// What `@query` and `@results` read from the active tab at send time
+    var mentionTab = MentionTab()
   }
 
   /// Refused before the query reached the database: no `queryRunner` (the workspace has no
@@ -66,8 +70,9 @@ extension AIAssistantViewModel {
 
   /// Streams the reply into `entryId`; when "Run read-only queries" was on at send time and still
   /// is, runs the reply's ```sql run block once and stops, unless `token` went stale. Only a
-  /// connection the gate allows sends its schema, MongoDB screen, rules, earlier messages and the
-  /// catalog of a reviewed statement, and runs queries (never on a review turn); otherwise the
+  /// connection the gate allows sends its schema, MongoDB screen, rules, earlier messages, the
+  /// catalog of a reviewed statement and the question's @mentions, and runs queries (never on a
+  /// review turn); otherwise the
   /// request carries the new question and the dialect only. A turn that offers tools (allowed,
   /// no review, `offersTools`) runs the tool loop instead, without run blocks.
   func runTurn(
@@ -76,8 +81,13 @@ extension AIAssistantViewModel {
     let allowed =
       context.access.map { $0.decision(settings: settings.configuration) == .allowed } ?? true
     let review: String?
+    let mentions: String
     do {
       review = try await reviewContext(context.review, allowed: allowed)
+      mentions =
+        allowed
+        ? try await mentionContext(
+          context.mentions, tab: context.mentionTab, sessionKey: context.sessionKey) : ""
     } catch {
       return  // Stopped while the catalog was read
     }
@@ -94,7 +104,9 @@ extension AIAssistantViewModel {
       model: context.model, question: context.question,
       explicit: allowed ? context.explicit : [], snapshot: snapshot,
       // Earlier turns may hold table names, SQL or filters from when the connection was allowed
-      history: allowed ? history : [AIChatMessage(role: .user, text: context.question)],
+      history: allowed
+        ? Self.attaching(mentions, to: history)
+        : [AIChatMessage(role: .user, text: context.question)],
       runsQueries: allowed && runsQueries, compactPrompt: context.compactPrompt,
       screen: allowed ? context.screen : nil, review: review,
       rules: allowed ? context.access?.config.aiRules ?? "" : "", tools: !tools.isEmpty)

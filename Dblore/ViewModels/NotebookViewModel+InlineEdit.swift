@@ -522,6 +522,7 @@ extension NotebookViewModel {
     updated.sessionReset = result.sessionReset
     updated.skippedStatements = result.skippedStatements
     updated.skippedQueuedCells = result.skippedQueuedCells
+    updated.aiSessionKey = result.aiSessionKey
     editorResult = updated
     syncRowDetail(cellId: nil, result: updated)
   }

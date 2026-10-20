@@ -2,6 +2,27 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- **AI access per connection.** Each connection has an AI access setting (use the default, Always, Ask once per session, or Never) and its own rules that are sent with every request. Never sends no schema, query, error or rows; Ask shows Allow / Not now before anything leaves the Mac. Settings > AI sets the default and whether result rows may be sent. The MCP server follows the same setting. [#007e1348](https://github.com/dinhanhthi/Dblore/commit/007e1348) [#a83891ba](https://github.com/dinhanhthi/Dblore/commit/a83891ba) [#aba54711](https://github.com/dinhanhthi/Dblore/commit/aba54711)
+- **Review and Optimize.** The AI panel reviews or optimizes the current SQL query using table structure and the EXPLAIN plan shape (never literals or rows), shows the steps and a local diff, and Apply replaces the query as one undo step. [#68318f66](https://github.com/dinhanhthi/Dblore/commit/68318f66)
+- **AI tools with approval cards.** On remote providers the assistant can list and describe tables, run one read-only query when "Run read-only queries" is on (the rows are shown to you; they reach the model only with "Send result rows to AI"), and propose SQL as a card with its kind. Nothing runs on its own: Run goes through the tab's normal path with Safe Mode, and DROP or TRUNCATE need the object name typed first. [#c167a5b8](https://github.com/dinhanhthi/Dblore/commit/c167a5b8) [#52500436](https://github.com/dinhanhthi/Dblore/commit/52500436)
+- **Google Gemini** as an AI provider, with its API key kept in the Keychain. [#a76472cc](https://github.com/dinhanhthi/Dblore/commit/a76472cc)
+- **Inline suggestions.** Optional gray text after the caret in SQL query tabs and notebook cells (off by default; Tab accepts, Esc dismisses). On-device keeps your SQL on this Mac. [#dbc5cbb8](https://github.com/dinhanhthi/Dblore/commit/dbc5cbb8) [#29c30197](https://github.com/dinhanhthi/Dblore/commit/29c30197)
+- **Slash commands and @mentions** in the AI panel: `/explain`, `/fix`, `/review`, `/optimize` and your own commands with `{{query}}`, `{{selection}}`, `{{schema}}` and `{{error}}` placeholders; `@table:`, `@query`, `@results` and `@favorite:` attach context, following the connection's AI access setting.
+
+### Fixed
+
+- **AI schema context** puts each table, column and index on one line, so a catalog name cannot add lines to the prompt. [#a52dbf02](https://github.com/dinhanhthi/Dblore/commit/a52dbf02)
+
+### Upgrade notes
+
+- Connections saved by this version carry AI access and rules fields; an older build drops them when it saves the connection again.
+- With Google Gemini as the active AI provider, an older build shows AI as not configured.
+- An older build drops custom slash commands and the inline suggestion settings when it saves the AI settings.
+
 ## v0.8.1 (2026-10-17)
 
 ### Added

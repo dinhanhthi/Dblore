@@ -113,7 +113,9 @@ struct AIBubbleOverlay: View {
     )
     .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
     .background {
-      ModalEscapeCatcher {
+      // Suspended while the composer popup shows, so Esc closes only the popup. It stays
+      // mounted to keep its Escape order below any modal opened after the bubble.
+      ModalEscapeCatcher(isEnabled: !assistant.composerSuggestionsShown) {
         withSidebarAnimation(SidebarAnimation.bubble) { assistant.collapseBubble() }
       }
     }

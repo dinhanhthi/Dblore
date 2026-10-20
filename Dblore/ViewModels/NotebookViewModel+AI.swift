@@ -88,6 +88,35 @@ extension NotebookViewModel {
     return error
   }
 
+  /// Result of the selected statement (else the whole result) in the editor or selected cell, as
+  /// `@results` reads it, at most `AITools.queryRowLimit` rows. Nil on a Markdown note or a
+  /// read-only source tab, for an error, for a statement without columns, and when it came from
+  /// another connection than the tab's (a switch since it ran, a file, an unstamped result).
+  var aiCurrentResult: AIQueryResult? {
+    if viewMode == .markdown || isReadOnlySource { return nil }
+    let statements: [StatementResult]
+    let index: Int
+    let result: CellResult?
+    if viewMode == .editor {
+      (statements, index, result) = (editorStatementResults, selectedStatementIndex, editorResult)
+    } else if let cell = aiSelectedCell {
+      (statements, index, result) = (
+        cell.statementResults, cell.selectedStatementIndex, cell.result
+      )
+    } else {
+      return nil
+    }
+    let statement = statements.indices.contains(index) ? statements[index].result : nil
+    guard let shown = statement ?? result, shown.error == nil, !shown.columns.isEmpty,
+      let key = aiSessionKey, shown.aiSessionKey == key
+    else { return nil }
+    return AIQueryResult.make(
+      from: QueryResult(
+        columns: shown.columns, rows: shown.rows, rowCount: shown.rowCount, executionTime: 0,
+        wasLimited: shown.wasLimited),
+      maxRows: AITools.queryRowLimit)
+  }
+
   /// Plan of the selected statement's result (else the whole result) in the editor or selected
   /// cell, when it is an EXPLAIN result the plan view reads and it explained `sql`: the text it
   /// ran is `sql` or `sql` behind one of the prefixes Explain adds

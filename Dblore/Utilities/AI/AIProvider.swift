@@ -91,6 +91,8 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
   var inlineModel: String?
   /// Typing pause before a ghost text request
   var inlineDebounceMs: Int
+  /// Slash commands the user wrote (`AISlashCommand.sanitized` on decode)
+  var customCommands: [AICustomCommand]
 
   static let empty = AIConfiguration(activeProvider: nil, configs: [:])
 
@@ -98,7 +100,8 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     activeProvider: AIProviderKind?, configs: [AIProviderKind: AIProviderConfig],
     runsQueries: Bool = false, defaultConnectionAccess: AIAccessPolicy = .always,
     sendsResultRows: Bool = false, inlineEnabled: Bool = false,
-    inlineProvider: AIProviderKind? = nil, inlineModel: String? = nil, inlineDebounceMs: Int = 400
+    inlineProvider: AIProviderKind? = nil, inlineModel: String? = nil, inlineDebounceMs: Int = 400,
+    customCommands: [AICustomCommand] = []
   ) {
     self.activeProvider = activeProvider
     self.configs = configs
@@ -109,6 +112,7 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     self.inlineProvider = inlineProvider
     self.inlineModel = inlineModel
     self.inlineDebounceMs = inlineDebounceMs
+    self.customCommands = customCommands
   }
 
   /// Provider and model ghost text uses: the inline provider (else the chat provider) with the
@@ -126,7 +130,16 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case activeProvider, configs, runsQueries, defaultConnectionAccess, sendsResultRows
-    case inlineEnabled, inlineProvider, inlineModel, inlineDebounceMs
+    case inlineEnabled, inlineProvider, inlineModel, inlineDebounceMs, customCommands
+  }
+
+  /// One saved command; nil when it cannot be decoded, so one bad entry drops only itself
+  private struct LossyCommand: Decodable {
+    let command: AICustomCommand?
+
+    init(from decoder: Decoder) throws {
+      command = try? AICustomCommand(from: decoder)
+    }
   }
 
   // A dictionary with enum keys encodes as a flat array by default; use string keys instead
@@ -153,6 +166,11 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
       .flatMap(AIProviderKind.init(rawValue:))
     inlineModel = try container.decodeIfPresent(String.self, forKey: .inlineModel)
     inlineDebounceMs = try container.decodeIfPresent(Int.self, forKey: .inlineDebounceMs) ?? 400
+    // Absent before slash commands. The saved list is untrusted: invalid entries are dropped and
+    // the limits applied; a list that is no array drops every command, not the configuration.
+    let commands = (try? container.decodeIfPresent([LossyCommand].self, forKey: .customCommands))
+      .flatMap { $0 }?.compactMap(\.command)
+    customCommands = AISlashCommand.sanitized(commands ?? [])
   }
 
   func encode(to encoder: Encoder) throws {
@@ -167,6 +185,7 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     try container.encodeIfPresent(inlineProvider, forKey: .inlineProvider)
     try container.encodeIfPresent(inlineModel, forKey: .inlineModel)
     try container.encode(inlineDebounceMs, forKey: .inlineDebounceMs)
+    try container.encode(customCommands, forKey: .customCommands)
   }
 }
 

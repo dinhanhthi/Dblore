@@ -76,6 +76,7 @@ struct AISettingsSection: View {
 
       modelsCard
       AIInlineCard(settings: settings)
+      AISlashCommandsCard(settings: settings)
       privacyCard
     }
     .onAppear(perform: loadInitial)

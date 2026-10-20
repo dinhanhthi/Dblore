@@ -146,6 +146,9 @@ final class AIAssistantViewModel {
   /// Session presentation while visible; reset to the default mode on each open
   var presentation: AIPanelMode = .sidebar
   private(set) var isBubbleExpanded = false
+  /// True while the composer's `/` or `@` popup shows: Esc then reaches the composer, which
+  /// closes the popup, instead of closing the bubble or blurring the editor
+  var composerSuggestionsShown = false
   var providerOverride: AIProviderKind?
   var modelOverride: String?
   /// Qualified table names; empty means automatic selection
@@ -192,6 +195,13 @@ final class AIAssistantViewModel {
   /// Catalog-only context of a reviewed statement with the shown plan, read when a Review or
   /// Optimize turn the gate allows is sent; "" sends none. Nil means not connected.
   @ObservationIgnored var queryContextSource: ((String, ExplainPlan?) async throws -> String)?
+  /// The active tab, read when a turn with `@query` or `@results` is sent
+  @ObservationIgnored var activeTabSource: () -> NotebookViewModel? = { nil }
+  /// Catalog-only structure of the relation an `@table` mention names, on the connection of the
+  /// session key (`WorkspaceManager.aiMentionTable`); nil when not found or not allowed
+  @ObservationIgnored var tableStructureSource: ((String, _ sessionKey: String?) async -> String?)?
+  /// The workspace's favorite statements, for `@favorite`
+  @ObservationIgnored var favoritesSource: () -> [FavoriteStatement] = { [] }
   /// The connection's AI access, read on user actions (send, retry, live answer, one-shot),
   /// never from a view body. Nil without a connection: nothing to protect.
   @ObservationIgnored var aiAccessSource: () -> AIAccessContext? = { nil }
@@ -371,7 +381,7 @@ final class AIAssistantViewModel {
 
   /// Asks the gate for a send. Needs approval: holds `resume` for Allow and returns nil, so
   /// nothing is sent and the draft stays.
-  private func admitTurn(resume: @escaping @MainActor () -> Void) -> AccessCheck? {
+  func admitTurn(resume: @escaping @MainActor () -> Void) -> AccessCheck? {
     let check = aiAccessCheck()
     guard check.decision == .needsApproval, let context = check.context else {
       pendingApproval = nil
@@ -426,6 +436,9 @@ final class AIAssistantViewModel {
         id: entryId, role: .assistant, text: "", isError: false, review: review?.request))
 
     let model = activeModel
+    let sessionKey = Self.sessionKey(access.context)
+    // Mentions resolve against the current connection, and only when the gate allows it
+    let mentions = access.decision == .allowed ? AIMention.parse(question) : []
     let client: any AIChatClient
     do {
       guard !model.isEmpty else { throw AIClientError.missingModel }
@@ -441,12 +454,13 @@ final class AIAssistantViewModel {
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
       compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource(),
-      access: access.context, sessionKey: Self.sessionKey(access.context),
+      access: access.context, sessionKey: sessionKey,
       mongoDatabase: sqlDialect == .mongodb ? access.context?.config.database : nil,
       review: review,
       // On-device models get no tools; without a connection there is nothing to read
       offersTools: provider != .localMLX && toolRunner != nil && access.context != nil,
-      toolEndpoint: Self.toolEndpoint(provider, settings.config(for: provider)))
+      toolEndpoint: Self.toolEndpoint(provider, settings.config(for: provider)),
+      mentions: mentions, mentionTab: mentionTab(for: mentions, sessionKey: sessionKey))
     let history = makeHistory()
     isGenerating = true
     toolTurnSessionKey = context.offersTools ? context.sessionKey : nil

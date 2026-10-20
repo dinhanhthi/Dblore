@@ -22,6 +22,14 @@ struct AIAssistantPanel: View {
   @State private var composerTextHeight: CGFloat = 0
   @State private var showHistory = false
   @State private var retryEntryId: UUID?
+  /// What the composer popup lists for the `/` or `@` token at the end of the draft
+  @State private var suggestions: [AIComposerSuggestions.Item] = []
+  @State private var selectedSuggestion = 0
+  /// Start of the token Esc closed the popup on: it stays closed until another token starts
+  @State private var dismissedSuggestionStart: Int?
+  /// Why the last slash command did nothing or left placeholders empty, shown while the draft is
+  /// the one it left
+  @State private var commandNote: (text: String, draft: String)?
 
   private static let examples = [
     "Top 10 customers by order total",
@@ -57,12 +65,26 @@ struct AIAssistantPanel: View {
         // Follows the foreground so it stays visible on the tinted bubble: lighter in dark, darker in light
         Rectangle().fill(Color.foreground.opacity(0.2)).frame(height: 1)
       }
-      if assistant.needsSetup {
-        setupState
-      } else if assistant.messages.isEmpty {
-        emptyState
-      } else {
-        messageList
+      VStack(spacing: 0) {
+        if assistant.needsSetup {
+          setupState
+        } else if assistant.messages.isEmpty {
+          emptyState
+        } else {
+          messageList
+        }
+      }
+      // Pinned to the bottom of the messages, so it grows upward above the whole footer
+      // (composer, chips and notes stay visible) and never leaves the panel
+      .overlay(alignment: .bottom) {
+        if showsSuggestions {
+          AIComposerSuggestionPopup(
+            items: suggestions, selected: selectedSuggestion, onPick: pickSuggestion(at:)
+          )
+          .frame(maxHeight: Self.suggestionsMaxHeight, alignment: .bottom)
+          .padding(.horizontal, Spacing.md)
+          .padding(.vertical, Spacing.xs)
+        }
       }
       Divider()
       footer
@@ -84,7 +106,13 @@ struct AIAssistantPanel: View {
     .onChange(of: viewerTableName) { _, name in assistant.attachViewerTable(name) }
     // Only detach when the assistant is hidden: on a mode switch the outgoing panel disappears
     // after the incoming one appeared (its onAppear was a no-op), so detaching would drop the table
-    .onDisappear { if !assistant.isVisible { assistant.attachViewerTable(nil) } }
+    .onDisappear {
+      if !assistant.isVisible { assistant.attachViewerTable(nil) }
+      assistant.composerSuggestionsShown = false
+    }
+    .onChange(of: showsSuggestions, initial: true) { _, shows in
+      assistant.composerSuggestionsShown = shows
+    }
   }
 
   /// Accent glow from the top so the panel reads as the AI surface, fading out before the messages
@@ -397,6 +425,10 @@ struct AIAssistantPanel: View {
         Label(Self.privateNoteText(note), systemImage: "lock")
           .font(.small)
           .foregroundColor(.foregroundMuted)
+      } else if let commandNote, commandNote.draft == assistant.draft {
+        Label(commandNote.text, systemImage: "info.circle")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
       }
       if activeTab?.isReadOnlySource == true, !assistant.needsSetup {
         readOnlySourceQuickActions
@@ -529,7 +561,22 @@ struct AIAssistantPanel: View {
               insertComposerNewline()
               return .handled
             }
-            assistant.send()
+            if showsSuggestions {
+              pickSuggestion(at: selectedSuggestion)
+            } else {
+              submit()
+            }
+            return .handled
+          }
+          .onKeyPress(keys: [.upArrow, .downArrow, .tab, .escape], phases: .down) { press in
+            guard showsSuggestions, !Self.isComposing else { return .ignored }
+            let count = suggestions.count
+            switch press.key {
+            case .upArrow: selectedSuggestion = (selectedSuggestion + count - 1) % count
+            case .downArrow: selectedSuggestion = (selectedSuggestion + 1) % count
+            case .escape: dismissSuggestions()
+            default: pickSuggestion(at: selectedSuggestion)
+            }
             return .handled
           }
           .background(
@@ -555,6 +602,7 @@ struct AIAssistantPanel: View {
       .overlay(
         HairlineBorder(shape: composerShape, color: composerFocused ? .borderFocus : .border)
       )
+      .onChange(of: assistant.draft, initial: true) { _, _ in refreshSuggestions() }
 
       if assistant.isGenerating {
         Button {
@@ -566,7 +614,7 @@ struct AIAssistantPanel: View {
         .help("Stop")
       } else {
         Button {
-          assistant.send()
+          submit()
         } label: {
           Image(systemName: "arrow.up")
         }
@@ -577,6 +625,75 @@ struct AIAssistantPanel: View {
         )
         .help("Send (Return). New line (Shift+Return)")
       }
+    }
+  }
+
+  // MARK: - Composer suggestions and slash commands
+
+  /// Past it the popup scrolls; the space above the footer can cut it shorter
+  private static let suggestionsMaxHeight: CGFloat = 240
+
+  private var showsSuggestions: Bool {
+    composerFocused && !suggestions.isEmpty && !assistant.needsSetup
+  }
+
+  /// Reads the command, table and favorite lists only while a token needs them
+  private func refreshSuggestions() {
+    if commandNote?.draft != assistant.draft { commandNote = nil }
+    let token = AIComposerSuggestions.token(in: assistant.draft)
+    if token?.start != dismissedSuggestionStart { dismissedSuggestionStart = nil }
+    var items: [AIComposerSuggestions.Item] = []
+    if let token, dismissedSuggestionStart == nil {
+      items = AIComposerSuggestions.items(
+        for: token,
+        commands: AISlashCommand.available(
+          custom: assistant.settings.configuration.customCommands, dialect: assistant.sqlDialect),
+        tables: assistant.schemaSource().tables,
+        favorites: assistant.favoritesSource())
+    }
+    if items != suggestions { selectedSuggestion = 0 }
+    suggestions = items
+  }
+
+  private func pickSuggestion(at index: Int) {
+    guard suggestions.indices.contains(index),
+      let token = AIComposerSuggestions.token(in: assistant.draft)
+    else { return }
+    assistant.draft = AIComposerSuggestions.draft(
+      assistant.draft, picking: suggestions[index], at: token)
+    composerFocused = true
+  }
+
+  private func dismissSuggestions() {
+    dismissedSuggestionStart = AIComposerSuggestions.token(in: assistant.draft)?.start
+    suggestions = []
+  }
+
+  /// Send, or run the slash command the draft starts with: it fills the draft for review or
+  /// tells why it did nothing
+  private func submit() {
+    guard AISlashCommand.parse(assistant.draft) != nil else {
+      assistant.send()
+      return
+    }
+    let outcome = assistant.runSlashCommand(in: activeTab)
+    commandNote = Self.commandNoteText(outcome).map { ($0, assistant.draft) }
+  }
+
+  private static func commandNoteText(_ outcome: AIAssistantViewModel.SlashOutcome) -> String? {
+    switch outcome {
+    case .unknown(let name):
+      "Unknown command /\(name)"
+    case .unavailable(.explain):
+      "/explain needs a query in the active tab"
+    case .unavailable(.fix):
+      "No error to fix: /fix needs a query that failed"
+    case .unavailable(let builtIn):
+      "/\(builtIn.rawValue) needs a SQL query in the active tab"
+    case .filled(withheld: true):
+      "AI access is off for this connection; placeholders were left empty"
+    case .notACommand, .filled(withheld: false), .awaitingApproval:
+      nil
     }
   }
 

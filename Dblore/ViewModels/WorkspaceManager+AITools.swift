@@ -101,6 +101,18 @@ extension WorkspaceManager {
     }
   }
 
+  /// The structure an `@table` mention resolves to on the connection `sessionKey`: `name` as
+  /// typed (`schema.name` or a bare name) through `describeForAI`, so catalog only (sampled
+  /// fields on MongoDB). Nil unless the gate allows the connection, it is connected and still
+  /// has `sessionKey` (nil never matches), and the name names exactly one loaded relation.
+  func aiMentionTable(_ name: String, sessionKey: String?) async -> String? {
+    guard isAIAllowed(), connectionState.isConnected, let config = workspace.connectionConfig,
+      let sessionKey, AIAccessGate.sessionKey(for: config) == sessionKey,
+      case .success(let text) = await describeForAI(schema: nil, table: name, config: config)
+    else { return nil }
+    return text
+  }
+
   /// The structure of one loaded relation, never row counts or values. A SQL table is read with
   /// `fetchTableStructure` (columns, primary key, indexes, foreign keys); a view, a MongoDB
   /// collection (its sampled fields) or a table whose read failed renders the cached columns.

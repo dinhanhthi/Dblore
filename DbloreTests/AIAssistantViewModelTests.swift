@@ -1046,6 +1046,32 @@ struct AIAssistantViewModelTests {
     #expect(context.decision(settings: vm.settings.configuration) == .allowed)
   }
 
+  @Test("a slash command reading the query asks first; Allow runs it again with the values")
+  func slashCommandAllowRerunsCommand() throws {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let settings = makeSettings()
+    settings.configuration.customCommands = [
+      AICustomCommand(name: "probe", template: "Explain {{query}}")
+    ]
+    let vm = makeVM(client, settings: settings)
+    let context = access(.askOncePerSession)
+    vm.aiAccessSource = { context }
+    let tab = NotebookViewModel(notebook: DbloreNotebook(connectionConfig: context.config))
+    tab.viewMode = .editor
+    tab.editorContent = "SELECT id FROM orders"
+
+    vm.draft = "/probe"
+    #expect(vm.runSlashCommand(in: tab) == .awaitingApproval)
+    #expect(vm.pendingApproval?.connectionName == "Prod")
+    #expect(vm.draft == "/probe")
+
+    vm.allowPendingTurn()
+    #expect(vm.pendingApproval == nil)
+    #expect(vm.draft == "Explain SELECT id FROM orders")
+    #expect(context.decision(settings: vm.settings.configuration) == .allowed)
+    #expect(client.requests.isEmpty)
+  }
+
   @Test("a connection made private while answering refuses the query")
   func privateMidTurnRefusesQuery() async {
     final class Holder { var policy = AIAccessPolicy.always }
