@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# Build the DuckDB plugin artifact: download the pinned official libduckdb.dylib,
-# verify its upstream SHA-256, re-sign it with the Developer ID (hardened runtime)
-# and notarize it. --install-dev copies it into the gitignored .plugin-dev/ for
-# tests; --publish (user-run only) uploads it to GitHub and rewrites the catalog.
+# Build a plugin artifact (--plugin <id>, default duckdb). For duckdb: download the
+# pinned official libduckdb.dylib, verify its upstream SHA-256, re-sign it with the
+# Developer ID (hardened runtime) and notarize it. --install-dev copies it into the
+# gitignored .plugin-dev/ for tests; --publish (user-run only) uploads it to GitHub
+# and rewrites that plugin's catalog entry, leaving the other entries as they are.
 
 set -euo pipefail
 
@@ -14,21 +15,23 @@ UPSTREAM_SHA256="e0bc007d9b0094c0970ac1847a8601d10aad07cbd2910ce586ec810f77b638d
 TEAM_ID="86H6CNLN4C"
 SIGN_IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
 NOTARY_PROFILE="DbloreNotary"
-TAG="plugin-duckdb-v$DUCKDB_VERSION"
-CATALOG="Dblore/Utilities/Plugins/DuckDBPluginCatalog.json"
+CATALOG="Dblore/Utilities/Plugins/PluginCatalog.json"
 
 usage() {
   cat <<EOF
-Usage: scripts/release-plugin.sh [--install-dev] [--publish [--yes]] [--skip-notarize]
+Usage: scripts/release-plugin.sh [--plugin <id>] [--install-dev] [--publish [--yes]] [--skip-notarize]
 
-Downloads DuckDB $DUCKDB_VERSION (libduckdb-osx-universal.zip), verifies the upstream
-SHA-256, signs libduckdb.dylib with "$SIGN_IDENTITY",
-notarizes it and prints its SHA-256.
+Builds the library of catalog plugin <id>, signs it with "$SIGN_IDENTITY",
+notarizes it and prints its SHA-256. duckdb is the only build recipe: it downloads
+DuckDB $DUCKDB_VERSION (libduckdb-osx-universal.zip) and verifies the upstream SHA-256.
 
+  --plugin <id>     Plugin id in $CATALOG (default duckdb);
+                    an id not in the catalog is refused
   --install-dev     Write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
                     into .plugin-dev/ at the repo root
-  --publish         Upload to GitHub release $TAG (--latest=false) and rewrite
-                    $CATALOG. Manual, user-run only; afterwards
+  --publish         Upload to GitHub release plugin-<id>-v<version> (--latest=false) and
+                    rewrite only the <id> entry of $CATALOG.
+                    Manual, user-run only; afterwards
                     scripts/release-local.sh --check-plugin-only verifies the asset
   --yes             Skip the interactive confirmation of --publish
   --skip-notarize   Sign only (not allowed with --publish)
@@ -41,12 +44,18 @@ fail() {
   exit 1
 }
 
+PLUGIN_ID="duckdb"
 INSTALL_DEV=0
 PUBLISH=0
 ASSUME_YES=0
 SKIP_NOTARIZE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --plugin)
+      [[ $# -ge 2 ]] || fail "--plugin requires a value"
+      PLUGIN_ID="$2"
+      shift
+      ;;
     --install-dev) INSTALL_DEV=1 ;;
     --publish) PUBLISH=1 ;;
     --yes) ASSUME_YES=1 ;;
@@ -67,6 +76,72 @@ cd "$(dirname "$0")/.."
 OUT_DIR="$PWD/.plugin-dev"
 
 [[ $PUBLISH -eq 1 && $SKIP_NOTARIZE -eq 1 ]] && fail "--publish requires notarization; drop --skip-notarize"
+
+# Prints the libraryFileName of catalog entry <id>; exits non-zero when the catalog is not
+# schema version 2 or does not list <id> exactly once.
+catalog_library_file_name() {
+  python3 -I - "$1" "$2" <<'PY'
+import json, sys
+path, plugin_id = sys.argv[1:]
+with open(path) as f:
+    data = json.load(f)
+if data.get("schemaVersion") != 2 or not isinstance(data.get("plugins"), list):
+    sys.exit("not a schema version 2 catalog: " + path)
+matches = [p for p in data["plugins"] if isinstance(p, dict) and p.get("id") == plugin_id]
+if len(matches) != 1:
+    sys.exit(1)
+print(matches[0]["libraryFileName"])
+PY
+}
+
+# Sets version, url and sha256 of catalog entry <id> only, after checking them against the
+# rules of PluginCatalog.swift; its other fields and the other entries are kept as they are.
+rewrite_catalog_entry() {
+  python3 -I - "$1" "$2" "$3" "$4" "$5" <<'PY'
+import json, os, re, sys
+path, plugin_id, version, url, sha = sys.argv[1:]
+with open(path) as f:
+    data = json.load(f)
+if data.get("schemaVersion") != 2 or not isinstance(data.get("plugins"), list):
+    sys.exit("not a schema version 2 catalog: " + path)
+matches = [p for p in data["plugins"] if isinstance(p, dict) and p.get("id") == plugin_id]
+if len(matches) != 1:
+    sys.exit("plugin %s is not listed exactly once in %s" % (plugin_id, path))
+entry = matches[0]
+library = entry.get("libraryFileName", "")
+if not re.fullmatch(r"[0-9]+(\.[0-9]+)*", version):
+    sys.exit("invalid version: " + version)
+if not re.fullmatch(r"[0-9a-f]{64}", sha):
+    sys.exit("invalid sha256: " + sha)
+asset = r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/%s/%s" % (
+    re.escape("plugin-%s-v%s" % (plugin_id, version)), re.escape(library))
+if not re.fullmatch(asset, url):
+    sys.exit("url is not the release asset plugin-%s-v%s/%s: %s" % (plugin_id, version, library, url))
+entry.update({"version": version, "url": url, "sha256": sha})
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+[[ "$PLUGIN_ID" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid plugin id: $PLUGIN_ID"
+[[ -f "$CATALOG" ]] || fail "$CATALOG not found"
+LIBRARY_FILE_NAME=$(catalog_library_file_name "$CATALOG" "$PLUGIN_ID") ||
+  fail "plugin $PLUGIN_ID is not in $CATALOG"
+
+case "$PLUGIN_ID" in
+  duckdb)
+    PLUGIN_VERSION="$DUCKDB_VERSION"
+    [[ "$LIBRARY_FILE_NAME" == "libduckdb.dylib" ]] ||
+      fail "$CATALOG names $LIBRARY_FILE_NAME for duckdb; the build produces libduckdb.dylib"
+    ;;
+  *)
+    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb has one)"
+    ;;
+esac
+TAG="plugin-$PLUGIN_ID-v$PLUGIN_VERSION"
 
 WORK_DIR=""
 cleanup() {
@@ -93,8 +168,8 @@ if [[ $PUBLISH -eq 1 ]]; then
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !! --publish creates a PUBLIC GitHub release $TAG on $REPO,
-!! uploads libduckdb.dylib to it and rewrites $CATALOG.
-!! Every user installing the DuckDB plugin downloads this file.
+!! uploads $LIBRARY_FILE_NAME to it and rewrites the $PLUGIN_ID entry of $CATALOG.
+!! Every user installing the $PLUGIN_ID plugin downloads this file.
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 EOF
@@ -186,22 +261,11 @@ if [[ $PUBLISH -eq 1 ]]; then
     --notes "Official DuckDB $DUCKDB_VERSION libduckdb.dylib (upstream sha256 $UPSTREAM_SHA256), re-signed with Developer ID ($TEAM_ID) and notarized. Signed sha256: $DYLIB_SHA256" ||
     fail "gh release create failed; the catalog was not changed"
 
-  url="https://github.com/$REPO/releases/download/$TAG/libduckdb.dylib"
-  mkdir -p "$(dirname "$CATALOG")"
-  python3 -I - "$CATALOG" "$DUCKDB_VERSION" "$url" "$DYLIB_SHA256" <<'PY'
-import json, os, sys
-path, version, url, sha = sys.argv[1:]
-data = {}
-if os.path.exists(path):
-    with open(path) as f:
-        data = json.load(f)
-data.update({"version": version, "url": url, "sha256": sha})
-with open(path, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-PY
+  url="https://github.com/$REPO/releases/download/$TAG/$LIBRARY_FILE_NAME"
+  rewrite_catalog_entry "$CATALOG" "$PLUGIN_ID" "$PLUGIN_VERSION" "$url" "$DYLIB_SHA256" ||
+    fail "release $TAG is published but rewriting $CATALOG failed; set the $PLUGIN_ID entry by hand (url $url, sha256 $DYLIB_SHA256)"
   echo "release: $(gh release view "$TAG" --repo "$REPO" --json url -q .url)"
-  echo "updated $CATALOG; review and commit it, then run scripts/release-local.sh --check-plugin-only"
+  echo "updated the $PLUGIN_ID entry of $CATALOG; review and commit it, then run scripts/release-local.sh --check-plugin-only --plugin $PLUGIN_ID"
 fi
 
 echo "==> Done"

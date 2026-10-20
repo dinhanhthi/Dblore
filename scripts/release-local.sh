@@ -15,18 +15,19 @@ NOTARY_PROFILE="DbloreNotary"
 # Must match PROVISIONING_PROFILE_SPECIFIER (Release) and scripts/ExportOptions.plist
 SIGNING_PROFILE="Dblore Developer ID"
 SPARKLE_ACCOUNT="sqlnotebook"
-PLUGIN_CATALOG="Dblore/Utilities/Plugins/DuckDBPluginCatalog.json"
+PLUGIN_CATALOG="Dblore/Utilities/Plugins/PluginCatalog.json"
 
 usage() {
   cat <<EOF
 Usage: scripts/release-local.sh --expect-version <version> [--dry-run]
-       scripts/release-local.sh --check-plugin-only
+       scripts/release-local.sh --check-plugin-only [--plugin <id>]
 
   --expect-version <v>      <v> is X.Y.Z, the version to release as tag v<v>
   --dry-run                 Run the preflight checks only (no build, tag or push)
-  --check-plugin-only       Only check that the DuckDB plugin asset named in
+  --check-plugin-only       Only check that the asset of every plugin in
                             $PLUGIN_CATALOG is published
                             and matches its SHA-256 (part of every preflight)
+  --plugin <id>             With --check-plugin-only, check only plugin <id>
   -h, --help                Show this help
 EOF
 }
@@ -39,6 +40,7 @@ fail() {
 VERSION=""
 DRY_RUN=0
 CHECK_PLUGIN_ONLY=0
+ONLY_PLUGIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expect-version)
@@ -48,6 +50,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run) DRY_RUN=1 ;;
     --check-plugin-only) CHECK_PLUGIN_ONLY=1 ;;
+    --plugin)
+      [[ $# -ge 2 ]] || fail "--plugin requires a value"
+      ONLY_PLUGIN="$2"
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -62,6 +69,9 @@ done
 
 cd "$(dirname "$0")/.."
 
+[[ -z "$ONLY_PLUGIN" || $CHECK_PLUGIN_ONLY -eq 1 ]] ||
+  fail "--plugin only works with --check-plugin-only; a release checks every plugin"
+
 WORK_DIR=""
 NOTES=""
 PLUGIN_TMP=""
@@ -73,33 +83,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The app installs the DuckDB plugin from the catalog URL only when its SHA-256
-# matches, so never ship a catalog whose asset is missing or different.
+# The app installs a plugin from its catalog URL only when its SHA-256 matches,
+# so never ship a catalog with an entry whose asset is missing or different.
 check_plugin_asset() {
-  echo "==> Checking the DuckDB plugin asset"
+  echo "==> Checking the plugin assets"
   [[ -f "$PLUGIN_CATALOG" ]] || fail "$PLUGIN_CATALOG not found"
-  local version url expected_sha max_size http_code actual_sha
-  version=$(plutil -extract version raw -o - "$PLUGIN_CATALOG") || fail "no version in $PLUGIN_CATALOG"
-  url=$(plutil -extract url raw -o - "$PLUGIN_CATALOG") || fail "no url in $PLUGIN_CATALOG"
-  expected_sha=$(plutil -extract sha256 raw -o - "$PLUGIN_CATALOG") || fail "no sha256 in $PLUGIN_CATALOG"
-  max_size=$(plutil -extract maxSize raw -o - "$PLUGIN_CATALOG") || fail "no maxSize in $PLUGIN_CATALOG"
-  [[ "$url" == https://* ]] || fail "plugin url in $PLUGIN_CATALOG is not https: $url"
-  [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "plugin sha256 in $PLUGIN_CATALOG is not 64 lowercase hex characters"
-  [[ "$max_size" =~ ^[0-9]+$ ]] || fail "plugin maxSize in $PLUGIN_CATALOG is not an integer"
+  local schema_version count i id version url expected_sha max_size http_code actual_sha checked=0
+  schema_version=$(plutil -extract schemaVersion raw -o - "$PLUGIN_CATALOG") || fail "no schemaVersion in $PLUGIN_CATALOG"
+  [[ "$schema_version" == "2" ]] || fail "$PLUGIN_CATALOG has schemaVersion $schema_version, expected 2"
+  # raw on an array prints its element count
+  count=$(plutil -extract plugins raw -o - "$PLUGIN_CATALOG") || fail "no plugins array in $PLUGIN_CATALOG"
+  [[ "$count" =~ ^[0-9]+$ ]] || fail "plugins in $PLUGIN_CATALOG is not an array"
 
   PLUGIN_TMP=$(mktemp -d -t dblore-plugin-check)
-  local curl_status=0
-  http_code=$(curl -sSL --proto '=https' --proto-redir '=https' --max-filesize "$max_size" \
-    --connect-timeout 20 --max-time 600 -w '%{http_code}' -o "$PLUGIN_TMP/asset" "$url") ||
-    curl_status=$?
-  [[ "$http_code" != "404" ]] ||
-    fail "DuckDB plugin $version asset not published ($url returned HTTP 404) — run scripts/release-plugin.sh --publish, commit the updated catalog, then rerun"
-  [[ $curl_status -eq 0 && "$http_code" == "200" ]] ||
-    fail "could not download the DuckDB plugin asset $url (curl exit $curl_status, HTTP ${http_code:-none}; network error, timeout or larger than $max_size bytes)"
-  actual_sha=$(shasum -a 256 "$PLUGIN_TMP/asset" | awk '{ print $1 }')
-  [[ "$actual_sha" == "$expected_sha" ]] ||
-    fail "DuckDB plugin SHA-256 mismatch: $PLUGIN_CATALOG has $expected_sha, the published asset is $actual_sha"
-  echo "plugin: DuckDB $version asset matches $PLUGIN_CATALOG"
+  for ((i = 0; i < count; i++)); do
+    id=$(plutil -extract "plugins.$i.id" raw -o - "$PLUGIN_CATALOG") || fail "no plugins.$i.id in $PLUGIN_CATALOG"
+    [[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "plugins.$i.id in $PLUGIN_CATALOG is not a valid id: $id"
+    [[ -z "$ONLY_PLUGIN" || "$id" == "$ONLY_PLUGIN" ]] || continue
+    version=$(plutil -extract "plugins.$i.version" raw -o - "$PLUGIN_CATALOG") || fail "no version for $id in $PLUGIN_CATALOG"
+    url=$(plutil -extract "plugins.$i.url" raw -o - "$PLUGIN_CATALOG") || fail "no url for $id in $PLUGIN_CATALOG"
+    expected_sha=$(plutil -extract "plugins.$i.sha256" raw -o - "$PLUGIN_CATALOG") || fail "no sha256 for $id in $PLUGIN_CATALOG"
+    max_size=$(plutil -extract "plugins.$i.maxSize" raw -o - "$PLUGIN_CATALOG") || fail "no maxSize for $id in $PLUGIN_CATALOG"
+    [[ "$url" == https://* ]] || fail "plugin $id url in $PLUGIN_CATALOG is not https: $url"
+    [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "plugin $id sha256 in $PLUGIN_CATALOG is not 64 lowercase hex characters"
+    [[ "$max_size" =~ ^[0-9]+$ ]] || fail "plugin $id maxSize in $PLUGIN_CATALOG is not an integer"
+
+    local curl_status=0
+    http_code=$(curl -sSL --proto '=https' --proto-redir '=https' --max-filesize "$max_size" \
+      --connect-timeout 20 --max-time 600 -w '%{http_code}' -o "$PLUGIN_TMP/$id" "$url") ||
+      curl_status=$?
+    [[ "$http_code" != "404" ]] ||
+      fail "plugin $id $version asset not published ($url returned HTTP 404) — run scripts/release-plugin.sh --plugin $id --publish, commit the updated catalog, then rerun"
+    [[ $curl_status -eq 0 && "$http_code" == "200" ]] ||
+      fail "could not download the plugin $id asset $url (curl exit $curl_status, HTTP ${http_code:-none}; network error, timeout or larger than $max_size bytes)"
+    actual_sha=$(shasum -a 256 "$PLUGIN_TMP/$id" | awk '{ print $1 }')
+    [[ "$actual_sha" == "$expected_sha" ]] ||
+      fail "plugin $id SHA-256 mismatch: $PLUGIN_CATALOG has $expected_sha, the published asset is $actual_sha"
+    echo "plugin: $id $version asset matches $PLUGIN_CATALOG"
+    checked=$((checked + 1))
+  done
+  [[ -z "$ONLY_PLUGIN" || $checked -gt 0 ]] || fail "plugin $ONLY_PLUGIN is not in $PLUGIN_CATALOG"
 }
 
 if [[ $CHECK_PLUGIN_ONLY -eq 1 ]]; then

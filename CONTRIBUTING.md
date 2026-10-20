@@ -89,24 +89,26 @@ To upgrade, bump both exact pins in `scripts/markdown-editor/package.json`
 ## DuckDB plugin
 
 DuckDB ships as an optional plugin, not inside the app: users install it from
-Settings > Plugins, which downloads the `libduckdb.dylib` named in
-`Dblore/Utilities/Plugins/DuckDBPluginCatalog.json` and refuses it unless its SHA-256
-matches. `scripts/release-plugin.sh` builds that artifact: it downloads the pinned official
-DuckDB release, checks the upstream SHA-256, re-signs the dylib with the Developer ID
-(hardened runtime) and notarizes it.
+Settings > Plugins, which downloads the `libduckdb.dylib` named by the `duckdb` entry of the
+plugin catalog `Dblore/Utilities/Plugins/PluginCatalog.json` and refuses it unless its
+SHA-256 matches. `scripts/release-plugin.sh --plugin <id>` (default `duckdb`; an id not in
+the catalog is refused) builds a plugin artifact; DuckDB is the only build recipe: it
+downloads the pinned official DuckDB release, checks the upstream SHA-256, re-signs the
+dylib with the Developer ID (hardened runtime) and notarizes it.
 
 - **Local tests:** `scripts/release-plugin.sh --install-dev` writes the signed dylib, an
   ad-hoc-signed copy and `dev-catalog.json` into the gitignored `.plugin-dev/`. The DuckDB
   suites that load it are gated; run them with
   `TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 DUCKDB_PLUGIN_TESTS=1` in front of the `xcodebuild test`
   command above.
-- **Publish (maintainer only, manual):** `scripts/release-plugin.sh --publish` creates the
-  public GitHub release `plugin-duckdb-v<version>` with `--latest=false`, so
-  `releases/latest` keeps pointing at the app DMG, and rewrites the catalog SHA-256. Review
-  and commit the catalog.
+- **Publish (maintainer only, manual):** `scripts/release-plugin.sh --plugin <id> --publish`
+  creates the public GitHub release `plugin-<id>-v<version>` with `--latest=false`, so
+  `releases/latest` keeps pointing at the app DMG, and rewrites the version, URL and
+  SHA-256 of that plugin's catalog entry only. Review and commit the catalog.
 - **Before an app release:** `scripts/release-local.sh --check-plugin-only` downloads the
-  published asset and checks it against the catalog. The full release preflight runs the
-  same check and refuses to build while the asset is missing (not published yet) or its
+  published asset of every catalog entry and checks it against the catalog (add
+  `--plugin <id>` to check one entry). The full release preflight runs the same check on
+  every entry and refuses to build while an asset is missing (not published yet) or its
   SHA-256 differs from the catalog.
 - **Bumping DuckDB:** change `DUCKDB_VERSION` and `UPSTREAM_SHA256` in
   `scripts/release-plugin.sh` after reviewing the upstream release, then publish again.

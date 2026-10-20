@@ -46,7 +46,7 @@ struct QueryCopyBar: View {
   /// Connection dialect of INSERT export and clipboard copy.
   let dialect: SQLDialect
 
-  /// The connection's query language. MongoDB results have no SQL INSERT download.
+  /// The connection's query language. MongoDB results have no SQL INSERT or Parquet download.
   private var queryLanguage: DatabaseCapabilities.QueryLanguage {
     dialect == .mongodb ? .mongosh : .sql
   }
@@ -147,6 +147,7 @@ struct QueryCopyBar: View {
           result: result,
           format: request.format,
           queryLanguage: queryLanguage,
+          queryIndex: queryIndex,
           onExport: { options in
             let exported = result
             let index = queryIndex
@@ -282,6 +283,15 @@ struct QueryCopyBar: View {
             HStack {
               Image(systemName: "arrow.down.doc")
               Text("SQL INSERT")
+            }
+          }
+        }
+
+        if ResultExportSheet.exportFormats(for: queryLanguage).contains(.parquet) {
+          Button(action: { exportRequest = ExportRequest(format: .parquet) }) {
+            HStack {
+              Image(systemName: "arrow.down.doc")
+              Text("Parquet")
             }
           }
         }

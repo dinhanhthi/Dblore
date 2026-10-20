@@ -12,6 +12,7 @@ nonisolated enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
   case markdown
   case pdf
   case sqlInsert
+  case parquet
 
   var id: String { rawValue }
 
@@ -23,6 +24,7 @@ nonisolated enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
     case .markdown: "Markdown"
     case .pdf: "PDF"
     case .sqlInsert: "SQL INSERT"
+    case .parquet: "Parquet"
     }
   }
 
@@ -40,7 +42,14 @@ nonisolated enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
       "A paginated PDF. Long text can wrap instead of being cut off."
     case .sqlInsert:
       "INSERT statements for the rows in this result."
+    case .parquet:
+      "Apache Parquet, a typed columnar file for analytics tools. Written by the DuckDB plugin."
     }
+  }
+
+  /// Parquet is written by the DuckDB plugin's engine.
+  var requiresDuckDBPlugin: Bool {
+    self == .parquet
   }
 
   /// CSV and Markdown can omit the column-name row. SQL can omit the column list.

@@ -44,15 +44,7 @@ final class PluginRegistry {
   /// From the bundled catalog, each manager's launch check started. An invalid catalog is logged
   /// and leaves the registry empty, so no plugin is offered, downloaded or loaded.
   static let shared: PluginRegistry = {
-    let entries: [PluginCatalogEntry]
-    do {
-      entries = try PluginCatalog.bundled().plugins
-    } catch {
-      entries = []
-      let message = "Plugin catalog unavailable: \(error.localizedDescription)"
-      Task { await AppLogger.shared.error(message, category: "Plugins") }
-    }
-    let registry = PluginRegistry(entries: entries)
+    let registry = PluginRegistry(catalog: { try PluginCatalog.bundled() })
     for manager in registry.managers { manager.startLaunchCheck() }
     return registry
   }()
@@ -66,6 +58,24 @@ final class PluginRegistry {
     session: URLSession = PluginManager.downloadSession()
   ) {
     managers = entries.map { PluginManager(entry: $0, root: root, session: session) }
+  }
+
+  /// One manager per entry of the catalog `load` returns. A load that throws is logged and leaves
+  /// the registry empty.
+  convenience init(
+    catalog load: () throws -> PluginCatalog,
+    root: URL = PluginManager.defaultRoot,
+    session: URLSession = PluginManager.downloadSession()
+  ) {
+    let entries: [PluginCatalogEntry]
+    do {
+      entries = try load().plugins
+    } catch {
+      entries = []
+      let message = "Plugin catalog unavailable: \(error.localizedDescription)"
+      Task { await AppLogger.shared.error(message, category: "Plugins") }
+    }
+    self.init(entries: entries, root: root, session: session)
   }
 
   /// The manager for the catalog entry `id`; nil when the catalog has no such plugin.

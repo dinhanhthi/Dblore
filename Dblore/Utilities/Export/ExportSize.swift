@@ -47,7 +47,7 @@ enum ExportSize {
     switch options.format {
     case .pdf:
       return pdf(result: result, options: options)
-    case .csv, .excel, .json, .markdown, .sqlInsert:
+    case .csv, .excel, .json, .markdown, .sqlInsert, .parquet:
       let bytes = textBytes(result: result, options: options)
       return ExportSizeEstimate(bytes: bytes, pageCount: nil, warnsAboutWrap: false)
     }

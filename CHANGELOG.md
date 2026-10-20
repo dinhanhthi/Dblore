@@ -17,8 +17,10 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Connection color and group.** Give a connection a color and a group in its form; the Connections list on the welcome screen and the Recent connections menu group them, and the footer shows the connection's color. [#2554f09b](https://github.com/dinhanhthi/Dblore/commit/2554f09b)
 - **Several highlight rules at once.** Highlight cells or rows with as many rules as you need (a cell rule wins over a row rule), switch each one on or off, and mark saved rules Active to apply them whenever the table opens. [#2554f09b](https://github.com/dinhanhthi/Dblore/commit/2554f09b)
 - **SQLite and DuckDB plan trees.** Explain on SQLite (EXPLAIN QUERY PLAN) and DuckDB (JSON plans, with timings for Explain Analyze) opens the same plan tree as PostgreSQL and MySQL. [#9825e825](https://github.com/dinhanhthi/Dblore/commit/9825e825)
-- **Create tables.** New Table… on the sidebar's Tables header (PostgreSQL, MySQL, SQLite) builds columns, a primary key, unique and foreign keys and a table comment (PostgreSQL, MySQL), shows the exact SQL and runs it through Safe Mode; under Review it waits for Commit on PostgreSQL and SQLite (MySQL asks you to switch off Review first).
+- **Create tables.** New Table… on the sidebar's Tables header (PostgreSQL, MySQL, SQLite) builds columns, a primary key, unique and foreign keys and a table comment (PostgreSQL, MySQL), shows the exact SQL and runs it through Safe Mode; under Review it waits for Commit on PostgreSQL and SQLite (MySQL asks you to switch off Review first). [#0369eeaf](https://github.com/dinhanhthi/Dblore/commit/0369eeaf)
 - **Rename, comment and drop tables** from the structure editor, or with Rename… and Drop Table… on a table in the sidebar. Drop asks for the table name and shows the exact statement first; under Review the change waits for Commit on PostgreSQL and SQLite, and open tabs follow a rename or close after a drop. Table comments are read and edited on PostgreSQL and MySQL. [#c73bd2d1](https://github.com/dinhanhthi/Dblore/commit/c73bd2d1)
+- **Parquet export.** Export a SQL result as a `.parquet` file from the export sheet or the copy bar's format menu, with progress and Cancel. Integer, floating-point, boolean, timestamp, binary and JSON columns keep their type; other columns are written as text. It needs the DuckDB plugin; without it the format links to Settings > Plugins.
+- **Plugins list.** Settings > Plugins shows each available plugin on its own row, with its own Install, Remove, progress and Cancel.
 
 ### Fixed
 
@@ -31,6 +33,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - An older build drops custom slash commands and the inline suggestion settings when it saves the AI settings.
 - An older build drops a connection's color and group when it saves the connection again.
 - Saved highlights that use the Pink, Cyan or Gray color cannot be read by an older build: it shows no saved highlights and replaces them all on its next save.
+- The DuckDB plugin installed by an earlier version keeps working; there is nothing to reinstall.
 
 ## v0.8.1 (2026-10-17)
 
