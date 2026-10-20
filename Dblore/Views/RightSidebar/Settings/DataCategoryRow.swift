@@ -2,7 +2,8 @@
 //  DataCategoryRow.swift
 //  Dblore
 //
-//  One local-data category in Settings: size, export, clear, and history retention.
+//  One local-data category in Settings: size, export, clear, and history and Data Rewind
+//  retention.
 //
 
 import AppKit
@@ -23,7 +24,8 @@ enum DataByteCount {
   }
 }
 
-/// Icon, title, size, and actions for one category. Query history also hosts retention.
+/// Icon, title, size, and actions for one category. Query history and Data Rewind also host
+/// their recording switch and retention.
 struct DataCategoryRow: View {
   let row: DataSettingsRow
   var isBusy: Bool
@@ -66,6 +68,11 @@ struct DataCategoryRow: View {
         HistoryRetentionControls(isBusy: isBusy || row.loading, onClear: onClear)
           .padding(.leading, Self.descriptionIndent)
       }
+
+      if row.category == .dataRewind {
+        RewindRetentionControls(isBusy: isBusy || row.loading, onDelete: onClear)
+          .padding(.leading, Self.descriptionIndent)
+      }
     }
   }
 
@@ -79,11 +86,14 @@ struct DataCategoryRow: View {
           .buttonStyle(FilledSecondaryButtonStyle())
           .linkPointer()
       }
-      Button("Export", action: onExport)
-        .buttonStyle(FilledSecondaryButtonStyle())
-        .disabled(isBusy || row.loading)
-        .linkPointer()
-      if row.category != .queryHistory {
+      // Row data never leaves this Mac through an export
+      if !row.category.isExcludedFromBackup {
+        Button("Export", action: onExport)
+          .buttonStyle(FilledSecondaryButtonStyle())
+          .disabled(isBusy || row.loading)
+          .linkPointer()
+      }
+      if row.category != .queryHistory && row.category != .dataRewind {
         Button("Clear", action: onClear)
           .buttonStyle(DangerButtonStyle())
           .disabled(isBusy || row.loading)
@@ -204,5 +214,59 @@ private struct HistoryRetentionControls: View {
     case 0: "Forever"
     default: "\(days) days"
     }
+  }
+}
+
+/// Recording switch and retention for Data Rewind. Days are clamped by `AppSettings`.
+private struct RewindRetentionControls: View {
+  var isBusy: Bool
+  let onDelete: () -> Void
+
+  @Bindable private var appSettings = AppSettings.shared
+  @Environment(\.pixelLength) private var pixelLength
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      SettingsToggle(
+        title: "Record Data Rewind",
+        description:
+          "Reads each row before and after a data viewer edit, so the edit can be undone later.",
+        isOn: $appSettings.rewindEnabled
+      )
+
+      HStack(spacing: Spacing.sm) {
+        Text("Keep for")
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+        Spacer(minLength: Spacing.sm)
+        CapsuleDropdown(
+          title: "\(appSettings.rewindRetentionDays) days",
+          accessibilityLabel: "Keep Data Rewind for",
+          options: AppSettings.rewindRetentionChoices,
+          optionTitle: { "\($0) days" },
+          isSelected: { $0 == appSettings.rewindRetentionDays },
+          onSelect: { appSettings.rewindRetentionDays = $0 }
+        )
+      }
+
+      Text(
+        "Up to \(DataByteCount.text(RewindStore.defaultMaxBytes)) of row data is kept; the oldest edits go first."
+      )
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
+
+      Button("Delete", action: onDelete)
+        .buttonStyle(DangerButtonStyle())
+        .disabled(isBusy)
+        .linkPointer()
+    }
+    .padding(Spacing.sm)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    // Same box as query history retention
+    .background(Color.panelBackground, in: RoundedRectangle(cornerRadius: CornerRadius.md))
+    .overlay(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .strokeBorder(Color.border, lineWidth: pixelLength)
+    )
   }
 }

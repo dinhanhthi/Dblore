@@ -98,11 +98,11 @@ struct DataSettingsSection: View {
       }
     }
     .confirmationDialog(
-      "Clear \(pendingClear?.title ?? "data")?",
+      "\(clearVerb) \(pendingClear?.title ?? "data")?",
       isPresented: clearIsPresented,
       titleVisibility: .visible
     ) {
-      Button("Clear", role: .destructive) { confirmClear() }
+      Button(clearVerb, role: .destructive) { confirmClear() }
       Button("Cancel", role: .cancel) {}
     } message: {
       Text("This removes \(pendingClear?.title ?? "this category") from this Mac.")
@@ -262,6 +262,11 @@ struct DataSettingsSection: View {
     )
   }
 
+  /// The Data Rewind row's button says "Delete", so its dialog does too
+  private var clearVerb: String {
+    pendingClear == .dataRewind ? "Delete" : "Clear"
+  }
+
   private func confirmClear() {
     guard let category = pendingClear else { return }
     let token = model.prepareClear(category)
@@ -278,10 +283,12 @@ struct DataSettingsSection: View {
   }
 
   /// Full selection uses `exportAll` so local models follow the checkbox (off by default).
+  /// Categories a backup never holds (Data Rewind) are not offered.
   private func writeExportAll(_ selected: Set<LocalDataCategory>, to url: URL) {
     let includeModels = selected.contains(.localModels)
     let others = selected.subtracting([.localModels])
-    let availableOthers = Set(model.rows.map(\.category)).subtracting([.localModels])
+    let availableOthers = Set(model.rows.map(\.category).filter { !$0.isExcludedFromBackup })
+      .subtracting([.localModels])
     runExport(to: url, finished: "Export finished.") {
       if others == availableOthers {
         try await model.exportAll(includeModels: includeModels, to: url)
@@ -383,6 +390,8 @@ enum DataSettingsProduction {
     if !SessionManager.isRunningAsTestHost {
       list.append(
         QueryHistoryLocalDataProvider(store: .shared, fileURL: queryHistoryFileURL))
+      list.append(
+        DataRewindLocalDataProvider(store: RewindStore.shared, fileURL: RewindStore.defaultURL))
     }
     let rest: [any LocalDataProvider] = [
       ConnectionHistoryLocalDataProvider(defaults: defaults, domainName: domain),
@@ -436,7 +445,7 @@ enum DataSettingsGroup: CaseIterable {
   /// Exhaustive, so a new `LocalDataCategory` fails the build until it has a group.
   private static func group(of category: LocalDataCategory) -> DataSettingsGroup {
     switch category {
-    case .queryHistory, .connectionHistory, .recentItems: .history
+    case .queryHistory, .dataRewind, .connectionHistory, .recentItems: .history
     case .openTabs, .savedFilters, .schemaLayout: .workspace
     case .aiChats, .aiSettings, .localModels: .assistant
     case .logs, .appSettings: .app
@@ -473,6 +482,7 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
 }
 
 /// Category checkboxes. Local models start unchecked and are labeled with their size.
+/// Categories a backup never holds are left out.
 private struct DataExportAllSheet: View {
   @Bindable var model: DataSettingsModel
   var onExport: (Set<LocalDataCategory>) -> Void
@@ -489,7 +499,12 @@ private struct DataExportAllSheet: View {
     self.onExport = onExport
     self.onCancel = onCancel
     _selected = State(
-      initialValue: Set(model.rows.map(\.category).filter { $0 != .localModels }))
+      initialValue: Set(
+        model.rows.map(\.category).filter { $0 != .localModels && !$0.isExcludedFromBackup }))
+  }
+
+  private var rows: [DataSettingsRow] {
+    model.rows.filter { !$0.category.isExcludedFromBackup }
   }
 
   var body: some View {
@@ -512,7 +527,7 @@ private struct DataExportAllSheet: View {
 
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.sm) {
-          ForEach(model.rows) { row in
+          ForEach(rows) { row in
             Toggle(isOn: isOn(row.category)) {
               VStack(alignment: .leading, spacing: Spacing.xxs) {
                 Text(title(for: row))

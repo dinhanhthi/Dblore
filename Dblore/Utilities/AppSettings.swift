@@ -326,6 +326,8 @@ class AppSettings {
     static let historyEnabled = "app.settings.historyEnabled"
     static let historyRetentionDays = "app.settings.historyRetentionDays"
     static let historyMaxEntries = "app.settings.historyMaxEntries"
+    static let rewindEnabled = "app.settings.rewindEnabled"
+    static let rewindRetentionDays = "app.settings.rewindRetentionDays"
     static let showExperimentalEngines = "app.settings.showExperimentalEngines"
     static let resultFontSize = "app.settings.resultFontSize"
     static let colorValuesByType = "app.settings.colorValuesByType"
@@ -755,6 +757,28 @@ class AppSettings {
     }
   }
 
+  /// Record Data Rewind entries for data viewer edits.
+  /// Default: true
+  var rewindEnabled: Bool = true {
+    didSet {
+      defaults.set(rewindEnabled, forKey: Keys.rewindEnabled)
+    }
+  }
+
+  /// Days of Data Rewind entries to keep. Allowed: 7, 30, 90, 365. Any other value becomes 30.
+  /// Default: 30
+  var rewindRetentionDays: Int = AppSettings.defaultRewindRetentionDays {
+    didSet {
+      let clampedValue = Self.clampRewindRetentionDays(rewindRetentionDays)
+      if clampedValue != rewindRetentionDays {
+        rewindRetentionDays = clampedValue
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(rewindRetentionDays, forKey: Keys.rewindRetentionDays)
+      RewindPrune.schedule()
+    }
+  }
+
   /// Show database engines with `isAvailable == false` in the connection type picker.
   /// Default: false (the picker stays hidden while only PostgreSQL is available)
   var showExperimentalEngines: Bool = false {
@@ -1150,6 +1174,19 @@ class AppSettings {
       historyRetentionDays = clamped
     }
 
+    if defaults.object(forKey: Keys.rewindEnabled) != nil {
+      rewindEnabled = defaults.bool(forKey: Keys.rewindEnabled)
+    }
+
+    if defaults.object(forKey: Keys.rewindRetentionDays) != nil {
+      let stored = defaults.integer(forKey: Keys.rewindRetentionDays)
+      let clamped = Self.clampRewindRetentionDays(stored)
+      if clamped != stored {
+        defaults.set(clamped, forKey: Keys.rewindRetentionDays)
+      }
+      rewindRetentionDays = clamped
+    }
+
     if defaults.object(forKey: Keys.showExperimentalEngines) != nil {
       showExperimentalEngines = defaults.bool(forKey: Keys.showExperimentalEngines)
     }
@@ -1263,6 +1300,8 @@ class AppSettings {
     historyEnabled = true
     historyRetentionDays = Self.defaultHistoryRetentionDays
     historyMaxEntries = Self.defaultHistoryMaxEntries
+    rewindEnabled = true
+    rewindRetentionDays = Self.defaultRewindRetentionDays
     showExperimentalEngines = false
     notifyLongQueries = false
     longQueryThresholdSeconds = Self.defaultLongQueryThresholdSeconds

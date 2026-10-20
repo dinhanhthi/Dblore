@@ -278,6 +278,7 @@ struct DbloreApp: App {
     if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()
       pruneQueryHistoryOnLaunch()
+      RewindPrune.schedule()
       LaunchSessionRestore.prepare()
     }
 

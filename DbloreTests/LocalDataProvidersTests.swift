@@ -335,6 +335,41 @@ struct LocalDataProvidersTests {
     expectUnrelated(suite)
   }
 
+  @Test("Data Rewind reports its file, deletes every entry, and exports nothing")
+  func dataRewind() async throws {
+    let root = try makeRoot()
+    defer { remove(root) }
+    let url = root.appendingPathComponent("rewind.sqlite")
+    let store = try RewindStore(url: url)
+    try store.record(
+      RewindEntry(
+        id: 0, connectionKey: "SQLite||0|/tmp/a.db", schema: "main", table: "t",
+        qualifiedName: "\"t\"", engine: .sqlite, created: Date(), state: .pending,
+        editKind: .staged, statementCount: 1, columns: [], notCaptured: false,
+        notRewindableReason: nil),
+      rows: [RewindRow(operation: .delete, primaryKey: ["id": "1"], before: ["id": "1"])])
+    let provider = DataRewindLocalDataProvider(store: store, fileURL: url)
+
+    let summary = await provider.summary()
+    #expect(summary.itemCount == 1)
+    #expect(summary.bytes == (try store.fileSize()))
+    #expect(summary.location == url)
+
+    let folder = try makeFolder(in: root)
+    try await provider.export(to: folder)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+
+    let notes = try await recordChanges { try await provider.clear() }
+    #expect(notes == [LocalDataCategory.dataRewind.rawValue])
+    #expect(try store.count() == 0)
+
+    // A file the store could not open is removed from disk
+    let unreadable = root.appendingPathComponent("broken.sqlite")
+    try Data("not sqlite".utf8).write(to: unreadable)
+    try await DataRewindLocalDataProvider(store: nil, fileURL: unreadable).clear()
+    #expect(!FileManager.default.fileExists(atPath: unreadable.path))
+  }
+
   @Test("App settings skip password and secret keys")
   func appSettings() async throws {
     let suite = makeSuite()
