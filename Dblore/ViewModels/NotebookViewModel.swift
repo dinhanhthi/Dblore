@@ -185,6 +185,9 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+  /// Selected rows of the editor or data viewer grid, for the result header or paging bar.
+  /// Set by the grid; nil once it goes away. View state only.
+  var editorSelectionSummary: ResultSelectionSummary?
 
   // MARK: - Pinning (session only, see NotebookViewModel+Pinning.swift)
   /// Cells showing the compare view

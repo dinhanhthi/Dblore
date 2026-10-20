@@ -68,6 +68,17 @@ extension EditorModeView {
         // Result info
         resultInfoSection(result: result)
 
+        if let summary = viewModel.editorSelectionSummary, result.error == nil,
+          !viewModel.isEditorComparing, resultDisplayModeBinding(for: result).wrappedValue == .grid
+        {
+          Rectangle()
+            .fill(Color.foregroundMuted.opacity(0.3))
+            .frame(width: 1, height: 12)
+          ResultSelectionSummaryView(summary: summary)
+            .font(.system(size: 12))
+            .foregroundColor(.foregroundSubtle)
+        }
+
         Spacer()
 
         // Grid / Documents / Chart falls back here when the "Run with query" footer is hidden
@@ -568,6 +579,7 @@ struct EditorResultGridView: View {
       onClearHighlight: canHighlight ? { viewModel.clearHighlight() } : nil,
       searchQuery: viewModel.searchState.query,
       caseSensitive: viewModel.searchState.isCaseSensitive,
+      wholeWord: viewModel.searchState.isWholeWord,
       currentMatch: currentMatch,
       searchMatches: viewModel.searchState.matches,
       forwardsScrollToParent: false,
@@ -581,7 +593,8 @@ struct EditorResultGridView: View {
       foreignKeys: viewModel.lookupForeignKeys,
       lookupDialect: viewModel.sqlDialect,
       onLookupReferencedRow: referencedRow.lookup,
-      onJumpToReferencedRow: referencedRow.jump
+      onJumpToReferencedRow: referencedRow.jump,
+      onSelectionSummaryChange: { viewModel.editorSelectionSummary = $0 }
     )
   }
 }

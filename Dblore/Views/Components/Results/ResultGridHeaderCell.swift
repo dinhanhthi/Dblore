@@ -19,12 +19,13 @@ struct ResultGridHeaderContent: Equatable {
   var type: String?
   /// Primary-key column of a result with a live edit target (key icon)
   var isPrimaryKey = false
-  /// The column name contains the search query
+  /// The column name contains the search query (as a whole word when `wholeWord`)
   var isHighlighted = false
   /// The current search match is this column's name
   var isCurrentMatch = false
   var searchQuery = ""
   var caseSensitive = false
+  var wholeWord = false
   /// Header of the "#" row number column: muted title, right-aligned
   var isRowNumber = false
   /// A category filter is hiding at least one value of this column
@@ -235,7 +236,8 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     }
     return ResultGridCoordinator.highlighted(
       content.title, query: content.searchQuery, caseSensitive: content.caseSensitive,
-      font: Self.titleFont, textColor: ResultGridCoordinator.textColor,
+      wholeWord: content.wholeWord, font: Self.titleFont,
+      textColor: ResultGridCoordinator.textColor,
       isCurrentMatch: content.isCurrentMatch)
   }
 

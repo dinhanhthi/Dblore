@@ -212,6 +212,11 @@ class SQLTextView: NSTextView {
     ghostTextDidChangeText()
     // Skip autocomplete update if we're accepting a suggestion or doing programmatic edits
     guard !isAcceptingSuggestion && !isProgrammaticEdit else { return }
+    // Undo and redo replay earlier edits (a Replace, a Format): not typing
+    if undoManager?.isUndoing == true || undoManager?.isRedoing == true {
+      hideAutocomplete()
+      return
+    }
     // Update autocomplete suggestions when text changes
     updateAutocompleteSuggestions()
   }

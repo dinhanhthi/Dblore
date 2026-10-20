@@ -238,6 +238,10 @@ struct SearchMatch: Identifiable, Equatable, Sendable {
 struct SearchState: Equatable, Sendable {
   var query: String = ""
   var isCaseSensitive: Bool = false
+  /// Query text matches only whole words (letters, digits and `_` do not touch the match)
+  var isWholeWord: Bool = false
+  /// The Replace row is shown (Find and Replace…)
+  var isReplaceVisible: Bool = false
   var matches: [SearchMatch] = []
   var currentMatchIndex: Int = 0
   var isSearching: Bool = false

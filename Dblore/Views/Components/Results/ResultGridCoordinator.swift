@@ -78,6 +78,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let ascending: Bool
     let searchQuery: String
     let caseSensitive: Bool
+    let wholeWord: Bool
     let currentMatchId: UUID?
     let hideColumnTypes: Bool
     let hasEditTarget: Bool
@@ -158,6 +159,15 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)?
   /// Called by the context menu's "Clear Highlight"
   var onClearHighlight: (() -> Void)?
+  /// Called, debounced, with the summary of 2+ selected rows in `clickedColumn`; nil below two
+  /// rows and when the grid goes away
+  var onSelectionSummaryChange: ((ResultSelectionSummary?) -> Void)?
+  /// Result column of the last click in the cells. Nil before a click and on the "#" gutter.
+  var clickedColumn: Int?
+  var selectionSummaryDebounce: Duration = .milliseconds(150)
+  private var selectionSummaryTask: Task<Void, Never>?
+  /// Last summary sent (`.none` before the first), so a reload with the same selection is quiet
+  private var reportedSelectionSummary: ResultSelectionSummary?? = .none
   /// Table updated last, so the context menu can read the current row and column selection
   private weak var gridTableView: NSTableView?
   /// True while `update` shows the input sort in the header, so it isn't reported back
@@ -195,23 +205,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// Header content of `column`: the type unless hidden, the key icon for a primary-key
   /// column of a result with a live edit target (a result read from a file has none), the
-  /// search highlight when the name contains the query and the current-match color when
-  /// `currentMatch` is this column's name
+  /// search highlight when the name contains the query (as a whole word when `wholeWord`) and
+  /// the current-match color when `currentMatch` is this column's name
   static func headerContent(
     for column: ColumnInfo, result: CellResult, hideColumnTypes: Bool, searchQuery: String,
-    caseSensitive: Bool, currentMatch: SearchMatch?, isFiltered: Bool = false
+    caseSensitive: Bool, wholeWord: Bool = false, currentMatch: SearchMatch?,
+    isFiltered: Bool = false
   ) -> ResultGridHeaderContent {
-    let isHighlighted =
-      !searchQuery.isEmpty
-      && column.name.range(of: searchQuery, options: caseSensitive ? [] : .caseInsensitive)
-        != nil
+    let isHighlighted = !NotebookViewModel.sourceMatchRanges(
+      in: column.name, query: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
+      limit: 1
+    ).isEmpty
     return ResultGridHeaderContent(
       title: column.name,
       type: hideColumnTypes ? nil : column.type,
       isPrimaryKey: result.editTarget != nil && result.primaryKeyColumns.contains(column.name),
       isHighlighted: isHighlighted,
       isCurrentMatch: isHighlighted && currentMatch?.matchType == .columnName(column.name),
-      searchQuery: searchQuery, caseSensitive: caseSensitive, isFiltered: isFiltered)
+      searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
+      isFiltered: isFiltered)
   }
 
   /// Records `size` and the matching row height. True when the face changed, so the caller
@@ -235,8 +247,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   @discardableResult
   func update(
     _ tableView: NSTableView, result: CellResult, sortColumn: String?, ascending: Bool,
-    searchQuery: String = "", caseSensitive: Bool = false, currentMatch: SearchMatch? = nil,
-    hideColumnTypes: Bool = false, hiddenColumns: Set<String> = [],
+    searchQuery: String = "", caseSensitive: Bool = false, wholeWord: Bool = false,
+    currentMatch: SearchMatch? = nil, hideColumnTypes: Bool = false,
+    hiddenColumns: Set<String> = [],
     highlight: TableHighlight? = nil, highlightDialect: DatabaseType = .postgresql,
     valueFilter: ColumnValueFilter = ColumnValueFilter(),
     searchMatches: [SearchMatch] = [],
@@ -248,7 +261,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let newKey = Key(
       timestamp: result.timestamp, columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
-      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatchId: currentMatch?.id,
+      searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
+      currentMatchId: currentMatch?.id,
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
       hiddenColumns: hiddenColumns, highlight: highlight, highlightDialect: highlightDialect,
       valueFilter: valueFilter)
@@ -256,8 +270,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     if newKey == key {
       guard nextChangeSet != stagedChangeSet else { return false }
       applyStagedChangeSet(nextChangeSet, to: tableView)
+      scheduleSelectionSummary(tableView)
       return true
     }
+    // The same index may name another column now
+    if newKey.columnNames != key?.columnNames { clickedColumn = nil }
+    defer { scheduleSelectionSummary(tableView) }
     if newKey.timestamp != key?.timestamp || newKey.columnNames != key?.columnNames {
       columnFilterPopover?.close()
       columnFilterPopover = nil
@@ -310,7 +328,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       }
       updateHeader(
         tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
-        caseSensitive: caseSensitive, currentMatch: gridMatch)
+        caseSensitive: caseSensitive, wholeWord: wholeWord, currentMatch: gridMatch)
       // New columns fit the column name and the cell text, like a divider double-click.
       // A re-run keeps a width the user dragged.
       if newKey.columnNames != oldKey?.columnNames {
@@ -674,6 +692,60 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     NSPasteboard.general.setString(selectionTSV(tableView), forType: .string)
   }
 
+  // MARK: - Selection summary
+
+  func tableViewSelectionDidChange(_ notification: Notification) {
+    guard let tableView = notification.object as? NSTableView else { return }
+    scheduleSelectionSummary(tableView)
+  }
+
+  /// Records the result column under a click in table column `tableColumn`
+  func noteClickedColumn(tableColumn: Int, in tableView: NSTableView) {
+    guard tableView.tableColumns.indices.contains(tableColumn) else { return }
+    let column = Int(tableView.tableColumns[tableColumn].identifier.rawValue)
+    guard column != clickedColumn else { return }
+    clickedColumn = column
+    scheduleSelectionSummary(tableView)
+  }
+
+  /// Summary of displayed `rows` in `clickedColumn`: the row count only without a clicked
+  /// column, nil below two rows
+  func selectionSummary(rows: IndexSet) async throws -> ResultSelectionSummary? {
+    guard rows.count >= 2, let model else { return nil }
+    guard let column = clickedColumn, model.columns.indices.contains(column) else {
+      return ResultSelectionSummary(rowCount: rows.count)
+    }
+    return try await ResultSelectionSummary.summarize(
+      values: model.selectedColumnValues(rows: rows, columns: [column]),
+      columnName: model.columns[column].name, columnType: model.columns[column].type)
+  }
+
+  /// Reports the summary of the current selection after `selectionSummaryDebounce`. A newer
+  /// change cancels a pending or running one.
+  func scheduleSelectionSummary(_ tableView: NSTableView) {
+    selectionSummaryTask?.cancel()
+    guard onSelectionSummaryChange != nil else { return }
+    let rows = tableView.selectedRowIndexes
+    let debounce = selectionSummaryDebounce
+    selectionSummaryTask = Task { [weak self] in
+      try? await Task.sleep(for: debounce)
+      guard !Task.isCancelled, let self else { return }
+      let summary = try? await self.selectionSummary(rows: rows)
+      guard !Task.isCancelled, self.reportedSelectionSummary != .some(summary) else { return }
+      self.reportedSelectionSummary = .some(summary)
+      self.onSelectionSummaryChange?(summary)
+    }
+  }
+
+  /// The grid left the view hierarchy: drop pending work and clear the summary after this update
+  func selectionSummaryGridDidDisappear() {
+    selectionSummaryTask?.cancel()
+    selectionSummaryTask = nil
+    reportedSelectionSummary = .none
+    guard let onSelectionSummaryChange else { return }
+    Task { @MainActor in onSelectionSummaryChange(nil) }
+  }
+
   // MARK: - Inline edit
 
   /// Starts editing the cell at a table row and model column with its full value.
@@ -880,7 +952,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       cell.hasSearchHighlight = true
       cell.textField?.attributedStringValue = Self.highlighted(
         text, query: key.searchQuery, caseSensitive: key.caseSensitive,
-        textColor: textColor,
+        wholeWord: key.wholeWord, textColor: textColor,
         isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
     } else {
       cell.hasSearchHighlight = false
@@ -982,7 +1054,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// redrawn (reloadData doesn't) and re-tiled in its scroll view when its height changes
   private func updateHeader(
     _ tableView: NSTableView, result: CellResult, hideColumnTypes: Bool, searchQuery: String,
-    caseSensitive: Bool, currentMatch: SearchMatch?
+    caseSensitive: Bool, wholeWord: Bool, currentMatch: SearchMatch?
   ) {
     for tableColumn in tableView.tableColumns {
       guard let cell = tableColumn.headerCell as? ResultGridHeaderCell,
@@ -990,8 +1062,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       else { continue }
       cell.content = Self.headerContent(
         for: result.columns[index], result: result, hideColumnTypes: hideColumnTypes,
-        searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
-        isFiltered: valueFilter.isActive(index))
+        searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
+        currentMatch: currentMatch, isFiltered: valueFilter.isActive(index))
     }
     guard let headerView = tableView.headerView else { return }
     let height = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
@@ -1056,25 +1128,25 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     }
   }
 
-  /// `text` with every match of `query` on the search highlight color, like SearchHighlighter;
-  /// in the current match cell the first match is on the current-match color
+  /// `text` with every match of `query` (the matches the search counts, see
+  /// `NotebookViewModel.sourceMatchRanges`) on the search highlight color; in the current match
+  /// cell the first match, the one the search points to, is on the current-match color
   static func highlighted(
-    _ text: String, query: String, caseSensitive: Bool, font: NSFont = font, textColor: NSColor,
-    isCurrentMatch: Bool
+    _ text: String, query: String, caseSensitive: Bool, wholeWord: Bool = false,
+    font: NSFont = font, textColor: NSColor, isCurrentMatch: Bool
   ) -> NSAttributedString {
     let string = NSMutableAttributedString(
       string: text, attributes: [.font: font, .foregroundColor: textColor])
-    let options: String.CompareOptions = caseSensitive ? [] : .caseInsensitive
-    var start = text.startIndex
-    while let range = text.range(of: query, options: options, range: start..<text.endIndex) {
-      let isCurrent = isCurrentMatch && start == text.startIndex
+    let ranges = NotebookViewModel.sourceMatchRanges(
+      in: text, query: query, caseSensitive: caseSensitive, wholeWord: wholeWord)
+    for (index, range) in ranges.enumerated() {
+      let isCurrent = isCurrentMatch && index == 0
       string.addAttributes(
         [
           .backgroundColor: isCurrent
             ? Self.currentMatchColor : NSColor(SearchHighlighter.highlightColor),
           .foregroundColor: NSColor.black,
         ], range: NSRange(range, in: text))
-      start = range.upperBound
     }
     return string
   }

@@ -675,6 +675,7 @@ struct WorkspaceTabContentView: View {
       .focusedSceneValue(\.activeViewModel, viewModel)
       .focusedSceneValue(\.toggleRightSidebarAction, toggleRightSidebarAction)
       .focusedSceneValue(\.openSearchAction, openSearchAction)
+      .focusedSceneValue(\.findReplaceAction, findReplaceAction)
       .focusedSceneValue(\.findNextAction, findNextAction)
       .focusedSceneValue(\.findPreviousAction, findPreviousAction)
       .onAppear {
@@ -736,6 +737,13 @@ struct WorkspaceTabContentView: View {
 
   private var openSearchAction: () -> Void {
     { [viewModel] in viewModel.openSearch() }
+  }
+
+  /// Nil where Replace may not edit (data viewer, read-only source, note): the menu item is
+  /// disabled there
+  private var findReplaceAction: (() -> Void)? {
+    guard viewModel.isReplaceAvailable else { return nil }
+    return { [viewModel] in viewModel.openFindReplace() }
   }
 
   private var findNextAction: () -> Void {

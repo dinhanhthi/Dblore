@@ -222,21 +222,17 @@ enum SQLSyntaxHighlighter {
     _ text: String,
     searchQuery: String,
     isCaseSensitive: Bool,
+    isWholeWord: Bool = false,
     currentMatchRange: NSRange?,
     dialect: SQLDialect = .postgresql
   ) -> NSAttributedString {
     // First apply syntax highlighting (or plain text if disabled)
     let result = NSMutableAttributedString(attributedString: highlight(text, dialect: dialect))
 
-    // Then apply search highlighting on top
-    guard !searchQuery.isEmpty else { return result }
-
-    // Find all search matches
-    let searchText = isCaseSensitive ? text : text.lowercased()
-    let query = isCaseSensitive ? searchQuery : searchQuery.lowercased()
-
-    var searchStartIndex = searchText.startIndex
-    while let range = searchText.range(of: query, range: searchStartIndex..<searchText.endIndex) {
+    // Then apply search highlighting on top, on the matches Replace edits
+    let ranges = NotebookViewModel.sourceMatchRanges(
+      in: text, query: searchQuery, caseSensitive: isCaseSensitive, wholeWord: isWholeWord)
+    for range in ranges {
       let nsRange = NSRange(range, in: text)
 
       // Determine if this is the current match
@@ -255,8 +251,6 @@ enum SQLSyntaxHighlighter {
 
       // Use black text for better contrast on highlight background
       result.addAttribute(.foregroundColor, value: NSColor.black, range: nsRange)
-
-      searchStartIndex = range.upperBound
     }
 
     return result

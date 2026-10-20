@@ -305,6 +305,12 @@ struct DataViewerPagingBar: View {
           }
         }
 
+        if let summary = selectionSummary {
+          ResultSelectionSummaryView(summary: summary)
+            .font(.monoSmall)
+            .foregroundColor(.foregroundSubtle)
+        }
+
         Spacer(minLength: Spacing.sm)
 
         let tabs = displayTabs
@@ -322,6 +328,14 @@ struct DataViewerPagingBar: View {
           .frame(height: 1)
       }
     }
+  }
+
+  /// Selected rows of the grid, in Grid mode and the Documents section of a collection only
+  private var selectionSummary: ResultSelectionSummary? {
+    guard viewModel.dataViewerDisplayMode == .grid,
+      (viewModel.mongoCollection?.section ?? .documents) == .documents
+    else { return nil }
+    return viewModel.editorSelectionSummary
   }
 
   /// Same rule as the in-grid picker: a loaded page, with Documents and JSON for a MongoDB

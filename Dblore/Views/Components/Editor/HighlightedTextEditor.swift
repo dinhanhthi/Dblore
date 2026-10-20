@@ -343,6 +343,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Search state
     var searchQuery: String = ""
     var isCaseSensitive: Bool = false
+    var isWholeWord: Bool = false
     private var currentMatchId: UUID?
     private var currentMatchRange: NSRange?
     var isSearchActive: Bool = false
@@ -561,6 +562,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
             text,
             searchQuery: searchQuery,
             isCaseSensitive: isCaseSensitive,
+            isWholeWord: isWholeWord,
             currentMatchRange: currentMatchRange,
             dialect: dialect
           )
@@ -603,6 +605,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           text,
           searchQuery: searchQuery,
           isCaseSensitive: isCaseSensitive,
+          isWholeWord: isWholeWord,
           currentMatchRange: currentMatchRange,
           dialect: dialect
         )
@@ -708,6 +711,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         let matchRange = match.matchRange
         let query = notification.userInfo?["query"] as? String ?? ""
         let caseSensitive = notification.userInfo?["caseSensitive"] as? Bool ?? false
+        let wholeWord = notification.userInfo?["wholeWord"] as? Bool ?? false
 
         Task { @MainActor [weak self] in
           guard let self = self else { return }
@@ -719,6 +723,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           // Update search state for ALL cells (to show yellow highlights)
           self.searchQuery = query
           self.isCaseSensitive = caseSensitive
+          self.isWholeWord = wholeWord
           self.isSearchActive = true
 
           // In editor mode, cellId is nil - accept all SQL content matches
@@ -769,6 +774,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           // Clear search state
           self.searchQuery = ""
           self.isCaseSensitive = false
+          self.isWholeWord = false
           self.currentMatchId = nil
           self.currentMatchRange = nil
           self.isSearchActive = false
