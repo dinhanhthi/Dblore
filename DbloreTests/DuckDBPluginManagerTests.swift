@@ -61,15 +61,15 @@ struct DuckDBPluginManagerTests {
   private static func catalog(
     sha256: String = hex(payload), maxSize: Int64 = 1024
   )
-    -> DuckDBPluginCatalog
+    -> PluginCatalogEntry
   {
-    DuckDBPluginCatalog(
-      version: "1.5.6",
+    PluginCatalogEntry(
+      id: "duckdb", version: "1.5.6",
       url: URL(
         string:
           "https://github.com/dinhanhthi/Dblore/releases/download/plugin-duckdb-v1.5.6/libduckdb.dylib"
       )!,
-      sha256: sha256, maxSize: maxSize)
+      sha256: sha256, maxSize: maxSize, libraryFileName: "libduckdb.dylib")
   }
 
   private static func tempRoot() -> URL {
@@ -79,14 +79,14 @@ struct DuckDBPluginManagerTests {
 
   /// A manager past its launch check (`.checking` blocks install).
   private static func manager(
-    _ catalog: DuckDBPluginCatalog, root: URL
+    _ catalog: PluginCatalogEntry, root: URL
   ) async -> DuckDBPluginManager {
     let manager = unchecked(catalog, root: root)
     await manager.refresh()
     return manager
   }
 
-  private static func unchecked(_ catalog: DuckDBPluginCatalog?, root: URL) -> DuckDBPluginManager {
+  private static func unchecked(_ catalog: PluginCatalogEntry?, root: URL) -> DuckDBPluginManager {
     DuckDBPluginManager(catalog: catalog, root: root, session: PluginStubURLProtocol.makeSession())
   }
 
@@ -367,7 +367,9 @@ struct DuckDBPluginManagerTests {
         data.subdata(in: $0..<min($0 + chunk, data.count))
       })
     let manager = await Self.manager(
-      Self.catalog(sha256: hex(data), maxSize: try DuckDBPluginCatalog.bundled().maxSize),
+      Self.catalog(
+        sha256: hex(data),
+        maxSize: try #require(PluginCatalog.bundled().entry(id: "duckdb")).maxSize),
       root: root)
     await manager.install()
     #expect(manager.isInstalled, "\(manager.state)")

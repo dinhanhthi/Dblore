@@ -1,6 +1,6 @@
 // DuckDBPluginManager.swift
 // Downloads, verifies, installs, removes and loads the optional DuckDB plugin (libduckdb.dylib)
-// pinned by DuckDBPluginCatalog.json.
+// pinned by the "duckdb" entry of PluginCatalog.json.
 
 import Foundation
 import Observation
@@ -46,7 +46,7 @@ final class DuckDBPluginManager {
   nonisolated static let teamIdentifier = "86H6CNLN4C"
 
   static let shared: DuckDBPluginManager = {
-    let manager = DuckDBPluginManager(catalog: try? DuckDBPluginCatalog.bundled())
+    let manager = DuckDBPluginManager(catalog: try? PluginCatalog.bundled().entry(id: "duckdb"))
     manager.startLaunchCheck()
     return manager
   }()
@@ -62,7 +62,7 @@ final class DuckDBPluginManager {
   private(set) var requiresRestartToUnload = false
 
   /// nil when the bundled catalog is missing or invalid; install and load then fail.
-  nonisolated let catalog: DuckDBPluginCatalog?
+  nonisolated let catalog: PluginCatalogEntry?
   nonisolated let root: URL
   private let session: URLSession
   private let libraryCache = LibraryCache()
@@ -76,7 +76,7 @@ final class DuckDBPluginManager {
   @ObservationIgnored private var launchCheck: Task<Void, Never>?
 
   init(
-    catalog: DuckDBPluginCatalog?,
+    catalog: PluginCatalogEntry?,
     root: URL = DuckDBPluginManager.defaultRoot,
     session: URLSession = DuckDBPluginManager.downloadSession()
   ) {
@@ -259,7 +259,7 @@ final class DuckDBPluginManager {
 
   // MARK: - Download
 
-  private func download(catalog: DuckDBPluginCatalog, into file: FileHandle) async throws {
+  private func download(catalog: PluginCatalogEntry, into file: FileHandle) async throws {
     let delegate = DownloadDelegate(file: file, maxSize: catalog.maxSize) { [weak self] fraction in
       Task { @MainActor in self?.reportProgress(fraction) }
     }
@@ -344,7 +344,7 @@ final class DuckDBPluginManager {
 
   /// Size of the file at `url` when it hashes to the catalog SHA-256; nil otherwise.
   @concurrent private static func verifiedSize(
-    of url: URL, catalog: DuckDBPluginCatalog
+    of url: URL, catalog: PluginCatalogEntry
   ) async -> Int64? {
     guard
       let sha = try? await PluginIntegrity.sha256(of: url, maxSize: catalog.maxSize),
@@ -366,7 +366,7 @@ final class DuckDBPluginManager {
   nonisolated static func removeOtherVersions(in directory: URL, keeping version: String) {
     let manager = FileManager.default
     guard let names = try? manager.contentsOfDirectory(atPath: directory.path) else { return }
-    for name in names where name != version && DuckDBPluginCatalog.isValidVersion(name) {
+    for name in names where name != version && PluginCatalogEntry.isValidVersion(name) {
       let path = directory.appendingPathComponent(name).path
       // attributesOfItem does not follow a symlink, so a link reports .typeSymbolicLink.
       guard let type = try? manager.attributesOfItem(atPath: path)[.type] as? FileAttributeType,
