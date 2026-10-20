@@ -16,11 +16,18 @@ private final class PluginStubURLProtocol: URLProtocol, @unchecked Sendable {
   }
 
   private nonisolated(unsafe) static var storedMode: Mode = .respond([])
+  private nonisolated(unsafe) static var storedRequestCount = 0
   private static let lock = NSLock()
 
   static var mode: Mode {
     get { lock.withLock { storedMode } }
     set { lock.withLock { storedMode = newValue } }
+  }
+
+  /// Requests started since the last reset.
+  static var requestCount: Int {
+    get { lock.withLock { storedRequestCount } }
+    set { lock.withLock { storedRequestCount = newValue } }
   }
 
   static func makeSession() -> URLSession {
@@ -34,6 +41,7 @@ private final class PluginStubURLProtocol: URLProtocol, @unchecked Sendable {
 
   override func startLoading() {
     guard let url = request.url else { return }
+    Self.requestCount += 1
     let response = HTTPURLResponse(
       url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -51,7 +59,7 @@ private final class PluginStubURLProtocol: URLProtocol, @unchecked Sendable {
 
 @MainActor
 @Suite(.serialized)
-struct DuckDBPluginManagerTests {
+struct PluginManagerTests {
   private static let payload = Data("pretend this is libduckdb".utf8)
 
   private static func hex(_ data: Data) -> String {
@@ -80,22 +88,23 @@ struct DuckDBPluginManagerTests {
   /// A manager past its launch check (`.checking` blocks install).
   private static func manager(
     _ catalog: PluginCatalogEntry, root: URL
-  ) async -> DuckDBPluginManager {
+  ) async -> PluginManager {
     let manager = unchecked(catalog, root: root)
     await manager.refresh()
     return manager
   }
 
-  private static func unchecked(_ catalog: PluginCatalogEntry?, root: URL) -> DuckDBPluginManager {
-    DuckDBPluginManager(catalog: catalog, root: root, session: PluginStubURLProtocol.makeSession())
+  private static func unchecked(_ catalog: PluginCatalogEntry, root: URL) -> PluginManager {
+    PluginManager(entry: catalog, root: root, session: PluginStubURLProtocol.makeSession())
   }
 
-  private static func stagingIsEmpty(_ manager: DuckDBPluginManager) -> Bool {
-    let items = try? FileManager.default.contentsOfDirectory(atPath: manager.stagingDirectory.path)
+  private static func stagingIsEmpty(_ manager: PluginManager) -> Bool {
+    guard let staging = manager.stagingDirectory else { return true }
+    let items = try? FileManager.default.contentsOfDirectory(atPath: staging.path)
     return items?.isEmpty ?? true
   }
 
-  private static func installedFileExists(_ manager: DuckDBPluginManager) -> Bool {
+  private static func installedFileExists(_ manager: PluginManager) -> Bool {
     guard let url = manager.installedURL else { return false }
     return FileManager.default.fileExists(atPath: url.path)
   }
@@ -129,7 +138,8 @@ struct DuckDBPluginManagerTests {
     let root = Self.tempRoot()
     defer { try? FileManager.default.removeItem(at: root) }
     let manager = await Self.manager(Self.catalog(), root: root)
-    let old = manager.pluginDirectory.appendingPathComponent("1.4.0", isDirectory: true)
+    let directory = try #require(manager.pluginDirectory)
+    let old = directory.appendingPathComponent("1.4.0", isDirectory: true)
     try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
     try Data("old".utf8).write(to: old.appendingPathComponent("libduckdb.dylib"))
     PluginStubURLProtocol.mode = .respond([Self.payload])
@@ -158,13 +168,13 @@ struct DuckDBPluginManagerTests {
       at: plugins.appendingPathComponent("1.3.0"), withDestinationURL: outside)
     try Data("file".utf8).write(to: plugins.appendingPathComponent("1.3.9"))
 
-    DuckDBPluginManager.removeOtherVersions(in: plugins, keeping: "1.5.6")
+    PluginManager.removeOtherVersions(in: plugins, keeping: "1.5.6")
 
     let left = Set(try manager.contentsOfDirectory(atPath: plugins.path))
     #expect(left == ["1.5.6", "beta", "1.2.x", "1.3.0", "1.3.9"])
     #expect(manager.fileExists(atPath: outside.appendingPathComponent("keep.txt").path))
     // A missing plugin directory is not an error.
-    DuckDBPluginManager.removeOtherVersions(
+    PluginManager.removeOtherVersions(
       in: root.appendingPathComponent("missing", isDirectory: true), keeping: "1.5.6")
   }
 
@@ -179,6 +189,8 @@ struct DuckDBPluginManagerTests {
     await manager.refresh()
 
     #expect(manager.state == .notInstalled)
+    // Load hashes again before dlopen, whatever the last refresh saw.
+    #expect(throws: PluginLoaderError.integrityMismatch) { _ = try manager.loadDuckDBLibrary() }
   }
 
   @Test func shaMismatchInstallsNothing() async {
@@ -206,7 +218,7 @@ struct DuckDBPluginManagerTests {
 
     await manager.install()
 
-    #expect(manager.state == .failed(DuckDBPluginError.tooLarge.localizedDescription))
+    #expect(manager.state == .failed(PluginManagerError.tooLarge.localizedDescription))
     #expect(!Self.installedFileExists(manager))
     #expect(Self.stagingIsEmpty(manager))
   }
@@ -230,6 +242,30 @@ struct DuckDBPluginManagerTests {
     #expect(!manager.isBusy)
     #expect(Self.stagingIsEmpty(manager))
     #expect(!Self.installedFileExists(manager))
+  }
+
+  /// Older builds staged `root/.staging/libduckdb-<UUID>.dylib`; a file left by a killed
+  /// download is swept on install. Symlinks and other plugins' staging directories stay.
+  @Test func installSweepsLegacyStagingFilesOnly() async throws {
+    let root = Self.tempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let manager = FileManager.default
+    let legacy = try Self.seed(
+      Data("partial".utf8), at: root, ".staging", "libduckdb-\(UUID().uuidString).dylib")
+    let outside = try Self.seed(Data("keep".utf8), at: root, "outside.dylib")
+    let link = root.appendingPathComponent(".staging/link.dylib")
+    try manager.createSymbolicLink(at: link, withDestinationURL: outside)
+    let other = try Self.seed(Data("other".utf8), at: root, ".staging", "fake-plugin", "x.dylib")
+    PluginStubURLProtocol.mode = .respond([Self.payload])
+    let plugin = await Self.manager(Self.catalog(), root: root)
+
+    await plugin.install()
+
+    #expect(plugin.isInstalled, "\(plugin.state)")
+    #expect(!manager.fileExists(atPath: legacy.path))
+    #expect((try? manager.destinationOfSymbolicLink(atPath: link.path)) == outside.path)
+    #expect(try Data(contentsOf: outside) == Data("keep".utf8))
+    #expect(try Data(contentsOf: other) == Data("other".utf8))
   }
 
   // MARK: - Launch check
@@ -277,19 +313,52 @@ struct DuckDBPluginManagerTests {
     #expect(await fresh.isInstalledAfterLaunchCheck(), "a connect at launch must not see no plugin")
   }
 
-  @Test func refreshWithoutCatalogEndsChecking() async {
-    let manager = Self.unchecked(nil, root: Self.tempRoot())
+  /// An entry that would not pass the catalog rules never yields a path (staging included), so
+  /// nothing is written or deleted under the plugin root.
+  @Test(arguments: [
+    PluginCatalogEntry(
+      id: "..", version: "1.5.6", url: URL(string: "https://github.com/a/b")!,
+      sha256: String(repeating: "0", count: 64), maxSize: 1024,
+      libraryFileName: "libduckdb.dylib"),
+    PluginCatalogEntry(
+      id: "duckdb", version: "../..", url: URL(string: "https://github.com/a/b")!,
+      sha256: String(repeating: "0", count: 64), maxSize: 1024,
+      libraryFileName: "libduckdb.dylib"),
+    PluginCatalogEntry(
+      id: "duckdb", version: "1.5.6", url: URL(string: "https://github.com/a/b")!,
+      sha256: String(repeating: "0", count: 64), maxSize: 1024,
+      libraryFileName: "../libduckdb.dylib"),
+  ])
+  func invalidEntryHasNoPathAndInstallsNothing(_ entry: PluginCatalogEntry) async throws {
+    let root = Self.tempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sentinel = try Self.seed(Data("keep".utf8), at: root, "sentinel.txt")
+    PluginStubURLProtocol.requestCount = 0
+    let manager = Self.unchecked(entry, root: root)
+    #expect(manager.installedURL == nil)
+    #expect(manager.pluginDirectory == nil)
+    #expect(manager.stagingDirectory == nil)
+
     await manager.refresh()
     #expect(manager.state == .notInstalled)
+    await manager.install()
+    #expect(manager.state == .failed(PluginManagerError.catalogUnavailable.localizedDescription))
+    await manager.remove()
+    #expect(throws: PluginManagerError.catalogUnavailable) { _ = try manager.loadDuckDBLibrary() }
+
+    #expect(PluginStubURLProtocol.requestCount == 0)
+    #expect(Self.contents(root) == ["sentinel.txt"])
+    #expect(try Data(contentsOf: sentinel) == Data("keep".utf8))
   }
 
   @Test nonisolated func isLoadedDoesNotWaitForALoadInProgress() {
     struct Stop: Error {}
+    final class Bound: Sendable {}
     let cache = LibraryCache()
     let started = DispatchSemaphore(value: 0)
     let release = DispatchSemaphore(value: 0)
     let loader = Thread {
-      _ = try? cache.load {
+      _ = try? cache.load { () throws -> Bound in
         started.signal()
         release.wait()
         throw Stop()
@@ -327,7 +396,7 @@ struct DuckDBPluginManagerTests {
 
   @Test func loadWithoutInstallThrowsNotInstalled() async {
     let manager = await Self.manager(Self.catalog(), root: Self.tempRoot())
-    #expect(throws: DuckDBPluginError.notInstalled) { _ = try manager.loadLibrary() }
+    #expect(throws: PluginManagerError.notInstalled) { _ = try manager.loadDuckDBLibrary() }
   }
 
   @Test func unsignedInstalledFileIsRefusedBeforeDlopen() async throws {
@@ -338,9 +407,105 @@ struct DuckDBPluginManagerTests {
     let manager = await Self.manager(Self.catalog(), root: root)
     await manager.install()
 
-    #expect(throws: DuckDBLibraryError.teamIDMismatch(expected: "86H6CNLN4C", actual: nil)) {
-      _ = try manager.loadLibrary()
+    #expect(throws: PluginLoaderError.teamIDMismatch(expected: "86H6CNLN4C", actual: nil)) {
+      _ = try manager.loadDuckDBLibrary()
     }
+  }
+
+  // MARK: - Install paths: several plugins under one root
+
+  private static let fakePayload = Data("pretend this is another plugin".utf8)
+
+  private static func fakeEntry() -> PluginCatalogEntry {
+    PluginCatalogEntry(
+      id: "fake-plugin", version: "0.1",
+      url: URL(
+        string:
+          "https://github.com/dinhanhthi/Dblore/releases/download/plugin-fake-plugin-v0.1/libfake.dylib"
+      )!,
+      sha256: hex(fakePayload), maxSize: 1024, libraryFileName: "libfake.dylib")
+  }
+
+  /// Writes `data` at `root/<components...>`, creating the directories.
+  private static func seed(_ data: Data, at root: URL, _ components: String...) throws -> URL {
+    let url = components.reduce(root) { $0.appendingPathComponent($1) }
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try data.write(to: url)
+    return url
+  }
+
+  private static func contents(_ directory: URL) -> Set<String> {
+    Set((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
+  }
+
+  @Test func dylibAtTodaysPathReadsAsInstalledWithoutDownload() async throws {
+    let root = Self.tempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    // The layout every earlier build installed: Plugins/duckdb/<version>/libduckdb.dylib.
+    let existing = try Self.seed(Self.payload, at: root, "duckdb", "1.5.6", "libduckdb.dylib")
+    PluginStubURLProtocol.requestCount = 0
+
+    let manager = await Self.manager(Self.catalog(), root: root)
+
+    #expect(manager.state == .installed(version: "1.5.6", size: Int64(Self.payload.count)))
+    #expect(manager.installedURL?.path == existing.path)
+    #expect(PluginStubURLProtocol.requestCount == 0, "no download")
+    // The default root is Application Support/Dblore/Plugins, as before.
+    let support = try #require(
+      FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+    #expect(PluginManager.defaultRoot.path == support.path + "/Dblore/Plugins")
+  }
+
+  @Test func secondEntryInstallsUnderItsOwnDirectoryOnly() async throws {
+    let root = Self.tempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let duckDBFile = try Self.seed(Self.payload, at: root, "duckdb", "1.5.6", "libduckdb.dylib")
+    _ = try Self.seed(Data("old".utf8), at: root, "duckdb", "1.4.0", "libduckdb.dylib")
+    let registry = PluginRegistry(
+      entries: [Self.catalog(), Self.fakeEntry()], root: root,
+      session: PluginStubURLProtocol.makeSession())
+    let fake = try #require(registry.manager(id: "fake-plugin"))
+    let duckDB = try #require(registry.manager(id: "duckdb"))
+    await fake.refresh()
+    await duckDB.refresh()
+    PluginStubURLProtocol.mode = .respond([Self.fakePayload])
+
+    await fake.install()
+
+    #expect(fake.isInstalled, "\(fake.state)")
+    let installed = try #require(fake.installedURL)
+    #expect(installed.path == root.path + "/fake-plugin/0.1/libfake.dylib")
+    #expect(try Data(contentsOf: installed) == Self.fakePayload)
+    // The DuckDB directory, including its older version, is left as it was.
+    #expect(Self.contents(root.appendingPathComponent("duckdb")) == ["1.5.6", "1.4.0"])
+    #expect(try Data(contentsOf: duckDBFile) == Self.payload)
+    #expect(duckDB.isInstalled)
+  }
+
+  @Test func removingOnePluginLeavesTheOther() async throws {
+    let root = Self.tempRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try Self.seed(Self.payload, at: root, "duckdb", "1.5.6", "libduckdb.dylib")
+    _ = try Self.seed(Self.fakePayload, at: root, "fake-plugin", "0.1", "libfake.dylib")
+    let registry = PluginRegistry(
+      entries: [Self.catalog(), Self.fakeEntry()], root: root,
+      session: PluginStubURLProtocol.makeSession())
+    let fake = try #require(registry.manager(id: "fake-plugin"))
+    let duckDB = try #require(registry.manager(id: "duckdb"))
+    await fake.refresh()
+    await duckDB.refresh()
+    #expect(fake.isInstalled && duckDB.isInstalled)
+
+    await duckDB.remove()
+
+    #expect(duckDB.state == .notInstalled)
+    #expect(Self.contents(root) == ["fake-plugin"])
+    await fake.refresh()
+    #expect(fake.isInstalled)
+
+    await fake.remove()
+    #expect(Self.contents(root).isEmpty)
   }
 
   // MARK: - Gated: real .plugin-dev artifacts (declared in load order)
@@ -358,7 +523,7 @@ struct DuckDBPluginManagerTests {
   }
 
   /// Installs `artifact` through the download path (stubbed) under a container root.
-  private static func installArtifact(_ name: String) async throws -> (DuckDBPluginManager, URL) {
+  private static func installArtifact(_ name: String) async throws -> (PluginManager, URL) {
     let data = try Data(contentsOf: pluginDev.appendingPathComponent(name))
     let root = try containerRoot()
     let chunk = 1 << 20
@@ -382,8 +547,8 @@ struct DuckDBPluginManagerTests {
     defer { try? FileManager.default.removeItem(at: root) }
     let url = try #require(manager.installedURL)
 
-    #expect(throws: DuckDBLibraryError.teamIDMismatch(expected: "86H6CNLN4C", actual: nil)) {
-      _ = try manager.loadLibrary()
+    #expect(throws: PluginLoaderError.teamIDMismatch(expected: "86H6CNLN4C", actual: nil)) {
+      _ = try manager.loadDuckDBLibrary()
     }
     #expect(dlopen(url.path, RTLD_NOW | RTLD_NOLOAD) == nil, "ad-hoc copy must not be loaded")
   }
@@ -393,8 +558,8 @@ struct DuckDBPluginManagerTests {
     let (manager, root) = try await Self.installArtifact("libduckdb.dylib")
     defer { try? FileManager.default.removeItem(at: root) }
 
-    let library = try manager.loadLibrary()
-    #expect(try manager.loadLibrary() === library, "cached once per manager")
+    let library = try manager.loadDuckDBLibrary()
+    #expect(try manager.loadDuckDBLibrary() === library, "cached once per manager")
 
     var database: OpaquePointer?
     var connection: OpaquePointer?

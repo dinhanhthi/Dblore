@@ -1,11 +1,9 @@
 // DuckDBLibrary.swift
-// Loads the optional libduckdb plugin with dlopen and resolves the small part
-// of the DuckDB C API (duckdb.h v1.5.6) that Dblore uses, via dlsym.
+// Loads the optional libduckdb plugin through PluginLoader (hash, Team ID, dlopen) and resolves
+// the small part of the DuckDB C API (duckdb.h v1.5.6) that Dblore uses, via dlsym.
 
-import CryptoKit
 import Darwin
 import Foundation
-import Security
 
 #if !arch(arm64)
   // `fetchChunk` relies on the AAPCS64 rule for by-value structs larger than 16 bytes.
@@ -28,6 +26,19 @@ nonisolated enum DuckDBLibraryError: Error, Equatable {
   case teamIDMismatch(expected: String, actual: String?)
 }
 
+extension DuckDBLibraryError {
+  /// The same refusal under the DuckDB error type (the payloads are unchanged).
+  nonisolated init(_ error: PluginLoaderError) {
+    switch error {
+    case .loadFailed(let message): self = .loadFailed(message)
+    case .invalidPath(let path): self = .invalidPath(path)
+    case .integrityMismatch: self = .integrityMismatch
+    case .teamIDMismatch(let expected, let actual):
+      self = .teamIDMismatch(expected: expected, actual: actual)
+    }
+  }
+}
+
 /// `duckdb_state`: DuckDBSuccess = 0, DuckDBError = 1.
 nonisolated enum DuckDBState {
   static let success: Int32 = 0
@@ -48,9 +59,10 @@ nonisolated struct DuckDBResult {
 /// Spike finding (task 2.5): files the sandboxed app writes are auto-quarantined
 /// (`com.apple.quarantine = 0082;…;Dblore;`) and the app cannot remove the xattr
 /// (EPERM). A downloaded plugin must therefore be notarized, and callers must
-/// pass `expectedTeamID` to `load(at:expectedSHA256:expectedVersion:expectedTeamID:)`: dlopen of a
-/// quarantined, non-notarized dylib fails ("library load disallowed by system policy") and shows a
-/// Gatekeeper dialog, and a wrong-team dylib fails library validation.
+/// pass `expectedTeamID` (`PluginManager.loadLibrary` always passes
+/// `PluginLoader.teamIdentifier`): dlopen of a quarantined, non-notarized dylib fails ("library
+/// load disallowed by system policy") and shows a Gatekeeper dialog, and a wrong-team dylib fails
+/// library validation.
 ///
 /// The loaded library and its C function table. Opaque DuckDB handles
 /// (`duckdb_database`, `duckdb_connection`, `duckdb_config`) are `OpaquePointer?`.
@@ -144,60 +156,28 @@ nonisolated final class DuckDBLibrary: @unchecked Sendable {
 
   /// Loads the library only if the file hashes to `expectedSHA256` (hex, any case) and then
   /// reports `expectedVersion` (bare, e.g. "1.5.6"). With `expectedTeamID`, the code signature
-  /// must be valid, chain to Apple and carry that Team ID before dlopen, so an ad-hoc or foreign
-  /// dylib never reaches Gatekeeper. `maxSize` caps the bytes hashed.
-  ///
-  /// The file is opened once (no symlink, regular file only), hashed through that descriptor,
-  /// and dlopen'd by the path `F_GETPATH` returns for it. Right before dlopen the path must still
-  /// name the same file, unmodified (device, inode, size and mtime match the descriptor's
-  /// pre-hash `fstat`). This narrows but does not close the check-to-load race: the signature
-  /// check and dlopen still open by path, and a swap after the final `stat` is not detected.
-  /// Hardened-runtime library validation (same Team ID) is the primary guard; the hash binds
-  /// the file to the catalog entry. On a version mismatch the library stays loaded (it is never
+  /// must be valid, chain to Apple and carry that Team ID before dlopen. `maxSize` caps the bytes
+  /// hashed. Every check before dlopen is `PluginLoader.open`'s; see there for the order and the
+  /// check-to-load race it narrows. On a version mismatch the library stays loaded (it is never
   /// dlclose'd) but is not returned.
   static func load(
     at url: URL, expectedSHA256: String, expectedVersion: String, expectedTeamID: String? = nil,
     maxSize: Int64? = nil
   ) throws -> DuckDBLibrary {
-    guard url.isFileURL, url.relativePath.hasPrefix("/") else {
-      throw DuckDBLibraryError.invalidPath(url.relativePath)
+    let handle: UnsafeMutableRawPointer
+    do {
+      handle = try PluginLoader.open(
+        at: url, expectedSHA256: expectedSHA256, expectedTeamID: expectedTeamID, maxSize: maxSize)
+    } catch let error as PluginLoaderError {
+      throw DuckDBLibraryError(error)
     }
-    let path = url.path
-    let fd = Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-    guard fd >= 0 else {
-      throw DuckDBLibraryError.loadFailed("\(path): \(String(cString: strerror(errno)))")
-    }
-    defer { Darwin.close(fd) }
-    var opened = stat()
-    guard fstat(fd, &opened) == 0 else {
-      throw DuckDBLibraryError.loadFailed("\(path): \(String(cString: strerror(errno)))")
-    }
-    guard opened.st_mode & S_IFMT == S_IFREG else {
-      throw DuckDBLibraryError.loadFailed("\(path): not a regular file")
-    }
-    if let maxSize, opened.st_size > maxSize { throw DuckDBLibraryError.integrityMismatch }
+    return try bind(handle: handle, expectedVersion: expectedVersion)
+  }
 
-    guard try sha256Hex(of: fd, path: path, maxSize: maxSize) == expectedSHA256.lowercased()
-    else {
-      throw DuckDBLibraryError.integrityMismatch
-    }
-    var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
-    guard fcntl(fd, F_GETPATH, &resolved) != -1 else {
-      throw DuckDBLibraryError.loadFailed("\(path): \(String(cString: strerror(errno)))")
-    }
-    let verifiedPath = String(
-      decoding: resolved.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
-    if let expectedTeamID {
-      try checkTeamID(ofPath: verifiedPath, expected: expectedTeamID)
-    }
-    var current = stat()
-    guard stat(verifiedPath, &current) == 0, isSameFile(opened, current) else {
-      throw DuckDBLibraryError.integrityMismatch
-    }
-    guard let handle = dlopen(verifiedPath, RTLD_NOW | RTLD_LOCAL) else {
-      let message = dlerror().map { String(cString: $0) } ?? "dlopen failed for \(verifiedPath)"
-      throw DuckDBLibraryError.loadFailed(message)
-    }
+  /// Resolves the C API from a handle `PluginLoader.open` returned and checks that
+  /// `duckdb_library_version()` (without its "v") is `expectedVersion`.
+  static func bind(handle: UnsafeMutableRawPointer, expectedVersion: String) throws -> DuckDBLibrary
+  {
     let library = try DuckDBLibrary(handle: handle)
     let version = library.version
     let actual = version.hasPrefix("v") ? String(version.dropFirst()) : version
@@ -205,66 +185,6 @@ nonisolated final class DuckDBLibrary: @unchecked Sendable {
       throw DuckDBLibraryError.versionMismatch(expected: expectedVersion, actual: actual)
     }
     return library
-  }
-
-  /// Same inode, unmodified: device, inode, size and modification time all match.
-  private static func isSameFile(_ a: stat, _ b: stat) -> Bool {
-    a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size
-      && a.st_mtimespec.tv_sec == b.st_mtimespec.tv_sec
-      && a.st_mtimespec.tv_nsec == b.st_mtimespec.tv_nsec
-  }
-
-  /// Throws `teamIDMismatch` unless the file's code signature is valid, anchored at Apple and its
-  /// leaf certificate's OU is `expected`. `actual` is the unvalidated Team ID read from the
-  /// signature (nil when ad-hoc signed or unsigned).
-  private static func checkTeamID(ofPath path: String, expected: String) throws {
-    var code: SecStaticCode?
-    guard
-      SecStaticCodeCreateWithPath(URL(fileURLWithPath: path) as CFURL, [], &code) == errSecSuccess,
-      let code
-    else { throw DuckDBLibraryError.teamIDMismatch(expected: expected, actual: nil) }
-    let actual = teamIdentifier(of: code)
-    let isWellFormed =
-      expected.utf8.count == 10
-      && expected.utf8.allSatisfy { (0x41...0x5A).contains($0) || (0x30...0x39).contains($0) }
-    var requirement: SecRequirement?
-    guard isWellFormed, actual == expected,
-      SecRequirementCreateWithString(
-        "anchor apple generic and certificate leaf[subject.OU] = \"\(expected)\"" as CFString,
-        [], &requirement) == errSecSuccess,
-      let requirement,
-      SecStaticCodeCheckValidity(code, [], requirement) == errSecSuccess
-    else { throw DuckDBLibraryError.teamIDMismatch(expected: expected, actual: actual) }
-  }
-
-  /// Team ID from the code signature, not validated; nil when ad-hoc signed or unsigned.
-  private static func teamIdentifier(of code: SecStaticCode) -> String? {
-    var info: CFDictionary?
-    guard
-      SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info)
-        == errSecSuccess,
-      let values = info as? [String: Any]
-    else { return nil }
-    return values[kSecCodeInfoTeamIdentifier as String] as? String
-  }
-
-  private static func sha256Hex(of fd: Int32, path: String, maxSize: Int64?) throws -> String {
-    var hasher = SHA256()
-    var buffer = [UInt8](repeating: 0, count: 1 << 16)
-    var total: Int64 = 0
-    while true {
-      let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-      if count < 0 {
-        throw DuckDBLibraryError.loadFailed("\(path): \(String(cString: strerror(errno)))")
-      }
-      if count == 0 { break }
-      total += Int64(count)
-      if let maxSize, total > maxSize { throw DuckDBLibraryError.integrityMismatch }
-      buffer.withUnsafeBytes {
-        hasher.update(bufferPointer: UnsafeRawBufferPointer(rebasing: $0[..<count]))
-      }
-    }
-    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
 
   private init(handle: UnsafeMutableRawPointer) throws {
@@ -335,5 +255,14 @@ nonisolated final class DuckDBLibrary: @unchecked Sendable {
     unionMemberCount = try symbol("duckdb_union_type_member_count")
     unionMemberName = try symbol("duckdb_union_type_member_name")
     unionMemberType = try symbol("duckdb_union_type_member_type")
+  }
+}
+
+extension PluginManager {
+  /// The DuckDB plugin's library, verified and loaded once per manager (see `loadLibrary`).
+  nonisolated func loadDuckDBLibrary() throws -> DuckDBLibrary {
+    try loadLibrary { handle, entry in
+      try DuckDBLibrary.bind(handle: handle, expectedVersion: entry.version)
+    }
   }
 }

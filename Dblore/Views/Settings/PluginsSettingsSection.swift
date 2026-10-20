@@ -9,7 +9,8 @@ import AppKit
 import SwiftUI
 
 struct PluginsSettingsSection: View {
-  private let manager = DuckDBPluginManager.shared
+  /// nil only when the bundled catalog is missing or invalid (logged by the registry).
+  private let manager = PluginRegistry.shared.manager(id: "duckdb")
 
   @State private var isConfirmingRemove = false
 
@@ -28,14 +29,14 @@ struct PluginsSettingsSection: View {
 
           controls
 
-          if case .failed(let message) = manager.state {
+          if case .failed(let message) = manager?.state {
             Text(message)
               .font(.bodyText)
               .foregroundColor(.destructive)
               .textSelection(.enabled)
           }
 
-          if manager.requiresRestartToUnload {
+          if manager?.requiresRestartToUnload == true {
             Text("DuckDB stays loaded until you quit Dblore.")
               .font(.bodyText)
               .foregroundColor(.foregroundMuted)
@@ -59,7 +60,7 @@ struct PluginsSettingsSection: View {
       titleVisibility: .visible
     ) {
       Button("Remove", role: .destructive) {
-        Task { await manager.remove() }
+        Task { await manager?.remove() }
       }
       Button("Cancel", role: .cancel) {}
     } message: {
@@ -69,7 +70,7 @@ struct PluginsSettingsSection: View {
 
   @ViewBuilder
   private var versionLabel: some View {
-    if let version = manager.catalog?.version {
+    if let version = manager?.entry.version {
       Text("v\(version)")
         .font(.monoSmall)
         .foregroundColor(.foregroundMuted)
@@ -78,7 +79,11 @@ struct PluginsSettingsSection: View {
 
   @ViewBuilder
   private var controls: some View {
-    switch manager.state {
+    switch manager?.state {
+    case nil:
+      Text(PluginManagerError.catalogUnavailable.localizedDescription)
+        .font(.bodyText)
+        .foregroundColor(.destructive)
     case .checking:
       HStack(spacing: Spacing.sm) {
         ProgressView().controlSize(.small)
@@ -90,7 +95,7 @@ struct PluginsSettingsSection: View {
       Button("Install") { install() }
         .buttonStyle(PrimaryButtonStyle())
         .controlSize(.regular)
-        .disabled(manager.catalog == nil)
+        .disabled(manager?.installedURL == nil)
         .linkPointer()
     case .downloading(let fraction):
       HStack(spacing: Spacing.md) {
@@ -99,7 +104,7 @@ struct PluginsSettingsSection: View {
           .font(.small)
           .foregroundColor(.foregroundMuted)
           .monospacedDigit()
-        Button("Cancel") { manager.cancel() }
+        Button("Cancel") { manager?.cancel() }
           .buttonStyle(FilledSecondaryButtonStyle())
           .controlSize(.regular)
           .linkPointer()
@@ -128,12 +133,12 @@ struct PluginsSettingsSection: View {
       Button("Retry") { install() }
         .buttonStyle(PrimaryButtonStyle())
         .controlSize(.regular)
-        .disabled(manager.catalog == nil)
+        .disabled(manager?.installedURL == nil)
         .linkPointer()
     }
   }
 
   private func install() {
-    Task { await manager.install() }
+    Task { await manager?.install() }
   }
 }

@@ -80,7 +80,9 @@ struct ConnectionFormModal: View {
 
   /// Read in `body`, so the picker and the missing-plugin row follow install and remove. While
   /// the launch check hashes the file, a present file counts as installed.
-  private var isDuckDBInstalled: Bool { DuckDBPluginManager.shared.isInstalledOrPending }
+  private var isDuckDBInstalled: Bool {
+    PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true
+  }
 
   private var missingPluginRow: some View {
     HStack(spacing: Spacing.sm) {

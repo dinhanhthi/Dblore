@@ -77,6 +77,7 @@ import Testing
     (json(entry(id: "DuckDB")), .invalidID("DuckDB")),
     (json(entry(id: "duck_db")), .invalidID("duck_db")),
     (json(entry(id: "")), .invalidID("")),
+    (json(entry(id: "-duckdb")), .invalidID("-duckdb")),
     // URL: scheme, host, userinfo, port, query, fragment, encoding, path shape, tag, asset.
     (
       json(

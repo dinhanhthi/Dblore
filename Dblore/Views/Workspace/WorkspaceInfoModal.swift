@@ -235,7 +235,7 @@ struct WorkspaceInfoModal: View {
     guard let type = workspace.connectionConfig?.databaseType, type == .duckdb,
       type.capabilities.requiresPlugin
     else { return false }
-    return !DuckDBPluginManager.shared.isInstalledOrPending
+    return PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending != true
   }
 
   /// Same Install action as the connection form's missing-plugin row: opens Settings > Plugins,

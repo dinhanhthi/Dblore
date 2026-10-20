@@ -681,7 +681,7 @@ class WorkspaceManager: Identifiable {
         .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
         to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
       ).config)
-    guard DuckDBPluginManager.shared.isInstalledOrPending else {
+    guard PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
     }

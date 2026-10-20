@@ -489,9 +489,10 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
 
   var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
   var duckDBLibraryLoader: DuckDBLibraryLoader = { @MainActor in
-    let manager = DuckDBPluginManager.shared
-    guard await manager.isInstalledAfterLaunchCheck() else { return nil }
-    return { try manager.loadLibrary() }
+    guard let manager = PluginRegistry.shared.manager(id: "duckdb"),
+      await manager.isInstalledAfterLaunchCheck()
+    else { return nil }
+    return { try manager.loadDuckDBLibrary() }
   }
 
   func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession {

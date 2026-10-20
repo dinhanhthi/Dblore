@@ -12,7 +12,7 @@ nonisolated enum PluginCatalogError: LocalizedError, Equatable {
   case malformed
   /// `schemaVersion` is missing or not 2.
   case unsupportedSchemaVersion
-  /// The id is not `[a-z0-9-]+` (it becomes a directory name).
+  /// The id is not `[a-z0-9][a-z0-9-]*` (it becomes a directory name).
   case invalidID(String)
   /// Two entries share an id.
   case duplicateID(String)
@@ -70,8 +70,9 @@ nonisolated struct PluginCatalogEntry: Sendable, Equatable {
       && parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) })
   }
 
+  /// `[a-z0-9][a-z0-9-]*`: never starts with "-", so it never reads as a command-line option.
   static func isValidID(_ id: String) -> Bool {
-    !id.isEmpty
+    !id.isEmpty && !id.hasPrefix("-")
       && id.unicodeScalars.allSatisfy { ("a"..."z").contains($0) || isDigit($0) || $0 == "-" }
   }
 
