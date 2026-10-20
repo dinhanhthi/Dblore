@@ -153,7 +153,8 @@ struct WorkspaceInfoModal: View {
               try await workspaceManager.connectionManager.testConnection(config: config)
             },
             onConnect: { config, aiFieldsEdited in
-              try await workspaceManager.connect(config: config, aiFieldsEdited: aiFieldsEdited)
+              try await workspaceManager.connect(
+                config: config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
             },
             onConnectionSuccess: { isPresented = false },
             submitTitle: workspaceManager.connectionState.isConnected

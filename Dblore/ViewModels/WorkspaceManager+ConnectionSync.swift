@@ -6,7 +6,8 @@
 //  per-connection Safe Mode and protected mode for every tab and for the connection actor.
 //  An opened file's AI policy never weakens the saved connection's, and AI features ask the
 //  strictest of the live policy and of every saved row of the connection's identity. A save
-//  keeps the saved row's AI policy and rules unless the AI fields themselves were edited.
+//  keeps the saved row's AI policy and rules unless the AI fields themselves were edited, and
+//  its color and group unless the save comes from the connection form.
 //  Connecting to the same database with weaker settings goes through the same Safe Mode unlock
 //  as a runtime change.
 //
@@ -107,6 +108,22 @@ extension WorkspaceManager {
     return config
   }
 
+  /// `config` with the color and group of the saved row a save of `config` overwrites, for saves
+  /// that do not come from the connection form (an opened file, a rename), so they never erase
+  /// what the form set, and for an opened file's config, so the form opens on the saved values.
+  /// Unchanged without that row, and with Remember off.
+  static func keepingSavedAppearance(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    guard config.rememberConnection else { return config }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    guard let saved = exactSavedEntry(for: config, in: history)?.config else { return config }
+    var config = config
+    config.colorTag = saved.colorTag
+    config.groupName = saved.groupName
+    return config
+  }
+
   private static func exactSavedEntry(
     for config: ConnectionConfig, in history: [ConnectionHistoryEntry]
   ) -> ConnectionHistoryEntry? {
@@ -169,6 +186,7 @@ extension WorkspaceManager {
     guard !trimmed.isEmpty, var current = workspace.connectionConfig, current.name != trimmed
     else { return }
     current = Self.keepingSavedAIFields(current, defaults: defaults)
+    current = Self.keepingSavedAppearance(current, defaults: defaults)
     current.name = trimmed
     workspace.connectionConfig = current
     editingConnectionConfig.name = trimmed
@@ -240,12 +258,14 @@ extension WorkspaceManager {
   ///   `completePendingWeakeningConnect()` after the unlock.
   /// - Parameter aiFieldsEdited: true only when the user edited the AI policy or rules: the save
   ///   then writes them; otherwise the saved row's AI fields are kept.
+  /// - Parameter fromForm: true when `config` comes from the connection form: the save writes its
+  ///   color and group (nil clears them); otherwise the saved row's are kept.
   func connect(
     config: ConnectionConfig, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
     isAutoConnect: Bool = false,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
-    aiFieldsEdited: Bool = false
+    aiFieldsEdited: Bool = false, fromForm: Bool = false
   ) async throws {
     lastUnlockConnectError = nil
     // The pin of a switched MongoDB connection holds on its own server only (Reconnect,
@@ -271,14 +291,17 @@ extension WorkspaceManager {
       let pendingSSH = SSHCredentialStoreFactory.currentCredential(for: config)
       pendingWeakeningSSHCredential = pendingSSH?.credential
       pendingWeakeningAIFieldsEdited = aiFieldsEdited
+      pendingWeakeningFromForm = fromForm
       throw WorkspaceConnectError.unlockRequired
     }
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
     pendingWeakeningAIFieldsEdited = false
+    pendingWeakeningFromForm = false
     try await connectWithoutUnlockCheck(
-      config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited)
+      config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited,
+      fromForm: fromForm)
   }
 
   /// Connect with the held config after a successful Safe Mode unlock. No-op without one.
@@ -292,9 +315,11 @@ extension WorkspaceManager {
     }
     let scopedSSH = SSHCredentialStoreFactory.scoped(pendingWeakeningSSHCredential, for: config)
     let aiFieldsEdited = pendingWeakeningAIFieldsEdited
+    let fromForm = pendingWeakeningFromForm
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
     pendingWeakeningAIFieldsEdited = false
+    pendingWeakeningFromForm = false
     defer {
       scopedMaterial?.clear()
       scopedSSH?.clear()
@@ -302,7 +327,8 @@ extension WorkspaceManager {
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-          try await connectWithoutUnlockCheck(config: config, aiFieldsEdited: aiFieldsEdited)
+          try await connectWithoutUnlockCheck(
+            config: config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
         }
       }
     } catch {
@@ -334,6 +360,7 @@ extension WorkspaceManager {
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
     pendingWeakeningAIFieldsEdited = false
+    pendingWeakeningFromForm = false
   }
 
   /// Connect/disconnect: results shown in every tab came from the previous connection, so none

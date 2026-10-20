@@ -270,7 +270,7 @@ class NotebookViewModel {
         _ schema: String, _ name: String, _ orderColumns: [String], _ filter: TableFilter?
       ) -> Void
     )?
-  /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
+  /// Highlight form of the data viewer: only `applyHighlight()` adds it to `dataViewer.highlights`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer
   var savedHighlights: [SavedHighlight] = []

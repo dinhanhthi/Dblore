@@ -17,6 +17,19 @@ struct SavedHighlight: Codable, Identifiable, Equatable {
   var id = UUID()
   var name: String
   var highlight: TableHighlight
+  /// Applied again whenever the SQL table opens
+  var isActive = false
+}
+
+extension SavedHighlight {
+  /// The active flag is optional, so a highlight saved before it existed loads inactive
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    name = try container.decode(String.self, forKey: .name)
+    highlight = try container.decode(TableHighlight.self, forKey: .highlight)
+    isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
+  }
 }
 
 /// A named MongoDB Documents query (filter text and options) saved for one collection
@@ -161,6 +174,14 @@ final class SavedFilterStore {
       highlights.append(SavedHighlight(name: name, highlight: highlight))
     }
     all[key] = highlights
+    store(all, Self.highlightStorageKey)
+  }
+
+  /// Marks a saved highlight to be applied (or not) when its table opens
+  func setHighlightActive(id: UUID, _ isActive: Bool, for key: String) {
+    var all: [String: [SavedHighlight]] = load(Self.highlightStorageKey)
+    guard let index = all[key]?.firstIndex(where: { $0.id == id }) else { return }
+    all[key]?[index].isActive = isActive
     store(all, Self.highlightStorageKey)
   }
 

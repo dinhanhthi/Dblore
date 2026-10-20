@@ -55,7 +55,7 @@ struct ResultGridView: NSViewRepresentable {
   var onHighlightCell:
     ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)? =
       nil
-  /// Receives the context menu's "Clear Highlight"
+  /// Receives the context menu's "Clear Highlights"
   var onClearHighlight: (() -> Void)? = nil
   /// Text highlighted in the cells (search)
   var searchQuery = ""
@@ -76,9 +76,10 @@ struct ResultGridView: NSViewRepresentable {
   /// Names of result columns hidden in the grid; the result, column indices and edits are
   /// unchanged
   var hiddenColumns: Set<String> = []
-  /// Highlight painted on the matching cells or rows; the rows stay unchanged
-  var highlight: TableHighlight? = nil
-  /// Dialect the highlight is evaluated in (`like` case sensitivity)
+  /// Highlight rules painted on the matching cells or rows, first match wins; the rows stay
+  /// unchanged
+  var highlights: [TableHighlight] = []
+  /// Dialect the highlights are evaluated in (`like` case sensitivity)
   var highlightDialect: DatabaseType = .postgresql
   /// Catalog relation for "Referenced Row...". Nil hides the item (a join, or no relation).
   var relationSchema: String? = nil
@@ -224,7 +225,7 @@ struct ResultGridView: NSViewRepresentable {
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
       currentMatch: currentMatch, hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
-      highlight: highlight, highlightDialect: highlightDialect, valueFilter: valueFilter,
+      highlights: highlights, highlightDialect: highlightDialect, valueFilter: valueFilter,
       searchMatches: searchMatches, changeSet: changeSet)
     // A font or color change alone skips `update` (the row model is unchanged). `update` may
     // also refresh only staged rows, so reload every visible cell onto the new face and colors.

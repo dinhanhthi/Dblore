@@ -368,6 +368,13 @@ extension DatabaseType {
   }
 }
 
+extension AccentColor {
+  /// Connection color tag (dot, swatch, footer stripe): this palette color in each appearance
+  var tagColor: Color {
+    Color(light: Color(hex: lightHex), dark: Color(hex: darkHex))
+  }
+}
+
 /// Opacities of the state fills, kept apart so their contrast can be checked for every accent
 enum StateFill {
   static let selectionLight = 0.22

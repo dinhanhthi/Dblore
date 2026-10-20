@@ -263,7 +263,7 @@ struct AppWelcomeView: View {
     let windowManager = WorkspaceWindowManager.shared
     let manager = windowManager.newWorkspace(connection: config)
     do {
-      try await manager.connect(config: config, aiFieldsEdited: aiFieldsEdited)
+      try await manager.connect(config: config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
       isShowingConnectionSidebar = false
       onWorkspaceSelected?(manager.id)
     } catch {
@@ -399,10 +399,18 @@ struct WelcomeRecents: View {
   }
 
   private var shownConnections: [ConnectionHistoryEntry] {
+    Self.matchingConnections(connections, query: query)
+  }
+
+  /// Connections whose name, connection string or group contains `query` (all when empty).
+  static func matchingConnections(
+    _ connections: [ConnectionHistoryEntry], query: String
+  ) -> [ConnectionHistoryEntry] {
     guard !query.isEmpty else { return connections }
     return connections.filter {
       $0.shortDisplayName.localizedCaseInsensitiveContains(query)
         || $0.config.displayString.localizedCaseInsensitiveContains(query)
+        || ($0.config.groupName?.localizedCaseInsensitiveContains(query) ?? false)
     }
   }
 
@@ -479,20 +487,29 @@ struct WelcomeRecents: View {
     }
   }
 
+  /// Grouped under section headers; ungrouped connections come last, under "Ungrouped" only
+  /// when some connection has a group.
   @ViewBuilder
   private var connectionRows: some View {
     let rows = shownConnections
-    ForEach(rows, id: \.id) { connection in
-      RecentConnectionRow(
-        connection: connection,
-        isLoading: loadingId == connection.id,
-        onSelect: { entry in
-          loadingId = entry.id
-          onOpenConnection(entry)
-        },
-        onConfigure: { onEditConnection(connection) },
-        onRemove: { onRemoveConnection(connection) }
-      )
+    let groups = ConnectionAppearance.grouped(rows)
+    let showsHeaders = groups.contains { $0.name != nil }
+    ForEach(groups, id: \.name) { group in
+      if showsHeaders {
+        groupHeader(group.name ?? "Ungrouped")
+      }
+      ForEach(group.entries, id: \.id) { connection in
+        RecentConnectionRow(
+          connection: connection,
+          isLoading: loadingId == connection.id,
+          onSelect: { entry in
+            loadingId = entry.id
+            onOpenConnection(entry)
+          },
+          onConfigure: { onEditConnection(connection) },
+          onRemove: { onRemoveConnection(connection) }
+        )
+      }
     }
     if rows.isEmpty {
       emptyListText(connections.isEmpty ? "No recent connections" : noMatchText)
@@ -500,6 +517,17 @@ struct WelcomeRecents: View {
   }
 
   private var noMatchText: String { "Nothing matches \"\(query)\"" }
+
+  private func groupHeader(_ name: String) -> some View {
+    Text(name)
+      .font(.caption.weight(.semibold))
+      .foregroundColor(.foregroundMuted)
+      .lineLimit(1)
+      .padding(.horizontal, Spacing.sm)
+      .padding(.top, Spacing.sm)
+      .padding(.bottom, Spacing.xxs)
+      .accessibilityAddTraits(.isHeader)
+  }
 
   private func emptyListText(_ text: String) -> some View {
     Text(text)
@@ -664,7 +692,17 @@ struct RecentConnectionRow: View {
             .foregroundColor(connection.config.databaseType.brandColor)
         }
       } title: {
-        Text(connection.shortDisplayName)
+        HStack(spacing: Spacing.xs) {
+          // Apart from the engine badge in the icon slot
+          if let color = connection.config.colorTag {
+            Circle()
+              .fill(color.tagColor)
+              .frame(width: 7, height: 7)
+              .help(color.rawValue)
+              .accessibilityLabel("Color \(color.rawValue)")
+          }
+          Text(connection.shortDisplayName)
+        }
       } detail: {
         Text(connection.config.displayString)
       } trailing: {

@@ -12,6 +12,8 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Google Gemini** as an AI provider, with its API key kept in the Keychain. [#a76472cc](https://github.com/dinhanhthi/Dblore/commit/a76472cc)
 - **Inline suggestions.** Optional gray text after the caret in SQL query tabs and notebook cells (off by default; Tab accepts, Esc dismisses). On-device keeps your SQL on this Mac. [#dbc5cbb8](https://github.com/dinhanhthi/Dblore/commit/dbc5cbb8) [#29c30197](https://github.com/dinhanhthi/Dblore/commit/29c30197)
 - **Slash commands and @mentions** in the AI panel: `/explain`, `/fix`, `/review`, `/optimize` and your own commands with `{{query}}`, `{{selection}}`, `{{schema}}` and `{{error}}` placeholders; `@table:`, `@query`, `@results` and `@favorite:` attach context, following the connection's AI access setting.
+- **Connection color and group.** Give a connection a color and a group in its form; the Connections list on the welcome screen and the Recent connections menu group them, and the footer shows the connection's color.
+- **Several highlight rules at once.** Highlight cells or rows with as many rules as you need (a cell rule wins over a row rule), switch each one on or off, and mark saved rules Active to apply them whenever the table opens.
 
 ### Fixed
 
@@ -22,6 +24,8 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - Connections saved by this version carry AI access and rules fields; an older build drops them when it saves the connection again.
 - With Google Gemini as the active AI provider, an older build shows AI as not configured.
 - An older build drops custom slash commands and the inline suggestion settings when it saves the AI settings.
+- An older build drops a connection's color and group when it saves the connection again.
+- Saved highlights that use the Pink, Cyan or Gray color cannot be read by an older build: it shows no saved highlights and replaces them all on its next save.
 
 ## v0.8.1 (2026-10-17)
 

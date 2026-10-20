@@ -372,7 +372,23 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     didSet { aiRules = Self.clampedAIRules(aiRules) }
   }
 
+  /// Swatch shown next to the connection; one of the app accent palette colors.
+  var colorTag: AccentColor?
+  /// Folder the connection is listed under, normalized by `normalizedGroupName`.
+  var groupName: String? {
+    didSet { groupName = Self.normalizedGroupName(groupName) }
+  }
+
   nonisolated static let aiRulesLimit = 2_000
+  nonisolated static let groupNameLimit = 64
+
+  /// Trimmed and cut to `groupNameLimit` characters; blank becomes nil.
+  nonisolated static func normalizedGroupName(_ name: String?) -> String? {
+    guard let name else { return nil }
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let cut = String(trimmed.prefix(groupNameLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
+    return cut.isEmpty ? nil : cut
+  }
 
   nonisolated static func clampedAIRules(_ rules: String) -> String {
     rules.count > aiRulesLimit ? String(rules.prefix(aiRulesLimit)) : rules
@@ -404,6 +420,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case mongoHomeDatabase
     // AI access policy and rules (absent on connections saved before them)
     case aiAccess, aiRules
+    // Color and group (absent on connections saved before them)
+    case colorTag, groupName
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -462,6 +480,11 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     aiAccess = rawAccess.flatMap(AIAccessPolicy.init(rawValue:)) ?? .useDefault
     aiRules = Self.clampedAIRules(
       try container.decodeIfPresent(String.self, forKey: .aiRules) ?? "")
+    // An unknown color (e.g. from a newer version) shows no color
+    let rawColor = try container.decodeIfPresent(String.self, forKey: .colorTag)
+    colorTag = rawColor.flatMap(AccentColor.init(rawValue:))
+    groupName = Self.normalizedGroupName(
+      try container.decodeIfPresent(String.self, forKey: .groupName))
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -515,6 +538,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encodeIfPresent(mongoHomeDatabase, forKey: .mongoHomeDatabase)
     try container.encode(aiAccess, forKey: .aiAccess)
     try container.encode(aiRules, forKey: .aiRules)
+    try container.encodeIfPresent(colorTag?.rawValue, forKey: .colorTag)
+    try container.encodeIfPresent(groupName, forKey: .groupName)
   }
 
   nonisolated init(
@@ -538,7 +563,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     idleInTransactionTimeoutSeconds: Int? = nil,
     rowCapOverride: Int? = nil,
     fileBookmark: Data? = nil,
-    readOnlyFile: Bool? = nil
+    readOnlyFile: Bool? = nil,
+    colorTag: AccentColor? = nil,
+    groupName: String? = nil
   ) {
     self.databaseType = databaseType
     self.host = host
@@ -564,6 +591,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     self.readOnlyFile = readOnlyFile ?? (databaseType == .duckdb)
     self.aiAccess = .useDefault
     self.aiRules = ""
+    self.colorTag = colorTag
+    self.groupName = Self.normalizedGroupName(groupName)
   }
 
   /// A copy with every timeout filled in: the connection's own override, else `global`.

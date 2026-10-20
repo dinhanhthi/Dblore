@@ -28,6 +28,8 @@ extension ConnectionFormContent {
         .inputCapsuleStyle()
       }
 
+      appearanceFields()
+
       if capabilities.usesNetwork {
         HStack(spacing: Spacing.md) {
           FormField(label: "Host") {
@@ -106,6 +108,42 @@ extension ConnectionFormContent {
           .font(.caption)
           .foregroundColor(.destructive)
           .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  /// Group (typed, or picked from the saved groups) and color tag, listed with the connection.
+  func appearanceFields() -> some View {
+    HStack(alignment: .top, spacing: Spacing.md) {
+      FormField(label: "Group") {
+        ConnectionGroupField(groupName: $connectionConfig.groupName)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      FormField(label: "Color") {
+        CapsuleTabPicker(
+          selection: $connectionConfig.colorTag,
+          tabs: [nil] + AccentColor.allCases.map { Optional($0) },
+          height: 28
+        ) { color in
+          Group {
+            if let color {
+              Circle()
+                .fill(color.tagColor)
+                .frame(width: 14, height: 14)
+            } else {
+              Image(systemName: "circle.slash")
+                .font(.system(size: 13))
+                .foregroundColor(.foregroundMuted)
+                .frame(width: 14, height: 14)
+            }
+          }
+          .help(color?.rawValue ?? "No color")
+          .accessibilityLabel(color?.rawValue ?? "No color")
+        }
+        .fitsContent(selectedFill: Color.foreground.opacity(0.18), tabPadding: 3)
+        .fixedSize()
+        .accessibilityLabel("Connection color")
       }
     }
   }
@@ -198,6 +236,8 @@ extension ConnectionFormContent {
         .textFieldStyle(.plain)
         .inputCapsuleStyle()
       }
+
+      appearanceFields()
 
       FormField(label: "Connection String") {
         VStack(alignment: .leading, spacing: Spacing.xs) {
@@ -663,6 +703,8 @@ extension ConnectionFormContent {
           .inputCapsuleStyle()
       }
 
+      appearanceFields()
+
       VStack(alignment: .leading, spacing: Spacing.xs) {
         Button("Browse", action: chooseSQLiteFile)
           .buttonStyle(FilledSecondaryButtonStyle())
@@ -711,6 +753,8 @@ extension ConnectionFormContent {
           .textFieldStyle(.plain)
           .inputCapsuleStyle()
       }
+
+      appearanceFields()
 
       VStack(alignment: .leading, spacing: Spacing.xs) {
         HStack(spacing: Spacing.sm) {
@@ -1120,6 +1164,56 @@ enum DuckDBFilePicker {
     panel.prompt = "Create"
     panel.message = "Create a new DuckDB database file"
     return panel
+  }
+}
+
+/// Group name field with a menu of the groups already used by saved connections. Typing goes
+/// to a draft: `groupName` trims on every write, which would drop a space typed between words.
+private struct ConnectionGroupField: View {
+  @Binding var groupName: String?
+  @State private var draft = ""
+  @State private var savedGroups: [String] = []
+
+  var body: some View {
+    HStack(spacing: Spacing.xs) {
+      TextField("None", text: $draft)
+        .textFieldStyle(.plain)
+        .autocorrectionDisabled()
+        .accessibilityLabel("Group")
+
+      if !savedGroups.isEmpty {
+        Menu {
+          ForEach(savedGroups, id: \.self) { name in
+            Button(name) { draft = name }
+          }
+        } label: {
+          Image(systemName: "chevron.down")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(.foregroundMuted)
+            .frame(width: 16)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .linkPointer()
+        .help("Saved groups")
+        .accessibilityLabel("Saved groups")
+      }
+    }
+    .inputCapsuleStyle()
+    .onAppear {
+      draft = groupName ?? ""
+      let history = SessionManager.loadHistory(passwords: NoPasswordStore())
+      savedGroups = ConnectionAppearance.grouped(history).compactMap(\.name)
+    }
+    .onChange(of: draft) { _, newValue in
+      groupName = newValue
+    }
+    // A loaded recent row or a new draft replaced the group
+    .onChange(of: groupName) { _, newValue in
+      if ConnectionConfig.normalizedGroupName(draft) != newValue { draft = newValue ?? "" }
+    }
   }
 }
 

@@ -344,8 +344,8 @@ struct EditorResultGridView: View {
   @Bindable var viewModel: NotebookViewModel
   /// Names of result columns hidden in the grid (data viewer); empty shows every column
   var hiddenColumns: Set<String> = []
-  /// Highlight of the data viewer, painted in the grid without changing its rows
-  var highlight: TableHighlight? = nil
+  /// Highlight rules of the data viewer, painted in the grid without changing its rows
+  var highlights: [TableHighlight] = []
   var dialect: DatabaseType = .postgresql
   /// Adds the highlight items to the cell context menu (data viewer)
   var canHighlight = false
@@ -585,7 +585,7 @@ struct EditorResultGridView: View {
       forwardsScrollToParent: false,
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
       hiddenColumns: hiddenColumns,
-      highlight: highlight,
+      highlights: highlights,
       highlightDialect: dialect,
       relationSchema: relation?.schema,
       relationTable: relation?.table,

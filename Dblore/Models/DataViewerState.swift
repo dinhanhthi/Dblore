@@ -32,8 +32,8 @@ struct DataViewerState: Equatable {
   var documentSort: DocumentSort? = nil
   /// MongoDB: the applied query options (projection, sort, collation, hint, skip, limit, ...)
   var documentOptions = MongoQueryOptions()
-  /// The applied highlight: painted client-side, so not part of `LoadKey`
-  var highlight = TableHighlight(filter: TableFilter(conditions: []))
+  /// The applied highlight rules, first match wins: painted client-side, so not part of `LoadKey`
+  var highlights: [TableHighlight] = []
   /// Staged inserts, deletes, and cell edits. Nil when nothing is staged.
   /// Session-only: a saved tab stores the relation, not this set.
   var changeSet: RowChangeSet? = nil
@@ -63,6 +63,11 @@ struct DataViewerState: Equatable {
       schema: schema, name: name, page: page, pageSize: pageSize, filter: filter,
       documentFilter: documentFilter, documentSort: documentSort,
       documentOptions: documentOptions)
+  }
+
+  /// Rules that paint: enabled and with a complete condition
+  var activeHighlights: [TableHighlight] {
+    highlights.filter { $0.isEnabled && $0.hasCompleteCondition }
   }
 
   /// Tab title: `name` for the default (or no) schema or an engine that never names it

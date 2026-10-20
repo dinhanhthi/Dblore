@@ -264,11 +264,12 @@ struct HeaderView: View {
           }
           .buttonStyle(
             GhostButtonStyle(
-              isActive: isHighlightShown || !(viewModel.dataViewer?.highlight.isEmpty ?? true),
+              isActive: isHighlightShown
+                || !(viewModel.dataViewer?.activeHighlights.isEmpty ?? true),
               iconOnly: true)
           )
           .overlay(alignment: .bottomTrailing) {
-            if !(viewModel.dataViewer?.highlight.isEmpty ?? true) {
+            if !(viewModel.dataViewer?.activeHighlights.isEmpty ?? true) {
               Circle().fill(Color.accent).frame(width: 5, height: 5).padding(4)
                 .allowsHitTesting(false)
             }

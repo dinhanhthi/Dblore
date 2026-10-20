@@ -5,6 +5,7 @@
 //  Connection history management
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Connection History Extension
@@ -16,35 +17,12 @@ extension ConnectionFormContent {
   func connectionHistorySection() -> some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       Menu {
-        ForEach(historyForSelectedType()) { entry in
-          Button(action: {
-            loadConnection(entry)
-          }) {
-            HStack {
-              // Connection name
-              Text(historyTitle(entry.config))
-                .font(.body)
-
-              historyShield(for: entry.config)
-              if entry.config.protectionLevel != .none {
-                Image(systemName: entry.config.protectionLevel.iconName)
-                  .foregroundColor(
-                    entry.config.protectionLevel == .readOnly ? .warning : .secondary
-                  )
-                  .font(.caption)
-              }
-
-              Spacer()
-
-              Button(action: {
-                prepareDeleteConnection(entry.id)
-              }) {
-                Image(systemName: "trash")
-                  .foregroundColor(.destructive)
-              }
-              .buttonStyle(.plain)
-              .linkPointer()
-            }
+        let groups = ConnectionAppearance.grouped(historyForSelectedType())
+        ForEach(groups, id: \.name) { group in
+          if let name = group.name {
+            Section(name) { historyRows(group.entries) }
+          } else {
+            historyRows(group.entries)
           }
         }
 
@@ -59,6 +37,12 @@ extension ConnectionFormContent {
         }
       } label: {
         HStack {
+          if let color = selectedHistoryEntry?.config.colorTag {
+            Circle()
+              .fill(color.tagColor)
+              .frame(width: 8, height: 8)
+              .accessibilityLabel("Color \(color.rawValue)")
+          }
           Text(selectedHistoryEntry.map { historyTitle($0.config) } ?? "Select a connection")
             .lineLimit(1)
             .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
@@ -102,6 +86,70 @@ extension ConnectionFormContent {
         "This removes every connection from Recent connections. Saved passwords and certificates for those connections are removed too."
       )
     }
+  }
+
+  /// Menu rows of the recent connections, each with its color dot when it has one.
+  @ViewBuilder
+  func historyRows(_ entries: [ConnectionHistoryEntry]) -> some View {
+    ForEach(entries) { entry in
+      Button(action: {
+        loadConnection(entry)
+      }) {
+        // A menu item draws an icon only from the button's own Label in .titleAndIcon style
+        if let color = entry.config.colorTag {
+          Label {
+            Text(historyTitle(entry.config))
+          } icon: {
+            Self.menuColorDot(color)
+              .accessibilityLabel("Color \(color.rawValue)")
+          }
+          .labelStyle(.titleAndIcon)
+        } else {
+          historyRowContent(entry)
+        }
+      }
+    }
+  }
+
+  private func historyRowContent(_ entry: ConnectionHistoryEntry) -> some View {
+    HStack {
+      // Connection name
+      Text(historyTitle(entry.config))
+        .font(.body)
+
+      historyShield(for: entry.config)
+      if entry.config.protectionLevel != .none {
+        Image(systemName: entry.config.protectionLevel.iconName)
+          .foregroundColor(
+            entry.config.protectionLevel == .readOnly ? .warning : .secondary
+          )
+          .font(.caption)
+      }
+
+      Spacer()
+
+      Button(action: {
+        prepareDeleteConnection(entry.id)
+      }) {
+        Image(systemName: "trash")
+          .foregroundColor(.destructive)
+      }
+      .buttonStyle(.plain)
+      .linkPointer()
+    }
+  }
+
+  /// A drawn, non-template dot: a menu item would draw a SwiftUI shape or a tinted symbol in
+  /// the menu's text color.
+  static func menuColorDot(_ color: AccentColor) -> Image {
+    let fill = NSColor(color.tagColor)
+    let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+      fill.setFill()
+      NSBezierPath(ovalIn: rect).fill()
+      return true
+    }
+    image.isTemplate = false
+    return Image(nsImage: image)
   }
 
   /// A row saved without a name shows `database@host:port` instead of an empty title.

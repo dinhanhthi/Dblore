@@ -178,7 +178,7 @@ struct DataViewerView: View {
         EditorResultGridView(
           result: result, viewModel: viewModel,
           hiddenColumns: viewModel.dataViewer?.hiddenColumns ?? [],
-          highlight: viewModel.dataViewer?.highlight,
+          highlights: viewModel.dataViewer?.highlights ?? [],
           dialect: viewModel.dataViewer?.databaseType ?? .postgresql,
           canHighlight: true,
           displayMode: $viewModel.dataViewerDisplayMode,

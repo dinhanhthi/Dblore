@@ -95,6 +95,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningSSHCredential: SSHStoredCredential?
   /// The held connect's `aiFieldsEdited` (see `connect(config:…, aiFieldsEdited:)`)
   var pendingWeakeningAIFieldsEdited = false
+  /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
+  var pendingWeakeningFromForm = false
   /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
   /// plugin, see `presentConnectErrorIfActionable`), shown inline in the form.
   /// Cleared by the next connect attempt and when the form goes away.
@@ -322,9 +324,11 @@ class WorkspaceManager: Identifiable {
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
-    // An opened file's AI policy never weakens the saved one
+    // An opened file's AI policy never weakens the saved one, and the form opens on the saved
+    // color and group (a form connect writes what the form shows)
     var workspace = workspace
     workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
+      .map { Self.keepingSavedAppearance($0) }
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -513,10 +517,10 @@ class WorkspaceManager: Identifiable {
   /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
-  /// unless `aiFieldsEdited`.
+  /// unless `aiFieldsEdited`, and its color and group unless `fromForm`.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
-    aiFieldsEdited: Bool = false
+    aiFieldsEdited: Bool = false, fromForm: Bool = false
   ) async throws {
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
@@ -547,6 +551,7 @@ class WorkspaceManager: Identifiable {
       }
       if savesConnection, config.mongoHomeDatabase == nil {
         if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
+        if !fromForm { config = Self.keepingSavedAppearance(config) }
         guard SessionManager.saveConnection(config) else {
           throw CertificateFormError.keychainSave
         }
@@ -667,10 +672,12 @@ class WorkspaceManager: Identifiable {
   /// The bookmark is made now, while the Finder grant lasts. Without the plugin, the form also
   /// shows the missing-plugin error and its Install button.
   func presentDuckDBFile(_ url: URL) {
-    let config = ConnectionFormContent.applyingDuckDBChoice(
-      .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
-      to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
-    ).config
+    // A file saved before opens on its saved color and group (a form connect writes them)
+    let config = Self.keepingSavedAppearance(
+      ConnectionFormContent.applyingDuckDBChoice(
+        .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
+        to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
+      ).config)
     guard DuckDBPluginManager.shared.isInstalledOrPending else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
@@ -847,6 +854,7 @@ class WorkspaceManager: Identifiable {
         viewModel.editorStatementResults = []
         viewModel.dataViewerDisplayMode = .grid
         viewModel.applyMongoViewPreference()
+        viewModel.applySavedHighlights()
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -858,6 +866,7 @@ class WorkspaceManager: Identifiable {
     viewModel.viewMode = .editor
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
+    viewModel.applySavedHighlights()
     if let filter {
       viewModel.filterDraft = filter
     }
@@ -939,6 +948,7 @@ class WorkspaceManager: Identifiable {
     state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
+    viewModel.applySavedHighlights()
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }

@@ -83,7 +83,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let hideColumnTypes: Bool
     let hasEditTarget: Bool
     let hiddenColumns: Set<String>
-    let highlight: TableHighlight?
+    let highlights: [TableHighlight]
     let highlightDialect: DatabaseType
     let valueFilter: ColumnValueFilter
   }
@@ -96,8 +96,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private var key: Key?
   /// Table (displayed) row and result column of the current search match
   private var currentMatchCell: (row: Int, column: Int)?
-  /// Displayed row -> result columns of the applied highlight's matches, compiled once per update
-  private var highlightMatches: [Int: Set<Int>] = [:]
+  /// Colors of the applied highlight rules per displayed row and result column, compiled once
+  /// per update
+  private var highlightPaint = HighlightPaint()
 
   /// Set by the caller from `NotebookViewModel.canEdit(_:)`: without it no cell can be edited
   var isEditable = false
@@ -157,7 +158,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// menu; nil hides the highlight items (the grid has no highlight form)
   var onHighlightCell:
     ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)?
-  /// Called by the context menu's "Clear Highlight"
+  /// Called by the context menu's "Clear Highlights"
   var onClearHighlight: (() -> Void)?
   /// Called, debounced, with the summary of 2+ selected rows in `clickedColumn`; nil below two
   /// rows and when the grid goes away
@@ -250,7 +251,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     searchQuery: String = "", caseSensitive: Bool = false, wholeWord: Bool = false,
     currentMatch: SearchMatch? = nil, hideColumnTypes: Bool = false,
     hiddenColumns: Set<String> = [],
-    highlight: TableHighlight? = nil, highlightDialect: DatabaseType = .postgresql,
+    highlights: [TableHighlight] = [], highlightDialect: DatabaseType = .postgresql,
     valueFilter: ColumnValueFilter = ColumnValueFilter(),
     searchMatches: [SearchMatch] = [],
     changeSet: RowChangeSet? = nil
@@ -264,7 +265,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
       currentMatchId: currentMatch?.id,
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
-      hiddenColumns: hiddenColumns, highlight: highlight, highlightDialect: highlightDialect,
+      hiddenColumns: hiddenColumns, highlights: highlights, highlightDialect: highlightDialect,
       valueFilter: valueFilter)
     let nextChangeSet = Self.normalizedChangeSet(changeSet)
     if newKey == key {
@@ -304,10 +305,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       _ = model.apply(changeSet: nextChangeSet)
       self.model = model
       self.stagedChangeSet = nextChangeSet
-      highlightMatches =
-        highlight?.matches(
-          rows: (0..<model.rowCount).map(model.row(at:)), columns: result.columns.map(\.name),
-          dialect: highlightDialect.dialect) ?? [:]
+      highlightPaint =
+        highlights.contains { $0.isEnabled && $0.hasCompleteCondition }
+        ? HighlightPaint(
+          rules: highlights, rows: (0..<model.rowCount).map(model.row(at:)),
+          columns: result.columns.map(\.name), dialect: highlightDialect.dialect)
+        : HighlightPaint()
       let gridMatch = Self.shownGridMatch(
         currentMatch, matches: searchMatches, model: model)
       currentMatchCell = nil
@@ -441,9 +444,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         parent.submenu = submenu
         menu.addItem(parent)
       }
-      if key?.highlight?.isEmpty == false {
+      if key?.highlights.isEmpty == false {
         addItem(
-          to: menu, "Clear Highlight", #selector(clearHighlight(_:)),
+          to: menu, "Clear Highlights", #selector(clearHighlight(_:)),
           MenuTarget(row: row, column: column))
       }
     }
@@ -1037,17 +1040,15 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     rowView.editedColumns = model?.editedColumns(at: row) ?? []
   }
 
-  /// Paints the cell with a soft tint of the highlight color when the highlight matches it, else
+  /// Paints the cell with a soft tint of the color of the first highlight rule matching it, else
   /// with the sorted-column tint, and always clears it otherwise, since cells are reused
   private func applyHighlight(to cell: NSTableCellView, row: Int, column: Int) {
-    let hits = highlightMatches[row]
-    let isPainted =
-      key?.highlight?.style == .row ? hits != nil : hits?.contains(column) == true
     let isSorted = key?.sortColumn != nil && model?.columns[column].name == key?.sortColumn
-    cell.layer?.backgroundColor =
-      isPainted
-      ? key?.highlight?.color.nsColor.withAlphaComponent(0.3).cgColor
-      : isSorted ? Self.sortedColumnColor.cgColor : nil
+    if let color = highlightPaint.color(row: row, column: column) {
+      cell.layer?.backgroundColor = color.nsColor.withAlphaComponent(0.3).cgColor
+    } else {
+      cell.layer?.backgroundColor = isSorted ? Self.sortedColumnColor.cgColor : nil
+    }
   }
 
   /// Header height from the flag, and each column's header content; the header view is

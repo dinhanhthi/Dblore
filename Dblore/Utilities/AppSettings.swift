@@ -183,7 +183,7 @@ enum SafeModeBiometricError: LocalizedError, Equatable {
 }
 
 /// Accent color preference enum
-enum AccentColor: String, CaseIterable {
+nonisolated enum AccentColor: String, CaseIterable, Sendable {
   case blue = "Blue"
   case purple = "Purple"
   case green = "Green"
