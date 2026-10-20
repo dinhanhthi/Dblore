@@ -127,7 +127,8 @@ extension NotebookViewModel {
     let query = notebook.cells[index].content
 
     guard connectionState.isConnected else {
-      notebook.cells[index].result = .errorResult("Not connected to database", sourceQuery: query)
+      notebook.cells[index].result = .errorResult(
+        "Not connected to database", sourceQuery: query, aiSessionKey: aiSessionKey)
       onDocumentChanged?()
       return
     }
@@ -192,10 +193,12 @@ extension NotebookViewModel {
     guard let queuedIndex = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
     }
+    // Before the query is sent: an error that lands after a switch stays the old connection's
+    let aiSessionKey = self.aiSessionKey
 
     guard let connectionManager = connectionManager else {
       let errorResult = CellResult.errorResult(
-        "No database connection available", sourceQuery: task.query)
+        "No database connection available", sourceQuery: task.query, aiSessionKey: aiSessionKey)
       notebook.cells[queuedIndex].result = errorResult
       onDocumentChanged?()
       return errorResult
@@ -274,7 +277,8 @@ extension NotebookViewModel {
               sourceQuery: tuple.queryText,
               tableName: nil,
               primaryKeyColumns: [],
-              affectedRows: tuple.result.affectedRows
+              affectedRows: tuple.result.affectedRows,
+              aiSessionKey: aiSessionKey
             ).withCapInfo(from: tuple.result),
             statementIndex: index
           )
@@ -321,7 +325,8 @@ extension NotebookViewModel {
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: queryResult.affectedRows,
           editTarget: target,
-          lookupRelation: lookup
+          lookupRelation: lookup,
+          aiSessionKey: aiSessionKey
         ).withCapInfo(from: queryResult)
 
         carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)
@@ -342,7 +347,8 @@ extension NotebookViewModel {
       result = .errorResult(
         error.localizedDescription,
         executionTime: executionTime,
-        sourceQuery: task.query
+        sourceQuery: task.query,
+        aiSessionKey: aiSessionKey
       )
       notebook.cells[index].result = result
       notebook.cells[index].executionCount = executionCounter
@@ -355,7 +361,8 @@ extension NotebookViewModel {
     } catch {
       // Handle general errors
       executionCounter += 1
-      result = .errorResult(error.localizedDescription, sourceQuery: task.query)
+      result = .errorResult(
+        error.localizedDescription, sourceQuery: task.query, aiSessionKey: aiSessionKey)
       notebook.cells[index].result = result
       notebook.cells[index].executionCount = executionCounter
       // Clear multi-statement data on error

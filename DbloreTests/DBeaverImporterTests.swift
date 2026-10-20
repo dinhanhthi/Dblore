@@ -16,7 +16,7 @@ struct DBeaverImporterTests {
 
   private static let secretsFileName = "credentials-config.json"
   private static let dataSourcesFileName = "data-sources.json"
-  /// DBeaver's published static key (`BaseProjectImpl.LOCAL_KEY_CACHE`).
+  /// The fixed static key of `credentials-config.json`.
   private static let key: [UInt8] = [
     0xba, 0xbb, 0x4a, 0x9f, 0x77, 0x4a, 0xb8, 0x53, 0xc9, 0x6c, 0x2d, 0x65, 0x3d, 0xfe, 0x54, 0x4a,
   ]
@@ -43,7 +43,7 @@ struct DBeaverImporterTests {
     }
   }
 
-  /// Encrypts like DBeaver's `DefaultValueEncryptor`: random IV, then AES-128-CBC/PKCS7.
+  /// Encrypts like `credentials-config.json` is stored: random IV, then AES-128-CBC/PKCS7.
   private static func encrypt(_ plaintext: Data) -> Data {
     var iv = [UInt8](repeating: 0, count: kCCBlockSizeAES128)
     _ = SecRandomCopyBytes(kSecRandomDefault, iv.count, &iv)
@@ -375,7 +375,7 @@ struct DBeaverImporterTests {
   }
 
   @Test(
-    "maps the mysql_ssl handler like DBeaver's Connector/J settings",
+    "maps the mysql_ssl handler booleans to an SSL mode",
     arguments: [
       ("mysql8", [String: String](), true, SSLMode.prefer),
       ("mysql8", ["ssl.require": "true"], true, .require),

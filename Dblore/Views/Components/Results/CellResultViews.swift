@@ -71,6 +71,7 @@ struct ResultAreaView: View {
             error: error,
             searchQuery: viewModel.searchState.query,
             isCaseSensitive: viewModel.searchState.isCaseSensitive,
+            isWholeWord: viewModel.searchState.isWholeWord,
             cellId: cellId,
             viewModel: viewModel
           )
@@ -168,6 +169,7 @@ struct ErrorResultView: View {
   let error: String
   let searchQuery: String
   let isCaseSensitive: Bool
+  var isWholeWord = false
   let cellId: UUID
   let viewModel: NotebookViewModel
   @State private var currentMatchRange: Range<String.Index>?
@@ -190,6 +192,7 @@ struct ErrorResultView: View {
           text: error,
           query: searchQuery,
           caseSensitive: isCaseSensitive,
+          wholeWord: isWholeWord,
           currentMatchRange: currentMatchRange
         )
         .font(.mono)
@@ -249,6 +252,8 @@ struct ResultMetadataView: View {
   var cellId: UUID? = nil
   /// Grid / Chart shared with the grid, drawn at the trailing end. Nil hides the slider.
   var displayMode: Binding<ResultDisplayMode>? = nil
+  /// Summary of the selected rows in the grid, shown in Grid mode only
+  var selectionSummary: ResultSelectionSummary? = nil
   /// Bar width, measured without a GeometryReader so the bar hugs its text height.
   @State private var barWidth: CGFloat = 0
 
@@ -378,6 +383,12 @@ struct ResultMetadataView: View {
           Text(CellResultViews.formatTimestamp(result.timestamp))
         }
 
+        if let selectionSummary, displayMode?.wrappedValue ?? .grid == .grid {
+          Text("|")
+            .foregroundColor(.foregroundSubtle)
+          ResultSelectionSummaryView(summary: selectionSummary)
+        }
+
         Spacer(minLength: 0)
         if let viewModel, let cellId {
           CellResultPinControls(result: result, viewModel: viewModel, cellId: cellId)
@@ -404,6 +415,80 @@ struct ResultMetadataView: View {
           .padding(.bottom, Spacing.xs)
       }
     }
+  }
+}
+
+// MARK: - Selection Summary
+
+/// Status bar text of the selected rows: "Count n · Sum … · Avg …" for the clicked column, whose
+/// click opens min, max, non-null and Copy; the row count only without a clicked column.
+/// Takes the font and color of the bar it sits in.
+struct ResultSelectionSummaryView: View {
+  let summary: ResultSelectionSummary
+  @State private var showsDetails = false
+
+  var body: some View {
+    if let columnName = summary.columnName {
+      Button(action: { showsDetails.toggle() }) {
+        Text(summary.statusText())
+          .lineLimit(1)
+      }
+      .buttonStyle(.plain)
+      .linkPointer()
+      .fixedSize()
+      .help("Show the selection summary")
+      .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
+        details(columnName: columnName)
+      }
+    } else {
+      Text(summary.statusText())
+        .lineLimit(1)
+        .fixedSize()
+    }
+  }
+
+  private func details(columnName: String) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text(columnName)
+        .font(.system(size: 12, weight: .semibold))
+        .foregroundColor(.foreground)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Divider()
+      Grid(alignment: .leading, horizontalSpacing: Spacing.md, verticalSpacing: Spacing.xs) {
+        ForEach(summary.lines(), id: \.label) { line in
+          GridRow {
+            Text(line.label)
+              .font(.system(size: 11))
+              .foregroundColor(.foregroundSubtle)
+            Text(line.value)
+              .font(.monoSmall)
+              .foregroundColor(.foreground)
+              .textSelection(.enabled)
+          }
+        }
+      }
+      if let note = summary.mixedNote() {
+        Text(note)
+          .font(.system(size: 11))
+          .foregroundColor(.foregroundMuted)
+      }
+      HStack {
+        Spacer()
+        Button("Copy", action: copy)
+          .buttonStyle(SecondaryButtonStyle())
+          .controlSize(.small)
+          .help("Copy the summary")
+      }
+    }
+    .padding(Spacing.md)
+    .frame(width: 240)
+  }
+
+  private func copy() {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(summary.copyText(), forType: .string)
+    showsDetails = false
   }
 }
 
@@ -555,6 +640,8 @@ struct NotebookResultGridView: View {
   @State private var currentMatch: SearchMatch?
   /// A legacy horizontal scroller is shown inside the grid, for the grid height
   @State private var showsHorizontalScroller = false
+  /// Summary of the selected rows, shown in the metadata bar
+  @State private var selectionSummary: ResultSelectionSummary?
 
   /// Get the cell from viewModel
   private var cell: NotebookCell? {
@@ -653,6 +740,7 @@ struct NotebookResultGridView: View {
       },
       searchQuery: viewModel.searchState.query,
       caseSensitive: viewModel.searchState.isCaseSensitive,
+      wholeWord: viewModel.searchState.isWholeWord,
       currentMatch: currentMatch,
       searchMatches: viewModel.searchState.matches,
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
@@ -663,7 +751,8 @@ struct NotebookResultGridView: View {
       lookupDialect: viewModel.sqlDialect,
       onLookupReferencedRow: referencedRow.lookup,
       onJumpToReferencedRow: referencedRow.jump,
-      onHorizontalScrollerChange: { showsHorizontalScroller = $0 }
+      onHorizontalScrollerChange: { showsHorizontalScroller = $0 },
+      onSelectionSummaryChange: { selectionSummary = $0 }
     )
     .frame(
       height: ResultGridView.height(
@@ -695,12 +784,14 @@ struct NotebookResultGridView: View {
           selectedStatementIndex: cell.selectedStatementIndex,
           viewModel: viewModel,
           cellId: cellId,
-          displayMode: displayMode
+          displayMode: displayMode,
+          selectionSummary: selectionSummary
         )
       } else {
         // Single statement: no dropdown
         ResultMetadataView(
-          result: result, viewModel: viewModel, cellId: cellId, displayMode: displayMode)
+          result: result, viewModel: viewModel, cellId: cellId, displayMode: displayMode,
+          selectionSummary: selectionSummary)
       }
     }
     // A new result (run or statement switch) refreshes the comparison off the main actor

@@ -166,8 +166,10 @@ struct RowStagingUndoTests {
       _ = viewModel.stageEdit(row: 0, column: "nickname", value: .string("neo"))
     }
 
-    viewModel.dataViewer?.highlight = TableHighlight(
-      filter: TableFilter(conditions: [FilterCondition(column: "nickname", value: "neo")]))
+    viewModel.dataViewer?.highlights = [
+      TableHighlight(
+        filter: TableFilter(conditions: [FilterCondition(column: "nickname", value: "neo")]))
+    ]
     viewModel.dataViewer?.totalRows = 10
 
     #expect(viewModel.undoManager.undoActionName == "Edit Cell")

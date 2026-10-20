@@ -47,7 +47,9 @@ struct HistoryRow: View {
           if let kind = HistoryRowLabels.kindLabel(entry.kind) {
             historyBadge(kind)
           }
-          historyBadge(HistoryRowLabels.sourceLabel(entry.source))
+          historyBadge(
+            HistoryRowLabels.sourceLabel(entry.source),
+            icon: HistoryRowLabels.sourceIcon(entry.source))
         }
         .font(.caption)
         .foregroundColor(.foregroundMuted)
@@ -151,14 +153,19 @@ struct HistoryRow: View {
   }
 
   /// Same capsule tokens as the filter row. Kind does not pick a color.
-  private func historyBadge(_ title: String) -> some View {
-    Text(title)
-      .font(.caption2)
-      .foregroundColor(.foregroundMuted)
-      .lineLimit(1)
-      .padding(.horizontal, Spacing.xs)
-      .background(Capsule().fill(Color.inputBackground))
-      .overlay(HairlineBorder(shape: Capsule()))
+  private func historyBadge(_ title: String, icon: String? = nil) -> some View {
+    HStack(spacing: Spacing.xxs) {
+      if let icon {
+        Image(systemName: icon)
+      }
+      Text(title)
+    }
+    .font(.caption2)
+    .foregroundColor(.foregroundMuted)
+    .lineLimit(1)
+    .padding(.horizontal, Spacing.xs)
+    .background(Capsule().fill(Color.inputBackground))
+    .overlay(HairlineBorder(shape: Capsule()))
   }
 }
 
@@ -214,6 +221,16 @@ nonisolated enum HistoryRowLabels: Sendable {
     case .ai: "AI Assistant"
     case .dump: "Dump"
     case .restore: "Restore"
+    case .rewind: "Rewind"
+    }
+  }
+
+  /// SF Symbol shown before the source label, nil for none
+  static func sourceIcon(_ source: QueryHistoryEntry.Source) -> String? {
+    switch source {
+    case .rewind: "clock.arrow.circlepath"
+    case .cell, .editor, .dataViewerEdit, .dataImport, .mcp, .structure, .ai, .dump, .restore:
+      nil
     }
   }
 }

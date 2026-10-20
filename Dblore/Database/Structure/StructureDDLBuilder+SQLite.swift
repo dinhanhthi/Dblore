@@ -1,6 +1,7 @@
 // StructureDDLBuilder+SQLite.swift
 // SQLite: only the ALTERs it runs directly, one statement each, never a table rebuild. Order as
-// PostgreSQL: DROP INDEX, DROP COLUMN, ADD COLUMN, CREATE INDEX, RENAME COLUMN.
+// PostgreSQL: DROP INDEX, DROP COLUMN, ADD COLUMN, CREATE INDEX, RENAME COLUMN, then the table
+// RENAME TO (a bare name: the table stays in its schema).
 // - ADD COLUMN: no PRIMARY KEY, UNIQUE or STORED generated column; NOT NULL needs a non-NULL
 //   default; the default must be constant (no CURRENT_TIME / DATE / TIMESTAMP, no parentheses).
 // - RENAME COLUMN needs 3.25.0, DROP COLUMN 3.35.0.
@@ -8,7 +9,7 @@
 //   this table) and generated columns. A column used in a CHECK, an expression index, another
 //   column's generation expression or another table's foreign key is not visible here: SQLite
 //   itself rejects the statement.
-// - Everything else (type, default, nullability, constraints) throws.
+// - Everything else (type, default, nullability, constraints, table comments) throws.
 
 import Foundation
 
@@ -24,14 +25,13 @@ nonisolated extension StructureDDLBuilder {
     var addColumns: [String] = []
     var createIndexes: [String] = []
     var renames: [String] = []
+    var tableRename: String?
     for change in changes {
       switch change {
       case .addColumn(let column):
         try checkSQLiteAddColumn(column)
         addColumns.append(
-          "ALTER TABLE \(table) ADD COLUMN \(try q(column.name)) \(column.type)"
-            + (column.isNullable ? "" : " NOT NULL")
-            + (column.defaultExpression.map { " DEFAULT \($0)" } ?? ""))
+          "ALTER TABLE \(table) ADD COLUMN " + (try columnDefinition(column, dialect: dialect)))
       case .renameColumn(let column, let newName):
         try requireSQLite(3_025_000, libraryVersion, for: "Renaming a column")
         renames.append("ALTER TABLE \(table) RENAME COLUMN \(try q(column)) TO \(try q(newName))")
@@ -49,6 +49,10 @@ nonisolated extension StructureDDLBuilder {
             + "(\(try quotedList(index.columns, dialect: dialect)))")
       case .dropIndex(let name):
         dropIndexes.append("DROP INDEX \(try q(structure.schema)).\(try q(name))")
+      case .renameTable(let newName):
+        tableRename = "ALTER TABLE \(table) RENAME TO \(try q(newName))"
+      case .setTableComment:
+        throw StructureDDLError.unsupported("SQLite tables have no comments.")
       case .alterColumnType, .setDefault, .dropDefault, .setNotNull, .dropNotNull,
         .addConstraint, .dropConstraint:
         throw StructureDDLError.unsupported(
@@ -56,6 +60,7 @@ nonisolated extension StructureDDLBuilder {
       }
     }
     return dropIndexes + dropColumns + addColumns + createIndexes + renames
+      + [tableRename].compactMap { $0 }
   }
 
   private static func requireSQLite(_ minimum: Int, _ version: Int, for what: String) throws {

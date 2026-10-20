@@ -71,6 +71,8 @@ private let sideEffectReadCases: [String] = [
   "SELECT setval('seq', 1)",
   "SELECT * FROM load_aws_credentials()",
   "SELECT * FROM query('SELECT 1')",
+  "SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT nextval(''s'')'))",
+  #"SELECT * FROM "JSON_Execute_Serialized_SQL"(json_serialize_sql('SELECT getenv(''HOME'')'))"#,
   "SELECT * FROM t WHERE a = getenv('X')",
   "WITH x AS (SELECT nextval('seq')) SELECT * FROM x",
   "FROM t SELECT nextval('seq')",

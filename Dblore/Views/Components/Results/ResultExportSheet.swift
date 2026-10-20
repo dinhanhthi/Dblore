@@ -1,6 +1,7 @@
 // ResultExportSheet.swift
 // Download options. The format picker opens on the menu item the user chose.
-// Export writes a file. Nothing here is sent to the database. SQL INSERT is offered for SQL only.
+// Export writes a file. Nothing here is sent to the database. SQL INSERT and Parquet are offered
+// for SQL only. Parquet stays in the sheet after its save panel: progress and Cancel show here.
 
 import SwiftUI
 
@@ -8,19 +9,24 @@ struct ResultExportSheet: View {
   let result: CellResult
   /// Formats the picker offers (`exportFormats(for:)`).
   let formats: [ExportFormat]
+  /// Default file name of a Parquet download.
+  let queryIndex: Int?
   var onExport: (ExportOptions) -> Void
   var onCancel: () -> Void
 
   @State private var options: ExportOptions
   @State private var estimate: ExportSizeEstimate
   @State private var confirmLarge = false
+  @State private var parquet = ParquetExportRun()
 
   init(
     result: CellResult, format: ExportFormat, queryLanguage: DatabaseCapabilities.QueryLanguage,
-    onExport: @escaping (ExportOptions) -> Void, onCancel: @escaping () -> Void
+    queryIndex: Int? = nil, onExport: @escaping (ExportOptions) -> Void,
+    onCancel: @escaping () -> Void
   ) {
     self.result = result
     self.formats = Self.exportFormats(for: queryLanguage)
+    self.queryIndex = queryIndex
     self.onExport = onExport
     self.onCancel = onCancel
     let initial = ExportOptions(format: formats.contains(format) ? format : .csv)
@@ -28,11 +34,12 @@ struct ResultExportSheet: View {
     _estimate = State(initialValue: ExportSize.estimate(result: result, options: initial))
   }
 
-  /// Every format for SQL. MongoDB has no SQL INSERT (its results have no SQL table or literals).
+  /// Every format for SQL. MongoDB has no SQL INSERT (its results have no SQL table or literals)
+  /// and no Parquet (its documents have no column types).
   static func exportFormats(for language: DatabaseCapabilities.QueryLanguage) -> [ExportFormat] {
     switch language {
     case .sql: ExportFormat.allCases
-    case .mongosh: ExportFormat.allCases.filter { $0 != .sqlInsert }
+    case .mongosh: ExportFormat.allCases.filter { $0 != .sqlInsert && $0 != .parquet }
     }
   }
 
@@ -50,6 +57,15 @@ struct ResultExportSheet: View {
               .fixedSize(horizontal: false, vertical: true)
             rowBadge
             sizeSummary
+            if options.format.requiresDuckDBPlugin && !isDuckDBPluginReady {
+              missingPluginRow
+            }
+            if let message = parquet.errorMessage {
+              Text(message)
+                .font(.small)
+                .foregroundColor(.destructive)
+                .fixedSize(horizontal: false, vertical: true)
+            }
           }
           if showsFormatOptions {
             sectionGroup {
@@ -68,12 +84,16 @@ struct ResultExportSheet: View {
     }
     .frame(width: 440, height: 560)
     .background(Color.appBackground)
+    .interactiveDismissDisabled(parquet.isRunning)
+    // Closing the tab or window also stops a running Parquet export and removes its temp folder.
+    .onDisappear { parquet.cancel() }
     .onChange(of: options) { _, updated in
       estimate = ExportSize.estimate(result: result, options: updated)
+      parquet.clearError()
     }
     .alert("Large export", isPresented: $confirmLarge) {
       Button("Cancel", role: .cancel) {}
-      Button("Export anyway") { onExport(options) }
+      Button("Export anyway") { runExport() }
     } message: {
       Text(estimate.confirmMessage)
     }
@@ -85,12 +105,14 @@ struct ResultExportSheet: View {
         .font(.subheading)
         .foregroundColor(.foreground)
       Spacer()
-      Button(action: onCancel) {
+      Button(action: close) {
         Image(systemName: "xmark")
           .font(.system(size: 11, weight: .semibold))
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .help("Close")
+      // The save panel stays open on its own after the sheet closes.
+      .disabled(isChoosingParquetFile)
     }
     .modalBarPadding(vertical: Spacing.sm)
   }
@@ -132,6 +154,7 @@ struct ResultExportSheet: View {
       .pickerStyle(.menu)
       .labelsHidden()
       .fixedSize()
+      .disabled(parquet.isRunning)
     }
   }
 
@@ -275,17 +298,69 @@ struct ResultExportSheet: View {
 
   private var footer: some View {
     HStack {
-      Button("Reset to Default") {
-        options = ExportOptions(format: options.format)
-      }
-      .buttonStyle(GhostButtonStyle())
-      Spacer()
-      Button("Cancel", action: onCancel)
+      if let written = parquet.rowsWritten {
+        ProgressView(value: Double(written), total: Double(max(result.rows.count, 1)))
+        Text("\(written.formatted()) of \(result.rows.count.formatted()) rows")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .monospacedDigit()
+          .fixedSize()
+        Button("Cancel") { parquet.cancel() }
+          .buttonStyle(GhostButtonStyle())
+          .keyboardShortcut(.cancelAction)
+      } else {
+        Button("Reset to Default") {
+          options = ExportOptions(format: options.format)
+        }
         .buttonStyle(GhostButtonStyle())
-      Button("Export", action: export)
-        .buttonStyle(PrimaryButtonStyle())
+        .disabled(parquet.isRunning)
+        Spacer()
+        Button("Cancel", action: close)
+          .buttonStyle(GhostButtonStyle())
+          .disabled(isChoosingParquetFile)
+        Button("Export", action: export)
+          .buttonStyle(PrimaryButtonStyle())
+          .disabled(!canExport)
+      }
     }
     .modalBarPadding()
+  }
+
+  /// The DuckDB plugin is installed, or its launch check is still hashing an installed file.
+  private var isDuckDBPluginReady: Bool {
+    PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending ?? false
+  }
+
+  /// The Parquet save panel is open: no rows written yet.
+  private var isChoosingParquetFile: Bool {
+    parquet.isRunning && parquet.rowsWritten == nil
+  }
+
+  private var canExport: Bool {
+    !parquet.isRunning && (!options.format.requiresDuckDBPlugin || isDuckDBPluginReady)
+  }
+
+  private var missingPluginRow: some View {
+    HStack(spacing: Spacing.sm) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.warning)
+      Text("Requires the DuckDB plugin")
+        .foregroundColor(.warning)
+      Spacer(minLength: Spacing.sm)
+      Button("Open Settings > Plugins") {
+        close()
+        ConnectionErrorAction.postOpenPluginSettings()
+      }
+      .buttonStyle(.link)
+      .linkPointer()
+    }
+    .font(.small)
+  }
+
+  /// Closes the sheet; a running Parquet export is cancelled and cleans up after itself.
+  private func close() {
+    parquet.cancel()
+    onCancel()
   }
 
   private var sizeSummary: some View {
@@ -306,7 +381,21 @@ struct ResultExportSheet: View {
     if estimate.isLarge {
       confirmLarge = true
     } else {
+      runExport()
+    }
+  }
+
+  private func runExport() {
+    guard options.format == .parquet else {
       onExport(options)
+      return
+    }
+    parquet.start(
+      result: DataExporter.applying(options, to: result), queryIndex: queryIndex
+    ) { url in
+      onCancel()
+      // The sheet is still dismissing. Presenting now stacks the two modals.
+      DispatchQueue.main.async { DataExporter.presentSavedFile(url) }
     }
   }
 
@@ -357,5 +446,58 @@ struct ResultExportSheet: View {
           options.redactedColumns.remove(index)
         }
       })
+  }
+}
+
+/// One Parquet download from the sheet: save panel, then the export off the main actor with
+/// its row progress, Cancel, and the error to show when it fails.
+@Observable
+final class ParquetExportRun {
+  /// Rows inserted so far; nil while no export is writing.
+  private(set) var rowsWritten: Int?
+  private(set) var errorMessage: String?
+  private var task: Task<Void, Never>?
+
+  var isRunning: Bool { task != nil }
+
+  func start(result: CellResult, queryIndex: Int?, onSaved: @escaping (URL) -> Void) {
+    guard task == nil else { return }
+    errorMessage = nil
+    task = Task {
+      defer {
+        task = nil
+        rowsWritten = nil
+      }
+      // The sheet may have closed while the panel was open.
+      guard let url = await DataExporter.chooseParquetDestination(queryIndex: queryIndex),
+        !Task.isCancelled
+      else { return }
+      rowsWritten = 0
+      do {
+        try await DataExporter.exportParquet(
+          result: result, to: url,
+          progress: { rows in
+            Task { @MainActor in self.report(rows) }
+          })
+        onSaved(url)
+      } catch is CancellationError {
+      } catch {
+        errorMessage = "Export failed: \(error.localizedDescription)"
+      }
+    }
+  }
+
+  func cancel() {
+    task?.cancel()
+  }
+
+  func clearError() {
+    errorMessage = nil
+  }
+
+  /// Late reports (after the export ended) are dropped.
+  private func report(_ rows: Int) {
+    guard task != nil, let written = rowsWritten else { return }
+    rowsWritten = max(written, rows)
   }
 }

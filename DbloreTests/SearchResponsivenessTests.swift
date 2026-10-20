@@ -2,7 +2,8 @@
 // The notebook search scans up to the row cap of every result: the scan must not run on the
 // main actor, or the window freezes for the whole scan. Compared within one run (stall vs
 // total search time), so a slow runner does not fail it. Other suites share this process's
-// main actor: when it is busy right before or after the search, the numbers are only recorded.
+// main actor: when it is busy right before or after the search, the stall check is skipped
+// and reported as a known issue.
 
 import Foundation
 import Testing
@@ -59,7 +60,11 @@ struct SearchResponsivenessTests {
     PerfReport.record("search10kx30.total", ms: totalMs)
     PerfReport.record("search10kx30.maxMainStall", ms: stallMs)
     // The main actor was shared with other suites: the stall is not this search's
-    guard before < 20, after < 20 else { return }
+    let quiet = before < 20 && after < 20
+    withKnownIssue("Main actor busy around the search; stall check skipped", isIntermittent: true) {
+      #expect(quiet, "main actor busy: \(before) ms before, \(after) ms after")
+    }
+    guard quiet else { return }
     #expect(stallMs < totalMs * 0.25, "main actor stalled \(stallMs) ms of a \(totalMs) ms search")
   }
 }

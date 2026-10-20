@@ -7,7 +7,9 @@
 // always binds" (DDL takes no binds): they are written as typed, after `checkedText` lexes them
 // with the dialect tokenizer and rejects comments, `;`, a top-level `,` (another ALTER action),
 // unbalanced parentheses, unterminated quotes and control characters other than tab, newline
-// and carriage return.
+// and carriage return. A table comment is a string literal (`SQLDialect.literal`: quotes doubled,
+// backslashes escaped where the engine reads them; MySQL sessions run without
+// NO_BACKSLASH_ESCAPES); a NUL in it is refused.
 //
 // Names in changes are loaded names; renames run last. PostgreSQL order:
 // 1. DROP INDEX, one statement each
@@ -15,7 +17,10 @@
 //    DEFAULT, SET/DROP NOT NULL), ADD CONSTRAINT, each group in the order given
 // 3. CREATE INDEX, one statement each (no CONCURRENTLY: it cannot run in a transaction)
 // 4. RENAME COLUMN, one ALTER TABLE each (PostgreSQL does not combine RENAME with other actions)
-// MySQL and SQLite: see their extensions. DuckDB is view-only: any change throws.
+// 5. COMMENT ON TABLE
+// 6. ALTER TABLE ... RENAME TO (a bare name: the table stays in its schema)
+// MySQL and SQLite: see their extensions. DuckDB is view-only: any change throws, and so does
+// `dropTable`.
 
 import Foundation
 
@@ -72,6 +77,17 @@ nonisolated enum StructureDDLBuilder {
     }
   }
 
+  /// `DROP TABLE schema.table`, no CASCADE: the server refuses it while other objects depend on
+  /// the table
+  static func dropTable(_ structure: TableStructure, engine: Engine) throws -> [String] {
+    switch engine {
+    case .duckdb:
+      throw StructureDDLError.unsupported("DuckDB tables are view-only in the structure editor.")
+    case .postgresql, .mysql, .sqlite:
+      return ["DROP TABLE \(try tableName(structure, dialect: engine.dialect))"]
+    }
+  }
+
   // MARK: - PostgreSQL
 
   private static func postgresStatements(
@@ -88,13 +104,12 @@ nonisolated enum StructureDDLBuilder {
     var addConstraints: [String] = []
     var createIndexes: [String] = []
     var renames: [String] = []
+    var tableComment: String?
+    var tableRename: String?
     for change in changes {
       switch change {
       case .addColumn(let column):
-        addColumns.append(
-          "ADD COLUMN \(try q(column.name)) \(column.type)"
-            + (column.isNullable ? "" : " NOT NULL")
-            + (column.defaultExpression.map { " DEFAULT \($0)" } ?? ""))
+        addColumns.append("ADD COLUMN " + (try columnDefinition(column, dialect: dialect)))
       case .alterColumnType(let column, let type):
         alterColumns.append("ALTER COLUMN \(try q(column)) TYPE \(type)")
       case .setDefault(let column, let expression):
@@ -121,11 +136,17 @@ nonisolated enum StructureDDLBuilder {
             + " (\(try quotedList(index.columns, dialect: dialect)))")
       case .dropIndex(let name):
         dropIndexes.append("DROP INDEX \(try q(structure.schema)).\(try q(name))")
+      case .renameTable(let newName):
+        tableRename = "ALTER TABLE \(table) RENAME TO \(try q(newName))"
+      case .setTableComment(let text):
+        tableComment =
+          "COMMENT ON TABLE \(table) IS " + (text.map { dialect.literal(.string($0)) } ?? "NULL")
       }
     }
     let actions = dropConstraints + dropColumns + addColumns + alterColumns + addConstraints
     let alter = actions.isEmpty ? [] : ["ALTER TABLE \(table) " + actions.joined(separator: ", ")]
     return dropIndexes + alter + createIndexes + renames
+      + [tableComment, tableRename].compactMap { $0 }
   }
 
   // MARK: - Shared helpers
@@ -137,6 +158,18 @@ nonisolated enum StructureDDLBuilder {
     return try dialect.quoteIdentifier(structure.schema) + "." + name
   }
 
+  /// `name type [NOT NULL] [DEFAULT expression]`; MySQL writes NULL explicitly (a TIMESTAMP
+  /// column is otherwise NOT NULL on some servers). Used by ADD COLUMN and CREATE TABLE.
+  static func columnDefinition(
+    _ column: StructureChange.NewColumn, dialect: SQLDialect
+  ) throws -> String {
+    let nullability =
+      dialect == .mysql
+      ? (column.isNullable ? " NULL" : " NOT NULL") : (column.isNullable ? "" : " NOT NULL")
+    return "\(try dialect.quoteIdentifier(column.name)) \(column.type)" + nullability
+      + (column.defaultExpression.map { " DEFAULT \($0)" } ?? "")
+  }
+
   /// `"a", "b"`, each name replaced by its entry in `renamed` when present
   static func quotedList(
     _ names: [String], dialect: SQLDialect, renamed: [String: String] = [:]
@@ -145,9 +178,11 @@ nonisolated enum StructureDDLBuilder {
   }
 
   /// `[CONSTRAINT name] PRIMARY KEY (...) | UNIQUE (...) | FOREIGN KEY ... | CHECK (expr)`.
-  /// Column names go through `renamed` (MySQL renames in the same ALTER TABLE).
+  /// Column names go through `renamed` (MySQL renames in the same ALTER TABLE). A foreign key
+  /// names its target bare when `qualifiesReference` is false (SQLite: same database only).
   static func constraintDefinition(
-    _ constraint: TableStructure.Constraint, dialect: SQLDialect, renamed: [String: String]
+    _ constraint: TableStructure.Constraint, dialect: SQLDialect, renamed: [String: String],
+    qualifiesReference: Bool = true
   ) throws -> String {
     let name = try constraint.name.map { "CONSTRAINT \(try dialect.quoteIdentifier($0)) " } ?? ""
     let columns = try quotedList(constraint.columns, dialect: dialect, renamed: renamed)
@@ -160,8 +195,8 @@ nonisolated enum StructureDDLBuilder {
       return name + "CHECK (\(expression))"
     case .foreignKey(let reference):
       let target =
-        try dialect.quoteIdentifier(reference.schema) + "."
-        + dialect.quoteIdentifier(reference.table)
+        (qualifiesReference ? try dialect.quoteIdentifier(reference.schema) + "." : "")
+        + (try dialect.quoteIdentifier(reference.table))
       return name + "FOREIGN KEY (\(columns)) REFERENCES \(target) "
         + "(\(try quotedList(reference.columns, dialect: dialect)))"
         + action("ON UPDATE", reference.onUpdate) + action("ON DELETE", reference.onDelete)
@@ -218,6 +253,12 @@ nonisolated enum StructureDDLBuilder {
       case .renameColumn(let name, let newName):
         _ = try loadedColumn(name, in: structure)
         try checkedName(newName)
+      case .renameTable(let newName):
+        try checkedName(newName)
+      case .setTableComment(let text):
+        if text?.contains("\0") == true {
+          throw StructureDDLError.invalidText("A comment cannot contain a NUL character.")
+        }
       case .addConstraint(let constraint):
         if let name = constraint.name { try checkedName(name) }
         if case .check(let expression) = constraint.kind {

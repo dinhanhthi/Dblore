@@ -8,55 +8,11 @@ import Testing
 @Suite struct PluginIntegrityTests {
   private static let validSHA = String(repeating: "ab", count: 32)
 
-  private static func json(
-    version: String = "1.5.6",
-    url: String =
-      "https://github.com/dinhanhthi/Dblore/releases/download/plugin-duckdb-v1.5.6/libduckdb.dylib",
-    sha256: String = validSHA,
-    maxSize: Int64 = 1024
-  ) -> Data {
-    let object: [String: Any] = [
-      "version": version, "url": url, "sha256": sha256, "maxSize": maxSize,
-    ]
-    return try! JSONSerialization.data(withJSONObject: object)
-  }
-
   private static func tempDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory
       .appendingPathComponent("plugin-integrity-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     return dir
-  }
-
-  // MARK: - Catalog
-
-  @Test func bundledCatalogDecodesAndValidates() throws {
-    let catalog = try DuckDBPluginCatalog.bundled()
-    #expect(catalog.version == "1.5.6")
-    #expect(catalog.url.host == "github.com")
-    #expect(catalog.url.path.hasSuffix("/plugin-duckdb-v1.5.6/libduckdb.dylib"))
-    #expect(catalog.sha256.count == 64)
-    #expect(catalog.maxSize > 117_008_720)
-  }
-
-  @Test func validCatalogDecodesWithLowercasedSHA() throws {
-    let catalog = try DuckDBPluginCatalog.decode(Self.json(sha256: Self.validSHA.uppercased()))
-    #expect(catalog.sha256 == Self.validSHA)
-    #expect(catalog.maxSize == 1024)
-  }
-
-  @Test(arguments: [
-    (json(url: "http://github.com/a/libduckdb.dylib"), DuckDBPluginCatalogError.invalidURL),
-    (json(url: "https://example.com/libduckdb.dylib"), .invalidURL),
-    (json(url: "https://github.com.evil.io/libduckdb.dylib"), .invalidURL),
-    (json(sha256: "abc"), .invalidSHA256),
-    (json(sha256: String(repeating: "g", count: 64)), .invalidSHA256),
-    (json(version: "../1.5.6"), .invalidVersion),
-    (json(version: ""), .invalidVersion),
-    (json(maxSize: 0), .invalidMaxSize),
-  ])
-  func invalidCatalogIsRejected(data: Data, expected: DuckDBPluginCatalogError) {
-    #expect(throws: expected) { _ = try DuckDBPluginCatalog.decode(data) }
   }
 
   // MARK: - Streaming SHA-256

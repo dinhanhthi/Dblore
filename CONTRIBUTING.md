@@ -86,30 +86,54 @@ To upgrade, bump both exact pins in `scripts/markdown-editor/package.json`
 (`@milkdown/kit`, `esbuild`), run `npm install`, rebuild, then review the bundle diff and
 `markdown-editor-licenses.txt` before committing. `markdown-editor.html` is hand-written.
 
-## DuckDB plugin
+## Plugins
 
-DuckDB ships as an optional plugin, not inside the app: users install it from
-Settings > Plugins, which downloads the `libduckdb.dylib` named in
-`Dblore/Utilities/Plugins/DuckDBPluginCatalog.json` and refuses it unless its SHA-256
-matches. `scripts/release-plugin.sh` builds that artifact: it downloads the pinned official
-DuckDB release, checks the upstream SHA-256, re-signs the dylib with the Developer ID
-(hardened runtime) and notarizes it.
+Heavy database engines and other heavy features ship as optional plugins, not inside the app
+(a C ABI library, signed with the app's Team ID, notarized, SHA-pinned in the catalog). The
+on-device AI runtime is the one exception and stays built in. DuckDB is the only plugin so
+far: users install it from Settings > Plugins, which downloads the `libduckdb.dylib` named by
+the `duckdb` entry of the plugin catalog `Dblore/Utilities/Plugins/PluginCatalog.json` and
+refuses it unless its SHA-256 matches.
+
+The catalog is `schemaVersion` 2 with a `plugins` array; each entry has `id`, `version`,
+`url`, `sha256`, `maxSize` and `libraryFileName`. Decoding is strict and a bad catalog is
+refused as a whole: ids are unique and match `[a-z0-9][a-z0-9-]*`, `version` is
+dot-separated digits, `sha256` is 64 lowercase hex digits, the URL is the https github.com
+release asset named `libraryFileName` under the tag `plugin-<id>-v<version>`,
+`libraryFileName` is a `.dylib` basename and `maxSize` is positive and at most 256 MiB. The install path is
+`Plugins/<id>/<version>/<libraryFileName>`. `PluginLoader` opens the file without following
+symlinks, checks the size and SHA-256 of the opened file and the Team ID before `dlopen`.
+
+`scripts/release-plugin.sh --plugin <id>` (default `duckdb`; an id not in
+the catalog is refused) builds a plugin artifact; DuckDB is the only build recipe: it
+downloads the pinned official DuckDB release, checks the upstream SHA-256, re-signs the
+dylib with the Developer ID (hardened runtime) and notarizes it.
 
 - **Local tests:** `scripts/release-plugin.sh --install-dev` writes the signed dylib, an
   ad-hoc-signed copy and `dev-catalog.json` into the gitignored `.plugin-dev/`. The DuckDB
-  suites that load it are gated; run them with
+  suites that load it are gated; run them as their own command, with
   `TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 DUCKDB_PLUGIN_TESTS=1` in front of the `xcodebuild test`
-  command above.
-- **Publish (maintainer only, manual):** `scripts/release-plugin.sh --publish` creates the
-  public GitHub release `plugin-duckdb-v<version>` with `--latest=false`, so
-  `releases/latest` keeps pointing at the app DMG, and rewrites the catalog SHA-256. Review
-  and commit the catalog.
+  command above and without `SKIP_INTEGRATION_TESTS=true` (that variable turns the gate off).
+- **Publish (maintainer only, manual):** `scripts/release-plugin.sh --plugin <id> --publish`
+  creates the public GitHub release `plugin-<id>-v<version>` with `--latest=false`, so
+  `releases/latest` keeps pointing at the app DMG, and rewrites the version, URL and
+  SHA-256 of that plugin's catalog entry only. Review and commit the catalog.
 - **Before an app release:** `scripts/release-local.sh --check-plugin-only` downloads the
-  published asset and checks it against the catalog. The full release preflight runs the
-  same check and refuses to build while the asset is missing (not published yet) or its
+  published asset of every catalog entry and checks it against the catalog (add
+  `--plugin <id>` to check one entry). The full release preflight runs the same check on
+  every entry and refuses to build while an asset is missing (not published yet) or its
   SHA-256 differs from the catalog.
 - **Bumping DuckDB:** change `DUCKDB_VERSION` and `UPSTREAM_SHA256` in
   `scripts/release-plugin.sh` after reviewing the upstream release, then publish again.
+
+## No other products in the codebase
+
+Dblore is an independent product. Never name a competing database client anywhere in the
+tracked code, comments, tests, commit messages, changelog, README or website, and never write
+"similar to X" or "inspired by X". Describe behavior in Dblore's own terms, or cite a public
+spec (file format, protocol, RFC, vendor docs). The one exception is interop: an app's name may
+appear where it names the source of a file the user imports (the connection importers, their
+UI labels, enum cases, tests, and the import feature's docs).
 
 ## Website
 

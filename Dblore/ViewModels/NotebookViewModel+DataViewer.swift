@@ -153,7 +153,7 @@ extension NotebookViewModel {
       return (commands.page?.render(), commands.count.render())
     } catch {
       editorResult = CellResult.errorResult(
-        error.localizedDescription, sourceQuery: state.documentFilter)
+        error.localizedDescription, sourceQuery: state.documentFilter, aiSessionKey: aiSessionKey)
       return nil
     }
   }

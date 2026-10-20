@@ -147,4 +147,107 @@ struct AIMessageParserTests {
     #expect(
       !AIMessageParser.isReadOnly("EXPLAIN ANALYZE UPDATE users SET a = 1", dialect: .postgresql))
   }
+
+  // MARK: Text-protocol tool calls
+
+  private let toolNames: Set<String> = ["list_tables", "run_read_query"]
+
+  private func toolCall(_ markdown: String) throws(AIStreamError) -> AIToolCall? {
+    try AIMessageParser.toolCall(in: markdown, toolNames: toolNames, id: "local-1")
+  }
+
+  private func expectInvalid(_ body: String) {
+    #expect(throws: AIStreamError.self) { try toolCall("```tool\n\(body)\n```") }
+  }
+
+  @Test func toolBlockBecomesToolCall() throws {
+    let markdown = """
+      Let me check.
+      ```tool
+      {"tool": "run_read_query", "arguments": {"sql": "SELECT 1", "limit": 5}}
+      ```
+      """
+    #expect(
+      try toolCall(markdown)
+        == AIToolCall(
+          id: "local-1", name: "run_read_query", inputJSON: #"{"limit":5,"sql":"SELECT 1"}"#))
+    // Text outside the block stays displayable text
+    #expect(
+      AIMessageParser.parse(markdown, dialect: .postgresql).first == .text("Let me check."))
+    let empty = "```tool\n{\"tool\": \"list_tables\", \"arguments\": {}}\n```"
+    #expect(try toolCall(empty)?.inputJSON == "{}")
+  }
+
+  /// `1e999` fails to parse; `-1e999` parses to -inf, which would raise when serialized
+  @Test(arguments: ["1e999", "-1e999"])
+  func nonFiniteToolArgumentThrows(number: String) {
+    #expect(throws: AIStreamError.invalidToolCall("The model sent a malformed tool call.")) {
+      try toolCall("```tool\n{\"tool\": \"list_tables\", \"arguments\": {\"x\": \(number)}}\n```")
+    }
+  }
+
+  @Test func onlyTheFirstToolBlockCounts() throws {
+    let markdown = """
+      ```sql
+      SELECT 1
+      ```
+      ```tool
+      {"tool": "list_tables", "arguments": {}}
+      ```
+      ```tool
+      {"tool": "run_read_query", "arguments": {"sql": "SELECT 2"}}
+      ```
+      """
+    #expect(try toolCall(markdown)?.name == "list_tables")
+  }
+
+  @Test func noClosedToolBlockIsNil() throws {
+    #expect(try toolCall("No tools needed.\n```sql\nSELECT 1\n```") == nil)
+    #expect(try toolCall("```tool\n{\"tool\": \"list_tables\", \"arguments\": {}}") == nil)
+  }
+
+  @Test(arguments: [
+    #"{"tool": "drop_everything", "arguments": {}}"#,
+    #"{"tool": 1, "arguments": {}}"#,
+    #"{"tool": "list_tables"}"#,
+    #"{"tool": "list_tables", "arguments": "{}"}"#,
+    #"{"tool": "list_tables", "arguments": []}"#,
+    #"{"tool": "list_tables", "arguments": {}, "extra": true}"#,
+    #"{"tool": "list_tables", "arguments": {} /* note */}"#,
+    #"[{"tool": "list_tables", "arguments": {}}]"#,
+    "list_tables()",
+    "",
+  ])
+  func invalidToolBlockThrows(body: String) {
+    expectInvalid(body)
+  }
+
+  @Test func oversizedToolBlockThrows() {
+    let sql = String(repeating: "x", count: AISSEParser.maxToolInputBytes)
+    expectInvalid(#"{"tool": "run_read_query", "arguments": {"sql": "\#(sql)"}}"#)
+  }
+
+  @Test func unknownToolErrorIsGeneric() {
+    #expect(throws: AIStreamError.invalidToolCall("The model called a tool that was not offered."))
+    {
+      try toolCall("```tool\n{\"tool\": \"evil\", \"arguments\": {}}\n```")
+    }
+  }
+
+  @Test func textProtocolSectionListsToolsAndBlockShape() {
+    let tool = AIToolSpec(
+      name: "run_read_query", description: "Run one read-only query",
+      parameters: .object([
+        "type": .string("object"),
+        "properties": .object(["sql": .object(["type": .string("string")])]),
+      ]))
+    let section = AITextToolProtocol.systemSection(tools: [tool])
+    #expect(section.contains("```tool"))
+    #expect(section.contains(#""tool""#) && section.contains(#""arguments""#))
+    #expect(
+      section.contains(
+        #"- run_read_query: Run one read-only query"#
+          + "\n" + #"  Arguments schema: {"properties":{"sql":{"type":"string"}},"type":"object"}"#
+      ))
+  }
 }

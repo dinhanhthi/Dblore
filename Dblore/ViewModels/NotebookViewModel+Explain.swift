@@ -188,7 +188,8 @@ extension NotebookViewModel {
       notebook.cells[index].cellType == .sql
     else { return }
     guard connectionState.isConnected else {
-      notebook.cells[index].result = .errorResult("Not connected to database", sourceQuery: query)
+      notebook.cells[index].result = .errorResult(
+        "Not connected to database", sourceQuery: query, aiSessionKey: aiSessionKey)
       onDocumentChanged?()
       return
     }

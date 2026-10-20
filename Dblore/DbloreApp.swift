@@ -278,6 +278,7 @@ struct DbloreApp: App {
     if !SessionManager.isRunningAsTestHost {
       SessionManager.migrateIfNeeded()
       pruneQueryHistoryOnLaunch()
+      RewindPrune.schedule()
       LaunchSessionRestore.prepare()
     }
 
@@ -401,6 +402,12 @@ extension FocusedValues {
     set { self[OpenSearchActionKey.self] = newValue }
   }
 
+  /// Opens Find and Replace; nil where Replace may not edit (data viewer, read-only source)
+  var findReplaceAction: (() -> Void)? {
+    get { self[FindReplaceActionKey.self] }
+    set { self[FindReplaceActionKey.self] = newValue }
+  }
+
   var findNextAction: (() -> Void)? {
     get { self[FindNextActionKey.self] }
     set { self[FindNextActionKey.self] = newValue }
@@ -435,6 +442,11 @@ struct IsSchemaVisualizerActiveKey: FocusedValueKey {
 
 /// FocusedValue key for opening search panel.
 struct OpenSearchActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// FocusedValue key for opening the search panel with its Replace row.
+struct FindReplaceActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
@@ -935,6 +947,7 @@ struct NotebookCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.openSearchAction) private var openSearchAction
+  @FocusedValue(\.findReplaceAction) private var findReplaceAction
   @FocusedValue(\.findNextAction) private var findNextAction
   @FocusedValue(\.findPreviousAction) private var findPreviousAction
 
@@ -1020,6 +1033,12 @@ struct NotebookCommands: Commands {
         }
         .keyboardShortcut("f", modifiers: .command)
 
+        Button("Find and Replace…") {
+          findReplaceAction?()
+        }
+        .keyboardShortcut("f", modifiers: [.command, .option])
+        .disabled(findReplaceAction == nil)
+
         Divider()
 
         Button("Find Next") {
@@ -1043,6 +1062,7 @@ struct EditorCommands: Commands {
   @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
   @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
   @FocusedValue(\.openSearchAction) private var openSearchAction
+  @FocusedValue(\.findReplaceAction) private var findReplaceAction
   @FocusedValue(\.findNextAction) private var findNextAction
   @FocusedValue(\.findPreviousAction) private var findPreviousAction
 
@@ -1072,6 +1092,12 @@ struct EditorCommands: Commands {
           openSearchAction?()
         }
         .keyboardShortcut("f", modifiers: .command)
+
+        Button("Find and Replace…") {
+          findReplaceAction?()
+        }
+        .keyboardShortcut("f", modifiers: [.command, .option])
+        .disabled(findReplaceAction == nil)
 
         Divider()
 

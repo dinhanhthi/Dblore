@@ -23,6 +23,8 @@ nonisolated struct QueryHistoryEntry: Sendable, Codable, Equatable {
     case dump
     /// One summary row per SQL dump restore
     case restore
+    /// The inverse statements of a Data Rewind
+    case rewind
 
     /// JSON from a newer version may hold an unknown source: it reads as editor, as the
     /// database read does, instead of failing the whole import. Encoding keeps the raw value.

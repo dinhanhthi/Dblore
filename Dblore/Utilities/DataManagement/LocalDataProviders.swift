@@ -220,6 +220,39 @@ nonisolated struct QueryHistoryLocalDataProvider: LocalDataProvider {
   }
 }
 
+/// Size and delete only: the store holds row data, so it is never exported or imported
+/// (`LocalDataBackup` skips the category before reaching these).
+nonisolated struct DataRewindLocalDataProvider: LocalDataProvider {
+  /// Nil when the file could not be opened; delete then removes the file itself.
+  var store: RewindStore?
+  var fileURL: URL
+  var category: LocalDataCategory { .dataRewind }
+
+  func summary() async -> LocalDataSummary {
+    let count = (try? store?.count()) ?? 0
+    let bytes = [fileURL.path, fileURL.path + "-wal"].reduce(Int64(0)) {
+      $0 + LocalDataFiles.byteCount(of: URL(fileURLWithPath: $1))
+    }
+    return LocalDataSummary(bytes: bytes, itemCount: count, location: fileURL)
+  }
+
+  func export(to folder: URL) async throws {}
+
+  func importData(from folder: URL) async throws {}
+
+  func clear() async throws {
+    if let store {
+      try store.deleteAll()
+    } else {
+      for path in [fileURL.path, fileURL.path + "-wal", fileURL.path + "-shm"]
+      where FileManager.default.fileExists(atPath: path) {
+        try FileManager.default.removeItem(atPath: path)
+      }
+    }
+    LocalDataNotifications.post(category)
+  }
+}
+
 nonisolated struct ConnectionHistoryLocalDataProvider: LocalDataProvider {
   var client: LocalDefaultsClient
   var category: LocalDataCategory { .connectionHistory }

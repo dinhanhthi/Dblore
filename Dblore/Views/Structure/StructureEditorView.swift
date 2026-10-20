@@ -1,7 +1,8 @@
 // StructureEditorView.swift
-// The structure editor panel: one table's columns, indexes and constraints with staged changes,
-// the exact DDL Apply sends (previewed with `SQLCodeWell`), and the Safe Mode step before it is
-// sent. A view-only table (DuckDB, protected or paused connection) shows everything read-only.
+// The structure editor panel: one table's name and comment, columns, indexes and constraints with
+// staged changes, the exact DDL Apply sends (previewed with `SQLCodeWell`), and the Safe Mode step
+// before it is sent. Drop Table asks for the table name and shows the exact DROP first. A
+// view-only table (DuckDB, protected or paused connection) shows everything read-only.
 // Apply results and new preview errors show as toasts, drawn over the panel (its backdrop covers
 // the window's toast overlay); an Apply error also keeps its full text in a banner.
 
@@ -86,10 +87,16 @@ struct StructureEditorView: View {
       }
       .frame(maxHeight: .infinity)
       .overlay { ToastOverlay() }
+      if model.isConfirmingDrop {
+        dropConfirmation
+      }
       if let statements = model.pendingConfirmation {
         SafeModeConfirmationPanel(
-          requiresPassword: model.confirmationRequiresPassword, confirmTitle: "Apply Changes",
-          biometricReason: "Authorize the structure change in Safe Mode",
+          requiresPassword: model.confirmationRequiresPassword,
+          confirmTitle: model.confirmsDrop ? "Drop Table" : "Apply Changes",
+          biometricReason: model.confirmsDrop
+            ? "Authorize dropping the table in Safe Mode"
+            : "Authorize the structure change in Safe Mode",
           databasePassword: databasePassword, isConnected: isConnected,
           isPending: { [model] in model.pendingConfirmation != nil && isShown() },
           onCancel: { [model] in model.cancelConfirmation() },
@@ -134,6 +141,7 @@ struct StructureEditorView: View {
         color: .destructive)
     case .loaded:
       Group {
+        StructureTableSection(model: model)
         StructureColumnsSection(model: model, databaseType: databaseType)
         StructureIndexesSection(model: model, databaseType: databaseType)
         StructureConstraintsSection(model: model, databaseType: databaseType)
@@ -167,8 +175,35 @@ struct StructureEditorView: View {
     }
   }
 
+  /// Typed-name step of Drop Table, where the Safe Mode step sits (a sheet cannot go over the
+  /// panel): the exact DROP, then the table name to type
+  private var dropConfirmation: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Divider()
+      SQLCodeWell(
+        sql: model.dropStatements.map { $0 + ";" }.joined(separator: "\n"), placeholder: nil,
+        dialect: databaseType.dialect
+      )
+      .frame(height: 48)
+      .padding(.horizontal, Spacing.md)
+      TypedNameConfirmation(
+        objectKind: "table", name: model.table, confirmTitle: "Drop Table",
+        onCancel: { [model] in model.cancelDropTable() },
+        onConfirm: { [model] typed in Task { await model.confirmDropTable(typedName: typed) } })
+    }
+    .background(Color.cardHeaderBackground)
+  }
+
   private var footer: some View {
     GenericModalFooter {
+      if !model.isReadOnly {
+        Button("Drop Table...") { model.requestDropTable() }
+          .buttonStyle(DangerButtonStyle())
+          .disabled(!model.canDropTable || model.isConfirmingDrop)
+          .help(
+            model.changes.isEmpty
+              ? "Drop the table after typing its name" : "Apply or discard the changes first")
+      }
       if model.isReadOnly {
         Text("View only")
           .font(.small)
@@ -208,6 +243,72 @@ struct StructureEditorView: View {
   static func displayedLoadError(_ message: String) -> String {
     message.hasPrefix(loadErrorPrefix)
       ? String(message.dropFirst(loadErrorPrefix.count)) : message
+  }
+}
+
+// MARK: - Table
+
+/// The table's name (a rename) and comment (PostgreSQL and MySQL), staged like the other changes
+private struct StructureTableSection: View {
+  let model: StructureEditorModel
+
+  var body: some View {
+    SettingsGroupCard(title: "Table") {
+      HStack(alignment: .top, spacing: Spacing.md) {
+        labeled("Name") {
+          field(
+            model.workingTableName, isEdited: model.workingTableName != model.table,
+            placeholder: "",
+            takesFocus: {
+              // Once: a reload after Apply shows the field again
+              let focuses = model.focusesTableName
+              model.focusesTableName = false
+              return focuses
+            }
+          ) { model.renameTable(to: $0) }
+        }
+        .frame(width: 260)
+        if model.supportsTableComment {
+          labeled("Comment") {
+            field(
+              model.workingComment ?? "",
+              isEdited: model.workingComment != model.structure?.comment, placeholder: "None"
+            ) { model.setTableComment($0) }
+          }
+        }
+      }
+    }
+  }
+
+  private func labeled(
+    _ title: String, @ViewBuilder content: () -> some View
+  ) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      Text(title)
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+      content()
+    }
+  }
+
+  @ViewBuilder
+  private func field(
+    _ value: String, isEdited: Bool, placeholder: String, takesFocus: (() -> Bool)? = nil,
+    commit: @escaping (String) -> Void
+  ) -> some View {
+    if model.isReadOnly {
+      Text(value.isEmpty ? placeholder : value)
+        .font(.structureField)
+        .foregroundColor(value.isEmpty ? .foregroundSubtle : .structureCellForeground)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .help(value)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    } else {
+      StructureCommitField(
+        value: value, placeholder: placeholder, isEdited: isEdited, takesFocus: takesFocus,
+        onCommit: commit)
+    }
   }
 }
 
@@ -342,6 +443,8 @@ struct StructureCommitField: View {
   let value: String
   var placeholder = ""
   var isEdited = false
+  /// Asked when the field appears: true focuses it
+  var takesFocus: (() -> Bool)? = nil
   let onCommit: (String) -> Void
 
   @State private var draft = ""
@@ -360,6 +463,9 @@ struct StructureCommitField: View {
       }
       .onChange(of: value, initial: true) { _, newValue in
         if !isFocused { draft = newValue }
+      }
+      .task {
+        if takesFocus?() == true { isFocused = true }
       }
   }
 

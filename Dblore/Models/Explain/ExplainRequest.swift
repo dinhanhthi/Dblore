@@ -58,9 +58,9 @@ nonisolated struct ExplainRequest: Sendable {
     self.changesData = Self.statementChangesData(body, dialect: dialect)
   }
 
-  /// `dialect.explainPrefix` plus the statement. Format is JSON on PostgreSQL (plan view);
-  /// SQLite and DuckDB ignore it (grid / text plan). MySQL is the tabular plan unless
-  /// `jsonFormat`; its ANALYZE is a text tree.
+  /// `dialect.explainPrefix` plus the statement. Format is JSON on PostgreSQL and DuckDB (plan
+  /// view); SQLite ignores it (its `EXPLAIN QUERY PLAN` rows are read as the tree). MySQL is the
+  /// tabular plan unless `jsonFormat`; its ANALYZE is a text tree.
   var sql: String {
     let format = dialect == .mysql && !jsonFormat ? nil : "json"
     return dialect.explainPrefix(analyze: analyze, buffers: buffers, format: format) + " "

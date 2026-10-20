@@ -219,16 +219,18 @@ struct DuckDBDialectSitesTests {
 
   // MARK: - EXPLAIN
 
-  @Test("DuckDB EXPLAIN is text, with ANALYZE of a write rolled back")
+  @Test("DuckDB EXPLAIN is JSON, with ANALYZE of a write rolled back and gated as the write")
   func duckdbExplain() throws {
     let plain = try ExplainRequest(
       statement: "SELECT 1", analyze: false, buffers: false, dialect: .duckdb)
-    #expect(plain.wrappedSQL == "EXPLAIN SELECT 1")
+    #expect(plain.wrappedSQL == "EXPLAIN (FORMAT JSON) SELECT 1")
 
     let update = #"UPDATE t SET b = '\xDE'::BLOB WHERE id = 1"#
     let analyzed = try ExplainRequest(
       statement: update, analyze: true, buffers: true, dialect: .duckdb)
-    #expect(analyzed.wrappedSQL == "BEGIN; EXPLAIN ANALYZE \(update); ROLLBACK;")
+    #expect(analyzed.wrappedSQL == "BEGIN; EXPLAIN (ANALYZE, FORMAT JSON) \(update); ROLLBACK;")
+    #expect(kinds(analyzed.sql, .duckdb) == [.explain(inner: .dml, analyze: true)])
+    #expect(kinds(plain.sql, .duckdb) == [.explain(inner: .read, analyze: false)])
   }
 
   @Test("A DuckDB statement with a backslash string is one statement")

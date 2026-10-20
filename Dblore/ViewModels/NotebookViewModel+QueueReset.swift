@@ -37,7 +37,8 @@ extension NotebookViewModel {
     guard batch.epoch != current else { return .run(expectedEpoch: current) }
 
     let message = CellResult.queuedCellsNotRunMessage(1 + cancelPendingCells())
-    let result = CellResult.errorResult(message, sourceQuery: task.query)
+    let result = CellResult.errorResult(
+      message, sourceQuery: task.query, aiSessionKey: aiSessionKey)
     if let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) {
       notebook.cells[index].result = result
       notebook.cells[index].statementResults = []

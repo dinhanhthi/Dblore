@@ -1,7 +1,7 @@
 // MySQLSchemaIntrospector+Structure.swift
 // Structure of one MySQL / MariaDB table from information_schema (COLUMNS, STATISTICS,
 // TABLE_CONSTRAINTS, KEY_COLUMN_USAGE, REFERENTIAL_CONSTRAINTS, CHECK_CONSTRAINTS). Database and
-// table are always binds. A view or a missing table throws.
+// table are always binds. A view or a missing table throws. An empty table comment reads as nil.
 //
 // Defaults are raw SQL text on both engines (see `MySQLCatalog.defaultExpression`). Generated
 // expressions, check clauses and functional index keys stay as the server prints them (MySQL
@@ -24,7 +24,7 @@ nonisolated extension MySQLSchemaIntrospector {
     let found = try await rows(
       in: session,
       sql: """
-        SELECT 1 FROM information_schema.TABLES
+        SELECT TABLE_COMMENT FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE IN \(Self.tableTypes)
         """,
       binds: binds)
@@ -37,7 +37,8 @@ nonisolated extension MySQLSchemaIntrospector {
       columns: try await structureColumns(binds, server: server, in: session),
       indexes: try await structureIndexes(binds, server: server, in: session),
       constraints: try await structureKeys(binds, in: session)
-        + structureChecks(binds, server: server, in: session))
+        + structureChecks(binds, server: server, in: session),
+      comment: found.first.flatMap { MySQLCatalog.nonEmpty(MySQLCatalogValue.string($0, 0)) })
   }
 
   /// The session's parsed version, or `SELECT VERSION()` for another session type.

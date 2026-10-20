@@ -11,6 +11,7 @@ extension Notification.Name {
 /// One kind of data the app stores on this Mac, excluding Keychain secrets.
 nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
   case queryHistory
+  case dataRewind
   case connectionHistory
   case recentItems
   case openTabs
@@ -34,6 +35,7 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
   var title: String {
     switch self {
     case .queryHistory: "Query History"
+    case .dataRewind: "Data Rewind"
     case .connectionHistory: "Connection History"
     case .recentItems: "Recent Workspaces and Files"
     case .openTabs: "Open Tabs"
@@ -51,6 +53,7 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
   var symbolName: String {
     switch self {
     case .queryHistory: "clock.arrow.circlepath"
+    case .dataRewind: "arrow.uturn.backward.circle"
     case .connectionHistory: "server.rack"
     case .recentItems: "clock"
     case .openTabs: "square.stack"
@@ -67,6 +70,7 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
   var description: String {
     switch self {
     case .queryHistory: "Statements you have run"
+    case .dataRewind: "Rows read before and after data viewer edits, to undo them. Never backed up."
     case .connectionHistory: "Saved database connections, without passwords"
     case .recentItems: "Workspaces and files you opened recently"
     case .openTabs: "Tabs restored at the next launch. Open tabs stay until you quit."
@@ -82,6 +86,9 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
 
   /// Local AI models are large enough that a full backup should leave them out unless asked.
   var isLarge: Bool { self == .localModels }
+
+  /// Data Rewind holds row data from the user's databases, so backups never include it.
+  var isExcludedFromBackup: Bool { self == .dataRewind }
 }
 
 /// Removes its `localDataChanged` token when released, so the owner stops observing on deinit.

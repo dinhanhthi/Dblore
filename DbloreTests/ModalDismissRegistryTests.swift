@@ -49,4 +49,38 @@ struct ModalDismissRegistryTests {
     #expect(registry.hasModal(in: other) == true)
   }
 
+  @Test("A suspended modal keeps its place and lets Escape through")
+  func suspendedModalKeepsOrder() {
+    let registry = ModalDismissRegistry()
+    let window = makeWindow()
+    var closed: [String] = []
+    let bubble = UUID()
+    let modal = UUID()
+    registry.upsert(id: bubble, window: window) { closed.append("bubble") }
+    registry.upsert(id: modal, window: window) { closed.append("modal") }
+
+    // Suspending and resuming the lower entry does not move it above the modal.
+    registry.upsert(id: bubble, window: window, isEnabled: false) { closed.append("bubble") }
+    registry.upsert(id: bubble, window: window, isEnabled: true) { closed.append("bubble") }
+    #expect(registry.handleEscape(in: window))
+    #expect(closed == ["modal"])
+    registry.unregister(id: modal)
+
+    // A modal on top takes Escape even while the entry below it is suspended.
+    registry.upsert(id: bubble, window: window, isEnabled: false) { closed.append("bubble") }
+    registry.upsert(id: modal, window: window) { closed.append("modal 2") }
+    #expect(registry.handleEscape(in: window))
+    #expect(closed == ["modal", "modal 2"])
+    registry.unregister(id: modal)
+
+    // The suspended top entry does not consume Escape and is not dismissed.
+    #expect(registry.handleEscape(in: window) == false)
+    #expect(closed == ["modal", "modal 2"])
+    #expect(registry.hasModal(in: window))
+
+    registry.upsert(id: bubble, window: window, isEnabled: true) { closed.append("bubble") }
+    #expect(registry.handleEscape(in: window))
+    #expect(closed == ["modal", "modal 2", "bubble"])
+  }
+
 }

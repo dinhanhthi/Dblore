@@ -4,7 +4,8 @@
 // run_query takes exactly one mongosh read command, refuses writes ($out/$merge at any depth)
 // and server-side JavaScript ($where, $function, $accumulator, {$code}) before sending, keeps
 // the SQL caps (rows, cells, 30 s statement timeout -> maxTimeMS) and records History as `.mcp`;
-// describe_table finds the introspector's `<database>.<collection>` keys.
+// describe_table finds the introspector's `<database>.<collection>` keys; the AI access gate
+// refuses a Never or unapproved Ask connection before anything is sent or recorded.
 
 import Foundation
 import Testing
@@ -46,6 +47,8 @@ private final class CountingReadSource: MCPReadSource, @unchecked Sendable {
 struct MCPMongoToolTests {
   private let source = CountingReadSource()
   private let history = RecordedHistory()
+  /// Session approvals of this test only
+  private let gate = AIAccessGate()
 
   private static func entry() -> ConnectionHistoryEntry {
     ConnectionHistoryEntry(
@@ -57,8 +60,8 @@ struct MCPMongoToolTests {
   private func service(_ entry: ConnectionHistoryEntry) -> MCPToolService {
     let id = entry.id
     return MCPToolService(
-      connections: { [entry] }, allowlist: { [id] }, source: source, recorder: history,
-      historyEnabled: { true })
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty }, source: source,
+      recorder: history, historyEnabled: { true }, gate: gate)
   }
 
   private static func run(
@@ -107,8 +110,8 @@ struct MCPMongoToolTests {
       certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
       knownHosts: InMemorySSHKnownHostStore())
     let service = MCPToolService(
-      connections: { [saved] }, allowlist: { [id] }, source: MCPSQLReadSource(pool: pool),
-      recorder: history, historyEnabled: { true })
+      connections: { [saved] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history, historyEnabled: { true }, gate: gate)
 
     let capped = await Self.run(service, id, "db.orders.find({status: \"open\"})")
     #expect(!capped.isError, "\(capped.text)")
@@ -143,6 +146,22 @@ struct MCPMongoToolTests {
   }
 
   // MARK: - run_query checks
+
+  @Test("AI access Never and unapproved Ask refuse run_query before sending or recording")
+  func aiAccessRefused() async {
+    for (policy, message) in [
+      (AIAccessPolicy.never, MCPToolError.connectionNotAvailable.localizedDescription),
+      (.askOncePerSession, "Allow AI access to this connection in Dblore first."),
+    ] {
+      var entry = Self.entry()
+      entry.config.aiAccess = policy
+      let result = await Self.run(service(entry), entry.id, "db.orders.find()")
+      #expect(result.isError)
+      #expect(result.text == message, "\(policy)")
+    }
+    #expect(source.requests.isEmpty)
+    #expect(await history.entries.isEmpty)
+  }
 
   @Test("Several commands and comment-only text are refused before sending")
   func oneCommand() async {

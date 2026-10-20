@@ -133,6 +133,8 @@ struct AIAssistantViewModelTests {
       AISchemaSnapshot(
         tables: tables, foreignKeys: [], databaseName: "shop", dialect: .postgresql)
     }
+    // The workspace owns this rule (WorkspaceAIConnectionSwitchTests)
+    vm.isCurrentMongoCollection = { _, _ in true }
     return vm
   }
 
@@ -264,12 +266,12 @@ struct AIAssistantViewModelTests {
   func quickActions() async {
     let client = FakeAIChatClient(.events(["ok"]))
     let vm = makeVM(client)
-    vm.explain(sql: "SELECT 42")
+    vm.explain(sql: "SELECT 42", sessionKey: nil)
     #expect(vm.draft.contains("SELECT 42"))
     #expect(vm.messages.isEmpty)
     #expect(!vm.isGenerating)
     vm.draft = ""
-    vm.fixError(sql: "SELEC 1", error: "syntax error near SELEC")
+    vm.fixError(sql: "SELEC 1", error: "syntax error near SELEC", sessionKey: nil)
     #expect(vm.draft.contains("SELEC 1"))
     #expect(vm.draft.contains("syntax error near SELEC"))
     #expect(vm.messages.isEmpty)
@@ -481,6 +483,8 @@ struct AIAssistantViewModelTests {
     #expect(decoded.queryResult == nil)
     #expect(decoded.isRunning == nil)
     #expect(decoded.queryOutcome == nil)
+    #expect(decoded.toolCalls == nil)
+    #expect(decoded.toolResults == nil)
 
     // Chats saved while the AI could read results carry `sharedWithModel`, now ignored
     let shared = #"""
@@ -500,6 +504,31 @@ struct AIAssistantViewModelTests {
     var expected = entry
     expected.queryResult?.rows = []
     #expect(try JSONDecoder().decode(AIChatEntry.self, from: data) == expected)
+  }
+
+  @Test("tool calls and results round-trip on a chat entry, the signature kept unchanged")
+  func chatEntryToolCoding() throws {
+    var entry = AIChatEntry(id: UUID(), role: .assistant, text: "", isError: false)
+    entry.toolCalls = [
+      AIToolCall(id: "call_1", name: "list_tables", inputJSON: "{}", signature: "c2ln"),
+      AIToolCall(id: "call_2", name: "describe_table", inputJSON: #"{"table":"users"}"#),
+    ]
+    entry.toolResults = [AIToolResult(id: "call_1", content: "users", isError: false)]
+    let data = try JSONEncoder().encode(entry)
+    #expect(try JSONDecoder().decode(AIChatEntry.self, from: data) == entry)
+
+    let plain = AIChatEntry(id: UUID(), role: .user, text: "hi", isError: false)
+    let json = String(decoding: try JSONEncoder().encode(plain), as: UTF8.self)
+    #expect(!json.contains("toolCalls") && !json.contains("toolResults"))
+  }
+
+  @Test("a chat message's text joins its text blocks only")
+  func chatMessageText() {
+    let call = AIToolCall(id: "call_1", name: "list_tables", inputJSON: "{}")
+    let message = AIChatMessage(
+      role: .assistant, blocks: [.text("Let me "), .toolUse(call), .text("look.")])
+    #expect(message.text == "Let me look.")
+    #expect(AIChatMessage(role: .user, text: "hi").blocks == [.text("hi")])
   }
 
   // MARK: - Query runs
@@ -824,5 +853,253 @@ struct AIAssistantViewModelTests {
     }
     holder.task = task
     await #expect(throws: CancellationError.self) { try await task.value }
+  }
+
+  // MARK: - Connection AI access
+
+  /// The connection "Prod" with `policy`, asking its own gate so approvals stay in the test
+  private func access(
+    _ policy: AIAccessPolicy, rules: String = "", gate: AIAccessGate = AIAccessGate(),
+    host: String = "db.example"
+  ) -> AIAccessContext {
+    var config = ConnectionConfig(
+      host: host, port: 5432, database: "shop", username: "ana", name: "Prod")
+    config.aiAccess = policy
+    config.aiRules = rules
+    return AIAccessContext(config: config, savedPolicies: [], gate: gate)
+  }
+
+  /// Session key of the connection `access` builds for `host`
+  private func key(host: String = "db.example") -> String {
+    AIAccessGate.sessionKey(for: access(.always, host: host).config)
+  }
+
+  @Test("a private connection sends no schema, screen or rules, and generic chat still works")
+  func deniedChatSendsNoConnectionData() async throws {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client)
+    vm.schemaSource = mongoSnapshot
+    vm.mongoScreenSource = {
+      AIMongoAssist.Screen(database: "shop", collection: "orders", showsAggregations: false)
+    }
+    vm.aiAccessSource = { self.access(.never, rules: "Never read payments.") }
+    await ask(vm, "how do I count documents?")
+
+    let request = try #require(client.requests.first)
+    #expect(client.requests.count == 1)
+    #expect(request.messages.map(\.text) == ["how do I count documents?"])
+    #expect(!request.system.contains("orders"))
+    #expect(!request.system.contains("shop"))
+    #expect(!request.system.contains("The user is viewing"))
+    #expect(!request.system.contains("Never read payments."))
+    #expect(request.system.contains("MongoDB assistant"))
+    #expect(vm.privateNote == .messageOnly)
+    #expect(vm.messages.last?.text == "ok")
+  }
+
+  @Test("a Fix draft on a private connection is held; a typed question then goes alone")
+  func deniedConnectionDraftIsHeld() async throws {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client)
+    vm.aiAccessSource = { self.access(.never) }
+    vm.fixError(
+      sql: "INSERT INTO t VALUES (1)", error: LeakyDatabaseError.value, sessionKey: key())
+
+    vm.send()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(client.requests.isEmpty)
+    #expect(vm.messages.isEmpty)
+    #expect(vm.draft.contains(LeakyDatabaseError.value))
+    #expect(vm.privateNote == .draftHeld)
+
+    vm.draft = ""
+    vm.draft = "hello"
+    vm.send()
+    await finish(vm)
+    #expect(client.requests.map { $0.messages.map(\.text) } == [["hello"]])
+    #expect(vm.privateNote == .messageOnly)
+  }
+
+  @Test("a private connection gets only the new question; allowed turns keep the history")
+  func deniedSendsNoHistory() async throws {
+    final class Holder { var policy = AIAccessPolicy.always }
+    let holder = Holder()
+    let client = FakeAIChatClient(.events(["r"]))
+    let vm = makeVM(client)
+    vm.aiAccessSource = { self.access(holder.policy) }
+    await ask(vm, "columns of payments?")
+    await ask(vm, "and orders?")
+    #expect(
+      client.requests.last?.messages.map(\.text) == ["columns of payments?", "r", "and orders?"])
+
+    holder.policy = .never
+    await ask(vm, "what is a join?")
+    #expect(client.requests.last?.messages.map(\.text) == ["what is a join?"])
+    #expect(vm.privateNote == .messageOnly)
+    vm.newChat()
+    #expect(vm.privateNote == nil)
+  }
+
+  @Test("a private connection refuses Retry and Edit of a stored Fix message")
+  func deniedRetrySendsNothing() async throws {
+    final class Holder { var policy = AIAccessPolicy.always }
+    let holder = Holder()
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client)
+    vm.aiAccessSource = { self.access(holder.policy) }
+    vm.fixError(
+      sql: "INSERT INTO t VALUES (1)", error: LeakyDatabaseError.value, sessionKey: key())
+    vm.send()
+    await finish(vm)
+    let stored = vm.messages
+    #expect(client.requests.count == 1)
+
+    holder.policy = .never
+    vm.retry(from: stored[0].id)
+    vm.retry(from: stored[0].id, editedText: "edited")
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(client.requests.count == 1)
+    #expect(vm.messages == stored)
+    #expect(vm.privateNote == .retryHeld)
+
+    vm.connectionDidChange()
+    #expect(vm.privateNote == nil)
+  }
+
+  @Test("a switch to another connection drops a Fix draft; a reconnect and a typed one keep it")
+  func connectionChangeDropsFixDraft() async throws {
+    final class Holder { var host = "db.example" }
+    let holder = Holder()
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client)
+    vm.aiAccessSource = { self.access(.never, host: holder.host) }
+    vm.fixError(
+      sql: "INSERT INTO t VALUES (1)", error: LeakyDatabaseError.value, sessionKey: key())
+    vm.connectionDidChange()  // reconnect or MongoDB database switch: same connection
+    #expect(!vm.draft.isEmpty)
+    holder.host = "other.example"
+    vm.connectionDidChange()
+    #expect(vm.draft.isEmpty)
+
+    vm.draft = "hello"
+    vm.connectionDidChange()
+    #expect(vm.draft == "hello")
+    vm.send()  // not held: the Fix flag went with the draft
+    await finish(vm)
+    #expect(client.requests.map { $0.messages.map(\.text) } == [["hello"]])
+  }
+
+  @Test("a Fix draft filled on another connection, or unstamped, is held at send")
+  func fixDraftOfAnotherConnectionHeld() async throws {
+    final class Holder { var host = "a.example" }
+    let holder = Holder()
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client)
+    vm.aiAccessSource = { self.access(.always, host: holder.host) }
+    vm.fixError(
+      sql: "INSERT INTO t VALUES (1)", error: LeakyDatabaseError.value,
+      sessionKey: key(host: "a.example"))
+    holder.host = "b.example"
+    vm.send()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(client.requests.isEmpty)
+    #expect(vm.privateNote == .draftFromOtherConnection)
+    vm.draft = ""
+    #expect(vm.privateNote == nil)
+
+    // A source without a session key fails closed
+    vm.fixError(sql: "INSERT INTO t VALUES (1)", error: LeakyDatabaseError.value, sessionKey: nil)
+    vm.send()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(client.requests.isEmpty)
+    #expect(vm.privateNote == .draftFromOtherConnection)
+  }
+
+  @Test("needs approval: nothing is sent until Allow; Not now keeps the draft")
+  func needsApprovalHoldsTheTurn() async throws {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let vm = makeVM(client, tables: [table("customers")])
+    let context = access(.askOncePerSession, rules: "Never read payments.")
+    vm.aiAccessSource = { context }
+
+    vm.draft = "top customers"
+    vm.send()
+    #expect(vm.pendingApproval?.connectionName == "Prod")
+    vm.dismissPendingTurn()
+    #expect(vm.pendingApproval == nil)
+    #expect(vm.draft == "top customers")
+
+    vm.send()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(client.requests.isEmpty)
+    #expect(vm.messages.isEmpty)
+    #expect(!vm.isGenerating)
+
+    vm.allowPendingTurn()
+    await finish(vm)
+    #expect(vm.pendingApproval == nil)
+    #expect(vm.draft.isEmpty)
+    let request = try #require(client.requests.first)
+    #expect(client.requests.count == 1)
+    #expect(request.system.contains("customers"))
+    #expect(request.system.contains("Connection rules (from the user):\nNever read payments."))
+    #expect(context.decision(settings: vm.settings.configuration) == .allowed)
+  }
+
+  @Test("a slash command reading the query asks first; Allow runs it again with the values")
+  func slashCommandAllowRerunsCommand() throws {
+    let client = FakeAIChatClient(.events(["ok"]))
+    let settings = makeSettings()
+    settings.configuration.customCommands = [
+      AICustomCommand(name: "probe", template: "Explain {{query}}")
+    ]
+    let vm = makeVM(client, settings: settings)
+    let context = access(.askOncePerSession)
+    vm.aiAccessSource = { context }
+    let tab = NotebookViewModel(notebook: DbloreNotebook(connectionConfig: context.config))
+    tab.viewMode = .editor
+    tab.editorContent = "SELECT id FROM orders"
+
+    vm.draft = "/probe"
+    #expect(vm.runSlashCommand(in: tab) == .awaitingApproval)
+    #expect(vm.pendingApproval?.connectionName == "Prod")
+    #expect(vm.draft == "/probe")
+
+    vm.allowPendingTurn()
+    #expect(vm.pendingApproval == nil)
+    #expect(vm.draft == "Explain SELECT id FROM orders")
+    #expect(context.decision(settings: vm.settings.configuration) == .allowed)
+    #expect(client.requests.isEmpty)
+  }
+
+  @Test("a connection made private while answering refuses the query")
+  func privateMidTurnRefusesQuery() async {
+    final class Holder { var policy = AIAccessPolicy.always }
+    let holder = Holder()
+    let settings = makeSettings(runsQueries: true)
+    let client = FakeAIChatClient(.eventsThenAct([Self.runReply]) { holder.policy = .never })
+    let runner = FakeQueryRunner()
+    let vm = makeVM(client, settings: settings)
+    vm.queryRunner = { try await runner.run($0) }
+    vm.aiAccessSource = { self.access(holder.policy) }
+    await ask(vm, "email of user 11?")
+
+    #expect(runner.sqls.isEmpty)
+    #expect(client.requests.count == 1)
+    #expect(vm.messages.last?.queryOutcome == .refused)
+  }
+
+  @Test("a private connection gets no filter or pipeline request")
+  func deniedMongoAssistSendsNothing() async {
+    let client = FakeAIChatClient(.events(["{}"]))
+    let vm = makeVM(client)
+    vm.schemaSource = mongoSnapshot
+    vm.aiAccessSource = { self.access(.never) }
+
+    await #expect(throws: AIAssistantViewModel.AIAccessError.denied) {
+      _ = try await vm.mongoAssist(
+        .filter, prompt: "paid orders", database: "shop", collection: "orders", current: "")
+    }
+    #expect(client.requests.isEmpty)
   }
 }

@@ -103,10 +103,10 @@ struct LocalDataBackupTests {
     let providers = try fixtures.providers()
 
     let exportAll = LocalDataBackup.exportAllCategories()
-    #expect(exportAll == LocalDataCategory.allCases.filter { !$0.isLarge })
+    let backedUp = LocalDataCategory.allCases.filter { !$0.isExcludedFromBackup }
+    #expect(exportAll == backedUp.filter { !$0.isLarge })
     #expect(!exportAll.contains(.localModels))
-    #expect(
-      LocalDataBackup.exportAllCategories(including: [.localModels]) == LocalDataCategory.allCases)
+    #expect(LocalDataBackup.exportAllCategories(including: [.localModels]) == backedUp)
 
     let without = root.appendingPathComponent("WithoutModels.dblorebackup", isDirectory: true)
     try await LocalDataBackup.export(
@@ -129,6 +129,46 @@ struct LocalDataBackupTests {
     #expect(try Data(contentsOf: copied) == Data("model-weights".utf8))
     let withManifest = try LocalDataBackup.inspect(withModels)
     #expect(withManifest.categories.map(\.id).contains("localModels"))
+  }
+
+  @Test("Data Rewind row data never goes into a backup, and an import ignores it")
+  func dataRewindExcludedFromBackup() async throws {
+    let root = try makeRoot()
+    defer { remove(root) }
+    let storeURL = root.appendingPathComponent("rewind.sqlite")
+    let store = try RewindStore(url: storeURL)
+    try store.record(
+      RewindEntry(
+        id: 0, connectionKey: "SQLite||0|/tmp/a.db", schema: "main", table: "t",
+        qualifiedName: "\"t\"", engine: .sqlite, created: created, state: .committed,
+        editKind: .inline, statementCount: 1, columns: [RewindColumn(name: "v", typeName: "")],
+        notCaptured: false, notRewindableReason: nil),
+      rows: [
+        RewindRow(
+          operation: .update, primaryKey: ["rowid": "1"], before: ["v": "'row-secret-value'"],
+          after: ["v": "'other'"])
+      ])
+    let rewind = DataRewindLocalDataProvider(store: store, fileURL: storeURL)
+    let memory = TextMemory("log")
+    let logs = TextProvider(category: .logs, memory: memory, contents: "log")
+    #expect(LocalDataCategory.allCases.filter(\.isExcludedFromBackup) == [.dataRewind])
+
+    let package = root.appendingPathComponent("Rewind.dblorebackup", isDirectory: true)
+    try await LocalDataBackup.export(
+      categories: [.dataRewind, .logs], providers: [rewind, logs], to: package,
+      appVersion: "9.2.0", created: created)
+    #expect(try LocalDataBackup.inspect(package).categories.map(\.id) == ["logs"])
+    let folder = package.appendingPathComponent("dataRewind").path
+    #expect(!FileManager.default.fileExists(atPath: folder))
+
+    // A package written by hand with a dataRewind folder: import leaves the store alone
+    try FileManager.default.createDirectory(
+      at: package.appendingPathComponent("dataRewind"), withIntermediateDirectories: true)
+    try Data("planted".utf8).write(to: package.appendingPathComponent("dataRewind/rewind.sqlite"))
+    try await LocalDataBackup.import(
+      package, categories: [.dataRewind, .logs], providers: [logs])
+    #expect(memory.importCount == 1)
+    #expect(try store.count() == 1)
   }
 
   @Test("formatVersion 2 is rejected and provider data stays unchanged")

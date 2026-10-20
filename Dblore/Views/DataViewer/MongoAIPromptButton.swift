@@ -4,6 +4,8 @@
 //
 //  Sparkles button opening a small AI prompt popover on MongoDB collection screens. The caller's
 //  `generate` turns the prompt into a filter or pipeline; errors stay inline in the popover.
+//  The connection's AI access is asked on open and on Apply: a connection that needs approval
+//  shows Allow for this session / Not now, an off one says so, and nothing is sent.
 //  `MongoAIPipelineButton` is the builder's preset (Aggregations section and builder sheet).
 //
 
@@ -20,22 +22,32 @@ struct MongoAIPromptButton: View {
   @State private var isBusy = false
   @State private var error: String?
   @State private var task: Task<Void, Never>?
+  /// The gate's answer, read on open and on Apply (never from the body)
+  @State private var access: AIAssistantViewModel.AccessCheck?
 
   var body: some View {
-    Button(action: { isPresented.toggle() }) {
+    // Read here so a change of `access` re-evaluates the body and the popover with it: read only
+    // in the popover's closure, it kept showing the prompt to a denied connection
+    let state = MongoAIPromptState(needsSetup: assistant.needsSetup, access: access)
+    Button(action: {
+      if !isPresented { access = assistant.aiAccessCheck() }
+      isPresented.toggle()
+    }) {
       Image(systemName: "sparkles")
     }
     .buttonStyle(SecondaryButtonStyle(iconOnly: true))
     .help(help)
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
       MongoAIPromptPopover(
-        needsSetup: assistant.needsSetup,
+        state: state,
         placeholder: placeholder,
         prompt: $prompt,
         isBusy: isBusy,
         error: error,
         apply: apply,
         stop: stop,
+        allow: allow,
+        notNow: { isPresented = false },
         openSettings: openSettings
       )
       .onDisappear { stop() }
@@ -45,6 +57,8 @@ struct MongoAIPromptButton: View {
   private func apply() {
     let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty, !isBusy else { return }
+    access = assistant.aiAccessCheck()
+    guard access?.decision == .allowed else { return }
     isBusy = true
     error = nil
     task = Task {
@@ -66,6 +80,13 @@ struct MongoAIPromptButton: View {
     }
   }
 
+  private func allow() {
+    guard let context = access?.context else { return }
+    assistant.approveForSession(context)
+    access = assistant.aiAccessCheck()
+    prompt = ""
+  }
+
   private func stop() {
     task?.cancel()
     task = nil
@@ -82,15 +103,45 @@ struct MongoAIPromptButton: View {
   }
 }
 
+/// What the AI prompt popover shows, from the AI setup and the gate's last answer (read on open
+/// and on Apply)
+enum MongoAIPromptState: Equatable {
+  case setup
+  /// AI access is off for the connection, or it needs approval with no connection to approve
+  /// (fail closed): no prompt, nothing is sent
+  case off
+  /// The connection waits for "Allow for this session"
+  case approval(connectionName: String)
+  case prompt
+
+  init(needsSetup: Bool, access: AIAssistantViewModel.AccessCheck?) {
+    if needsSetup {
+      self = .setup
+      return
+    }
+    switch access?.decision {
+    case .denied: self = .off
+    case .needsApproval:
+      self =
+        access?.context.map {
+          .approval(connectionName: AIAssistantViewModel.connectionName($0.config))
+        } ?? .off
+    case .allowed, nil: self = .prompt
+    }
+  }
+}
+
 /// Popover body: its own view so the prompt field's focus lives in the popover's hierarchy
 private struct MongoAIPromptPopover: View {
-  let needsSetup: Bool
+  let state: MongoAIPromptState
   let placeholder: String
   @Binding var prompt: String
   let isBusy: Bool
   let error: String?
   let apply: () -> Void
   let stop: () -> Void
+  let allow: () -> Void
+  let notNow: () -> Void
   let openSettings: () -> Void
 
   @FocusState private var promptFocused: Bool
@@ -101,13 +152,30 @@ private struct MongoAIPromptPopover: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      if needsSetup {
+      switch state {
+      case .setup:
         Text("Set up an AI provider to use this.")
           .font(.small)
           .foregroundColor(.foregroundMuted)
         Button("Set up AI in Settings", action: openSettings)
           .buttonStyle(PrimaryButtonStyle())
-      } else {
+      case .off:
+        Text("AI access is off for this connection.")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+      case .approval(let approvalName):
+        Text("AI needs your approval to use \(approvalName).")
+          .font(.small)
+          .foregroundColor(.foreground)
+          .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: Spacing.xs) {
+          Spacer()
+          Button("Not now", action: notNow)
+            .buttonStyle(GhostButtonStyle())
+          Button("Allow for this session", action: allow)
+            .buttonStyle(PrimaryButtonStyle())
+        }
+      case .prompt:
         // A popover keeps the size it opened with: reserve the 3 lines up front, scroll past them
         TextField(placeholder, text: $prompt, axis: .vertical)
           .textFieldStyle(.plain)

@@ -7,9 +7,11 @@
 // read as `standard_conforming_strings = on` reads it, and runs only once the session says on.
 // `executeGatedRestore` checks the plan against the merged policy before anything is sent.
 // PostgreSQL and SQLite run it as one staged batch (atomic; inside the app transaction under
-// Protected mode). MySQL commits each schema change at once, so it runs one statement at a
-// time (refused with a transaction open or under Protected mode) and afterwards always resets
-// the session settings the dump changed, or closes the session when that fails.
+// Protected mode). DuckDB runs it as one staged batch too, but has no SAVEPOINT, so it is
+// refused under Protected mode and with a transaction open. MySQL commits each schema change at
+// once, so it runs one statement at a time (refused with a transaction open or under Protected
+// mode) and afterwards always resets the session settings the dump changed, or closes the
+// session when that fails.
 
 import Foundation
 
@@ -95,7 +97,7 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .unsupportedEngine(let engine):
       "\(engine) connections cannot restore SQL dumps. Nothing was executed."
     case .containsNUL:
-      "This file contains a NUL character, where SQLite would cut the statement. "
+      "This file contains a NUL character, where the database would cut the statement. "
         + "Nothing was executed."
     case .statementRefused(let index, let reason):
       "Statement \(index + 1) is not part of a SQL dump: \(reason). Nothing was executed."
@@ -133,6 +135,21 @@ nonisolated struct SQLRestorePlan: Sendable {
   static let maxScriptBytes = 64 * 1024 * 1024
   /// First line of every dump (`SQLDumpAssembler.header`), followed by the engine's raw value
   static let headerPrefix = "-- Dblore SQL dump 1 engine="
+  /// Why a DuckDB restore is refused under Protected mode
+  static let duckdbProtectedModeMessage =
+    "Turn Protected mode off for this connection to restore a DuckDB dump: DuckDB has no "
+    + "savepoint, so the restore cannot wait for Commit inside the pending transaction."
+  /// Why a restore into a DuckDB file opened read-only is refused, and how to reopen it
+  static let duckdbReadOnlyFileMessage =
+    "This DuckDB file is open read-only, so a SQL dump cannot be restored into it. To restore, "
+    + "edit the connection, turn off Read-only and connect again."
+
+  /// A DuckDB file (not in-memory) opened read-only (`readOnlyFile`) on a connection that is not
+  /// Read-only protected itself
+  static func isReadOnlyDuckDBFile(_ config: ConnectionConfig) -> Bool {
+    config.databaseType == .duckdb && config.readOnlyFile
+      && config.database != DuckDBSession.inMemoryPath && config.protectionLevel != .readOnly
+  }
 
   let engine: DatabaseType
   /// Statements to send, in order. A SQLite trigger the splitter kept whole and a MySQL
@@ -148,17 +165,18 @@ nonisolated struct SQLRestorePlan: Sendable {
   let standardStringsStatement: Int?
 
   /// - Throws: `SQLRestoreError` (too large, header missing or another engine, a NUL in a
-  ///   SQLite script, or the first statement a dump never writes); `CancellationError` when
-  ///   the task planning it is cancelled
+  ///   SQLite or DuckDB script, or the first statement a dump never writes);
+  ///   `CancellationError` when the task planning it is cancelled
   init(script: String, engine: DatabaseType) throws {
     let bytes = script.utf8.count
     guard bytes <= Self.maxScriptBytes else { throw SQLRestoreError.tooLarge(bytes: bytes) }
     switch engine {
-    case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb: throw SQLRestoreError.unsupportedEngine(engine.rawValue)
+    case .postgresql, .mysql, .sqlite, .duckdb: break
+    case .mongodb: throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
     try Self.checkHeader(script, engine: engine)
-    if engine == .sqlite, script.unicodeScalars.contains("\0") {
+    // Both read statements as C strings: a NUL would cut the statement the whitelist approved
+    if engine == .sqlite || engine == .duckdb, script.unicodeScalars.contains("\0") {
       throw SQLRestoreError.containsNUL
     }
     let dialect = engine.dialect
@@ -166,12 +184,18 @@ nonisolated struct SQLRestorePlan: Sendable {
     var kinds: [SQLRestoreStatementKind] = []
     var options: [String] = []
     var standardStrings: Int?
+    // DuckDB: the sequences the file created so far (`checkDuckDBSequences`)
+    var sequences = Set<[String]>()
     for piece in SQLTokenizer(dialect: dialect).splitStatements(script) {
       // A file read cancelled while it is planned stops here
       try Task.checkCancellation()
       guard let classified = SQLStatementClassifier.classifyStatement(piece, dialect: dialect)
       else { continue }
       let accepted = try Self.accept(classified, engine: engine, index: statements.count)
+      if engine == .duckdb, accepted.kind == .schema {
+        try Self.checkDuckDBSequences(
+          classified.text, created: &sequences, index: statements.count)
+      }
       if accepted.standardStrings, standardStrings == nil { standardStrings = statements.count }
       statements.append(accepted.statement)
       kinds.append(accepted.kind)
@@ -267,6 +291,37 @@ nonisolated struct SQLRestorePlan: Sendable {
       return Accepted(statement: read, kind: .schema, standardStrings: true)
     default:
       throw refusal(index, describe(statement.kind))
+    }
+  }
+
+  /// DuckDB: records the sequence a `CREATE SEQUENCE` creates, and refuses a `CREATE TABLE`
+  /// whose `nextval` default (`duckdbSequenceDefaults`) names a sequence the file did not create
+  /// before it: a sequence already in the database would advance on every later insert. A
+  /// one-part name is the table's schema's sequence (DuckDB looks there first, then in `main`,
+  /// which this check does not follow), a one-part table or sequence is in `main`. Names
+  /// compare ASCII case-insensitively, as DuckDB compares identifiers.
+  private static func checkDuckDBSequences(
+    _ text: String, created: inout Set<[String]>, index: Int
+  ) throws {
+    let tokens = tokens(text, .duckdb)
+    var shape = ShapeReader(tokens)
+    guard shape.words("CREATE") else { return }
+    let isSequence = shape.words("SEQUENCE")
+    guard isSequence || shape.words("TABLE"), let target = shape.nameParts() else { return }
+    let name = target.map { SQLTokenizer.asciiUppercased($0.text) }
+    let qualified = name.count == 1 ? ["MAIN"] + name : name
+    if isSequence {
+      created.insert(qualified)
+      return
+    }
+    guard let body = duckdbTableBody(&shape) else { return }
+    for sequence in duckdbSequenceDefaults(body.tokens, columnDepth: body.columnDepth) ?? [] {
+      let key = sequence.count == 1 ? [qualified[0]] + sequence : sequence
+      guard created.contains(key) else {
+        throw refusal(
+          index,
+          "a Dblore dump's nextval default names only a sequence the dump creates before the table")
+      }
     }
   }
 
@@ -457,6 +512,21 @@ nonisolated extension SQLRestorePlan {
   ///   `CREATE VIRTUAL TABLE <name> USING <module> [(...)]`, `CREATE [UNIQUE] INDEX <name>`,
   ///   `CREATE VIEW <name>`, `CREATE TRIGGER <name> ... ON <table>`, with one-part names only
   ///   (no `temp.` object, hidden from the schema and alive on the app's connection).
+  /// - DuckDB: `CREATE SCHEMA IF NOT EXISTS <name>`, `CREATE TYPE <name> AS ENUM (<string>,
+  ///   ...)`, `CREATE SEQUENCE <name> START WITH <n> INCREMENT BY <n> MINVALUE <n> MAXVALUE <n>
+  ///   [NO] CYCLE` (the forms `SQLDumpDDL.duckdb` builds, nothing else after them), and the
+  ///   catalog's text: `CREATE TABLE <name>(...)`, `CREATE [UNIQUE] INDEX <name> ON
+  ///   <table>(...)`, each with nothing after the list, and `CREATE VIEW <name> [(<column>, ...)]
+  ///   AS <query>`. No OR REPLACE, TEMP or IF NOT EXISTS (but on the schema); names have at most
+  ///   two parts, never in `temp`, `system`, `information_schema` or `pg_catalog`. No function
+  ///   the classifier stops in a read (`duckdbSideEffectFunctions`, extension prefixes) or the
+  ///   restore refuses (`duckdbRestoreRefusedFunctions`: SQL run from a string, file, setting,
+  ///   pragma and secret reads, logging) is called, but `nextval` as a table's column default
+  ///   (`duckdbSequenceDefaults`; the plan checks the file created that sequence first), and no
+  ///   remote URL is named (`SQLStatementClassifier.namesRemoteURL`). A deny-list, not an
+  ///   allow-list: a view may call any of DuckDB's scalar and aggregate functions. Files named
+  ///   another way (`FROM '<path>'`) are left to the session, which grants only the files the
+  ///   user picked.
   static func isDumpSchema(_ tokens: [SQLToken], engine: DatabaseType) -> Bool {
     var shape = ShapeReader(tokens)
     switch engine {
@@ -514,9 +584,148 @@ nonisolated extension SQLRestorePlan {
       if shape.words("VIEW") { return shape.sqliteName() }
       _ = shape.words("UNIQUE")
       return shape.words("INDEX") && shape.sqliteName()
-    case .duckdb, .mongodb:
+    case .duckdb:
+      return isDuckDBSchema(&shape)
+    case .mongodb:
       return false
     }
+  }
+
+  /// The DuckDB shapes of `isDumpSchema`
+  private static func isDuckDBSchema(_ shape: inout ShapeReader) -> Bool {
+    guard shape.words("CREATE") else { return false }
+    if shape.words("SCHEMA", "IF", "NOT", "EXISTS") {
+      return shape.duckdbSchemaName() && shape.atEnd
+    }
+    if shape.words("TYPE") {
+      guard shape.duckdbTarget(), shape.words("AS", "ENUM"), shape.symbol("(") else {
+        return false
+      }
+      if !shape.symbol(")") {
+        repeat {
+          guard shape.kind(.string) else { return false }
+        } while shape.symbol(",")
+        guard shape.symbol(")") else { return false }
+      }
+      return shape.atEnd
+    }
+    if shape.words("SEQUENCE") {
+      return shape.duckdbTarget() && shape.words("START", "WITH") && shape.integer()
+        && shape.words("INCREMENT", "BY") && shape.integer() && shape.words("MINVALUE")
+        && shape.integer() && shape.words("MAXVALUE") && shape.integer()
+        && (shape.words("CYCLE") || shape.words("NO", "CYCLE")) && shape.atEnd
+    }
+    // Only the body is scanned for calls (`callsDuckDBSideEffect`): the object's own name, a
+    // view's column list and the table a foreign key references come before `(` too
+    if shape.words("TABLE") {
+      guard shape.duckdbTarget(), let body = duckdbTableBody(&shape), shape.atEnd else {
+        return false
+      }
+      return duckdbSequenceDefaults(body.tokens, columnDepth: body.columnDepth) != nil
+        && !callsDuckDBSideEffect(body.tokens, allowing: ["NEXTVAL"])
+    }
+    if shape.words("VIEW") {
+      guard shape.duckdbTarget() else { return false }
+      if shape.peekSymbol("("), !shape.columnList() { return false }
+      return shape.words("AS") && !shape.atEnd
+        && !callsDuckDBSideEffect(Array(shape.tokens[shape.index...]), allowing: [])
+    }
+    _ = shape.words("UNIQUE")
+    guard shape.words("INDEX"), shape.name(parts: 1), shape.words("ON"), shape.duckdbTarget()
+    else { return false }
+    let open = shape.index
+    return shape.group() && shape.atEnd
+      && !callsDuckDBSideEffect(Array(shape.tokens[(open + 1)..<(shape.index - 1)]), allowing: [])
+  }
+
+  /// A DuckDB table's column list from its `(`: the tokens between the parentheses without the
+  /// name parts after each `REFERENCES` (a table, not a call), and the depth of its column
+  /// definitions. Nil when the list is not there or not closed.
+  fileprivate static func duckdbTableBody(
+    _ shape: inout ShapeReader
+  ) -> (tokens: [SQLToken], columnDepth: Int)? {
+    let open = shape.index
+    guard shape.group() else { return nil }
+    let tokens = shape.tokens
+    let end = shape.index - 1
+    var body: [SQLToken] = []
+    var index = open + 1
+    while index < end {
+      let token = tokens[index]
+      body.append(token)
+      index += 1
+      guard token.isWord("REFERENCES") else { continue }
+      var parts = 0
+      while index < end, parts < 3,
+        tokens[index].kind == .word || tokens[index].kind == .quotedIdentifier
+      {
+        parts += 1
+        index += 1
+        guard index < end, parts < 3, tokens[index].isSymbol(".") else { break }
+        body.append(tokens[index])
+        index += 1
+      }
+    }
+    return (body, tokens[open].depth + 1)
+  }
+
+  /// A call to a function a DuckDB read may not call or a restore refuses (but `allowed`), or a
+  /// remote URL
+  private static func callsDuckDBSideEffect(
+    _ tokens: [SQLToken], allowing allowed: Set<String>
+  )
+    -> Bool
+  {
+    let body = tokens[...]
+    let classifier = SQLStatementClassifier.self
+    return classifier.calls(
+      body,
+      anyOf: classifier.duckdbSideEffectFunctions.union(classifier.duckdbRestoreRefusedFunctions)
+        .subtracting(allowed),
+      orPrefixes: classifier.duckdbSideEffectFunctionPrefixes
+        + classifier.duckdbRestoreRefusedFunctionPrefixes,
+      orContaining: classifier.duckdbRestoreRefusedFunctionInfixes)
+      || classifier.namesRemoteURL(body)
+  }
+
+  /// The sequence names (parts, ASCII uppercased; one or two) of the `nextval` calls in a
+  /// DuckDB table's column list (`duckdbTableBody`) when each one is a column default as the catalog writes it,
+  /// `DEFAULT(nextval('<name>'))` or `DEFAULT nextval('<name>')`, else nil: `nextval` in a
+  /// CHECK, a generated column, a cast or any other expression, or with a name built at run
+  /// time, is refused.
+  private static func duckdbSequenceDefaults(
+    _ tokens: [SQLToken], columnDepth: Int
+  ) -> [[String]]? {
+    func isDefault(_ index: Int) -> Bool {
+      index >= 0 && tokens[index].isWord("DEFAULT") && tokens[index].depth == columnDepth
+    }
+    var names: [[String]] = []
+    for index in tokens.indices where isNextval(tokens[index]) {
+      guard index + 1 < tokens.count, tokens[index + 1].isSymbol("(") else { continue }
+      guard index + 3 < tokens.count, tokens[index + 2].kind == .string,
+        tokens[index + 3].isSymbol(")"),
+        isDefault(index - 1)
+          || (index >= 1 && tokens[index - 1].isSymbol("(") && isDefault(index - 2)
+            && index + 4 < tokens.count && tokens[index + 4].isSymbol(")")),
+        let name = duckdbSequenceName(tokens[index + 2].text)
+      else { return nil }
+      names.append(name)
+    }
+    return names
+  }
+
+  /// `nextval` as a word or quoted identifier
+  private static func isNextval(_ token: SQLToken) -> Bool {
+    token.isWord("NEXTVAL")
+      || (token.kind == .quotedIdentifier && SQLTokenizer.asciiUppercased(token.text) == "NEXTVAL")
+  }
+
+  /// The parts (ASCII uppercased) of the name in a `nextval('<name>')` literal, as DuckDB reads
+  /// it: `name` or `schema.name`, words or quoted identifiers and nothing else, else nil
+  private static func duckdbSequenceName(_ literal: String) -> [String]? {
+    var shape = ShapeReader(SQLTokenizer(dialect: .duckdb).tokens(literal))
+    guard let parts = shape.nameParts(), parts.count <= 2, shape.atEnd else { return nil }
+    return parts.map { SQLTokenizer.asciiUppercased($0.text) }
   }
 
   /// After `CREATE TABLE <name>`: `(...)` or `PARTITION OF <parent>` with its bound
@@ -611,11 +820,13 @@ nonisolated extension SQLRestorePlan {
   /// `INSERT INTO <table> [(<column>, ...)] [OVERRIDING SYSTEM VALUE] VALUES (<literal>, ...)
   /// [, (<literal>, ...)]...` with nothing after the last row, or `INSERT INTO <table> DEFAULT
   /// VALUES` (OVERRIDING and a schema-qualified table on PostgreSQL only, never into a `pg_`
-  /// system table), and the SQLite `DELETE FROM sqlite_sequence WHERE name = '<table>'`.
+  /// system table; DuckDB always `<schema>.<table>`, never in `temp`, `system` or a system
+  /// schema), and the SQLite `DELETE FROM sqlite_sequence WHERE name = '<table>'`.
   /// The literals are those `SQLDumpDataRenderer` writes: quoted text everywhere (PostgreSQL
-  /// `'...'` or `E'...'`, bytea as its `\x...` text), NULL, `X'<hex>'` on MySQL and SQLite,
-  /// and SQLite `quote()` numbers (`-`, digits, `.digits`, `e+NN` / `e-NN`). No function call,
-  /// cast, operator, identifier, DEFAULT or subquery can run inside a row.
+  /// `'...'` or `E'...'`, bytea as its `\x...` text, DuckDB BLOB as its `\x...` text), NULL,
+  /// `X'<hex>'` on MySQL and SQLite, and SQLite `quote()` numbers (`-`, digits, `.digits`,
+  /// `e+NN` / `e-NN`). No function call, cast, operator, identifier, DEFAULT or subquery can run
+  /// inside a row.
   static func dataRefusal(_ tokens: [SQLToken], engine: DatabaseType) -> String? {
     var shape = ShapeReader(tokens)
     if engine == .sqlite, shape.words("DELETE", "FROM", "SQLITE_SEQUENCE", "WHERE", "NAME") {
@@ -625,9 +836,17 @@ nonisolated extension SQLRestorePlan {
       return notWritten(tokens)
     }
     let postgres = engine == .postgresql
-    guard target.count == 1 || (postgres && target.count == 2) else { return notWritten(tokens) }
-    // The schema, or an unqualified table name
-    if postgres, isSystemSchema(target[0]) { return notWritten(tokens) }
+    switch engine {
+    case .postgresql:
+      guard target.count <= 2 else { return notWritten(tokens) }
+      // The schema, or an unqualified table name
+      if isSystemSchema(target[0]) { return notWritten(tokens) }
+    case .duckdb:
+      // The writer always qualifies the table: an unqualified name could reach a temp table
+      guard target.count == 2, !isDuckDBSystemName(target[0]) else { return notWritten(tokens) }
+    case .mysql, .sqlite, .mongodb:
+      guard target.count == 1 else { return notWritten(tokens) }
+    }
     if shape.words("DEFAULT", "VALUES") { return shape.atEnd ? nil : notWritten(tokens) }
     if shape.peekSymbol("("), !shape.columnList() {
       return "a dump's INSERT lists only column names, not \(shape.describeNext)"
@@ -636,7 +855,7 @@ nonisolated extension SQLRestorePlan {
       guard shape.words("SYSTEM", "VALUE") else { return notWritten(tokens) }
     }
     guard shape.words("VALUES") else { return notWritten(tokens) }
-    let blobs = engine != .postgresql
+    let blobs = engine == .mysql || engine == .sqlite
     let numbers = engine == .sqlite
     repeat {
       guard shape.symbol("(") else { return notLiteral(shape, engine) }
@@ -654,7 +873,7 @@ nonisolated extension SQLRestorePlan {
   private static func notLiteral(_ shape: ShapeReader, _ engine: DatabaseType) -> String {
     let forms =
       switch engine {
-      case .postgresql: "quoted text and NULL"
+      case .postgresql, .duckdb: "quoted text and NULL"
       case .sqlite: "quoted text, numbers, X'...' blobs and NULL"
       default: "quoted text, X'...' blobs and NULL"
       }
@@ -667,6 +886,13 @@ nonisolated extension SQLRestorePlan {
   fileprivate static func isSystemSchema(_ token: SQLToken) -> Bool {
     let name = SQLTokenizer.asciiLowercased(token.text)
     return name.hasPrefix("pg_") || name == "information_schema"
+  }
+
+  /// A system schema (`isSystemSchema`: `pg_catalog`, `information_schema`), or DuckDB's
+  /// `temp` (objects on the app's connection only) or `system` catalog as the first name part
+  fileprivate static func isDuckDBSystemName(_ token: SQLToken) -> Bool {
+    let name = SQLTokenizer.asciiLowercased(token.text)
+    return isSystemSchema(token) || name == "temp" || name == "system"
   }
 }
 
@@ -756,6 +982,18 @@ nonisolated private struct ShapeReader {
     return !SQLRestorePlan.isSystemSchema(read[0])
   }
 
+  /// A DuckDB name of one or two parts; a schema (or catalog) part is not a system one
+  mutating func duckdbTarget() -> Bool {
+    guard let read = nameParts(), read.count <= 2 else { return false }
+    return read.count == 1 || !SQLRestorePlan.isDuckDBSystemName(read[0])
+  }
+
+  /// A one-part DuckDB schema name that is not a system one
+  mutating func duckdbSchemaName() -> Bool {
+    guard let read = nameParts(), read.count == 1 else { return false }
+    return !SQLRestorePlan.isDuckDBSystemName(read[0])
+  }
+
   /// An optional `IF NOT EXISTS`, then a one-part SQLite name
   mutating func sqliteName() -> Bool {
     _ = words("IF", "NOT", "EXISTS")
@@ -806,6 +1044,15 @@ nonisolated private struct ShapeReader {
     if valid, words("E") { valid = (symbol("+") || symbol("-")) && digits() }
     if !valid { index = start }
     return valid
+  }
+
+  /// `[-]<digits>`: a DuckDB sequence value as `SQLDumpDDL.duckdb` writes it
+  mutating func integer() -> Bool {
+    let start = index
+    _ = symbol("-")
+    if digits() { return true }
+    index = start
+    return false
   }
 
   private mutating func digits() -> Bool {
@@ -859,6 +1106,10 @@ extension DatabaseConnectionManager {
   /// - PostgreSQL / SQLite: one staged batch with no row-count checks (`runStagedBatch`), so a
   ///   failure rolls everything back; under Protected mode it joins the app transaction
   ///   (`pending`). A failed COMMIT is rolled back.
+  /// - DuckDB: the same batch, never inside a transaction (BEGIN ... COMMIT): DuckDB has no
+  ///   SAVEPOINT, so Protected mode and an open transaction are refused
+  ///   (`DatabaseError.sequentialBatchRefused`). A DuckDB file opened read-only is refused with
+  ///   how to reopen it writable (`SQLRestorePlan.duckdbReadOnlyFileMessage`).
   /// - MySQL: `executeGatedSequentialBatch` (refused with a transaction open or under Protected
   ///   mode, `DatabaseError.sequentialBatchRefused`). The session's sql_mode and time_zone are
   ///   read first (a Cancel meanwhile: `DatabaseError.batchCancelled`); afterwards, on success,
@@ -899,9 +1150,12 @@ extension DatabaseConnectionManager {
     // refuses it.
     let effective = effectivePolicy(for: policy)
     if effective.protectionLevel == .readOnly {
+      let readOnlyFile = config.map(SQLRestorePlan.isReadOnlyDuckDBFile) == true
       throw DatabaseError.blockedByProtection(
         statementIndex: 0, kind: plan.statements.first?.kind ?? .dml,
-        reason: "Restoring a SQL dump is not allowed on a read-only connection")
+        reason: readOnlyFile
+          ? SQLRestorePlan.duckdbReadOnlyFileMessage
+          : "Restoring a SQL dump is not allowed on a read-only connection")
     }
     if case .blocked(let index, let kind, let reason) = Self.evaluate(
       plan.statements, policy: effective, dialect: engine.dialect)
@@ -921,10 +1175,11 @@ extension DatabaseConnectionManager {
     }
     try await PerfSignpost.interval("restore.run") {
       switch engine {
-      case .postgresql, .sqlite:
+      case .postgresql, .sqlite, .duckdb:
         try refuseIfEnding()
         try refuseIfOwnedByAnotherCaller(caller)
         try refuseIfAborted()
+        if engine == .duckdb { try refuseDuckDBRestoreInTransaction(effective) }
         guard session != nil else { throw DatabaseError.notConnected }
         try refuseIfConnectionClosed()
         summary.insideUserTransaction = userTxOpen
@@ -940,7 +1195,7 @@ extension DatabaseConnectionManager {
         summary.statementsRun = try await runMySQLRestore(
           plan, policy: policy, effective: effective, epoch: epoch, caller: caller,
           progress: report)
-      case .duckdb, .mongodb:
+      case .mongodb:
         throw SQLRestoreError.unsupportedEngine(engine.rawValue)
       }
     }
@@ -948,6 +1203,18 @@ extension DatabaseConnectionManager {
   }
 
   // MARK: - Private
+
+  /// DuckDB has no SAVEPOINT, which the batch sends inside a transaction (Protected mode, or the
+  /// user's own): both are refused before anything is sent
+  private func refuseDuckDBRestoreInTransaction(_ effective: ProtectionPolicy) throws {
+    if effective.protectedMode {
+      throw DatabaseError.sequentialBatchRefused(SQLRestorePlan.duckdbProtectedModeMessage)
+    }
+    if !txState.isIdle || userTxOpen {
+      throw DatabaseError.sequentialBatchRefused(
+        "Commit or roll back the open transaction first, then restore the dump.")
+    }
+  }
 
   /// One by one in autocommit; the session settings are reset afterwards on every path
   private func runMySQLRestore(

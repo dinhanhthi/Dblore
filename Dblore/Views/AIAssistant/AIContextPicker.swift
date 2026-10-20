@@ -72,7 +72,7 @@ struct AIDropdownLabel: View {
 }
 
 /// Wraps children onto new lines when the row is full
-private struct AIFlowLayout: Layout {
+struct AIFlowLayout: Layout {
   var spacing: CGFloat = 4
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

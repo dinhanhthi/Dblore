@@ -3,10 +3,42 @@
 
 import Foundation
 
+nonisolated enum AIContentBlock: Sendable, Equatable {
+  case text(String)
+  /// The model asks the app to run a tool
+  case toolUse(AIToolCall)
+  /// The app's answer to the tool call with the same id
+  case toolResult(AIToolResult)
+}
+
 nonisolated struct AIChatMessage: Sendable, Equatable {
   enum Role: String, Sendable, Codable { case user, assistant }
   let role: Role
-  let text: String
+  let blocks: [AIContentBlock]
+
+  init(role: Role, blocks: [AIContentBlock]) {
+    self.role = role
+    self.blocks = blocks
+  }
+
+  init(role: Role, text: String) {
+    self.init(role: role, blocks: [.text(text)])
+  }
+
+  /// The text blocks joined, for wires and clients that only send text
+  var text: String {
+    blocks.reduce(into: "") { result, block in
+      if case .text(let text) = block { result += text }
+    }
+  }
+
+  /// True when the message holds a tool call or a tool result, so it needs the wire's block shape
+  var hasToolBlocks: Bool {
+    blocks.contains { block in
+      if case .text = block { return false }
+      return true
+    }
+  }
 }
 
 nonisolated struct AIChatRequest: Sendable {
@@ -14,12 +46,27 @@ nonisolated struct AIChatRequest: Sendable {
   var system: String
   var messages: [AIChatMessage]
   var maxTokens: Int = 2048
+  /// Tools the model may call; empty sends no tools
+  var tools: [AIToolSpec] = []
 }
 
 nonisolated enum AIStreamEvent: Sendable, Equatable {
   case text(String)
   /// An on-device model is being loaded into memory before the first token
   case loadingModel
+  /// A complete tool call (arguments fully assembled)
+  case toolCall(AIToolCall)
+  /// The model ended its turn
+  case stop(AIStopReason)
+}
+
+/// Why the model ended its turn, normalized across wires
+nonisolated enum AIStopReason: Sendable, Equatable {
+  case endTurn
+  case toolUse
+  case maxTokens
+  /// Any other provider value, kept as sent
+  case other(String)
 }
 
 nonisolated enum AIClientError: LocalizedError, Equatable, Sendable {
@@ -46,6 +93,9 @@ nonisolated protocol AIChatClient: Sendable {
   func listModels() async throws -> [String]
   /// Like `listModels`, also reporting whether the built-in fallback list was used
   func listModelsResult() async throws -> AIModelListResult
+  /// True when the wire streams tool calls natively; false: the caller falls back to the text
+  /// protocol (on-device gets no tools at all, decided by provider kind)
+  var supportsNativeTools: Bool { get }
 }
 
 nonisolated struct AIModelListResult: Sendable, Equatable {
@@ -55,6 +105,8 @@ nonisolated struct AIModelListResult: Sendable, Equatable {
 }
 
 extension AIChatClient {
+  nonisolated var supportsNativeTools: Bool { false }
+
   func listModelsResult() async throws -> AIModelListResult {
     AIModelListResult(models: try await listModels(), isFallback: false)
   }
@@ -84,6 +136,7 @@ nonisolated enum AIClientFactory {
     case .anthropicMessages: return AnthropicClient(baseURL: base, apiKey: key, session: session)
     case .chatCompletions:
       return OpenAICompatibleClient(baseURL: base, apiKey: key, session: session)
+    case .geminiGenerateContent: return GeminiClient(baseURL: base, apiKey: key, session: session)
     case .responses: throw AIClientError.invalidEndpoint("Unsupported provider.")
     }
   }
@@ -122,6 +175,8 @@ nonisolated enum AIClientFactory {
           for delta in try parser.consume(line: "") {
             if yield(delta, continuation) { return }
           }
+          // No terminal event: a tool call still being assembled is an error, not dropped
+          try parser.endOfBody()
           continuation.finish()
         } catch is CancellationError {
           continuation.finish()
@@ -160,6 +215,12 @@ nonisolated enum AIClientFactory {
     switch delta {
     case .text(let text):
       continuation.yield(.text(text))
+      return false
+    case .toolCall(let call):
+      continuation.yield(.toolCall(call))
+      return false
+    case .stop(let reason):
+      continuation.yield(.stop(reason))
       return false
     case .done:
       continuation.finish()

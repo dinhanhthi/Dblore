@@ -262,7 +262,8 @@ nonisolated struct MLXChatClient: AIChatClient {
     max(1, min(value, maxTokensLimit))
   }
 
-  /// System prompt first (when not empty), then the conversation in order.
+  /// System prompt first (when not empty), then the conversation in order. Text blocks only:
+  /// on-device models get no tools, so `request.tools` and tool blocks are never sent.
   static func chatMessages(for request: AIChatRequest) -> [Chat.Message] {
     var result: [Chat.Message] = []
     if !request.system.isEmpty { result.append(.system(request.system)) }

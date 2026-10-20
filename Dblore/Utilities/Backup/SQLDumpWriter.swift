@@ -1,11 +1,14 @@
 // SQLDumpWriter.swift
-// Writes a SQL dump of a PostgreSQL, MySQL / MariaDB or SQLite database to a file, off the main
-// actor. It connects its own `DatabaseConnectionManager` (never the tab's) from the tab's
-// in-memory config with the tab's unremembered certificate and SSH secret, reads everything
-// inside one snapshot transaction (`withDumpSnapshot`), streams the dump to a temporary file in
-// the container, then replaces the destination with it. Cancel (task cancellation) interrupts
-// the running read, rolls the snapshot back and deletes the temporary file. The temporary file
-// is created mode 0600 and moved over the destination in one step (`replaceItem`).
+// Writes a SQL dump of a PostgreSQL, MySQL / MariaDB, SQLite or DuckDB database to a file, off
+// the main actor. For PostgreSQL, MySQL and SQLite it connects its own
+// `DatabaseConnectionManager` (never the tab's) from the tab's in-memory config with the tab's
+// unremembered certificate and SSH secret. DuckDB is read on the tab's own manager and session
+// (`init(tabManager:config:)`): a second instance would open an empty new `:memory:` database or
+// the same file again. Everything is read inside one snapshot transaction (`withDumpSnapshot`),
+// streamed to a temporary file in the container, then the destination is replaced with it.
+// Cancel (task cancellation) interrupts the running read, rolls the snapshot back and deletes
+// the temporary file. The temporary file is created mode 0600 and moved over the destination in
+// one step (`replaceItem`).
 //
 // Dump format (restore reads it):
 //   -- Dblore SQL dump 1 engine=<DatabaseType.rawValue> created=<ISO 8601, UTC>
@@ -90,6 +93,22 @@ nonisolated enum SQLDumpSelection {
     var output = input
     output.tables = zip(input.tables, names).filter { chosen.contains($0.1) }.map(\.0)
     output.views = views(input.views, dropped: Set(names).subtracting(chosen))
+    return output
+  }
+
+  /// Compared by schema and name. Indexes of tables left out go. Views stay only when every
+  /// table stays: the catalog keeps no view dependencies, and DuckDB resolves a view's names when
+  /// it is created, so a view on a table left out would fail the whole restore. Schemas, ENUM
+  /// types and sequences stay.
+  static func duckdb(
+    _ input: SQLDumpDDL.DuckDBInput, keeping chosen: Set<Name>
+  ) -> SQLDumpDDL.DuckDBInput {
+    var output = input
+    output.tables = input.tables.filter {
+      chosen.contains(Name(schema: $0.structure.schema, name: $0.structure.name))
+    }
+    output.indexes = input.indexes.filter { chosen.contains(Name(schema: $0.schema, name: $0.table)) }
+    if output.tables.count < input.tables.count { output.views = [] }
     return output
   }
 
@@ -275,6 +294,8 @@ actor SQLDumpWriter {
   private let material: ClientCertificateStoreFactory.ConnectionMaterial?
   private let sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
   private let manager: DatabaseConnectionManager
+  /// `manager` is the tab's (DuckDB): never reconnected or disconnected here
+  private let usesTabSession: Bool
   private let temporaryDirectory: URL
   private var output: FileHandle?
 
@@ -308,25 +329,44 @@ actor SQLDumpWriter {
       temporaryDirectory: temporaryDirectory)
   }
 
+  /// DuckDB: dumps on `tabManager`'s connected session. `config`: the tab's in-memory config.
+  init(
+    tabManager: DatabaseConnectionManager, config: ConnectionConfig,
+    temporaryDirectory: URL = FileManager.default.temporaryDirectory
+  ) {
+    self.init(
+      config: config, material: nil, sshCredential: nil, manager: tabManager,
+      usesTabSession: true, temporaryDirectory: temporaryDirectory)
+  }
+
   private init(
     config: ConnectionConfig, material: ClientCertificateStoreFactory.ConnectionMaterial?,
     sshCredential: SSHCredentialStoreFactory.ConnectionCredential?,
-    manager: DatabaseConnectionManager, temporaryDirectory: URL
+    manager: DatabaseConnectionManager, usesTabSession: Bool = false, temporaryDirectory: URL
   ) {
     self.config = config
     self.material = material
     self.sshCredential = sshCredential
     self.manager = manager
+    self.usesTabSession = usesTabSession
     self.temporaryDirectory = temporaryDirectory
   }
 
   /// True when `url` resolves (standardized, symlinks resolved, case-insensitive) to the
-  /// connected SQLite file or its `-wal`, `-journal` or `-shm` file
+  /// connected SQLite file or its `-wal`, `-journal` or `-shm` file, or to the connected DuckDB
+  /// file or its `.wal` file
   nonisolated static func isConnectedDatabaseFile(_ url: URL, config: ConnectionConfig) -> Bool {
-    guard config.databaseType == .sqlite, !config.database.isEmpty else { return false }
+    let sidecars: [String]
+    switch config.databaseType {
+    case .sqlite: sidecars = SQLiteFileAccess.sidecarSuffixes
+    case .duckdb where config.database != DuckDBSession.inMemoryPath:
+      sidecars = SQLiteFileAccess.duckDBSidecarSuffixes
+    case .duckdb, .postgresql, .mysql, .mongodb: return false
+    }
+    guard !config.database.isEmpty else { return false }
     let database = resolvedPath(URL(fileURLWithPath: config.database)).lowercased()
     let target = resolvedPath(url).lowercased()
-    return ([""] + SQLiteFileAccess.sidecarSuffixes).contains { target == database + $0 }
+    return ([""] + sidecars).contains { target == database + $0 }
   }
 
   /// `realpath` of the file, or of its folder plus the name when the file does not exist
@@ -395,7 +435,13 @@ actor SQLDumpWriter {
     progress: @escaping @Sendable (SQLDumpProgress) -> Void = { _ in }
   ) async throws -> SQLDumpProgress {
     let engine = config.databaseType
-    guard [.postgresql, .mysql, .sqlite].contains(engine) else {
+    switch engine {
+    case .postgresql, .mysql, .sqlite:
+      guard !usesTabSession else { throw SQLDumpError.unsupportedEngine(engine) }
+    case .duckdb:
+      // Never through a second instance (see the file header)
+      guard usesTabSession else { throw SQLDumpError.unsupportedEngine(engine) }
+    case .mongodb:
       throw SQLDumpError.unsupportedEngine(engine)
     }
     if Self.isConnectedDatabaseFile(destination, config: config) {
@@ -408,13 +454,15 @@ actor SQLDumpWriter {
     var dumpConfig = config
     if engine == .sqlite { dumpConfig.readOnlyFile = true }
     do {
-      try await manager.reconnectWithActiveCertificate(
-        config: dumpConfig, material: material, sshCredential: sshCredential)
+      if !usesTabSession {
+        try await manager.reconnectWithActiveCertificate(
+          config: dumpConfig, material: material, sshCredential: sshCredential)
+      }
       let result = try await manager.withDumpSnapshot { reader in
         try await self.dump(reader, engine: engine, options: options, progress: progress)
       }
       try closeOutput()
-      await manager.disconnect()
+      if !usesTabSession { await manager.disconnect() }
       try Task.checkCancellation()
       // The path may have become a link to the database while the dump ran
       if Self.isConnectedDatabaseFile(destination, config: config) {
@@ -424,7 +472,7 @@ actor SQLDumpWriter {
       return result
     } catch {
       try? closeOutput()
-      await manager.disconnect()
+      if !usesTabSession { await manager.disconnect() }
       try? FileManager.default.removeItem(at: temporary)
       if Task.isCancelled { throw CancellationError() }
       throw error
@@ -457,10 +505,16 @@ actor SQLDumpWriter {
       let input = try await SQLDumpCatalog.mysqlInput(reader)
       script = try SQLDumpDDL.mysql(
         chosen.map { SQLDumpSelection.mysql(input, keeping: $0) } ?? input)
-    default:
+    case .sqlite:
       let input = try await SQLDumpCatalog.sqliteInput(reader)
       script = try SQLDumpDDL.sqlite(
         chosen.map { SQLDumpSelection.sqlite(input, keeping: $0) } ?? input)
+    case .duckdb:
+      let input = try await SQLDumpCatalog.duckdbInput(reader)
+      script = try SQLDumpDDL.duckdb(
+        chosen.map { SQLDumpSelection.duckdb(input, keeping: $0) } ?? input)
+    case .mongodb:
+      throw SQLDumpError.unsupportedEngine(engine)
     }
     var assembler = SQLDumpAssembler(engine: engine)
     let dataTables = script.tables.filter(\.hasData)

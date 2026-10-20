@@ -307,7 +307,7 @@ struct MCPReadOnlyIntegrationTests {
     let id = entry.id
     let pool = MCPConnectionPool(entry: { $0 == id ? saved : nil })
     let service = MCPToolService(
-      connections: { [entry] }, allowlist: { [id] },
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
       source: MCPSQLReadSource(pool: pool), recorder: InMemoryQueryHistoryRecorder(),
       historyEnabled: { false })
     let runCapped: (String, Int) async -> MCPToolResult = { sql, maxRows in

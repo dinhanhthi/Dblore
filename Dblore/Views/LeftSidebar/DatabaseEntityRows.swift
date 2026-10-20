@@ -26,7 +26,8 @@ struct TableRowView: View {
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
-  /// Menu items of a MongoDB collection (SQL tables have none)
+  /// Menu items of a MongoDB collection, or an SQL table's Rename and Drop Table (after the
+  /// structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
 
@@ -110,12 +111,19 @@ struct TableRowView: View {
         }
       }
       .contextMenu {
-        RowActionButtons(actions: menuActions, onAction: onMenuAction)
+        let language = databaseType.capabilities.queryLanguage
+        if language == .mongosh {
+          RowActionButtons(actions: menuActions, language: language, onAction: onMenuAction)
+        }
         if let onImport {
           Button("Import Data...", action: onImport)
         }
         if let structureMenuTitle {
           Button(structureMenuTitle, action: onEditStructure)
+        }
+        if language == .sql, !menuActions.isEmpty {
+          Divider()
+          RowActionButtons(actions: menuActions, language: language, onAction: onMenuAction)
         }
       }
 
@@ -256,7 +264,9 @@ struct ViewRowView: View {
         }
       }
       .contextMenu {
-        RowActionButtons(actions: menuActions, onAction: onMenuAction)
+        RowActionButtons(
+          actions: menuActions, language: databaseType.capabilities.queryLanguage,
+          onAction: onMenuAction)
       }
 
       // Columns (when expanded)
@@ -289,12 +299,13 @@ struct ViewRowView: View {
 /// actions renders nothing.
 private struct RowActionButtons: View {
   let actions: [SidebarSectionModel.RowAction]
+  let language: SidebarSectionModel.QueryLanguage
   let onAction: (SidebarSectionModel.RowAction) -> Void
 
   var body: some View {
     ForEach(actions.indices, id: \.self) { index in
       if index > 0 && actions[index] == .drop { Divider() }
-      Button(actions[index].title) { onAction(actions[index]) }
+      Button(actions[index].title(for: language)) { onAction(actions[index]) }
     }
   }
 }

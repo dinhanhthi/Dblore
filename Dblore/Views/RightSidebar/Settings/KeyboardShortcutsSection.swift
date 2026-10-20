@@ -44,6 +44,7 @@ struct KeyboardShortcutsSection: View {
       ShortcutRow(action: "Toggle Right Sidebar", shortcut: "Cmd+Shift+B")
       ShortcutRow(action: "Toggle AI Assistant", shortcut: "Cmd+L")
       ShortcutRow(action: "Find", shortcut: "Cmd+F")
+      ShortcutRow(action: "Find and Replace", shortcut: "Cmd+Option+F")
       ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
       ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
       ShortcutRow(
@@ -62,6 +63,7 @@ struct KeyboardShortcutsSection: View {
       ShortcutRow(action: "Toggle Comment", shortcut: "Cmd+/")
       ShortcutRow(action: "Toggle Word Wrap", shortcut: "Option+Z")
       ShortcutRow(action: "Find", shortcut: "Cmd+F")
+      ShortcutRow(action: "Find and Replace", shortcut: "Cmd+Option+F")
       ShortcutRow(action: "Find Next", shortcut: "Cmd+G")
       ShortcutRow(action: "Find Previous", shortcut: "Cmd+Shift+G")
       ShortcutRow(action: "Close Search", shortcut: "Esc")

@@ -76,4 +76,38 @@ struct AIEndpointTests {
         == "https://x.com/v1/messages")
     #expect(AIEndpoint.modelsURL(base: base).absoluteString == "https://x.com/v1/models")
   }
+
+  @Test("the Gemini base URL normalizes unchanged and builds the per-model stream URL")
+  func geminiURLs() throws {
+    let base = try AIEndpoint.normalize(AIProviderKind.gemini.defaultBaseURL)
+    #expect(base.absoluteString == "https://generativelanguage.googleapis.com/v1beta")
+    #expect(
+      try AIEndpoint.normalize("https://generativelanguage.googleapis.com/v1beta/models/")
+        == base)
+    #expect(AIEndpoint.chatURL(base: base, wire: .geminiGenerateContent) == base)
+    #expect(
+      try AIEndpoint.geminiStreamURL(base: base, model: "models/gemini-2.5-flash").absoluteString
+        == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+    )
+    #expect(
+      AIEndpoint.modelsURL(base: base).absoluteString
+        == "https://generativelanguage.googleapis.com/v1beta/models")
+  }
+
+  @Test(
+    "Gemini model ids that could add a path, query or fragment are refused",
+    arguments: ["", "models/", "a/b", "..", "../a", ".a", "-a", "a?x", "a#x", "a b", "a\n", "é"])
+  func geminiModelRefused(model: String) throws {
+    let base = try AIEndpoint.normalize(AIProviderKind.gemini.defaultBaseURL)
+    #expect(AIEndpoint.geminiModelID(model) == nil)
+    #expect(throws: AIEndpointError.invalidModel) {
+      try AIEndpoint.geminiStreamURL(base: base, model: model)
+    }
+  }
+
+  @Test("Gemini model ids keep dots, dashes and underscores")
+  func geminiModelAccepted() {
+    #expect(AIEndpoint.geminiModelID("gemini-2.5-flash-lite") == "gemini-2.5-flash-lite")
+    #expect(AIEndpoint.geminiModelID("models/gemini_exp.1") == "gemini_exp.1")
+  }
 }

@@ -9,9 +9,8 @@
 //  internal entity declarations are rejected, external entities are never resolved, and
 //  warnings never carry secret values.
 //
-//  Layout (`<project><component><data-source name uuid>` with `<driver-ref>`, `<jdbc-url>`,
-//  `<user-name>`, `<ssh-properties><enabled>`), cross-checked in public DataGrip project files
-//  and the open-source DataGrip importers of Tabularis and TablePro.
+//  Layout: `<project><component><data-source name uuid>` with `<driver-ref>`, `<jdbc-url>`,
+//  `<user-name>`, `<ssh-properties><enabled>`.
 //
 
 import Foundation

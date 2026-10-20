@@ -207,6 +207,8 @@ struct PendingInlineEdit: Equatable, Sendable {
   let tableName: String
   let cellId: UUID?
   let connectionManager: DatabaseConnectionManager
+  /// Data Rewind reads around the UPDATE, nil when nothing is recorded
+  var rewindPlan: RewindPlan? = nil
 
   static func == (lhs: PendingInlineEdit, rhs: PendingInlineEdit) -> Bool {
     lhs.statement == rhs.statement && lhs.columnNames == rhs.columnNames
@@ -238,6 +240,10 @@ struct SearchMatch: Identifiable, Equatable, Sendable {
 struct SearchState: Equatable, Sendable {
   var query: String = ""
   var isCaseSensitive: Bool = false
+  /// Query text matches only whole words (letters, digits and `_` do not touch the match)
+  var isWholeWord: Bool = false
+  /// The Replace row is shown (Find and Replace…)
+  var isReplaceVisible: Bool = false
   var matches: [SearchMatch] = []
   var currentMatchIndex: Int = 0
   var isSearching: Bool = false

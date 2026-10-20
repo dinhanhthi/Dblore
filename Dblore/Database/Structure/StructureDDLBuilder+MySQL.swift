@@ -1,7 +1,9 @@
 // StructureDDLBuilder+MySQL.swift
 // MySQL / MariaDB: every change in ONE `ALTER TABLE db.table` (atomic DDL on InnoDB 8), clauses in
 // this order: DROP constraint / DROP INDEX, DROP COLUMN, ADD COLUMN, one clause per edited column,
-// ADD constraint, ADD INDEX; each group in the order given.
+// ADD constraint, ADD INDEX, then the table COMMENT; each group in the order given. A table rename
+// is a `RENAME TABLE db.old TO db.new` after it: the statements run one by one, so the ALTER must
+// still name the loaded table.
 //
 // All edits to one column merge into one clause. MODIFY (or CHANGE when renamed) restates the
 // full loaded definition and changes only the edited parts: COLUMN_TYPE, CHARACTER SET and
@@ -42,6 +44,8 @@ nonisolated extension StructureDDLBuilder {
     var editOrder: [String] = []
     var addConstraints: [String] = []
     var addIndexes: [String] = []
+    var tableComment: String?
+    var tableRename: String?
     func edit(_ column: String, _ apply: (inout ColumnEdit) -> Void) {
       if edits[column] == nil { editOrder.append(column) }
       apply(&edits[column, default: ColumnEdit()])
@@ -49,10 +53,7 @@ nonisolated extension StructureDDLBuilder {
     for change in changes {
       switch change {
       case .addColumn(let column):
-        addColumns.append(
-          "ADD COLUMN \(try q(column.name)) \(column.type) "
-            + (column.isNullable ? "NULL" : "NOT NULL")
-            + (column.defaultExpression.map { " DEFAULT \($0)" } ?? ""))
+        addColumns.append("ADD COLUMN " + (try columnDefinition(column, dialect: dialect)))
       case .alterColumnType(let column, let type):
         edit(column) { $0.type = type }
       case .setDefault(let column, let expression):
@@ -87,6 +88,15 @@ nonisolated extension StructureDDLBuilder {
             + (index.method.map { " USING \($0)" } ?? ""))
       case .dropIndex(let name):
         drops.append("DROP INDEX \(try q(name))")
+      case .renameTable(let newName):
+        var renamedTable = structure
+        renamedTable.name = newName
+        tableRename =
+          "RENAME TABLE \(try tableName(structure, dialect: dialect)) "
+          + "TO \(try tableName(renamedTable, dialect: dialect))"
+      case .setTableComment(let text):
+        // An empty comment removes it
+        tableComment = "COMMENT = \(dialect.literal(.string(text ?? "")))"
       }
     }
     var columnClauses: [String] = []
@@ -105,10 +115,15 @@ nonisolated extension StructureDDLBuilder {
     }
     let clauses =
       drops + dropColumns + addColumns + columnClauses + addConstraints + addIndexes
-    return [
-      "ALTER TABLE \(try tableName(structure, dialect: dialect)) "
-        + clauses.joined(separator: ", ")
-    ]
+      + [tableComment].compactMap { $0 }
+    let alter =
+      clauses.isEmpty
+      ? []
+      : [
+        "ALTER TABLE \(try tableName(structure, dialect: dialect)) "
+          + clauses.joined(separator: ", ")
+      ]
+    return alter + [tableRename].compactMap { $0 }
   }
 
   /// True when `expression` has a word or quoted identifier equal (ignoring ASCII case, as

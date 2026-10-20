@@ -91,6 +91,87 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.rowCapOverride == nil)
     #expect(decoded.fileBookmark == nil)
     #expect(decoded.readOnlyFile == false)
+    #expect(decoded.aiAccess == .useDefault)
+    #expect(decoded.aiRules == "")
+    #expect(decoded.colorTag == nil)
+    #expect(decoded.groupName == nil)
+  }
+
+  @Test("Color tag and group round-trip; nil omits the keys and an unknown color decodes as nil")
+  func colorAndGroupCoding() throws {
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["colorTag"] == nil)
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["groupName"] == nil)
+
+    let config = ConnectionConfig(
+      host: "localhost", database: "app", colorTag: .pink, groupName: "Prod")
+    let object = try encodedObject(config)
+    #expect(object["colorTag"] as? String == "Pink")
+    #expect(object["groupName"] as? String == "Prod")
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+    #expect(decoded.colorTag == .pink)
+    #expect(decoded.groupName == "Prod")
+    #expect(decoded == config)
+
+    var future = object
+    future["colorTag"] = "Teal"
+    let unknown = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: future))
+    #expect(unknown.colorTag == nil)
+    #expect(unknown.groupName == "Prod")
+  }
+
+  @Test("Group names are trimmed, cut to 64 characters, and blank becomes nil, on set and decode")
+  func groupNameNormalization() throws {
+    var config = ConnectionConfig(host: "localhost", groupName: "  Prod \n")
+    #expect(config.groupName == "Prod")
+    config.groupName = "   "
+    #expect(config.groupName == nil)
+    // The 64th character is a space: the cut never leaves trailing whitespace
+    config.groupName = String(repeating: "a", count: 63) + " " + String(repeating: "b", count: 10)
+    #expect(config.groupName == String(repeating: "a", count: 63))
+
+    var object = try encodedObject(config)
+    object["groupName"] = "  " + String(repeating: "c", count: 70)
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.groupName == String(repeating: "c", count: 64))
+    object["groupName"] = " \t "
+    let blank = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(blank.groupName == nil)
+  }
+
+  @Test("AI access and rules round-trip; an unknown policy decodes as use default")
+  func aiAccessCoding() throws {
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    config.aiAccess = .askOncePerSession
+    config.aiRules = "Never send the users table."
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+    #expect(decoded.aiAccess == .askOncePerSession)
+    #expect(decoded.aiRules == "Never send the users table.")
+    #expect(decoded == config)
+
+    var object = try encodedObject(config)
+    object["aiAccess"] = "fromTheFuture"
+    let unknown = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(unknown.aiAccess == .useDefault)
+  }
+
+  @Test("AI rules are clamped to 2,000 characters on decode and on set")
+  func aiRulesClamp() throws {
+    let long = String(repeating: "a", count: 2_500)
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    config.aiRules = long
+    #expect(config.aiRules.count == 2_000)
+
+    var object = try encodedObject(config)
+    object["aiRules"] = long
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.aiRules.count == 2_000)
   }
 
   @Test("SQLite config round-trips the file path, bookmark, and read-only flag")

@@ -2,16 +2,20 @@
 // The SQL dump's snapshot session. `withDumpSnapshot` lifts the session brakes `connect` applied
 // (a per-table read of a large table must not time out), opens one read-only snapshot
 // transaction for the whole dump, runs the body with an uncapped reader that accepts only reads,
-// and always sends ROLLBACK. Only a dump manager (`SQLDumpWriter`'s own) calls it: the brake
-// statements are app-owned and sent straight to the session, never through
-// `applySessionSettings`, whose engines clamp 0 back to the default (`SessionBrakeLimits.clamp`).
+// and always sends ROLLBACK. For PostgreSQL, MySQL and SQLite only a dump manager
+// (`SQLDumpWriter`'s own) calls it: the brake statements are app-owned and sent straight to the
+// session, never through `applySessionSettings`, whose engines clamp 0 back to the default
+// (`SessionBrakeLimits.clamp`). DuckDB is dumped on the tab's own manager: refused while a
+// transaction is open there (its BEGIN would fail and its ROLLBACK end the user's work), run as
+// one DuckDB catalog read (so the app's own catalog reads wait instead of ending the dump's open
+// result), with the session's statement timeout raised for the dump and set back afterwards.
 
 import Foundation
 
 nonisolated enum SQLDumpError: Error, Equatable, LocalizedError {
   /// The dump reader was given a statement the classifier does not mark as a read
   case notRead
-  /// The engine has no SQL dump (DuckDB, MongoDB)
+  /// The engine has no SQL dump (MongoDB), or DuckDB without the tab's own session
   case unsupportedEngine(DatabaseType)
   /// MySQL or MariaDB could not be told apart, so the statement timeout variable is unknown
   case unknownMySQLServer
@@ -21,6 +25,8 @@ nonisolated enum SQLDumpError: Error, Equatable, LocalizedError {
   case noDatabaseSelected
   /// A data read returned a value that is not text in the expected form
   case unexpectedValue(table: String, column: String)
+  /// DuckDB: the tab's session has a transaction open (the dump runs on that session)
+  case transactionOpen
 
   var errorDescription: String? {
     switch self {
@@ -36,6 +42,8 @@ nonisolated enum SQLDumpError: Error, Equatable, LocalizedError {
       "Choose a database in the connection settings to export a SQL dump."
     case .unexpectedValue(let table, let column):
       "Column \"\(column)\" of table \"\(table)\" returned a value the dump cannot write."
+    case .transactionOpen:
+      "Commit or roll back the open transaction first, then export the dump."
     }
   }
 }
@@ -98,7 +106,8 @@ extension DatabaseConnectionManager {
   /// Statements that turn the session brakes off for the dump. PostgreSQL's are `SET LOCAL`
   /// (sent after BEGIN, reverted by the ROLLBACK); MySQL's are `SET SESSION` (sent before
   /// START TRANSACTION; the dump session is closed afterwards). SQLite has none: the dump calls
-  /// `applySessionSettings` with 0 instead.
+  /// `applySessionSettings` with 0 instead. DuckDB has none either: its only brake is the
+  /// session's own statement timeout (`withDumpSnapshot`).
   /// - Throws: `SQLDumpError.unknownMySQLServer` for MySQL without `serverInfo`.
   nonisolated static func dumpBrakeLiftStatements(
     databaseType: DatabaseType, serverInfo: MySQLServerInfo?
@@ -116,9 +125,9 @@ extension DatabaseConnectionManager {
         "SET SESSION innodb_lock_wait_timeout = \(dumpLockWaitSeconds)",
         "SET SESSION lock_wait_timeout = \(dumpLockWaitSeconds)",
       ]
-    case .sqlite:
+    case .sqlite, .duckdb:
       return []
-    case .duckdb, .mongodb:
+    case .mongodb:
       throw SQLDumpError.unsupportedEngine(databaseType)
     }
   }
@@ -141,8 +150,12 @@ extension DatabaseConnectionManager {
       return lift + [
         "SET time_zone = '+00:00'", "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY",
       ]
-    default:
+    case .sqlite:
       return lift + ["BEGIN"]
+    case .duckdb:
+      return lift + ["BEGIN TRANSACTION READ ONLY"]
+    case .mongodb:
+      throw SQLDumpError.unsupportedEngine(databaseType)
     }
   }
 
@@ -153,6 +166,7 @@ extension DatabaseConnectionManager {
     _ body: @escaping @Sendable (DumpSnapshotReader) async throws -> T
   ) async throws -> T {
     guard let databaseType else { throw DatabaseError.notConnected }
+    if databaseType == .duckdb { return try await withDuckDBDumpSnapshot(body) }
     var serverInfo = mysqlServerInfo
     return try await withSession { session in
       if databaseType == .mysql, serverInfo == nil {
@@ -160,6 +174,41 @@ extension DatabaseConnectionManager {
       }
       return try await Self.runDumpSnapshot(
         on: session, databaseType: databaseType, serverInfo: serverInfo, body)
+    }
+  }
+
+  /// DuckDB, on the tab's session: refused while a transaction is open there (app or user);
+  /// one catalog read for the whole dump; the statement timeout (DuckDB's watchdog deadline for
+  /// a whole read, including the time the dump takes to write its rows) raised to the largest
+  /// allowed for the dump, then set back to the connection's own on every path. A statement
+  /// another tab sends meanwhile ends the dump's read (it fails) or runs inside its read-only
+  /// transaction (a write fails).
+  private func withDuckDBDumpSnapshot<T: Sendable>(
+    _ body: @escaping @Sendable (DumpSnapshotReader) async throws -> T
+  ) async throws -> T {
+    guard txState.isIdle, txOwner == nil, !userTxOpen else { throw SQLDumpError.transactionOpen }
+    let restored = SessionBrakeLimits.clampStatementTimeout(
+      config?.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout)
+    return try await withCatalogReadSession { session in
+      // The wait for another catalog read can suspend: a transaction opened meanwhile would end
+      // at the dump's ROLLBACK
+      guard txState.isIdle, txOwner == nil, !userTxOpen else {
+        throw SQLDumpError.transactionOpen
+      }
+      try await session.applySessionSettings(
+        statementTimeoutSeconds: SessionBrakeLimits.statementTimeoutRange.upperBound,
+        lockTimeoutSeconds: 0, idleTimeoutSeconds: 0)
+      let result: Result<T, Error>
+      do {
+        result = .success(
+          try await Self.runDumpSnapshot(
+            on: session, databaseType: .duckdb, serverInfo: nil, body))
+      } catch {
+        result = .failure(error)
+      }
+      try? await session.applySessionSettings(
+        statementTimeoutSeconds: restored, lockTimeoutSeconds: 0, idleTimeoutSeconds: 0)
+      return try result.get()
     }
   }
 

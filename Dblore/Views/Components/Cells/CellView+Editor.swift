@@ -25,6 +25,8 @@ struct SQLEditorView: View {
   var dialect: SQLDialect = .postgresql
   /// False for read-only text (object source tabs): still selectable and copyable
   var isEditable = true
+  /// AI ghost text of a SQL query tab or SQL notebook cell; nil (the default) shows none
+  var inlineCompletion: AIInlineCompletionController?
 
   private var editorFontSize: CGFloat { AppSettings.shared.editorFontSize }
 
@@ -68,7 +70,8 @@ struct SQLEditorView: View {
         wordWrapEnabled: wordWrapEnabled,
         dialect: dialect,
         fontSize: editorFontSize,
-        isEditable: isEditable
+        isEditable: isEditable,
+        inlineCompletion: inlineCompletion
       )
     }
     .padding(isEditorMode ? .leading : .all, Spacing.sm)

@@ -1,11 +1,11 @@
-// DuckDBPluginManager.swift
-// Downloads, verifies, installs, removes and loads the optional DuckDB plugin (libduckdb.dylib)
-// pinned by DuckDBPluginCatalog.json.
+// PluginManager.swift
+// Downloads, verifies, installs, removes and loads one optional plugin pinned by an entry of
+// PluginCatalog.json. `PluginRegistry` holds one manager per entry, keyed by id.
 
 import Foundation
 import Observation
 
-nonisolated enum DuckDBPluginState: Equatable, Sendable {
+nonisolated enum PluginState: Equatable, Sendable {
   /// Initial state until the first `refresh()` has hashed the installed file.
   case checking
   case notInstalled
@@ -15,7 +15,7 @@ nonisolated enum DuckDBPluginState: Equatable, Sendable {
   case failed(String)
 }
 
-nonisolated enum DuckDBPluginError: LocalizedError, Equatable {
+nonisolated enum PluginManagerError: LocalizedError, Equatable {
   case catalogUnavailable
   case notInstalled
   case httpStatus(Int)
@@ -26,8 +26,8 @@ nonisolated enum DuckDBPluginError: LocalizedError, Equatable {
 
   var errorDescription: String? {
     switch self {
-    case .catalogUnavailable: "The DuckDB plugin catalog is missing or invalid."
-    case .notInstalled: "The DuckDB plugin is not installed."
+    case .catalogUnavailable: "The plugin catalog entry is missing or invalid."
+    case .notInstalled: "The plugin is not installed."
     case .httpStatus(let code): "The download failed (HTTP \(code))."
     case .insecureRedirect: "The download was redirected to a non-HTTPS address."
     case .tooLarge: "The download is larger than expected and was stopped."
@@ -37,19 +37,57 @@ nonisolated enum DuckDBPluginError: LocalizedError, Equatable {
   }
 }
 
+/// The plugins of the bundled catalog, one `PluginManager` per entry. Immutable after init; the
+/// managers are main-actor observable models read by views.
+@MainActor
+final class PluginRegistry {
+  /// From the bundled catalog, each manager's launch check started. An invalid catalog is logged
+  /// and leaves the registry empty, so no plugin is offered, downloaded or loaded.
+  static let shared: PluginRegistry = {
+    let registry = PluginRegistry(catalog: { try PluginCatalog.bundled() })
+    for manager in registry.managers { manager.startLaunchCheck() }
+    return registry
+  }()
+
+  /// In catalog order.
+  let managers: [PluginManager]
+
+  init(
+    entries: [PluginCatalogEntry],
+    root: URL = PluginManager.defaultRoot,
+    session: URLSession = PluginManager.downloadSession()
+  ) {
+    managers = entries.map { PluginManager(entry: $0, root: root, session: session) }
+  }
+
+  /// One manager per entry of the catalog `load` returns. A load that throws is logged and leaves
+  /// the registry empty.
+  convenience init(
+    catalog load: () throws -> PluginCatalog,
+    root: URL = PluginManager.defaultRoot,
+    session: URLSession = PluginManager.downloadSession()
+  ) {
+    let entries: [PluginCatalogEntry]
+    do {
+      entries = try load().plugins
+    } catch {
+      entries = []
+      let message = "Plugin catalog unavailable: \(error.localizedDescription)"
+      Task { await AppLogger.shared.error(message, category: "Plugins") }
+    }
+    self.init(entries: entries, root: root, session: session)
+  }
+
+  /// The manager for the catalog entry `id`; nil when the catalog has no such plugin.
+  func manager(id: String) -> PluginManager? {
+    managers.first { $0.entry.id == id }
+  }
+}
+
 @MainActor
 @Observable
-final class DuckDBPluginManager {
-  typealias State = DuckDBPluginState
-
-  /// Team ID the plugin must be signed with (same as the app).
-  nonisolated static let teamIdentifier = "86H6CNLN4C"
-
-  static let shared: DuckDBPluginManager = {
-    let manager = DuckDBPluginManager(catalog: try? DuckDBPluginCatalog.bundled())
-    manager.startLaunchCheck()
-    return manager
-  }()
+final class PluginManager {
+  typealias State = PluginState
 
   nonisolated static var defaultRoot: URL {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -61,9 +99,11 @@ final class DuckDBPluginManager {
   /// True after Remove while the library is loaded: it stays mapped until the app quits.
   private(set) var requiresRestartToUnload = false
 
-  /// nil when the bundled catalog is missing or invalid; install and load then fail.
-  nonisolated let catalog: DuckDBPluginCatalog?
+  nonisolated let entry: PluginCatalogEntry
   nonisolated let root: URL
+  /// `root/<id>`, `root/<id>/<version>/<libraryFileName>` and `root/.staging/<id>`; nil when the
+  /// entry would not pass the catalog rules, and then install, remove and load do nothing or fail.
+  nonisolated private let paths: (directory: URL, library: URL, staging: URL)?
   private let session: URLSession
   private let libraryCache = LibraryCache()
   /// Bumped by install and remove so an older refresh never overwrites their result.
@@ -76,13 +116,14 @@ final class DuckDBPluginManager {
   @ObservationIgnored private var launchCheck: Task<Void, Never>?
 
   init(
-    catalog: DuckDBPluginCatalog?,
-    root: URL = DuckDBPluginManager.defaultRoot,
-    session: URLSession = DuckDBPluginManager.downloadSession()
+    entry: PluginCatalogEntry,
+    root: URL = PluginManager.defaultRoot,
+    session: URLSession = PluginManager.downloadSession()
   ) {
-    self.catalog = catalog
+    self.entry = entry
     self.root = root
     self.session = session
+    paths = Self.paths(for: entry, root: root)
     hasInstalledFile = installedURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
   }
 
@@ -96,20 +137,43 @@ final class DuckDBPluginManager {
 
   // MARK: - Paths
 
-  nonisolated var stagingDirectory: URL {
-    root.appendingPathComponent(".staging", isDirectory: true)
-  }
+  /// `root/.staging/<id>`: one per plugin, since an install empties it.
+  nonisolated var stagingDirectory: URL? { paths?.staging }
 
-  nonisolated var pluginDirectory: URL {
-    root.appendingPathComponent("duckdb", isDirectory: true)
-  }
+  /// `root/<id>`, e.g. Application Support/Dblore/Plugins/duckdb.
+  nonisolated var pluginDirectory: URL? { paths?.directory }
 
-  /// Application Support/Dblore/Plugins/duckdb/<version>/libduckdb.dylib
-  nonisolated var installedURL: URL? {
-    catalog.map {
-      pluginDirectory.appendingPathComponent($0.version, isDirectory: true)
-        .appendingPathComponent("libduckdb.dylib")
-    }
+  /// `root/<id>/<version>/<libraryFileName>`, e.g.
+  /// Application Support/Dblore/Plugins/duckdb/1.5.6/libduckdb.dylib (the path every earlier
+  /// build installed DuckDB at, so an existing install is found as is).
+  nonisolated var installedURL: URL? { paths?.library }
+
+  /// The paths only when id, version and file name pass the catalog rules and each stays one
+  /// component below its parent (no "." or ".." segment): the file name is the last component
+  /// and the version directory is its direct parent inside `root/<id>`. Staging is
+  /// `root/.staging/<id>`, so an install never empties anything else.
+  private nonisolated static func paths(
+    for entry: PluginCatalogEntry, root: URL
+  ) -> (directory: URL, library: URL, staging: URL)? {
+    guard PluginCatalogEntry.isValidID(entry.id),
+      PluginCatalogEntry.isValidVersion(entry.version),
+      PluginCatalogEntry.isValidLibraryFileName(entry.libraryFileName)
+    else { return nil }
+    let directory = root.appendingPathComponent(entry.id, isDirectory: true)
+    let versionDirectory = directory.appendingPathComponent(entry.version, isDirectory: true)
+    let library = versionDirectory.appendingPathComponent(
+      entry.libraryFileName, isDirectory: false)
+    let staging = root.appendingPathComponent(".staging", isDirectory: true)
+      .appendingPathComponent(entry.id, isDirectory: true)
+    guard library.lastPathComponent == entry.libraryFileName,
+      library.standardized.path == library.path,
+      library.deletingLastPathComponent().path == versionDirectory.path,
+      library.path == versionDirectory.path + "/" + entry.libraryFileName,
+      versionDirectory.path == directory.path + "/" + entry.version,
+      directory.path == root.path + "/" + entry.id,
+      staging.path == root.path + "/.staging/" + entry.id
+    else { return nil }
+    return (directory, library, staging)
   }
 
   // MARK: - Queries
@@ -120,8 +184,8 @@ final class DuckDBPluginManager {
     return false
   }
 
-  /// Installed, or still checking a file that exists: keep DuckDB offered in the picker and
-  /// don't report a saved DuckDB connection as missing its plugin.
+  /// Installed, or still checking a file that exists: keep the plugin's engine (DuckDB) offered
+  /// in the picker and don't report a saved connection as missing its plugin.
   var isInstalledOrPending: Bool {
     switch state {
     case .installed: true
@@ -159,15 +223,15 @@ final class DuckDBPluginManager {
   /// Hashes the installed file off the main actor and publishes installed/notInstalled.
   func refresh() async {
     guard !isTransferring else { return }
-    guard let catalog, let url = installedURL else {
+    guard let url = installedURL else {
       if state == .checking { state = .notInstalled }
       return
     }
     let token = generation
-    let size = await Self.verifiedSize(of: url, catalog: catalog)
+    let size = await Self.verifiedSize(of: url, entry: entry)
     guard token == generation, !isTransferring else { return }
     if let size {
-      state = .installed(version: catalog.version, size: size)
+      state = .installed(version: entry.version, size: size)
     } else if case .failed = state {
       // Keep the last error visible.
     } else {
@@ -181,32 +245,34 @@ final class DuckDBPluginManager {
   /// Ignored while busy. Nothing is installed unless every check passes.
   func install() async {
     guard !isBusy else { return }
-    guard let catalog, let target = installedURL else {
-      state = .failed(DuckDBPluginError.catalogUnavailable.localizedDescription)
+    guard let target = installedURL, let directory = pluginDirectory,
+      let staging = stagingDirectory
+    else {
+      state = .failed(PluginManagerError.catalogUnavailable.localizedDescription)
       return
     }
+    let entry = entry
     generation += 1
     cancelRequested = false
     state = .downloading(0)
-    let staging = stagingDirectory
-    let staged = staging.appendingPathComponent("libduckdb-\(UUID().uuidString).dylib")
+    let staged = staging.appendingPathComponent("\(UUID().uuidString)-\(entry.libraryFileName)")
     do {
       let file = try await Self.prepareStaging(staging, file: staged)
       try checkCancelled()
-      try await download(catalog: catalog, into: file)
+      try await download(entry: entry, into: file)
       try checkCancelled()
       state = .verifying
-      let sha = try await PluginIntegrity.sha256(of: staged, maxSize: catalog.maxSize)
-      guard sha == catalog.sha256 else { throw DuckDBPluginError.integrityMismatch }
+      let sha = try await PluginIntegrity.sha256(of: staged, maxSize: entry.maxSize)
+      guard sha == entry.sha256 else { throw PluginManagerError.integrityMismatch }
       try checkCancelled()
       let size = try await Self.commit(staged, to: target)
       await Self.removeDirectory(staging)
-      // A loaded library always comes from `catalog.version` (the catalog is fixed per
-      // manager), which is kept anyway; skip pruning while one is mapped to stay safe.
+      // A loaded library always comes from `entry.version` (the entry is fixed per manager),
+      // which is kept anyway; skip pruning while one is mapped to stay safe.
       if !libraryCache.isLoaded {
-        await Self.pruneOtherVersions(in: pluginDirectory, keeping: catalog.version)
+        await Self.pruneOtherVersions(in: directory, keeping: entry.version)
       }
-      state = .installed(version: catalog.version, size: size)
+      state = .installed(version: entry.version, size: size)
     } catch {
       await Self.removeDirectory(staging)
       if cancelRequested || error is CancellationError {
@@ -226,12 +292,13 @@ final class DuckDBPluginManager {
     activeTask?.cancel()
   }
 
-  /// Deletes the installed plugin. A loaded library stays mapped until the app quits.
+  /// Deletes the installed plugin (`root/<id>` only). A loaded library stays mapped until the
+  /// app quits.
   func remove() async {
-    guard !isBusy else { return }
+    guard !isBusy, let directory = pluginDirectory else { return }
     generation += 1
     do {
-      try await Self.removeItem(pluginDirectory)
+      try await Self.removeItem(directory)
       state = .notInstalled
       // Never blocks: `isLoaded` does not take the lock `load` holds while hashing.
       if libraryCache.isLoaded { requiresRestartToUnload = true }
@@ -240,30 +307,32 @@ final class DuckDBPluginManager {
     }
   }
 
-  /// Loads the installed plugin once per manager and caches it. Each dlopen is preceded by a
-  /// SHA-256 check against the catalog and a code-signature Team ID check. Blocks while it hashes
-  /// (~117 MB), so call it off the main actor.
-  nonisolated func loadLibrary() throws -> DuckDBLibrary {
+  /// Loads the installed plugin once per manager and caches it. `PluginLoader.open` checks the
+  /// SHA-256 against the entry and the code-signature Team ID before dlopen; `bind` then resolves
+  /// the plugin's symbols from the handle. Blocks while it hashes (~117 MB for DuckDB), so call
+  /// it off the main actor.
+  nonisolated func loadLibrary<Library: AnyObject & Sendable>(
+    bind: (_ handle: UnsafeMutableRawPointer, _ entry: PluginCatalogEntry) throws -> Library
+  ) throws -> Library {
     try libraryCache.load {
-      guard let catalog, let url = installedURL else {
-        throw DuckDBPluginError.catalogUnavailable
-      }
+      guard let url = installedURL else { throw PluginManagerError.catalogUnavailable }
       guard FileManager.default.fileExists(atPath: url.path) else {
-        throw DuckDBPluginError.notInstalled
+        throw PluginManagerError.notInstalled
       }
-      return try DuckDBLibrary.load(
-        at: url, expectedSHA256: catalog.sha256, expectedVersion: catalog.version,
-        expectedTeamID: Self.teamIdentifier, maxSize: catalog.maxSize)
+      let handle = try PluginLoader.open(
+        at: url, expectedSHA256: entry.sha256, expectedTeamID: PluginLoader.teamIdentifier,
+        maxSize: entry.maxSize)
+      return try bind(handle, entry)
     }
   }
 
   // MARK: - Download
 
-  private func download(catalog: DuckDBPluginCatalog, into file: FileHandle) async throws {
-    let delegate = DownloadDelegate(file: file, maxSize: catalog.maxSize) { [weak self] fraction in
+  private func download(entry: PluginCatalogEntry, into file: FileHandle) async throws {
+    let delegate = DownloadDelegate(file: file, maxSize: entry.maxSize) { [weak self] fraction in
       Task { @MainActor in self?.reportProgress(fraction) }
     }
-    let task = session.dataTask(with: URLRequest(url: catalog.url))
+    let task = session.dataTask(with: URLRequest(url: entry.url))
     task.delegate = delegate
     activeTask = task
     try await withTaskCancellationHandler {
@@ -287,30 +356,50 @@ final class DuckDBPluginManager {
 
   private static func message(for error: Error) -> String {
     switch error {
-    case let error as DuckDBPluginError: error.localizedDescription
-    case PluginIntegrityError.tooLarge: DuckDBPluginError.tooLarge.localizedDescription
+    case let error as PluginManagerError: error.localizedDescription
+    case PluginIntegrityError.tooLarge: PluginManagerError.tooLarge.localizedDescription
     case PluginIntegrityError.notRegularFile:
-      DuckDBPluginError.integrityMismatch.localizedDescription
-    case PluginIntegrityError.io(let message): DuckDBPluginError.io(message).localizedDescription
+      PluginManagerError.integrityMismatch.localizedDescription
+    case PluginIntegrityError.io(let message): PluginManagerError.io(message).localizedDescription
     default: error.localizedDescription
     }
   }
 
   // MARK: - File work (off the main actor)
 
-  /// Empties the staging directory and opens a new staged file for writing.
+  /// Empties the staging directory, sweeps legacy staged files, and opens a new staged file for
+  /// writing.
   @concurrent private static func prepareStaging(
     _ staging: URL, file: URL
   ) async throws
     -> FileHandle
   {
     let manager = FileManager.default
+    removeLegacyStagedFiles(in: staging.deletingLastPathComponent())
     try? manager.removeItem(at: staging)
     try manager.createDirectory(at: staging, withIntermediateDirectories: true)
     guard manager.createFile(atPath: file.path, contents: nil) else {
-      throw DuckDBPluginError.io("cannot create \(file.lastPathComponent)")
+      throw PluginManagerError.io("cannot create \(file.lastPathComponent)")
     }
     return try FileHandle(forWritingTo: file)
+  }
+
+  /// Best effort: deletes the regular files directly under `root/.staging`, left there by an older
+  /// build's interrupted download (`libduckdb-<UUID>.dylib`, up to 128 MB). Symlinks and
+  /// directories (other plugins' `.staging/<id>`) are left alone; no link is followed.
+  private nonisolated static func removeLegacyStagedFiles(in stagingRoot: URL) {
+    let manager = FileManager.default
+    let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey]
+    guard
+      let items = try? manager.contentsOfDirectory(
+        at: stagingRoot, includingPropertiesForKeys: keys)
+    else { return }
+    for item in items {
+      guard let values = try? item.resourceValues(forKeys: Set(keys)),
+        values.isRegularFile == true, values.isSymbolicLink == false
+      else { continue }
+      try? manager.removeItem(at: item)
+    }
   }
 
   /// Atomically renames the verified file over `target` and excludes it from backups. Once the
@@ -320,7 +409,7 @@ final class DuckDBPluginManager {
       at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
     let stagedSize = fileSize(staged)
     guard rename(staged.path, target.path) == 0 else {
-      throw DuckDBPluginError.io(String(cString: strerror(errno)))
+      throw PluginManagerError.io(String(cString: strerror(errno)))
     }
     var values = URLResourceValues()
     values.isExcludedFromBackup = true
@@ -328,12 +417,15 @@ final class DuckDBPluginManager {
     do {
       try installed.setResourceValues(values)
     } catch {
-      let message = "DuckDB plugin: cannot exclude from backup: \(error.localizedDescription)"
+      let message =
+        "Plugin \(target.lastPathComponent): cannot exclude from backup: "
+        + error.localizedDescription
       await AppLogger.shared.warning(message, category: "Plugins")
     }
     if let size = fileSize(target) { return size }
     await AppLogger.shared.warning(
-      "DuckDB plugin: cannot read installed size; using staged size", category: "Plugins")
+      "Plugin \(target.lastPathComponent): cannot read installed size; using staged size",
+      category: "Plugins")
     return stagedSize ?? 0
   }
 
@@ -342,13 +434,13 @@ final class DuckDBPluginManager {
     return (attributes?[.size] as? NSNumber)?.int64Value
   }
 
-  /// Size of the file at `url` when it hashes to the catalog SHA-256; nil otherwise.
+  /// Size of the file at `url` when it hashes to the entry's SHA-256; nil otherwise.
   @concurrent private static func verifiedSize(
-    of url: URL, catalog: DuckDBPluginCatalog
+    of url: URL, entry: PluginCatalogEntry
   ) async -> Int64? {
     guard
-      let sha = try? await PluginIntegrity.sha256(of: url, maxSize: catalog.maxSize),
-      sha == catalog.sha256
+      let sha = try? await PluginIntegrity.sha256(of: url, maxSize: entry.maxSize),
+      sha == entry.sha256
     else { return nil }
     return fileSize(url)
   }
@@ -366,7 +458,7 @@ final class DuckDBPluginManager {
   nonisolated static func removeOtherVersions(in directory: URL, keeping version: String) {
     let manager = FileManager.default
     guard let names = try? manager.contentsOfDirectory(atPath: directory.path) else { return }
-    for name in names where name != version && DuckDBPluginCatalog.isValidVersion(name) {
+    for name in names where name != version && PluginCatalogEntry.isValidVersion(name) {
       let path = directory.appendingPathComponent(name).path
       // attributesOfItem does not follow a symlink, so a link reports .typeSymbolicLink.
       guard let type = try? manager.attributesOfItem(atPath: path)[.type] as? FileAttributeType,
@@ -391,15 +483,22 @@ final class DuckDBPluginManager {
 /// never waits on a load in progress.
 nonisolated final class LibraryCache: @unchecked Sendable {
   private let loadLock = NSLock()
-  private var library: DuckDBLibrary?
+  private var library: (any AnyObject & Sendable)?
   private let flagLock = NSLock()
   private var loaded = false
 
   var isLoaded: Bool { flagLock.withLock { loaded } }
 
-  func load(_ make: () throws -> DuckDBLibrary) throws -> DuckDBLibrary {
+  /// The cached library, or `make()`'s on the first successful call. A library already loaded
+  /// under another type is never loaded again: the call throws instead.
+  func load<Library: AnyObject & Sendable>(_ make: () throws -> Library) throws -> Library {
     try loadLock.withLock {
-      if let library { return library }
+      if let library {
+        guard let typed = library as? Library else {
+          throw PluginLoaderError.loadFailed("plugin already loaded as \(type(of: library))")
+        }
+        return typed
+      }
       let made = try make()
       library = made
       flagLock.withLock { loaded = true }
@@ -445,10 +544,10 @@ private nonisolated final class DownloadDelegate: NSObject, URLSessionDataDelega
   ) {
     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
     if status != 200 {
-      fail(DuckDBPluginError.httpStatus(status), dataTask)
+      fail(PluginManagerError.httpStatus(status), dataTask)
       completionHandler(.cancel)
     } else if response.expectedContentLength > maxSize {
-      fail(DuckDBPluginError.tooLarge, dataTask)
+      fail(PluginManagerError.tooLarge, dataTask)
       completionHandler(.cancel)
     } else {
       lock.withLock { expected = response.expectedContentLength }
@@ -463,13 +562,13 @@ private nonisolated final class DownloadDelegate: NSObject, URLSessionDataDelega
     }
     guard !failed else { return }
     guard total <= maxSize else {
-      fail(DuckDBPluginError.tooLarge, dataTask)
+      fail(PluginManagerError.tooLarge, dataTask)
       return
     }
     do {
       try file.write(contentsOf: data)
     } catch {
-      fail(DuckDBPluginError.io(error.localizedDescription), dataTask)
+      fail(PluginManagerError.io(error.localizedDescription), dataTask)
       return
     }
     guard expected > 0 else { return }
@@ -490,7 +589,7 @@ private nonisolated final class DownloadDelegate: NSObject, URLSessionDataDelega
     if request.url?.scheme == "https" {
       completionHandler(request)
     } else {
-      fail(DuckDBPluginError.insecureRedirect, task)
+      fail(PluginManagerError.insecureRedirect, task)
       completionHandler(nil)
     }
   }

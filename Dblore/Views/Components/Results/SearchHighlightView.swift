@@ -40,12 +40,14 @@ enum SearchHighlighter {
   ///   - text: The text to highlight
   ///   - query: The search query
   ///   - caseSensitive: Whether search is case sensitive
-  ///   - currentMatchRange: Optional range of the current match (highlighted in orange)
+  ///   - wholeWord: Whether only whole-word matches are highlighted
+  ///   - currentMatchRange: Optional range of the current match (highlighted in orange), in `text`
   /// - Returns: Cached or newly created AttributedString with highlights
   static func highlight(
     text: String,
     query: String,
     caseSensitive: Bool,
+    wholeWord: Bool = false,
     currentMatchRange: Range<String.Index>? = nil
   ) -> AttributedString {
     guard !query.isEmpty else {
@@ -53,7 +55,8 @@ enum SearchHighlighter {
     }
 
     // Create cache key from all parameters
-    let cacheKey = "\(text)|\(query)|\(caseSensitive)|\(currentMatchRange?.description ?? "")"
+    let cacheKey =
+      "\(text)|\(query)|\(caseSensitive)|\(wholeWord)|\(currentMatchRange?.description ?? "")"
 
     // Check cache first (O(1) lookup)
     if let cached = cache[cacheKey] {
@@ -67,14 +70,11 @@ enum SearchHighlighter {
 
     // Not in cache, compute the AttributedString
     var attributedString = AttributedString(text)
-    let searchText = caseSensitive ? text : text.lowercased()
-    let searchQuery = caseSensitive ? query : query.lowercased()
 
-    // Find all matches and highlight them
-    var searchStartIndex = searchText.startIndex
-    while let range = searchText.range(
-      of: searchQuery, range: searchStartIndex..<searchText.endIndex)
-    {
+    // Find all matches (the ones the search counts, on `text` itself) and highlight them
+    let ranges = NotebookViewModel.sourceMatchRanges(
+      in: text, query: query, caseSensitive: caseSensitive, wholeWord: wholeWord)
+    for range in ranges {
       // Convert String.Index to AttributedString.Index
       if let attrStart = AttributedString.Index(range.lowerBound, within: attributedString),
         let attrEnd = AttributedString.Index(range.upperBound, within: attributedString)
@@ -91,8 +91,6 @@ enum SearchHighlighter {
         // For accessibility, also make text slightly darker
         attributedString[attrRange].foregroundColor = .black
       }
-
-      searchStartIndex = range.upperBound
     }
 
     // Store in cache with LRU eviction
@@ -142,17 +140,20 @@ struct SearchHighlightText: View {
   let text: String
   let query: String
   let caseSensitive: Bool
+  let wholeWord: Bool
   let currentMatchRange: Range<String.Index>?
 
   init(
     text: String,
     query: String,
     caseSensitive: Bool,
+    wholeWord: Bool = false,
     currentMatchRange: Range<String.Index>? = nil
   ) {
     self.text = text
     self.query = query
     self.caseSensitive = caseSensitive
+    self.wholeWord = wholeWord
     self.currentMatchRange = currentMatchRange
   }
 
@@ -163,6 +164,7 @@ struct SearchHighlightText: View {
       text: text,
       query: query,
       caseSensitive: caseSensitive,
+      wholeWord: wholeWord,
       currentMatchRange: currentMatchRange
     )
   }

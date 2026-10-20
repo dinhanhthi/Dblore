@@ -409,6 +409,106 @@ struct ResultGridCoordinatorTests {
     #expect(cell((coordinator, tableView), row: 0, column: 0)?.stringValue == "3")
   }
 
+  // MARK: - Selection summary
+
+  /// The summary the coordinator reports after `change`, without the debounce delay
+  private func reportedSummary(
+    _ coordinator: ResultGridCoordinator, after change: () -> Void
+  ) async -> ResultSelectionSummary? {
+    coordinator.selectionSummaryDebounce = .zero
+    return await withCheckedContinuation { continuation in
+      coordinator.onSelectionSummaryChange = { summary in
+        coordinator.onSelectionSummaryChange = nil
+        continuation.resume(returning: summary)
+      }
+      change()
+    }
+  }
+
+  @Test("Two selected rows report count, sum and average of the clicked column, sorted rows")
+  func selectionSummaryOfClickedColumn() async {
+    let (coordinator, tableView) = makeGrid(sortColumn: "id")
+    coordinator.clickedColumn = 0
+    let summary = await reportedSummary(coordinator) {
+      tableView.selectRowIndexes(IndexSet([0, 1]), byExtendingSelection: false)
+    }
+    #expect(summary?.columnName == "id")
+    #expect(summary?.count == 2)
+    #expect(summary?.sum == 3)
+    #expect(summary?.average == Decimal(string: "1.5"))
+    #expect(summary?.minimum == 1)
+    #expect(summary?.maximum == 2)
+  }
+
+  @Test("One selected row reports no summary")
+  func selectionSummaryNeedsTwoRows() async {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    coordinator.clickedColumn = 0
+    let summary = await reportedSummary(coordinator) {
+      tableView.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+    }
+    #expect(summary == nil)
+  }
+
+  @Test("Without a clicked column the summary is the row count only")
+  func selectionSummaryWithoutColumn() async {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    let summary = await reportedSummary(coordinator) {
+      tableView.selectRowIndexes(IndexSet([0, 1, 2]), byExtendingSelection: false)
+    }
+    #expect(summary == ResultSelectionSummary(rowCount: 3))
+  }
+
+  @Test("A click maps the table column to the result column; the \"#\" gutter is no column")
+  func clickedColumnMapping() async {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    tableView.selectRowIndexes(IndexSet([0, 2]), byExtendingSelection: false)
+    let name = await reportedSummary(coordinator) {
+      coordinator.noteClickedColumn(tableColumn: 2, in: tableView)
+    }
+    #expect(coordinator.clickedColumn == 1)
+    #expect(name?.columnName == "name")
+    #expect(name?.sum == nil)
+    let gutter = await reportedSummary(coordinator) {
+      coordinator.noteClickedColumn(tableColumn: 0, in: tableView)
+    }
+    #expect(coordinator.clickedColumn == nil)
+    #expect(gutter == ResultSelectionSummary(rowCount: 2))
+  }
+
+  @Test("Document (JSON) cells count as non-numeric")
+  func jsonCellsAreNotNumeric() async {
+    let documents = CellResult(
+      columns: [ColumnInfo(name: "doc", type: "numeric")],
+      rows: [[.json("{\"a\":1}")], [.json("2")]], rowCount: 2)
+    let coordinator = ResultGridCoordinator()
+    let tableView = NSTableView()
+    coordinator.update(tableView, result: documents, sortColumn: nil, ascending: true)
+    coordinator.clickedColumn = 0
+    let summary = await reportedSummary(coordinator) {
+      tableView.selectRowIndexes(IndexSet([0, 1]), byExtendingSelection: false)
+    }
+    #expect(summary?.count == 2)
+    #expect(summary?.nonNullCount == 2)
+    #expect(summary?.numericCount == 0)
+    #expect(summary?.sum == nil)
+  }
+
+  @Test("New columns forget the clicked column; the grid going away clears the summary")
+  func selectionSummaryResets() async {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    coordinator.clickedColumn = 1
+    let other = CellResult(
+      columns: [ColumnInfo(name: "total", type: "int4")], rows: [[.int(1)], [.int(2)]],
+      rowCount: 2)
+    coordinator.update(tableView, result: other, sortColumn: nil, ascending: true)
+    #expect(coordinator.clickedColumn == nil)
+    let summary = await reportedSummary(coordinator) {
+      coordinator.selectionSummaryGridDidDisappear()
+    }
+    #expect(summary == nil)
+  }
+
   private func deleteKey(code: UInt16, characters: String) throws -> NSEvent {
     guard
       let event = NSEvent.keyEvent(

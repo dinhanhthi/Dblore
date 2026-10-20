@@ -102,18 +102,38 @@ extension DatabaseConnectionManager {
       try refuseIfSessionChanged(
         since: epoch, generation: cancelGeneration, remaining: statements.count - results.count)
       var result: QueryResult
+      let userCommit =
+        !protectedMode && userTxOpen
+        && ProtectedTransactionRules.committedUserTransaction(
+          statement, dialect: Self.dialect(of: config))
+      // A MySQL BEGIN commits the open transaction too: a loss meanwhile leaves it unknown
+      let commitsUserTransaction =
+        userCommit
+        || (!protectedMode && userTxOpen
+          && ProtectedTransactionRules.beginCommitsOpenTransaction(
+            statement, dialect: Self.dialect(of: config)))
+      // What the user's COMMIT did to the Data Rewind entries (`sendUserCommit`)
+      var commitState: RewindEntry.State? = .committed
       do {
+        if commitsUserTransaction { userCommitsInFlight += 1 }
+        defer { if commitsUserTransaction { userCommitsInFlight -= 1 } }
         let inTransaction = !txState.isIdle || userTxOpen
         let statementBinds = binds.indices.contains(index) ? binds[index] : []
-        result = try await executeSingleStatement(
-          statement.text, maxRows: maxRows, inTransaction: inTransaction, binds: statementBinds)
+        if userCommit, statement.kind == .tcl {
+          let sent = await sendUserCommit(statement.text, binds: statementBinds)
+          commitState = sent.rewindState
+          result = try sent.result.get()
+        } else {
+          result = try await executeSingleStatement(
+            statement.text, maxRows: maxRows, inTransaction: inTransaction, binds: statementBinds)
+        }
       } catch {
         // The session is gone: nothing of the old transaction state applies any more
         if let cancelled = cancelError(since: epoch, generation: cancelGeneration) {
           throw cancelled
         }
         if !protectedMode {
-          noteUserTransaction(after: statement, succeeded: false)
+          noteUserTransaction(after: statement, succeeded: false, commitState: commitState)
           await confirmUserTransactionWithServer(after: statement, succeeded: false)
         }
         throw await transactionFailure(error, openedHere: openedHere)
@@ -133,7 +153,7 @@ extension DatabaseConnectionManager {
             dialect: Self.dialect(of: config)))
       }
       if !protectedMode {
-        noteUserTransaction(after: statement, succeeded: true)
+        noteUserTransaction(after: statement, succeeded: true, commitState: commitState)
         await confirmUserTransactionWithServer(after: statement, succeeded: true)
       }
       noteSchemaChange(statement)
@@ -161,7 +181,8 @@ extension DatabaseConnectionManager {
   ///   is possible), when the server rolled it back instead, or when the connection was lost.
   ///   A COMMIT that throws is followed by ROLLBACK (unless the connection was lost): SQLite
   ///   keeps the transaction open after a deferred foreign key failure, PostgreSQL has already
-  ///   ended it. The state is `.idle` afterwards.
+  ///   ended it. The state is `.idle` afterwards. The Data Rewind entries are discarded only
+  ///   when the server rejected the COMMIT (`isServerRejection`), else they stay pending.
   func commitAppTransaction(expectedGeneration: UInt64) async throws {
     // The server ended the session (and its transaction): never report a silent success
     if session == nil, let loss = lastSessionLoss {
@@ -185,13 +206,21 @@ extension DatabaseConnectionManager {
       txState = .ending(kind: .commit, pending: pending)
       await transactionEndHook?(.commit)
       let metadata: CommandResult
+      let startTime = Date()
       do {
-        metadata = try await sendTransactionControl("COMMIT")
+        metadata = try await withSession { session in
+          try await session.command("COMMIT", binds: [])
+        }
       } catch {
         let lost = isConnectionLost
+        // Unknown whether committed unless the server rejected it (MySQL reports a lost
+        // connection later), so the Data Rewind entries stay pending (unconfirmed)
+        let rejected = !lost && Self.isServerRejection(error)
+        let failure = transactionControlError(error, sql: "COMMIT", startTime: startTime)
         if !lost { _ = try? await sendTransactionControl("ROLLBACK") }
         txState = .idle
         discardAppSchemaChange()
+        closeRewindEntries(as: rejected ? .discarded : nil)
         if lost {
           throw DatabaseError.transactionAborted(
             "The connection was lost during Commit; it is unknown whether the "
@@ -199,16 +228,18 @@ extension DatabaseConnectionManager {
         }
         throw DatabaseError.transactionAborted(
           "Commit failed and the \(pending.count) pending statement(s) were rolled back: "
-            + error.localizedDescription)
+            + failure.localizedDescription)
       }
       txState = .idle
       // COMMIT of a transaction the server already aborted answers with a ROLLBACK tag
       guard metadata.tag == "COMMIT" else {
         discardAppSchemaChange()
+        closeRewindEntries(as: .discarded)
         throw DatabaseError.transactionAborted(
           "The server rolled back the transaction instead of committing it (a statement had "
             + "failed); the \(pending.count) pending statement(s) were discarded.")
       }
+      closeRewindEntries(as: .committed)
       promoteAppSchemaChange()
     }
   }
@@ -237,10 +268,12 @@ extension DatabaseConnectionManager {
       }
       txState = .idle
       discardAppSchemaChange()
+      closeRewindEntries(as: .discarded)
       throw lostConnectionError(pendingCount: previous.pending.count, error)
     }
     txState = .idle
     discardAppSchemaChange()
+    closeRewindEntries(as: .discarded)
   }
 
   /// Test hook (see `transactionEndHook`): lets a test hold Commit / Rollback in the `.ending`
@@ -322,19 +355,32 @@ extension DatabaseConnectionManager {
   }
 
   /// Update `userTxOpen`, and when a user `COMMIT` / `END` persisted schema changes, ask the
-  /// sidebar to reload. `ROLLBACK` drops those changes instead.
-  func noteUserTransaction(after statement: ClassifiedStatement, succeeded: Bool) {
+  /// sidebar to reload. `ROLLBACK` drops those changes instead. `commitState`: what a user
+  /// COMMIT did to the open Data Rewind entries (`sendUserCommit`; nil: unknown).
+  func noteUserTransaction(
+    after statement: ClassifiedStatement, succeeded: Bool, commitState: RewindEntry.State?
+  ) {
     let wasOpen = userTxOpen
     let dialect = Self.dialect(of: config)
     userTxOpen = ProtectedTransactionRules.userTxOpen(
       after: statement, current: userTxOpen, succeeded: succeeded, dialect: dialect)
     guard wasOpen else { return }
-    if succeeded && ProtectedTransactionRules.committedUserTransaction(statement, dialect: dialect)
-    {
+    // A MySQL BEGIN commits the open transaction, then opens the next one
+    let commits =
+      ProtectedTransactionRules.committedUserTransaction(statement, dialect: dialect)
+      || ProtectedTransactionRules.beginCommitsOpenTransaction(statement, dialect: dialect)
+    if succeeded && commits {
       if schemaDirtyInUserTx { schemaRefreshPending = true }
       schemaDirtyInUserTx = false
+      closeRewindEntries(as: commitState)
     } else if !userTxOpen {
       schemaDirtyInUserTx = false
+      closeRewindEntries(as: commits ? commitState : .discarded)
+    } else if succeeded
+      && ProtectedTransactionRules.rolledBackUserTransaction(statement, dialect: dialect)
+    {
+      // ROLLBACK AND CHAIN: a transaction is open again, but what ran before it is gone
+      closeRewindEntries(as: .discarded)
     }
   }
 
@@ -358,6 +404,7 @@ extension DatabaseConnectionManager {
     if userTxOpen && !open {
       if schemaDirtyInUserTx { schemaRefreshPending = true }
       schemaDirtyInUserTx = false
+      closeRewindEntries(as: .committed)
     }
     userTxOpen = open
   }
@@ -418,11 +465,13 @@ extension DatabaseConnectionManager {
     if isConnectionLost {
       txState = .idle
       discardAppSchemaChange()
+      closeRewindEntries(as: .discarded)
       return lostConnectionError(pendingCount: pending.count, error)
     }
     if openedHere && pending.isEmpty, (try? await sendTransactionControl("ROLLBACK")) != nil {
       txState = .idle
       discardAppSchemaChange()
+      closeRewindEntries(as: .discarded)
       return error
     }
     txState = .aborted(reason: error.localizedDescription, pending: pending)
@@ -500,6 +549,44 @@ extension DatabaseConnectionManager {
     return postgres.connection?.isClosed ?? true
   }
 
+  /// A raw session error the server answered: a PostgreSQL error response (with its SQLSTATE),
+  /// a MySQL ERR packet (an error code) or any SQLite result (a local library, no network). A
+  /// COMMIT answered with an error did not commit. Anything else (I/O, a closed connection, a
+  /// timeout) is unknown: the answer may have been lost after the server committed.
+  nonisolated static func isServerRejection(_ error: Error) -> Bool {
+    switch error {
+    case let error as PSQLError: error.code == .server && error.serverInfo?[.sqlState] != nil
+    case let error as MySQLSessionError: error.code != nil
+    case is SQLiteSessionError: true
+    default: false
+    }
+  }
+
+  /// Send a user `COMMIT` / `END` with the result `executeCommand` gives, and what it did to
+  /// the open Data Rewind entries: committed; discarded when the server rejected it
+  /// (`isServerRejection`) or answered with a ROLLBACK tag (PostgreSQL, for a transaction a
+  /// failed statement aborted); nil when unknown. SQLite keeps the transaction open after a
+  /// COMMIT that fails (SQLITE_BUSY, a deferred foreign key): it can be retried, so nil too.
+  private func sendUserCommit(
+    _ sql: String, binds: [SQLBindValue]
+  ) async -> (result: Result<QueryResult, Error>, rewindState: RewindEntry.State?) {
+    let startTime = Date()
+    do {
+      let command = try await withSession { session in
+        try await session.command(sql, binds: binds)
+      }
+      let result = QueryResult(
+        columns: [], rows: [], rowCount: 0, executionTime: Date().timeIntervalSince(startTime),
+        affectedRows: StatementRoute.commandAffectedRows(command))
+      return (.success(result), command.tag == "ROLLBACK" ? .discarded : .committed)
+    } catch {
+      return (
+        .failure(unwrapFailure(error, fallbackSQL: sql, startTime: startTime)),
+        Self.isServerRejection(error) && !(error is SQLiteSessionError) ? .discarded : nil
+      )
+    }
+  }
+
   /// The server may close the session on its own (e.g. `idle_in_transaction_session_timeout`
   /// while a user transaction idles). Nothing is sent: the session is forgotten
   /// (`markSessionLost`, which also ends the user transaction) and the caller gets
@@ -521,14 +608,22 @@ extension DatabaseConnectionManager {
       return try await withSession { session in
         try await session.command(sql, binds: [])
       }
-    } catch let error as DatabaseError {
-      throw error
-    } catch let error as PSQLError {
-      throw DatabaseError.queryFailed(
-        formatPostgresError(error, query: sql), Date().timeIntervalSince(startTime))
     } catch {
-      throw DatabaseError.queryFailed(
-        error.localizedDescription, Date().timeIntervalSince(startTime))
+      throw transactionControlError(error, sql: sql, startTime: startTime)
+    }
+  }
+
+  /// The error `sendTransactionControl` throws for the raw `error` of `sql`
+  private func transactionControlError(
+    _ error: Error, sql: String, startTime: Date
+  ) -> DatabaseError {
+    switch error {
+    case let error as DatabaseError:
+      error
+    case let error as PSQLError:
+      .queryFailed(formatPostgresError(error, query: sql), Date().timeIntervalSince(startTime))
+    default:
+      .queryFailed(error.localizedDescription, Date().timeIntervalSince(startTime))
     }
   }
 }

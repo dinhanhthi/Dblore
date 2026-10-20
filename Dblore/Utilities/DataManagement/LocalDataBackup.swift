@@ -56,7 +56,8 @@ nonisolated struct BackupExportProgress: Equatable, Sendable {
 /// Writes and reads a `.dblorebackup` directory package.
 ///
 /// Local AI models (`LocalDataCategory.isLarge`) are left out of `exportAllCategories()`
-/// unless that category is passed in `including`.
+/// unless that category is passed in `including`. Categories with `isExcludedFromBackup`
+/// (Data Rewind) are never written or read, even when asked for.
 nonisolated enum LocalDataBackup {
   static let formatVersion = 1
   static let manifestFileName = "manifest.json"
@@ -65,7 +66,9 @@ nonisolated enum LocalDataBackup {
   static func exportAllCategories(
     including large: Set<LocalDataCategory> = []
   ) -> [LocalDataCategory] {
-    LocalDataCategory.allCases.filter { !$0.isLarge || large.contains($0) }
+    LocalDataCategory.allCases.filter {
+      !$0.isExcludedFromBackup && (!$0.isLarge || large.contains($0))
+    }
   }
 
   /// Writes `packageURL` as a directory package: `manifest.json` plus one folder per category.
@@ -80,7 +83,7 @@ nonisolated enum LocalDataBackup {
     created: Date = Date(),
     progress: @Sendable (BackupExportProgress) async -> Void = { _ in }
   ) async throws {
-    let selected = unique(categories)
+    let selected = backedUp(categories)
     let indexed = try index(providers, required: selected)
     let version = appVersion ?? currentAppVersion()
     var committed = false
@@ -140,7 +143,7 @@ nonisolated enum LocalDataBackup {
     guard manifest.formatVersion == formatVersion else {
       throw LocalDataBackupError.unsupportedVersion(manifest.formatVersion)
     }
-    let selected = unique(categories)
+    let selected = backedUp(categories)
     let indexed = try index(providers, required: selected)
     let package = LocalDataBackupPackage(existing: url)
     for category in selected {
@@ -151,9 +154,10 @@ nonisolated enum LocalDataBackup {
     }
   }
 
-  private static func unique(_ categories: [LocalDataCategory]) -> [LocalDataCategory] {
+  /// Each category once, without the ones a backup never holds.
+  private static func backedUp(_ categories: [LocalDataCategory]) -> [LocalDataCategory] {
     var seen: Set<LocalDataCategory> = []
-    return categories.filter { seen.insert($0).inserted }
+    return categories.filter { !$0.isExcludedFromBackup && seen.insert($0).inserted }
   }
 
   private static func index(

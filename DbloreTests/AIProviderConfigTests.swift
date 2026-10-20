@@ -51,6 +51,71 @@ struct AIProviderConfigTests {
     #expect(try JSONDecoder().decode(AIConfiguration.self, from: data).runsQueries)
   }
 
+  @Test("Connection access: absent is always, unknown asks; rows default to off; round-trip")
+  func connectionAccessCoding() throws {
+    let old = #"{"activeProvider":"ollama","configs":{"ollama":{"baseURL":"u","model":"m"}}}"#
+    let legacy = try JSONDecoder().decode(AIConfiguration.self, from: Data(old.utf8))
+    #expect(legacy.defaultConnectionAccess == .always)
+    #expect(legacy.sendsResultRows == false)
+    let future = #"{"configs":{},"defaultConnectionAccess":"fromTheFuture"}"#
+    let unknown = try JSONDecoder().decode(AIConfiguration.self, from: Data(future.utf8))
+    #expect(unknown.defaultConnectionAccess == .askOncePerSession)
+
+    let config = AIConfiguration(
+      activeProvider: nil, configs: [:], defaultConnectionAccess: .never, sendsResultRows: true)
+    let decoded = try JSONDecoder().decode(
+      AIConfiguration.self, from: try JSONEncoder().encode(config))
+    #expect(decoded == config)
+  }
+
+  @Test("configuration saved before Gemini decodes unchanged; Gemini round-trips")
+  func geminiCoding() throws {
+    let old =
+      #"{"activeProvider":"anthropic","configs":{"anthropic":{"baseURL":"https://api.anthropic.com/v1","model":"claude"},"ollama":{"baseURL":"u","model":"m"}},"runsQueries":true,"defaultConnectionAccess":"never","sendsResultRows":true}"#
+    let legacy = try JSONDecoder().decode(AIConfiguration.self, from: Data(old.utf8))
+    #expect(
+      legacy
+        == AIConfiguration(
+          activeProvider: .anthropic,
+          configs: [
+            .anthropic: AIProviderConfig(baseURL: "https://api.anthropic.com/v1", model: "claude"),
+            .ollama: AIProviderConfig(baseURL: "u", model: "m"),
+          ], runsQueries: true, defaultConnectionAccess: .never, sendsResultRows: true))
+
+    let config = AIConfiguration(
+      activeProvider: .gemini,
+      configs: [
+        .gemini: AIProviderConfig(
+          baseURL: AIProviderKind.gemini.defaultBaseURL, model: "gemini-2.5-flash")
+      ])
+    let data = try JSONEncoder().encode(config)
+    let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    #expect(json["activeProvider"] as? String == "gemini")
+    #expect((json["configs"] as? [String: Any])?["gemini"] != nil)
+    #expect(try JSONDecoder().decode(AIConfiguration.self, from: data) == config)
+  }
+
+  @Test("Gemini is listed, keyed, speaks its own wire and has fallback models")
+  func geminiProvider() {
+    #expect(AIProviderKind.allCases.contains(.gemini))
+    #expect(AIProviderKind.gemini.requiresAPIKey)
+    #expect(AIProviderKind.gemini.wire == .geminiGenerateContent)
+    #expect(
+      AIProviderKind.gemini.defaultBaseURL == "https://generativelanguage.googleapis.com/v1beta")
+    #expect(!AIProviderKind.gemini.fallbackModels.isEmpty)
+    #expect(AIProviderKind.gemini.fallbackModels.allSatisfy { AIEndpoint.geminiModelID($0) == $0 })
+  }
+
+  @Test("isConfigured for Gemini needs a key")
+  func geminiConfigured() {
+    let (settings, _, _) = makeSettings()
+    settings.configuration.configs[.gemini] = AIProviderConfig(
+      baseURL: "", model: "gemini-2.5-flash")
+    #expect(!settings.isConfigured(.gemini))
+    settings.setAPIKey("gm-test", for: .gemini)
+    #expect(settings.isConfigured(.gemini))
+  }
+
   @Test("corrupt JSON falls back to empty")
   func corruptJSON() {
     let suite = UserDefaults(suiteName: "AIProviderConfigTests-\(UUID())")!

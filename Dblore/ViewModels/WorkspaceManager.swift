@@ -58,6 +58,10 @@ class WorkspaceManager: Identifiable {
   /// Where the AI Assistant's queries are recorded
   @ObservationIgnored var aiHistoryRecorder: any QueryHistoryRecording =
     NotebookViewModel.defaultHistoryRecorder()
+  /// The connection config AI features read, the saved connection's policy and the gate they
+  /// ask; nil without a connection. Decodes the saved list per call: call it on user actions,
+  /// not per keystroke or from view bodies.
+  @ObservationIgnored var aiAccessSource: () -> AIAccessContext? = { nil }
   var connectionState: ConnectionState = .disconnected
   var editingConnectionConfig: ConnectionConfig
 
@@ -89,6 +93,10 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningConnect: ConnectionConfig?
   var pendingWeakeningCertificate: ClientCertificateMaterial?
   var pendingWeakeningSSHCredential: SSHStoredCredential?
+  /// The held connect's `aiFieldsEdited` (see `connect(config:…, aiFieldsEdited:)`)
+  var pendingWeakeningAIFieldsEdited = false
+  /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
+  var pendingWeakeningFromForm = false
   /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
   /// plugin, see `presentConnectErrorIfActionable`), shown inline in the form.
   /// Cleared by the next connect attempt and when the form goes away.
@@ -226,6 +234,9 @@ class WorkspaceManager: Identifiable {
 
   /// Table shown in the structure editor panel. Nil hides it.
   var structureEditor: StructureEditorModel?
+  /// Renames and drops waiting in the Protected mode transaction: applied to the open tabs on
+  /// Commit, dropped on any other end
+  @ObservationIgnored var pendingTableChanges: [StructureEditorModel.TableChange] = []
 
   // MARK: - Command Palette
 
@@ -268,6 +279,8 @@ class WorkspaceManager: Identifiable {
   /// The Back Up Database or Restore Backup panel (File menu, Databases screen; shown by the
   /// container's backup panel)
   var mongoBackup: MongoBackupRequest?
+  /// The Data Rewind panel (View menu, command palette; shown by the container)
+  var dataRewind: DataRewindRequest?
 
   /// An import form and what it was opened for
   struct MongoImportRequest {
@@ -288,6 +301,12 @@ class WorkspaceManager: Identifiable {
     /// The tab it runs through (connection, rules, history); closing it stops the work
     let tabID: UUID
     let kind: Kind
+  }
+
+  /// The Data Rewind panel and the tab it runs through (connection, rules, history)
+  struct DataRewindRequest {
+    let model: DataRewindModel
+    let tabID: UUID
   }
 
   // Schema data (shared across all tabs)
@@ -316,6 +335,11 @@ class WorkspaceManager: Identifiable {
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
+    // An opened file's AI policy never weakens the saved one, and the form opens on the saved
+    // color and group (a form connect writes what the form shows)
+    var workspace = workspace
+    workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
+      .map { Self.keepingSavedAppearance($0) }
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -325,12 +349,23 @@ class WorkspaceManager: Identifiable {
     aiAssistant.schemaSource = { [weak self] in
       guard let self else { return .empty }
       let name = self.workspace.connectionConfig?.database
+      // From a connect until its schema lands the arrays may hold the previous connection's
+      let isLoaded = self.schemaConnectionEpoch != nil
       return AISchemaSnapshot(
-        tables: self.databaseTables, foreignKeys: self.databaseForeignKeys,
+        tables: isLoaded ? self.databaseTables : [],
+        foreignKeys: isLoaded ? self.databaseForeignKeys : [],
         databaseName: name?.isEmpty == false ? name : nil,
         dialect: self.workspace.connectionConfig?.databaseType.dialect ?? .postgresql)
     }
-    aiAssistant.mongoScreenSource = { [weak self] in self?.activeViewModel?.aiMongoScreen }
+    aiAssistant.mongoScreenSource = { [weak self] in
+      guard let self, let screen = self.activeViewModel?.aiMongoScreen,
+        self.aiListsMongoCollection(database: screen.database, collection: screen.collection)
+      else { return nil }
+      return screen
+    }
+    aiAssistant.isCurrentMongoCollection = { [weak self] in
+      self?.aiListsMongoCollection(database: $0, collection: $1) ?? false
+    }
     aiAssistant.dialectSource = { [weak self] in
       self?.workspace.connectionConfig?.databaseType.dialect ?? .postgresql
     }
@@ -338,6 +373,33 @@ class WorkspaceManager: Identifiable {
       guard let self else { throw AIAssistantViewModel.QueryRunError.notConnected }
       return try await self.runAIQuery(sql)
     }
+    aiAssistant.toolRunner = {
+      [weak self] call, dialect, sessionKey, mongoDatabase, runsQueries, sendsResultRows in
+      guard let self else {
+        return AIToolOutcome(
+          result: AIToolResult(
+            id: call.id, content: AITools.errorContent(.notConnected), isError: true))
+      }
+      return await self.runAITool(
+        call, dialect: dialect, sessionKey: sessionKey, mongoDatabase: mongoDatabase,
+        runsQueries: runsQueries, sendsResultRows: sendsResultRows)
+    }
+    aiAssistant.proposalRunner = { [weak self] proposal, confirmedName in
+      self?.runAIProposal(proposal, confirmedName: confirmedName)
+        ?? .refused("Not connected to a database.")
+    }
+    aiAssistant.queryContextSource = { [weak self] statement, plan in
+      try await self?.aiQueryContext(statement: statement, plan: plan) ?? ""
+    }
+    aiAssistant.activeTabSource = { [weak self] in self?.activeViewModel }
+    aiAssistant.tableStructureSource = { [weak self] name, sessionKey in
+      await self?.aiMentionTable(name, sessionKey: sessionKey)
+    }
+    aiAssistant.favoritesSource = { [weak self] in self?.workspace.favorites.items ?? [] }
+    aiAccessSource = { [weak self] in
+      self.flatMap { Self.aiAccessContext(for: $0.workspace.connectionConfig) }
+    }
+    aiAssistant.aiAccessSource = { [weak self] in self?.aiAccessSource() }
     aiAssistant.historyStore = AIConversationStore(workspaceId: workspace.id)
     historyList.browser = { [weak self] in self?.resolvedHistoryBrowser() }
     historyList.connectionKey = { [weak self] in self?.activeHistoryConnectionKey }
@@ -465,8 +527,11 @@ class WorkspaceManager: Identifiable {
   /// `savesConnection: false` leaves the recent list, its Keychain items and
   /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
   /// is never saved either: it shares the saved entry's key and would replace its database.
+  /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
+  /// unless `aiFieldsEdited`, and its color and group unless `fromForm`.
   func connectWithoutUnlockCheck(
-    config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true
+    config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
+    aiFieldsEdited: Bool = false, fromForm: Bool = false
   ) async throws {
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
@@ -496,12 +561,15 @@ class WorkspaceManager: Identifiable {
         config.fileBookmark = bookmark
       }
       if savesConnection, config.mongoHomeDatabase == nil {
+        if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
+        if !fromForm { config = Self.keepingSavedAppearance(config) }
         guard SessionManager.saveConnection(config) else {
           throw CertificateFormError.keychainSave
         }
       }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
       workspace.connectionConfig = config
+      aiAssistant.connectionDidChange()
       if !config.rememberConnection {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential
@@ -615,11 +683,13 @@ class WorkspaceManager: Identifiable {
   /// The bookmark is made now, while the Finder grant lasts. Without the plugin, the form also
   /// shows the missing-plugin error and its Install button.
   func presentDuckDBFile(_ url: URL) {
-    let config = ConnectionFormContent.applyingDuckDBChoice(
-      .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
-      to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
-    ).config
-    guard DuckDBPluginManager.shared.isInstalledOrPending else {
+    // A file saved before opens on its saved color and group (a form connect writes them)
+    let config = Self.keepingSavedAppearance(
+      ConnectionFormContent.applyingDuckDBChoice(
+        .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
+        to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
+      ).config)
+    guard PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
     }
@@ -717,6 +787,21 @@ class WorkspaceManager: Identifiable {
     mongoBackup = MongoBackupRequest(model: model, tabID: tabID, kind: kind)
   }
 
+  /// Data Rewind (View menu, command palette): connected to an engine that records data viewer
+  /// edits (not DuckDB, not MongoDB)
+  var canOpenDataRewind: Bool {
+    connectionState.isConnected
+      && workspace.connectionConfig?.databaseType.supportsDataRewind == true
+  }
+
+  /// Opens the Data Rewind panel through the active tab, or a new query tab when none is open
+  func openDataRewind() {
+    guard canOpenDataRewind, dataRewind == nil else { return }
+    let tabID = activeTabId ?? newSQLFile()
+    guard let tab = viewModel(for: tabID) else { return }
+    dataRewind = DataRewindRequest(model: DataRewindModel(viewModel: tab), tabID: tabID)
+  }
+
   /// Appends a clean editor-mode SQL tab (object source tabs) without selecting it
   func appendEditorTab(_ tab: TabItem, content: String) -> NotebookViewModel {
     let cell = NotebookCell(cellType: .sql, content: "")
@@ -795,6 +880,7 @@ class WorkspaceManager: Identifiable {
         viewModel.editorStatementResults = []
         viewModel.dataViewerDisplayMode = .grid
         viewModel.applyMongoViewPreference()
+        viewModel.applySavedHighlights()
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -806,6 +892,7 @@ class WorkspaceManager: Identifiable {
     viewModel.viewMode = .editor
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
+    viewModel.applySavedHighlights()
     if let filter {
       viewModel.filterDraft = filter
     }
@@ -887,6 +974,7 @@ class WorkspaceManager: Identifiable {
     state.databaseType = workspace.connectionConfig?.databaseType ?? .postgresql
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
+    viewModel.applySavedHighlights()
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }
@@ -1106,6 +1194,8 @@ class WorkspaceManager: Identifiable {
       guard let self else { return nil }
       return (id: self.workspace.id, name: self.workspace.name)
     }
+    viewModel.isAIAllowed = { [weak self] in self?.isAIAllowed() ?? false }
+    viewModel.aiInlineSchema = { [weak self] prefix in await self?.aiInlineSchema(prefix: prefix) }
     // Resolved at completion: the tab is registered after this returns
     viewModel.notificationTab = { [weak self, weak viewModel] in
       guard let self, let viewModel,
@@ -1236,6 +1326,10 @@ class WorkspaceManager: Identifiable {
     if mongoBackup?.tabID == id {
       mongoBackup?.model.dismiss()
       mongoBackup = nil
+    }
+    if dataRewind?.tabID == id {
+      dataRewind?.model.sheetDisappeared()
+      dataRewind = nil
     }
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()

@@ -84,7 +84,7 @@ struct JSONViewerContent: View {
         // Horizontal outside so scrollbar is always visible at bottom
         ScrollView(.horizontal, showsIndicators: true) {
           ScrollView(.vertical, showsIndicators: true) {
-            HighlightedJSONText(json: formattedJSON)
+            HighlightedJSONText(json: formattedJSON, cachesAnySize: true)
               .padding(Spacing.sm)
           }
         }
@@ -93,29 +93,39 @@ struct JSONViewerContent: View {
         .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
       }
     }
+    .onDisappear(perform: Self.clearCaches)
   }
 
   /// Last pretty-printed JSON and its output: the body re-runs on every state change (copy
   /// feedback, edit) and on parent re-renders with the same JSON
-  private static var lastPrettyPrint: (json: String, pretty: String)?
+  static var lastPrettyPrint: (json: String, pretty: String)?
 
   private var formattedJSON: String {
-    if isPrettyPrinted {
-      if let last = Self.lastPrettyPrint, last.json == json { return last.pretty }
-      guard let data = json.data(using: .utf8),
-        let object = try? JSONSerialization.jsonObject(with: data),
-        let prettyData = try? JSONSerialization.data(
-          withJSONObject: object, options: .prettyPrinted
-        ),
-        let prettyString = String(data: prettyData, encoding: .utf8)
-      else {
-        Self.lastPrettyPrint = (json, json)
-        return json
-      }
-      Self.lastPrettyPrint = (json, prettyString)
-      return prettyString
+    isPrettyPrinted ? Self.prettyPrinted(json) : json
+  }
+
+  /// `json` pretty-printed, or unchanged when it does not parse. Cached at any size until the
+  /// viewer closes.
+  static func prettyPrinted(_ json: String) -> String {
+    if let last = lastPrettyPrint, last.json == json { return last.pretty }
+    var pretty = json
+    if let data = json.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data),
+      let prettyData = try? JSONSerialization.data(
+        withJSONObject: object, options: .prettyPrinted
+      ),
+      let prettyString = String(data: prettyData, encoding: .utf8)
+    {
+      pretty = prettyString
     }
-    return json
+    lastPrettyPrint = (json, pretty)
+    return pretty
+  }
+
+  /// Drops the cached JSON, its pretty copy and highlighted text (the viewer closed)
+  static func clearCaches() {
+    lastPrettyPrint = nil
+    HighlightedJSONText.lastHighlight = nil
   }
 
   private func startEdit() {

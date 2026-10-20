@@ -1,7 +1,7 @@
 // PostgresSchemaIntrospector+Structure.swift
 // Structure of one PostgreSQL table from pg_catalog. Schema and table are bound and resolved to
-// the table oid (plain or partitioned table; a view or a missing name throws); every other read
-// binds that oid.
+// the table oid and comment (plain or partitioned table; a view or a missing name throws); every
+// other read binds that oid.
 //
 // Defaults and generated expressions are pg_get_expr text (`'x'::character varying`,
 // `nextval('s_seq'::regclass)`, `(s * 2)`). A generated column has no default. Index keys are the
@@ -19,7 +19,7 @@ nonisolated extension PostgresSchemaIntrospector {
     let found = try await rows(
       in: session,
       sql: """
-        SELECT c.oid::int8 FROM pg_class c
+        SELECT c.oid::int8, obj_description(c.oid, 'pg_class') FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')
         """,
@@ -32,7 +32,8 @@ nonisolated extension PostgresSchemaIntrospector {
       tableID: .postgresql(oid: oid), schema: schema, name: table,
       columns: try await structureColumns(bind, in: session),
       indexes: try await structureIndexes(bind, in: session),
-      constraints: try await structureConstraints(bind, in: session))
+      constraints: try await structureConstraints(bind, in: session),
+      comment: found.first.flatMap { $0.count > 1 ? CatalogValue.string($0[1]) : nil })
   }
 
   /// attgenerated is PostgreSQL 12+; read through to_jsonb so older servers see no key.

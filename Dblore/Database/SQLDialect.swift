@@ -130,15 +130,19 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   }
 
   /// PostgreSQL `EXPLAIN` with optional ANALYZE, BUFFERS, and FORMAT.
-  /// SQLite is always `EXPLAIN QUERY PLAN`. DuckDB is text only: `EXPLAIN` or `EXPLAIN ANALYZE`,
-  /// with `buffers` and `format` ignored. MySQL is `EXPLAIN ANALYZE` (format ignored),
-  /// `EXPLAIN FORMAT=<format>`, or `EXPLAIN`, with `buffers` ignored.
+  /// SQLite is always `EXPLAIN QUERY PLAN`. DuckDB is `EXPLAIN (FORMAT <format>)` or
+  /// `EXPLAIN (ANALYZE, FORMAT <format>)` (the plan view reads JSON), and `EXPLAIN` or
+  /// `EXPLAIN ANALYZE` (text) without a format, with `buffers` ignored. MySQL is
+  /// `EXPLAIN ANALYZE` (format ignored), `EXPLAIN FORMAT=<format>`, or `EXPLAIN`, with `buffers`
+  /// ignored.
   func explainPrefix(analyze: Bool, buffers: Bool, format: String?) -> String {
     switch engine {
     case .sqlite:
       return "EXPLAIN QUERY PLAN"
     case .duckdb:
-      return analyze ? "EXPLAIN ANALYZE" : "EXPLAIN"
+      guard let format else { return analyze ? "EXPLAIN ANALYZE" : "EXPLAIN" }
+      let options = (analyze ? ["ANALYZE"] : []) + ["FORMAT \(format.uppercased())"]
+      return "EXPLAIN (\(options.joined(separator: ", ")))"
     case .mysql:
       if analyze { return "EXPLAIN ANALYZE" }
       if let format { return "EXPLAIN FORMAT=\(format.uppercased())" }

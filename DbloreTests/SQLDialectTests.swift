@@ -133,10 +133,10 @@ private let explainCases: [(SQLDialect, Bool, Bool, String?, String)] = [
   (.duckdb, true, false, nil, "EXPLAIN ANALYZE"),
   (.duckdb, false, true, nil, "EXPLAIN"),
   (.duckdb, true, true, nil, "EXPLAIN ANALYZE"),
-  (.duckdb, false, false, "json", "EXPLAIN"),
-  (.duckdb, true, false, "json", "EXPLAIN ANALYZE"),
-  (.duckdb, false, true, "json", "EXPLAIN"),
-  (.duckdb, true, true, "json", "EXPLAIN ANALYZE"),
+  (.duckdb, false, false, "json", "EXPLAIN (FORMAT JSON)"),
+  (.duckdb, true, false, "json", "EXPLAIN (ANALYZE, FORMAT JSON)"),
+  (.duckdb, false, true, "json", "EXPLAIN (FORMAT JSON)"),
+  (.duckdb, true, true, "json", "EXPLAIN (ANALYZE, FORMAT JSON)"),
 ]
 
 @Suite("SQL Dialect")
@@ -190,7 +190,7 @@ struct SQLDialectTests {
   }
 
   @Test(
-    "EXPLAIN options are PostgreSQL-only; SQLite is EXPLAIN QUERY PLAN; DuckDB is plain text",
+    "EXPLAIN options are PostgreSQL-only; SQLite is EXPLAIN QUERY PLAN; DuckDB takes ANALYZE and FORMAT",
     arguments: explainCases)
   func explainPrefix(
     dialect: SQLDialect, analyze: Bool, buffers: Bool, format: String?, expected: String

@@ -1,7 +1,8 @@
 // DatabaseBackupModel.swift
 // Drives the SQL dump, SQLite file copy and restore sheets for the active tab. The dump opens
 // its own connection (`SQLDumpWriter`) from the tab manager's in-memory config, unremembered
-// certificate and SSH secret, and host-key prompt; the restore reads and plans the file off the
+// certificate and SSH secret, and host-key prompt (DuckDB: it reads on the tab's own manager
+// instead, never a second instance); the restore reads and plans the file off the
 // main actor, then runs it on the tab's connection through the gate (`executeGatedRestore`)
 // after the Safe Mode confirmation. Progress callbacks arrive off the main actor and hop back
 // here. One History row per dump and per restore (success, failure, cancel) when History is on.
@@ -45,6 +46,8 @@ final class DatabaseBackupModel {
         ConnectionConfig, ClientCertificateStoreFactory.ConnectionMaterial?,
         SSHCredentialStoreFactory.ConnectionCredential?, any SSHHostKeyPrompt
       ) -> SQLDumpWriter
+    /// DuckDB: the tab's own manager and in-memory config (the dump reads on the tab's session)
+    var makeTabDumpWriter: @MainActor (DatabaseConnectionManager, ConnectionConfig) -> SQLDumpWriter
     var copyDatabase:
       @Sendable (URL, URL, @escaping @Sendable (SQLiteFileBackup.Progress) -> Void) async throws
         -> SQLiteFileBackup.Progress
@@ -60,6 +63,7 @@ final class DatabaseBackupModel {
         SQLDumpWriter(
           config: config, material: material, sshCredential: credential, sshHostKeyPrompt: prompt)
       },
+      makeTabDumpWriter: { SQLDumpWriter(tabManager: $0, config: $1) },
       copyDatabase: { source, destination, progress in
         try await SQLiteFileBackup.copy(from: source, to: destination, progress: progress)
       },
@@ -130,9 +134,12 @@ final class DatabaseBackupModel {
       errorMessage = SQLDumpError.destinationIsDatabase.localizedDescription
       return
     }
-    let writer = environment.makeDumpWriter(
-      config, await manager.activeUnrememberedCertificate,
-      await manager.activeUnrememberedSSHCredential, manager.sshHostKeyPolicy.prompt)
+    let writer =
+      config.databaseType == .duckdb
+      ? environment.makeTabDumpWriter(manager, config)
+      : environment.makeDumpWriter(
+        config, await manager.activeUnrememberedCertificate,
+        await manager.activeUnrememberedSSHCredential, manager.sshHostKeyPolicy.prompt)
     let id = begin(.dumping)
     dumpProgress = SQLDumpProgress(tablesDone: 0, tableCount: 0, rowsWritten: 0)
     let started = ContinuousClock.now
@@ -250,7 +257,8 @@ final class DatabaseBackupModel {
         restorePlan = plan
         restoreFileSize = size
         planEpoch = epoch
-        restoreBlockedReason = Self.restoreBlockReason(plan, policy: viewModel.protectionPolicy)
+        restoreBlockedReason = Self.restoreBlockReason(
+          plan, policy: viewModel.protectionPolicy, config: viewModel.notebook.connectionConfig)
       }
     } catch {
       if operationID == id, Self.historyStatus(for: error) != .cancelled {
@@ -268,7 +276,8 @@ final class DatabaseBackupModel {
       return
     }
     clearMessages()
-    restoreBlockedReason = Self.restoreBlockReason(plan, policy: viewModel.protectionPolicy)
+    restoreBlockedReason = Self.restoreBlockReason(
+      plan, policy: viewModel.protectionPolicy, config: viewModel.notebook.connectionConfig)
     guard restoreBlockedReason == nil else { return }
     let style = environment.commitStyle(viewModel)
     if !plan.statements.isEmpty, style == .confirm || style == .password {
@@ -336,16 +345,23 @@ final class DatabaseBackupModel {
   }
 
   /// Why the gate would refuse `plan` under `policy` (the connection's own policy; the
-  /// connection still decides when it runs), or nil
+  /// connection still decides when it runs), or nil. `config`: the tab's connection, for a
+  /// DuckDB file opened read-only.
   nonisolated static func restoreBlockReason(
-    _ plan: SQLRestorePlan, policy: ProtectionPolicy
+    _ plan: SQLRestorePlan, policy: ProtectionPolicy, config: ConnectionConfig? = nil
   ) -> String? {
     if policy.protectionLevel == .readOnly {
+      if let config, SQLRestorePlan.isReadOnlyDuckDBFile(config) {
+        return SQLRestorePlan.duckdbReadOnlyFileMessage
+      }
       return "This connection is read-only: restoring a SQL dump is not allowed."
     }
     if plan.engine == .mysql, policy.protectedMode {
       return "Turn Protected mode off for this connection to restore a MySQL dump: MySQL commits "
         + "each schema change at once, so the restore cannot wait for Commit."
+    }
+    if plan.engine == .duckdb, policy.protectedMode {
+      return SQLRestorePlan.duckdbProtectedModeMessage
     }
     if case .blocked(let index, _, let reason) = DatabaseConnectionManager.evaluate(
       plan.statements, policy: policy, dialect: plan.engine.dialect)
@@ -541,12 +557,18 @@ final class DatabaseBackupModel {
     "\(count.formatted()) \(noun)\(count == 1 ? "" : "s")"
   }
 
-  /// The database name, or the SQLite file name without its extension
+  /// The database name, the SQLite or DuckDB file name without its extension, or "memory" for
+  /// an in-memory DuckDB database
   private static func baseName(_ config: ConnectionConfig) -> String {
-    let name =
-      config.databaseType == .sqlite
-      ? URL(fileURLWithPath: config.database).deletingPathExtension().lastPathComponent
-      : config.database
+    let name: String
+    switch config.databaseType {
+    case .duckdb where config.database == DuckDBSession.inMemoryPath:
+      name = "memory"
+    case .sqlite, .duckdb:
+      name = URL(fileURLWithPath: config.database).deletingPathExtension().lastPathComponent
+    case .postgresql, .mysql, .mongodb:
+      name = config.database
+    }
     return name.isEmpty ? "dump" : name
   }
 

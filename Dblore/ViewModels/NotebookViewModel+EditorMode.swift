@@ -35,7 +35,15 @@ extension NotebookViewModel {
       return
     }
 
-    guard let query = query, !query.isEmpty, !isEditorQueryRunning else { return }
+    guard let query = query, !query.isEmpty else { return }
+    await runUserEditorQuery(query)
+  }
+
+  /// Runs `query` as a typed editor run: the protection check, missing parameters and the
+  /// Safe Mode confirmation, then the gate in `executeEditorQuery`. Also how an AI proposal the
+  /// user approved runs (`WorkspaceManager.runAIProposal`), so it gets no other path.
+  func runUserEditorQuery(_ query: String) async {
+    guard !isEditorQueryRunning else { return }
     guard connectionState == .connected else {
       showToast("Not connected to database", type: .error)
       return
@@ -82,6 +90,8 @@ extension NotebookViewModel {
     // A confirmed run passes the binds captured with the dialog. Nil reads the live values.
     if boundParameters == nil, refuseMissingParameters(query, cellId: nil) != nil { return }
     let parameters = boundParameters ?? boundParameterValues(for: query, cellId: nil)
+    // Before the query is sent: an error that lands after a switch stays the old connection's
+    let aiSessionKey = self.aiSessionKey
 
     let startTime = Date()
     let notifyStart = ContinuousClock.now
@@ -126,7 +136,8 @@ extension NotebookViewModel {
                 primaryKeyColumns: target?.primaryKeyColumns ?? [],
                 affectedRows: tuple.result.affectedRows,
                 editTarget: target,
-                lookupRelation: lookup
+                lookupRelation: lookup,
+                aiSessionKey: aiSessionKey
               ).withCapInfo(from: tuple.result),
               statementIndex: index
             ))
@@ -182,7 +193,8 @@ extension NotebookViewModel {
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: result.affectedRows,
           editTarget: target,
-          lookupRelation: lookup
+          lookupRelation: lookup,
+          aiSessionKey: aiSessionKey
         ).withCapInfo(from: result)
 
         editorResult = cellResult
@@ -206,7 +218,8 @@ extension NotebookViewModel {
       editorResult = CellResult.errorResult(
         error.localizedDescription,
         executionTime: executionTime,
-        sourceQuery: query
+        sourceQuery: query,
+        aiSessionKey: aiSessionKey
       )
       recordFailure(error, sql: query, duration: executionTime, source: source)
       completion = Self.isCancellation(error) ? nil : .failed

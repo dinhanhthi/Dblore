@@ -3,7 +3,7 @@
 //  Dblore
 //
 //  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge,
-//  or the result card of a query the app ran for the assistant
+//  the result card of a query the app ran for the assistant, or a proposal card
 //
 
 import AppKit
@@ -20,8 +20,9 @@ struct AIMessageView: View {
   let dialect: SQLDialect
   /// Restarts the conversation from this entry; nil hides the button
   var onRetry: (() -> Void)?
-  /// Restarts the conversation from this entry with edited text; nil hides the button
-  var onEdit: ((String) -> Void)?
+  /// Restarts the conversation from this entry with edited text and returns true when sent
+  /// (a refused edit stays open); nil hides the button
+  var onEdit: ((String) -> Bool)?
   /// Label of this entry's first ```sql run block ("Ran", "Failed" or "Not run"); other run
   /// blocks are "Not run". nil while the reply streams: no label yet.
   var firstRunLabel: String? = "Not run"
@@ -29,6 +30,13 @@ struct AIMessageView: View {
   var mongoCollection: String? = nil
   /// Fills the filter bar or the Aggregations builder of `mongoCollection`; never runs
   var onMongoAction: ((AIMongoAssist.BlockAction) -> Void)? = nil
+  /// True while this entry's reply streams: a review answer shows as text until it is complete
+  var isStreaming = false
+  /// Applies a review answer's SQL to where it was reviewed (never runs); nil disables Apply
+  var onApplyReview: ((AIReviewRequest, String) -> NotebookViewModel.AIReviewApplyResult)? = nil
+  /// Runs a proposal after the user pressed Run on its card (`WorkspaceManager.runAIProposal`);
+  /// nil disables Run
+  var onRunProposal: ((AIProposal, String?) -> WorkspaceManager.AIProposalRunOutcome)? = nil
 
   @State private var isHovering = false
   @State private var isEditing = false
@@ -43,6 +51,14 @@ struct AIMessageView: View {
       // A result is its own bordered card: no bubble around it, no actions on it
       if let result = entry.queryResult {
         AIQueryResultCard(result: result)
+      } else if let proposal = entry.proposal {
+        // The entry's text is only the history placeholder of the proposal
+        AIProposalCardView(
+          proposal: proposal, dialect: dialect, onInsert: onInsert, onRun: onRunProposal)
+      } else if let review = entry.review, !entry.isError, !isStreaming, !entry.text.isEmpty {
+        AIReviewCardView(
+          request: review, text: entry.text,
+          onApply: onApplyReview.map { apply in { apply(review, $0) } })
       } else {
         bubble
       }
@@ -121,8 +137,7 @@ struct AIMessageView: View {
       HStack(spacing: Spacing.sm) {
         Button("Cancel") { isEditing = false }
         Button("Send") {
-          isEditing = false
-          onEdit?(editText)
+          if onEdit?(editText) == true { isEditing = false }
         }
         .disabled(!canSendEdit)
       }
@@ -599,7 +614,7 @@ private struct AICodeBlock: View {
 
 /// Compact bordered action on the code-block header, with a hover fill that
 /// contrasts against `cardHeaderBackground`.
-private struct AICodeActionButtonStyle: ButtonStyle {
+struct AICodeActionButtonStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     AICodeActionButton(configuration: configuration)
   }

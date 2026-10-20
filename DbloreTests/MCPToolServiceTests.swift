@@ -1,6 +1,6 @@
 // MCPToolServiceTests.swift
-// MCP tools: allowlist first, read-only run_query refused before sending, row and cell caps,
-// History audit as `.mcp`, and the deterministic result encoding.
+// MCP tools: allowlist first, then the AI access gate, read-only run_query refused before sending,
+// row and cell caps, History audit as `.mcp`, and the deterministic result encoding.
 
 import Foundation
 import Testing
@@ -66,6 +66,8 @@ struct MCPToolServiceTests {
   private let source = FakeReadSource()
   private let history = RecordedHistory()
   private let historySwitch = HistorySwitch()
+  /// Session approvals of this test only
+  private let gate = AIAccessGate()
 
   private static func entry(
     _ type: DatabaseType = .postgresql, name: String = "Prod", password: String = "pw-secret"
@@ -79,12 +81,28 @@ struct MCPToolServiceTests {
   }
 
   private func service(
-    _ entries: [ConnectionHistoryEntry], allowed: Set<UUID>
+    _ entries: [ConnectionHistoryEntry], allowed: Set<UUID>, ai: AIConfiguration? = .empty
   ) -> MCPToolService {
     let historySwitch = historySwitch
     return MCPToolService(
-      connections: { entries }, allowlist: { allowed }, source: source, recorder: history,
-      historyEnabled: { historySwitch.enabled })
+      connections: { entries }, allowlist: { allowed }, aiSettings: { ai }, source: source,
+      recorder: history, historyEnabled: { historySwitch.enabled }, gate: gate)
+  }
+
+  /// list_tables, describe_table and run_query on `id`.
+  private func connectionTools(
+    _ service: MCPToolService, _ id: UUID
+  ) async -> [MCPToolResult] {
+    var results: [MCPToolResult] = []
+    for (tool, extra) in [
+      ("list_tables", [:]), ("describe_table", ["table": JSONValue.string("users")]),
+      ("run_query", ["sql": .string("SELECT 1")]),
+    ] {
+      results.append(
+        await service.call(
+          tool, arguments: extra.merging(["connection_id": .string(id.uuidString)]) { $1 }))
+    }
+    return results
   }
 
   private func runQuery(
@@ -242,8 +260,8 @@ struct MCPToolServiceTests {
     let id = entry.id
     for (setting, expected) in [(300, 300), (5_000, 1_000), (0, 1)] {
       let configured = MCPToolService(
-        connections: { [entry] }, allowlist: { [id] }, source: source, recorder: history,
-        historyEnabled: { true }, defaultMaxRows: { setting })
+        connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty }, source: source,
+        recorder: history, historyEnabled: { true }, defaultMaxRows: { setting }, gate: gate)
       _ = await runQuery(configured, entry.id, "SELECT 1")
       #expect(source.requests.last?.maxRows == expected)
     }
@@ -377,8 +395,9 @@ struct MCPToolServiceTests {
       knownHosts: InMemorySSHKnownHostStore())
     let historySwitch = historySwitch
     let service = MCPToolService(
-      connections: { [entry] }, allowlist: { [id] }, source: MCPSQLReadSource(pool: pool),
-      recorder: history, historyEnabled: { historySwitch.enabled })
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history,
+      historyEnabled: { historySwitch.enabled }, gate: gate)
     let read = await runQuery(service, id, "SELECT 1")
     let tables = await service.call(
       "list_tables", arguments: ["connection_id": .string(id.uuidString)])
@@ -402,6 +421,78 @@ struct MCPToolServiceTests {
     for leaked in [hidden.id.uuidString, "Hidden", "pw-secret", "db.internal", "admin-user"] {
       #expect(!result.text.contains(leaked), "\(leaked)")
     }
+  }
+
+  @Test("AI access Never is refused like a non-allowlisted id and hidden; Ask is listed")
+  func aiAccessNever() async {
+    var never = Self.entry(name: "Never")
+    never.config.aiAccess = .never
+    var ask = Self.entry(.mysql, name: "Ask")
+    ask.config.aiAccess = .askOncePerSession
+    let outside = Self.entry(name: "Outside")
+    let service = service([never, ask, outside], allowed: [never.id, ask.id])
+
+    let refused = await connectionTools(service, never.id)
+    let notAllowlisted = await connectionTools(service, outside.id)
+    #expect(refused.map(\.isError) == [true, true, true])
+    #expect(Set((refused + notAllowlisted).map(\.text)).count == 1)
+    #expect(source.calls == 0)
+    #expect(await history.entries.isEmpty)
+
+    let listed = await service.call("list_connections", arguments: [:])
+    #expect(!listed.text.contains(never.id.uuidString) && !listed.text.contains("Never"))
+    #expect(listed.text.contains(ask.id.uuidString))
+  }
+
+  @Test("a non-allowlisted Never row of the same identity refuses and hides the allowlisted row")
+  func aiAccessStrictestSavedRow() async {
+    var always = Self.entry(name: "Always")
+    always.config.aiAccess = .always
+    var twin = Self.entry(name: "Twin")
+    twin.config.aiAccess = .never
+    var other = Self.entry(name: "Other")
+    other.config.host = "db2.internal"
+    other.config.aiAccess = .never
+
+    let strict = service([always, twin], allowed: [always.id])
+    let refused = await connectionTools(strict, always.id)
+    let notAllowlisted = await connectionTools(strict, twin.id)
+    #expect(refused.map(\.isError) == [true, true, true])
+    #expect(Set((refused + notAllowlisted).map(\.text)).count == 1)
+    #expect(source.calls == 0)
+    let listed = await strict.call("list_connections", arguments: [:])
+    #expect(
+      !listed.text.contains(always.id.uuidString) && !listed.text.contains(twin.id.uuidString))
+
+    let unrelated = service([always, other], allowed: [always.id])
+    let allowed = await connectionTools(unrelated, always.id)
+    #expect(allowed.map(\.isError) == [false, false, false], "\(allowed.map(\.text))")
+    let listedOther = await unrelated.call("list_connections", arguments: [:])
+    #expect(listedOther.text.contains(always.id.uuidString))
+    #expect(!listedOther.text.contains(other.id.uuidString))
+  }
+
+  @Test(
+    "AI access Ask is refused until approved in the app; unreadable settings ask",
+    arguments: [
+      (AIAccessPolicy.askOncePerSession, AIConfiguration?.some(.empty)), (.useDefault, nil),
+    ])
+  func aiAccessAsk(policy: AIAccessPolicy, ai: AIConfiguration?) async {
+    var entry = Self.entry()
+    entry.config.aiAccess = policy
+    let service = service([entry], allowed: [entry.id], ai: ai)
+
+    let refused = await connectionTools(service, entry.id)
+    let message = "Allow AI access to this connection in Dblore first."
+    #expect(refused.map(\.isError) == [true, true, true])
+    #expect(refused.map(\.text) == [message, message, message])
+    #expect(source.calls == 0)
+    #expect(await history.entries.isEmpty)
+
+    gate.approveForSession(AIAccessGate.sessionKey(for: entry.config))
+    let allowed = await connectionTools(service, entry.id)
+    #expect(allowed.map(\.isError) == [false, false, false], "\(allowed.map(\.text))")
+    #expect(source.calls == 3)
   }
 
   @Test("list_tables and describe_table go through the read source once allowlisted")

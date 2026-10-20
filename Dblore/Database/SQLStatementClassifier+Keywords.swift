@@ -129,9 +129,35 @@ nonisolated extension SQLStatementClassifier {
   /// `POSTGRES_SCAN_PUSHDOWN`, `POSTGRES_QUERY`, `POSTGRES_EXECUTE`, `POSTGRES_ATTACH`,
   /// `MYSQL_SCAN`, `MYSQL_QUERY`, `MYSQL_EXECUTE`, ...), and the sqlite, iceberg and delta
   /// extensions open other databases or remote tables (`SQLITE_SCAN`, `SQLITE_ATTACH`,
-  /// `ICEBERG_SCAN`, `ICEBERG_METADATA`, `ICEBERG_SNAPSHOTS`, `DELTA_SCAN`, ...).
+  /// `ICEBERG_SCAN`, `ICEBERG_METADATA`, `ICEBERG_SNAPSHOTS`, `DELTA_SCAN`, ...). `JSON_EXECUTE`
+  /// (`JSON_EXECUTE_SERIALIZED_SQL`) runs SQL serialized into a string, which the classifier
+  /// cannot see either.
   static let duckdbSideEffectFunctionPrefixes: [String] = [
-    "POSTGRES_", "MYSQL_", "SQLITE_", "ICEBERG_", "DELTA_",
+    "POSTGRES_", "MYSQL_", "SQLITE_", "ICEBERG_", "DELTA_", "JSON_EXECUTE",
+  ]
+
+  /// Restore only (`SQLRestorePlan.isDumpSchema`), on top of `duckdbSideEffectFunctions` and
+  /// its prefixes: DuckDB functions a restored table, index or view may not call (uppercase).
+  /// A view runs its body at restore and on every later read, so its text must not run SQL
+  /// from a string (`QUERY`, `QUERY_TABLE`, `JSON_EXECUTE_SERIALIZED_SQL`), read files (`READ_*`,
+  /// `GLOB`, `SNIFF_CSV`, `PARQUET_*`, `*_SCAN`), settings, pragmas or secrets (`PRAGMA_*`,
+  /// `DUCKDB_*`, `*SECRET*`), change logging (`ENABLE_LOGGING`, `WRITE_LOG`,
+  /// `TRUNCATE_DUCKDB_LOGS`) or the random seed (`SETSEED`), run plans or generated SQL
+  /// (`FROM_SUBSTRAIT*`, `SQLSMITH`, `FUZZYDUCK`, `REDUCE_SQL_STATEMENT`), read other formats
+  /// (`SCAN_*`, `ST_READ*`) or reach other catalogs (`DUCKLAKE_*`, `MD_*`). Names, then
+  /// prefixes, then names containing a piece. Only calls in the object's body are checked.
+  static let duckdbRestoreRefusedFunctions: Set<String> = [
+    "GLOB", "SNIFF_CSV", "WRITE_LOG", "ENABLE_LOGGING", "DISABLE_LOGGING", "SQLSMITH",
+    "FUZZYDUCK", "REDUCE_SQL_STATEMENT", "SETSEED",
+  ]
+
+  static let duckdbRestoreRefusedFunctionPrefixes: [String] = [
+    "QUERY", "PRAGMA_", "READ_", "PARQUET_", "JSON_EXECUTE", "SCAN_", "ST_READ", "FROM_SUBSTRAIT",
+    "DUCKLAKE_", "MD_",
+  ]
+
+  static let duckdbRestoreRefusedFunctionInfixes: [String] = [
+    "EXECUTE", "SECRET", "LOGGING", "DUCKDB", "_SCAN",
   ]
 
   /// URL schemes DuckDB (httpfs, azure, hf extensions) opens over the network (lowercase).

@@ -1,7 +1,7 @@
 // AIAssistantViewModel+Query.swift
-// The turn of one question: stream a reply; when its ```sql run block passes the read-only
-// guard, run it once on the connection and show the rows to the user. The model is not called
-// again and never sees the rows.
+// The turn of one question. A turn that offers tools runs the tool loop (`+Tools`). Otherwise:
+// stream a reply; when its ```sql run block passes the read-only guard, run it once on the
+// connection and show the rows to the user. The model is not called again and never sees the rows.
 
 import Foundation
 
@@ -21,6 +21,26 @@ extension AIAssistantViewModel {
     let dialect: SQLDialect
     /// MongoDB collection screen shown at send time
     var screen: AIMongoAssist.Screen? = nil
+    /// The connection's AI access read at send time; nil without a connection
+    var access: AIAccessContext? = nil
+    /// `AIAccessGate.sessionKey` of `access`: tools run only while the connection still has it,
+    /// and proposals and tool entries are stamped with it
+    var sessionKey: String? = nil
+    /// The connection's database at send time on MongoDB (blank: the session's default), nil
+    /// elsewhere: a database switch keeps `sessionKey`, so tools run only while it still matches
+    /// and proposals are stamped with it
+    var mongoDatabase: String? = nil
+    /// The Review or Optimize request the question was filled with
+    var review: PendingReview? = nil
+    /// The turn may offer the AI tools (not on-device, a tool runner and a connection); the gate
+    /// and a review turn still take them away
+    var offersTools = false
+    /// Key of a local OpenAI-compatible server that may refuse native tools (`toolEndpoint`)
+    var toolEndpoint: String? = nil
+    /// The question's @mentions; empty unless the gate allowed the connection at send time
+    var mentions: [AIMention] = []
+    /// What `@query` and `@results` read from the active tab at send time
+    var mentionTab = MentionTab()
   }
 
   /// Refused before the query reached the database: no `queryRunner` (the workspace has no
@@ -30,6 +50,8 @@ extension AIAssistantViewModel {
     case notConnected
     case connectionChanged
     case readSessionFailed
+    /// The gate does not allow AI on the connection (off, or not allowed this session)
+    case accessNotAllowed
 
     var errorDescription: String? {
       switch self {
@@ -39,21 +61,61 @@ extension AIAssistantViewModel {
       case .readSessionFailed:
         "Could not open a read-only session to this connection. "
           + "Nothing was sent to the database."
+      case .accessNotAllowed:
+        "AI access to this connection is off or not allowed this session. "
+          + "Nothing was sent to the database."
       }
     }
   }
 
   /// Streams the reply into `entryId`; when "Run read-only queries" was on at send time and still
-  /// is, runs the reply's ```sql run block once and stops, unless `token` went stale
+  /// is, runs the reply's ```sql run block once and stops, unless `token` went stale. Only a
+  /// connection the gate allows sends its schema, MongoDB screen, rules, earlier messages, the
+  /// catalog of a reviewed statement and the question's @mentions, and runs queries (never on a
+  /// review turn); otherwise the
+  /// request carries the new question and the dialect only. A turn that offers tools (allowed,
+  /// no review, `offersTools`) runs the tool loop instead, without run blocks.
   func runTurn(
     _ context: TurnContext, history: [AIChatMessage], entryId: UUID, token: Int
   ) async {
+    let allowed =
+      context.access.map { $0.decision(settings: settings.configuration) == .allowed } ?? true
+    let review: String?
+    let mentions: String
+    do {
+      review = try await reviewContext(context.review, allowed: allowed)
+      mentions =
+        allowed
+        ? try await mentionContext(
+          context.mentions, tab: context.mentionTab, sessionKey: context.sessionKey) : ""
+    } catch {
+      return  // Stopped while the catalog was read
+    }
+    let runsQueries = context.runsQueries && review == nil
+    let tools =
+      allowed && review == nil && context.offersTools
+      ? AITools.specs(runsQueries: runsQueries, isMongo: context.dialect == .mongodb) : []
+    let snapshot =
+      allowed
+      ? context.snapshot
+      : AISchemaSnapshot(
+        tables: [], foreignKeys: [], databaseName: nil, dialect: context.snapshot.dialect)
     let request = await Self.buildRequest(
-      model: context.model, question: context.question, explicit: context.explicit,
-      snapshot: context.snapshot, history: history, runsQueries: context.runsQueries,
-      compactPrompt: context.compactPrompt, screen: context.screen)
+      model: context.model, question: context.question,
+      explicit: allowed ? context.explicit : [], snapshot: snapshot,
+      // Earlier turns may hold table names, SQL or filters from when the connection was allowed
+      history: allowed
+        ? Self.attaching(mentions, to: history)
+        : [AIChatMessage(role: .user, text: context.question)],
+      runsQueries: allowed && runsQueries, compactPrompt: context.compactPrompt,
+      screen: allowed ? context.screen : nil, review: review,
+      rules: allowed ? context.access?.config.aiRules ?? "" : "", tools: !tools.isEmpty)
+    guard tools.isEmpty else {
+      await runToolLoop(request, tools: tools, context: context, entryId: entryId, token: token)
+      return
+    }
     guard await streamReply(request, from: context.client, into: entryId),
-      context.runsQueries, settings.configuration.runsQueries,
+      allowed, runsQueries, settings.configuration.runsQueries,
       let reply = messages.first(where: { $0.id == entryId })?.text,
       let sql = AIMessageParser.runQuery(in: reply, dialect: context.dialect)
     else { return }
@@ -87,6 +149,8 @@ extension AIAssistantViewModel {
           append(delta, to: id)
         case .loadingModel:
           isLoadingModel = true
+        case .toolCall, .stop:
+          break  // Tool turns are not offered yet
         }
       }
     } catch {
@@ -97,8 +161,9 @@ extension AIAssistantViewModel {
   }
 
   /// Runs `sql` behind a "Running query…" placeholder, which then holds the result or, on
-  /// failure (guard refusal, no connection, a connection changed to another dialect, database
-  /// error), the error and the SQL. Once `token` went stale the entries are left untouched.
+  /// failure (guard refusal, no connection, a connection changed to another dialect or no
+  /// longer allowed for AI, database error), the error and the SQL. Once `token` went stale
+  /// the entries are left untouched.
   private func runQuery(_ sql: String, context: TurnContext, token: Int) async {
     let id = UUID()
     messages.append(
@@ -108,6 +173,8 @@ extension AIAssistantViewModel {
     do {
       let dialect = sqlDialect
       guard dialect == context.dialect else { throw QueryRunError.connectionChanged }
+      // The connection or its policy can change while answering: ask again before running
+      guard aiAccessCheck().decision == .allowed else { throw QueryRunError.accessNotAllowed }
       _ = try ReadOnlyQueryGuard.check(sql, dialect: dialect, refuseFileAccess: true)
       guard let queryRunner else { throw QueryRunError.notConnected }
       result = try await queryRunner(sql)
@@ -131,7 +198,7 @@ extension AIAssistantViewModel {
 
   /// The app refused the query before it reached the server: the guard, no connection, another
   /// tab's pending transaction or the read-only gate
-  private static func isRefusedBeforeServer(_ failure: Error?) -> Bool {
+  static func isRefusedBeforeServer(_ failure: Error?) -> Bool {
     guard let failure else { return false }
     switch failure {
     case is ReadOnlyQueryGuard.Refusal, is QueryRunError,

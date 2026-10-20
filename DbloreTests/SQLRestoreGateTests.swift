@@ -108,8 +108,21 @@ struct SQLRestoreGateTests {
       Self.planError("-- Dblore SQL dump 1 engine=PostgreSQLX\nSELECT 1;", .postgresql)
         == .engineMismatch(dump: "PostgreSQLX", connection: "PostgreSQL"))
     #expect(
-      Self.planError(Self.header(.duckdb) + "\nCREATE TABLE a (id int);", .duckdb)
-        == .unsupportedEngine("DuckDB"))
+      Self.planError(Self.header(.mongodb) + "\ndb.a.find()", .mongodb)
+        == .unsupportedEngine("MongoDB"))
+    // A DuckDB dump restores only into DuckDB, and only a DuckDB dump into DuckDB
+    #expect(
+      Self.planError(Self.header(.duckdb) + "\nCREATE TABLE a (id int);", .sqlite)
+        == .engineMismatch(dump: "DuckDB", connection: "SQLite"))
+    #expect(
+      Self.planError(Self.header(.duckdb) + "\nCREATE TABLE a (id int);", .postgresql)
+        == .engineMismatch(dump: "DuckDB", connection: "PostgreSQL"))
+    #expect(
+      Self.planError(Self.header(.sqlite) + "\nCREATE TABLE a (id int);", .duckdb)
+        == .engineMismatch(dump: "SQLite", connection: "DuckDB"))
+    #expect(
+      Self.planError(Self.header(.postgresql) + "\nCREATE TABLE a (id int);", .duckdb)
+        == .engineMismatch(dump: "PostgreSQL", connection: "DuckDB"))
   }
 
   @Test("A header alone is an empty restore")
@@ -523,6 +536,184 @@ struct SQLRestoreGateTests {
       "CREATE VIEW `x` AS select 1 AS `1`;",
     ]
 
+  /// What `SQLDumpDDL.duckdb` and the writer emit, with the catalog's own table, index and
+  /// view text (`duckdb_tables().sql`, `duckdb_indexes().sql`, `duckdb_views().sql`)
+  private static let duckdbShapes: [String] =
+    [
+      "CREATE SCHEMA IF NOT EXISTS \"s2\";",
+      "CREATE TYPE \"main\".\"mood\" AS ENUM ('sad', 'it''s');",
+      "CREATE TYPE \"s2\".\"none\" AS ENUM ();",
+      "CREATE SEQUENCE \"main\".\"seq1\" START WITH 9 INCREMENT BY 2 MINVALUE 1"
+        + " MAXVALUE 9223372036854775807 NO CYCLE;",
+      "CREATE SEQUENCE \"s2\".\"d\" START WITH -2 INCREMENT BY -1"
+        + " MINVALUE -9223372036854775808 MAXVALUE -1 CYCLE;",
+      "CREATE TABLE t1(id INTEGER DEFAULT(nextval('seq1')) PRIMARY KEY, m ENUM('sad', 'it''s'),"
+        + " b BLOB DEFAULT('\\xAA'), g INTEGER GENERATED ALWAYS AS((id * 2)),"
+        + " ts TIMESTAMP DEFAULT(current_timestamp), CHECK((length(CAST(id AS VARCHAR)) < 9)),"
+        + " UNIQUE(m));",
+      "CREATE TABLE s2.\"we\"\"ird\"(x INTEGER, FOREIGN KEY (x) REFERENCES s2.p(id));",
+      "INSERT INTO \"main\".\"t1\" (\"id\", \"b\") VALUES\n('1', '\\xAB\\x00'),\n(NULL, ''),"
+        + "\n('3', 'it''s a \\ path');",
+      "INSERT INTO \"s2\".\"e\" DEFAULT VALUES;",
+      "CREATE UNIQUE INDEX idx2 ON t1(((id + 1)), b);",
+      "CREATE INDEX \"i x\" ON s2.\"we\"\"ird\"(x);",
+      "CREATE VIEW v1 AS SELECT id FROM t1 WHERE (id > 1);",
+      "CREATE VIEW s2.v2 (a) AS SELECT * FROM v1;",
+      "CREATE VIEW v3 AS (SELECT 1) UNION (SELECT 2);",
+      "CREATE VIEW v4 AS WITH c AS (SELECT id FROM t1)SELECT * FROM c;",
+      "CREATE VIEW v5 AS SELECT log10(id), list_transform([1], x -> x + 1) FROM t1;",
+      // Object names that look like refused functions are names, not calls
+      "CREATE TABLE query_log(id INTEGER PRIMARY KEY);", "CREATE TABLE \"checkpoint\"(x INTEGER);",
+      "CREATE TABLE s2.secrets(id INTEGER, q INTEGER REFERENCES query_log(id),"
+        + " FOREIGN KEY (id) REFERENCES main.read_receipts(id));",
+      "CREATE TABLE nextval(id INTEGER REFERENCES nextval(id));",
+      "CREATE INDEX i ON duckdb_stats(x);", "CREATE UNIQUE INDEX glob ON s2.parquet_files(x);",
+      "CREATE VIEW read_summary (a) AS SELECT 1;",
+      "CREATE VIEW query_summary (query) AS SELECT * FROM query_log;",
+    ]
+
+  @Test(
+    "DuckDB: statements a dump never writes are refused before anything is sent",
+    arguments: [
+      "DROP TABLE a;", "ATTACH '/tmp/other.duckdb' AS other;", "DETACH other;",
+      "INSTALL httpfs;", "LOAD httpfs;", "COPY a TO '/tmp/out.csv';", "EXPORT DATABASE '/tmp/x';",
+      "SET enable_external_access = true;", "PRAGMA enable_profiling;", "CALL pragma_version();",
+      "CHECKPOINT;", "SELECT 1;", "BEGIN TRANSACTION;", "USE other;",
+      "CREATE MACRO m(a) AS a + 1;", "CREATE SECRET s (TYPE s3, KEY_ID 'k');",
+      "UPDATE a SET id = 1;", "DELETE FROM a;", "ALTER TABLE a ADD COLUMN c INTEGER;",
+      // Tables: only the catalog's `CREATE TABLE <name>(...)`
+      "CREATE TABLE x AS SELECT * FROM read_csv('/etc/hosts');", "CREATE TABLE x(a) AS SELECT 1;",
+      "CREATE OR REPLACE TABLE a(id INTEGER);", "CREATE TEMP TABLE x(a INTEGER);",
+      "CREATE TABLE IF NOT EXISTS x(a INTEGER);", "CREATE TABLE temp.x(a INTEGER);",
+      "CREATE TABLE system.x(a INTEGER);", "CREATE TABLE temp.main.x(a INTEGER);",
+      "CREATE TABLE x(a INTEGER) WITH (x = 1);",
+      // Types and sequences: only the exact forms the writer builds
+      "CREATE TYPE t AS STRUCT(a INTEGER);", "CREATE TYPE t AS ENUM (SELECT 'a');",
+      "CREATE TYPE t AS ENUM ('a', getenv('HOME'));",
+      "CREATE TYPE temp.t AS ENUM ('a');", "CREATE OR REPLACE TYPE t AS ENUM ('a');",
+      "CREATE SEQUENCE s;",
+      "CREATE SEQUENCE s START WITH 1 INCREMENT BY 1 MINVALUE 1"
+        + " MAXVALUE 9 NO CYCLE OWNED BY a.id;",
+      "CREATE SEQUENCE s START WITH (1) INCREMENT BY 1 MINVALUE 1 MAXVALUE 9 NO CYCLE;",
+      "CREATE TEMP SEQUENCE s START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9 NO CYCLE;",
+      "CREATE SCHEMA temp;", "CREATE SCHEMA IF NOT EXISTS system;",
+      "CREATE SCHEMA IF NOT EXISTS a.b;",
+      // Views: a read the classifier accepts as one
+      "CREATE VIEW v AS SELECT getenv('HOME');",
+      "CREATE VIEW v AS SELECT * FROM read_csv('https://example.com/x.csv');",
+      "CREATE VIEW v AS SELECT * FROM query('SELECT 1');",
+      "CREATE VIEW v AS SELECT nextval('seq1');", "CREATE OR REPLACE VIEW v AS SELECT 1;",
+      // Functions that run SQL text, read files, settings or secrets, or write logs, whatever the
+      // name's case, in a view, a table expression or an index key
+      "CREATE VIEW v AS SELECT * FROM json_execute_serialized_sql(json_serialize_sql("
+        + "'SELECT nextval(''main.victim'')'));",
+      "CREATE VIEW v AS SELECT * FROM Query_Table('t');",
+      "CREATE VIEW v AS SELECT * FROM pragma_table_info('t');",
+      "CREATE VIEW v AS SELECT * FROM duckdb_settings();",
+      "CREATE VIEW v AS SELECT * FROM \"truncate_duckdb_logs\"();",
+      "CREATE VIEW v AS SELECT enable_logging();", "CREATE VIEW v AS SELECT disable_logging();",
+      "CREATE VIEW v AS SELECT write_log('x');", "CREATE VIEW v AS SELECT create_secret('x');",
+      "CREATE VIEW v AS SELECT * FROM read_parquet('/Users/me/picked.parquet');",
+      "CREATE VIEW v AS SELECT * FROM glob('/Users/*');",
+      "CREATE VIEW v AS SELECT * FROM sniff_csv('/etc/hosts');",
+      "CREATE VIEW v AS SELECT * FROM parquet_metadata('/tmp/x.parquet');",
+      "CREATE VIEW v AS SELECT * FROM arrow_scan(1, 2, 3);",
+      "CREATE VIEW v AS SELECT * FROM sqlite_scan('/tmp/x.db', 't');",
+      "CREATE TABLE x(a VARCHAR DEFAULT(read_text('/etc/hosts')));",
+      "CREATE TABLE x(a VARCHAR, CHECK((a NOT IN (SELECT file FROM glob('/x')))));",
+      "CREATE INDEX i ON a((length(postgres_query('db', 'SELECT 1'))));",
+      "CREATE TABLE query_log(a VARCHAR DEFAULT(read_text('/etc/hosts')));",
+      "CREATE TABLE x(a INTEGER REFERENCES p(id), CHECK((a <> length(read_text('/x')))));",
+      "CREATE INDEX query_idx ON query_log((read_text('/x')));",
+      "CREATE VIEW read_summary (a) AS SELECT * FROM a JOIN b ON read_text('/etc/passwd') IS NOT NULL;",
+      "CREATE VIEW v AS SELECT * FROM main.query_table('t');",
+      "CREATE VIEW v AS SELECT * FROM scan_arrow_ipc([]);",
+      "CREATE VIEW v AS SELECT * FROM st_readosm('/tmp/x.pbf');",
+      "CREATE VIEW v AS SELECT * FROM from_substrait('x'::BLOB);",
+      "CREATE VIEW v AS SELECT setseed(0.5);", "CREATE VIEW v AS SELECT * FROM sqlsmith();",
+      "CREATE VIEW v AS SELECT * FROM ducklake_snapshots('x');",
+      "CREATE VIEW v AS SELECT md_user_info();",
+      // nextval only as a column DEFAULT of a sequence created earlier in the file
+      "CREATE TABLE x(a INTEGER DEFAULT(nextval('victim')));",
+      "CREATE TABLE x(a INTEGER DEFAULT(nextval('main.victim')));",
+      "CREATE INDEX i ON a((nextval('seq1')));",
+      "CREATE TEMP VIEW v AS SELECT 1;", "CREATE VIEW temp.v AS SELECT 1;",
+      "CREATE VIEW v;",
+      // Indexes: name, table and key list only
+      "CREATE INDEX i ON a(id) WHERE id > 0;", "CREATE INDEX i ON a USING ART (id);",
+      "CREATE INDEX i ON temp.a(id);", "CREATE INDEX s.i ON a(id);",
+      "CREATE INDEX i ON a(getenv('HOME'));",
+      // Rows: quoted text and NULL only, into a qualified table outside the system catalogs
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES (1);",
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES ('1'::INTEGER);",
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES (CAST('1' AS INTEGER));",
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES (getenv('HOME'));",
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES (X'00');",
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES (DATE '2024-01-01');",
+      "INSERT INTO \"main\".\"a\" (\"id\") SELECT 1;",
+      "INSERT INTO \"main\".\"a\" (\"id\") VALUES ('1') RETURNING *;",
+      "INSERT INTO a (id) VALUES ('1');", "INSERT INTO \"temp\".\"a\" (\"id\") VALUES ('1');",
+      "INSERT INTO system.main.a (id) VALUES ('1');",
+      "INSERT OR REPLACE INTO \"main\".\"a\" (\"id\") VALUES ('1');",
+    ])
+  func duckdbRefusedStatements(statement: String) {
+    expectRefusedAtIndex1(.duckdb, statement)
+  }
+
+  @Test("DuckDB: nextval only as a column DEFAULT of a sequence the file created first")
+  func duckdbNextvalNeedsTheFilesOwnSequence() throws {
+    let sequence =
+      "CREATE SEQUENCE \"s2\".\"own\" START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9 NO CYCLE;"
+    func script(_ statements: String...) -> String {
+      ([Self.header(.duckdb)] + statements).joined(separator: "\n") + "\n"
+    }
+    // A one-part name is the table's schema's sequence; the catalog writes DEFAULT(...)
+    for table in [
+      "CREATE TABLE s2.t(id INTEGER DEFAULT(nextval('own')));",
+      "CREATE TABLE t(id INTEGER DEFAULT nextval('s2.own'), n INTEGER DEFAULT(nextval('s2.own')));",
+      "CREATE TABLE t(id INTEGER DEFAULT(nextval('\"S2\".\"OWN\"')));",
+    ] {
+      #expect(try Self.plan(script(sequence, table), .duckdb).kinds == [.schema, .schema])
+    }
+    for table in [
+      // A one-part name in `main` could reach a `main.own` already in the database
+      "CREATE TABLE t(id INTEGER DEFAULT(nextval('own')));",
+      "CREATE TABLE s2.t(id INTEGER DEFAULT(nextval('s2.other')));",
+      "CREATE TABLE s2.t(id INTEGER DEFAULT(nextval('memory.s2.own')));",
+      "CREATE TABLE s2.t(id INTEGER DEFAULT(nextval('own' || '')));",
+      "CREATE TABLE s2.t(id INTEGER DEFAULT(nextval('own') + 1));",
+      "CREATE TABLE s2.t(id VARCHAR DEFAULT(CAST(nextval('own') AS VARCHAR)));",
+      "CREATE TABLE s2.t(id INTEGER, CHECK((nextval('own') > 0)));",
+      "CREATE TABLE s2.t(id INTEGER GENERATED ALWAYS AS(nextval('own')));",
+    ] {
+      guard
+        case .statementRefused(let index, _)? = Self.planError(
+          script(sequence, table), .duckdb)
+      else {
+        Issue.record("Expected \(table) to be refused")
+        continue
+      }
+      #expect(index == 1)
+    }
+    // The sequence must come first
+    guard
+      case .statementRefused(let index, _)? = Self.planError(
+        script("CREATE TABLE s2.t(id INTEGER DEFAULT(nextval('own')));", sequence), .duckdb)
+    else {
+      Issue.record("Expected a table before its sequence to be refused")
+      return
+    }
+    #expect(index == 0)
+  }
+
+  @Test("A DuckDB script with a NUL character is refused (DuckDB would cut the text there)")
+  func duckdbNULRefused() {
+    #expect(
+      Self.planError(
+        Self.header(.duckdb) + "\nINSERT INTO \"main\".\"a\" (\"x\") VALUES ('x\u{0}');",
+        .duckdb) == .containsNUL)
+  }
+
   private static let sqliteShapes: [String] =
     [
       "PRAGMA defer_foreign_keys = ON;",
@@ -547,7 +738,7 @@ struct SQLRestoreGateTests {
     "Every statement shape a dump writes is accepted",
     arguments: [
       (DatabaseType.postgresql, postgresShapes), (.mysql, mysqlShapes),
-      (.sqlite, sqliteShapes),
+      (.sqlite, sqliteShapes), (.duckdb, duckdbShapes),
     ])
   func acceptedDumpShapes(engine: DatabaseType, statements: [String]) throws {
     let script = ([Self.header(engine)] + statements).joined(separator: "\n") + "\n"
@@ -1189,6 +1380,88 @@ struct SQLRestoreGateTests {
 }
 
 extension SQLRestoreGateTests {
+  // MARK: - DuckDB: one batch, no savepoint
+
+  private static let duckdbDump = [
+    header(.duckdb),
+    "CREATE TYPE \"main\".\"mood\" AS ENUM ('ok');",
+    "CREATE TABLE t(id INTEGER, m ENUM('ok'));",
+    "INSERT INTO \"main\".\"t\" (\"id\", \"m\") VALUES\n('1', 'ok'),\n(NULL, NULL);",
+  ].map { $0 + "\n" }.joined()
+
+  private func connectDuckDB(
+    protectedMode: Bool = false, database: String = DuckDBSession.inMemoryPath,
+    readOnlyFile: Bool = false
+  ) async throws -> (DatabaseConnectionManager, FakeDatabaseSessionFactory) {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.duckdb.capabilities)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(
+      config: ConnectionConfig(
+        databaseType: .duckdb, database: database, sslMode: .disable, protectionLevel: .none,
+        safeMode: .silent, protectedMode: protectedMode, readOnlyFile: readOnlyFile))
+    return (manager, factory)
+  }
+
+  @Test("DuckDB: one BEGIN TRANSACTION ... COMMIT with no savepoint")
+  func duckdbBatch() async throws {
+    let (manager, factory) = try await connectDuckDB()
+    let plan = try Self.plan(Self.duckdbDump, .duckdb)
+    #expect(plan.kinds == [.schema, .schema, .data])
+    let summary = try await manager.executeGatedRestore(
+      plan, policy: open, connectionEpoch: await manager.connectionEpoch)
+    let sent = factory.sessions.last?.statements ?? []
+    #expect(sent.first == "BEGIN TRANSACTION")
+    #expect(sent.last == "COMMIT")
+    #expect(Array(sent.dropFirst().dropLast()) == plan.statements.map(\.text))
+    #expect(!sent.contains { $0.contains("SAVEPOINT") })
+    #expect(summary.statementsRun == 3)
+    #expect(!summary.pending)
+  }
+
+  @Test("DuckDB under Protected mode or with the user's transaction open is refused")
+  func duckdbRefusesTransactions() async throws {
+    let (protected, protectedFactory) = try await connectDuckDB(protectedMode: true)
+    guard
+      case .sequentialBatchRefused(let reason)? = await restoreError(protected, Self.duckdbDump)
+        as? DatabaseError
+    else {
+      Issue.record("Expected Protected mode to be refused")
+      return
+    }
+    #expect(reason.contains("Protected mode"))
+    #expect(reason.contains("savepoint"))
+    #expect(protectedFactory.statements.isEmpty)
+
+    let (manager, factory) = try await connectDuckDB()
+    _ = try await manager.execute(userSQL: "BEGIN TRANSACTION", policy: open)
+    let sent = factory.statements.count
+    guard
+      case .sequentialBatchRefused(let open)? = await restoreError(manager, Self.duckdbDump)
+        as? DatabaseError
+    else {
+      Issue.record("Expected the open transaction to be refused")
+      return
+    }
+    #expect(open == "Commit or roll back the open transaction first, then restore the dump.")
+    #expect(factory.statements.count == sent)
+  }
+
+  @Test("DuckDB: a file opened read-only is refused with how to reopen it writable")
+  func duckdbReadOnlyFile() async throws {
+    let (manager, factory) = try await connectDuckDB(
+      database: "/tmp/dblore-restore-\(UUID().uuidString).duckdb", readOnlyFile: true)
+    guard
+      case .blockedByProtection(_, _, let reason)? = await restoreError(manager, Self.duckdbDump)
+        as? DatabaseError
+    else {
+      Issue.record("Expected a read-only refusal")
+      return
+    }
+    #expect(reason == SQLRestorePlan.duckdbReadOnlyFileMessage)
+    #expect(reason.contains("turn off Read-only"))
+    #expect(factory.statements.isEmpty)
+  }
+
   // MARK: - SQLite file
 
   private static func makeDatabase() throws -> URL {

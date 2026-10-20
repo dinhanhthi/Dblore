@@ -43,6 +43,35 @@ struct TableHighlightMatcherTests {
     #expect(match([cond("name", .equals, "bob"), cond("age", .equals, "1")]).isEmpty)
   }
 
+  @Test("Several rules: first match wins, a cell rule beats a row rule, disabled rules skip")
+  func severalRules() {
+    func rule(
+      _ condition: FilterCondition, _ color: HighlightColor, _ style: HighlightStyle,
+      enabled: Bool = true
+    ) -> TableHighlight {
+      var highlight = TableHighlight(
+        filter: TableFilter(conditions: [condition]), color: color, style: style)
+      highlight.isEnabled = enabled
+      return highlight
+    }
+    let paint = HighlightPaint(
+      rules: [
+        rule(cond("name", .equals, "Alice"), .red, .row),
+        rule(cond("age", .greaterThan, "5"), .green, .cell),
+        rule(cond("age", .equals, "30"), .blue, .cell),
+        rule(cond("name", .equals, "bob"), .gray, .row, enabled: false),
+        rule(cond("age", .isNotNull), .purple, .row),
+      ],
+      rows: rows, columns: columns, dialect: .postgresql)
+    // Row 0: the first row rule (red) wins over purple; the age cell takes the first cell rule
+    #expect(paint.color(row: 0, column: 0) == .red)
+    #expect(paint.color(row: 0, column: 1) == .green)
+    // Row 1: the disabled gray rule is skipped, so the row is purple under its green age cell
+    #expect(paint.color(row: 1, column: 0) == .purple)
+    #expect(paint.color(row: 1, column: 1) == .green)
+    #expect(paint.color(row: 2, column: 0) == nil)
+  }
+
   private func matchTyped(_ cell: CellValue, _ op: FilterOperator, _ value: String) -> Bool {
     TableHighlight(
       filter: TableFilter(conditions: [cond("c", op, value)]), style: .cell

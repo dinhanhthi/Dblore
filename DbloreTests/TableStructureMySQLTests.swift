@@ -1,7 +1,7 @@
 // TableStructureMySQLTests.swift
 // MySQLSchemaIntrospector.tableStructure against MySQL 8.4 (3307) and MariaDB 11.4 (3308):
 // raw defaults normalized to the same SQL text on both engines, AUTO_INCREMENT, generated
-// columns, charset, collation and comments, constraint-backed, prefix and (MySQL) functional
+// columns, charset, collation, column and table comments, constraint-backed, prefix and (MySQL) functional
 // indexes, a multi-column foreign key with actions, checks, and names that need backticks.
 // Opt-in (`.requiresMySQL`). Fixtures are created by root, read as `dblore_test`, and use the
 // `ts` prefix.
@@ -36,6 +36,7 @@ struct TableStructureMySQLTests {
         schema: Self.database, table: Self.child, in: session)
       #expect(table.tableID == .mysql(database: Self.database, table: Self.child))
       #expect(table.schema == Self.database && table.name == Self.child)
+      #expect(table.comment == "it's the table")
       #expect(
         table.columns.map(\.name) == [
           "id", "name", "n", "m", "bs", "nl", "ts", "h", "g", "s", "pa", "pb", "q",
@@ -155,6 +156,8 @@ struct TableStructureMySQLTests {
         schema: Self.database, table: Self.parent, in: session)
       #expect(
         parent.constraints == [.init(name: "PRIMARY", kind: .primaryKey, columns: ["b", "a"])])
+      // No comment reads as nil, not ""
+      #expect(parent.comment == nil)
     }
   }
 
@@ -247,7 +250,7 @@ struct TableStructureMySQLTests {
         CONSTRAINT `ts k` FOREIGN KEY (q) REFERENCES `ts child` (id)
           ON DELETE SET NULL ON UPDATE CASCADE,
         INDEX ts_prefix (name(5))
-      )
+      ) COMMENT = 'it''s the table'
       """#,
       "CREATE VIEW \(db).ts_v AS SELECT 1 AS x",
     ]

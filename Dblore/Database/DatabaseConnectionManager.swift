@@ -98,6 +98,16 @@ actor DatabaseConnectionManager {
   var mysqlTableColumns = MySQLTableColumnsCache()
   /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
   var lastSessionLoss: SessionLostEvent?
+  /// Where Data Rewind entries go; nil records nothing. The app takes `RewindRecorder.shared`
+  /// (opened off the actor on connect) on the first edit with a plan; tests set their own
+  /// (`setRewindRecorder`).
+  var rewindRecorder: RewindRecorder?
+  /// Keys this manager's pending Data Rewind entries in the recorder
+  nonisolated let rewindScope = UUID()
+  /// User COMMITs, MySQL implicit-commit statements and MySQL BEGINs (Protected mode off,
+  /// `userTxOpen`) awaited, one per script: a connection lost meanwhile may or may not have
+  /// committed
+  var userCommitsInFlight = 0
   /// Why a SQLite file was opened read-only by the app (a sidecar could not be written); nil
   /// otherwise. Set on connect, cleared when the connection is forgotten.
   private(set) var sqliteReadOnlyReason: String?
@@ -168,6 +178,10 @@ actor DatabaseConnectionManager {
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
+    // The Data Rewind store opens off this actor, long before the first edit reads it
+    if !SessionManager.isRunningAsTestHost {
+      Task.detached(priority: .utility) { _ = RewindRecorder.shared }
+    }
 
     // Disconnect if already connected. Nothing of the new connection (session, config,
     // epoch) is published until its session brakes are applied.
@@ -379,6 +393,10 @@ actor DatabaseConnectionManager {
     let forgotten = session
     let resources = (forgotten as? PostgresSession)?.detach() ?? DetachedPostgresSession()
     let mysql = (forgotten as? MySQLSession)?.detach()
+    // The server rolls back what was open, except a COMMIT already sent (the app's or the
+    // user's): unknown, so the entries stay pending (unconfirmed)
+    closeRewindEntries(
+      as: txState.endingKind == .commit || userCommitsInFlight > 0 ? nil : .discarded)
     session = nil
     config = nil
     sqliteReadOnlyReason = nil
@@ -489,9 +507,10 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
 
   var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
   var duckDBLibraryLoader: DuckDBLibraryLoader = { @MainActor in
-    let manager = DuckDBPluginManager.shared
-    guard await manager.isInstalledAfterLaunchCheck() else { return nil }
-    return { try manager.loadLibrary() }
+    guard let manager = PluginRegistry.shared.manager(id: "duckdb"),
+      await manager.isInstalledAfterLaunchCheck()
+    else { return nil }
+    return { try manager.loadDuckDBLibrary() }
   }
 
   func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession {

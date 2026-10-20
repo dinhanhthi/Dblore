@@ -15,7 +15,7 @@ struct ConnectionFormModal: View {
   var submitTitle: String = "Connect"
   var showsRecentHistory: Bool = true
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
-  var onConnect: ((ConnectionConfig) async throws -> Void)?
+  var onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)?
   var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
   var unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)?
   var unlockConnectError: Binding<String?>?
@@ -80,7 +80,9 @@ struct ConnectionFormModal: View {
 
   /// Read in `body`, so the picker and the missing-plugin row follow install and remove. While
   /// the launch check hashes the file, a present file counts as installed.
-  private var isDuckDBInstalled: Bool { DuckDBPluginManager.shared.isInstalledOrPending }
+  private var isDuckDBInstalled: Bool {
+    PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true
+  }
 
   private var missingPluginRow: some View {
     HStack(spacing: Spacing.sm) {
@@ -169,7 +171,7 @@ extension View {
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
-    onConnect: ((ConnectionConfig) async throws -> Void)? = nil,
+    onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)? = nil,
     unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil,
     unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)? = nil,
     unlockConnectError: Binding<String?>? = nil,
@@ -213,8 +215,9 @@ extension View {
       onTestConnection: { config in
         try await workspaceManager.connectionManager.testConnection(config: config)
       },
-      onConnect: { config in
-        try await workspaceManager.connect(config: config)
+      onConnect: { config, aiFieldsEdited in
+        try await workspaceManager.connect(
+          config: config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
       },
       unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate },
       unrememberedSSHCredential: { workspaceManager.activeUnrememberedSSHCredential },
@@ -292,7 +295,7 @@ struct WorkspaceConnectUnlockSheet: View {
         isPresented: $isPresented,
         connectionConfig: $config,
         onTestConnection: { _ in true },
-        onConnect: { _ in }
+        onConnect: { _, _ in }
       )
     }
 }

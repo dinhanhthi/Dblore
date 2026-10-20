@@ -7,8 +7,7 @@
 //  Passwords stay in TablePlus's Keychain and are never imported. The file is external input:
 //  its size is bounded and warnings never carry secret values.
 //
-//  Key names (cross-checked in the open-source TablePlus importers of TablePro, Gridex, Tabularis
-//  and the Raycast TablePlus extension): `ConnectionName`, `Driver` ("PostgreSQL", "MySQL", "MariaDB"), `DatabaseHost`,
+//  Key names: `ConnectionName`, `Driver` ("PostgreSQL", "MySQL", "MariaDB"), `DatabaseHost`,
 //  `DatabasePort` (string), `DatabaseName`, `DatabaseUser`, `isUseSocket`, `tLSMode` (integer),
 //  `isOverSSH`, `ServerAddress`, `ServerPort` (string), `ServerUser`, `isUsePrivateKey`.
 //  The `.tableplusconnection` export is RNCryptor-encrypted with a user passphrase: not supported.
@@ -136,7 +135,7 @@ nonisolated enum TablePlusImporter {
     return .success(ImportedConnection(config: config, source: .tablePlus, warnings: warnings))
   }
 
-  /// TablePlus stores the TLS picker index. Importers disagree on the index table (per driver),
+  /// TablePlus stores the TLS picker index. The index table is undocumented and differs per driver,
   /// so only 0 (the default, "preferred") is mapped; a mode name string is accepted too.
   private static func sslMode(_ value: Any?, warnings: inout [String]) -> SSLMode {
     switch value {

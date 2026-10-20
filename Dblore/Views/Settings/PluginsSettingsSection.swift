@@ -2,49 +2,93 @@
 //  PluginsSettingsSection.swift
 //  Dblore
 //
-//  Settings > Plugins: install, cancel and remove the optional DuckDB plugin.
+//  Settings > Plugins: one card per catalog plugin to install, cancel and remove it.
 //
 
 import AppKit
 import SwiftUI
 
 struct PluginsSettingsSection: View {
-  private let manager = DuckDBPluginManager.shared
-
-  @State private var isConfirmingRemove = false
-
-  private static let licenseURL = URL(
-    string: "https://github.com/duckdb/duckdb/blob/main/LICENSE")!
+  /// In catalog order; empty only when the bundled catalog is missing or invalid (logged by the
+  /// registry).
+  private let managers = PluginRegistry.shared.managers
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      SettingsGroupCard(title: "DuckDB", accessory: { versionLabel }) {
-        VStack(alignment: .leading, spacing: Spacing.md) {
-          Text(
-            "Query .duckdb files and Parquet/CSV with DuckDB. Downloaded on demand (~117 MB)."
-          )
+      if managers.isEmpty {
+        Text(PluginManagerError.catalogUnavailable.localizedDescription)
           .font(.bodyText)
-          .foregroundColor(.foregroundSubtle)
+          .foregroundColor(.destructive)
+      }
+      ForEach(managers, id: \.entry.id) { manager in
+        PluginRow(manager: manager)
+      }
+    }
+  }
+}
 
-          controls
+/// App-side text for a plugin id; the catalog carries none. Unknown ids show their id only.
+private struct PluginDisplayInfo {
+  let name: String
+  var summary: String?
+  var license: (title: String, url: URL)?
+  var removeMessage: String
 
-          if case .failed(let message) = manager.state {
-            Text(message)
-              .font(.bodyText)
-              .foregroundColor(.destructive)
-              .textSelection(.enabled)
-          }
+  static func forID(_ id: String) -> PluginDisplayInfo {
+    switch id {
+    case "duckdb":
+      PluginDisplayInfo(
+        name: "DuckDB",
+        summary:
+          "Query .duckdb files and Parquet/CSV with DuckDB. Downloaded on demand (~117 MB).",
+        license: (
+          "DuckDB is MIT licensed",
+          URL(string: "https://github.com/duckdb/duckdb/blob/main/LICENSE")!
+        ),
+        removeMessage:
+          "Deletes the downloaded DuckDB library. Install it again to use DuckDB connections.")
+    default:
+      PluginDisplayInfo(name: id, removeMessage: "Deletes the downloaded \(id) library.")
+    }
+  }
+}
 
-          if manager.requiresRestartToUnload {
-            Text("DuckDB stays loaded until you quit Dblore.")
-              .font(.bodyText)
-              .foregroundColor(.foregroundMuted)
-          }
+private struct PluginRow: View {
+  let manager: PluginManager
 
+  @State private var isConfirmingRemove = false
+
+  private var info: PluginDisplayInfo { .forID(manager.entry.id) }
+
+  var body: some View {
+    SettingsGroupCard(title: info.name, accessory: { versionLabel }) {
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        if let summary = info.summary {
+          Text(summary)
+            .font(.bodyText)
+            .foregroundColor(.foregroundSubtle)
+        }
+
+        controls
+
+        if case .failed(let message) = manager.state {
+          Text(message)
+            .font(.bodyText)
+            .foregroundColor(.destructive)
+            .textSelection(.enabled)
+        }
+
+        if manager.requiresRestartToUnload {
+          Text("\(info.name) stays loaded until you quit Dblore.")
+            .font(.bodyText)
+            .foregroundColor(.foregroundMuted)
+        }
+
+        if let license = info.license {
           Divider()
 
-          Button("DuckDB is MIT licensed") {
-            NSWorkspace.shared.open(Self.licenseURL)
+          Button(license.title) {
+            NSWorkspace.shared.open(license.url)
           }
           .buttonStyle(.plain)
           .font(.small)
@@ -54,7 +98,7 @@ struct PluginsSettingsSection: View {
       }
     }
     .confirmationDialog(
-      "Remove the DuckDB plugin?",
+      "Remove the \(info.name) plugin?",
       isPresented: $isConfirmingRemove,
       titleVisibility: .visible
     ) {
@@ -63,17 +107,14 @@ struct PluginsSettingsSection: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Deletes the downloaded DuckDB library. Install it again to use DuckDB connections.")
+      Text(info.removeMessage)
     }
   }
 
-  @ViewBuilder
   private var versionLabel: some View {
-    if let version = manager.catalog?.version {
-      Text("v\(version)")
-        .font(.monoSmall)
-        .foregroundColor(.foregroundMuted)
-    }
+    Text("v\(manager.entry.version)")
+      .font(.monoSmall)
+      .foregroundColor(.foregroundMuted)
   }
 
   @ViewBuilder
@@ -90,7 +131,7 @@ struct PluginsSettingsSection: View {
       Button("Install") { install() }
         .buttonStyle(PrimaryButtonStyle())
         .controlSize(.regular)
-        .disabled(manager.catalog == nil)
+        .disabled(manager.installedURL == nil)
         .linkPointer()
     case .downloading(let fraction):
       HStack(spacing: Spacing.md) {
@@ -128,7 +169,7 @@ struct PluginsSettingsSection: View {
       Button("Retry") { install() }
         .buttonStyle(PrimaryButtonStyle())
         .controlSize(.regular)
-        .disabled(manager.catalog == nil)
+        .disabled(manager.installedURL == nil)
         .linkPointer()
     }
   }

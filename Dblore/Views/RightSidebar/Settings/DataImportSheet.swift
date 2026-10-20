@@ -36,11 +36,16 @@ struct DataImportSheet: View {
     self.onImported = onImported
     self.onFailed = onFailed
     let known = manifest.categories.compactMap { LocalDataCategory(rawValue: $0.id) }
+      .filter { !$0.isExcludedFromBackup }
     _selected = State(initialValue: Set(known))
   }
 
+  /// Known categories a backup may hold. A hand-made package listing Data Rewind shows nothing.
   private var entries: [BackupManifest.Category] {
-    manifest.categories.filter { LocalDataCategory(rawValue: $0.id) != nil }
+    manifest.categories.filter {
+      guard let category = LocalDataCategory(rawValue: $0.id) else { return false }
+      return !category.isExcludedFromBackup
+    }
   }
 
   private var versionOK: Bool { manifest.formatVersion == LocalDataBackup.formatVersion }

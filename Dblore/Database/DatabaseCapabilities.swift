@@ -52,7 +52,8 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   let supportsTransactions: Bool
   /// The structure editor opens. DuckDB stays view-only by type, not by this flag.
   let supportsStructure: Bool
-  /// SQL backup and restore. False for DuckDB.
+  /// SQL backup and restore. False for MongoDB (its own backup format). DuckDB dumps on the
+  /// tab's own session and restores without Protected mode (no savepoints).
   let supportsSQLDump: Bool
 
   /// A local file (or in-memory) database: the connection form shows the file picker

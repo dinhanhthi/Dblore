@@ -185,6 +185,9 @@ class NotebookViewModel {
   var editorStatementResults: [StatementResult] = []  // Results for multi-statement queries
   var selectedStatementIndex: Int = 0  // Currently selected statement result (0-based)
   var totalExecutionTime: TimeInterval = 0  // Total time for all statements
+  /// Selected rows of the editor or data viewer grid, for the result header or paging bar.
+  /// Set by the grid; nil once it goes away. View state only.
+  var editorSelectionSummary: ResultSelectionSummary?
 
   // MARK: - Pinning (session only, see NotebookViewModel+Pinning.swift)
   /// Cells showing the compare view
@@ -267,7 +270,7 @@ class NotebookViewModel {
         _ schema: String, _ name: String, _ orderColumns: [String], _ filter: TableFilter?
       ) -> Void
     )?
-  /// Highlight form of the data viewer: only `applyHighlight()` copies it to `dataViewer.highlight`
+  /// Highlight form of the data viewer: only `applyHighlight()` adds it to `dataViewer.highlights`
   var highlightDraft = TableHighlight(filter: TableFilter(conditions: []))
   /// Highlights saved for the connection and table of the data viewer
   var savedHighlights: [SavedHighlight] = []
@@ -292,6 +295,18 @@ class NotebookViewModel {
   /// Latest posting task (posting never blocks the run)
   @ObservationIgnored var lastCompletionNotification: Task<Void, Never>?
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
+  /// Workspace mode: true only while the connection's AI access is allowed (needs approval and
+  /// denied are false). Set by `WorkspaceManager`; ghost text asks it before every request.
+  @ObservationIgnored var isAIAllowed: @MainActor () -> Bool = { false }
+  /// Workspace mode: compact schema of the workspace connection for the text before the caret,
+  /// nil until that connection's schema has landed or while its AI access is not allowed. Set by
+  /// `WorkspaceManager`; nil (no schema) when no workspace is wired.
+  @ObservationIgnored var aiInlineSchema: @MainActor (_ prefix: String) async -> String? = { _ in
+    nil
+  }
+  /// Ghost text controller of each SQL editor: the cell id, or this view model's `id` for the
+  /// editor tab (see `aiInlineCompletion(cellId:)`). Session only.
+  @ObservationIgnored var aiInlineCompletions: [UUID: AIInlineCompletionController] = [:]
 
   init(notebook: DbloreNotebook = .newDocument()) {
     self.notebook = notebook

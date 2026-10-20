@@ -11,6 +11,10 @@
 //   `HEX()` text is checked to be hex digits.
 // - SQLite selects `quote(col)`, which already returns an SQL literal, written as returned once
 //   checked to be `NULL`, a number, a quoted string or a blob.
+// - DuckDB selects `hex(col)` for BLOB columns, written as quoted `'\xHH...'` text (one escape
+//   per byte) that DuckDB casts to BLOB on insert, and `CAST(col AS VARCHAR)` for the rest,
+//   written as a quoted string (text with a NUL stops the dump: a restore refuses it). No cast
+//   or function call is written: the restore accepts only quoted text and NULL in a DuckDB row.
 
 import Foundation
 
@@ -29,16 +33,42 @@ nonisolated enum SQLDumpDataRenderer {
   ) throws -> String {
     let dialect = engine.dialect
     let values = try table.columns.map { column -> String in
-      let name = try dialect.quoteIdentifier(column.name)
-      switch engine {
-      case .postgresql: return "'v' || \(name)::text"
-      case .mysql: return isMySQLHex(column) ? "HEX(\(name))" : "CAST(\(name) AS CHAR)"
-      default: return "quote(\(name))"
-      }
+      textExpression(
+        try dialect.quoteIdentifier(column.name), typeName: column.dataType, engine: engine)
     }
     let from = engine == .postgresql ? "FROM ONLY \(table.target)" : "FROM \(table.target)"
     return values.isEmpty
       ? "SELECT \(from)" : "SELECT \(values.joined(separator: ", ")) \(from)"
+  }
+
+  /// One column read as text: PostgreSQL `'v' || col::text`, MySQL `HEX(col)` for
+  /// `mysqlHexTypes` and `CAST(col AS CHAR)` otherwise, SQLite `quote(col)`, DuckDB `hex(col)`
+  /// for BLOB and `CAST(col AS VARCHAR)` otherwise. `quotedName` is already quoted. MongoDB has
+  /// no text form and reads as SQLite. Shared with the Data Rewind capture (`RewindCaptureSQL`,
+  /// which refuses DuckDB and MongoDB).
+  static func textExpression(
+    _ quotedName: String, typeName: String, engine: DatabaseType
+  )
+    -> String
+  {
+    switch engine {
+    case .postgresql: "'v' || \(quotedName)::text"
+    case .mysql:
+      isMySQLHexType(typeName) ? "HEX(\(quotedName))" : "CAST(\(quotedName) AS CHAR)"
+    case .duckdb:
+      isDuckDBBlob(typeName) ? "hex(\(quotedName))" : "CAST(\(quotedName) AS VARCHAR)"
+    case .sqlite, .mongodb: "quote(\(quotedName))"
+    }
+  }
+
+  /// A DuckDB `duckdb_columns().data_type` read with `hex()`
+  static func isDuckDBBlob(_ typeName: String) -> Bool {
+    SQLTokenizer.asciiUppercased(typeName) == "BLOB"
+  }
+
+  /// A MySQL `DATA_TYPE` or result type name (any case) read with `HEX()`
+  static func isMySQLHexType(_ typeName: String) -> Bool {
+    mysqlHexTypes.contains(typeName.lowercased())
   }
 
   /// The SQL literal of one value read by `selectStatement`.
@@ -61,18 +91,33 @@ nonisolated enum SQLDumpDataRenderer {
       return SQLDialect.mysql.literal(.data(data))
     case (.sqlite, .string(let text)) where isSQLiteLiteral(text):
       return text
+    case (.duckdb, .string(let text)) where isDuckDBBlob(column.dataType):
+      guard text.utf8.count.isMultiple(of: 2), isHex(text[...]) else {
+        throw SQLDumpError.unexpectedValue(table: table, column: column.name)
+      }
+      let bytes = Array(text.utf8)
+      let escaped = stride(from: 0, to: bytes.count, by: 2).map {
+        "\\x" + String(decoding: bytes[$0...($0 + 1)], as: UTF8.self)
+      }
+      return "'" + escaped.joined() + "'"
+    case (.duckdb, .string(let text)):
+      // A restore refuses a DuckDB script with a NUL (DuckDB reads statements as C strings)
+      guard !text.unicodeScalars.contains("\0") else {
+        throw SQLDumpError.unexpectedValue(table: table, column: column.name)
+      }
+      return SQLDialect.duckdb.literal(.string(text))
     default:
       throw SQLDumpError.unexpectedValue(table: table, column: column.name)
     }
   }
 
   private static func isMySQLHex(_ column: TableStructure.Column) -> Bool {
-    mysqlHexTypes.contains(column.dataType.lowercased())
+    isMySQLHexType(column.dataType)
   }
 
   /// `quote()` output: `NULL`, a number (`9.0e+999` for infinity), `'text'` with every inner
   /// quote doubled, or `X'hex'`.
-  private static func isSQLiteLiteral(_ text: String) -> Bool {
+  static func isSQLiteLiteral(_ text: String) -> Bool {
     if text == "NULL" || isNumber(text) { return true }
     if text.count >= 3, text.hasPrefix("X'"), text.hasSuffix("'") {
       return isHex(text.dropFirst(2).dropLast())
@@ -97,7 +142,7 @@ nonisolated enum SQLDumpDataRenderer {
   }
 
   /// `-`, digits, an optional `.digits` fraction and an optional `e[+-]digits` exponent.
-  private static func isNumber(_ text: String) -> Bool {
+  static func isNumber(_ text: String) -> Bool {
     let unsigned = text.hasPrefix("-") ? text.dropFirst() : text[...]
     let parts = unsigned.split(separator: "e", maxSplits: 1, omittingEmptySubsequences: false)
     let mantissa = parts[0].split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false)
@@ -113,7 +158,7 @@ nonisolated enum SQLDumpDataRenderer {
   }
 
   /// ASCII hex digits only (empty allowed): `Character.isHexDigit` also accepts fullwidth forms.
-  private static func isHex(_ text: Substring) -> Bool {
+  static func isHex(_ text: Substring) -> Bool {
     text.utf8.allSatisfy { byte in
       (0x30...0x39).contains(byte) || (0x41...0x46).contains(byte) || (0x61...0x66).contains(byte)
     }

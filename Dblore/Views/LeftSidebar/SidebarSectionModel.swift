@@ -8,6 +8,8 @@
 //  also offer Build Aggregation..., then both Export Collection... (a read, so also on read-only
 //  connections). Collections add Import Documents... when the connection takes writes. When the
 //  schema may change, collections add Rename and Drop, views Edit View, Duplicate and Drop.
+//  PostgreSQL, MySQL and SQLite tables add Rename and Drop Table (the structure editor's flows)
+//  and the Tables header New Table... when the schema may change; DuckDB stays view-only.
 //
 
 import Foundation
@@ -26,7 +28,7 @@ nonisolated enum SidebarSectionModel {
     let icon: String
   }
 
-  /// A row menu item added by this model. SQL rows get none (their menus stay as they are).
+  /// A row menu item added by this model. SQL tables get only Rename and Drop.
   enum RowAction: Equatable, Sendable {
     /// Opens the relation in the data viewer, as a click on the row does.
     case open
@@ -58,6 +60,14 @@ nonisolated enum SidebarSectionModel {
       case .drop: "Drop…"
       case .duplicate: "Duplicate…"
       case .editDefinition: "Edit View…"
+      }
+    }
+
+    /// `title`, except Drop on an SQL table row, which names what it drops
+    func title(for language: QueryLanguage) -> String {
+      switch (self, language) {
+      case (.drop, .sql): "Drop Table…"
+      default: title
       }
     }
   }
@@ -97,24 +107,37 @@ nonisolated enum SidebarSectionModel {
     return type == .duckdb ? "View Structure..." : "Edit Structure..."
   }
 
-  /// The section header's create item. Nil (SQL) shows none.
-  static func createActionTitle(for kind: Kind, language: QueryLanguage) -> String? {
-    guard language == .mongosh else { return nil }
-    switch kind {
-    case .tables: return "New Collection…"
-    case .views: return "New View…"
-    case .functions, .procedures, .triggers: return nil
+  /// The engines whose tables Dblore creates, renames and drops (DuckDB is view-only, MongoDB
+  /// has collections)
+  static func supportsTableChanges(_ type: DatabaseType) -> Bool {
+    switch type {
+    case .postgresql, .mysql, .sqlite: true
+    case .duckdb, .mongodb: false
+    }
+  }
+
+  /// The section header's create item. Nil shows none.
+  static func createActionTitle(for kind: Kind, databaseType: DatabaseType) -> String? {
+    switch (databaseType, kind) {
+    case (.mongodb, .tables): "New Collection…"
+    case (.mongodb, .views): "New View…"
+    case (.postgresql, .tables), (.mysql, .tables), (.sqlite, .tables): "New Table…"
+    default: nil
     }
   }
 
   /// Menu items of the table, collection or view row named `name`. Without `canChangeSchema`
   /// (the default, fail-closed) no item changes the schema, without `canImportDocuments` (the
-  /// default) no collection offers an import; destructive items come last.
+  /// default) no collection offers an import; destructive items come last. SQL tables get Rename
+  /// and Drop only; the caller passes `canChangeSchema` false where `supportsTableChanges` is.
   static func rowActions(
     for kind: Kind, name: String, language: QueryLanguage, canChangeSchema: Bool = false,
     canImportDocuments: Bool = false
   ) -> [RowAction] {
-    guard language == .mongosh, kind == .tables || kind == .views else { return [] }
+    if language == .sql {
+      return kind == .tables && canChangeSchema ? [.rename, .drop] : []
+    }
+    guard kind == .tables || kind == .views else { return [] }
     let actions: [RowAction] = [.open, .copyName, .insert(findSnippet(collection: name))]
     if kind == .tables {
       return actions + [.buildAggregation, .exportCollection]

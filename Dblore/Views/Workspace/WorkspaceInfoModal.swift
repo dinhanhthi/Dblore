@@ -152,8 +152,9 @@ struct WorkspaceInfoModal: View {
             onTestConnection: { config in
               try await workspaceManager.connectionManager.testConnection(config: config)
             },
-            onConnect: { config in
-              try await workspaceManager.connect(config: config)
+            onConnect: { config, aiFieldsEdited in
+              try await workspaceManager.connect(
+                config: config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
             },
             onConnectionSuccess: { isPresented = false },
             submitTitle: workspaceManager.connectionState.isConnected
@@ -234,7 +235,7 @@ struct WorkspaceInfoModal: View {
     guard let type = workspace.connectionConfig?.databaseType, type == .duckdb,
       type.capabilities.requiresPlugin
     else { return false }
-    return !DuckDBPluginManager.shared.isInstalledOrPending
+    return PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending != true
   }
 
   /// Same Install action as the connection form's missing-plugin row: opens Settings > Plugins,

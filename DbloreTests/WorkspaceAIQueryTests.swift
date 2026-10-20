@@ -119,7 +119,41 @@ struct WorkspaceAIQueryTests {
     try await manager.connectionManager.connect(config: config)
     manager.connectionState = .connected
     manager.aiReadSessionFactory = aiRead
+    manager.aiAccessSource = { Self.access(config, .always) }
     return manager
+  }
+
+  /// `config` with `policy`, asking its own gate so the saved list and approvals stay out of it
+  private static func access(
+    _ config: ConnectionConfig, _ policy: AIAccessPolicy
+  )
+    -> AIAccessContext
+  {
+    var config = config
+    config.aiAccess = policy
+    return AIAccessContext(config: config, savedPolicies: [], gate: AIAccessGate())
+  }
+
+  @Test("A private or not yet allowed connection runs nothing and records nothing")
+  func refusedForPrivateConnection() async throws {
+    let recorder = RecordingHistory()
+    let live = FakeDatabaseSessionFactory(capabilities: .contract())
+    let aiRead = FakeDatabaseSessionFactory(capabilities: .contract(), rows: [[.int(1)]])
+    let manager = try await connectedManager(live: live, aiRead: aiRead)
+    manager.aiHistoryRecorder = recorder
+    let config = try #require(manager.workspace.connectionConfig)
+
+    for policy in [AIAccessPolicy.never, .askOncePerSession] {
+      manager.aiAccessSource = { Self.access(config, policy) }
+      await #expect(throws: AIAssistantViewModel.QueryRunError.accessNotAllowed) {
+        _ = try await manager.runAIQuery("SELECT 1")
+      }
+    }
+
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(aiRead.sessions.isEmpty)
+    #expect(live.statements.isEmpty)
+    #expect(await recorder.entries.isEmpty)
   }
 
   @Test("PostgreSQL: the query runs in a READ ONLY transaction on its own session, then closes")

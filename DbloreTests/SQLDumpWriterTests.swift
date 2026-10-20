@@ -92,6 +92,35 @@ struct SQLDumpWriterTests {
     #expect(session.statements == ["BEGIN", "SELECT 1", "ROLLBACK"])
   }
 
+  @Test func duckdbSnapshotIsAReadOnlyTransactionWithoutBrakeStatements() async throws {
+    #expect(
+      try DatabaseConnectionManager.dumpBrakeLiftStatements(databaseType: .duckdb, serverInfo: nil)
+        .isEmpty)
+    let session = Self.recordingSession()
+    _ = try await DatabaseConnectionManager.runDumpSnapshot(
+      on: session, databaseType: .duckdb, serverInfo: nil
+    ) { reader in
+      try await Self.drain(reader, "SELECT 1")
+    }
+    #expect(session.statements == ["BEGIN TRANSACTION READ ONLY", "SELECT 1", "ROLLBACK"])
+  }
+
+  @Test func duckdbDumpIsRefusedWhileATransactionIsOpenOnTheTab() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.duckdb.capabilities)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(config: Self.duckdbConfig)
+    _ = try await manager.execute(
+      userSQL: "BEGIN TRANSACTION", policy: ProtectionPolicy(protectionLevel: .none))
+    let sent = factory.statements.count
+    await #expect(throws: SQLDumpError.transactionOpen) {
+      _ = try await manager.withDumpSnapshot { _ in 0 }
+    }
+    #expect(factory.statements.count == sent)
+    #expect(
+      SQLDumpError.transactionOpen.errorDescription
+        == "Commit or roll back the open transaction first, then export the dump.")
+  }
+
   @Test func rollbackIsSentWhenTheBodyFails() async throws {
     let session = Self.recordingSession()
     await #expect(throws: FakeQueryError.self) {
@@ -357,6 +386,35 @@ struct SQLDumpWriterTests {
     }
   }
 
+  @Test func duckdbReadsTextAndBlobsAsHex() throws {
+    let table = SQLDumpDDL.TableInsert(
+      schema: "main", name: "t", target: "\"main\".\"t\"",
+      columns: [Self.column(1, "a\"b", "DECIMAL(18,4)"), Self.column(2, "bin", "BLOB")],
+      overridingSystemValue: false, hasData: true)
+    #expect(
+      try SQLDumpDataRenderer.selectStatement(table, engine: .duckdb)
+        == "SELECT CAST(\"a\"\"b\" AS VARCHAR), hex(\"bin\") FROM \"main\".\"t\"")
+    func duckdb(_ value: CellValue, _ type: String) throws -> String {
+      try SQLDumpDataRenderer.literal(
+        value, column: Self.column(1, "c", type), table: "t", engine: .duckdb)
+    }
+    #expect(try duckdb(.null, "BLOB") == "NULL")
+    #expect(try duckdb(.string(""), "VARCHAR") == "''")
+    #expect(try duckdb(.string("it's a \\ path"), "VARCHAR") == "'it''s a \\ path'")
+    #expect(
+      try duckdb(.string("2024-01-02 02:04:05.123456+01"), "TIMESTAMP WITH TIME ZONE")
+        == "'2024-01-02 02:04:05.123456+01'")
+    #expect(try duckdb(.string("AB005CFF"), "BLOB") == "'\\xAB\\x00\\x5C\\xFF'")
+    #expect(try duckdb(.string(""), "BLOB") == "''")
+    let refused = SQLDumpError.unexpectedValue(table: "t", column: "c")
+    for hex in ["ABC", "GG", "AB'", "\u{FF11}\u{FF11}"] {
+      #expect(throws: refused) { try duckdb(.string(hex), "BLOB") }
+    }
+    #expect(throws: refused) { try duckdb(.int(1), "INTEGER") }
+    // A restore refuses any DuckDB script with a NUL: the dump stops instead of writing one
+    #expect(throws: refused) { try duckdb(.string("a\u{0}b"), "VARCHAR") }
+  }
+
   @Test func literalsRefuseValuesNotInTheFormRead() throws {
     let refused = SQLDumpError.unexpectedValue(table: "t", column: "c")
     for hex in ["GG", "DE;AD", "DE AD", "\u{FF11}"] {
@@ -401,6 +459,40 @@ struct SQLDumpWriterTests {
     var postgres = config
     postgres.databaseType = .postgresql
     #expect(!SQLDumpWriter.isConnectedDatabaseFile(database, config: postgres))
+  }
+
+  @Test func destinationRefusesTheConnectedDuckDBFileAndItsWAL() throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let database = directory.appendingPathComponent("app.duckdb")
+    FileManager.default.createFile(atPath: database.path, contents: Data())
+    let config = ConnectionConfig(databaseType: .duckdb, database: database.path)
+    for path in [database.path, database.path + ".wal"] {
+      #expect(
+        SQLDumpWriter.isConnectedDatabaseFile(URL(fileURLWithPath: path), config: config),
+        "\(path)")
+    }
+    #expect(
+      !SQLDumpWriter.isConnectedDatabaseFile(
+        directory.appendingPathComponent("app.sql"), config: config))
+    #expect(
+      !SQLDumpWriter.isConnectedDatabaseFile(
+        directory.appendingPathComponent(":memory:"),
+        config: ConnectionConfig(databaseType: .duckdb, database: DuckDBSession.inMemoryPath)))
+  }
+
+  @Test func duckdbIsNeverDumpedThroughASecondConnection() async throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.duckdb.capabilities)
+    let writer = SQLDumpWriter(
+      config: Self.duckdbConfig, material: nil, sshCredential: nil, sessionFactory: factory,
+      temporaryDirectory: directory)
+    await #expect(throws: SQLDumpError.unsupportedEngine(.duckdb)) {
+      _ = try await writer.write(to: directory.appendingPathComponent("out.sql"))
+    }
+    #expect(factory.sessions.isEmpty)
+    #expect(try Self.leftovers(in: directory).isEmpty)
   }
 
   @Test func refusedDestinationNeverConnects() async throws {
@@ -771,6 +863,10 @@ struct SQLDumpWriterTests {
     for try await _ in try await reader.query(sql, binds: []).rows { count += 1 }
     return count
   }
+
+  private static let duckdbConfig = ConnectionConfig(
+    databaseType: .duckdb, database: DuckDBSession.inMemoryPath, sslMode: .disable,
+    protectionLevel: .none, safeMode: .silent, protectedMode: false)
 
   private static func sqliteConfig(_ path: String) -> ConnectionConfig {
     ConnectionConfig(

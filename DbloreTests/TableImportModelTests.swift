@@ -357,6 +357,54 @@ struct TableImportModelTests {
     #expect(model.previewRows.last?.last??.count == 70_000)
   }
 
+  @Test("An import never sends a Data Rewind plan, so imported rows are never recorded")
+  func importRecordsNoRewind() async throws {
+    let directory = FileManager.default.temporaryDirectory
+    let url = directory.appendingPathComponent("dblore-import-rewind-\(UUID().uuidString).sqlite")
+    let storeURL = directory.appendingPathComponent("dblore-import-store-\(UUID().uuidString)")
+    defer {
+      for path in [url.path, storeURL.path] {
+        for suffix in ["", "-wal", "-shm"] {
+          try? FileManager.default.removeItem(atPath: path + suffix)
+        }
+      }
+    }
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", safeMode: .silent,
+      protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    let store = try RewindStore(url: storeURL)
+    let recorder = RewindRecorder(store: store)
+    await manager.setRewindRecorder(recorder)
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    let epoch = await manager.connectionEpoch
+    let target = EditTarget(
+      qualifiedName: "\"main\".\"t\"", tableID: .sqlite(schema: "main", table: "t"),
+      primaryKeyColumns: ["id"], connectionEpoch: epoch, schema: "main", name: "t")
+    // Even a plan set by mistake is not sent for an import
+    let batch = PendingStagedBatch(
+      statements: [BoundStatement(sql: "INSERT INTO t (id) VALUES (?1)", values: ["5"])],
+      preview: "INSERT INTO t (id) -- 1 row from file", connectionEpoch: epoch,
+      historySource: .dataImport, rowRanges: [1...1],
+      rewindPlan: RewindPlan(
+        target: target, columns: [RewindColumn(name: "id", typeName: "INTEGER")],
+        editKind: .staged,
+        steps: [.init(operation: .insert, keyBefore: nil, keyAfter: [.int(5)])]))
+
+    #expect(await viewModel.beginImportBatch(batch) == nil)
+
+    let stored = try await manager.executeInternal("SELECT id FROM t")
+    #expect(stored.rows == [[.int(5)]])
+    await recorder.flushed()
+    #expect(try store.count() == 0)
+  }
+
   @Test("SQLite TEXT affinity follows the declared type")
   func textAffinity() {
     for type in ["TEXT", "varchar(10)", "CLOB", "NATIVE CHARACTER(70)"] {

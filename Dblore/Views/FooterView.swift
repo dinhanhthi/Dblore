@@ -90,6 +90,15 @@ struct FooterView: View {
     .overlay(alignment: .top) {
       Divider()
     }
+    // The connection's color tag as a thin stripe over the top edge
+    .overlay(alignment: .top) {
+      if let color = connectionConfig?.colorTag {
+        Rectangle()
+          .fill(color.tagColor)
+          .frame(height: 2)
+          .accessibilityLabel("Connection color \(color.rawValue)")
+      }
+    }
   }
 
   private func documentStats(viewModel: NotebookViewModel) -> some View {

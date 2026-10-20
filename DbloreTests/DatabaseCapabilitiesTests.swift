@@ -122,7 +122,7 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: false
+    supportsSQLDump: true
   )
 
   private static let mysql = DatabaseCapabilities(

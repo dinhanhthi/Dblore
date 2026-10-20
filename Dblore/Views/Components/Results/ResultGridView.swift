@@ -55,11 +55,13 @@ struct ResultGridView: NSViewRepresentable {
   var onHighlightCell:
     ((_ column: Int, _ value: CellValue, _ style: HighlightStyle, _ color: HighlightColor) -> Void)? =
       nil
-  /// Receives the context menu's "Clear Highlight"
+  /// Receives the context menu's "Clear Highlights"
   var onClearHighlight: (() -> Void)? = nil
   /// Text highlighted in the cells (search)
   var searchQuery = ""
   var caseSensitive = false
+  /// Highlight only whole-word matches (the search's Whole word option)
+  var wholeWord = false
   /// Current search match (the one Enter moved to): the grid scrolls to it and shows it on the
   /// current-match color when it is in this result's data. A match on a filtered-out row is
   /// skipped for the next entry in `searchMatches` the grid can show.
@@ -74,9 +76,10 @@ struct ResultGridView: NSViewRepresentable {
   /// Names of result columns hidden in the grid; the result, column indices and edits are
   /// unchanged
   var hiddenColumns: Set<String> = []
-  /// Highlight painted on the matching cells or rows; the rows stay unchanged
-  var highlight: TableHighlight? = nil
-  /// Dialect the highlight is evaluated in (`like` case sensitivity)
+  /// Highlight rules painted on the matching cells or rows, first match wins; the rows stay
+  /// unchanged
+  var highlights: [TableHighlight] = []
+  /// Dialect the highlights are evaluated in (`like` case sensitivity)
   var highlightDialect: DatabaseType = .postgresql
   /// Catalog relation for "Referenced Row...". Nil hides the item (a join, or no relation).
   var relationSchema: String? = nil
@@ -95,6 +98,9 @@ struct ResultGridView: NSViewRepresentable {
   var fontSize: CGFloat = AppSettings.shared.resultFontSize
   /// Colors values by type. The default reads Settings so a toggle refreshes the grid.
   var colorValuesByType: Bool = AppSettings.shared.colorValuesByType
+  /// Receives, debounced, the summary of 2+ selected rows in the last clicked column; nil below
+  /// two rows and when the grid goes away
+  var onSelectionSummaryChange: ((ResultSelectionSummary?) -> Void)? = nil
 
   /// Row height at the default result font size. Larger and smaller faces scale from this
   /// so an untouched setting keeps the 26pt rows the notebook height math expects.
@@ -182,6 +188,10 @@ struct ResultGridView: NSViewRepresentable {
     configure(context.coordinator, tableView)
   }
 
+  static func dismantleNSView(_ scrollView: NSScrollView, coordinator: ResultGridCoordinator) {
+    coordinator.selectionSummaryGridDidDisappear()
+  }
+
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
     let fontChanged = coordinator.noteFontSize(fontSize, tableView: tableView)
     // The first update loads cells with the flag; only a later toggle needs its own reload.
@@ -210,11 +220,12 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.lookupDialect = lookupDialect
     coordinator.onLookupReferencedRow = onLookupReferencedRow
     coordinator.onJumpToReferencedRow = onJumpToReferencedRow
+    coordinator.onSelectionSummaryChange = onSelectionSummaryChange
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
-      searchQuery: searchQuery, caseSensitive: caseSensitive, currentMatch: currentMatch,
-      hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
-      highlight: highlight, highlightDialect: highlightDialect, valueFilter: valueFilter,
+      searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
+      currentMatch: currentMatch, hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
+      highlights: highlights, highlightDialect: highlightDialect, valueFilter: valueFilter,
       searchMatches: searchMatches, changeSet: changeSet)
     // A font or color change alone skips `update` (the row model is unchanged). `update` may
     // also refresh only staged rows, so reload every visible cell onto the new face and colors.
@@ -301,6 +312,7 @@ func gridSearchMatchOnScreen(
         "match": shown,
         "query": viewModel.searchState.query,
         "caseSensitive": viewModel.searchState.isCaseSensitive,
+        "wholeWord": viewModel.searchState.isWholeWord,
         "viewModelId": viewModel.id,
         "resolved": true,
       ])
@@ -568,7 +580,10 @@ final class ResultGridTableView: NSTableView {
 
   override func mouseDown(with event: NSEvent) {
     let column = self.column(at: convert(event.locationInWindow, from: nil))
-    if column >= 0 { lastClickedColumn = column }
+    if column >= 0 {
+      lastClickedColumn = column
+      coordinator?.noteClickedColumn(tableColumn: column, in: self)
+    }
     super.mouseDown(with: event)
   }
 

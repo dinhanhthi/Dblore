@@ -702,4 +702,192 @@ struct SQLDumpDDLTests {
         "CREATE INDEX idx_notes_body ON notes(body);",
       ])
   }
+
+  // MARK: - DuckDB
+
+  private static func duckdbTable(
+    _ schema: String, _ name: String, _ columns: [Column], sql: String
+  ) -> SQLDumpDDL.DuckDBTable {
+    SQLDumpDDL.DuckDBTable(
+      structure: structure(
+        schema, name, columns, id: .duckdb(schema: schema, table: name)),
+      sql: sql)
+  }
+
+  private static func duckdbSequence(
+    _ name: String, start: Int64 = 1, increment: Int64 = 1, min: Int64 = 1,
+    max: Int64 = Int64.max, cycle: Bool = false, last: Int64?
+  ) -> SQLDumpDDL.DuckDBSequence {
+    SQLDumpDDL.DuckDBSequence(
+      schema: "main", name: name, start: start, increment: increment, minValue: min,
+      maxValue: max, cycle: cycle, lastValue: last)
+  }
+
+  /// main.t1 (sequence default, BLOB, generated column), s2."we""ird" (FK to s2.p), with the
+  /// text `duckdb_tables().sql` / `duckdb_indexes().sql` / `duckdb_views().sql` print
+  private static let duckdbInput = SQLDumpDDL.DuckDBInput(
+    schemas: ["s2"],
+    enums: [
+      SQLDumpDDL.DuckDBEnum(schema: "main", name: "mood", labels: ["sad", "it's"]),
+      SQLDumpDDL.DuckDBEnum(schema: "s2", name: "color", labels: ["red"]),
+    ],
+    sequences: [
+      duckdbSequence("seq1", start: 5, increment: 2, last: 7),
+      SQLDumpDDL.DuckDBSequence(
+        schema: "s2", name: "seq2", start: 1, increment: 1, minValue: 1, maxValue: Int64.max,
+        cycle: false, lastValue: nil),
+    ],
+    tables: [
+      duckdbTable(
+        "main", "t1",
+        [
+          column(1, "id", "INTEGER", nullable: false, default: "nextval('seq1')"),
+          column(2, "b", "BLOB"), column(3, "g", "INTEGER", default: "CAST((id * 2) AS INTEGER)"),
+          column(4, "AS", "INTEGER"),
+        ],
+        sql: "CREATE TABLE t1(id INTEGER DEFAULT(nextval('seq1')) PRIMARY KEY, b BLOB,"
+          + " g INTEGER GENERATED ALWAYS AS((id * 2)), \"AS\" INTEGER);"),
+      duckdbTable(
+        "s2", "p", [column(1, "id", "INTEGER", nullable: false)],
+        sql: "CREATE TABLE s2.p(id INTEGER PRIMARY KEY);"),
+      duckdbTable(
+        "s2", "we\"ird", [column(1, "x", "INTEGER")],
+        sql: "CREATE TABLE s2.\"we\"\"ird\"(x INTEGER, FOREIGN KEY (x) REFERENCES s2.p(id));"),
+    ],
+    indexes: [
+      SQLDumpDDL.DuckDBIndex(
+        schema: "main", table: "t1", name: "idx2",
+        sql: "CREATE UNIQUE INDEX idx2 ON t1(((id + 1)), b);"),
+      SQLDumpDDL.DuckDBIndex(
+        schema: "s2", table: "we\"ird", name: "idx3",
+        sql: "CREATE INDEX idx3 ON s2.\"we\"\"ird\"(x);"),
+    ],
+    views: [
+      SQLDumpDDL.View(
+        schema: "main", name: "v1", sql: "CREATE VIEW v1 AS SELECT id FROM t1 WHERE (id > 1);",
+        dependsOn: []),
+      SQLDumpDDL.View(
+        schema: "s2", name: "v2", sql: "CREATE VIEW s2.v2 (a) AS SELECT * FROM v1;",
+        dependsOn: []),
+    ])
+
+  @Test func duckdbPreDataCreatesSchemasEnumsSequencesThenTablesInOrder() throws {
+    let script = try SQLDumpDDL.duckdb(Self.duckdbInput)
+    #expect(
+      script.preData == [
+        "CREATE SCHEMA IF NOT EXISTS \"s2\";",
+        "CREATE TYPE \"main\".\"mood\" AS ENUM ('sad', 'it''s');",
+        "CREATE TYPE \"s2\".\"color\" AS ENUM ('red');",
+        "CREATE SEQUENCE \"main\".\"seq1\" START WITH 9 INCREMENT BY 2 MINVALUE 1"
+          + " MAXVALUE 9223372036854775807 NO CYCLE;",
+        "CREATE SEQUENCE \"s2\".\"seq2\" START WITH 1 INCREMENT BY 1 MINVALUE 1"
+          + " MAXVALUE 9223372036854775807 NO CYCLE;",
+        "CREATE TABLE t1(id INTEGER DEFAULT(nextval('seq1')) PRIMARY KEY, b BLOB,"
+          + " g INTEGER GENERATED ALWAYS AS((id * 2)), \"AS\" INTEGER);",
+        "CREATE TABLE s2.p(id INTEGER PRIMARY KEY);",
+        "CREATE TABLE s2.\"we\"\"ird\"(x INTEGER, FOREIGN KEY (x) REFERENCES s2.p(id));",
+      ])
+    #expect(
+      script.postData == [
+        "CREATE UNIQUE INDEX idx2 ON t1(((id + 1)), b);",
+        "CREATE INDEX idx3 ON s2.\"we\"\"ird\"(x);",
+        "CREATE VIEW v1 AS SELECT id FROM t1 WHERE (id > 1);",
+        "CREATE VIEW s2.v2 (a) AS SELECT * FROM v1;",
+      ])
+    #expect(script.comment.joined().contains("macros"))
+  }
+
+  @Test func duckdbInsertTargetsAreQualifiedAndSkipGeneratedColumns() throws {
+    let script = try SQLDumpDDL.duckdb(Self.duckdbInput)
+    #expect(
+      script.tables.map(\.target) == [
+        "\"main\".\"t1\"", "\"s2\".\"p\"", "\"s2\".\"we\"\"ird\"",
+      ])
+    #expect(script.tables.map { $0.columns.map(\.name) } == [["id", "b", "AS"], ["id"], ["x"]])
+    #expect(script.tables.allSatisfy { $0.hasData && !$0.overridingSystemValue })
+    #expect(
+      SQLDumpDDL.duckdbGeneratedColumns(
+        "CREATE TABLE t(id INTEGER, \"G x\" INTEGER GENERATED ALWAYS AS((id + 1)),"
+          + " c VARCHAR DEFAULT('GENERATED ALWAYS AS'), \"GENERATED\" INTEGER,"
+          + " s STRUCT(a INTEGER, b INTEGER), h BIGINT GENERATED ALWAYS AS((id * 2)));",
+        columns: ["id", "g X", "c", "GENERATED", "s", "h"]) == ["g X", "h"])
+  }
+
+  @Test func duckdbViewsComeAfterTheViewsTheyName() throws {
+    func view(_ schema: String, _ name: String, _ sql: String) -> SQLDumpDDL.View {
+      SQLDumpDDL.View(schema: schema, name: name, sql: sql, dependsOn: [])
+    }
+    let input = SQLDumpDDL.DuckDBInput(
+      schemas: [], enums: [], sequences: [], tables: [], indexes: [],
+      views: [
+        view("main", "a_dependent", "CREATE VIEW a_dependent AS SELECT count(*) FROM zz_base;"),
+        view("s2", "b", "CREATE VIEW s2.b AS SELECT * FROM main.\"Zz_Base\";"),
+        view("main", "zz_base", "CREATE VIEW zz_base AS SELECT 1 AS n;"),
+      ])
+    #expect(
+      try SQLDumpDDL.duckdb(input).postData == [
+        "CREATE VIEW zz_base AS SELECT 1 AS n;",
+        "CREATE VIEW a_dependent AS SELECT count(*) FROM zz_base;",
+        "CREATE VIEW s2.b AS SELECT * FROM main.\"Zz_Base\";",
+      ])
+  }
+
+  @Test func duckdbSequencesStartAtTheirNextValue() throws {
+    func start(_ sequence: SQLDumpDDL.DuckDBSequence) throws -> String {
+      let input = SQLDumpDDL.DuckDBInput(
+        schemas: [], enums: [], sequences: [sequence], tables: [], indexes: [], views: [])
+      return try #require(try SQLDumpDDL.duckdb(input).preData.first)
+    }
+    // Never used: its own start
+    #expect(try start(Self.duckdbSequence("a", start: 4, last: nil)).contains(" START WITH 4 "))
+    // Descending
+    #expect(
+      try start(Self.duckdbSequence("d", start: -1, increment: -1, min: -5, max: -1, last: -1))
+        == "CREATE SEQUENCE \"main\".\"d\" START WITH -2 INCREMENT BY -1 MINVALUE -5"
+        + " MAXVALUE -1 NO CYCLE;")
+    // Used up and cycling: back to its first value
+    #expect(
+      try start(Self.duckdbSequence("c", max: 3, cycle: true, last: 3))
+        == "CREATE SEQUENCE \"main\".\"c\" START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 3"
+        + " CYCLE;")
+    // Used up without CYCLE: START cannot pass MAXVALUE, so it stays at the last value
+    #expect(try start(Self.duckdbSequence("e", max: 3, last: 3)).contains(" START WITH 3 "))
+    #expect(
+      try start(Self.duckdbSequence("o", max: Int64.max, last: Int64.max))
+        .contains(" START WITH 9223372036854775807 "))
+  }
+
+  @Test func duckdbRefusesCatalogTextThatIsNotOneStatementOfItsKind() throws {
+    func script(table: String? = nil, index: String? = nil, view: String? = nil) throws {
+      var input = SQLDumpDDL.DuckDBInput(
+        schemas: [], enums: [], sequences: [], tables: [], indexes: [], views: [])
+      if let table {
+        input.tables = [Self.duckdbTable("main", "t", [Self.column(1, "a", "INTEGER")], sql: table)]
+      }
+      if let index {
+        input.indexes = [SQLDumpDDL.DuckDBIndex(schema: "main", table: "t", name: "t", sql: index)]
+      }
+      if let view {
+        input.views = [SQLDumpDDL.View(schema: "main", name: "t", sql: view, dependsOn: [])]
+      }
+      _ = try SQLDumpDDL.duckdb(input)
+    }
+    let refused = SQLDumpDDLError.unsafeDefinition("t")
+    for text in [
+      "CREATE TABLE t(a INTEGER); DROP TABLE victim;", "CREATE VIEW t AS SELECT 1;",
+      "CREATE TABLE t(a INTEGER) /*", "CREATE TABLE t(a VARCHAR DEFAULT('x", "DROP TABLE t;",
+      "CREATE TABLE t(a INTEGER);\0",
+    ] {
+      #expect(throws: refused, "\(text)") { try script(table: text) }
+    }
+    for text in ["CREATE TABLE t(a INTEGER);", "ATTACH 'x' AS y;", "CREATE INDEX t ON t(a); --"] {
+      #expect(throws: refused, "\(text)") { try script(index: text) }
+    }
+    for text in ["CREATE TABLE t AS SELECT 1;", "CREATE VIEW t AS SELECT 1; COPY t TO 'x';"] {
+      #expect(throws: refused, "\(text)") { try script(view: text) }
+    }
+    try script(
+      table: "CREATE TABLE t(a VARCHAR DEFAULT('a;b'));", index: "CREATE INDEX t ON t(a)",
+      view: "CREATE VIEW t AS SELECT 'x;y' AS \"semi;colon\";")
+  }
 }

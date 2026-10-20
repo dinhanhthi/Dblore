@@ -372,7 +372,43 @@ enum DataExporter {
       saveFile(
         data: fileData(text: sql, options: options), defaultFilename: name,
         allowedFileTypes: ["sql"])
+    case .parquet:
+      // Async with progress: the export sheet runs `exportParquet` after its own save panel.
+      assertionFailure("Parquet is exported by ResultExportSheet")
+      break
     }
+  }
+
+  // MARK: - Parquet
+
+  /// Writes `result` (options already applied) to `destination` through the DuckDB plugin,
+  /// off the main actor (`@concurrent` leaves it). `loadLibrary` is the plugin's loader (nil
+  /// when it is not installed).
+  /// - Throws: `ParquetExport.Failure.pluginMissing` and the errors of `ParquetExporter.export`.
+  @concurrent nonisolated static func exportParquet(
+    result: CellResult, to destination: URL,
+    loadLibrary: AppDatabaseSessionFactory.DuckDBLibraryLoader =
+      AppDatabaseSessionFactory().duckDBLibraryLoader,
+    progress: @escaping @Sendable (Int) -> Void = { _ in }
+  ) async throws {
+    guard let load = await loadLibrary() else { throw ParquetExport.Failure.pluginMissing }
+    try await PerfSignpost.interval("export.parquet") {
+      try await ParquetExporter(loadLibrary: load).export(
+        result, to: destination, progress: progress)
+    }
+  }
+
+  /// The save panel of a Parquet download; nil when cancelled.
+  static func chooseParquetDestination(queryIndex: Int?) async -> URL? {
+    let savePanel = NSSavePanel()
+    savePanel.nameFieldStringValue = generateFilename(
+      extension: "parquet", queryIndex: queryIndex)
+    savePanel.allowedContentTypes = UTType(filenameExtension: "parquet").map { [$0] } ?? []
+    savePanel.canCreateDirectories = true
+    let response = await withCheckedContinuation { continuation in
+      savePanel.begin { continuation.resume(returning: $0) }
+    }
+    return response == .OK ? savePanel.url : nil
   }
 
   // MARK: - Download Functions
@@ -691,7 +727,8 @@ enum DataExporter {
     return true
   }
 
-  private static func presentSavedFile(_ url: URL) {
+  /// The Open File / Open Location alert after a file was saved.
+  static func presentSavedFile(_ url: URL) {
     let alert = NSAlert()
     alert.messageText = "Export Complete"
     alert.informativeText = "Saved \(url.lastPathComponent)."

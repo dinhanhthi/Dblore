@@ -67,6 +67,9 @@ struct HighlightedTextEditor: View {
   /// The MongoDB query field keys (brackets and quotes pair, Return keeps the indent); for
   /// mongosh bodies
   var mongoQueryEditing = false
+  /// AI ghost text: an explicit opt-in (nil, the default, shows none). Only SQL query tabs and
+  /// SQL notebook cells set it; a MongoDB field or a read-only text never takes it.
+  var inlineCompletion: AIInlineCompletionController?
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -85,7 +88,8 @@ struct HighlightedTextEditor: View {
       dialect: dialect,
       fontSize: fontSize,
       isEditable: isEditable,
-      mongoQueryEditing: mongoQueryEditing
+      mongoQueryEditing: mongoQueryEditing,
+      inlineCompletion: inlineCompletion
     )
     .frame(height: maxHeight ?? height)
   }
@@ -108,6 +112,12 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var fontSize: CGFloat = AppSettings.shared.editorFontSize
   var isEditable = true
   var mongoQueryEditing = false
+  var inlineCompletion: AIInlineCompletionController?
+
+  /// The ghost text controller this editor shows: none for a MongoDB field or read-only text
+  var shownInlineCompletion: AIInlineCompletionController? {
+    mongoQueryEditing || !isEditable ? nil : inlineCompletion
+  }
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = PassthroughScrollView()
@@ -137,6 +147,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Set editor mode
     textView.isEditorMode = isEditorMode
     textView.isEditable = isEditable
+    textView.inlineCompletion = shownInlineCompletion
 
     // Store reference to textView
     DispatchQueue.main.async {
@@ -242,6 +253,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     if textView.isEditable != isEditable {
       textView.isEditable = isEditable
     }
+    if textView.inlineCompletion !== shownInlineCompletion {
+      textView.inlineCompletion?.dismiss()
+      textView.inlineCompletion = shownInlineCompletion
+    }
 
     // Update word wrap setting only when it changes (ensureLayout is a full-document layout)
     context.coordinator.configureWordWrapIfNeeded(
@@ -290,6 +305,8 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Stop any pending autocomplete computation and close the popover
     textView.hideAutocomplete()
+    textView.inlineCompletion?.dismiss()
+    textView.inlineCompletion = nil
 
     // Clear callbacks
     textView.onFocus = nil
@@ -326,6 +343,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     // Search state
     var searchQuery: String = ""
     var isCaseSensitive: Bool = false
+    var isWholeWord: Bool = false
     private var currentMatchId: UUID?
     private var currentMatchRange: NSRange?
     var isSearchActive: Bool = false
@@ -544,6 +562,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
             text,
             searchQuery: searchQuery,
             isCaseSensitive: isCaseSensitive,
+            isWholeWord: isWholeWord,
             currentMatchRange: currentMatchRange,
             dialect: dialect
           )
@@ -586,6 +605,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           text,
           searchQuery: searchQuery,
           isCaseSensitive: isCaseSensitive,
+          isWholeWord: isWholeWord,
           currentMatchRange: currentMatchRange,
           dialect: dialect
         )
@@ -691,6 +711,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         let matchRange = match.matchRange
         let query = notification.userInfo?["query"] as? String ?? ""
         let caseSensitive = notification.userInfo?["caseSensitive"] as? Bool ?? false
+        let wholeWord = notification.userInfo?["wholeWord"] as? Bool ?? false
 
         Task { @MainActor [weak self] in
           guard let self = self else { return }
@@ -702,6 +723,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           // Update search state for ALL cells (to show yellow highlights)
           self.searchQuery = query
           self.isCaseSensitive = caseSensitive
+          self.isWholeWord = wholeWord
           self.isSearchActive = true
 
           // In editor mode, cellId is nil - accept all SQL content matches
@@ -752,6 +774,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
           // Clear search state
           self.searchQuery = ""
           self.isCaseSensitive = false
+          self.isWholeWord = false
           self.currentMatchId = nil
           self.currentMatchRange = nil
           self.isSearchActive = false
