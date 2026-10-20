@@ -63,6 +63,64 @@ struct DatabaseBackupModelTests {
     #expect(manager.sshHostKeyPolicy.prompt as? RecordingPrompt === prompt)
   }
 
+  @Test func duckdbDumpSuggestsTheFileNameOrMemory() async throws {
+    for (database, expected) in [
+      ("/Users/me/data/sales.duckdb", "sales.sql"), (DuckDBSession.inMemoryPath, "memory.sql"),
+    ] {
+      let config = ConnectionConfig(
+        databaseType: .duckdb, database: database, protectionLevel: .none, protectedMode: false,
+        readOnlyFile: true)
+      let manager = DatabaseConnectionManager(
+        sessionFactory: FakeDatabaseSessionFactory(capabilities: DatabaseType.duckdb.capabilities))
+      try await manager.connect(config: config)
+      let suggested = SuggestedNames()
+      var environment = Self.environment()
+      environment.chooseSaveURL = { name, _ in
+        suggested.append(name)
+        return nil
+      }
+      let model = DatabaseBackupModel(
+        viewModel: Self.viewModel(manager: manager, config: config), environment: environment)
+      await model.exportDump(options: SQLDumpOptions())
+      #expect(suggested.values == [expected])
+      await manager.disconnect()
+    }
+  }
+
+  @Test func duckdbDumpsOnTheTabsOwnManager() async throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let config = ConnectionConfig(
+      databaseType: .duckdb, database: DuckDBSession.inMemoryPath, protectionLevel: .none,
+      protectedMode: false)
+    let manager = DatabaseConnectionManager(
+      sessionFactory: FakeDatabaseSessionFactory(capabilities: DatabaseType.duckdb.capabilities))
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    let made = WriterArguments()
+    var tabManagers: [DatabaseConnectionManager] = []
+    var environment = Self.environment(save: directory.appendingPathComponent("out.sql"))
+    environment.makeDumpWriter = { config, material, credential, prompt in
+      made.record(config: config, material: material, credential: credential, prompt: prompt)
+      return SQLDumpWriter(
+        config: config, material: nil, sshCredential: nil,
+        sessionFactory: FakeDatabaseSessionFactory(capabilities: .contract()),
+        temporaryDirectory: directory)
+    }
+    environment.makeTabDumpWriter = { tabManager, config in
+      tabManagers.append(tabManager)
+      return SQLDumpWriter(tabManager: tabManager, config: config, temporaryDirectory: directory)
+    }
+    let model = DatabaseBackupModel(
+      viewModel: Self.viewModel(manager: manager, config: config), environment: environment)
+
+    await model.exportDump(options: SQLDumpOptions())
+
+    #expect(made.count == 0)
+    #expect(tabManagers.count == 1)
+    #expect(tabManagers.first === manager)
+  }
+
   @Test func dumpRefusesTheOpenSQLiteFileBeforeStarting() async throws {
     let fixture = try await SQLiteFixture()
     defer { fixture.remove() }
@@ -502,6 +560,25 @@ struct DatabaseBackupModelTests {
     #expect(DatabaseBackupModel.restoreBlockReason(sqlite, policy: schemaOnly) != nil)
     // Protected mode keeps a PostgreSQL / SQLite restore pending until Commit: not refused
     #expect(DatabaseBackupModel.restoreBlockReason(sqlite, policy: protected) == nil)
+    // DuckDB has no savepoints: Protected mode is refused, and a file opened read-only says how
+    // to reopen it writable
+    let duckdb = try SQLRestorePlan(
+      script: "-- Dblore SQL dump 1 engine=DuckDB created=x\nCREATE TABLE t (id int);\n",
+      engine: .duckdb)
+    #expect(DatabaseBackupModel.restoreBlockReason(duckdb, policy: open) == nil)
+    #expect(
+      DatabaseBackupModel.restoreBlockReason(duckdb, policy: protected)?.contains("Protected mode")
+        == true)
+    let file = ConnectionConfig(
+      databaseType: .duckdb, database: "/tmp/a.duckdb", protectionLevel: .none,
+      protectedMode: false, readOnlyFile: true)
+    #expect(
+      DatabaseBackupModel.restoreBlockReason(
+        duckdb, policy: ProtectionPolicy(config: file), config: file)
+        == SQLRestorePlan.duckdbReadOnlyFileMessage)
+    #expect(
+      DatabaseBackupModel.restoreBlockReason(duckdb, policy: readOnly)?.contains("read-only")
+        == true)
   }
 
   @Test func protectedModeRestoreWaitsForCommit() async throws {
@@ -844,4 +921,13 @@ private actor ReadGate {
     for waiter in releaseWaiters { waiter.resume() }
     releaseWaiters.removeAll()
   }
+}
+
+/// Names the save panel was asked to suggest
+private final class SuggestedNames: @unchecked Sendable {
+  private let lock = NSLock()
+  private var recorded: [String] = []
+
+  func append(_ name: String) { lock.withLock { recorded.append(name) } }
+  var values: [String] { lock.withLock { recorded } }
 }

@@ -200,6 +200,10 @@ struct SQLRestoreSheet: View {
           note(
             "The restore runs as one transaction. Under Protected mode it waits for Commit; a "
               + "Roll Back then undoes it, except sequence changes (setval), which stay.")
+        case .duckdb:
+          note(
+            "The restore runs as one transaction with Protected mode off: DuckDB has no "
+              + "savepoints, so it cannot wait for Commit.")
         default:
           note(
             "The restore runs as one transaction. Under Protected mode it waits for Commit.")

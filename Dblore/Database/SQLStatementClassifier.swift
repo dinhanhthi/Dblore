@@ -614,11 +614,13 @@ nonisolated enum SQLStatementClassifier {
     return analysis
   }
 
-  /// A call `name(` at any depth to one of `names` (uppercase) or to a name starting with one
-  /// of `prefixes` (uppercase), including a quoted, bracketed, or backticked name. A mention
-  /// inside a string or comment is not a call: those are not word tokens.
-  private static func calls(
-    _ body: ArraySlice<SQLToken>, anyOf names: Set<String>, orPrefixes prefixes: [String] = []
+  /// A call `name(` at any depth to one of `names` (uppercase), to a name starting with one
+  /// of `prefixes` or containing one of `infixes` (uppercase), including a quoted, bracketed, or
+  /// backticked name. A mention inside a string or comment is not a call: those are not word
+  /// tokens.
+  static func calls(
+    _ body: ArraySlice<SQLToken>, anyOf names: Set<String>, orPrefixes prefixes: [String] = [],
+    orContaining infixes: [String] = []
   ) -> Bool {
     body.indices.contains { index in
       let next = body.index(after: index)
@@ -626,6 +628,7 @@ nonisolated enum SQLStatementClassifier {
         let name = functionName(body[index])
       else { return false }
       return names.contains(name) || prefixes.contains { name.hasPrefix($0) }
+        || infixes.contains { name.contains($0) }
     }
   }
 
@@ -703,7 +706,7 @@ nonisolated enum SQLStatementClassifier {
   /// adjacent literals joined across a newline (`'https:'` newline `'//h/x'`, DuckDB's
   /// `quotecontinue`). The phase-15 session (`enable_external_access=false` with
   /// `allowed_directories` / `allowed_paths`, `lock_configuration=true`) blocks those.
-  private static func namesRemoteURL(_ body: ArraySlice<SQLToken>) -> Bool {
+  static func namesRemoteURL(_ body: ArraySlice<SQLToken>) -> Bool {
     body.contains { token in
       guard token.kind == .string || token.kind == .quotedIdentifier else { return false }
       let text = withoutDollarTag(token.text)

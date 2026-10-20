@@ -16,6 +16,13 @@
 // `sqlite_` tables and virtual-table shadow tables skipped; a virtual table keeps its CREATE
 // only); AUTOINCREMENT counters, indexes, views and triggers after data. That text is file data,
 // so each one must be exactly one CREATE statement of its row's type (`sqliteDefinition`).
+// DuckDB: pre-data is CREATE SCHEMA for every schema but `main`, the ENUM types, the sequences
+// (built from their values, starting at the next one), then `duckdb_tables().sql` in creation
+// order (a foreign key's table first); post-data is `duckdb_indexes().sql`, then
+// `duckdb_views().sql` after the views each one names (DuckDB resolves a view's names when it is
+// created, and a reopened file numbers views by name). The catalog text must be exactly one CREATE statement
+// of its kind (`duckdbDefinition`). The table text writes ENUM columns as `ENUM('a', ...)`, so
+// restored columns have the labels but not the type name.
 //
 // Views are ordered by their dependencies, ties and unknown dependencies by schema then name.
 // Identifiers go through `SQLDialect.quoteIdentifier`; expressions, types and definitions are
@@ -213,6 +220,54 @@ nonisolated enum SQLDumpDDL {
     var tableName: String
     /// Nil for automatic indexes
     var sql: String?
+  }
+
+  // MARK: - DuckDB input
+
+  struct DuckDBInput: Sendable, Equatable {
+    /// Schemas other than `main`
+    var schemas: [String]
+    var enums: [DuckDBEnum]
+    var sequences: [DuckDBSequence]
+    /// In creation order: a table a foreign key references comes first
+    var tables: [DuckDBTable]
+    /// In creation order
+    var indexes: [DuckDBIndex]
+    /// `duckdb_views().sql`; `dependsOn` is filled from the names each one mentions
+    var views: [View]
+  }
+
+  struct DuckDBEnum: Sendable, Equatable {
+    var schema: String
+    var name: String
+    /// In sort order
+    var labels: [String]
+  }
+
+  struct DuckDBSequence: Sendable, Equatable {
+    var schema: String
+    var name: String
+    var start: Int64
+    var increment: Int64
+    var minValue: Int64
+    var maxValue: Int64
+    var cycle: Bool
+    /// `duckdb_sequences().last_value`: nil when the sequence was never used
+    var lastValue: Int64?
+  }
+
+  struct DuckDBTable: Sendable, Equatable {
+    var structure: TableStructure
+    /// `duckdb_tables().sql`
+    var sql: String
+  }
+
+  struct DuckDBIndex: Sendable, Equatable {
+    var schema: String
+    var table: String
+    var name: String
+    /// `duckdb_indexes().sql`
+    var sql: String
   }
 
   // MARK: - PostgreSQL
@@ -699,6 +754,152 @@ nonisolated enum SQLDumpDDL {
   private static func isVirtual(_ row: SQLiteMasterRow) -> Bool {
     let words = (row.sql ?? "").split(whereSeparator: \.isWhitespace).prefix(2)
     return words.map { $0.uppercased() } == ["CREATE", "VIRTUAL"]
+  }
+
+  // MARK: - DuckDB
+
+  private static let duckdbComment = [
+    "-- Not included: macros, secrets, comments, temporary objects, attached databases and user"
+      + " types other than ENUM."
+  ]
+
+  static func duckdb(_ input: DuckDBInput) throws -> Script {
+    let dialect = SQLDialect.duckdb
+    var pre = try input.schemas.map {
+      "CREATE SCHEMA IF NOT EXISTS \(try dialect.quoteIdentifier($0));"
+    }
+    for type in input.enums {
+      let labels = type.labels.map { dialect.literal(.string($0)) }.joined(separator: ", ")
+      pre.append(
+        "CREATE TYPE \(try duckdbQualified(type.schema, type.name)) AS ENUM (\(labels));")
+    }
+    for sequence in input.sequences {
+      pre.append(
+        "CREATE SEQUENCE \(try duckdbQualified(sequence.schema, sequence.name))"
+          + " START WITH \(duckdbNextValue(sequence)) INCREMENT BY \(sequence.increment)"
+          + " MINVALUE \(sequence.minValue) MAXVALUE \(sequence.maxValue)"
+          + (sequence.cycle ? " CYCLE;" : " NO CYCLE;"))
+    }
+    var inserts: [TableInsert] = []
+    for table in input.tables {
+      let structure = table.structure
+      pre.append(try duckdbDefinition(table.sql, heads: [["CREATE", "TABLE"]], name: structure.name))
+      let generated = duckdbGeneratedColumns(table.sql, columns: structure.columns.map(\.name))
+      inserts.append(
+        TableInsert(
+          schema: structure.schema, name: structure.name,
+          target: try duckdbQualified(structure.schema, structure.name),
+          columns: structure.columns.filter { !generated.contains($0.name) },
+          overridingSystemValue: false, hasData: true))
+    }
+    let indexes = try input.indexes.map {
+      try duckdbDefinition(
+        $0.sql, heads: [["CREATE", "INDEX"], ["CREATE", "UNIQUE", "INDEX"]], name: $0.name)
+    }
+    let views = try orderedViews(duckdbViewDependencies(input.views)).map {
+      try duckdbDefinition($0.sql, heads: [["CREATE", "VIEW"]], name: $0.name)
+    }
+    return Script(comment: duckdbComment, preData: pre, tables: inserts, postData: indexes + views)
+  }
+
+  /// The value the restored sequence hands out first: the one after `lastValue` (its start
+  /// when never used). A used-up sequence starts at its first value again with CYCLE, and stays
+  /// at its last value without (START cannot pass the bound, so that value comes once more).
+  static func duckdbNextValue(_ sequence: DuckDBSequence) -> Int64 {
+    guard let last = sequence.lastValue else { return sequence.start }
+    let (next, overflow) = last.addingReportingOverflow(sequence.increment)
+    if !overflow, (sequence.minValue...sequence.maxValue).contains(next) { return next }
+    guard sequence.cycle else { return last }
+    return sequence.increment > 0 ? sequence.minValue : sequence.maxValue
+  }
+
+  /// `views` with `dependsOn` set to the other views whose name (ASCII case-insensitive, in any
+  /// schema) appears as a word or quoted identifier in their text. A column that shares a
+  /// view's name only adds an order constraint; a cycle falls back to name order.
+  static func duckdbViewDependencies(_ views: [View]) -> [View] {
+    views.map { view in
+      let mentioned = Set(
+        SQLTokenizer(dialect: .duckdb).tokens(view.sql).compactMap { token -> String? in
+          guard token.kind == .word || token.kind == .quotedIdentifier else { return nil }
+          return SQLTokenizer.asciiUppercased(token.text)
+        })
+      var dependent = view
+      dependent.dependsOn = views.filter {
+        $0 != view && mentioned.contains(SQLTokenizer.asciiUppercased($0.name))
+      }.map { ObjectName(schema: $0.schema, name: $0.name) }
+      return dependent
+    }
+  }
+
+  /// The names in `columns` that the table text defines as generated (`<name> <type> GENERATED
+  /// ALWAYS AS(...)`, the one form `duckdb_tables().sql` prints): `duckdb_columns()` shows a
+  /// generated column as a plain default. Names compare ASCII case-insensitively, as DuckDB
+  /// compares identifiers.
+  static func duckdbGeneratedColumns(_ sql: String, columns: [String]) -> Set<String> {
+    let tokens = SQLTokenizer(dialect: .duckdb).tokens(sql)
+    guard let open = tokens.firstIndex(where: { $0.isSymbol("(") }) else { return [] }
+    let depth = tokens[open].depth + 1
+    var generated = Set<String>()
+    var segment: [SQLToken] = []
+    for token in tokens[(open + 1)...] {
+      let ends = token.depth == depth - 1 || (token.depth == depth && token.isSymbol(","))
+      if !ends {
+        if token.depth == depth { segment.append(token) }
+        continue
+      }
+      let words = segment.map { $0.keyword ?? "" }
+      if let name = segment.first, name.kind == .word || name.kind == .quotedIdentifier,
+        words.indices.contains(where: { words[$0...].starts(with: ["GENERATED", "ALWAYS", "AS"]) })
+      {
+        let key = SQLTokenizer.asciiUppercased(name.text)
+        generated.formUnion(columns.filter { SQLTokenizer.asciiUppercased($0) == key })
+      }
+      segment = []
+      if token.depth == depth - 1 { break }
+    }
+    return generated
+  }
+
+  /// `sql` terminated, once it is exactly one CREATE statement starting with one of `heads`:
+  /// catalog text of a database file, which can hold anything. The final `;` must be a symbol
+  /// (not inside a comment or string a later statement of the dump would close), the only one,
+  /// and no NUL may cut it short.
+  /// - Throws: `SQLDumpDDLError.unsafeDefinition` otherwise.
+  private static func duckdbDefinition(
+    _ sql: String, heads: [[String]], name: String
+  ) throws -> String {
+    let text = terminated(sql)
+    let tokenizer = SQLTokenizer(dialect: .duckdb)
+    let words = tokenizer.tokens(text).prefix(3).map { $0.kind == .word ? $0.text : "" }
+    guard !text.unicodeScalars.contains("\0"), heads.contains(where: { words.starts(with: $0) }),
+      endsAtItsOnlySemicolon(text, tokenizer)
+    else { throw SQLDumpDDLError.unsafeDefinition(name) }
+    return text
+  }
+
+  /// The last lexeme of `text` other than whitespace is a `;` symbol, and no other `;` is one
+  private static func endsAtItsOnlySemicolon(_ text: String, _ tokenizer: SQLTokenizer) -> Bool {
+    let scalars = Array(text.unicodeScalars)
+    var semicolons = 0
+    var endsWithSemicolon = false
+    var i = 0
+    while i < scalars.count {
+      let lexeme = tokenizer.lexeme(in: scalars, at: i)
+      switch lexeme.kind {
+      case .whitespace: break
+      case .symbol where scalars[i] == ";":
+        semicolons += 1
+        endsWithSemicolon = true
+      default: endsWithSemicolon = false
+      }
+      i = lexeme.range.upperBound
+    }
+    return semicolons == 1 && endsWithSemicolon
+  }
+
+  private static func duckdbQualified(_ schema: String, _ name: String) throws -> String {
+    let dialect = SQLDialect.duckdb
+    return try dialect.quoteIdentifier(schema) + "." + dialect.quoteIdentifier(name)
   }
 
   // MARK: - Shared

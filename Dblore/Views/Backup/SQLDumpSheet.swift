@@ -140,14 +140,19 @@ struct SQLDumpSheet: View {
           .font(.bodyText)
           .disabled(model.isBusy)
         Text(
-          "The dump reads everything in one snapshot on its own connection. It holds your data "
-            + "as plain text: keep the file somewhere safe."
+          (engine == .duckdb
+            ? "The dump reads everything in one snapshot on this tab's connection. "
+            : "The dump reads everything in one snapshot on its own connection. ")
+            + "It holds your data as plain text: keep the file somewhere safe."
         )
         .font(.small)
         .foregroundColor(.foregroundMuted)
         .fixedSize(horizontal: false, vertical: true)
         Text(
-          "Not included: functions, procedures, extensions, roles, ownership and grants. "
+          (engine == .duckdb
+            ? "Not included: macros, secrets, comments, temporary objects, attached databases "
+              + "and user types other than ENUM. "
+            : "Not included: functions, procedures, extensions, roles, ownership and grants. ")
             + "Restore it with File > Restore SQL Dump (up to 64 MiB)."
         )
         .font(.small)

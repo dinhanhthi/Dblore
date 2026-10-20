@@ -11,6 +11,10 @@
 //   `HEX()` text is checked to be hex digits.
 // - SQLite selects `quote(col)`, which already returns an SQL literal, written as returned once
 //   checked to be `NULL`, a number, a quoted string or a blob.
+// - DuckDB selects `hex(col)` for BLOB columns, written as quoted `'\xHH...'` text (one escape
+//   per byte) that DuckDB casts to BLOB on insert, and `CAST(col AS VARCHAR)` for the rest,
+//   written as a quoted string (text with a NUL stops the dump: a restore refuses it). No cast
+//   or function call is written: the restore accepts only quoted text and NULL in a DuckDB row.
 
 import Foundation
 
@@ -38,18 +42,28 @@ nonisolated enum SQLDumpDataRenderer {
   }
 
   /// One column read as text: PostgreSQL `'v' || col::text`, MySQL `HEX(col)` for
-  /// `mysqlHexTypes` and `CAST(col AS CHAR)` otherwise, SQLite `quote(col)`. `quotedName` is
-  /// already quoted. DuckDB and MongoDB have no text form of their own yet and read as SQLite.
-  /// Shared with the Data Rewind capture (`RewindCaptureSQL`).
-  static func textExpression(_ quotedName: String, typeName: String, engine: DatabaseType)
+  /// `mysqlHexTypes` and `CAST(col AS CHAR)` otherwise, SQLite `quote(col)`, DuckDB `hex(col)`
+  /// for BLOB and `CAST(col AS VARCHAR)` otherwise. `quotedName` is already quoted. MongoDB has
+  /// no text form and reads as SQLite. Shared with the Data Rewind capture (`RewindCaptureSQL`,
+  /// which refuses DuckDB and MongoDB).
+  static func textExpression(
+    _ quotedName: String, typeName: String, engine: DatabaseType
+  )
     -> String
   {
     switch engine {
     case .postgresql: "'v' || \(quotedName)::text"
     case .mysql:
       isMySQLHexType(typeName) ? "HEX(\(quotedName))" : "CAST(\(quotedName) AS CHAR)"
-    case .sqlite, .duckdb, .mongodb: "quote(\(quotedName))"
+    case .duckdb:
+      isDuckDBBlob(typeName) ? "hex(\(quotedName))" : "CAST(\(quotedName) AS VARCHAR)"
+    case .sqlite, .mongodb: "quote(\(quotedName))"
     }
+  }
+
+  /// A DuckDB `duckdb_columns().data_type` read with `hex()`
+  static func isDuckDBBlob(_ typeName: String) -> Bool {
+    SQLTokenizer.asciiUppercased(typeName) == "BLOB"
   }
 
   /// A MySQL `DATA_TYPE` or result type name (any case) read with `HEX()`
@@ -77,6 +91,21 @@ nonisolated enum SQLDumpDataRenderer {
       return SQLDialect.mysql.literal(.data(data))
     case (.sqlite, .string(let text)) where isSQLiteLiteral(text):
       return text
+    case (.duckdb, .string(let text)) where isDuckDBBlob(column.dataType):
+      guard text.utf8.count.isMultiple(of: 2), isHex(text[...]) else {
+        throw SQLDumpError.unexpectedValue(table: table, column: column.name)
+      }
+      let bytes = Array(text.utf8)
+      let escaped = stride(from: 0, to: bytes.count, by: 2).map {
+        "\\x" + String(decoding: bytes[$0...($0 + 1)], as: UTF8.self)
+      }
+      return "'" + escaped.joined() + "'"
+    case (.duckdb, .string(let text)):
+      // A restore refuses a DuckDB script with a NUL (DuckDB reads statements as C strings)
+      guard !text.unicodeScalars.contains("\0") else {
+        throw SQLDumpError.unexpectedValue(table: table, column: column.name)
+      }
+      return SQLDialect.duckdb.literal(.string(text))
     default:
       throw SQLDumpError.unexpectedValue(table: table, column: column.name)
     }

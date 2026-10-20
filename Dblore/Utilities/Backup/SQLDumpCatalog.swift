@@ -12,6 +12,9 @@
 // the server has it (MySQL 8.0.13+), else views fall back to name order.
 // SQLite dumps the `main` database: `sqlite_master` in rowid order, shadow tables from
 // `pragma_table_list` (SQLite 3.37+, else the name prefix rule) and `sqlite_sequence`.
+// DuckDB dumps the connected database (`current_database()`), without internal and temporary
+// objects: non-internal schemas, ENUM types, sequences, then tables, indexes and views in
+// creation (oid) order, each with the `sql` text of its `duckdb_*()` table function.
 
 import Foundation
 
@@ -397,6 +400,93 @@ nonisolated enum SQLDumpCatalog {
     return SQLDumpDDL.SQLiteInput(
       masterRows: masterRows, structures: structures, shadowTableNames: shadowNames,
       sequences: sequences)
+  }
+
+  // MARK: - DuckDB
+
+  /// Objects of the connected database, not of `temp`, `system` or an attached one
+  private static let duckdbCurrent = "database_name = current_database()"
+
+  static func duckdbInput(_ reader: any DatabaseSession) async throws -> SQLDumpDDL.DuckDBInput {
+    let schemas = try await rows(
+      reader,
+      """
+      SELECT schema_name FROM duckdb_schemas()
+      WHERE \(duckdbCurrent) AND NOT internal ORDER BY schema_name
+      """
+    ).compactMap { text($0, 0) }
+    let enums = try await rows(
+      reader,
+      """
+      SELECT schema_name, type_name, to_json(labels)::VARCHAR FROM duckdb_types()
+      WHERE \(duckdbCurrent) AND NOT internal AND logical_type = 'ENUM' ORDER BY type_oid
+      """
+    ).compactMap { row -> SQLDumpDDL.DuckDBEnum? in
+      guard row.count >= 3, let schema = text(row, 0), let name = text(row, 1) else { return nil }
+      return SQLDumpDDL.DuckDBEnum(
+        schema: schema, name: name, labels: CatalogValue.stringList(row[2]))
+    }
+    let sequences = try await rows(
+      reader,
+      """
+      SELECT schema_name, sequence_name, start_value::VARCHAR, increment_by::VARCHAR,
+        min_value::VARCHAR, max_value::VARCHAR, cycle, last_value::VARCHAR
+      FROM duckdb_sequences()
+      WHERE \(duckdbCurrent) AND NOT temporary ORDER BY schema_name, sequence_name
+      """
+    ).compactMap { row -> SQLDumpDDL.DuckDBSequence? in
+      guard row.count >= 8, let schema = text(row, 0), let name = text(row, 1),
+        let start = int64(row[2]), let increment = int64(row[3]), let minValue = int64(row[4]),
+        let maxValue = int64(row[5])
+      else { return nil }
+      return SQLDumpDDL.DuckDBSequence(
+        schema: schema, name: name, start: start, increment: increment, minValue: minValue,
+        maxValue: maxValue, cycle: CatalogValue.bool(row[6]) ?? false, lastValue: int64(row[7]))
+    }
+    let introspector = DuckDBSchemaIntrospector()
+    var tables: [SQLDumpDDL.DuckDBTable] = []
+    for row in try await rows(
+      reader,
+      """
+      SELECT schema_name, table_name, sql FROM duckdb_tables()
+      WHERE \(duckdbCurrent) AND NOT internal AND NOT temporary ORDER BY table_oid
+      """)
+    {
+      guard let schema = text(row, 0), let name = text(row, 1), let sql = text(row, 2) else {
+        continue
+      }
+      tables.append(
+        SQLDumpDDL.DuckDBTable(
+          structure: try await introspector.tableStructure(schema: schema, table: name, in: reader),
+          sql: sql))
+    }
+    let indexes = try await rows(
+      reader,
+      """
+      SELECT schema_name, table_name, index_name, sql FROM duckdb_indexes()
+      WHERE \(duckdbCurrent) ORDER BY index_oid
+      """
+    ).compactMap { row -> SQLDumpDDL.DuckDBIndex? in
+      guard let schema = text(row, 0), let table = text(row, 1), let name = text(row, 2),
+        let sql = text(row, 3)
+      else { return nil }
+      return SQLDumpDDL.DuckDBIndex(schema: schema, table: table, name: name, sql: sql)
+    }
+    let views = try await rows(
+      reader,
+      """
+      SELECT schema_name, view_name, sql FROM duckdb_views()
+      WHERE \(duckdbCurrent) AND NOT internal AND NOT temporary ORDER BY view_oid
+      """
+    ).compactMap { row -> SQLDumpDDL.View? in
+      guard let schema = text(row, 0), let name = text(row, 1), let sql = text(row, 2) else {
+        return nil
+      }
+      return SQLDumpDDL.View(schema: schema, name: name, sql: sql, dependsOn: [])
+    }
+    return SQLDumpDDL.DuckDBInput(
+      schemas: schemas, enums: enums, sequences: sequences, tables: tables, indexes: indexes,
+      views: views)
   }
 
   // MARK: - Shared

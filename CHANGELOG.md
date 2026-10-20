@@ -21,6 +21,8 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Rename, comment and drop tables** from the structure editor, or with Rename… and Drop Table… on a table in the sidebar. Drop asks for the table name and shows the exact statement first; under Review the change waits for Commit on PostgreSQL and SQLite, and open tabs follow a rename or close after a drop. Table comments are read and edited on PostgreSQL and MySQL. [#c73bd2d1](https://github.com/dinhanhthi/Dblore/commit/c73bd2d1)
 - **Parquet export.** Export a SQL result as a `.parquet` file from the export sheet or the copy bar's format menu, with progress and Cancel. Integer, floating-point, boolean, timestamp, binary and JSON columns keep their type; other columns are written as text. It needs the DuckDB plugin; without it the format links to Settings > Plugins. [#d25dc0d2](https://github.com/dinhanhthi/Dblore/commit/d25dc0d2)
 - **Plugins list.** Settings > Plugins shows each available plugin on its own row, with its own Install, Remove, progress and Cancel. [#d25dc0d2](https://github.com/dinhanhthi/Dblore/commit/d25dc0d2)
+- **Data Rewind.** Edits made in the data viewer on PostgreSQL, MySQL and SQLite (cell edits, Row Details and staged changes) keep a copy of each row before and after the change. View > Data Rewind… lists them for the connection, shows the exact SQL that puts the rows back and runs it as one batch after the usual Safe Mode confirmation; if a row changed since the edit, nothing is rewound and the row is named. The copies stay in a separate file on this Mac, are never included in backups, and are kept 30 days by default (7 to 365, up to 100 MB); Settings > Data turns recording off or deletes them. Imported rows are not recorded. [#43aa6176](https://github.com/dinhanhthi/Dblore/commit/43aa6176) [#870c05b7](https://github.com/dinhanhthi/Dblore/commit/870c05b7) [#56d66e10](https://github.com/dinhanhthi/Dblore/commit/56d66e10)
+- **DuckDB SQL dump and restore.** Export SQL Dump and Restore SQL Dump now work on DuckDB connections, in memory or from a file: schemas, ENUM types, sequences, tables, indexes, views and every row (including binary values) are written to a plain SQL file and read back in one transaction. Restore only accepts the statements a Dblore DuckDB dump contains (views that read files or run SQL from text are refused), needs a writable connection and runs with Protected mode off. Macros, other user types and comments are not dumped.
 
 ### Fixed
 
@@ -34,6 +36,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - An older build drops a connection's color and group when it saves the connection again.
 - Saved highlights that use the Pink, Cyan or Gray color cannot be read by an older build: it shows no saved highlights and replaces them all on its next save.
 - The DuckDB plugin installed by an earlier version keeps working; there is nothing to reinstall.
+- History rows from a rewind read as Editor in an older build.
 
 ## v0.8.1 (2026-10-17)
 

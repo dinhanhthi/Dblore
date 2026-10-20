@@ -159,7 +159,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: false
+        supportsSQLDump: true
       )
     case .mysql:
       DatabaseCapabilities(

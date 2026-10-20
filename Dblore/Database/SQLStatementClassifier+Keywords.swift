@@ -134,6 +134,30 @@ nonisolated extension SQLStatementClassifier {
     "POSTGRES_", "MYSQL_", "SQLITE_", "ICEBERG_", "DELTA_",
   ]
 
+  /// Restore only (`SQLRestorePlan.isDumpSchema`), on top of `duckdbSideEffectFunctions` and
+  /// its prefixes: DuckDB functions a restored table, index or view may not call (uppercase).
+  /// A view runs its body at restore and on every later read, so its text must not run SQL
+  /// from a string (`QUERY`, `QUERY_TABLE`, `JSON_EXECUTE_SERIALIZED_SQL`), read files (`READ_*`,
+  /// `GLOB`, `SNIFF_CSV`, `PARQUET_*`, `*_SCAN`), settings, pragmas or secrets (`PRAGMA_*`,
+  /// `DUCKDB_*`, `*SECRET*`), change logging (`ENABLE_LOGGING`, `WRITE_LOG`,
+  /// `TRUNCATE_DUCKDB_LOGS`) or the random seed (`SETSEED`), run plans or generated SQL
+  /// (`FROM_SUBSTRAIT*`, `SQLSMITH`, `FUZZYDUCK`, `REDUCE_SQL_STATEMENT`), read other formats
+  /// (`SCAN_*`, `ST_READ*`) or reach other catalogs (`DUCKLAKE_*`, `MD_*`). Names, then
+  /// prefixes, then names containing a piece. Only calls in the object's body are checked.
+  static let duckdbRestoreRefusedFunctions: Set<String> = [
+    "GLOB", "SNIFF_CSV", "WRITE_LOG", "ENABLE_LOGGING", "DISABLE_LOGGING", "SQLSMITH",
+    "FUZZYDUCK", "REDUCE_SQL_STATEMENT", "SETSEED",
+  ]
+
+  static let duckdbRestoreRefusedFunctionPrefixes: [String] = [
+    "QUERY", "PRAGMA_", "READ_", "PARQUET_", "JSON_EXECUTE", "SCAN_", "ST_READ", "FROM_SUBSTRAIT",
+    "DUCKLAKE_", "MD_",
+  ]
+
+  static let duckdbRestoreRefusedFunctionInfixes: [String] = [
+    "EXECUTE", "SECRET", "LOGGING", "DUCKDB", "_SCAN",
+  ]
+
   /// URL schemes DuckDB (httpfs, azure, hf extensions) opens over the network (lowercase).
   /// A string or quoted identifier that starts with one makes a DuckDB read fail closed.
   static let duckdbRemoteSchemes: [String] = [
