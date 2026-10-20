@@ -151,13 +151,7 @@ extension NotebookViewModel {
     let controller = AIInlineCompletionController()
     controller.isAllowed = { [weak self] in self?.isAIAllowed() ?? false }
     controller.source = { [weak self] in self?.aiInlineSource }
-    controller.schema = { [weak self] prefix in
-      // The arrays are copied here (copy on write) and scored off the main actor
-      guard let tables = self?.databaseTables, let foreignKeys = self?.databaseForeignKeys
-      else { return nil }
-      return await AIInlineCompletion.schemaOffMain(
-        prefix: prefix, tables: tables, foreignKeys: foreignKeys)
-    }
+    controller.schema = { [weak self] prefix in await self?.aiInlineSchema(prefix) }
     aiInlineCompletions[key] = controller
     return controller
   }

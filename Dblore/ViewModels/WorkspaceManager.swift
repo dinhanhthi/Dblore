@@ -1154,6 +1154,7 @@ class WorkspaceManager: Identifiable {
       return (id: self.workspace.id, name: self.workspace.name)
     }
     viewModel.isAIAllowed = { [weak self] in self?.isAIAllowed() ?? false }
+    viewModel.aiInlineSchema = { [weak self] prefix in await self?.aiInlineSchema(prefix: prefix) }
     // Resolved at completion: the tab is registered after this returns
     viewModel.notificationTab = { [weak self, weak viewModel] in
       guard let self, let viewModel,

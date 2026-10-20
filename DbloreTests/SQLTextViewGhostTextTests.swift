@@ -527,12 +527,57 @@ struct SQLTextViewGhostTextTests {
     #expect(source.aiInlineCompletion(cellId: nil) == nil)
   }
 
-  @Test("the schema closure builds the schema of the connection's tables")
-  func wiringSchema() async throws {
+  @Test("without a workspace the schema closure sends no schema")
+  func wiringSchemaNeedsWorkspace() async throws {
     let viewModel = makeViewModel(.postgresql)
     viewModel.databaseTables = [DatabaseTable(schema: "public", name: "invoices", columns: [])]
     let controller = try #require(viewModel.aiInlineCompletion(cellId: nil))
-    #expect(await controller.schema("SELECT * FROM inv") == "public.invoices()")
+    #expect(await controller.schema("SELECT * FROM inv") == nil)
+  }
+
+  /// A workspace on an allowed connection with one table loaded, and its notebook tab's editor
+  /// ghost text controller
+  private func makeWorkspace() -> (WorkspaceManager, AIInlineCompletionController?) {
+    var config = ConnectionConfig(
+      databaseType: .postgresql, host: "h.example", port: 1, database: "db", username: "u")
+    config.aiAccess = .always
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false)
+    let gate = AIAccessGate()
+    manager.aiAccessSource = { [weak manager] in
+      manager?.workspace.connectionConfig.map {
+        AIAccessContext(config: $0, savedPolicies: [], gate: gate)
+      }
+    }
+    manager.databaseTables = [DatabaseTable(schema: "public", name: "invoices", columns: [])]
+    manager.newNotebook()
+    return (manager, manager.activeViewModel?.aiInlineCompletion(cellId: nil))
+  }
+
+  @Test("no schema until the current connection's schema load lands, then its tables")
+  func wiringSchemaAfterLoad() async throws {
+    let (manager, controller) = makeWorkspace()
+    let ghost = try #require(controller)
+    manager.schemaConnectionEpoch = nil
+    #expect(await ghost.schema("SELECT * FROM inv") == nil)
+    manager.schemaConnectionEpoch = 1
+    #expect(await ghost.schema("SELECT * FROM inv") == "public.invoices()")
+  }
+
+  @Test("the schema is dropped when the connection's schema changes while it is built")
+  func wiringSchemaEpochChanges() async throws {
+    let (manager, controller) = makeWorkspace()
+    let ghost = try #require(controller)
+    manager.schemaConnectionEpoch = 1
+    let source = manager.aiAccessSource
+    var reads = 0
+    // The first gate read is before the build: the schema of another connection lands then
+    manager.aiAccessSource = { [weak manager] in
+      reads += 1
+      if reads == 1 { manager?.schemaConnectionEpoch = 2 }
+      return source()
+    }
+    #expect(await ghost.schema("SELECT * FROM inv") == nil)
   }
 
   @Test("a deleted cell's controller is dropped with the next one made; the editor tab's stays")

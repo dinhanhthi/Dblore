@@ -27,6 +27,22 @@ extension WorkspaceManager {
     return schemaConnectionEpoch == epoch && isAIAllowed() ? context : ""
   }
 
+  /// `AIInlineCompletion.schema` of the text before the caret, built off the main actor from
+  /// the loaded schema. Nil unless the AI access gate allows the connection and this
+  /// connection's schema has landed (until then the arrays may hold the previous connection's),
+  /// and when the connection or its AI access changed while it was built.
+  func aiInlineSchema(prefix: String) async -> String? {
+    guard let epoch = schemaConnectionEpoch, isAIAllowed() else { return nil }
+    let key = workspace.connectionConfig.map(AIAccessGate.sessionKey(for:))
+    // The arrays are copied here (copy on write) and scored off the main actor
+    let schema = await AIInlineCompletion.schemaOffMain(
+      prefix: prefix, tables: databaseTables, foreignKeys: databaseForeignKeys)
+    guard schemaConnectionEpoch == epoch, isAIAllowed(),
+      workspace.connectionConfig.map(AIAccessGate.sessionKey(for:)) == key
+    else { return nil }
+    return schema
+  }
+
   func isAIAllowed() -> Bool {
     aiAccessSource()?.decision(settings: aiAssistant.settings.configuration) == .allowed
   }

@@ -295,6 +295,12 @@ class NotebookViewModel {
   /// Workspace mode: true only while the connection's AI access is allowed (needs approval and
   /// denied are false). Set by `WorkspaceManager`; ghost text asks it before every request.
   @ObservationIgnored var isAIAllowed: @MainActor () -> Bool = { false }
+  /// Workspace mode: compact schema of the workspace connection for the text before the caret,
+  /// nil until that connection's schema has landed or while its AI access is not allowed. Set by
+  /// `WorkspaceManager`; nil (no schema) when no workspace is wired.
+  @ObservationIgnored var aiInlineSchema: @MainActor (_ prefix: String) async -> String? = { _ in
+    nil
+  }
   /// Ghost text controller of each SQL editor: the cell id, or this view model's `id` for the
   /// editor tab (see `aiInlineCompletion(cellId:)`). Session only.
   @ObservationIgnored var aiInlineCompletions: [UUID: AIInlineCompletionController] = [:]
