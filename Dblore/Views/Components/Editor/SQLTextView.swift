@@ -21,8 +21,24 @@ class SQLTextView: NSTextView {
   var dialect: SQLDialect = .postgresql
   var isEditorMode: Bool = false  // True when used in Editor mode (IDE-like arrow behavior)
   var viewModelId: UUID?  // ID of the viewModel that owns this text view (for scoped search)
+  /// AI ghost text after the caret (see SQLTextView+GhostText.swift). Nil (the default) shows
+  /// none; a MongoDB query field never takes one.
+  weak var inlineCompletion: AIInlineCompletionController? {
+    didSet {
+      if self is MongoQueryTextView, inlineCompletion != nil {
+        inlineCompletion = nil
+        return
+      }
+      guard inlineCompletion !== oldValue else { return }
+      inlineCompletion?.onSuggestionChange = { [weak self] in self?.needsDisplay = true }
+      needsDisplay = true
+    }
+  }
 
   // MARK: - Internal State (for extensions)
+
+  /// Observers of the clip views around the editor (see `observeGhostTextScrolling`)
+  var ghostTextScrollObservers: [NSObjectProtocol] = []
 
   // Autocomplete state
   private var autocompleteSuggestions: [AutocompleteSuggestion] = []
@@ -109,8 +125,14 @@ class SQLTextView: NSTextView {
       NotificationCenter.default.post(name: .editorUnfocused, object: self)
       // Hide autocomplete
       hideAutocomplete()
+      inlineCompletion?.focusLost()
     }
     return result
+  }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    observeGhostTextScrolling()
   }
 
   // MARK: - Current Line Highlight
@@ -120,6 +142,7 @@ class SQLTextView: NSTextView {
   ) {
     super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
     if isEditorMode { needsDisplay = true }
+    ghostTextSelectionDidChange()
   }
 
   override func drawBackground(in rect: NSRect) {
@@ -130,6 +153,11 @@ class SQLTextView: NSTextView {
     else { return }
     NSColor(Color.inputBackground).setFill()
     NSRect(x: 0, y: lineRect.minY, width: bounds.width, height: lineRect.height).fill()
+  }
+
+  override func draw(_ dirtyRect: NSRect) {
+    super.draw(dirtyRect)
+    drawGhostText()
   }
 
   /// Rect (view coordinates) of the logical line containing the caret, including wrapped fragments.
@@ -159,6 +187,10 @@ class SQLTextView: NSTextView {
     if !autocompleteSuggestions.isEmpty, handleAutocompleteNavigation(with: event) {
       return  // Handled, don't pass to super
     }
+    // Ghost text: Tab accepts, Esc dismisses (the popup above takes them first while open)
+    if handleGhostTextKey(with: event) {
+      return  // Handled, don't pass to super
+    }
 
     if handleCellShortcut(with: event) {
       return  // Handled, don't pass to super
@@ -177,6 +209,7 @@ class SQLTextView: NSTextView {
 
   override func didChangeText() {
     super.didChangeText()
+    ghostTextDidChangeText()
     // Skip autocomplete update if we're accepting a suggestion or doing programmatic edits
     guard !isAcceptingSuggestion && !isProgrammaticEdit else { return }
     // Update autocomplete suggestions when text changes

@@ -158,6 +158,11 @@ extension SettingsModal.SettingsTab {
             "Runs fully on this Mac (Apple Silicon). Nothing leaves your computer. Model downloads come from Hugging Face."
         ),
         .init(
+          card: "Inline suggestions", title: "Suggest SQL as you type",
+          detail:
+            "Off by default. Ghost text after the caret in SQL query tabs and notebook cells: Tab accepts, Esc dismisses. Provider and model, Same as chat. On-device keeps your SQL on this Mac."
+        ),
+        .init(
           card: "Privacy", title: "Default AI access for connections",
           detail:
             "Always, Ask once per session, Never. Each connection can override this in its connection form."

@@ -75,6 +75,7 @@ struct AISettingsSection: View {
       }
 
       modelsCard
+      AIInlineCard(settings: settings)
       privacyCard
     }
     .onAppear(perform: loadInitial)
@@ -647,6 +648,106 @@ struct AIPrivacyCard: View {
     runsQueries
       ? "AI writes a read-only query, the app runs it and shows the rows to you. The rows reach the AI only when Send result rows to AI is on."
       : "Schema (table/column names, types, keys) is sent. Row data is sent only when Send result rows to AI is on. AI never runs queries."
+  }
+
+  private func helpText(_ text: String) -> some View {
+    Text(verbatim: text)
+      .font(.bodyText)
+      .foregroundColor(.foregroundSubtle)
+      .fixedSize(horizontal: false, vertical: true)
+  }
+}
+
+/// Ghost text in SQL editors: the switch (off by default), its provider and model
+struct AIInlineCard: View {
+  @Bindable var settings: AISettings
+
+  private var configuration: AIConfiguration { settings.configuration }
+  /// The inline provider, else the chat provider
+  private var provider: AIProviderKind? {
+    configuration.inlineProvider ?? configuration.activeProvider
+  }
+
+  var body: some View {
+    SettingsGroupCard(title: "Inline suggestions") {
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        SettingsToggle(
+          title: "Suggest SQL as you type", isOn: $settings.configuration.inlineEnabled
+        ) {
+          helpText(
+            "Gray text after the caret in SQL query tabs and notebook cells. Tab accepts it, Esc dismisses it. The text around the caret and a compact schema are sent; never rows."
+          )
+        }
+        if configuration.inlineEnabled {
+          Divider()
+          providerRow
+          modelRow
+        }
+      }
+    }
+  }
+
+  private var providerRow: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text("Provider")
+        .font(.bodyText)
+        .foregroundColor(.foregroundMuted)
+      CapsuleDropdown(
+        title: title(configuration.inlineProvider),
+        width: 300,
+        accessibilityLabel: "Inline suggestion provider",
+        options: [nil] + AIProviderKind.allCases.map(Optional.some),
+        optionTitle: title,
+        isSelected: { $0 == configuration.inlineProvider },
+        onSelect: { kind in
+          guard kind != configuration.inlineProvider else { return }
+          // A model name belongs to one provider
+          var updated = configuration
+          updated.inlineProvider = kind
+          updated.inlineModel = nil
+          settings.configuration = updated
+        }
+      )
+      helpText("Recommended: On-device keeps your SQL on this Mac.")
+      if let provider, !settings.isConfigured(provider) {
+        helpText("Set up \(provider.displayName) in Provider above first.")
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var modelRow: some View {
+    if let provider {
+      VStack(alignment: .leading, spacing: Spacing.sm) {
+        Text("Model")
+          .font(.bodyText)
+          .foregroundColor(.foregroundMuted)
+        let chatModel = settings.config(for: provider).model
+        if provider == .localMLX || configuration.inlineProvider == nil {
+          // On-device keeps one model loaded: suggestions use the chat model
+          Text(verbatim: chatModel.isEmpty ? "No model chosen" : chatModel)
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+          helpText(
+            provider == .localMLX
+              ? "On-device uses the chat model: one model stays loaded."
+              : "Uses the chat model.")
+        } else {
+          ModelNameComboBox(
+            text: Binding(
+              get: { configuration.inlineModel ?? "" },
+              set: { settings.configuration.inlineModel = $0.isEmpty ? nil : $0 }),
+            options: provider.fallbackModels)
+          if !chatModel.isEmpty {
+            helpText("Empty uses \(provider.displayName)'s chat model, \(chatModel).")
+          }
+        }
+      }
+    }
+  }
+
+  private func title(_ kind: AIProviderKind?) -> String {
+    kind?.displayName ?? "Same as chat"
   }
 
   private func helpText(_ text: String) -> some View {

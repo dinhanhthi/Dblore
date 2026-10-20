@@ -140,6 +140,46 @@ extension NotebookViewModel {
       showsAggregations: model.section == .aggregations)
   }
 
+  /// Ghost text controller of the editor tab (`cellId` nil) or one SQL cell, created once per
+  /// editor. Nil where ghost text never goes: MongoDB (mongosh tabs and cells), read-only source
+  /// tabs and Markdown notes. Creating one drops the controllers of deleted cells.
+  func aiInlineCompletion(cellId: UUID?) -> AIInlineCompletionController? {
+    guard aiInlineSource != nil else { return nil }
+    let key = cellId ?? id
+    if let controller = aiInlineCompletions[key] { return controller }
+    pruneAIInlineCompletions()
+    let controller = AIInlineCompletionController()
+    controller.isAllowed = { [weak self] in self?.isAIAllowed() ?? false }
+    controller.source = { [weak self] in self?.aiInlineSource }
+    controller.schema = { [weak self] prefix in
+      // The arrays are copied here (copy on write) and scored off the main actor
+      guard let tables = self?.databaseTables, let foreignKeys = self?.databaseForeignKeys
+      else { return nil }
+      return await AIInlineCompletion.schemaOffMain(
+        prefix: prefix, tables: tables, foreignKeys: foreignKeys)
+    }
+    aiInlineCompletions[key] = controller
+    return controller
+  }
+
+  /// Drops the controllers of cells no longer in the notebook; the editor tab's stays. Run when
+  /// a controller is created, so the map never outgrows the cells shown; a deleted cell's
+  /// controller is idle until then (its editor dismissed it on teardown).
+  private func pruneAIInlineCompletions() {
+    let cellIds = Set(notebook.cells.map(\.id))
+    for (key, controller) in aiInlineCompletions where key != id && !cellIds.contains(key) {
+      controller.dismiss()
+      aiInlineCompletions[key] = nil
+    }
+  }
+
+  /// Dialect of the ghost text prompt; nil on MongoDB, a read-only source tab or a Markdown
+  /// note, so nothing is sent from them
+  var aiInlineSource: (dialect: SQLDialect, isReadOnlySource: Bool)? {
+    guard sqlDialect != .mongodb, !isReadOnlySource, viewMode != .markdown else { return nil }
+    return (sqlDialect, isReadOnlySource)
+  }
+
   enum AIReviewApplyResult: Equatable {
     case applied
     case refused(String)

@@ -146,3 +146,19 @@ extension SQLTextView {
     return false
   }
 }
+
+// MARK: - Ghost Text Keys
+
+extension SQLTextView {
+
+  /// Tab accepts the AI ghost text and Esc dismisses it, without modifiers and only while it
+  /// shows. `keyDown` hands keys to an open autocomplete popup first; this checks it too.
+  func handleGhostTextKey(with event: NSEvent) -> Bool {
+    let isTab = event.keyCode == 48
+    let isEscape = event.keyCode == 53
+    guard isTab || isEscape, getAutocompleteSuggestions().isEmpty else { return false }
+    let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+    guard flags.isEmpty else { return false }
+    return isTab ? acceptGhostText() : dismissGhostText()
+  }
+}

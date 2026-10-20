@@ -31,4 +31,10 @@ struct SettingsSearchTests {
     #expect(titles(Tab.search("results rows"), in: .ai).first == "Send result rows to AI")
   }
 
+  @Test("the inline suggestion setting is found by its keywords")
+  func aiInlineSetting() {
+    #expect(titles(Tab.search("ghost text"), in: .ai).first == "Suggest SQL as you type")
+    #expect(titles(Tab.search("inline on-device"), in: .ai).first == "Suggest SQL as you type")
+  }
+
 }

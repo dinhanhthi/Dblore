@@ -292,6 +292,12 @@ class NotebookViewModel {
   /// Latest posting task (posting never blocks the run)
   @ObservationIgnored var lastCompletionNotification: Task<Void, Never>?
   weak var editorTextView: SQLTextView?  // Reference to editor text view for getting selection
+  /// Workspace mode: true only while the connection's AI access is allowed (needs approval and
+  /// denied are false). Set by `WorkspaceManager`; ghost text asks it before every request.
+  @ObservationIgnored var isAIAllowed: @MainActor () -> Bool = { false }
+  /// Ghost text controller of each SQL editor: the cell id, or this view model's `id` for the
+  /// editor tab (see `aiInlineCompletion(cellId:)`). Session only.
+  @ObservationIgnored var aiInlineCompletions: [UUID: AIInlineCompletionController] = [:]
 
   init(notebook: DbloreNotebook = .newDocument()) {
     self.notebook = notebook

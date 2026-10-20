@@ -907,6 +907,14 @@ struct WorkspaceTabContentView: View {
           return nil
         }
 
+        // AI ghost text shown in the focused editor: hide it and keep the focus (an open
+        // autocomplete popup or a modifier keeps the usual Esc)
+        if textViewIsFocused,
+          (eventWindow.firstResponder as? SQLTextView)?.handleGhostTextKey(with: event) == true
+        {
+          return nil
+        }
+
         // Priority 1: If text editor is focused, unfocus it
         if textViewIsFocused {
           NotificationCenter.default.post(name: .unfocusEditor, object: nil)

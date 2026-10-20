@@ -83,23 +83,50 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
   var defaultConnectionAccess: AIAccessPolicy
   /// Whether result rows may be sent to the model (off: the model sees the query only)
   var sendsResultRows: Bool
+  /// Ghost text in SQL editors (explicit opt-in)
+  var inlineEnabled: Bool
+  /// Provider of ghost text; nil uses the chat provider
+  var inlineProvider: AIProviderKind?
+  /// Model of ghost text on `inlineProvider`; nil uses that provider's model. Ignored on-device.
+  var inlineModel: String?
+  /// Typing pause before a ghost text request
+  var inlineDebounceMs: Int
 
   static let empty = AIConfiguration(activeProvider: nil, configs: [:])
 
   init(
     activeProvider: AIProviderKind?, configs: [AIProviderKind: AIProviderConfig],
     runsQueries: Bool = false, defaultConnectionAccess: AIAccessPolicy = .always,
-    sendsResultRows: Bool = false
+    sendsResultRows: Bool = false, inlineEnabled: Bool = false,
+    inlineProvider: AIProviderKind? = nil, inlineModel: String? = nil, inlineDebounceMs: Int = 400
   ) {
     self.activeProvider = activeProvider
     self.configs = configs
     self.runsQueries = runsQueries
     self.defaultConnectionAccess = defaultConnectionAccess
     self.sendsResultRows = sendsResultRows
+    self.inlineEnabled = inlineEnabled
+    self.inlineProvider = inlineProvider
+    self.inlineModel = inlineModel
+    self.inlineDebounceMs = inlineDebounceMs
+  }
+
+  /// Provider and model ghost text uses: the inline provider (else the chat provider) with the
+  /// inline model (else that provider's model; only when the inline provider is set). On-device
+  /// always uses its chat model: the engine holds one resident model, and a second one would
+  /// reload weights on every typing pause. Nil without a provider or a model.
+  var inlineTarget: (provider: AIProviderKind, model: String)? {
+    guard let provider = inlineProvider ?? activeProvider else { return nil }
+    let chatModel = configs[provider]?.model ?? ""
+    let model =
+      provider == .localMLX || inlineProvider == nil
+      ? chatModel : (inlineModel.flatMap { $0.isEmpty ? nil : $0 } ?? chatModel)
+    return model.isEmpty ? nil : (provider, model)
   }
 
   private enum CodingKeys: String, CodingKey {
     case activeProvider, configs, runsQueries, defaultConnectionAccess, sendsResultRows
+    case inlineEnabled, inlineProvider, inlineModel, inlineDebounceMs
   }
 
   // A dictionary with enum keys encodes as a flat array by default; use string keys instead
@@ -120,6 +147,12 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     defaultConnectionAccess =
       rawAccess.map { AIAccessPolicy(rawValue: $0) ?? .askOncePerSession } ?? .always
     sendsResultRows = try container.decodeIfPresent(Bool.self, forKey: .sendsResultRows) ?? false
+    inlineEnabled = try container.decodeIfPresent(Bool.self, forKey: .inlineEnabled) ?? false
+    // An unknown provider (e.g. from a newer version) falls back to the chat provider
+    inlineProvider = try container.decodeIfPresent(String.self, forKey: .inlineProvider)
+      .flatMap(AIProviderKind.init(rawValue:))
+    inlineModel = try container.decodeIfPresent(String.self, forKey: .inlineModel)
+    inlineDebounceMs = try container.decodeIfPresent(Int.self, forKey: .inlineDebounceMs) ?? 400
   }
 
   func encode(to encoder: Encoder) throws {
@@ -130,6 +163,10 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
     try container.encode(runsQueries, forKey: .runsQueries)
     try container.encode(defaultConnectionAccess, forKey: .defaultConnectionAccess)
     try container.encode(sendsResultRows, forKey: .sendsResultRows)
+    try container.encode(inlineEnabled, forKey: .inlineEnabled)
+    try container.encodeIfPresent(inlineProvider, forKey: .inlineProvider)
+    try container.encodeIfPresent(inlineModel, forKey: .inlineModel)
+    try container.encode(inlineDebounceMs, forKey: .inlineDebounceMs)
   }
 }
 
@@ -146,6 +183,8 @@ final class AISettings {
 
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private let keyStore: AIKeyStore
+  /// Bumped when an API key is saved or removed; clients built with the old key are stale
+  @ObservationIgnored private(set) var keyRevision = 0
   /// Installed on-device model ids; a cached, observable set (no disk access while rendering)
   @ObservationIgnored var installedLocalModels: @MainActor () -> Set<String> = {
     LocalModelManager.shared.installedIDs
@@ -188,6 +227,7 @@ final class AISettings {
   @discardableResult
   func setAPIKey(_ value: String, for kind: AIProviderKind) -> Bool {
     let account = AIKeyStoreFactory.apiKeyAccount(kind.rawValue)
+    keyRevision += 1
     if value.isEmpty {
       keyStore.delete(account: account)
       return true

@@ -214,7 +214,8 @@ struct EditorModeView: View {
           isEditorMode: true,  // Remove border and focus effects
           wordWrapEnabled: appSettings.wordWrapEnabled,
           dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql,
-          isEditable: !isReadOnly
+          isEditable: !isReadOnly,
+          inlineCompletion: isReadOnly ? nil : viewModel.aiInlineCompletion(cellId: nil)
         )
       }
 

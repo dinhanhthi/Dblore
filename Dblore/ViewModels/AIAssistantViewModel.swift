@@ -160,6 +160,8 @@ final class AIAssistantViewModel {
   @ObservationIgnored let settings: AISettings
   @ObservationIgnored private let makeClient:
     (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient
+  /// Ghost text requests, cancelled before a request bound for the on-device model
+  @ObservationIgnored private let inlineCompletions: AIInlineCompletionRegistry
   @ObservationIgnored var schemaSource: () -> AISchemaSnapshot = { .empty }
   /// The MongoDB collection screen of the active tab, read at send time; nil elsewhere
   @ObservationIgnored var mongoScreenSource: () -> AIMongoAssist.Screen? = { nil }
@@ -208,10 +210,12 @@ final class AIAssistantViewModel {
     settings: AISettings = .shared,
     makeClient: @escaping (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient = {
       try AIClientFactory.make(kind: $0, config: $1, apiKey: $2)
-    }
+    },
+    inlineCompletions: AIInlineCompletionRegistry = .shared
   ) {
     self.settings = settings
     self.makeClient = makeClient
+    self.inlineCompletions = inlineCompletions
     localDataChanges.start { [weak self] note in
       guard LocalDataCategory.notification(note, includes: .aiChats) else { return }
       Task { @MainActor [weak self] in
@@ -425,8 +429,7 @@ final class AIAssistantViewModel {
     let client: any AIChatClient
     do {
       guard !model.isEmpty else { throw AIClientError.missingModel }
-      client = try makeClient(
-        provider, settings.config(for: provider), settings.apiKey(for: provider))
+      client = try foregroundClient(for: provider)
     } catch {
       markError(entryId, error)
       saveConversation()
@@ -453,6 +456,14 @@ final class AIAssistantViewModel {
       await self?.runTurn(context, history: history, entryId: entryId, token: token)
       self?.finishGeneration(token)
     }
+  }
+
+  /// The client of a chat turn or a one-shot request: every request the user asks for builds
+  /// its client here, once ghost requests have yielded the on-device model
+  private func foregroundClient(for provider: AIProviderKind) throws -> any AIChatClient {
+    inlineCompletions.yieldToForegroundRequest(on: provider)
+    return try makeClient(
+      provider, settings.config(for: provider), settings.apiKey(for: provider))
   }
 
   func stop() {
@@ -540,8 +551,7 @@ final class AIAssistantViewModel {
     guard isCurrentMongoCollection(database, collection) else {
       throw AIAccessError.otherConnection
     }
-    let client = try makeClient(
-      provider, settings.config(for: provider), settings.apiKey(for: provider))
+    let client = try foregroundClient(for: provider)
 
     let snapshot = schemaSource()
     let tables = snapshot.tables.filter {
