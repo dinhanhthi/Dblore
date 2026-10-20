@@ -2,7 +2,7 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
-## Unreleased
+## v0.8.2 (2026-10-21)
 
 ### Added
 
@@ -23,10 +23,24 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Plugins list.** Settings > Plugins shows each available plugin on its own row, with its own Install, Remove, progress and Cancel. [#d25dc0d2](https://github.com/dinhanhthi/Dblore/commit/d25dc0d2)
 - **Data Rewind.** Edits made in the data viewer on PostgreSQL, MySQL and SQLite (cell edits, Row Details and staged changes) keep a copy of each row before and after the change. View > Data Rewind… lists them for the connection, shows the exact SQL that puts the rows back and runs it as one batch after the usual Safe Mode confirmation; if a row changed since the edit, nothing is rewound and the row is named. The copies stay in a separate file on this Mac, are never included in backups, and are kept 30 days by default (7 to 365, up to 100 MB); Settings > Data turns recording off or deletes them. Imported rows are not recorded. [#43aa6176](https://github.com/dinhanhthi/Dblore/commit/43aa6176) [#870c05b7](https://github.com/dinhanhthi/Dblore/commit/870c05b7) [#56d66e10](https://github.com/dinhanhthi/Dblore/commit/56d66e10)
 - **DuckDB SQL dump and restore.** Export SQL Dump and Restore SQL Dump now work on DuckDB connections, in memory or from a file: schemas, ENUM types, sequences, tables, indexes, views and every row (including binary values) are written to a plain SQL file and read back in one transaction. Restore only accepts the statements a Dblore DuckDB dump contains (views that read files or run SQL from text are refused), needs a writable connection and runs with Protected mode off. Macros, other user types and comments are not dumped. [#a5c6c4e5](https://github.com/dinhanhthi/Dblore/commit/a5c6c4e5)
+- **MongoDB administration.** Admin commands join the mongosh subset (`createIndex`, `dropIndex`, `hideIndex`/`unhideIndex`, `createCollection`, `createView`, `drop`, `renameCollection` and `collMod`), so they also run from a `.js` tab. Indexes are created, hidden and dropped from the Indexes section, collections and views are created, renamed, dropped and edited from the sidebar, and a Validation section reads, generates from a sample and applies a collection's validator. Drops ask for the typed name first, and every action goes through Safe Mode. [#96d7ed97](https://github.com/dinhanhthi/Dblore/commit/96d7ed97) [#0454bb83](https://github.com/dinhanhthi/Dblore/commit/0454bb83) [#0598b573](https://github.com/dinhanhthi/Dblore/commit/0598b573) [#3f74eb9d](https://github.com/dinhanhthi/Dblore/commit/3f74eb9d)
+- **MongoDB bulk update and delete.** "Bulk Update / Delete…" in the Documents header runs one update or delete on every document that matches the filter, with a count preview first; an empty filter or 1,000 or more documents needs the collection name typed. [#9e0ee0cd](https://github.com/dinhanhthi/Dblore/commit/9e0ee0cd)
+- **MongoDB databases.** The sidebar's Databases button opens an overview of the server's databases and their collections, where you can create a database, drop one (typed name) or switch to it; the workspace reconnects to the chosen database. `db.getSiblingDB(...)` create and drop commands work in `.js` tabs. [#ec38c084](https://github.com/dinhanhthi/Dblore/commit/ec38c084) [#8e6a4c0a](https://github.com/dinhanhthi/Dblore/commit/8e6a4c0a) [#d587eb1b](https://github.com/dinhanhthi/Dblore/commit/d587eb1b)
+- **MongoDB JSON view.** A MongoDB result can be shown as JSON next to Grid and Documents, and the view mode and page size are remembered per collection. [#6b2540d0](https://github.com/dinhanhthi/Dblore/commit/6b2540d0)
+- **MongoDB export and import.** Export a collection, a query or an aggregation as Extended JSON or CSV. Import Documents… reads a JSON, NDJSON or CSV file into a new or existing collection after a preview; a conversion error stops the import before anything is sent. [#f199d5fd](https://github.com/dinhanhthi/Dblore/commit/f199d5fd) [#ba146fa3](https://github.com/dinhanhthi/Dblore/commit/ba146fa3) [#87ca6e17](https://github.com/dinhanhthi/Dblore/commit/87ca6e17)
+- **MongoDB backup and restore.** Back Up Database and Restore Backup (File menu) write the chosen collections and views, with their indexes and validators, to one `.ndjson` file and read it back after checking the whole file; Restore can drop colliding collections after the typed database name. [#119d223b](https://github.com/dinhanhthi/Dblore/commit/119d223b)
+- **Aggregation `$out` and `$merge` runs.** A pipeline that ends in `$out` or `$merge` runs from the Aggregations section behind Safe Mode, and the aggregation options set how many documents a stage preview shows (10, 20, 50 or 100). [#ffbed3a4](https://github.com/dinhanhthi/Dblore/commit/ffbed3a4)
+
+### Improved
+
+- **Menus** show a native checkmark on the selected item in dropdowns and in the AI assistant's model and context menus. [#d93bda0f](https://github.com/dinhanhthi/Dblore/commit/d93bda0f) [#a7164afa](https://github.com/dinhanhthi/Dblore/commit/a7164afa)
+- **Ghost buttons** have a stronger hover fill in light mode. [#964bad85](https://github.com/dinhanhthi/Dblore/commit/964bad85)
+- **AI assistant** empty state is centered without example prompts, and the floating card has a stronger border. [#c860085e](https://github.com/dinhanhthi/Dblore/commit/c860085e) [#39ec401a](https://github.com/dinhanhthi/Dblore/commit/39ec401a) [#43272b60](https://github.com/dinhanhthi/Dblore/commit/43272b60)
 
 ### Fixed
 
 - **AI schema context** puts each table, column and index on one line, so a catalog name cannot add lines to the prompt. [#a52dbf02](https://github.com/dinhanhthi/Dblore/commit/a52dbf02)
+- **PostgreSQL connection strings** with raw reserved characters in the password (such as `@`, `/` or `#`) are parsed. [#28433f4d](https://github.com/dinhanhthi/Dblore/commit/28433f4d)
 
 ### Upgrade notes
 
@@ -37,6 +51,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - Saved highlights that use the Pink, Cyan or Gray color cannot be read by an older build: it shows no saved highlights and replaces them all on its next save.
 - The DuckDB plugin installed by an earlier version keeps working; there is nothing to reinstall.
 - History rows from a rewind read as Editor in an older build.
+- A MongoDB workspace saved after a database switch carries the saved connection's database; an older build ignores it and may ask for the password again.
 - The Data Rewind store (`Application Support/Dblore/Rewind/rewind.sqlite`) holds copies of edited rows on this Mac. It is excluded from backups and never exported; Settings > Data deletes it.
 
 ## v0.8.1 (2026-10-17)

@@ -218,6 +218,13 @@
             <li><strong>Filter bar tools:</strong> the options button sets projection, sort, collation, hint, skip, limit and <code>maxTimeMS</code>; the bookmark button saves queries; <strong>Explain</strong> shows the plan as a tree; <strong>Export Code</strong> writes the query as Node.js, Python, Java, Go or C# driver code.</li>
             <li><strong>Aggregations:</strong> run a pipeline from the Aggregations section, built stage by stage or typed as text, with <strong>Wizard</strong> templates, saved pipelines, Explain and Export. Click a stage for the common operators, double-click to type any operator.</li>
             <li><strong>AI button:</strong> the filter bar and the Aggregations section write a filter or pipeline from a prompt (Stop, then Apply).</li>
+            <li><strong>Administration:</strong> the Indexes section creates, hides and drops indexes, a Validation section edits the collection's validator, and the sidebar creates, renames and drops collections and views. The same commands (<code>createIndex</code>, <code>createCollection</code>, <code>collMod</code> and others) work in a <code>.js</code> tab. Drops ask for the typed name first.</li>
+            <li><strong>Bulk Update / Delete…</strong> in the Documents header changes every document that matches the filter, after a count preview; an empty filter or 1,000 or more documents needs the collection name typed.</li>
+            <li><strong>Databases:</strong> the Databases button in the sidebar lists the server's databases; create, drop or switch to one (the workspace reconnects).</li>
+            <li><strong>JSON view:</strong> the picker under a result also offers JSON. The view mode and page size are remembered per collection.</li>
+            <li><strong>Export and import:</strong> <strong>Export...</strong> writes a collection, a query or an aggregation as Extended JSON or CSV; <strong>Import Documents...</strong> reads a JSON, NDJSON or CSV file after a preview.</li>
+            <li><strong>Back Up Database / Restore Backup</strong> (File menu) save collections and views, with indexes and validators, to one <code>.ndjson</code> file and read it back.</li>
+            <li>An aggregation that ends in <code>$out</code> or <code>$merge</code> runs from the Aggregations section after the Safe Mode confirmation.</li>
             <li><strong>Query files:</strong> a new query in a MongoDB workspace is a <code>.js</code> file; <code>.sql</code> files are refused there.</li>
             <li>MongoDB has no transactions, so writes ask before they run instead of waiting for Commit. For agents over MCP, use a user with a read-only role.</li>
 </ul>

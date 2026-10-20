@@ -64,7 +64,9 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **MySQL and MariaDB**: TLS, client certificates, SSH tunnels, staged edits by primary key
   and an EXPLAIN plan tree on MySQL
 - **MongoDB**: mongosh commands, editable document cards, a collection screen with filter,
-  schema and indexes, and an aggregation builder
+  schema, indexes and validation, an aggregation builder, index, collection and database
+  administration, bulk update and delete, JSON and CSV export and import, and backup and
+  restore
 - **SQLite**: open a file and work with it like a server connection, with an EXPLAIN QUERY
   PLAN tree
 
