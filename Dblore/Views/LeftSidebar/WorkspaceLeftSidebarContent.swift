@@ -21,6 +21,8 @@ struct WorkspaceLeftSidebarContent: View {
   @State private var favoriteFilter = ""
   /// The aggregation builder opened from a collection's menu
   @State private var aggregationBuilder: AggregationBuilderModel?
+  /// The Create Table sheet opened from the Tables header
+  @State private var createTable: CreateTableModel?
 
   enum SidebarTab: String, CaseIterable {
     case `public` = "Public"
@@ -57,6 +59,15 @@ struct WorkspaceLeftSidebarContent: View {
         onClose: { aggregationBuilder = nil },
         fieldSource: workspaceManager.autocompleteProvider,
         aiAssistant: workspaceManager.aiAssistant)
+    }
+    .sheet(item: $createTable) { model in
+      CreateTableSheet(
+        model: model,
+        tables: workspaceManager.databaseTables,
+        databasePassword: workspaceManager.workspace.connectionConfig?.password,
+        isConnected: workspaceManager.connectionState == .connected,
+        isShown: { [weak model] in model != nil && createTable === model },
+        onClose: closeCreateTable)
     }
   }
 
@@ -119,9 +130,12 @@ struct WorkspaceLeftSidebarContent: View {
     connectionDatabaseType.capabilities.queryLanguage
   }
 
-  /// An active tab connected to MongoDB whose protection allows schema changes: the collection
-  /// and view changes run through it. Without one they are not offered and "+" is disabled.
+  /// SQL: `WorkspaceManager.canChangeTableSchema` (New Table, Rename, Drop Table; hidden
+  /// without it). MongoDB: an active tab connected to MongoDB whose protection allows schema
+  /// changes: the collection and view changes run through it. Without one they are not offered
+  /// and "+" is disabled.
   private var canChangeSchema: Bool {
+    if queryLanguage == .sql { return workspaceManager.canChangeTableSchema }
     guard queryLanguage == .mongosh, let tab = workspaceManager.activeViewModel,
       tab.connectionManager != nil, tab.connectionState == .connected,
       tab.notebook.connectionConfig?.databaseType == .mongodb,
@@ -133,6 +147,49 @@ struct WorkspaceLeftSidebarContent: View {
   /// The section's "+" action, nil while the schema may not change
   private func createAction(_ form: SidebarMongoAdmin.Form) -> (() -> Void)? {
     canChangeSchema ? { startMongoAdmin(form) } : nil
+  }
+
+  /// The Tables header's "+" title: New Table... on SQL only while tables may change (hidden
+  /// otherwise), New Collection... on MongoDB (disabled while the schema may not change)
+  private var tablesCreateTitle: String? {
+    let title = SidebarSectionModel.createActionTitle(
+      for: .tables, databaseType: connectionDatabaseType)
+    return queryLanguage == .sql && !canChangeSchema ? nil : title
+  }
+
+  /// The Tables header's "+" action; `schema` is the group it sits in (nil: flat list)
+  private func tablesCreateAction(schema: String?) -> (() -> Void)? {
+    guard queryLanguage == .sql else { return createAction(.createCollection) }
+    return canChangeSchema ? { openCreateTable(schema: schema) } : nil
+  }
+
+  /// Where New Table can put a table: the listed schemas and the connection's default one
+  private var createTableSchemas: [String] {
+    let fallback: String
+    switch connectionDatabaseType {
+    case .mysql: fallback = workspaceManager.workspace.connectionConfig?.database ?? ""
+    case .postgresql, .sqlite, .duckdb, .mongodb:
+      fallback = connectionDatabaseType.dialect.defaultSchema
+    }
+    var schemas = publicSchemas
+    // The default schema stays pickable but goes last, so "+" on a flat list targets its schema
+    if !fallback.isEmpty, !schemas.contains(fallback) { schemas.append(fallback) }
+    return schemas
+  }
+
+  private func openCreateTable(schema: String?) {
+    guard createTable == nil else { return }
+    let schemas = createTableSchemas
+    guard let target = schema ?? schemas.first else { return }
+    createTable = workspaceManager.makeCreateTableModel(schema: target, schemas: schemas)
+  }
+
+  /// Closes the sheet unless a CREATE is being sent; a Safe Mode step still open is cancelled,
+  /// so a late Touch ID answer sends nothing
+  private func closeCreateTable() {
+    guard createTable?.isCreating != true else { return }
+    createTable?.cancelConfirmation()
+    createTable = nil
   }
 
   /// Whether the active tab is a data viewer showing this relation
@@ -303,7 +360,7 @@ struct WorkspaceLeftSidebarContent: View {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                       entitySections(
                         inSchema, idPrefix: "\(schema).", showsEmptySections: false,
-                        showsSchema: false)
+                        showsSchema: false, schema: schema)
                     }
                   }
                   .id(publicKeywords.isEmpty ? schema : "\(schema)-filtered")
@@ -312,7 +369,7 @@ struct WorkspaceLeftSidebarContent: View {
             } else {
               entitySections(
                 entities, idPrefix: "", showsEmptySections: publicKeywords.isEmpty,
-                showsSchema: connectionDatabaseType.namesSchema)
+                showsSchema: connectionDatabaseType.namesSchema, schema: nil)
             }
           }
           .padding(.vertical, Spacing.sm)
@@ -323,22 +380,24 @@ struct WorkspaceLeftSidebarContent: View {
   }
 
   /// The language's sections (`SidebarSectionModel`). `idPrefix` keeps section ids
-  /// unique per schema; `showsSchema` adds the "(schema)" label to table and view rows.
+  /// unique per schema; `showsSchema` adds the "(schema)" label to table and view rows;
+  /// `schema` is the group the sections sit in (nil: flat list), New Table's default target.
   @ViewBuilder
   private func entitySections(
-    _ entities: PublicEntities, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool
+    _ entities: PublicEntities, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool,
+    schema: String?
   ) -> some View {
     ForEach(SidebarSectionModel.sections(for: queryLanguage), id: \.kind) { section in
       entitySection(
         section, entities, idPrefix: idPrefix, showsEmptySections: showsEmptySections,
-        showsSchema: showsSchema)
+        showsSchema: showsSchema, schema: schema)
     }
   }
 
   @ViewBuilder
   private func entitySection(
     _ section: SidebarSectionModel.Section, _ entities: PublicEntities, idPrefix: String,
-    showsEmptySections: Bool, showsSchema: Bool
+    showsEmptySections: Bool, showsSchema: Bool, schema: String?
   ) -> some View {
     switch section.kind {
     case .tables:
@@ -348,8 +407,8 @@ struct WorkspaceLeftSidebarContent: View {
           count: entities.tables.count,
           icon: section.icon,
           isExpanded: true,
-          createTitle: SidebarSectionModel.createActionTitle(for: .tables, language: queryLanguage),
-          onCreate: createAction(.createCollection)
+          createTitle: tablesCreateTitle,
+          onCreate: tablesCreateAction(schema: schema)
         ) {
           ForEach(entities.tables) { table in
             tableRow(table, showsSchema: showsSchema)
@@ -365,7 +424,8 @@ struct WorkspaceLeftSidebarContent: View {
           count: entities.views.count,
           icon: section.icon,
           isExpanded: true,
-          createTitle: SidebarSectionModel.createActionTitle(for: .views, language: queryLanguage),
+          createTitle: SidebarSectionModel.createActionTitle(
+            for: .views, databaseType: connectionDatabaseType),
           onCreate: createAction(.createView)
         ) {
           ForEach(entities.views) { view in
@@ -518,7 +578,8 @@ struct WorkspaceLeftSidebarContent: View {
   /// Runs a row menu item: Open as a row click, Copy Name to the pasteboard, Insert at the
   /// cursor of the active cell (as favorites and history do), Build Aggregation in a sheet,
   /// Export Collection in the export form, Import Documents in the import form, and the schema
-  /// changes through `startMongoAdmin`.
+  /// changes through `startMongoAdmin`. An SQL table's Rename and Drop open the structure
+  /// editor on its Name field or its typed-name drop step.
   /// `view` is the row's view, nil for a collection.
   private func perform(
     _ action: SidebarSectionModel.RowAction, name: String, schema: String,
@@ -550,6 +611,10 @@ struct WorkspaceLeftSidebarContent: View {
     case .importDocuments:
       // Offered on collections only
       if view == nil { workspaceManager.openMongoImport(collection: name) }
+    case .rename where queryLanguage == .sql:
+      workspaceManager.openStructureEditor(schema: schema, table: name, start: .rename)
+    case .drop where queryLanguage == .sql:
+      workspaceManager.openStructureEditor(schema: schema, table: name, start: .drop)
     case .rename:
       startMongoAdmin(.rename(schema: schema, name: name))
     case .drop:

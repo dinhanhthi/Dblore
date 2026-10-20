@@ -53,10 +53,7 @@ nonisolated extension StructureDDLBuilder {
     for change in changes {
       switch change {
       case .addColumn(let column):
-        addColumns.append(
-          "ADD COLUMN \(try q(column.name)) \(column.type) "
-            + (column.isNullable ? "NULL" : "NOT NULL")
-            + (column.defaultExpression.map { " DEFAULT \($0)" } ?? ""))
+        addColumns.append("ADD COLUMN " + (try columnDefinition(column, dialect: dialect)))
       case .alterColumnType(let column, let type):
         edit(column) { $0.type = type }
       case .setDefault(let column, let expression):

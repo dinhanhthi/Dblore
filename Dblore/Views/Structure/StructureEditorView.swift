@@ -258,7 +258,13 @@ private struct StructureTableSection: View {
         labeled("Name") {
           field(
             model.workingTableName, isEdited: model.workingTableName != model.table,
-            placeholder: ""
+            placeholder: "",
+            takesFocus: {
+              // Once: a reload after Apply shows the field again
+              let focuses = model.focusesTableName
+              model.focusesTableName = false
+              return focuses
+            }
           ) { model.renameTable(to: $0) }
         }
         .frame(width: 260)
@@ -287,7 +293,7 @@ private struct StructureTableSection: View {
 
   @ViewBuilder
   private func field(
-    _ value: String, isEdited: Bool, placeholder: String,
+    _ value: String, isEdited: Bool, placeholder: String, takesFocus: (() -> Bool)? = nil,
     commit: @escaping (String) -> Void
   ) -> some View {
     if model.isReadOnly {
@@ -300,7 +306,8 @@ private struct StructureTableSection: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     } else {
       StructureCommitField(
-        value: value, placeholder: placeholder, isEdited: isEdited, onCommit: commit)
+        value: value, placeholder: placeholder, isEdited: isEdited, takesFocus: takesFocus,
+        onCommit: commit)
     }
   }
 }
@@ -436,6 +443,8 @@ struct StructureCommitField: View {
   let value: String
   var placeholder = ""
   var isEdited = false
+  /// Asked when the field appears: true focuses it
+  var takesFocus: (() -> Bool)? = nil
   let onCommit: (String) -> Void
 
   @State private var draft = ""
@@ -454,6 +463,9 @@ struct StructureCommitField: View {
       }
       .onChange(of: value, initial: true) { _, newValue in
         if !isFocused { draft = newValue }
+      }
+      .task {
+        if takesFocus?() == true { isFocused = true }
       }
   }
 

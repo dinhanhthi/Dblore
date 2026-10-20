@@ -109,10 +109,7 @@ nonisolated enum StructureDDLBuilder {
     for change in changes {
       switch change {
       case .addColumn(let column):
-        addColumns.append(
-          "ADD COLUMN \(try q(column.name)) \(column.type)"
-            + (column.isNullable ? "" : " NOT NULL")
-            + (column.defaultExpression.map { " DEFAULT \($0)" } ?? ""))
+        addColumns.append("ADD COLUMN " + (try columnDefinition(column, dialect: dialect)))
       case .alterColumnType(let column, let type):
         alterColumns.append("ALTER COLUMN \(try q(column)) TYPE \(type)")
       case .setDefault(let column, let expression):
@@ -161,6 +158,18 @@ nonisolated enum StructureDDLBuilder {
     return try dialect.quoteIdentifier(structure.schema) + "." + name
   }
 
+  /// `name type [NOT NULL] [DEFAULT expression]`; MySQL writes NULL explicitly (a TIMESTAMP
+  /// column is otherwise NOT NULL on some servers). Used by ADD COLUMN and CREATE TABLE.
+  static func columnDefinition(
+    _ column: StructureChange.NewColumn, dialect: SQLDialect
+  ) throws -> String {
+    let nullability =
+      dialect == .mysql
+      ? (column.isNullable ? " NULL" : " NOT NULL") : (column.isNullable ? "" : " NOT NULL")
+    return "\(try dialect.quoteIdentifier(column.name)) \(column.type)" + nullability
+      + (column.defaultExpression.map { " DEFAULT \($0)" } ?? "")
+  }
+
   /// `"a", "b"`, each name replaced by its entry in `renamed` when present
   static func quotedList(
     _ names: [String], dialect: SQLDialect, renamed: [String: String] = [:]
@@ -169,9 +178,11 @@ nonisolated enum StructureDDLBuilder {
   }
 
   /// `[CONSTRAINT name] PRIMARY KEY (...) | UNIQUE (...) | FOREIGN KEY ... | CHECK (expr)`.
-  /// Column names go through `renamed` (MySQL renames in the same ALTER TABLE).
+  /// Column names go through `renamed` (MySQL renames in the same ALTER TABLE). A foreign key
+  /// names its target bare when `qualifiesReference` is false (SQLite: same database only).
   static func constraintDefinition(
-    _ constraint: TableStructure.Constraint, dialect: SQLDialect, renamed: [String: String]
+    _ constraint: TableStructure.Constraint, dialect: SQLDialect, renamed: [String: String],
+    qualifiesReference: Bool = true
   ) throws -> String {
     let name = try constraint.name.map { "CONSTRAINT \(try dialect.quoteIdentifier($0)) " } ?? ""
     let columns = try quotedList(constraint.columns, dialect: dialect, renamed: renamed)
@@ -184,8 +195,8 @@ nonisolated enum StructureDDLBuilder {
       return name + "CHECK (\(expression))"
     case .foreignKey(let reference):
       let target =
-        try dialect.quoteIdentifier(reference.schema) + "."
-        + dialect.quoteIdentifier(reference.table)
+        (qualifiesReference ? try dialect.quoteIdentifier(reference.schema) + "." : "")
+        + (try dialect.quoteIdentifier(reference.table))
       return name + "FOREIGN KEY (\(columns)) REFERENCES \(target) "
         + "(\(try quotedList(reference.columns, dialect: dialect)))"
         + action("ON UPDATE", reference.onUpdate) + action("ON DELETE", reference.onDelete)

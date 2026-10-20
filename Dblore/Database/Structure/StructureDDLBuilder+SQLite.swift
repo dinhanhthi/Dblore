@@ -31,9 +31,7 @@ nonisolated extension StructureDDLBuilder {
       case .addColumn(let column):
         try checkSQLiteAddColumn(column)
         addColumns.append(
-          "ALTER TABLE \(table) ADD COLUMN \(try q(column.name)) \(column.type)"
-            + (column.isNullable ? "" : " NOT NULL")
-            + (column.defaultExpression.map { " DEFAULT \($0)" } ?? ""))
+          "ALTER TABLE \(table) ADD COLUMN " + (try columnDefinition(column, dialect: dialect)))
       case .renameColumn(let column, let newName):
         try requireSQLite(3_025_000, libraryVersion, for: "Renaming a column")
         renames.append("ALTER TABLE \(table) RENAME COLUMN \(try q(column)) TO \(try q(newName))")

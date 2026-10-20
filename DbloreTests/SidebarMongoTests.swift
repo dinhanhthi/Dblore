@@ -1,8 +1,8 @@
 // SidebarMongoTests.swift
 // The left sidebar section model: MongoDB shows only Collections and Views with Open, Copy Name
 // and Insert find() menus (the name escaped), collections also Build Aggregation...; SQL
-// connections keep their sections and menus. Rename, Drop, Edit View and Duplicate only when the
-// schema may change.
+// connections keep their sections and menus (tables add Rename and Drop Table). Rename, Drop, Edit
+// View and Duplicate only when the schema may change.
 
 import Foundation
 import Testing
@@ -33,11 +33,8 @@ struct SidebarMongoTests {
     #expect(SidebarSectionModel.structureMenuTitle(for: .postgresql) != nil)
     for kind in [SidebarSectionModel.Kind.tables, .views, .functions, .procedures, .triggers] {
       #expect(SidebarSectionModel.rowActions(for: kind, name: "users", language: language).isEmpty)
-      #expect(
-        SidebarSectionModel.rowActions(
-          for: kind, name: "users", language: language, canChangeSchema: true
-        ).isEmpty)
     }
+    // Tables add Rename and Drop Table when the schema may change (CreateTableModelTests)
   }
 
   @Test("collection and view rows offer Open, Copy Name, Insert find(); collections also Build")

@@ -50,6 +50,24 @@ struct StructureEditorContext {
   var recordHistory: @MainActor ([QueryHistoryOutcome]) async -> Void
 }
 
+extension StructureEditorContext {
+  /// `tab`'s connection, rules and History (also used by Create Table). Nil when the tab is not
+  /// connected.
+  init?(tab: NotebookViewModel) {
+    guard let manager = tab.connectionManager, let config = tab.notebook.connectionConfig else {
+      return nil
+    }
+    self.init(
+      database: manager, databaseType: config.databaseType, policy: tab.protectionPolicy,
+      commitStyle: { [weak tab] in
+        (tab?.notebook.connectionConfig ?? config)
+          .resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+      },
+      caller: tab.id,
+      recordHistory: { [weak tab] in await tab?.recordExecution($0, source: .structure) })
+  }
+}
+
 @MainActor
 @Observable
 final class StructureEditorModel {
@@ -157,6 +175,8 @@ final class StructureEditorModel {
   private(set) var isConfirmingDrop = false
   /// The Safe Mode step asks about the drop (not the staged changes)
   private(set) var confirmsDrop = false
+  /// The Name field takes the focus when it appears (opened from a row's Rename...)
+  @ObservationIgnored var focusesTableName = false
   /// Called after a change reached the server (to reload the sidebar schema)
   @ObservationIgnored var onApplied: (@MainActor () async -> Void)?
   /// Called when a rename or drop reached the server, before `onApplied` (the workspace
@@ -182,19 +202,8 @@ final class StructureEditorModel {
 
   /// The editor for `tab`'s connection. Nil when the tab is not connected.
   convenience init?(schema: String, table: String, tab: NotebookViewModel) {
-    guard let manager = tab.connectionManager, let config = tab.notebook.connectionConfig else {
-      return nil
-    }
-    self.init(
-      schema: schema, table: table,
-      context: StructureEditorContext(
-        database: manager, databaseType: config.databaseType, policy: tab.protectionPolicy,
-        commitStyle: { [weak tab] in
-          (tab?.notebook.connectionConfig ?? config)
-            .resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
-        },
-        caller: tab.id,
-        recordHistory: { [weak tab] in await tab?.recordExecution($0, source: .structure) }))
+    guard let context = StructureEditorContext(tab: tab) else { return nil }
+    self.init(schema: schema, table: table, context: context)
   }
 
   var isReadOnly: Bool { disabledReason != nil }
