@@ -170,12 +170,13 @@ nonisolated enum AIQueryContext {
   /// from table statistics, not rows.
   ///
   /// The string fields are still untrusted: `ExplainResultPlan.parse` accepts any one-cell
-  /// result whose column is named `QUERY PLAN`, so they can hold row data, and even a genuine
-  /// plan carries user-written aliases. Every string is flattened to one line and capped at
-  /// `fieldLimit`, so no field can add lines to the prompt. The node type must look like a node
-  /// type (letters, spaces, hyphens, `$` and underscores, at most 64 characters) or renders as
-  /// "Node"; join type and strategy must be one or two words of letters split by one space (at
-  /// most 32 characters, which covers "Right Anti") or are left out.
+  /// result whose column is named `QUERY PLAN` (besides the stricter SQLite and DuckDB plan
+  /// shapes), so they can hold row data, and even a genuine plan carries user-written aliases.
+  /// Every string is flattened to one line and capped at `fieldLimit`, so no field can add lines
+  /// to the prompt. The node type must look like a node type (letters, spaces, hyphens, `$` and
+  /// underscores, at most 64 characters) or renders as "Node"; join type and strategy must be
+  /// one or two words of letters split by one space (at most 32 characters, which covers
+  /// "Right Anti") or are left out.
   /// Relation, alias and index names are identifiers of any shape, so they are only flattened
   /// and capped.
   private static func nodeLine(_ node: ExplainNode) -> String {

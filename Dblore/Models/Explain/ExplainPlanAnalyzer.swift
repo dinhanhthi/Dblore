@@ -45,12 +45,16 @@ nonisolated struct AnalyzedNode: Equatable, Sendable {
   /// True when inclusive time was divided by workers launched plus one.
   var parallelCaveat: Bool
   var warnings: ExplainWarning
+  /// False when the node has no value for the plan's metric (no actual time in a timed plan,
+  /// no cost in a cost plan, as in a SQLite plan): it shows no share bar and is never hot.
+  var hasMetric: Bool
 }
 
 /// Preorder nodes and the hottest exclusive values.
 nonisolated struct AnalyzedPlan: Equatable, Sendable {
   var nodes: [AnalyzedNode]
-  /// Up to five nodes with the largest exclusive metric. Ties keep preorder.
+  /// Up to five nodes with the largest exclusive metric, among nodes that have one. Ties keep
+  /// preorder.
   var hotNodes: [AnalyzedNode]
 }
 
@@ -96,7 +100,8 @@ nonisolated enum ExplainPlanAnalyzer {
         misestimateDirection: rows.direction,
         buffersExclusive: exclusiveBuffers(node),
         parallelCaveat: useTime && node.workersLaunched != nil,
-        warnings: warnings(for: node, factor: rows.factor)
+        warnings: warnings(for: node, factor: rows.factor),
+        hasMetric: useTime ? node.actualTotalTime != nil : node.totalCost != nil
       )
     )
 
@@ -235,6 +240,7 @@ nonisolated enum ExplainPlanAnalyzer {
 
   private static func hottest(_ nodes: [AnalyzedNode]) -> [AnalyzedNode] {
     nodes.enumerated()
+      .filter { $0.element.hasMetric }
       .sorted { lhs, rhs in
         if lhs.element.exclusive != rhs.element.exclusive {
           return lhs.element.exclusive > rhs.element.exclusive

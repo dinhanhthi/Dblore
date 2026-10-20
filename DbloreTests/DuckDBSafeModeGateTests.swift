@@ -1,8 +1,8 @@
 // DuckDBSafeModeGateTests.swift
 // A real DuckDB session (dev plugin) behind the connection actor. A read-only protection
 // level blocks INSTALL, ATTACH, COPY ... TO and CREATE TABLE at the gate on a read-write file
-// and in memory, Safe Mode confirms them before anything is sent, and SELECT runs. Text
-// EXPLAIN / EXPLAIN ANALYZE go through the app's explain path and render as a raw grid.
+// and in memory, Safe Mode confirms them before anything is sent, and SELECT runs. JSON
+// EXPLAIN / EXPLAIN ANALYZE go through the app's explain path and open the plan view.
 
 import Foundation
 import Testing
@@ -68,8 +68,8 @@ struct DuckDBSafeModeGateTests {
     #expect(viewModel.notebook.cells[0].result?.rows == [[.int(1)]])
   }
 
-  @Test("EXPLAIN and EXPLAIN ANALYZE run through the explain path and show as text rows")
-  func textExplain() async throws {
+  @Test("EXPLAIN and EXPLAIN ANALYZE run through the explain path and show as a plan")
+  func jsonExplain() async throws {
     let config = duckDBConfig(path: DuckDBSession.inMemoryPath, safeMode: .silent)
     let manager = try await connect(config: config)
     defer { Task { await manager.disconnect() } }
@@ -86,12 +86,11 @@ struct DuckDBSafeModeGateTests {
       let result = try #require(viewModel.notebook.cells[0].result)
       #expect(result.error == nil, "analyze: \(analyze)")
       #expect(result.columns.map(\.name) == ["explain_key", "explain_value"])
-      #expect(ExplainResultPlan.parse(result) == nil)
-      guard case .string(let plan)? = result.rows.first?.last else {
-        Issue.record("Expected a text plan, got \(String(describing: result.rows.first))")
-        continue
+      let plan = try #require(ExplainResultPlan.parse(result), "analyze: \(analyze)")
+      func relations(_ node: ExplainNode) -> [String] {
+        (node.relationName.map { [$0] } ?? []) + node.children.flatMap(relations)
       }
-      #expect(plan.contains("SEQ_SCAN") || plan.contains("TABLE_SCAN"), "\(plan)")
+      #expect(relations(plan.root).contains("memory.main.t"), "\(plan.root)")
     }
 
     // A data-changing ANALYZE is wrapped in BEGIN / ROLLBACK, so the row is not kept.

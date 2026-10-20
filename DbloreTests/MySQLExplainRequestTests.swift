@@ -101,14 +101,14 @@ struct MySQLExplainRequestTests {
         mysqlServer: server)) != nil)
   }
 
-  @Test("PostgreSQL, SQLite and DuckDB Explain text is unchanged and needs no server info")
+  @Test("PostgreSQL, SQLite and DuckDB Explain text needs no server info")
   func otherEnginesUnchanged() throws {
     let cases: [(SQLDialect, Bool, String)] = [
       (.postgresql, false, "EXPLAIN (FORMAT JSON) SELECT 1"),
       (.postgresql, true, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1"),
       (.sqlite, false, "EXPLAIN QUERY PLAN SELECT 1"),
-      (.duckdb, false, "EXPLAIN SELECT 1"),
-      (.duckdb, true, "EXPLAIN ANALYZE SELECT 1"),
+      (.duckdb, false, "EXPLAIN (FORMAT JSON) SELECT 1"),
+      (.duckdb, true, "EXPLAIN (ANALYZE, FORMAT JSON) SELECT 1"),
     ]
     for (dialect, analyze, expected) in cases {
       let request = try ExplainRequest(

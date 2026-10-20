@@ -16,9 +16,56 @@ enum ExplainDisplayMode: Hashable {
 /// PostgreSQL JSON, or an `EXPLAIN` column holding MySQL `{"query_block": …}` JSON or a
 /// MongoDB explain reply. Each engine is detected by its own keys; anything else in that
 /// column (the EXPLAIN ANALYZE text tree, other JSON, a sharded MongoDB reply) gives nil.
+/// SQLite `EXPLAIN QUERY PLAN` rows and the DuckDB one-row JSON plan are read only when the
+/// column names match exactly and `sourceQuery` is one EXPLAIN statement, so a user table with
+/// the same columns is never a plan. Runs on every result: cheap checks come first.
 nonisolated enum ExplainResultPlan {
   static func parse(_ result: CellResult) -> ExplainPlan? {
-    guard result.columns.count == 1, let value = result.rows.first?.first else { return nil }
+    switch result.columns.count {
+    case 1: singleCell(result)
+    case SQLiteExplainAdapter.columnNames.count, DuckDBExplainAdapter.columnNames.count:
+      engineRows(result)
+    default: nil
+    }
+  }
+
+  private static func engineRows(_ result: CellResult) -> ExplainPlan? {
+    let names = result.columns.map(\.name)
+    if names == SQLiteExplainAdapter.columnNames {
+      guard isSingleExplain(result.sourceQuery, dialect: .sqlite) else { return nil }
+      return SQLiteExplainAdapter.plan(rows: result.rows)
+    }
+    guard names == DuckDBExplainAdapter.columnNames, result.rows.count == 1,
+      isSingleExplain(result.sourceQuery, dialect: .duckdb)
+    else { return nil }
+    switch result.rows[0].last {
+    case .json(let text)?, .string(let text)?:
+      return DuckDBExplainAdapter.plan(fromJSON: text)
+    default:
+      return nil
+    }
+  }
+
+  /// `sql` is exactly one statement (comment-only pieces aside) whose first token is EXPLAIN,
+  /// split and lexed with `dialect` the way the statement classifier does (comments skipped).
+  /// The column names already tell the engine, so the caller passes its dialect. A `;` token
+  /// inside the one statement means the splitter and the tokenizer disagree: not a plan.
+  private static func isSingleExplain(_ sql: String?, dialect: SQLDialect) -> Bool {
+    guard let sql else { return false }
+    let tokenizer = SQLTokenizer(dialect: dialect)
+    var statement: [SQLToken]?
+    for piece in tokenizer.splitStatements(sql) {
+      let tokens = tokenizer.tokens(piece)
+      if tokens.isEmpty { continue }
+      guard statement == nil else { return false }
+      statement = tokens
+    }
+    guard let statement, statement.first?.isWord("EXPLAIN") == true else { return false }
+    return !statement.contains { $0.isSymbol(";") }
+  }
+
+  private static func singleCell(_ result: CellResult) -> ExplainPlan? {
+    guard let value = result.rows.first?.first else { return nil }
     let column = result.columns[0].name
     if column.compare("QUERY PLAN", options: [.caseInsensitive]) == .orderedSame {
       return try? ExplainPlan.parse(value)
@@ -141,7 +188,8 @@ enum ExplainTree {
           misestimateDirection: nil,
           buffersExclusive: nil,
           parallelCaveat: false,
-          warnings: []
+          warnings: [],
+          hasMetric: false
         )
       return ExplainTreeItem(id: id, analyzed: analyzedNode, children: children)
     }
@@ -222,7 +270,7 @@ struct ExplainPlanView: View {
         if let execution = plan.executionTime {
           Text("Execution \(ExplainMetricText.number(execution)) ms")
         }
-        if !usesTime {
+        if !usesTime, analyzed.nodes.contains(where: \.hasMetric) {
           Text("Cost")
         }
       }

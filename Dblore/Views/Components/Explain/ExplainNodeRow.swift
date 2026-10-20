@@ -182,7 +182,23 @@ struct ExplainNodeRow: View {
         Spacer(minLength: Spacing.sm)
         warningIcons
       }
-      HStack(alignment: .center, spacing: Spacing.sm) {
+      if hasMetricsLine {
+        metricsLine
+      }
+    }
+    .accessibilityElement(children: .combine)
+  }
+
+  /// False when nothing in `metricsLine` would show (a SQLite node has no cost, rows or loops).
+  private var hasMetricsLine: Bool {
+    analyzed.hasMetric || analyzed.parallelCaveat || ExplainMetricText.rows(analyzed) != nil
+      || ExplainMetricText.misestimateBadge(analyzed) != nil
+      || ExplainMetricText.loops(analyzed) != nil || analyzed.buffersExclusive != nil
+  }
+
+  private var metricsLine: some View {
+    HStack(alignment: .center, spacing: Spacing.sm) {
+      if analyzed.hasMetric {
         ExplainShareBar(share: analyzed.share)
         Text(
           ExplainMetricText.pair(
@@ -191,41 +207,40 @@ struct ExplainNodeRow: View {
         .font(.monoSmall)
         .foregroundStyle(Color.foreground)
         .help(usesTime ? "Exclusive / inclusive time" : "Exclusive / inclusive cost")
-        if analyzed.parallelCaveat {
-          Image(systemName: "person.2")
-            .font(.system(size: 10))
-            .foregroundStyle(Color.foregroundSubtle)
-            .help("Inclusive time is divided by workers launched plus one")
-        }
-        if let rows = ExplainMetricText.rows(analyzed) {
-          Text(rows)
-            .font(.monoSmall)
-            .foregroundStyle(Color.foregroundMuted)
-            .lineLimit(1)
-        }
-        if let badge = ExplainMetricText.misestimateBadge(analyzed) {
-          Text(badge)
-            .font(.smallest)
-            .foregroundStyle(Color.warning)
-            .padding(.horizontal, Spacing.xs)
-            .padding(.vertical, 1)
-            .background(Capsule().fill(Color.warning.opacity(0.18)))
-        }
-        if let loops = ExplainMetricText.loops(analyzed) {
-          Text(loops)
-            .font(.monoSmall)
-            .foregroundStyle(Color.foregroundMuted)
-        }
-        if let buffers = analyzed.buffersExclusive {
-          Text(ExplainMetricText.buffers(buffers))
-            .font(.monoSmall)
-            .foregroundStyle(Color.foregroundMuted)
-            .lineLimit(1)
-        }
-        Spacer(minLength: 0)
       }
+      if analyzed.parallelCaveat {
+        Image(systemName: "person.2")
+          .font(.system(size: 10))
+          .foregroundStyle(Color.foregroundSubtle)
+          .help("Inclusive time is divided by workers launched plus one")
+      }
+      if let rows = ExplainMetricText.rows(analyzed) {
+        Text(rows)
+          .font(.monoSmall)
+          .foregroundStyle(Color.foregroundMuted)
+          .lineLimit(1)
+      }
+      if let badge = ExplainMetricText.misestimateBadge(analyzed) {
+        Text(badge)
+          .font(.smallest)
+          .foregroundStyle(Color.warning)
+          .padding(.horizontal, Spacing.xs)
+          .padding(.vertical, 1)
+          .background(Capsule().fill(Color.warning.opacity(0.18)))
+      }
+      if let loops = ExplainMetricText.loops(analyzed) {
+        Text(loops)
+          .font(.monoSmall)
+          .foregroundStyle(Color.foregroundMuted)
+      }
+      if let buffers = analyzed.buffersExclusive {
+        Text(ExplainMetricText.buffers(buffers))
+          .font(.monoSmall)
+          .foregroundStyle(Color.foregroundMuted)
+          .lineLimit(1)
+      }
+      Spacer(minLength: 0)
     }
-    .accessibilityElement(children: .combine)
   }
 
   @ViewBuilder
