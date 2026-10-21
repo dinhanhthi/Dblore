@@ -128,8 +128,31 @@ struct MongoSessionTests {
 
     let auto = try await Self.plan(Self.config(username: "ann", password: "pw"))
     #expect(auto.settings.authentication == .auto(username: "ann", password: "pw"))
-    let anonymous = try await Self.plan(Self.config(username: ""))
+    let anonymous = try await Self.plan(Self.config(username: "", password: ""))
     #expect(anonymous.settings.authentication == .unauthenticated)
+  }
+
+  @Test("A user name without a password is refused before anything connects")
+  func emptyPasswordRefused() async throws {
+    // MongoKitten's SCRAM (PBKDF2) asserts on an empty password: an unreadable Keychain item
+    // crashed the app.
+    let cases: [ConnectionConfig] = [
+      Self.config(username: "ann", password: ""),
+      Self.config(
+        uri: "mongodb://db.example.com/app?authMechanism=SCRAM-SHA-256", username: "ann",
+        password: ""),
+    ]
+    for config in cases {
+      let error = await Self.failure { _ = try await Self.plan(config) }
+      #expect(Self.connectionFailure(error) == MongoSession.missingPasswordMessage)
+    }
+    // The same refusal through open(), with no server to reach.
+    let session = MongoSession(
+      config: Self.config(
+        uri: "mongodb://127.0.0.1:1/app?directConnection=true", username: "ann", password: ""))
+    let opened = await Self.failure { try await session.open() }
+    await session.close()
+    #expect(Self.connectionFailure(opened) == MongoSession.missingPasswordMessage)
   }
 
   @Test("Without a stored URI the host and port of the config are used")

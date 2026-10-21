@@ -19,6 +19,7 @@
 //   literal with TLS is refused up front: NIOSSL cannot send an IP address as SNI.
 // - Credentials come from `config.username`/`config.password` (the stored URI has none); no
 //   user name means no authentication. `authMechanism` nil means `.auto` (SCRAM negotiation).
+//   A user name with an empty password is refused before connecting (SCRAM needs one).
 // - authSource: the URI's `authSource`, else the TXT record's (`+srv`), else the database of the
 //   connection (`identityDatabase`: the saved database after a database switch), else `admin`
 //   (connection string spec). A user stored in `admin` while the connection names another
@@ -168,6 +169,7 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
   /// the overflow row. A find without a limit stops here and its cursor is closed.
   static let maxBufferedDocuments = SessionBrakeLimits.rowCapRange.upperBound + 1
   static let ipTLSMessage = "TLS to MongoDB needs the server's host name, not an IP address."
+  static let missingPasswordMessage = "Enter the password for this connection."
 
   let capabilities: DatabaseCapabilities
   let config: ConnectionConfig
@@ -496,6 +498,11 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
         database: nil, username: nil, password: nil, authSource: nil, authMechanism: nil,
         tls: nil, replicaSet: nil, directConnection: nil, appName: nil, readPreference: nil,
         ignoredOptions: [])
+    }
+    // Every supported mechanism is SCRAM, whose PBKDF2 in MongoKitten asserts on an empty
+    // password (an unreadable Keychain item): refuse before anything connects.
+    if !config.username.isEmpty, config.password.isEmpty {
+      throw DatabaseError.connectionFailed(missingPasswordMessage)
     }
     // Before any SRV lookup: a tunnel reaches one host as the bastion resolves it.
     if config.sshTunnel != nil, uri.isSRV || uri.hosts.count != 1 {

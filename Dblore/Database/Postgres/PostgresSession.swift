@@ -130,22 +130,33 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     }
 
     let postgresConfig = Self.postgresConfiguration(config, tls: tlsConfig)
+    // The probe work outlives a timeout or cancel. The group shuts down when that work ends,
+    // so a connect retry never lands on a shut-down loop.
+    let shutdown = ProbeTeardown(
+      grace: .nanoseconds(postgresConfig.options.connectTimeout.nanoseconds) + .seconds(5)
+    ) { try? await group.shutdownGracefully() }
     do {
       try await withTimeout(of: .seconds(config.timeoutSeconds)) {
         try await self.probeConnectAndQuery {
-          try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+          do {
+            try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+          } catch {
+            await shutdown.run()
+            throw error
+          }
+          await shutdown.run()
         }
       }
       return true
     } catch is TimeoutError {
-      try? await group.shutdownGracefully()
+      shutdown.runAfterGrace()
       throw DatabaseError.connectionFailed(
         "Connection timeout after \(config.timeoutSeconds) seconds")
     } catch let error as PSQLError {
-      try? await group.shutdownGracefully()
+      shutdown.runAfterGrace()
       throw DatabaseError.connectionFailed(formatPostgresError(error))
     } catch {
-      try? await group.shutdownGracefully()
+      shutdown.runAfterGrace()
       throw DatabaseError.connectionFailed(error.localizedDescription)
     }
   }
@@ -180,7 +191,6 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
     try await Self.runTestQuery(on: conn)
     try await conn.close()
-    try await group.shutdownGracefully()
   }
 
   /// `SELECT 1 as test` on `conn`. Closes `conn` before rethrowing a failure.
@@ -580,6 +590,37 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     watchStorage = watch
     tunnelStorage = tunnel
     lock.unlock()
+  }
+
+  /// Tears a probe's resources down once (its event-loop group, or its SSH tunnel). `run` is
+  /// called when the probe work ends. `runAfterGrace` covers work that never ends (a query the
+  /// server never answers): the grace outlasts the connect step, so none is in flight by then.
+  final class ProbeTeardown: @unchecked Sendable {
+    private let lock = NSLock()
+    private let grace: Duration
+    private let teardown: @Sendable () async -> Void
+    private var done = false
+
+    init(grace: Duration, teardown: @escaping @Sendable () async -> Void) {
+      self.grace = grace
+      self.teardown = teardown
+    }
+
+    func run() async {
+      let alreadyDone = lock.withLock {
+        defer { done = true }
+        return done
+      }
+      if !alreadyDone { await teardown() }
+    }
+
+    func runAfterGrace() {
+      guard !lock.withLock({ done }) else { return }
+      Task {
+        try? await Task.sleep(for: grace)
+        await run()
+      }
+    }
   }
 
   /// One resume of a probe continuation. A result that wins the race with cancel is kept

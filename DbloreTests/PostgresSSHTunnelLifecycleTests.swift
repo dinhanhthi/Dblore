@@ -175,6 +175,62 @@ struct PostgresSSHTunnelSeamTests {
     }
   }
 
+  @Test(
+    "Verify Full with an IP-literal DB host is refused before the tunnel opens",
+    arguments: [
+      ("10.0.0.5", SSLMode.verifyFull, true), ("fd00::5", .verifyFull, true),
+      ("db.internal", .verifyFull, false), ("10.0.0.5", .verifyCa, false),
+    ])
+  func verifyFullNeedsHostName(host: String, mode: SSLMode, refused: Bool) async {
+    let name = "tlsname-\(host)-\(mode)"
+    let config = ConnectionConfig(
+      host: host, port: 5432, database: "app", username: "ada", password: "secret",
+      sslMode: mode,
+      sshTunnel: SSHTunnelConfig(host: "bastion-\(name).example", port: 2200, username: "jump"),
+      timeoutSeconds: 2)
+    Self.save(.password("jump-pass"), for: config)
+    for isProbe in [false, true] {
+      let factory = FakeSSHTunnelFactory(connectError: SSHTunnelError.authenticationFailed)
+      let session = PostgresSession(
+        config: config, tunnelFactory: factory, hostKeyValidator: AcceptAnySSHHostKey())
+      do {
+        if isProbe { _ = try await session.probe() } else { try await session.open() }
+        Issue.record("The connection must fail")
+      } catch DatabaseError.connectionFailed(let message) {
+        #expect(refused && message.contains("Verify Full"), "\(message)")
+      } catch {
+        #expect(!refused, "\(error)")
+      }
+      #expect(factory.connectCount == (refused ? 0 : 1))
+    }
+  }
+
+  @Test("A tunneled probe timeout closes the tunnel only once the probe work ends")
+  func probeTimeoutKeepsTunnelUntilWorkEnds() async throws {
+    let config = Self.config("probe-timeout", timeoutSeconds: 1)
+    Self.save(.password("jump-pass"), for: config)
+    let factory = FakeSSHTunnelFactory(holdsOpen: true)
+    defer { factory.tunnels.forEach { $0.releaseOpen() } }
+    let session = PostgresSession(
+      config: config, tunnelFactory: factory, hostKeyValidator: AcceptAnySSHHostKey())
+    do {
+      _ = try await session.probe()
+      Issue.record("probe returned; expected a timeout")
+    } catch DatabaseError.connectionFailed(let message) {
+      #expect(message.contains("Connection timeout after 1 seconds"))
+    }
+    let tunnel = try #require(factory.tunnels.first)
+    #expect(tunnel.openRequests.count == 1)
+    #expect(!tunnel.isClosed, "The tunnel closed while the channel open was still running")
+    tunnel.releaseOpen()
+    let clock = ContinuousClock()
+    let deadline = clock.now + .seconds(3)
+    while !tunnel.isClosed, clock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    #expect(tunnel.isClosed)
+  }
+
   @Test("The default host-key validator rejects every key until trust is wired")
   func defaultValidatorRejects() async {
     let key = NIOSSHPrivateKey(ed25519Key: .init()).publicKey
@@ -494,9 +550,23 @@ private final class FakeSSHTunnel: SSHTunneling, @unchecked Sendable {
   private var opens: [(host: String, port: Int)] = []
   private var onMainThread: [Bool] = []
   private let openError: (any Error)?
+  /// Opens park until `releaseOpen()`, ignoring cancellation like a NIO open does.
+  private let holdsOpen: Bool
+  private var released = false
+  private var parkedOpen: CheckedContinuation<Void, Never>?
 
-  init(openError: (any Error)?) {
+  init(openError: (any Error)?, holdsOpen: Bool = false) {
     self.openError = openError
+    self.holdsOpen = holdsOpen
+  }
+
+  func releaseOpen() {
+    let parked = lock.withLock {
+      released = true
+      defer { parkedOpen = nil }
+      return parkedOpen
+    }
+    parked?.resume()
   }
 
   var isClosed: Bool { lock.withLock { closed } }
@@ -511,6 +581,16 @@ private final class FakeSSHTunnel: SSHTunneling, @unchecked Sendable {
     lock.withLock {
       opens.append((targetHost, targetPort))
       onMainThread.append(isMain)
+    }
+    if holdsOpen {
+      await withCheckedContinuation { continuation in
+        let resumeNow = lock.withLock {
+          if released { return true }
+          parkedOpen = continuation
+          return false
+        }
+        if resumeNow { continuation.resume() }
+      }
     }
     throw openError ?? SSHTunnelError.closedBeforeReady
   }
@@ -539,10 +619,12 @@ private final class FakeSSHTunnelFactory: SSHTunnelFactory, @unchecked Sendable 
   private var made: [FakeSSHTunnel] = []
   private let connectError: (any Error)?
   private let openError: (any Error)?
+  private let holdsOpen: Bool
 
-  init(connectError: (any Error)? = nil, openError: (any Error)? = nil) {
+  init(connectError: (any Error)? = nil, openError: (any Error)? = nil, holdsOpen: Bool = false) {
     self.connectError = connectError
     self.openError = openError
+    self.holdsOpen = holdsOpen
   }
 
   var connectCount: Int { lock.withLock { recorded.count } }
@@ -568,7 +650,7 @@ private final class FakeSSHTunnelFactory: SSHTunnelFactory, @unchecked Sendable 
           handshakeTimeout: handshakeTimeout))
     }
     if let connectError { throw connectError }
-    let tunnel = FakeSSHTunnel(openError: openError)
+    let tunnel = FakeSSHTunnel(openError: openError, holdsOpen: holdsOpen)
     lock.withLock { made.append(tunnel) }
     return tunnel
   }

@@ -51,6 +51,7 @@ nonisolated struct DetachedPostgresSession: Sendable {
 extension PostgresSession {
   /// `open()` for a connection with `sshTunnel`. Every failure after the tunnel exists closes it.
   func openThroughTunnel() async throws {
+    try Self.checkTunneledTLSName(config)
     let tls = try tunnelTLS()
     let authentication = try SSHTunnelConnector.sshAuthentication(for: config)
     let tunnel = try await SSHTunnelConnector.connectTunnel(
@@ -73,11 +74,13 @@ extension PostgresSession {
     setConnected(conn, tunnel: tunnel)
   }
 
-  /// `probe()` for a connection with `sshTunnel`. The tunnel is always closed afterwards,
-  /// also when the shared timeout fires while the probe is still running.
+  /// `probe()` for a connection with `sshTunnel`. The tunnel is always closed afterwards: when
+  /// the probe work ends, or after a grace when the shared timeout fires and the work never
+  /// ends, so a connect still running never lands on the tunnel's shut-down loop.
   /// The tunnel connects before the probe timeout starts: its own connect and handshake
   /// timeouts bound it, and the handshake one is paused while the trust sheet is open.
   func probeThroughTunnel() async throws -> Bool {
+    try Self.checkTunneledTLSName(config)
     let tls = try tunnelTLS()
     let authentication = try SSHTunnelConnector.sshAuthentication(for: config)
     let tunnel: any SSHTunneling
@@ -88,27 +91,38 @@ extension PostgresSession {
     } catch {
       throw Self.tunnelFailure(error)
     }
+    // The grace outlasts one attempt's nominal timeout with margin; the tunnel's own close
+    // also waits for channel opens still in flight.
+    let teardown = ProbeTeardown(grace: .seconds(config.timeoutSeconds) + .seconds(5)) {
+      await tunnel.close()
+    }
     do {
       try await withTimeout(of: .seconds(config.timeoutSeconds)) {
         try await self.probeConnectAndQuery {
-          try await self.runTunneledProbe(tls: tls, tunnel: tunnel)
+          do {
+            try await self.runTunneledProbe(tls: tls, tunnel: tunnel)
+          } catch {
+            await teardown.run()
+            throw error
+          }
+          await teardown.run()
         }
       }
       return true
     } catch is TimeoutError {
-      await tunnel.close()
+      teardown.runAfterGrace()
       throw DatabaseError.connectionFailed(
         "Connection timeout after \(config.timeoutSeconds) seconds")
     } catch let error as PSQLError {
-      await tunnel.close()
+      teardown.runAfterGrace()
       throw DatabaseError.connectionFailed(formatPostgresError(error))
     } catch {
-      await tunnel.close()
+      teardown.runAfterGrace()
       throw Self.tunnelFailure(error)
     }
   }
 
-  /// Every failure path of the caller closes `tunnel` (close is idempotent).
+  /// The caller closes `tunnel` once this returns or throws.
   private func runTunneledProbe(
     tls: PostgresConnection.Configuration.TLS, tunnel: any SSHTunneling
   ) async throws {
@@ -116,8 +130,7 @@ extension PostgresSession {
       try await self.connectPostgres(through: tunnel, tls: tls)
     }
     try await Self.runTestQuery(on: conn)
-    await DetachedPostgresSession(connection: conn, tunnel: tunnel)
-      .close(includingConnection: true)
+    await DetachedPostgresSession.closeBounded(conn)
   }
 
   /// Typed errors pass through; anything else becomes `connectionFailed` like a direct open.
@@ -168,6 +181,16 @@ extension PostgresSession {
       password: config.password, database: config.database)
     configuration.options.tlsServerName = tlsServerName(for: config.host)
     return configuration
+  }
+
+  /// Verify Full checks the certificate against `tlsServerName`, and with none (an IP literal,
+  /// which SNI refuses) against the peer address: for an SSH channel that is the bastion's
+  /// address, not the database server's. Refused rather than checked against the wrong host.
+  static func checkTunneledTLSName(_ config: ConnectionConfig) throws {
+    guard config.sslMode == .verifyFull, tlsServerName(for: config.host) == nil else { return }
+    throw DatabaseError.connectionFailed(
+      "Verify Full over SSH needs the database server's host name, not an IP address. Enter "
+        + "the name in its certificate, or choose Verify CA.")
   }
 
   /// The SNI and verification name for `host`. Nil for an IP literal (not valid in SNI),

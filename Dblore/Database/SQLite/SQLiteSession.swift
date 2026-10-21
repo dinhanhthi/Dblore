@@ -37,8 +37,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   let closeEvents: AsyncStream<SessionCloseReason>
 
   private let config: ConnectionConfig
-  /// Read-only with normal locking (`SQLITE_OPEN_READONLY`, no `immutable=1`), so a read
-  /// transaction sees rows still in another connection's WAL and is a stable snapshot (SQL dump)
+  /// Read-only with normal locking (`SQLITE_OPEN_READONLY`) and never the `immutable=1`
+  /// fallback of a read-only file, so a read transaction sees rows still in another
+  /// connection's WAL and is a stable snapshot (SQL dump)
   private let snapshotReadOnly: Bool
   private let executor: DispatchSerialQueue
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
@@ -202,21 +203,15 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     if filePath.isEmpty {
       throw SQLiteSessionError(extendedCode: SQLITE_CANTOPEN, message: "database path is empty")
     }
-    let readOnly = config.readOnlyFile || snapshotReadOnly
-    let path =
-      snapshotReadOnly ? filePath : try Self.databasePath(filePath: filePath, readOnly: readOnly)
-    let flags = Self.openFlags(readOnly: readOnly)
-    var handle: OpaquePointer?
-    let code = path.withCString { pointer in
-      sqlite3_open_v2(pointer, &handle, flags, nil)
-    }
-    guard code == SQLITE_OK, let opened = handle else {
-      let error = errorFrom(handle, fallback: code, fallbackMessage: "unable to open database")
-      sqlite3_close_v2(handle)
-      throw error
+    let opened: OpaquePointer
+    if snapshotReadOnly {
+      opened = try openHandle(filePath, readOnly: true)
+    } else if config.readOnlyFile {
+      opened = try openReadOnlyFile(filePath)
+    } else {
+      opened = try openHandle(filePath, readOnly: false)
     }
     withState { db = opened }
-    sqlite3_extended_result_codes(opened, 1)
     sqlite3_progress_handler(
       opened, Self.progressInstructionCount,
       { context in
@@ -230,6 +225,42 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       closeOnQueue()
       throw error
     }
+  }
+
+  /// `mode=ro` (normal locking, reads the -wal). SQLite may still create the -wal and -shm next
+  /// to a WAL database, as reads need them. When the first read fails because they cannot be
+  /// opened or created (a sandbox grant without the folder), or another connection still holds
+  /// a lock after the busy timeout, reopens with `immutable=1`, which takes no lock and needs no
+  /// sidecar but misses rows still in the WAL.
+  private func openReadOnlyFile(_ filePath: String) throws -> OpaquePointer {
+    let opened = try openHandle(
+      Self.readOnlyURI(filePath, query: URLQueryItem(name: "mode", value: "ro")), readOnly: true)
+    // A writer's checkpoint or WAL recovery is busy, not a sidecar denial: wait like any read
+    // before falling back
+    sqlite3_busy_timeout(opened, Int32(Self.busyTimeoutMilliseconds))
+    let code = sqlite3_exec(opened, "SELECT 1 FROM sqlite_master LIMIT 1", nil, nil, nil)
+    if code == SQLITE_OK { return opened }
+    let error = errorFrom(opened, fallback: code, fallbackMessage: "unable to read database")
+    sqlite3_close_v2(opened)
+    guard SQLiteFileAccess.isReadProbeFallback(code) else { throw error }
+    return try openHandle(
+      Self.readOnlyURI(filePath, query: URLQueryItem(name: "immutable", value: "1")), readOnly: true
+    )
+  }
+
+  private func openHandle(_ path: String, readOnly: Bool) throws -> OpaquePointer {
+    let flags = Self.openFlags(readOnly: readOnly)
+    var handle: OpaquePointer?
+    let code = path.withCString { pointer in
+      sqlite3_open_v2(pointer, &handle, flags, nil)
+    }
+    guard code == SQLITE_OK, let opened = handle else {
+      let error = errorFrom(handle, fallback: code, fallbackMessage: "unable to open database")
+      sqlite3_close_v2(handle)
+      throw error
+    }
+    sqlite3_extended_result_codes(opened, 1)
+    return opened
   }
 
   private func closeOnQueue() {
@@ -251,13 +282,12 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     return SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX
   }
 
-  /// Read-only files use a `file:` URI with `immutable=1`, which refuses writes.
-  private static func databasePath(filePath: String, readOnly: Bool) throws -> String {
-    if !readOnly { return filePath }
+  /// A `file:` URI for `filePath` with one query parameter (`mode=ro` or `immutable=1`).
+  private static func readOnlyURI(_ filePath: String, query: URLQueryItem) throws -> String {
     var components = URLComponents()
     components.scheme = "file"
     components.path = filePath
-    components.queryItems = [URLQueryItem(name: "immutable", value: "1")]
+    components.queryItems = [query]
     guard let uri = components.string else {
       throw SQLiteSessionError(
         extendedCode: SQLITE_CANTOPEN, message: "unable to open a read-only database")

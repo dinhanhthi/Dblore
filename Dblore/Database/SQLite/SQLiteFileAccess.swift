@@ -309,6 +309,21 @@ nonisolated enum SQLiteFileAccess {
     }
   }
 
+  /// An extended result code of a read-only file's first `mode=ro` read that `immutable=1` can
+  /// get past: the -shm or -wal cannot be opened or created, or another connection holds a lock
+  /// past the busy timeout. Other I/O errors are real and are not hidden.
+  static func isReadProbeFallback(_ extendedCode: Int32) -> Bool {
+    switch extendedCode & 0xFF {
+    case SQLITE_CANTOPEN, SQLITE_PERM, SQLITE_AUTH, SQLITE_BUSY, SQLITE_LOCKED: return true
+    default: break
+    }
+    // Swift does not import these sqlite3.h macros: READONLY_RECOVERY, READONLY_CANTINIT,
+    // IOERR_SHMOPEN, IOERR_SHMSIZE, IOERR_SHMLOCK, IOERR_SHMMAP
+    let readOnlyCodes: [Int32] = [SQLITE_READONLY | 1 << 8, SQLITE_READONLY | 5 << 8]
+    let shmCodes: [Int32] = (18...21).map { SQLITE_IOERR | $0 << 8 }
+    return (readOnlyCodes + shmCodes).contains(extendedCode)
+  }
+
   private static func sqliteMessage(_ handle: OpaquePointer?) -> String? {
     guard let handle else { return nil }
     return String(cString: sqlite3_errmsg(handle))
