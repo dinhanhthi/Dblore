@@ -101,7 +101,7 @@ nonisolated protocol DatabaseSessionFactory: Sendable {
   ) async throws -> any DatabaseSession
 }
 
-extension DatabaseSessionFactory {
+nonisolated extension DatabaseSessionFactory {
   func makeSession(
     config: ConnectionConfig, extraAllowedPaths: [String]
   ) async throws -> any DatabaseSession {

@@ -189,7 +189,7 @@ extension SQLTextView {
     let isUpArrow = event.keyCode == 126
     let isDownArrow = event.keyCode == 125
     let isTab = event.keyCode == 48
-    let isEnter = event.keyCode == 36
+    let isEnter = event.keyCode == 36 || event.keyCode == 76  // Return or keypad Enter
     let isEscape = event.keyCode == 53
 
     // Check for modifiers
@@ -313,32 +313,24 @@ extension SQLTextView {
     return token.trimmingCharacters(in: CharacterSet.whitespaces)
   }
 
-  /// Find the NSRange of the current token at cursor position
+  /// Find the NSRange of the current token at cursor position.
+  /// Walks UTF-16 units, as `position` and the returned range are editor (NSString) offsets.
   func findTokenRange(in text: String, at position: Int) -> NSRange? {
-    guard position > 0, position <= text.count else { return nil }
-
     let nsText = text as NSString
-    let beforeCursor = String(text.prefix(position))
+    guard position > 0, position <= nsText.length else { return nil }
+
+    func isBoundary(_ unit: unichar) -> Bool {
+      guard let scalar = Unicode.Scalar(unit) else { return false }
+      return Character(scalar).isWhitespace || "(),;".unicodeScalars.contains(scalar)
+    }
 
     // Find start of token - search backwards
-    var tokenStart = 0
-    for (index, char) in beforeCursor.enumerated().reversed() {
-      if char.isWhitespace || "(),;".contains(char) {
-        tokenStart = index + 1
-        break
-      }
-    }
+    var tokenStart = position
+    while tokenStart > 0 && !isBoundary(nsText.character(at: tokenStart - 1)) { tokenStart -= 1 }
 
-    // Find end of token - search forwards from tokenStart
+    // Find end of token - search forwards
     var tokenEnd = position
-    for index in position..<nsText.length {
-      let char = Character(UnicodeScalar(nsText.character(at: index))!)
-      if char.isWhitespace || "(),;".contains(char) {
-        tokenEnd = index
-        break
-      }
-      tokenEnd = index + 1
-    }
+    while tokenEnd < nsText.length && !isBoundary(nsText.character(at: tokenEnd)) { tokenEnd += 1 }
 
     return NSRange(location: tokenStart, length: tokenEnd - tokenStart)
   }

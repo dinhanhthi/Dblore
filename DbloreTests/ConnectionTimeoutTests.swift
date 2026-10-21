@@ -84,33 +84,27 @@ struct ConnectionTimeoutTests {
     }
   }
 
-  @Test("Multiple timeout values work correctly")
+  @Test(
+    "A short timeout fires while a longer one lets its operation finish",
+    .timeLimit(.minutes(1)))
   func multipleTimeoutValuesWorkCorrectly() async throws {
-    // Arrange - Test different timeout durations
-    let testCases: [(duration: Duration, sleepTime: Duration, shouldTimeout: Bool)] = [
-      (.milliseconds(100), .milliseconds(50), false),  // Should complete
-      (.milliseconds(100), .milliseconds(200), true),  // Should timeout
-      (.seconds(1), .milliseconds(500), false),  // Should complete
-      (.seconds(1), .seconds(2), true),  // Should timeout
-    ]
+    // Arrange - The long operation finishes only after the short timeout has fired
+    let (shortFired, signal) = AsyncStream<Void>.makeStream()
+    async let long = withTestTimeout(of: .seconds(60)) {
+      for await _ in shortFired {}
+      return "Done"
+    }
 
-    // Act & Assert
-    for testCase in testCases {
-      if testCase.shouldTimeout {
-        await #expect(throws: TimeoutError.self) {
-          try await withTestTimeout(of: testCase.duration) {
-            try await Task.sleep(for: testCase.sleepTime)
-            return "Done"
-          }
-        }
-      } else {
-        let result = try await withTestTimeout(of: testCase.duration) {
-          try await Task.sleep(for: testCase.sleepTime)
-          return "Done"
-        }
-        #expect(result == "Done")
+    // Act & Assert - Ordering only: no elapsed time is measured
+    await #expect(throws: TimeoutError.self) {
+      try await withTestTimeout(of: .milliseconds(100)) {
+        try await Task.sleep(for: .seconds(3600))
+        return "Should not reach here"
       }
     }
+    signal.finish()
+    let result = try await long
+    #expect(result == "Done")
   }
 
   // MARK: - Helper: Test version of withTimeout

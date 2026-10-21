@@ -78,8 +78,9 @@ nonisolated enum SQLDumpDataRenderer {
   ) throws -> String {
     if case .null = value { return "NULL" }
     switch (engine, value) {
-    case (.postgresql, .string(let text)) where text.hasPrefix("v"):
-      return SQLDialect.postgresql.literal(.string(String(text.dropFirst())))
+    case (.postgresql, .string(let text)) where text.unicodeScalars.first == "v":
+      // Scalars, not characters: a combining mark after the prefix joins it in one character
+      return SQLDialect.postgresql.literal(.string(String(text.unicodeScalars.dropFirst())))
     case (.mysql, .string(let text)) where isMySQLHex(column):
       guard isHex(text[...]) else {
         throw SQLDumpError.unexpectedValue(table: table, column: column.name)
