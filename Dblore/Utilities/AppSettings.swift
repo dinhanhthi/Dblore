@@ -331,6 +331,7 @@ class AppSettings {
     static let showExperimentalEngines = "app.settings.showExperimentalEngines"
     static let resultFontSize = "app.settings.resultFontSize"
     static let colorValuesByType = "app.settings.colorValuesByType"
+    static let neutralizesCopiedFormulas = "app.settings.neutralizesCopiedFormulas"
     static let editorFontSize = "app.settings.editorFontSize"
     static let notifyLongQueries = "app.settings.notifyLongQueries"
     static let longQueryThresholdSeconds = "app.settings.longQueryThresholdSeconds"
@@ -705,6 +706,15 @@ class AppSettings {
   var colorValuesByType: Bool = true {
     didSet {
       defaults.set(colorValuesByType, forKey: Keys.colorValuesByType)
+    }
+  }
+
+  /// Prefix copied text cells that start with =, +, -, @ (TSV copies) so spreadsheets
+  /// don't run them as formulas
+  /// Default: true
+  var neutralizesCopiedFormulas: Bool = true {
+    didSet {
+      defaults.set(neutralizesCopiedFormulas, forKey: Keys.neutralizesCopiedFormulas)
     }
   }
 
@@ -1161,6 +1171,10 @@ class AppSettings {
       colorValuesByType = defaults.bool(forKey: Keys.colorValuesByType)
     }
 
+    if defaults.object(forKey: Keys.neutralizesCopiedFormulas) != nil {
+      neutralizesCopiedFormulas = defaults.bool(forKey: Keys.neutralizesCopiedFormulas)
+    }
+
     if defaults.object(forKey: Keys.historyEnabled) != nil {
       historyEnabled = defaults.bool(forKey: Keys.historyEnabled)
     }
@@ -1293,6 +1307,7 @@ class AppSettings {
     hideColumnTypes = false
     resultFontSize = Self.defaultResultFontSize
     colorValuesByType = true
+    neutralizesCopiedFormulas = true
     // Same-value assignment does not run didSet, so write the review projection first.
     defaults.set(CommitStyle.review.rawValue, forKey: Keys.commitStyle)
     safeMode = CommitStyle.review.legacyProjection.safeMode

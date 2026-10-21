@@ -92,6 +92,43 @@ struct ExportOptionsTests {
     let json = DataExporter.applying(
       ExportOptions(format: .json, sanitizeFormulas: true), to: result)
     #expect(json.rows[0][0] == .string("=1+1"))
+    let hidden = grid(
+      columns: ["crlf", "lf", "mark"],
+      rows: [[.string("\r\n=1+1"), .string("\n=1+1"), .string("=\u{0301}1+1")]])
+    let csv = DataExporter.applying(ExportOptions(format: .csv), to: hidden)
+    #expect(csv.rows[0][0] == .string("'\r\n=1+1"))
+    #expect(csv.rows[0][1] == .string("'\n=1+1"))
+    #expect(csv.rows[0][2] == .string("'=\u{0301}1+1"))
+  }
+
+  @Test("Without quotes, a formula cannot start the next physical line of a field")
+  func neverQuoteNeutralizesEveryLine() {
+    let result = grid(columns: ["note"], rows: [[.string("abc\r\n=HYPERLINK(\"x\")\n@y")]])
+    let never = DataExporter.applying(ExportOptions(format: .csv, quote: .never), to: result)
+    #expect(never.rows[0][0] == .string("abc\r\n'=HYPERLINK(\"x\")\n'@y"))
+    let text = DataExporter.toCSV(result: never, includeHeader: false, quote: .never)
+    let lines = text.unicodeScalars.split(whereSeparator: { $0 == "\r" || $0 == "\n" })
+    #expect(!lines.contains { ["=", "+", "-", "@"].contains($0.first) })
+    let quoted = DataExporter.applying(ExportOptions(format: .csv), to: result)
+    #expect(quoted.rows[0][0] == result.rows[0][0])
+    let smuggled = grid(columns: ["a,=1", "b"], rows: [[.string("x,=1+1"), .string("\"=1+1\"")]])
+    let split = DataExporter.applying(ExportOptions(format: .csv, quote: .never), to: smuggled)
+    #expect(split.rows[0] == [.string("x,'=1+1"), .string("'\"=1+1\"")])
+    let csv = DataExporter.toCSV(result: split, quote: .never)
+    let fields = csv.unicodeScalars.split(whereSeparator: { "\r\n,".unicodeScalars.contains($0) })
+    #expect(!fields.contains { ["=", "+", "-", "@", "\""].contains($0.first) })
+  }
+
+  @Test("Column names are sanitized like text cells, and stay raw when sanitizing is off")
+  func sanitizesHeaders() {
+    let result = grid(columns: ["=HYPERLINK(\"x\")", "a\n=1"], rows: [[.int(1), .int(2)]])
+    let never = DataExporter.applying(ExportOptions(format: .csv, quote: .never), to: result)
+    #expect(never.columns.map(\.name) == ["'=HYPERLINK(\"x\")", "a\n'=1"])
+    let excel = DataExporter.applying(ExportOptions(format: .excel), to: result)
+    #expect(DataExporter.toExcelXML(result: excel).contains("&apos;=HYPERLINK"))
+    let raw = DataExporter.applying(
+      ExportOptions(format: .csv, sanitizeFormulas: false, quote: .never), to: result)
+    #expect(raw.columns.map(\.name) == ["=HYPERLINK(\"x\")", "a\n=1"])
   }
 
   @Test("CSV can quote every field, or none, including a field that contains a comma")
@@ -102,6 +139,7 @@ struct ExportOptionsTests {
     let never = DataExporter.toCSV(result: result, includeHeader: false, quote: .never)
     #expect(never.contains("a,b"))
     #expect(!never.contains("\"a,b\""))
+    #expect(DataExporter.escapeCSV("\r\n", quote: .ifNeeded) == "\"\r\n\"")
   }
 
   @Test("The finished text file uses the chosen line ending and encoding")

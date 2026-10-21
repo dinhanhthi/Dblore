@@ -37,6 +37,13 @@ struct ResultTableSettingsSection: View {
           isOn: $appSettings.hideRunWithQuerySection
         )
 
+        SettingsToggle(
+          title: "Neutralize Copied Formulas",
+          description:
+            "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it.",
+          isOn: $appSettings.neutralizesCopiedFormulas
+        )
+
         // Max Height (Notebook only)
         if viewMode == .notebook {
           SettingsSlider(

@@ -204,6 +204,11 @@ extension SettingsModal.SettingsTab {
             "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables."
         ),
         .init(
+          card: "Table", title: "Neutralize Copied Formulas",
+          detail:
+            "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it."
+        ),
+        .init(
           card: "Table", title: "Max Height",
           detail: "Adjust the maximum height of result tables. (Notebook only)"),
         .init(

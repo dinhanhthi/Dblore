@@ -63,7 +63,29 @@ struct ResultGridModelTests {
   @Test("TSV columns follow the given order")
   func tsvColumnOrder() {
     let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
-    #expect(model.tsv(rows: IndexSet([0, 1]), columns: [1, 0]) == "a\t1\nNULL\t2")
+    #expect(
+      model.tsv(rows: IndexSet([0, 1]), columns: [1, 0], neutralizesFormulas: false)
+        == "a\t1\nNULL\t2")
+  }
+
+  @Test("Cmd+C TSV prefixes formula-like text when on, never numbers or dates")
+  func tsvNeutralizesFormulaText() {
+    let date = Date(timeIntervalSince1970: 0)
+    let model = ResultGridModel(
+      result: CellResult(
+        columns: [
+          ColumnInfo(name: "t", type: "text"), ColumnInfo(name: "n", type: "int4"),
+          ColumnInfo(name: "d", type: "date"),
+        ],
+        rows: [[.string("=1+1"), .int(-5), .date(date)]], rowCount: 1),
+      sortColumn: nil, ascending: true)
+    let iso = CellValue.date(date).fullString
+    #expect(
+      model.tsv(rows: IndexSet([0]), columns: [0, 1, 2], neutralizesFormulas: true)
+        == "'=1+1\t-5\t\(iso)")
+    #expect(
+      model.tsv(rows: IndexSet([0]), columns: [0, 1, 2], neutralizesFormulas: false)
+        == "=1+1\t-5\t\(iso)")
   }
 
   @Test("A displayed row maps back to its index in result.rows")
@@ -83,7 +105,7 @@ struct ResultGridModelTests {
       ],
       rowCount: 3)
     let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
-    let tsv = model.tsv(rows: IndexSet([0, 1]), columns: [0, 1])
+    let tsv = model.tsv(rows: IndexSet([0, 1]), columns: [0, 1], neutralizesFormulas: false)
     #expect(tsv == "1\t\"a\tb\"\n2\t\"line1\nline2\"")
   }
 

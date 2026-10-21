@@ -686,7 +686,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     guard let model else { return "" }
     return model.tsv(
       rows: tableView.selectedRowIndexes,
-      columns: tableView.tableColumns.compactMap { Int($0.identifier.rawValue) })
+      columns: tableView.tableColumns.compactMap { Int($0.identifier.rawValue) },
+      neutralizesFormulas: AppSettings.shared.neutralizesCopiedFormulas)
   }
 
   func copySelection(_ tableView: NSTableView) {

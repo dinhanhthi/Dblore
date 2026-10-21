@@ -220,11 +220,15 @@ struct ResultGridModel {
 
   /// Tab-separated selected cells (no header, no trailing newline), full values like the
   /// TSV copy, `columns` (model column indices) in the given order. A value with a tab,
-  /// newline or quote is quoted with quotes doubled, as in CSV.
-  func tsv(rows: IndexSet, columns: [Int]) -> String {
+  /// newline or quote is quoted with quotes doubled, as in CSV. `neutralizesFormulas`
+  /// prefixes formula-like text cells as in CSV; other cell types stay raw.
+  func tsv(rows: IndexSet, columns: [Int], neutralizesFormulas: Bool) -> String {
     rows.map { row in
-      columns.map { DataExporter.escapeTSV(value(row: row, column: $0).fullString) }
-        .joined(separator: "\t")
+      columns.map {
+        DataExporter.tsvField(
+          value(row: row, column: $0), neutralizesFormulas: neutralizesFormulas)
+      }
+      .joined(separator: "\t")
     }
     .joined(separator: "\n")
   }

@@ -449,6 +449,13 @@ struct SettingsModalResultTableSection: View {
             isOn: $appSettings.hideRunWithQuerySection
           )
           Divider()
+          SettingsToggle(
+            title: "Neutralize Copied Formulas",
+            description:
+              "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it.",
+            isOn: $appSettings.neutralizesCopiedFormulas
+          )
+          Divider()
           SettingsSlider(
             title: "Max Height",
             valueText: "\(Int(appSettings.maxResultHeight)) pt",

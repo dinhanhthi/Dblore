@@ -30,17 +30,21 @@ enum DataExporter {
     return csv
   }
 
-  /// Export result to TSV format (tab-separated, Excel-compatible)
-  static func toTSV(result: CellResult) -> String {
+  /// Export result to TSV format (tab-separated, Excel-compatible). `neutralizesFormulas`
+  /// prefixes formula-like text cells and headers as in CSV; other cell types stay raw.
+  /// Headers are escaped like cells either way.
+  static func toTSV(result: CellResult, neutralizesFormulas: Bool) -> String {
     var tsv = ""
 
     // Header row
-    let headers = result.columns.map { $0.name }
+    let headers = result.columns.map {
+      tsvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
+    }
     tsv += headers.joined(separator: "\t") + "\n"
 
     // Data rows
     for row in result.rows {
-      let values = row.map { escapeTSV($0.fullString) }
+      let values = row.map { tsvField($0, neutralizesFormulas: neutralizesFormulas) }
       tsv += values.joined(separator: "\t") + "\n"
     }
 
@@ -54,6 +58,16 @@ enum DataExporter {
       return value
     }
     return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+  }
+
+  /// One escaped TSV field. The formula prefix (text cells only, first scalar only: the
+  /// quoting keeps every line in this field) is added before escaping, so it lands inside the
+  /// quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`.
+  static func tsvField(_ value: CellValue, neutralizesFormulas: Bool) -> String {
+    if neutralizesFormulas, case .string(let text) = value {
+      return escapeTSV(prefixedIfFormula(text, splitsFields: false))
+    }
+    return escapeTSV(value.fullString)
   }
 
   /// Export result to XLSX format (ZIP-based Office Open XML)
@@ -413,13 +427,6 @@ enum DataExporter {
 
   // MARK: - Download Functions
 
-  /// Download result as CSV file
-  static func downloadCSV(result: CellResult, filename: String? = nil, queryIndex: Int? = nil) {
-    let csv = toCSV(result: result)
-    let defaultName = filename ?? generateFilename(extension: "csv", queryIndex: queryIndex)
-    saveFile(content: csv, defaultFilename: defaultName, allowedFileTypes: ["csv"])
-  }
-
   /// Download result as Excel file (.xlsx format - ZIP-based OOXML)
   static func downloadExcel(result: CellResult, filename: String? = nil, queryIndex: Int? = nil) {
     guard let xlsxData = toXLSX(result: result) else {
@@ -474,7 +481,8 @@ enum DataExporter {
 
   /// Copy result to clipboard in TSV format (Excel-compatible)
   static func copyTSV(result: CellResult) {
-    let tsv = toTSV(result: result)
+    let tsv = toTSV(
+      result: result, neutralizesFormulas: AppSettings.shared.neutralizesCopiedFormulas)
     copyToClipboard(tsv)
   }
 
@@ -551,8 +559,8 @@ enum DataExporter {
     case .never:
       return value
     case .ifNeeded:
-      if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
-      {
+      // Per unicode scalar, so a CRLF counts as a line break.
+      if value.unicodeScalars.contains(where: { ",\"\n\r".unicodeScalars.contains($0) }) {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
       }
@@ -684,10 +692,9 @@ enum DataExporter {
         completion(false)
         return
       }
-      completion(
-        completeSave(url) {
-          try content.write(to: url, atomically: true, encoding: .utf8)
-        })
+      completeSave(url, completion: completion) {
+        try content.write(to: url, atomically: true, encoding: .utf8)
+      }
     }
   }
 
@@ -700,31 +707,44 @@ enum DataExporter {
     savePanel.begin { response in
       guard response == .OK, let url = savePanel.url else { return }
       completeSave(url) {
-        try data.write(to: url)
+        try data.write(to: url, options: .atomic)
       }
     }
   }
 
-  /// Writes the file, then asks whether to open it or reveal it. Cancel leaves the saved file as is.
-  /// False when the write failed.
-  @discardableResult
-  private static func completeSave(_ url: URL, write: () throws -> Void) -> Bool {
-    do {
-      try write()
-    } catch {
-      let alert = NSAlert()
-      alert.messageText = "Export Failed"
-      alert.informativeText = "Could not save file: \(error.localizedDescription)"
-      alert.alertStyle = .critical
-      alert.runModal()
-      return false
-    }
+  /// Writes the file off the main actor, then asks whether to open it or reveal it. Cancel leaves
+  /// the saved file as is. `completion` gets false when the write failed (after its alert).
+  /// `write` only captures Sendable values (the text or bytes and the URL).
+  private static func completeSave(
+    _ url: URL, completion: @escaping @MainActor (Bool) -> Void = { _ in },
+    write: @escaping @Sendable () throws -> Void
+  ) {
+    Task {
+      do {
+        try await performWrite(write)
+      } catch {
+        let alert = NSAlert()
+        alert.messageText = "Export Failed"
+        alert.informativeText = "Could not save file: \(error.localizedDescription)"
+        alert.alertStyle = .critical
+        alert.runModal()
+        completion(false)
+        return
+      }
 
-    // The save panel is still dismissing. Presenting now stacks the two modals.
-    DispatchQueue.main.async {
-      presentSavedFile(url)
+      // The save panel may still be dismissing. Presenting now stacks the two modals.
+      DispatchQueue.main.async {
+        presentSavedFile(url)
+      }
+      completion(true)
     }
-    return true
+  }
+
+  /// Runs a file write off the main actor (`@concurrent` leaves it).
+  @concurrent nonisolated private static func performWrite(
+    _ write: @Sendable () throws -> Void
+  ) async throws {
+    try write()
   }
 
   /// The Open File / Open Location alert after a file was saved.
