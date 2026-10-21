@@ -16,8 +16,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 
 > [!NOTE]
 > Dblore is built around my own day-to-day needs, so many features are still missing.
-> Need something? [Suggest a feature](https://github.com/dinhanhthi/Dblore/issues/new?template=feature_request.md&title=New%20feature%3A%20&labels=enhancement)
-> and I'll consider adding it.
+> Need something? [Suggest a feature](https://github.com/dinhanhthi/Dblore/issues/new?template=feature_request.md&title=New%20feature%3A%20&labels=enhancement)  
+> and I'll consider adding it. You can check all available features [here](https://dblore.dinhanhthi.com/features.html).
 
 ![Screenshot](assets/poster.png)
 
