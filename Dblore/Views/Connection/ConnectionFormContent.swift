@@ -421,12 +421,14 @@ struct ConnectionFormContent: View {
   static func sslModeHelp(for type: DatabaseType) -> String? {
     switch type {
     case .mysql:
-      "Only Verify CA and Verify Full check the server certificate. With Require, Prefer or "
-        + "Allow the connection is encrypted but not authenticated: an active man in the middle "
-        + "can intercept the connection and the password. Prefer and Allow also fall back to a "
-        + "plain, unencrypted connection when the server offers no SSL. On untrusted networks, "
-        + "use Verify CA or Verify Full. A picked CA certificate is used only by Verify CA and "
-        + "Verify Full."
+      "Only Verify CA and Verify Full check the server certificate. Require, Prefer and Allow "
+        + "encrypt the connection but do not verify the certificate, and Prefer and Allow fall "
+        + "back to plain text when the server offers no SSL. So on Disable, Allow, Prefer and "
+        + "Require Dblore never sends the full password, and it may refuse to sign in when the "
+        + "server asks for it. A direct 127.0.0.1, ::1 or localhost host is exempt. A forwarder "
+        + "you run on this Mac (ssh -L, a port-forward, a proxy) counts as local and is not "
+        + "guarded; the app's own SSH tunnel always is. On untrusted networks, use Verify CA or "
+        + "Verify Full. A picked CA certificate is used only by Verify CA and Verify Full."
     case .mongodb:
       "Verify Full encrypts the connection and checks the server certificate and host name. Use "
         + "the server's host name, not an IP address. A picked CA certificate replaces the "

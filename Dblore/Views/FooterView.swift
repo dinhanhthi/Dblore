@@ -219,7 +219,9 @@ struct FooterView: View {
   ) -> String? {
     guard isConnected, let config, transport == .encryptedUnverified else { return nil }
     return "SSL mode \(config.sslMode.displayName): encrypted, but the server certificate is not "
-      + "verified, so an active man in the middle can intercept the connection and the password"
+      + "verified, so a man in the middle can read the traffic and the sign-in scramble (which "
+      + "can be guessed offline). Dblore does not send the full password unless the host is "
+      + "this Mac. Verify CA or Verify Full removes the risk."
   }
 
   /// Faint and neutral: a hint, not an alarm

@@ -8,6 +8,7 @@
 import Foundation
 import MySQLNIO
 import NIOCore
+import NIOEmbedded
 import NIOPosix
 import NIOSSL
 import Testing
@@ -176,7 +177,7 @@ struct MySQLSessionTests {
           try await session.open()
           Issue.record("Prefer logged in through a stripped handshake on a cold cache")
         } catch DatabaseError.connectionFailed(let message) {
-          #expect(message.contains("full authentication"), "\(message)")
+          #expect(message.contains(MySQLSession.plaintextFullAuthRefusedMessage), "\(message)")
         }
         await session.close()
         let connections = try await proxy.closedConnections(2)
@@ -549,6 +550,127 @@ struct MySQLSessionTests {
     #expect(proxy.openedConnections == 2)
   }
 
+  // MARK: - Full-authentication guard (no server)
+
+  /// What the armed guard refuses after the greeting, and the text the user reads for it.
+  nonisolated static let guardRefusals: [([UInt8], FullAuthRefusal.Reason, String)] = [
+    (
+      MySQLWireFixtures.performFullAuthentication, .fullAuthentication,
+      MySQLSession.fullAuthRefusedMessage
+    ),
+    (
+      // Worded as when the fork itself refuses a plugin it cannot use.
+      MySQLWireFixtures.authSwitchRequest(plugin: "sha256_password"),
+      .authSwitch(plugin: "sha256_password"),
+      MySQLSessionError(MySQLError.unsupportedAuthPlugin(name: "sha256_password")).message
+    ),
+    (
+      MySQLWireFixtures.authSwitchRequest(plugin: "client_ed25519"),
+      .authSwitch(plugin: "client_ed25519"),
+      MySQLSession.unsupportedAuthPluginMessage("client_ed25519")
+    ),
+    // A hostile server's name (line breaks with fake guidance, a bidi override, a long string)
+    // never reaches the user's text, and the guard keeps at most 65 bytes of it.
+    (
+      MySQLWireFixtures.authSwitchRequest(plugin: "x\nCall +1 555 0100 for help"),
+      .authSwitch(plugin: "x\nCall +1 555 0100 for help"),
+      MySQLSession.unsupportedSignInMessage
+    ),
+    (
+      MySQLWireFixtures.authSwitchRequest(plugin: "x\u{202E}drowssap"),
+      .authSwitch(plugin: "x\u{202E}drowssap"), MySQLSession.unsupportedSignInMessage
+    ),
+    (
+      MySQLWireFixtures.authSwitchRequest(plugin: String(repeating: "a", count: 200)),
+      .authSwitch(plugin: String(repeating: "a", count: 65)), MySQLSession.unsupportedSignInMessage
+    ),
+  ]
+
+  @Test(
+    "mysql-nio's unsupported plugin shows its name only when it is a plain identifier",
+    arguments: [("client_ed25519", true), ("x\nCall +1 555 0100 for help", false)])
+  func forkUnsupportedPluginMessage(name: String, shown: Bool) {
+    let message = MySQLSessionError(MySQLError.unsupportedAuthPlugin(name: name)).message
+    if shown {
+      #expect(message.contains(name))
+    } else {
+      #expect(message == MySQLSession.unsupportedSignInMessage)
+    }
+  }
+
+  @Test(
+    "A login the armed guard refuses fails with the guard's reason, not 'closed'",
+    arguments: guardRefusals)
+  func guardRefusalMessage(
+    payload: [UInt8], reason: FullAuthRefusal.Reason, message: String
+  ) throws {
+    let config = Self.config(host: "db.example", port: 3306, sslMode: .prefer)
+    let login = try GuardedLogin(config: config)
+    try login.channel.writeInbound(Self.wire(0, MySQLWireFixtures.greeting(ssl: false)))
+    _ = try MySQLFullAuthGuardTests.outbound(login.channel)
+    try login.channel.writeInbound(Self.wire(2, payload))
+
+    #expect(login.refusal.reason == reason)
+    #expect((login.captured.error as? MySQLSessionError)?.message == message)
+    #expect(try MySQLFullAuthGuardTests.outbound(login.channel).isEmpty)
+  }
+
+  @Test("A direct loopback login is not guarded and never asks for the server's RSA key")
+  func loopbackRefusesFullAuthWithoutKeyRetrieval() throws {
+    let config = Self.config(host: "127.0.0.1", port: 3306, sslMode: .prefer)
+    let login = try GuardedLogin(config: config)
+    try login.channel.writeInbound(Self.wire(0, MySQLWireFixtures.greeting(ssl: false)))
+    _ = try MySQLFullAuthGuardTests.outbound(login.channel)
+    try login.channel.writeInbound(Self.wire(2, MySQLWireFixtures.performFullAuthentication))
+
+    // With allowPublicKeyRetrieval the fork would send request_public_key (0x02) and wait.
+    #expect(MySQLFullAuthGuardTests.isPublicKeyRetrievalNotAllowed(login.captured.error))
+    #expect(!login.refusal.refused)
+    let error = try #require(login.captured.error)
+    #expect(MySQLSessionError(error).message == MySQLSession.plaintextFullAuthRefusedMessage)
+  }
+
+  @Test("A successful login disarms the guard before the first result reaches the fork")
+  func loginDisarmsTheGuard() throws {
+    let config = Self.config(host: "db.example", port: 3306, sslMode: .prefer)
+    let login = try GuardedLogin(config: config)
+    try login.channel.writeInbound(Self.wire(0, MySQLWireFixtures.greeting(ssl: false)))
+    _ = try MySQLFullAuthGuardTests.outbound(login.channel)
+    try login.channel.writeInbound(
+      ByteBuffer(
+        bytes: MySQLWireFixtures.frame(sequence: 2, MySQLWireFixtures.fastAuthSuccess)
+          + MySQLWireFixtures.frame(sequence: 3, MySQLWireFixtures.ok)))
+    #expect(try login.captured.result?.get() != nil)
+
+    // A one-column result's column count: an armed guard refuses it as AuthMoreData.
+    let columnCount = MySQLWireFixtures.frame(sequence: 1, [0x01])
+    try login.channel.writeInbound(ByteBuffer(bytes: columnCount))
+    #expect(login.spy.seen.last == columnCount)
+    #expect(!login.refusal.refused)
+  }
+
+  /// `MySQLSession.login(over:)` on an EmbeddedChannel holding the guard the session's
+  /// bootstrap adds for `config`, and a spy after it.
+  @MainActor struct GuardedLogin {
+    let channel: EmbeddedChannel
+    let spy: MySQLFullAuthGuardTests.InboundSpy
+    let refusal = FullAuthRefusal()
+    let captured: MySQLFullAuthGuardTests.Captured<MySQLConnection>
+
+    init(config: ConnectionConfig) throws {
+      let armed = armsFullAuthGuard(
+        tlsMode: config.sslMode, host: config.host, usesSSH: config.sshTunnel != nil)
+      (channel, spy) = try MySQLFullAuthGuardTests.channel(
+        guard: MySQLFullAuthGuard(armed: armed, refusal: refusal))
+      captured = MySQLFullAuthGuardTests.Captured(
+        MySQLSession.login(over: channel, config: config, tls: nil, refusal: refusal))
+    }
+  }
+
+  static func wire(_ sequence: UInt8, _ payload: [UInt8]) -> ByteBuffer {
+    ByteBuffer(bytes: MySQLWireFixtures.frame(sequence: sequence, payload))
+  }
+
   // MARK: - Packets (no server)
 
   @Test("A binary value length above Int.max is a protocol error")
@@ -637,7 +759,7 @@ struct MySQLSessionTests {
           try await cold.open()
           Issue.record("plain TCP full authentication succeeded")
         } catch DatabaseError.connectionFailed(let message) {
-          #expect(message.contains("full authentication"), "\(message)")
+          #expect(message.contains(MySQLSession.plaintextFullAuthRefusedMessage), "\(message)")
         }
         await cold.close()
         // A TLS login fills the cache; plain TCP then uses fast authentication (20-byte scramble).
@@ -666,12 +788,12 @@ struct MySQLSessionTests {
   // MARK: - Helpers
 
   static func config(
-    port: Int, username: String = TestMySQLDatabase.username,
+    host: String = TestMySQLDatabase.host, port: Int, username: String = TestMySQLDatabase.username,
     password: String = TestMySQLDatabase.password, sslMode: SSLMode = .disable,
     clientCertificate: Bool = false
   ) -> ConnectionConfig {
     ConnectionConfig(
-      databaseType: .mysql, host: TestMySQLDatabase.host, port: port,
+      databaseType: .mysql, host: host, port: port,
       database: TestMySQLDatabase.database, username: username, password: password,
       sslMode: sslMode,
       clientCertificate: clientCertificate
@@ -766,7 +888,8 @@ struct MySQLSessionTests {
 }
 
 /// A loopback MySQL endpoint without TLS. Alone it sends a HandshakeV10 without CLIENT_SSL and
-/// refuses the login with ERROR 1045; with `upstreamPort` it proxies a real server
+/// refuses the login with ERROR 1045, or answers it once with `loginReply` and leaves the close
+/// to the client; with `upstreamPort` it proxies a real server
 /// and clears CLIENT_SSL in the server's handshake (a downgrade by a man in the middle). It
 /// records the bytes each client connection sent.
 nonisolated final class NoTLSServer: @unchecked Sendable {
@@ -775,13 +898,19 @@ nonisolated final class NoTLSServer: @unchecked Sendable {
   private var closed: Set<Int> = []
   private var channel: (any Channel)?
   private let upstreamPort: Int?
+  private let loginReply: [UInt8]?
 
-  private init(upstreamPort: Int?) { self.upstreamPort = upstreamPort }
+  private init(upstreamPort: Int?, loginReply: [UInt8]?) {
+    self.upstreamPort = upstreamPort
+    self.loginReply = loginReply
+  }
 
   var port: Int { channel?.localAddress?.port ?? 0 }
 
-  static func start(upstreamPort: Int? = nil) async throws -> NoTLSServer {
-    let server = NoTLSServer(upstreamPort: upstreamPort)
+  static func start(
+    upstreamPort: Int? = nil, loginReply: [UInt8]? = nil
+  ) async throws -> NoTLSServer {
+    let server = NoTLSServer(upstreamPort: upstreamPort, loginReply: loginReply)
     server.channel = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
       .childChannelInitializer { child in
         child.eventLoop.makeCompletedFuture {
@@ -869,6 +998,7 @@ nonisolated final class NoTLSServer: @unchecked Sendable {
     let server: NoTLSServer
     var index = 0
     var upstream: (any Channel)?
+    var replied = false
 
     init(server: NoTLSServer) { self.server = server }
 
@@ -899,6 +1029,11 @@ nonisolated final class NoTLSServer: @unchecked Sendable {
       server.record(bytes, index)
       if let upstream {
         upstream.writeAndFlush(ByteBuffer(bytes: bytes), promise: nil)
+      } else if let reply = server.loginReply, !NoTLSServer.sentNoLogin(bytes) {
+        // Once, to the login; the connection stays open to record what the client sends next.
+        guard !replied else { return }
+        replied = true
+        context.channel.writeAndFlush(ByteBuffer(bytes: reply), promise: nil)
       } else if server.upstreamPort == nil {
         // mysql-nio waits for an answer to its login: refuse it rather than just closing.
         let reply = NoTLSServer.sentNoLogin(bytes) ? [] : NoTLSServer.accessDenied

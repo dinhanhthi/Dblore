@@ -1,12 +1,7 @@
-// MySQLFullAuthGuardSpikeTests.swift
-// Phase 3.1 spike: can the app keep mysql-nio from sending the real password in
-// caching_sha2_password "full authentication" ([0x01, 0x04]) when the TLS mode does not verify
-// the server, without changing the fork? The guard below is a prototype (production code comes
-// in task 4.1): an inbound/outbound handler the app adds to the channel before
-// `MySQLConnection.connect(over:)`. The fork appends its codec and connection handler at
-// `.last` and puts NIOSSLClientHandler at `.first`, so the guard ends up after TLS (it reads
-// decrypted packets) and before the packet decoder (the fork never sees what it drops).
-// No server: the login runs over EmbeddedChannels with scripted packets.
+// MySQLFullAuthGuardTests.swift
+// The full-authentication guard keeps mysql-nio from sending the real password when the TLS
+// mode does not verify the server. No server: the login runs over EmbeddedChannels with
+// scripted packets (and an in-memory TLS server for the unverified TLS rows).
 
 import Foundation
 import MySQLNIO
@@ -19,7 +14,7 @@ import os
 @testable import Dblore
 
 @Suite(.serialized)
-struct MySQLFullAuthGuardSpikeTests {
+struct MySQLFullAuthGuardTests {
   static let password = "guarded-secret"
 
   /// Control: without the guard, the fork refuses full authentication over a plain channel with
@@ -40,7 +35,8 @@ struct MySQLFullAuthGuardSpikeTests {
   /// refusal, and nothing more leaves the client (no password, no COM_QUIT).
   @Test func guardDropsFullAuthBeforeTheForkSeesIt() throws {
     let refusal = FullAuthRefusal()
-    let (channel, spy) = try Self.channel(guard: FullAuthGuard(armed: true, refusal: refusal))
+    let (channel, spy) = try Self.channel(
+      guard: MySQLFullAuthGuard(armed: true, refusal: refusal))
     let login = Self.login(over: channel, tls: nil)
 
     try channel.writeInbound(Self.packet(0, MySQLWireFixtures.greeting(ssl: false)))
@@ -61,38 +57,71 @@ struct MySQLFullAuthGuardSpikeTests {
     #expect(!channel.isActive)
   }
 
-  /// An OK does not disarm the guard; `disarm()`, run when the fork's login future succeeds (as
-  /// the app does), does. After it a packet that looks like [0x01, 0x04] (a one-column text row
-  /// holding 0x04, say) reaches the fork untouched; before it the guard would refuse it.
-  @Test(arguments: [true, false])
-  func lookalikeRowPassesOnlyAfterDisarm(disarmed: Bool) throws {
+  /// A wrong password (ERR 1045) passes the armed guard: the login fails with the server's
+  /// error, not `.closed`, and no refusal is recorded.
+  @Test func serverErrorPassesWhileArmed() throws {
     let refusal = FullAuthRefusal()
-    let fullAuthGuard = FullAuthGuard(armed: true, refusal: refusal)
-    let (channel, spy) = try Self.channel(guard: fullAuthGuard)
-    let login = Self.login(over: channel, tls: nil, disarming: disarmed ? fullAuthGuard : nil)
+    let (channel, spy) = try Self.channel(
+      guard: MySQLFullAuthGuard(armed: true, refusal: refusal))
+    let login = Self.login(over: channel, tls: nil)
 
     try channel.writeInbound(Self.packet(0, MySQLWireFixtures.greeting(ssl: false)))
     _ = try Self.outbound(channel)
-    // fast_auth_success and OK in one read.
-    try channel.writeInbound(
-      ByteBuffer(
-        bytes: MySQLWireFixtures.frame(sequence: 2, MySQLWireFixtures.fastAuthSuccess)
-          + MySQLWireFixtures.frame(sequence: 3, MySQLWireFixtures.ok)))
-    let connection = try #require(try login.result?.get())
+    let message = "Access denied for user 'dblore'@'localhost' (using password: YES)"
+    let err = MySQLWireFixtures.frame(
+      sequence: 2, MySQLWireFixtures.err(code: 1045, sqlState: "28000", message: message))
+    try channel.writeInbound(ByteBuffer(bytes: err))
 
+    #expect(!refusal.refused)
+    #expect(spy.seen.last == err)
+    #expect(!Self.isClosed(login.error))
+    guard case .server(let packet)? = login.error as? MySQLError else {
+      Issue.record("expected the server's error, got \(String(describing: login.error))")
+      return
+    }
+    #expect(packet.errorCode == 1045)
+    #expect(packet.sqlState == "28000")
+    #expect(packet.errorMessage == message)
+  }
+
+  /// An OK does not disarm the guard; `disarm()`, run when the fork's login future succeeds (as
+  /// the app does), does. After it a packet that looks like [0x01, 0x04] (a one-column text row
+  /// holding 0x04, say) reaches the fork untouched; before it the guard refuses it. With
+  /// `oneRead`, fast_auth_success, OK and that packet arrive in one read: `disarm()` runs inside
+  /// the guard's forwarding loop and the packet still reaches the fork once, after the OK.
+  @Test(arguments: [(false, false), (true, false), (true, true)])
+  func lookalikeRowPassesOnlyAfterDisarm(disarmed: Bool, oneRead: Bool) throws {
+    let refusal = FullAuthRefusal()
+    let fullAuthGuard = MySQLFullAuthGuard(armed: true, refusal: refusal)
+    let (channel, spy) = try Self.channel(guard: fullAuthGuard)
+    let login = Self.login(over: channel, tls: nil, disarming: disarmed ? fullAuthGuard : nil)
+
+    let greeting = MySQLWireFixtures.frame(sequence: 0, MySQLWireFixtures.greeting(ssl: false))
+    let fastAuth = MySQLWireFixtures.frame(sequence: 2, MySQLWireFixtures.fastAuthSuccess)
+    let ok = MySQLWireFixtures.frame(sequence: 3, MySQLWireFixtures.ok)
     let lookalike = MySQLWireFixtures.frame(
       sequence: 1, MySQLWireFixtures.performFullAuthentication)
-    try channel.writeInbound(ByteBuffer(bytes: lookalike))
+
+    try channel.writeInbound(ByteBuffer(bytes: greeting))
+    _ = try Self.outbound(channel)
+    if oneRead {
+      try channel.writeInbound(ByteBuffer(bytes: fastAuth + ok + lookalike))
+      #expect(try login.result?.get() != nil)
+    } else {
+      try channel.writeInbound(ByteBuffer(bytes: fastAuth + ok))
+      #expect(try login.result?.get() != nil)
+      try channel.writeInbound(ByteBuffer(bytes: lookalike))
+    }
 
     if disarmed {
-      #expect(spy.seen.last == lookalike)
+      #expect(spy.seen == [greeting, fastAuth, ok, lookalike])
       #expect(!refusal.refused)
     } else {
-      #expect(!spy.seen.contains(lookalike))
+      #expect(spy.seen == [greeting, fastAuth, ok])
       #expect(refusal.reason == .fullAuthentication)
     }
     // Disarmed, no command was waiting, so the fork closed on the stray packet; armed, the guard.
-    #expect(connection.isClosed)
+    #expect(!channel.isActive)
   }
 
   /// The fork reads only the status and command bytes of AuthMoreData, so any more-data packet
@@ -100,7 +129,8 @@ struct MySQLFullAuthGuardSpikeTests {
   @Test(arguments: RefusedScript.all)
   func guardRefusesEveryOtherMoreDataPacket(script: RefusedScript) throws {
     let refusal = FullAuthRefusal()
-    let (channel, spy) = try Self.channel(guard: FullAuthGuard(armed: true, refusal: refusal))
+    let (channel, spy) = try Self.channel(
+      guard: MySQLFullAuthGuard(armed: true, refusal: refusal))
     let login = Self.login(over: channel, tls: nil)
 
     for chunk in script.chunks { try channel.writeInbound(ByteBuffer(bytes: chunk)) }
@@ -116,15 +146,18 @@ struct MySQLFullAuthGuardSpikeTests {
   }
 
   /// The fork joins a 0xFFFFFF-byte frame with the frames after it into one message, which a
-  /// later chunk (an OK-looking [0x00, ...]) cannot change. The guard refuses such a frame on its
-  /// header, here in the greeting phase, so no HandshakeResponse is written.
-  @Test func guardRefusesAnOversizedGreetingOnItsHeader() throws {
+  /// later chunk (an OK-looking [0x00, ...]) cannot change, and a hostile server could make the
+  /// guard buffer up to 16 MiB. The guard refuses any frame over 64 KiB on its header, here in
+  /// the greeting phase, so no HandshakeResponse is written.
+  @Test(arguments: [64 * 1024 + 1, 0xFF_FF_FF])
+  func guardRefusesAnOversizedGreetingOnItsHeader(length: Int) throws {
     let refusal = FullAuthRefusal()
-    let (channel, spy) = try Self.channel(guard: FullAuthGuard(armed: true, refusal: refusal))
+    let (channel, spy) = try Self.channel(
+      guard: MySQLFullAuthGuard(armed: true, refusal: refusal))
     let login = Self.login(over: channel, tls: nil)
 
     let greeting = MySQLWireFixtures.frame(
-      sequence: 0, MySQLWireFixtures.padded(MySQLWireFixtures.greeting(ssl: false)))
+      sequence: 0, MySQLWireFixtures.padded(MySQLWireFixtures.greeting(ssl: false), to: length))
     try channel.writeInbound(ByteBuffer(bytes: greeting.prefix(4)))
     #expect(refusal.reason == .oversizedFrame)
     try channel.writeInbound(ByteBuffer(bytes: greeting.dropFirst(4)))
@@ -141,7 +174,8 @@ struct MySQLFullAuthGuardSpikeTests {
   /// that learns a cleartext plugin still cannot send the password.
   @Test func guardRefusesASwitchToAnotherPlugin() throws {
     let refusal = FullAuthRefusal()
-    let (channel, spy) = try Self.channel(guard: FullAuthGuard(armed: true, refusal: refusal))
+    let (channel, spy) = try Self.channel(
+      guard: MySQLFullAuthGuard(armed: true, refusal: refusal))
     let login = Self.login(over: channel, tls: nil)
 
     try channel.writeInbound(Self.packet(0, MySQLWireFixtures.greeting(ssl: false)))
@@ -160,7 +194,8 @@ struct MySQLFullAuthGuardSpikeTests {
   /// A switch to mysql_native_password reaches the fork, which answers with the scramble.
   @Test func guardPassesASwitchToNativePassword() throws {
     let refusal = FullAuthRefusal()
-    let (channel, _) = try Self.channel(guard: FullAuthGuard(armed: true, refusal: refusal))
+    let (channel, _) = try Self.channel(
+      guard: MySQLFullAuthGuard(armed: true, refusal: refusal))
     let login = Self.login(over: channel, tls: nil)
 
     try channel.writeInbound(Self.packet(0, MySQLWireFixtures.greeting(ssl: false)))
@@ -202,14 +237,19 @@ struct MySQLFullAuthGuardSpikeTests {
   }
 
   /// Over TLS that does not verify the server (the Require mode), the fork answers full
-  /// authentication with the password in cleartext inside the tunnel. With the guard the
-  /// in-memory TLS server receives nothing after the handshake response. The guard reads the
-  /// decrypted [0x01, 0x04], so it sits after NIOSSLClientHandler, which the fork put `.first`.
-  @Test(arguments: [false, true])
-  func unverifiedTLSFullAuth(guarded: Bool) throws {
+  /// authentication with the password in cleartext inside the tunnel, also when the more-data
+  /// packet carries a trailing byte. With the guard the in-memory TLS server receives nothing
+  /// after the handshake response. The guard reads the decrypted packet, so it sits after
+  /// NIOSSLClientHandler (which the fork put `.first`) and before the fork's decoder.
+  @Test(
+    arguments: [
+      (false, [0x01, 0x04]), (true, [0x01, 0x04]), (false, [0x01, 0x04, 0x00]),
+      (true, [0x01, 0x04, 0x00]),
+    ] as [(Bool, [UInt8])])
+  func unverifiedTLSFullAuth(guarded: Bool, moreData: [UInt8]) throws {
     let refusal = FullAuthRefusal()
-    let (client, spy) = try Self.channel(
-      guard: guarded ? FullAuthGuard(armed: true, refusal: refusal) : nil)
+    let fullAuthGuard = guarded ? MySQLFullAuthGuard(armed: true, refusal: refusal) : nil
+    let (client, spy) = try Self.channel(guard: fullAuthGuard)
     var tls = TLSConfiguration.makeClientConfiguration()
     tls.certificateVerification = .none
     let login = Self.login(over: client, tls: tls)
@@ -217,26 +257,20 @@ struct MySQLFullAuthGuardSpikeTests {
     try client.writeInbound(Self.packet(0, MySQLWireFixtures.greeting(ssl: true)))
     let sslRequest = try #require(try client.readOutbound(as: ByteBuffer.self))
     #expect(sslRequest.readableBytes == 4 + 32 && sslRequest.getInteger(at: 3) == UInt8(1))
-    let pipeline = String(describing: client.pipeline)
-    let tlsAt = try #require(pipeline.range(of: "NIOSSLClientHandler")).lowerBound
-    let spyAt = try #require(pipeline.range(of: "InboundSpy")).lowerBound
-    #expect(tlsAt < spyAt)
-    if guarded {
-      let guardAt = try #require(pipeline.range(of: "FullAuthGuard")).lowerBound
-      #expect(tlsAt < guardAt && guardAt < spyAt)
-    }
+    try Self.expectGuardBetweenTLSAndSpy(client, fullAuthGuard: fullAuthGuard, spy: spy)
 
     let server = try Self.tlsServer()
     let response = try Self.shuttle(client, server) { !$0.isEmpty }
     #expect(response.count > 4 && response[3] == 2)  // HandshakeResponse41 after SSLRequest
 
-    server.writeAndFlush(Self.packet(3, MySQLWireFixtures.performFullAuthentication), promise: nil)
+    let fullAuth = MySQLWireFixtures.frame(sequence: 3, moreData)
+    server.writeAndFlush(ByteBuffer(bytes: fullAuth), promise: nil)
     let afterResponse = try Self.shuttle(client, server) { !$0.isEmpty || refusal.refused }
 
     if guarded {
       #expect(afterResponse.isEmpty)
       #expect(refusal.reason == .fullAuthentication)
-      #expect(!spy.seen.contains(MySQLWireFixtures.frame(sequence: 3, [0x01, 0x04])))
+      #expect(!spy.seen.contains(fullAuth))
       #expect(Self.isClosed(login.error))
     } else {
       #expect(
@@ -263,190 +297,50 @@ struct MySQLFullAuthGuardSpikeTests {
     ]
     for (mode, host, usesSSH, armed) in rows {
       #expect(
-        Self.armsFullAuthGuard(tlsMode: mode, host: host, usesSSH: usesSSH) == armed,
+        armsFullAuthGuard(tlsMode: mode, host: host, usesSSH: usesSSH) == armed,
         "\(mode.rawValue) \(host) ssh=\(usesSSH)")
     }
   }
 }
 
-// MARK: - Prototype (moves to production in task 4.1)
+// MARK: - Helpers
 
-extension MySQLFullAuthGuardSpikeTests {
-  /// Whether a MySQL login arms the full-authentication guard. Only Verify CA and Verify Full
-  /// check the server's certificate; a direct connection to this Mac is exempt, but not the SSH
-  /// forwarder's loopback address (decided from the connection settings, not the socket).
-  static func armsFullAuthGuard(tlsMode: SSLMode, host: String, usesSSH: Bool) -> Bool {
-    switch tlsMode {
-    case .verifyCa, .verifyFull: return false
-    case .disable, .allow, .prefer, .require: break
-    }
-    if usesSSH { return true }
-    return !["127.0.0.1", "::1", "localhost"].contains(host.lowercased())
-  }
+extension MySQLFullAuthGuardTests {
+  /// A user inbound event fired from one handler's context: it reaches only the handlers after
+  /// it, which is how the tests read the pipeline's order.
+  enum PipelineMarker: Equatable, Sendable { case fromTLS, fromGuard }
 
-  /// Set once the guard refused a login packet, with why: the login error is then `.closed`, so
-  /// the reason is what tells the user what the server asked for.
-  final class FullAuthRefusal: Sendable {
-    enum Reason: Equatable, Sendable {
-      /// An AuthMoreData packet other than fast_auth_success (perform_full_authentication).
-      case fullAuthentication
-      /// An auth switch to a plugin outside the allow-list.
-      case authSwitch(plugin: String)
-      /// A frame of 0xFFFFFF bytes, which the fork would join with the frames after it.
-      case oversizedFrame
-    }
-
-    private let state = OSAllocatedUnfairLock<Reason?>(initialState: nil)
-    var reason: Reason? { state.withLock { $0 } }
-    var refused: Bool { reason != nil }
-    func record(_ reason: Reason) { state.withLock { $0 = $0 ?? reason } }
-  }
-
-  /// Frames the server's login packets (3-byte little-endian length, 1-byte sequence) and, while
-  /// armed, allow-lists them: an AuthMoreData packet (0x01) passes only as exactly [0x01, 0x03]
-  /// (fast_auth_success), and an auth switch request (0xFE) only to caching_sha2_password or
-  /// mysql_native_password. The fork reads just the status and command bytes of AuthMoreData,
-  /// so matching [0x01, 0x04] alone would let [0x01, 0x04, ...] through; and the app always
-  /// passes `allowPublicKeyRetrieval: false`, so no legitimate login more-data packet other than
-  /// [0x01, 0x03] exists. OK (0x00), ERR (0xFF) and the greeting pass.
-  ///
-  /// The guard sees wire frames, but the fork's decoder joins a frame of 0xFFFFFF bytes with the
-  /// frames after it into one message that the first frame's first byte classifies. So, while
-  /// armed, a 0xFFFFFF-byte frame is refused on its header (no greeting or login packet comes
-  /// near 16 MiB), and no byte the guard reads ends the login: only the fork knows when it is
-  /// over. The guard stays armed until the caller runs `disarm()` once the fork's login future
-  /// succeeded, before the first command, so query results are never inspected.
-  ///
-  /// A refused packet is dropped: the guard records the reason and closes the channel from its
-  /// own position, so the close skips the fork's handler (which would write a COM_QUIT), and
-  /// drops every later write.
-  final class FullAuthGuard: ChannelDuplexHandler {
-    typealias InboundIn = ByteBuffer
-    typealias InboundOut = ByteBuffer
-    typealias OutboundIn = ByteBuffer
-    typealias OutboundOut = ByteBuffer
-
-    private enum Phase { case greeting, authentication, passthrough, refused }
-    private static let fastAuthSuccess: [UInt8] = [0x01, 0x03]
-    private static let switchablePlugins = ["caching_sha2_password", "mysql_native_password"]
-    /// A frame this long continues in the next one.
-    private static let continuedLength = 0xFF_FF_FF
-
-    private var phase: Phase
-    private var pending = ByteBuffer()
-    private var context: ChannelHandlerContext?
-    private var forwarding = false
-    private let refusal: FullAuthRefusal
-
-    init(armed: Bool, refusal: FullAuthRefusal) {
-      self.phase = armed ? .greeting : .passthrough
-      self.refusal = refusal
-    }
-
-    /// Stops inspecting packets. Call it on the channel's event loop once the fork's login
-    /// future succeeded; it forwards what the guard still holds. No effect after a refusal.
-    func disarm() {
-      guard let context else { return }
-      context.eventLoop.preconditionInEventLoop()
-      guard phase == .greeting || phase == .authentication else { return }
-      phase = .passthrough
-      if !forwarding { forwardPending(context: context) }
-    }
-
-    func handlerAdded(context: ChannelHandlerContext) { self.context = context }
-
-    func handlerRemoved(context: ChannelHandlerContext) { self.context = nil }
-
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-      switch phase {
-      case .passthrough:
-        context.fireChannelRead(data)
-      case .refused:
-        break
-      case .greeting, .authentication:
-        var incoming = unwrapInboundIn(data)
-        pending.writeBuffer(&incoming)
-        forwardLoginPackets(context: context)
-      }
-    }
-
-    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
-      guard phase != .refused else {
-        promise?.fail(ChannelError.ioOnClosedChannel)
-        return
-      }
-      context.write(data, promise: promise)
-    }
-
-    private func forwardLoginPackets(context: ChannelHandlerContext) {
-      forwarding = true
-      defer { forwarding = false }
-      while phase == .greeting || phase == .authentication,
-        let header = pending.getBytes(at: pending.readerIndex, length: 4)
-      {
-        let length = Int(header[0]) | Int(header[1]) << 8 | Int(header[2]) << 16
-        guard length != Self.continuedLength else {
-          refuse(.oversizedFrame, context: context)
-          return
-        }
-        guard let packet = pending.readSlice(length: 4 + length) else { break }
-        if phase == .greeting {
-          phase = .authentication
-        } else if let reason = Self.refusalReason(Array(packet.readableBytesView.dropFirst(4))) {
-          refuse(reason, context: context)
-          return
-        }
-        context.fireChannelRead(wrapInboundOut(packet))
-      }
-      forwardPending(context: context)
-    }
-
-    /// Once disarmed, hands the bytes still held to the fork; while armed, keeps them.
-    private func forwardPending(context: ChannelHandlerContext) {
-      if phase == .passthrough, pending.readableBytes > 0 {
-        let rest = pending
-        pending = ByteBuffer()
-        context.fireChannelRead(wrapInboundOut(rest))
-      } else {
-        pending.discardReadBytes()
-      }
-    }
-
-    private static func refusalReason(_ payload: [UInt8]) -> FullAuthRefusal.Reason? {
-      switch payload.first {
-      case 0x01:
-        return payload == fastAuthSuccess ? nil : .fullAuthentication
-      case 0xFE:
-        let name = payload.dropFirst().prefix { $0 != 0 }
-        let plugin = String(decoding: name, as: UTF8.self)
-        guard name.endIndex < payload.endIndex, switchablePlugins.contains(plugin) else {
-          return .authSwitch(plugin: plugin)
-        }
-        return nil
-      default:
-        return nil
-      }
-    }
-
-    private func refuse(_ reason: FullAuthRefusal.Reason, context: ChannelHandlerContext) {
-      phase = .refused
-      pending.clear()
-      refusal.record(reason)
-      context.close(mode: .all, promise: nil)
-    }
-  }
-
-  /// Records what the guard forwarded to the fork's decoder.
+  /// Records what the guard forwarded to the fork's decoder, and the markers that reached it
+  /// (kept from the fork's handlers).
   final class InboundSpy: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     typealias InboundOut = ByteBuffer
     var seen: [[UInt8]] = []
+    var markers: [PipelineMarker] = []
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
       seen.append(Array(unwrapInboundIn(data).readableBytesView))
       context.fireChannelRead(data)
     }
 
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+      if let marker = event as? PipelineMarker {
+        markers.append(marker)
+      } else {
+        context.fireUserInboundEventTriggered(event)
+      }
+    }
+  }
+
+  /// Placed directly before the guard: it sees a marker exactly when the guard would.
+  final class MarkerProbe: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+    var markers: [PipelineMarker] = []
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+      if let marker = event as? PipelineMarker { markers.append(marker) }
+      context.fireUserInboundEventTriggered(event)
+    }
   }
 
   /// The connect future's outcome (EmbeddedEventLoop completes it synchronously).
@@ -461,14 +355,12 @@ extension MySQLFullAuthGuardSpikeTests {
       return error
     }
   }
-}
 
-// MARK: - Helpers
-
-extension MySQLFullAuthGuardSpikeTests {
   /// An active channel with the guard (if any) and the spy in front, as the app's bootstrap
-  /// initializer would leave it before `connect(over:)` appends the fork's handlers.
-  static func channel(guard fullAuthGuard: FullAuthGuard?) throws -> (EmbeddedChannel, InboundSpy) {
+  /// initializer leaves it before `connect(over:)` appends the fork's handlers after them.
+  static func channel(
+    guard fullAuthGuard: MySQLFullAuthGuard?
+  ) throws -> (EmbeddedChannel, InboundSpy) {
     let channel = EmbeddedChannel()
     let spy = InboundSpy()
     if let fullAuthGuard { try channel.pipeline.syncOperations.addHandler(fullAuthGuard) }
@@ -479,7 +371,8 @@ extension MySQLFullAuthGuardSpikeTests {
 
   /// Starts the fork's login; `disarming` is disarmed when it succeeds, as the app will do.
   static func login(
-    over channel: EmbeddedChannel, tls: TLSConfiguration?, disarming: FullAuthGuard? = nil
+    over channel: EmbeddedChannel, tls: TLSConfiguration?,
+    disarming: MySQLFullAuthGuard? = nil
   ) -> Captured<MySQLConnection> {
     let connect = MySQLConnection.connect(
       over: channel, username: "dblore", database: "app", password: password,
@@ -489,6 +382,29 @@ extension MySQLFullAuthGuardSpikeTests {
       connect.whenSuccess { _ in bound.value.disarm() }
     }
     return Captured(connect)
+  }
+
+  /// Reads the order from markers: one fired from NIOSSLClientHandler's context reaches the
+  /// probe placed directly before the guard (so TLS comes first), and one fired from the
+  /// guard's context reaches the spy but not the probe (so the guard comes before the spy and
+  /// the fork's handlers appended after it). Without a guard, TLS still comes before the spy.
+  static func expectGuardBetweenTLSAndSpy(
+    _ channel: EmbeddedChannel, fullAuthGuard: MySQLFullAuthGuard?, spy: InboundSpy
+  ) throws {
+    let pipeline = channel.pipeline.syncOperations
+    let tlsContext = try pipeline.context(handlerType: NIOSSLClientHandler.self)
+    guard let fullAuthGuard else {
+      tlsContext.fireUserInboundEventTriggered(PipelineMarker.fromTLS)
+      #expect(spy.markers == [.fromTLS])
+      return
+    }
+    let probe = MarkerProbe()
+    try pipeline.addHandler(probe, position: .before(fullAuthGuard))
+    tlsContext.fireUserInboundEventTriggered(PipelineMarker.fromTLS)
+    try pipeline.context(handler: fullAuthGuard)
+      .fireUserInboundEventTriggered(PipelineMarker.fromGuard)
+    #expect(probe.markers == [.fromTLS])
+    #expect(spy.markers == [.fromTLS, .fromGuard])
   }
 
   static func packet(_ sequence: UInt8, _ payload: [UInt8]) -> ByteBuffer {

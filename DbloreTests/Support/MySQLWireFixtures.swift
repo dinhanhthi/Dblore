@@ -52,10 +52,15 @@ enum MySQLWireFixtures {
     [0xFE] + Array(plugin.utf8) + [0x00] + Array(21...40) + [0x00]
   }
 
-  /// `payload` padded with zeros to 0xFFFFFF bytes, the length at which a packet continues in
-  /// the next one: the receiver joins them into one message.
-  static func padded(_ payload: [UInt8]) -> [UInt8] {
-    payload + [UInt8](repeating: 0, count: 0xFF_FF_FF - payload.count)
+  /// ERR_Packet: 0xFF, 2-byte little-endian error code, '#', 5-character SQLSTATE, message.
+  static func err(code: UInt16, sqlState: String, message: String) -> [UInt8] {
+    [0xFF, UInt8(code & 0xFF), UInt8(code >> 8)] + Array("#\(sqlState)\(message)".utf8)
+  }
+
+  /// `payload` padded with zeros to `length` bytes, by default 0xFFFFFF, the length at which a
+  /// packet continues in the next one: the receiver joins them into one message.
+  static func padded(_ payload: [UInt8], to length: Int = 0xFF_FF_FF) -> [UInt8] {
+    payload + [UInt8](repeating: 0, count: length - payload.count)
   }
 
   /// One packet on the wire: 3-byte little-endian payload length, 1-byte sequence id, payload.
