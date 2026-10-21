@@ -48,6 +48,7 @@ struct MongoSchemaFieldRow: View {
     var id: String { key }
     /// Unique x category (the analyzer's values are distinct)
     let key: String
+    /// Strings quoted, so the string "5" and the number 5 read apart
     let label: String
     let fraction: Double
     let percent: String
@@ -300,7 +301,7 @@ struct MongoSchemaFieldRow: View {
       let present = field.presentCount
       let points = field.topValues.enumerated().map { index, share in
         ValuePoint(
-          key: "\(index)", label: share.value.isEmpty ? #""""# : share.value,
+          key: "\(index)", label: share.isString ? "\"\(share.value)\"" : share.value,
           fraction: fraction(share.count, of: present),
           percent: percent(share.count, of: present), filterValue: share.filterValue)
       }

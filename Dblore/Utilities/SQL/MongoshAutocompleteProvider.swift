@@ -152,7 +152,8 @@ enum MongoshAutocompleteProvider {
   /// Suggestions inside a bare document of `collection`: the text is read as if it followed
   /// `db.getCollection("<collection>").find(` or `...aggregate([{<op>: `. Both prefixes end at
   /// an editor token boundary, so the suggestion texts fit `text` unchanged. The `.stage(op)`
-  /// operator must be a trusted literal stage name: it is interpolated unescaped into the prefix.
+  /// operator is interpolated unescaped into the prefix: one other than `$` and ASCII letters
+  /// gets no suggestions.
   static func documentSuggestions(
     for text: String, at position: Int, collection: String, mode: DocumentMode,
     tables: [DatabaseTable]
@@ -161,11 +162,20 @@ enum MongoshAutocompleteProvider {
     let prefix: String
     switch mode {
     case .filter: prefix = command + ".find("
-    case .stage(let op): prefix = command + ".aggregate([{\(op): "
+    case .stage(let op):
+      guard isStageName(op) else { return [] }
+      prefix = command + ".aggregate([{\(op): "
     }
     let cursor = min(max(position, 0), (text as NSString).length)
     return suggestions(
       for: prefix + text, at: (prefix as NSString).length + cursor, tables: tables)
+  }
+
+  /// `$` then one or more ASCII letters
+  private static func isStageName(_ op: String) -> Bool {
+    let units = Array(op.utf16)
+    return units.count > 1 && units[0] == 0x24
+      && units.dropFirst().allSatisfy { (0x41...0x5A).contains($0) || (0x61...0x7A).contains($0) }
   }
 
   // MARK: - Candidates
@@ -370,11 +380,13 @@ enum MongoshAutocompleteProvider {
     return start
   }
 
-  fileprivate static func isWordStart(_ c: unichar) -> Bool {
+  fileprivate nonisolated static func isWordStart(_ c: unichar) -> Bool {
     (0x41...0x5A).contains(c) || (0x61...0x7A).contains(c) || c == 0x5F || c == 0x24  // _ $
   }
 
-  fileprivate static func isWordPart(_ c: unichar) -> Bool {
+  /// A word character of the suggestions (ASCII letters, digits, `_`, `$`), the word a
+  /// suggestion replaces; the query field's editing reads words with it too
+  nonisolated static func isWordPart(_ c: unichar) -> Bool {
     isWordStart(c) || (0x30...0x39).contains(c)
   }
 

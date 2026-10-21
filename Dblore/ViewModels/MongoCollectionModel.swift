@@ -97,6 +97,8 @@ final class MongoCollectionModel {
   private(set) var indexEpoch: UInt64?
   /// Names of the index rows showing their key, kept across section switches
   var expandedIndexes: Set<String> = []
+  /// Stage selected in the Aggregations builder, kept across section switches
+  var selectedStage: AggregationBuilderModel.Stage.ID?
   /// What the server can do (hidden indexes), nil until read
   private(set) var serverFeatures: MongoServerFeatures?
   private(set) var validationState: ValidationState = .idle
@@ -143,10 +145,11 @@ final class MongoCollectionModel {
   }
 
   /// Show Aggregations (building the builder on first use) with the given stages in place of
-  /// the current ones. Nothing runs.
+  /// the current ones, the first one selected. Nothing runs.
   func showGeneratedPipeline(_ stages: [AIMongoAssist.GeneratedStage]) {
     section = .aggregations
     aggregationModel?.replaceStages(stages)
+    selectedStage = aggregationModel?.stages.first?.id
   }
 
   /// Read the indexes once: only while nothing was loaded or tried yet.
@@ -229,10 +232,13 @@ final class MongoCollectionModel {
     }
   }
 
-  /// Drop the reads in flight; their results are ignored. A cancelled read can start again. An
-  /// export is stopped too (no file left), and one whose save panel is open does not start.
+  /// Drop the reads in flight, aggregation run and previews included; their results are
+  /// ignored. A cancelled read can start again. An export is stopped too (no file left), and one
+  /// whose save panel is open does not start.
   func cancel() {
     export?.dismiss()
+    aggregationModel?.cancelRun()
+    aggregationModel?.cancelPreviews()
     indexTask?.cancel()
     indexTask = nil
     if case .loading = indexState { indexState = .idle }

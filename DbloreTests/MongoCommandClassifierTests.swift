@@ -172,6 +172,24 @@ struct MongoCommandClassifierTests {
         "db.c.createIndex({a: 1}, {partialFilterExpression: {a: {$gt: 1}}})"))
   }
 
+  @Test("Server-side JavaScript nested in arrays and sub-pipelines is found, in exact case only")
+  func javaScriptNestedAndCase() {
+    for text in [
+      "db.c.find({$and: [{a: 1}, {$or: [{b: 2}, {$where: \"1\"}]}]})",
+      "db.c.aggregate([{$facet: {x: [{$lookup: {from: \"d\", as: \"y\", pipeline: "
+        + "[{$match: {$expr: {$function: {body: \"\", args: [], lang: \"js\"}}}}]}}]}}])",
+      "db.c.updateOne({}, [{$set: {n: {$accumulator: {}}}}])",
+    ] {
+      // Parsed, so the scan finds the key rather than failing closed
+      #expect((try? MongoshParser.parse(text)) != nil, "\(text)")
+      #expect(MongoCommandClassifier.usesServerSideJavaScript(text), "\(text)")
+    }
+    // The server matches operators in exact case: `$Where` is an unknown operator, not JavaScript
+    for text in ["db.c.find({$Where: \"1\"})", "db.c.find({a: {$FUNCTION: 1}})"] {
+      #expect(!MongoCommandClassifier.usesServerSideJavaScript(text), "\(text)")
+    }
+  }
+
   @Test("An explain is a read only when the explained command is one, never a write")
   func explain() throws {
     for text in [

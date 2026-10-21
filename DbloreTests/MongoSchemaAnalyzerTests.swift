@@ -5,8 +5,9 @@
 // array element documents entered without an index; top values with counts for strings
 // (apart from numbers and bools of the same text), numbers and bools, number and date ranges,
 // weekday and hour histograms for dates and ObjectId timestamps read with the injected
-// Calendar; the exact filter value of a top value (none for a cut text). sampleCommand refuses
-// server-side JavaScript in the filter and builds `$sample` or `find().limit()` text.
+// Calendar; the exact filter value of a top value (none for a cut text); the 5,000 field node
+// cap and its truncation flag. sampleCommand refuses server-side JavaScript in the filter and
+// builds `$sample` or `find().limit()` text.
 // MongoSchemaFilter edits filter text from schema clicks; MongoSchemaExport writes JSON Schema and
 // `$jsonSchema`.
 //
@@ -186,6 +187,8 @@ struct MongoSchemaAnalyzerTests {
       qty.topValues.map(\.filterValue) == [
         .int32(5), .int32(-1), .int32(2), .string("5"), .double(7.5),
       ])
+    // Regression: the two `5` shares keep their kind, so the view can quote the string one.
+    #expect(qty.topValues.map(\.isString) == [false, false, false, true, false])
     #expect(status.topValues.first?.filterValue == .string("active"))
     // A text cut at 256 characters is no exact value.
     let note = try #require(try Self.field("note", in: report).topValues.first)
@@ -214,6 +217,21 @@ struct MongoSchemaAnalyzerTests {
     let nested = try Self.field("a.", in: report)
     #expect(nested.depth == 2)
     #expect(Self.types(nested.types) == ["int:1", "undefined:1"])
+  }
+
+  @Test("Node cap: fields stop at 5,000 and the report is flagged truncated")
+  func nodeCap() throws {
+    let wide = MongoValue.document(
+      (0..<(MongoSchemaAnalyzer.nodeLimit + 10)).map { MongoValue.Field("k\($0)", .int32(1)) })
+
+    let report = MongoSchemaAnalyzer.analyze([wide], calendar: try Self.calendar())
+
+    #expect(report.fields.count == 5_000)
+    #expect(report.isTruncated)
+    #expect(report.fields.last?.path == "k4999")
+    let small = MongoSchemaAnalyzer.analyze(
+      try Self.parse(["{a: 1}"]), calendar: try Self.calendar())
+    #expect(!small.isTruncated)
   }
 
   @Test("Dates and ObjectId timestamps: range, weekday and hour histograms in the calendar's zone")

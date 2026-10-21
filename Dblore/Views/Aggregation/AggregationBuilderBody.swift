@@ -41,7 +41,11 @@ struct AggregationBuilderBody: View {
       resultsPane
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    .onAppear { selectedStage = selectedStage ?? model.stages.first?.id }
+    .onAppear {
+      if selectedStage.map({ id in !model.stages.contains { $0.id == id } }) ?? true {
+        selectedStage = model.stages.first?.id
+      }
+    }
     .onChange(of: model.stages.map(\.id)) { _, ids in
       if selectedStage.map({ !ids.contains($0) }) ?? true {
         selectedStage = ids.first

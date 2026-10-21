@@ -63,7 +63,9 @@ nonisolated enum QueryFieldEditing {
     else { return end }
     let ns = text as NSString
     var tailStart = caret
-    while tailStart < NSMaxRange(range), isWordPart(ns.character(at: tailStart)) {
+    while tailStart < NSMaxRange(range),
+      MongoshAutocompleteProvider.isWordPart(ns.character(at: tailStart))
+    {
       tailStart += 1
     }
     let tail = ns.substring(
@@ -163,13 +165,6 @@ nonisolated enum QueryFieldEditing {
     var index = offset
     while index > 0, ns.character(at: index - 1) == 0x5C { index -= 1 }
     return (offset - index) % 2 == 1
-  }
-
-  /// A word character of the mongosh suggestions (ASCII letters, digits, `_`, `$`), the word a
-  /// suggestion replaces
-  private static func isWordPart(_ unit: unichar) -> Bool {
-    (0x41...0x5A).contains(unit) || (0x61...0x7A).contains(unit) || (0x30...0x39).contains(unit)
-      || unit == 0x5F || unit == 0x24
   }
 
   private static func isWordCharacter(_ character: Character) -> Bool {

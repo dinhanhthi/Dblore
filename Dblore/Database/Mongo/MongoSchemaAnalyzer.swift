@@ -6,7 +6,8 @@
 // - Paths: top-level keys, keys of embedded documents and keys of documents inside arrays (no
 //   index in the path), down to three segments. Scalar array elements get no path of their own;
 //   they are counted in the array field's `elementTypes`. The dotted `path` is for display only;
-//   `keyPath` (the keys one by one) identifies a field.
+//   `keyPath` (the keys one by one) identifies a field. At most 5,000 field nodes are kept;
+//   keys first seen past that are skipped and the report is flagged truncated.
 // - Presence: every document met at a path (top-level document, embedded document, array
 //   element document) is one parent occurrence of its keys. A parent occurrence lacking the key
 //   counts as type "undefined"; a null or missing parent is not an occurrence.
@@ -35,6 +36,8 @@ nonisolated enum MongoSchemaAnalyzer {
   static let undefinedTypeName = "undefined"
   /// Characters kept of a counted value or sample text; longer texts end with "…".
   static let valueTextLimit = 256
+  /// Field nodes kept; keys first seen past this are skipped.
+  static let nodeLimit = 5_000
 
   nonisolated struct TypeShare: Equatable, Sendable {
     let name: String
@@ -45,6 +48,8 @@ nonisolated enum MongoSchemaAnalyzer {
     /// Display text: raw text for a string, mongosh text for a number or bool (cut at 256).
     let value: String
     let count: Int
+    /// A string, apart from a number or bool of the same text ("5" and 5).
+    let isString: Bool
     /// The exact value to filter on (`.string` apart from numbers of the same text); nil when
     /// the counted text was cut.
     let filterValue: MongoValue?
@@ -88,6 +93,8 @@ nonisolated enum MongoSchemaAnalyzer {
     let sampleSize: Int
     /// Tree order: top-level fields first seen first (`_id` first), children after their parent.
     let fields: [Field]
+    /// Keys were skipped past `nodeLimit` field nodes.
+    let isTruncated: Bool
   }
 
   /// A sample filter that cannot be sent.
@@ -116,7 +123,8 @@ nonisolated enum MongoSchemaAnalyzer {
       sampleSize += 1
       state.visit(fields, under: nil)
     }
-    return Report(sampleSize: sampleSize, fields: state.fields())
+    return Report(
+      sampleSize: sampleSize, fields: state.fields(), isTruncated: state.isTruncated)
   }
 
   // MARK: - Sample command
@@ -242,6 +250,8 @@ extension MongoSchemaAnalyzer {
     var roots: [Int] = []
     /// Top-level documents met.
     var documentCount = 0
+    /// A key was skipped past `nodeLimit` nodes.
+    var isTruncated = false
 
     init(calendar: Calendar) {
       self.calendar = calendar
@@ -261,14 +271,19 @@ extension MongoSchemaAnalyzer {
       guard depth < MongoSchemaAnalyzer.maxDepth else { return }
       var seen = Set<String>()
       for field in fields where seen.insert(field.key).inserted {
-        add(field.value, at: node(field.key, under: parent))
+        guard let node = node(field.key, under: parent) else { continue }
+        add(field.value, at: node)
       }
     }
 
-    /// The node of `key` under `parent`, created on first sight.
-    private mutating func node(_ key: String, under parent: Int?) -> Int {
+    /// The node of `key` under `parent`, created on first sight; nil past `nodeLimit` nodes.
+    private mutating func node(_ key: String, under parent: Int?) -> Int? {
       let nodeKey = NodeKey(parent: parent, key: key)
       if let index = nodeIndex[nodeKey] { return index }
+      guard nodes.count < MongoSchemaAnalyzer.nodeLimit else {
+        isTruncated = true
+        return nil
+      }
       let index = nodes.count
       let keyPath = (parent.map { nodes[$0].keyPath } ?? []) + [key]
       nodes.append(Accumulator(parent: parent, keyPath: keyPath))
@@ -384,7 +399,9 @@ extension MongoSchemaAnalyzer {
         }
         .prefix(MongoSchemaAnalyzer.topValueLimit)
         .map {
-          ValueShare(value: $0.key.text, count: $0.value.count, filterValue: $0.value.filterValue)
+          ValueShare(
+            value: $0.key.text, count: $0.value.count, isString: $0.key.isString,
+            filterValue: $0.value.filterValue)
         }
       return Field(
         keyPath: accumulator.keyPath, presentCount: presentCount,

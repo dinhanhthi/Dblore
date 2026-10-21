@@ -618,6 +618,14 @@ struct MongoSessionTests {
     #expect(tlsSession.formatError(ChannelError.ioOnClosedChannel) == MongoSession.tlsHint)
   }
 
+  @Test("Only a missing privilege (13, Atlas 8000) is unauthorized, never a timeout")
+  func unauthorized() {
+    #expect(MongoSessionError(code: 13, codeName: "Unauthorized", message: "x").isUnauthorized)
+    #expect(MongoSessionError(code: 8000, codeName: "AtlasError", message: "x").isUnauthorized)
+    #expect(!MongoSessionError(code: 50, codeName: "MaxTimeMSExpired", message: "x").isUnauthorized)
+    #expect(!MongoSessionError(message: "The connection to the server is closed.").isUnauthorized)
+  }
+
   @Test("buildInfo versions parse without their suffix; an unknown version enables every feature")
   func serverVersionFeatures() {
     #expect(MongoServerVersion("4.4.29-rc0") == MongoServerVersion(4, 4, 29))

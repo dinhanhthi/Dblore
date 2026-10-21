@@ -327,6 +327,23 @@ struct DataViewerMongoTests {
     await manager.disconnect()
   }
 
+  @Test("The collection model is kept for the same collection, replaced for another, nil on SQL")
+  func collectionModelSync() async throws {
+    let (viewModel, manager, _) = try await Self.connected()
+    let model = try #require(viewModel.mongoCollectionModel)
+    viewModel.dataViewer = Self.state(page: 2, filter: "{a: 1}")
+    #expect(viewModel.mongoCollectionModel === model)
+    viewModel.dataViewer = Self.state(name: "orders")
+    let other = try #require(viewModel.mongoCollectionModel)
+    #expect(other !== model)
+    #expect(other.collection == "orders")
+    viewModel.notebook.connectionConfig?.databaseType = .postgresql
+    viewModel.dataViewer = DataViewerState(
+      schema: "public", name: "orders", orderColumns: ["id"], page: 1, pageSize: 100)
+    #expect(viewModel.mongoCollectionModel == nil)
+    await manager.disconnect()
+  }
+
   @Test("A data viewer tab on a MongoDB workspace gets the mongodb dialect")
   func tabDialect() throws {
     let manager = WorkspaceManager(
@@ -336,5 +353,18 @@ struct DataViewerMongoTests {
     let viewModel = try #require(manager.viewModel(for: id))
     #expect(viewModel.sqlDialect == .mongodb)
     #expect(viewModel.dataViewer?.databaseType == .mongodb)
+  }
+
+  @Test("A generated pipeline selects its first stage")
+  func generatedPipelineSelection() throws {
+    let model = MongoCollectionModel(
+      database: "db", collection: "users",
+      connectionManager: DatabaseConnectionManager())
+    model.section = .aggregations
+    model.selectedStage = try #require(model.aggregationModel?.stages.first?.id)
+    model.section = .documents
+    model.showGeneratedPipeline([.init(operator: "$match", body: "{a: 1}")])
+    let ids = try #require(model.aggregationModel).stages.map(\.id)
+    #expect(model.selectedStage == ids.first)
   }
 }

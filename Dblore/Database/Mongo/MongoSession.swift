@@ -70,6 +70,12 @@ nonisolated struct MongoSessionError: Error, Equatable, Sendable, LocalizedError
   /// A write error: the documents written before it (`n` of the reply)
   var written: Int?
 
+  /// The server refused a command for a missing privilege: `Unauthorized` (13), or
+  /// `AtlasError` (8000), Atlas's answer to an action the user's role does not allow.
+  var isUnauthorized: Bool {
+    code == 13 || code == 8000 || codeName == "Unauthorized" || codeName == "AtlasError"
+  }
+
   var errorDescription: String? {
     guard let code else { return message }
     return "ERROR \(code) (\(codeName ?? "MongoServerError")): \(message)"

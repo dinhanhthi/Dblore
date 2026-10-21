@@ -1614,7 +1614,10 @@ class WorkspaceManager: Identifiable {
       }
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
-      if !tab.title.hasSuffix(".sql") {
+      if tab.title.lowercased().hasSuffix(".js") {
+        panel.nameFieldStringValue = String(tab.title.dropLast(3))
+      }
+      if !panel.nameFieldStringValue.hasSuffix(".sql") {
         panel.nameFieldStringValue += ".sql"
       }
     case .markdown:

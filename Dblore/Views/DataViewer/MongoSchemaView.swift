@@ -175,6 +175,8 @@ struct MongoSchemaView: View {
     case .done(let report):
       "Based on a sample of \(report.sampleSize.formatted()) "
         + (report.sampleSize == 1 ? "document" : "documents")
+        + (report.isTruncated
+          ? " · first \(MongoSchemaAnalyzer.nodeLimit.formatted()) fields only" : "")
     }
   }
 

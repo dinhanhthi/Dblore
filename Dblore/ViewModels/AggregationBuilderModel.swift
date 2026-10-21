@@ -874,6 +874,12 @@ final class AggregationBuilderModel: Identifiable {
     cancelStalePreviews()
   }
 
+  /// Cancels every preview in flight; nothing is shown for them and they can run again.
+  func cancelPreviews() {
+    for running in inFlight.values { running.task.cancel() }
+    inFlight = [:]
+  }
+
   /// Cancels in-flight previews whose command no stage would send any more.
   private func cancelStalePreviews() {
     let current = Set(stages.compactMap { previewCommand(for: $0.id) })
