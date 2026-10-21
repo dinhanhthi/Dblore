@@ -24,7 +24,13 @@ struct CellInfoContent: View {
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
   @State private var isWordWrapEnabled = true
+  /// Off-main Format JSON of a large value; nil when idle
+  @State private var formatTask: Task<Void, Never>?
   @FocusState private var isTextEditorFocused: Bool
+
+  /// Values above this many UTF-8 bytes are never beautified or highlighted on the main actor:
+  /// they show raw in a LargeTextView, and Format JSON pretty-prints them off the main actor
+  static let maxHighlightedBytes = 256 * 1024
 
   @Environment(NotebookViewModel.self) private var viewModel
 
@@ -118,12 +124,24 @@ struct CellInfoContent: View {
             }
 
             // Beautify button (only for string type)
-            if isStringValue {
+            if isStringValue && formatTask != nil {
+              ProgressView()
+                .controlSize(.small)
+
+              FloatingPanelButton(
+                icon: "xmark",
+                helpText: "Cancel Format JSON",
+                useSymbolEffect: false,
+                action: cancelFormat
+              )
+            } else if isStringValue {
               FloatingPanelToggleButton(
                 icon: "curlybraces",
-                helpText: isBeautified ? "Show Original" : "Beautify JSON",
+                helpText: isBeautified
+                  ? "Show Original" : isLargeValue ? "Format JSON" : "Beautify JSON",
                 isActive: isBeautified,
-                action: isBeautified ? showOriginal : { beautifyJSON() }
+                action: isBeautified
+                  ? showOriginal : isLargeValue ? formatLargeJSON : { beautifyJSON() }
               )
             }
 
@@ -199,7 +217,16 @@ struct CellInfoContent: View {
         }
       } else {
         // Read-only view for non-boolean types
-        if isBeautified {
+        if isLargeValue {
+          // Too large for a SwiftUI Text: lazily laid-out text view, never highlighted
+          LargeTextView(
+            text: isBeautified ? beautifiedJSON : value.fullString,
+            wrapsLines: isWordWrapEnabled
+          )
+          .frame(maxHeight: .infinity, alignment: .top)
+          .background(Color.tableHeaderBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        } else if isBeautified {
           // Nested ScrollViews for both axes to avoid centering issue
           // Horizontal outside so scrollbar is always visible at bottom
           if isWordWrapEnabled {
@@ -270,8 +297,10 @@ struct CellInfoContent: View {
       }
       beautifyJSON(silent: true)
     }
+    .onDisappear(perform: cancelFormat)
     .onChange(of: value) { _, newValue in
       // Reset beautified state when value changes
+      cancelFormat()
       isBeautified = false
       beautifiedJSON = ""
 
@@ -311,6 +340,18 @@ struct CellInfoContent: View {
     return false
   }
 
+  /// Sized from the value, without building its text (base64 of a whole blob for `.data`)
+  private var isLargeValue: Bool {
+    switch value {
+    case .string(let text), .json(let text):
+      text.utf8.count > Self.maxHighlightedBytes
+    case .data(let data):
+      (data.count + 2) / 3 * 4 > Self.maxHighlightedBytes
+    case .int, .double, .bool, .null, .date:
+      false
+    }
+  }
+
   private var hasBooleanValueChanged: Bool {
     editedBoolValue != originalBoolValue
   }
@@ -326,6 +367,7 @@ struct CellInfoContent: View {
   }
 
   private func startEdit() {
+    cancelFormat()
     editedValue = value.fullString
     isEditing = true
     isTextEditorFocused = true
@@ -392,7 +434,7 @@ struct CellInfoContent: View {
 
   /// `silent` is used for automatic beautification: no toasts, and only for JSON objects/arrays.
   private func beautifyJSON(silent: Bool = false) {
-    guard case .string(let stringValue) = value else { return }
+    guard case .string(let stringValue) = value, !isLargeValue else { return }
 
     if silent {
       let first = stringValue.first(where: { !$0.isWhitespace })
@@ -416,7 +458,8 @@ struct CellInfoContent: View {
 
       // Check if entire data was consumed by trying to parse again from start
       // If there's trailing data, JSONSerialization will only parse the first valid object
-      let serializedData = try JSONSerialization.data(withJSONObject: parsedObject, options: [])
+      let serializedData = try JSONSerialization.data(
+        withJSONObject: parsedObject, options: .fragmentsAllowed)
 
       // Compare original data length with serialized length
       // If original is significantly longer, there's likely trailing invalid JSON
@@ -431,7 +474,7 @@ struct CellInfoContent: View {
       // Generate pretty printed version
       let prettyData = try JSONSerialization.data(
         withJSONObject: parsedObject,
-        options: .prettyPrinted
+        options: [.prettyPrinted, .fragmentsAllowed]
       )
 
       guard let prettyString = String(data: prettyData, encoding: .utf8) else {
@@ -455,6 +498,37 @@ struct CellInfoContent: View {
   private func showOriginal() {
     isBeautified = false
     beautifiedJSON = ""
+  }
+
+  /// Format JSON for a large value: pretty-prints off the main actor, shown raw (no highlight)
+  private func formatLargeJSON() {
+    guard case .string(let stringValue) = value, formatTask == nil else { return }
+    formatTask = Task {
+      let pretty = await Self.prettyPrintedJSON(stringValue)
+      guard !Task.isCancelled else { return }
+      formatTask = nil
+      guard let pretty else {
+        viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error)
+        return
+      }
+      beautifiedJSON = pretty
+      isBeautified = true
+    }
+  }
+
+  private func cancelFormat() {
+    formatTask?.cancel()
+    formatTask = nil
+  }
+
+  /// Pretty-printed `json`, or nil when it is not valid JSON. `@concurrent` leaves the main actor.
+  @concurrent nonisolated private static func prettyPrintedJSON(_ json: String) async -> String? {
+    guard let data = json.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data, options: .allowFragments),
+      let pretty = try? JSONSerialization.data(
+        withJSONObject: object, options: [.prettyPrinted, .fragmentsAllowed])
+    else { return nil }
+    return String(data: pretty, encoding: .utf8)
   }
 }
 

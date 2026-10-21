@@ -46,13 +46,14 @@ nonisolated enum SQLiteFileAccess {
           "Allow access to the folder \"\(url.deletingLastPathComponent().lastPathComponent)\" "
           + "so Dblore can write the journal files of \"\(url.lastPathComponent)\".")
     }
+    /// Arbiter calls go through `presenterQueue`, in order, so none blocks the caller
     var addPresenter: (SidecarFilePresenter) -> Void = { presenter in
-      NSFileCoordinator.addFilePresenter(presenter)
-      // Registration finishes asynchronously. Reading the list waits for it.
-      _ = NSFileCoordinator.filePresenters
+      presenterQueue.async { NSFileCoordinator.addFilePresenter(presenter) }
     }
+    /// Once after the presenters of one open are added
+    var waitForPresenters: () -> Void = { waitForPresenterRegistration() }
     var removePresenter: @Sendable (SidecarFilePresenter) -> Void = { presenter in
-      NSFileCoordinator.removeFilePresenter(presenter)
+      presenterQueue.async { NSFileCoordinator.removeFilePresenter(presenter) }
     }
     var probe: (URL) throws -> Void = { url in
       try probeWritable(url)
@@ -80,6 +81,35 @@ nonisolated enum SQLiteFileAccess {
       self.queue = queue
       super.init()
     }
+  }
+
+  /// Longest wait for a file coordination call. Past it, checks go on without the grant and
+  /// fail closed where the sandbox denies them.
+  static let presenterRegistrationTimeout: DispatchTimeInterval = .seconds(2)
+  /// Serial: a stalled arbiter holds one thread here, not one per wait. Once a block stalls,
+  /// the queue stays blocked for the rest of the process: later opens and backups pay the
+  /// timeout and fail closed, and queued adds and removals never run.
+  static let presenterQueue = DispatchQueue(label: "dblore.sqlite.presenter-registration")
+
+  /// Waits until the presenters added so far are registered, at most
+  /// `presenterRegistrationTimeout`. Registration finishes asynchronously and reading the list
+  /// waits for it. The arbiter registers a sidecar presenter with a synchronous request to the
+  /// file coordination daemon, which has been seen never to answer. Returns false then.
+  @discardableResult
+  static func waitForPresenterRegistration() -> Bool {
+    onPresenterQueue { _ = NSFileCoordinator.filePresenters }
+  }
+
+  /// Runs `work` on `presenterQueue` and waits for it at most `presenterRegistrationTimeout`,
+  /// so a stalled arbiter stalls that queue, not the caller. Returns false when the wait ends.
+  @discardableResult
+  static func onPresenterQueue(_ work: @escaping @Sendable () -> Void) -> Bool {
+    let done = DispatchSemaphore(value: 0)
+    presenterQueue.async {
+      work()
+      done.signal()
+    }
+    return done.wait(timeout: .now() + presenterRegistrationTimeout) == .success
   }
 
   /// Security scope and sidecar presenters for one open. `release()` is idempotent and
@@ -177,6 +207,7 @@ nonisolated enum SQLiteFileAccess {
     for presenter in presenters {
       hooks.addPresenter(presenter)
     }
+    hooks.waitForPresenters()
 
     var folderBookmark: Data?
     var readOnly = config.readOnlyFile

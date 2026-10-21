@@ -9,7 +9,9 @@
 // `pg_get_indexdef` and `pg_get_constraintdef`. Needs PostgreSQL 11+ (`pg_constraint.conparentid`).
 // MySQL dumps the base tables and views of the connected database (`SHOW CREATE TABLE`,
 // `SHOW CREATE VIEW`). View dependencies come from `information_schema.VIEW_TABLE_USAGE` where
-// the server has it (MySQL 8.0.13+), else views fall back to name order.
+// the server has it (MySQL 8.0.13+), else views fall back to name order. MariaDB has no
+// VIEW_TABLE_USAGE: the views each `information_schema.VIEWS.VIEW_DEFINITION` names are its
+// dependencies.
 // SQLite dumps the `main` database: `sqlite_master` in rowid order, shadow tables from
 // `pragma_table_list` (SQLite 3.37+, else the name prefix rule) and `sqlite_sequence`.
 // DuckDB dumps the connected database (`current_database()`), without internal and temporary
@@ -335,15 +337,19 @@ nonisolated enum SQLDumpCatalog {
             schema: database, table: name, in: reader),
           createStatement: statement))
     }
+    let isMariaDB =
+      try await rows(reader, "SELECT VERSION()").first.flatMap({ text($0, 0) }).flatMap(
+        MySQLServerInfo.init(version:))?.flavor == .mariadb
     var dependencies: [String: [SQLDumpDDL.ObjectName]] = [:]
-    // Not on MariaDB: an error inside the transaction leaves it open, and the views keep
-    // name order
-    if let usage = try? await rows(
-      reader,
-      """
-      SELECT VIEW_NAME, TABLE_SCHEMA, TABLE_NAME FROM information_schema.VIEW_TABLE_USAGE
-      WHERE VIEW_SCHEMA = ?
-      """, binds: [.text(database)])
+    // Not on MySQL before 8.0.13: an error inside the transaction leaves it open, and the views
+    // keep name order
+    if !isMariaDB,
+      let usage = try? await rows(
+        reader,
+        """
+        SELECT VIEW_NAME, TABLE_SCHEMA, TABLE_NAME FROM information_schema.VIEW_TABLE_USAGE
+        WHERE VIEW_SCHEMA = ?
+        """, binds: [.text(database)])
     {
       for row in usage {
         guard let view = text(row, 0), let schema = text(row, 1), let table = text(row, 2)
@@ -351,12 +357,21 @@ nonisolated enum SQLDumpCatalog {
         dependencies[view, default: []].append(SQLDumpDDL.ObjectName(schema: schema, name: table))
       }
     }
-    var views: [SQLDumpDDL.View] = []
-    for row in try await rows(
+    let listed = try await rows(
       reader,
-      "SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME",
+      "SELECT TABLE_NAME\(isMariaDB ? ", VIEW_DEFINITION" : "") FROM information_schema.VIEWS"
+        + " WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME",
       binds: [.text(database)])
-    {
+    if isMariaDB {
+      let names = Set(listed.compactMap { text($0, 0) })
+      for row in listed {
+        guard let name = text(row, 0), let definition = text(row, 1) else { continue }
+        dependencies[name] = mariadbViewDependencies(
+          definition, schema: database, viewNames: names)
+      }
+    }
+    var views: [SQLDumpDDL.View] = []
+    for row in listed {
       guard let name = text(row, 0) else { continue }
       let create = try await rows(reader, "SHOW CREATE VIEW \(try dialect.quoteIdentifier(name))")
       guard let statement = create.first.flatMap({ text($0, 1) }) else { continue }
@@ -365,6 +380,42 @@ nonisolated enum SQLDumpCatalog {
           schema: database, name: name, sql: statement, dependsOn: dependencies[name] ?? []))
     }
     return SQLDumpDDL.MySQLInput(tables: tables, views: views)
+  }
+
+  /// Views of `schema` among `viewNames` that a MariaDB `VIEW_DEFINITION` names: backtick-quoted
+  /// names exactly, bare ones without ASCII case. A name after `.` counts only when `schema` is
+  /// before the dot (`schema`.`view`, not another schema's view or `view`.`column`). String
+  /// literals and comments are skipped.
+  static func mariadbViewDependencies(
+    _ definition: String, schema: String, viewNames: Set<String>
+  ) -> [SQLDumpDDL.ObjectName] {
+    let bareNames = Dictionary(grouping: viewNames, by: SQLTokenizer.asciiUppercased)
+    func names(_ token: SQLToken) -> [String] {
+      switch token.kind {
+      case .quotedIdentifier: viewNames.contains(token.text) ? [token.text] : []
+      case .word: bareNames[token.text] ?? []
+      default: []
+      }
+    }
+    func isSchema(_ token: SQLToken) -> Bool {
+      switch token.kind {
+      case .quotedIdentifier: token.text == schema
+      case .word: token.text == SQLTokenizer.asciiUppercased(schema)
+      default: false
+      }
+    }
+    let tokens = SQLTokenizer(dialect: .mysql).tokens(definition)
+    var found: [SQLDumpDDL.ObjectName] = []
+    for (position, token) in tokens.enumerated() {
+      if position >= 2, tokens[position - 1].isSymbol("."), !isSchema(tokens[position - 2]) {
+        continue
+      }
+      for name in names(token).sorted() {
+        let object = SQLDumpDDL.ObjectName(schema: schema, name: name)
+        if !found.contains(object) { found.append(object) }
+      }
+    }
+    return found
   }
 
   // MARK: - SQLite

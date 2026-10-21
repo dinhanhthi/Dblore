@@ -255,6 +255,32 @@ struct StructureEditorModelTests {
     #expect(model.workingConstraints.map(\.id) == [before[0], before[2]])
   }
 
+  @Test("Index rows keep their ids when an earlier row is dropped, removed or its column renamed")
+  func indexRowIDsAreStable() async throws {
+    let model = makeModel(FakeStructureDatabase(structure: Self.items))
+    await model.load()
+    model.addColumn(Self.newColumn("a", "text"))
+    model.addIndex(
+      StructureChange.NewIndex(name: "by_id", columns: ["id"], isUnique: true, method: nil))
+    model.addIndex(
+      StructureChange.NewIndex(name: "by_a", columns: ["a"], isUnique: false, method: "hash"))
+    let before = model.workingIndexes.map(\.id)
+    #expect(Set(before).count == 3)
+
+    // Renaming the column an added index uses keeps its id
+    model.rename(.added("a"), to: "a2")
+    #expect(model.workingIndexes.map(\.id) == before)
+
+    model.dropIndex(named: "items_name")
+    model.dropIndex(named: "by_id")
+    #expect(model.workingIndexes.map(\.state) == [.dropped, .added])
+    #expect(model.workingIndexes.map(\.id) == [before[0], before[2]])
+    let kept = try #require(model.workingIndexes.last?.index)
+    #expect(kept.name == "by_a")
+    #expect(kept.keys == [.column("a2")])
+    #expect(kept.method == "hash")
+  }
+
   @Test("A builder error shows inline and disables Apply")
   func builderErrorDisablesApply() async throws {
     let model = makeModel(FakeStructureDatabase(structure: Self.items))

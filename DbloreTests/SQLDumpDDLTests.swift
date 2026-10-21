@@ -372,6 +372,30 @@ struct SQLDumpDDLTests {
     #expect(script.tables.map(\.overridingSystemValue) == [false])
   }
 
+  @Test func mariadbViewsFollowTheViewsTheirDefinitionsName() throws {
+    // MariaDB has no VIEW_TABLE_USAGE: a view on a view that sorts first comes second. String
+    // literals and another schema's view of the same name are not references.
+    let definitions = [
+      "big_order_ids": "select `qa`.`big_orders`.`id` AS `id` from `qa`.`big_orders`",
+      "big_orders":
+        "select `qa`.`orders`.`id` AS `id`,'big_order_ids' AS `s` from (`qa`.`orders`"
+        + " join `other`.`big_order_ids`)",
+    ]
+    let names = Set(definitions.keys)
+    let views = definitions.keys.sorted().map { name in
+      SQLDumpDDL.View(
+        schema: "qa", name: name, sql: "CREATE VIEW `\(name)` AS \(definitions[name]!)",
+        dependsOn: SQLDumpCatalog.mariadbViewDependencies(
+          definitions[name]!, schema: "qa", viewNames: names))
+    }
+    let script = try SQLDumpDDL.mysql(SQLDumpDDL.MySQLInput(tables: [], views: views))
+    #expect(
+      script.postData == [
+        "CREATE VIEW `big_orders` AS \(definitions["big_orders"]!);",
+        "CREATE VIEW `big_order_ids` AS \(definitions["big_order_ids"]!);",
+      ])
+  }
+
   @Test func mysqlDefinerRemovalHandlesQuotedAndBareUsers() {
     #expect(
       SQLDumpDDL.removingDefiner("CREATE DEFINER='app'@'10.0.0.%' VIEW `v` AS select 1")

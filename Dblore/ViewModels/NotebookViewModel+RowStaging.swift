@@ -36,6 +36,8 @@ struct PendingStagedBatch: Sendable {
   struct MongoInlineEdit: Sendable {
     /// The notebook cell to re-run, nil for the editor or the data viewer
     var cellId: UUID?
+    /// Edit target of the edited result: the editor refresh re-runs only that result
+    var target: EditTarget
   }
 
   struct MongoStagedChanges: Sendable {
