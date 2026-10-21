@@ -114,7 +114,17 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private var queriesRecorded: [String] = []
   private var typedRecorded: [MongoCommand] = []
   private var didEmitClose = false
-  private var slowContinuation: CheckedContinuation<Void, Error>?
+  /// Slow reads waiting for `interrupt`, which ends them all
+  private var slowContinuations: [CheckedContinuation<Void, Error>] = []
+  private var interruptReport: (@Sendable () async -> Bool?)?
+  /// `interrupt` leaves the slow reads waiting until `releaseSlowReads` (see
+  /// `holdSlowReadsOnInterrupt`)
+  private var interruptHolds = false
+  /// Only reads whose SQL contains this text are slow (every read when nil)
+  private var slowOnly: String?
+  /// The next `command` containing this text waits in `heldCommands` (`holdNextCommand`)
+  private var commandHold: String?
+  private var heldCommands: [CheckedContinuation<Void, Never>] = []
   private var startedContinuation: CheckedContinuation<Void, Never>?
   private var queryDidStart = false
   private var failingCommand: String?
@@ -208,12 +218,17 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     record(sql, binds: binds, query: true)
     if let hook = takeQueryHook() { await hook(sql) }
     if let failingQuery, sql.contains(failingQuery) { throw FakeQueryError() }
-    if slowQueries { try await waitUntilInterrupted() }
+    if slowQueries, lock.withLock({ slowOnly.map { sql.contains($0) } ?? true }) {
+      try await waitUntilInterrupted()
+    }
     return rowSource()
   }
 
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     record(sql, binds: binds, query: false)
+    if takeCommandHold(sql) {
+      await withCheckedContinuation { wait in lock.withLock { heldCommands.append(wait) } }
+    }
     if takeFailingCommand(sql) { throw FakeQueryError() }
     var result =
       commandRows?(sql).map { CommandResult(affectedRows: $0, tag: "FAKE \($0)") }
@@ -252,6 +267,40 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     lock.lock()
     failingCommands += texts
     lock.unlock()
+  }
+
+  /// From now on only reads whose SQL contains `text` are slow (with `slowQueries`)
+  func slowReads(containing text: String) {
+    lock.withLock { slowOnly = text }
+  }
+
+  /// The next `command` whose SQL contains `text` is recorded, then waits until
+  /// `releaseHeldCommands`, like a statement queued behind the running one
+  func holdNextCommand(containing text: String) {
+    lock.withLock { commandHold = text }
+  }
+
+  /// Commands `holdNextCommand` left waiting
+  var heldCommandCount: Int {
+    lock.withLock { heldCommands.count }
+  }
+
+  /// Lets the held commands answer
+  func releaseHeldCommands() {
+    let held = lock.withLock {
+      let held = heldCommands
+      heldCommands = []
+      return held
+    }
+    for wait in held { wait.resume() }
+  }
+
+  private func takeCommandHold(_ sql: String) -> Bool {
+    lock.withLock {
+      guard let text = commandHold, sql.contains(text) else { return false }
+      commandHold = nil
+      return true
+    }
   }
 
   /// The next `query` runs `hook` (once) before it answers, e.g. to cancel meanwhile.
@@ -303,7 +352,43 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   ) async throws {}
 
   func interrupt() async {
-    takeSlowWait()?.resume(throwing: CancellationError())
+    let holds = lock.withLock { interruptHolds }
+    if holds {
+      lock.withLock { interruptCount += 1 }
+      return
+    }
+    for pending in takeSlowWaits() { pending.resume(throwing: CancellationError()) }
+  }
+
+  /// Later interrupts leave the slow reads waiting, like an engine still unwinding the
+  /// statement: they end only with `releaseSlowReads`
+  func holdSlowReadsOnInterrupt() {
+    lock.withLock { interruptHolds = true }
+  }
+
+  /// Ends the slow reads an interrupt left waiting, as the interrupt would have
+  func releaseSlowReads() {
+    let pending = lock.withLock {
+      let pending = slowContinuations
+      slowContinuations = []
+      return pending
+    }
+    for wait in pending { wait.resume(throwing: CancellationError()) }
+  }
+
+  /// What `transactionOpenAfterInterrupt` answers (nil until set: the session cannot tell)
+  func reportAfterInterrupt(_ body: @escaping @Sendable () async -> Bool?) {
+    lock.withLock { interruptReport = body }
+  }
+
+  func transactionOpenAfterInterrupt() async -> Bool? {
+    guard let report = lock.withLock({ interruptReport }) else { return nil }
+    return await report()
+  }
+
+  /// Slow reads waiting for `interrupt`
+  var slowQueryCount: Int {
+    lock.withLock { slowContinuations.count }
   }
 
   func formatError(_ error: Error) -> String {
@@ -369,7 +454,7 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     _ cont: CheckedContinuation<Void, Error>
   ) -> CheckedContinuation<Void, Never>? {
     lock.lock()
-    slowContinuation = cont
+    slowContinuations.append(cont)
     queryDidStart = true
     let started = startedContinuation
     startedContinuation = nil
@@ -377,11 +462,11 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     return started
   }
 
-  private func takeSlowWait() -> CheckedContinuation<Void, Error>? {
+  private func takeSlowWaits() -> [CheckedContinuation<Void, Error>] {
     lock.lock()
     interruptCount += 1
-    let pending = slowContinuation
-    slowContinuation = nil
+    let pending = slowContinuations
+    slowContinuations = []
     lock.unlock()
     return pending
   }

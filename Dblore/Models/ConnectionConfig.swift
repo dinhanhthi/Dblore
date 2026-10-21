@@ -79,6 +79,12 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     }
   }
 
+  /// An interrupt cancel always aborts an open transaction, whatever the statement was doing
+  /// (DuckDB, reads too). SQLite rolls it back only when the interrupted statement was writing.
+  nonisolated var interruptAbortsTransaction: Bool {
+    self == .duckdb
+  }
+
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the

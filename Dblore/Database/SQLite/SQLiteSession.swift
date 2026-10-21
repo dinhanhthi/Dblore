@@ -186,6 +186,15 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     }
   }
 
+  /// An interrupted write rolls back the whole explicit transaction; an interrupted read keeps
+  /// it. `sqlite3_get_autocommit` on the serial queue, so it runs after the interrupted step.
+  func transactionOpenAfterInterrupt() async -> Bool? {
+    try? await run {
+      guard let handle = self.withState({ self.db }) else { return nil }
+      return sqlite3_get_autocommit(handle) == 0
+    }
+  }
+
   func formatError(_ error: Error) -> String {
     if let error = error as? SQLiteSessionError {
       return error.errorDescription ?? error.message

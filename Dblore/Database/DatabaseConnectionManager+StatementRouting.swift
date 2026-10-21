@@ -119,7 +119,9 @@ extension DatabaseConnectionManager {
 
   /// The error thrown for a failed statement (PostgreSQL details when available, MongoDB driver
   /// errors in the session's text; a lost session keeps its `connectionLost` message).
+  /// A MySQL deadlock inside the user's transaction ends it (`discardUserEntriesIfRolledBack`).
   func queryFailure(_ error: Error, query: String, startTime: Date) -> DatabaseError {
+    discardUserEntriesIfRolledBack(error)
     if let lost = error as? DatabaseError, case .connectionLost = lost { return lost }
     let executionTime = Date().timeIntervalSince(startTime)
     if let error = error as? PSQLError {

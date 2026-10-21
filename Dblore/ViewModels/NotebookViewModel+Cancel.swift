@@ -5,7 +5,7 @@
 //  Cancel stops the server work: the running statement's connection is closed and reopened by
 //  the actor (`DatabaseConnectionManager.cancelRunningStatement`). The Swift task alone would
 //  leave the backend running. When that discards pending Protected changes or the user's open
-//  transaction, the user confirms first ("Cancel query & discard" / "Keep running").
+//  transaction, the user confirms first (the warning's button / "Keep running").
 //
 
 import AppKit
@@ -81,8 +81,8 @@ extension NotebookViewModel {
       let ownedByAnotherTab = status.owner.map { $0 != id } ?? false
       if let warning = QueryCancelWarning.make(
         state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab,
-        keepsTransaction: status.keepsTransaction)
-        ?? (alwaysConfirm ? (status.keepsTransaction ? .statementInterrupt : .sessionReset) : nil)
+        keepsTransaction: status.keepsTransaction, interrupts: status.interrupts,
+        interruptRollsBack: status.interruptRollsBack) ?? (alwaysConfirm ? stopPrompt(status) : nil)
       {
         guard await confirmCancel(warning) else { return false }
       }
@@ -99,6 +99,13 @@ extension NotebookViewModel {
     }
   }
 
+  /// The editor Run button's prompt when nothing would be discarded: a server interrupt (MySQL,
+  /// MongoDB), an in-app engine's (SQLite, DuckDB) or a connection reset (PostgreSQL)
+  private func stopPrompt(_ status: RunningStatementStatus) -> QueryCancelWarning {
+    guard status.interrupts else { return .sessionReset }
+    return status.keepsTransaction ? .statementInterrupt : .inProcessInterrupt
+  }
+
   private func confirmCancel(_ warning: QueryCancelWarning) async -> Bool {
     if let cancelQueryPrompt { return await cancelQueryPrompt(warning) }
     let alert = NSAlert()
@@ -107,9 +114,7 @@ extension NotebookViewModel {
     alert.informativeText = warning.detail
     // Return keeps the query running; the destructive answer needs a click
     alert.addButton(withTitle: QueryCancelWarning.keepTitle)
-    let discard = alert.addButton(
-      withTitle: warning == .sessionReset || warning == .statementInterrupt
-        ? QueryCancelWarning.stopTitle : QueryCancelWarning.confirmTitle)
+    let discard = alert.addButton(withTitle: warning.buttonTitle)
     discard.hasDestructiveAction = true
     let response: NSApplication.ModalResponse
     if let window = NSApp.keyWindow {

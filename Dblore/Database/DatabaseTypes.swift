@@ -99,10 +99,13 @@ enum DatabaseError: LocalizedError {
   /// The server (or the network) closed the session; it was forgotten (full message, see
   /// `SessionLostEvent.message`)
   case connectionLost(String)
-  /// The user cancelled the running statement: the connection was closed (stopping the server
-  /// work) and reopened. `pendingCount` app-transaction changes / the user's open transaction
-  /// were rolled back with the old session. `connectionKept`: the engine's interrupt stopped
-  /// only the statement (`DatabaseType.interruptKeepsTransaction`), nothing was rolled back.
+  /// The user cancelled the running statement. `pendingCount` app-transaction changes / the
+  /// user's open transaction were rolled back. `connectionKept`: the cancel interrupted the
+  /// statement and kept the session (`CancelStrategy.interrupt`); the counts are what the
+  /// interrupt rolled back: none when the engine keeps the transaction
+  /// (`DatabaseType.interruptKeepsTransaction`) or the session reported it still open, else the
+  /// open transaction (SQLite after a write, DuckDB). Otherwise the connection was closed
+  /// (stopping the server work) and reopened, rolling back with the old session.
   case queryCancelled(pendingCount: Int, userTxRolledBack: Bool, connectionKept: Bool = false)
   /// The connection was closed and reopened (another tab's capped read, a cancel, a reconnect)
   /// while a script was between statements: its remaining `skippedStatements` were not run
@@ -224,19 +227,24 @@ enum DatabaseError: LocalizedError {
     }
   }
 
-  /// "Query cancelled — connection was reset (…)" plus what the reset rolled back, or the
-  /// kept-connection text when only the statement was stopped
+  /// "Query cancelled — connection was reset (…)" plus what the reset rolled back. When the
+  /// connection was kept (interrupt): "Query cancelled." plus what the interrupt rolled back, or
+  /// "The connection was kept." when nothing was
   nonisolated static func cancelMessage(
     pendingCount: Int, userTxRolledBack: Bool, connectionKept: Bool = false
   ) -> String {
-    if connectionKept { return "Query cancelled. The connection was kept." }
-    var parts = ["Query cancelled — connection was reset (temp tables, SET, search_path lost)."]
+    var parts = [
+      connectionKept
+        ? "Query cancelled."
+        : "Query cancelled — connection was reset (temp tables, SET, search_path lost)."
+    ]
     if pendingCount > 0 {
       let verb = pendingCount == 1 ? "was" : "were"
       parts.append(
         "\(pendingCount) pending change\(pendingCount == 1 ? "" : "s") \(verb) rolled back.")
     }
     if userTxRolledBack { parts.append("Your open transaction was rolled back.") }
+    if connectionKept && parts.count == 1 { parts.append("The connection was kept.") }
     return parts.joined(separator: " ")
   }
 

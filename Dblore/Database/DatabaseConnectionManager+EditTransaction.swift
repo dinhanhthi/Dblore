@@ -131,14 +131,19 @@ extension DatabaseConnectionManager {
     cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil,
     rewind: RewindPlan? = nil, rewinding: [Int64] = []
   ) async throws -> [Int] {
-    if protectedMode {
-      return try await runProtectedBatch(
-        statements, caller: caller, cancellationGeneration: cancellationGeneration,
-        progress: progress, rewind: rewind, rewinding: rewinding)
+    // User writes: refused after a DuckDB interrupt cancel since admission (`withSession`)
+    let admission = UserStatementAdmission(
+      epoch: connectionEpoch, generation: cancellationGeneration)
+    return try await Self.$userStatementAdmission.withValue(admission) {
+      if protectedMode {
+        return try await runProtectedBatch(
+          statements, caller: caller, cancellationGeneration: cancellationGeneration,
+          progress: progress, rewind: rewind, rewinding: rewinding)
+      }
+      return try await runUnprotectedBatch(
+        statements, cancellationGeneration: cancellationGeneration, progress: progress,
+        rewind: rewind, rewinding: rewinding)
     }
-    return try await runUnprotectedBatch(
-      statements, cancellationGeneration: cancellationGeneration, progress: progress,
-      rewind: rewind, rewinding: rewinding)
   }
 
   // MARK: - Private
@@ -282,11 +287,14 @@ extension DatabaseConnectionManager {
     if capture?.transactionLost == true { closeRewindEntries(as: .discarded) }
   }
 
-  /// The same for the edit's own statement: a MySQL deadlock (ER_LOCK_DEADLOCK) rolls the
-  /// user's transaction back whole. A lock wait timeout (1205) undoes the statement alone.
-  /// Checked on the raw error: the thrown `DatabaseError` keeps only its text.
-  private func discardUserEntriesIfRolledBack(_ error: Error) {
+  /// The same for a statement's own error (an edit, a batch or a typed statement; called from
+  /// `queryFailure`): a MySQL deadlock (ER_LOCK_DEADLOCK) rolls the user's transaction back
+  /// whole, so it is no longer open either. A lock wait timeout (1205) undoes the statement
+  /// alone. Checked on the raw error: the thrown `DatabaseError` keeps only its text.
+  func discardUserEntriesIfRolledBack(_ error: Error) {
     guard userTxOpen, (error as? MySQLSessionError)?.code == 1213 else { return }
+    userTxOpen = false
+    schemaDirtyInUserTx = false
     closeRewindEntries(as: .discarded)
   }
 
@@ -364,7 +372,6 @@ extension DatabaseConnectionManager {
     } catch let error as DatabaseError {
       throw error
     } catch {
-      discardUserEntriesIfRolledBack(error)
       throw queryFailure(error, query: check.sql, startTime: startTime)
     }
   }
@@ -381,7 +388,6 @@ extension DatabaseConnectionManager {
     } catch let error as DatabaseError {
       throw error
     } catch {
-      discardUserEntriesIfRolledBack(error)
       throw queryFailure(error, query: sql, startTime: startTime)
     }
   }
