@@ -4,8 +4,10 @@
 // drops only when ticked, changes a builder refuses listed as manual and never scripted (a
 // replaced index is not dropped when its new form cannot be created), lossy column changes
 // warned per item, the source schema in PostgreSQL types and defaults rewritten to the target,
-// and new MySQL columns with expression defaults restated with parentheses and INVISIBLE kept
-// (manual on a target that has no invisible columns).
+// a new PostgreSQL serial column's sequence created before and owned by the column after, inside
+// its item (a shared or other-named sequence created only if missing, with a warning, and one a
+// target column already reads left alone), and new MySQL columns with expression defaults restated with parentheses and
+// INVISIBLE kept (manual on a target that has no invisible columns).
 
 import Foundation
 import Testing
@@ -247,6 +249,103 @@ struct SchemaMigrationScriptBuilderTests {
     let note = try #require(items.first { $0.id == #"column.alter "orders"."note""# })
     #expect(script.manualItems.map(\.itemID) == [note.id])
     #expect(!script.statements.contains { $0.itemID == note.id })
+  }
+
+  @Test func aSerialColumnsSequenceIsCreatedAndOwnedByItsColumn() throws {
+    let serial = { (ordinal: Int, name: String, sequence: String) in
+      Self.column(
+        ordinal, name, "integer", nullable: false,
+        default: "nextval('dev.\(sequence)'::regclass)")
+    }
+    let orders = { (schema: String, columns: [Column]) in
+      Self.table(schema, "orders", [Self.column(1, "id", "integer", nullable: false)] + columns)
+    }
+    let source = SchemaSnapshot(
+      engine: .postgresql, schema: "dev",
+      tables: [
+        Self.table("dev", "customers", [serial(1, "id", "customers_id_seq")]),
+        orders("dev", [serial(2, "seq", "orders_seq_seq")]),
+      ])
+    let target = SchemaSnapshot(
+      engine: .postgresql, schema: "prod", tables: [orders("prod", [])])
+    let (items, script) = try Self.script(source, target)
+    let create = try #require(items.first { $0.id.hasPrefix("table.create") })
+    let add = try #require(items.first { $0.id.hasPrefix("column.add") })
+    #expect(
+      script.statements.map(\.sql) == [
+        #"CREATE SEQUENCE "prod"."customers_id_seq" AS integer"#,
+        """
+        CREATE TABLE "prod"."customers" (
+          "id" integer NOT NULL DEFAULT nextval('"prod".customers_id_seq'::regclass)
+        )
+        """,
+        #"ALTER SEQUENCE "prod"."customers_id_seq" OWNED BY "prod"."customers"."id""#,
+        #"CREATE SEQUENCE "prod"."orders_seq_seq" AS integer"#,
+        #"ALTER TABLE "prod"."orders" ADD COLUMN "seq" integer NOT NULL "#
+          + #"DEFAULT nextval('"prod".orders_seq_seq'::regclass)"#,
+        #"ALTER SEQUENCE "prod"."orders_seq_seq" OWNED BY "prod"."orders"."seq""#,
+      ])
+    #expect(
+      script.statements.map(\.itemID) == [create.id, create.id, create.id, add.id, add.id, add.id])
+    #expect(script.warnings.isEmpty)
+
+    // Unticked: none of its sequence statements
+    let unticked = try Self.script(source, target) { $0.isSelected = $0.id == add.id }.script
+    #expect(unticked.statements.count == 3)
+    #expect(unticked.statements.allSatisfy { $0.itemID == add.id })
+    #expect(!unticked.statements.contains { $0.sql.contains("customers_id_seq") })
+  }
+
+  @Test func sharedOrOtherNamedSequencesAreCreatedIfMissingAndNeverOwned() throws {
+    let reading = { (name: String, type: String, schema: String, sequence: String) in
+      Self.column(
+        1, name, type, nullable: false,
+        default: "nextval('\"\(schema)\".\(sequence)'::regclass)")
+    }
+    let orders = { (schema: String, columns: [Column]) in
+      Self.table(schema, "orders", [Self.column(1, "id", "integer", nullable: false)] + columns)
+    }
+    // invoices and receipts (a copy with its defaults) share one sequence; notes reads one that
+    // is not named as serial names it; tags in the target already reads global_seq
+    let source = SchemaSnapshot(
+      engine: .postgresql, schema: "Dev",
+      tables: [
+        Self.table("Dev", "invoices", [reading("id", "integer", "Dev", "invoices_id_seq")]),
+        Self.table("Dev", "notes", [reading("id", "bigint", "Dev", "note_ids")]),
+        orders("Dev", [reading("ref", "integer", "Dev", "global_seq")]),
+        Self.table("Dev", "receipts", [reading("id", "integer", "Dev", "invoices_id_seq")]),
+        Self.table("Dev", "tags", [reading("id", "integer", "Dev", "global_seq")]),
+      ])
+    let target = SchemaSnapshot(
+      engine: .postgresql, schema: "Prod",
+      tables: [
+        orders("Prod", []),
+        Self.table("Prod", "tags", [reading("id", "integer", "Prod", "global_seq")]),
+      ])
+    let (items, script) = try Self.script(source, target)
+    let created = { (table: String) in items.first { $0.id == "table.create \"\(table)\"" }?.id }
+    let create = { (table: String, type: String, sequence: String) in
+      """
+      CREATE TABLE "Prod"."\(table)" (
+        "id" \(type) NOT NULL DEFAULT nextval('"Prod".\(sequence)'::regclass)
+      )
+      """
+    }
+    #expect(
+      script.statements.map(\.sql) == [
+        #"CREATE SEQUENCE IF NOT EXISTS "Prod"."invoices_id_seq""#,
+        create("invoices", "integer", "invoices_id_seq"),
+        #"CREATE SEQUENCE IF NOT EXISTS "Prod"."note_ids""#,
+        create("notes", "bigint", "note_ids"),
+        #"CREATE SEQUENCE IF NOT EXISTS "Prod"."invoices_id_seq""#,
+        create("receipts", "integer", "invoices_id_seq"),
+        #"ALTER TABLE "Prod"."orders" ADD COLUMN "ref" integer NOT NULL "#
+          + #"DEFAULT nextval('"Prod".global_seq'::regclass)"#,
+      ])
+    #expect(
+      script.warnings.map(\.itemID) == ["invoices", "notes", "receipts"].compactMap(created))
+    #expect(script.warnings.allSatisfy { $0.message.contains("ownership is left unchanged") })
+    #expect(script.manualItems.isEmpty)
   }
 
   @Test func mysqlNewColumnsKeepExpressionDefaultsAndInvisible() throws {

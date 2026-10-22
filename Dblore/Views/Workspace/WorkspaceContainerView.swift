@@ -345,6 +345,7 @@ struct WorkspaceContainerView: View {
     .bridgedFocusedSceneValue(\.openSQLRestoreAction, backupAction(.restore))
     .bridgedFocusedSceneValue(\.openDatabaseFileCopyAction, backupAction(.fileCopy))
     .bridgedFocusedSceneValue(\.openDataDictionaryAction, dataDictionaryAction)
+    .bridgedFocusedSceneValue(\.openSchemaCompareAction, schemaCompareAction)
     .bridgedFocusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
@@ -357,6 +358,7 @@ struct WorkspaceContainerView: View {
     )
     .structureEditorPanel(workspaceManager: workspaceManager)
     .dataDictionaryExportSheet(workspaceManager: workspaceManager)
+    .schemaCompareSheet(workspaceManager: workspaceManager)
     .sidePanelOverlay(
       isPresented: Binding(
         get: { isImportPresented },
@@ -484,6 +486,11 @@ struct WorkspaceContainerView: View {
   private var dataDictionaryAction: (() -> Void)? {
     guard workspaceManager.canExportDataDictionary else { return nil }
     return { [workspaceManager] in workspaceManager.openDataDictionaryExport() }
+  }
+
+  private var schemaCompareAction: (() -> Void)? {
+    guard workspaceManager.canCompareSchemas else { return nil }
+    return { [workspaceManager] in workspaceManager.openSchemaCompare() }
   }
 
   private func requestImport(for table: DatabaseTable? = nil) {

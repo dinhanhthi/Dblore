@@ -111,6 +111,11 @@ struct OpenDataDictionaryActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Compare Schemas (File menu): nil unless `WorkspaceManager.canCompareSchemas`
+struct OpenSchemaCompareActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -150,6 +155,11 @@ extension FocusedValues {
   var openDataDictionaryAction: (() -> Void)? {
     get { self[OpenDataDictionaryActionKey.self] }
     set { self[OpenDataDictionaryActionKey.self] = newValue }
+  }
+
+  var openSchemaCompareAction: (() -> Void)? {
+    get { self[OpenSchemaCompareActionKey.self] }
+    set { self[OpenSchemaCompareActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

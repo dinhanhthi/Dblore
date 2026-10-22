@@ -331,6 +331,7 @@ extension WorkspaceManager {
     // Before the session closes: a structure read failing on the closed connection must find the
     // export already cancelled (silent, no "Export Failed" alert)
     dataDictionaryExport?.cancel()
+    schemaCompare?.close()
     await connectionManager.disconnect()
     // After the session closed: the picked files belong to that connection
     releaseDuckDBFileAccess()
@@ -366,6 +367,7 @@ extension WorkspaceManager {
     dataRewind?.model.sheetDisappeared()
     dataRewind = nil
     dataDictionaryExport = nil
+    schemaCompare = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

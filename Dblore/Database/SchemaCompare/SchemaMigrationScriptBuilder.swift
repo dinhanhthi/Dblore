@@ -20,6 +20,19 @@
 // default or new table's check that names the source schema (`dev.mood`,
 // `nextval('dev.orders_id_seq'::regclass)` become `"prod".…`, `SchemaDiff.schemaPrefixReplaced`).
 // Text that names the source schema where it cannot be rewritten safely makes its item manual.
+// PostgreSQL: a new table's or added column's default that reads a sequence of the target schema
+// (its name rewritten as above) gets that sequence created before the CREATE TABLE / ADD COLUMN,
+// in the same item (sequences are not in the diff, so a compare after the run reads the same
+// default). The snapshots have no list of sequences, so the columns that read each one (in both
+// snapshots, each side's schema prefix read as the target's) stand in for it:
+// - a target column reads it: it exists, nothing is scripted;
+// - only this column reads it, named as serial names it (`<table>_<column>_seq`, as parsed, not
+//   truncated): plain `CREATE SEQUENCE` (`AS` the column's smallint / integer / bigint), then
+//   `ALTER SEQUENCE … OWNED BY` the column. A leftover sequence of that name in the target makes
+//   the script fail, before anything is changed, rather than take it over;
+// - shared or named otherwise: `CREATE SEQUENCE IF NOT EXISTS` in every item that reads it (each
+//   stays whole when another is unticked), never OWNED BY, with a warning.
+// A default that reads any other sequence, or a changed default that reads one, is warned instead.
 // A column change of type, or from NULL to NOT NULL, stays ticked with a warning: existing values
 // may be converted (rounded, truncated, time zone dropped) or rejected. A default change on a
 // PostgreSQL identity column (identity against serial) is manual: DROP DEFAULT would leave the
@@ -148,8 +161,13 @@ nonisolated enum SchemaMigrationScriptBuilder {
         plan.add(.dropTables, try StructureDDLBuilder.dropTable(table, engine: engine))
       case .addColumn(let column):
         let table = try targetTable(item.table)
-        plan.add(.columns, try build([.addColumn(try newColumn(try rewritten(column)))], table))
-        plan.warnings += sequenceWarning(column, table: table.name)
+        let column = try rewritten(column)
+        let sequences = try serialSequences([column], table: table)
+        plan.add(
+          .columns,
+          sequences.create + (try build([.addColumn(try newColumn(column))], table))
+            + sequences.own)
+        plan.warnings += sequences.warnings
       case .dropColumn(let column):
         var table = try targetTable(item.table)
         let dropped = droppedIndexes[item.table] ?? []
@@ -243,7 +261,11 @@ nonisolated enum SchemaMigrationScriptBuilder {
           break
         }
       }
-      plan.add(.createTables, try CreateTableDDLBuilder.build(draft, engine: engine))
+      let sequences = try serialSequences(table.columns, table: table)
+      plan.add(
+        .createTables,
+        sequences.create + (try CreateTableDDLBuilder.build(draft, engine: engine))
+          + sequences.own)
 
       let uniqueNames = Set(
         table.constraints.compactMap { $0.kind == .unique ? $0.name : nil })
@@ -275,7 +297,7 @@ nonisolated enum SchemaMigrationScriptBuilder {
       if case .sqlite = engine, table.columns.contains(where: { $0.identity == .autoIncrement }) {
         plan.warnings.append("\"\(table.name)\": AUTOINCREMENT is not copied.")
       }
-      for column in table.columns { plan.warnings += sequenceWarning(column, table: table.name) }
+      plan.warnings += sequences.warnings
       return plan
     }
 
@@ -397,13 +419,127 @@ nonisolated enum SchemaMigrationScriptBuilder {
       return text
     }
 
-    /// A PostgreSQL default that reads a sequence needs that sequence in the target
+    /// A PostgreSQL default that reads a sequence the script does not create needs that sequence
+    /// in the target
     private func sequenceWarning(_ column: Column, table: String) -> [String] {
       guard case .postgresql = engine, column.defaultExpression?.contains("nextval(") == true
       else { return [] }
       return [
         "\"\(table)\".\"\(column.name)\": the default reads a sequence, which must exist in the target."
       ]
+    }
+
+    /// PostgreSQL: for new columns (defaults already rewritten) that read a sequence of the
+    /// target schema (`nextval('"prod".orders_id_seq'::regclass)`), the statements that create
+    /// it before the table or column and, for a serial column's own sequence, tie it to its
+    /// column after (dropped with the column). See the file header for the cases. A default that
+    /// reads any other sequence gets a warning instead.
+    private func serialSequences(
+      _ columns: [Column], table: TableStructure
+    ) throws -> (create: [String], own: [String], warnings: [String]) {
+      guard case .postgresql = engine else { return ([], [], []) }
+      let dialect = engine.dialect
+      let readers = sequenceReaders()
+      var create: [String] = []
+      var own: [String] = []
+      var warnings: [String] = []
+      var seen: Set<[String]> = []
+      for column in columns {
+        guard let text = column.defaultExpression, text.contains("nextval(") else { continue }
+        guard let sequence = Self.nextvalSequence(text), sequence.schema == target.schema else {
+          warnings += sequenceWarning(column, table: table.name)
+          continue
+        }
+        let key = [sequence.schema, sequence.name]
+        guard seen.insert(key).inserted, !readers.target.contains(key) else { continue }
+        let name =
+          try dialect.quoteIdentifier(sequence.schema) + "."
+          + dialect.quoteIdentifier(sequence.name)
+        guard readers.source[key] == 1, sequence.name == "\(table.name)_\(column.name)_seq" else {
+          create.append("CREATE SEQUENCE IF NOT EXISTS \(name)")
+          warnings.append(
+            "\"\(table.name)\".\"\(column.name)\": the sequence \(name) is created if missing and "
+              + "its ownership is left unchanged.")
+          continue
+        }
+        let type: String? =
+          switch SQLTokenizer.asciiLowercased(SchemaDiff.typeText(column)) {
+          case "smallint", "int2": "smallint"
+          case "integer", "int4": "integer"
+          case "bigint", "int8": "bigint"
+          default: nil
+          }
+        create.append("CREATE SEQUENCE \(name)" + (type.map { " AS \($0)" } ?? ""))
+        let owner =
+          try StructureDDLBuilder.tableName(table, dialect: dialect) + "."
+          + dialect.quoteIdentifier(column.name)
+        own.append("ALTER SEQUENCE \(name) OWNED BY \(owner)")
+      }
+      return (create, own, warnings)
+    }
+
+    /// How many source columns read each sequence (`[schema, name]`, the source schema read as
+    /// the target's), and the sequences a target column reads
+    private func sequenceReaders() -> (source: [[String]: Int], target: Set<[String]>) {
+      func key(_ text: String?) -> [String]? {
+        guard let text, let sequence = Self.nextvalSequence(text) else { return nil }
+        return [sequence.schema, sequence.name]
+      }
+      var source: [[String]: Int] = [:]
+      for column in self.source.tables.flatMap(\.columns) {
+        if let key = key(column.defaultExpression.flatMap { try? rewritten($0) }) {
+          source[key, default: 0] += 1
+        }
+      }
+      let target = Set(
+        self.target.tables.flatMap(\.columns).compactMap { key($0.defaultExpression) })
+      return (source, target)
+    }
+
+    /// The schema and name of the sequence a whole default `nextval('schema.name'::regclass)`
+    /// reads, each part bare (folded to lowercase, as PostgreSQL reads it) or double-quoted. Nil
+    /// for any other default or an unqualified name.
+    private static func nextvalSequence(_ text: String) -> (schema: String, name: String)? {
+      let head = "nextval('"
+      let tail = "'::regclass)"
+      guard text.hasPrefix(head), text.hasSuffix(tail), text.count >= head.count + tail.count
+      else { return nil }
+      let literal = String(text.dropFirst(head.count).dropLast(tail.count))
+      // A lone quote would end the literal early
+      guard !literal.replacingOccurrences(of: "''", with: "").contains("'") else { return nil }
+      let chars = Array(literal.replacingOccurrences(of: "''", with: "'"))
+      var parts: [String] = []
+      var i = 0
+      while i < chars.count {
+        var part = ""
+        if chars[i] == "\"" {
+          i += 1
+          while true {
+            guard i < chars.count else { return nil }
+            if chars[i] == "\"" {
+              guard i + 1 < chars.count, chars[i + 1] == "\"" else { break }
+              i += 1
+            }
+            part.append(chars[i])
+            i += 1
+          }
+          i += 1
+        } else {
+          while i < chars.count, chars[i].isLetter || chars[i].isNumber || "_$".contains(chars[i]) {
+            part.append(chars[i])
+            i += 1
+          }
+          part = SQLTokenizer.asciiLowercased(part)
+        }
+        guard !part.isEmpty else { return nil }
+        parts.append(part)
+        if i < chars.count {
+          guard chars[i] == ".", i + 1 < chars.count else { return nil }
+          i += 1
+        }
+      }
+      guard parts.count == 2 else { return nil }
+      return (parts[0], parts[1])
     }
 
     private func newIndex(_ index: TableStructure.Index) throws -> StructureChange.NewIndex {

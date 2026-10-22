@@ -243,6 +243,11 @@ class WorkspaceManager: Identifiable {
   /// Export Data Dictionary sheet. Nil hides it.
   var dataDictionaryExport: DataDictionaryExportModel?
 
+  // MARK: - Schema Compare
+
+  /// Compare Schemas sheet. Nil hides it.
+  var schemaCompare: SchemaCompareModel?
+
   // MARK: - Command Palette
 
   /// Open palette. Nil hides it.

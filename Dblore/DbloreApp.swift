@@ -621,6 +621,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
   @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
   @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
+  @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -736,6 +737,12 @@ struct TabCommands: Commands {
       if !isMongo {
         Button("Export Data Dictionary...") { openDataDictionaryAction?() }
           .disabled(openDataDictionaryAction == nil)
+      }
+
+      // PostgreSQL, MySQL / MariaDB and SQLite only
+      if WorkspaceWindowManager.shared.activeWorkspaceManager?.supportsSchemaCompare != false {
+        Button("Compare Schemas...") { openSchemaCompareAction?() }
+          .disabled(openSchemaCompareAction == nil)
       }
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }

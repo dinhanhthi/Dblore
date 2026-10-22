@@ -411,6 +411,10 @@ struct WorkspaceLeftSidebarContent: View {
             Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
               .disabled(!workspaceManager.canExportDataDictionary)
           }
+          if workspaceManager.supportsSchemaCompare {
+            Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
+              .disabled(!workspaceManager.canCompareSchemas)
+          }
         }
       }
     }

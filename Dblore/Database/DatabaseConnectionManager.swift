@@ -177,14 +177,54 @@ actor DatabaseConnectionManager {
   }
 
   /// Connects the single-use `side` like this manager: `config` (this manager's when nil), its
-  /// unremembered certificate and SSH secret.
+  /// unremembered certificate and SSH secret. `identity` (`config` when nil) is the connection
+  /// the certificate and SSH secret belong to, when `config` names another database (a MySQL
+  /// side on another database of the server): its unremembered secrets, else its Keychain
+  /// items, are used for `config`'s accounts (both accounts include the database).
   func connectSideManager(
-    _ side: DatabaseConnectionManager, config: ConnectionConfig? = nil
+    _ side: DatabaseConnectionManager, config: ConnectionConfig? = nil,
+    identity: ConnectionConfig? = nil
   ) async throws {
     guard let config = config ?? self.config else { throw DatabaseError.notConnected }
+    let identity = identity ?? config
     try await side.reconnectWithActiveCertificate(
-      config: config, material: activeUnrememberedCertificate,
-      sshCredential: activeUnrememberedSSHCredential)
+      config: config, material: sideCertificate(identity: identity, config: config),
+      sshCredential: sideSSHCredential(identity: identity, config: config))
+  }
+
+  /// `identity`'s certificate under `config`'s account
+  private func sideCertificate(
+    identity: ConnectionConfig, config: ConnectionConfig
+  ) -> ClientCertificateStoreFactory.ConnectionMaterial? {
+    let account = ClientCertificateStoreFactory.account(for: config)
+    let identityAccount = ClientCertificateStoreFactory.account(for: identity)
+    guard identityAccount != account else { return activeUnrememberedCertificate }
+    let material: ClientCertificateMaterial?
+    if let active = activeUnrememberedCertificate, active.account == identityAccount {
+      material = active.material
+    } else if identity.clientCertificate != nil {
+      material = ClientCertificateStoreFactory.load(for: identity)
+    } else {
+      material = nil
+    }
+    return material.map { .init(account: account, material: $0) }
+  }
+
+  /// `identity`'s SSH secret under `config`'s account
+  private func sideSSHCredential(
+    identity: ConnectionConfig, config: ConnectionConfig
+  ) -> SSHCredentialStoreFactory.ConnectionCredential? {
+    let identityAccount = SSHCredentialStoreFactory.account(for: identity)
+    guard let account = SSHCredentialStoreFactory.account(for: config),
+      identityAccount != account
+    else { return activeUnrememberedSSHCredential }
+    let credential: SSHStoredCredential?
+    if let active = activeUnrememberedSSHCredential, active.account == identityAccount {
+      credential = active.credential
+    } else {
+      credential = SSHCredentialStoreFactory.load(for: identity)
+    }
+    return credential.map { .init(account: account, credential: $0) }
   }
 
   deinit {
