@@ -374,7 +374,21 @@ struct WorkspaceLeftSidebarContent: View {
       userTypes: filteredUserTypes)
     let schemas = publicSchemas
     return VStack(spacing: 0) {
-      SidebarFilterField(text: $publicFilter)
+      if WorkspaceManager.searchesEveryTable(connectionDatabaseType) {
+        SidebarFilterField(text: $publicFilter, trailingSpacing: Spacing.xs) {
+          Button {
+            workspaceManager.openCrossTableSearch()
+          } label: {
+            Image(systemName: "text.magnifyingglass")
+          }
+          .buttonStyle(GhostButtonStyle(iconOnly: true))
+          .controlSize(.small)
+          .disabled(!workspaceManager.canSearchEveryTable)
+          .help("Find a Value in Every Table")
+        }
+      } else {
+        SidebarFilterField(text: $publicFilter)
+      }
 
       if !publicKeywords.isEmpty && entities.isEmpty {
         noMatchesState

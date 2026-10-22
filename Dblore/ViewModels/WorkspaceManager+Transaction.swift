@@ -332,6 +332,7 @@ extension WorkspaceManager {
     // export already cancelled (silent, no "Export Failed" alert)
     dataDictionaryExport?.cancel()
     schemaCompare?.close()
+    dropCrossTableSearch()
     await connectionManager.disconnect()
     // After the session closed: the picked files belong to that connection
     releaseDuckDBFileAccess()

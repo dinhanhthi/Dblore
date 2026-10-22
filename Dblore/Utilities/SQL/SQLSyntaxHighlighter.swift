@@ -44,7 +44,7 @@ enum SQLSyntaxHighlighter {
 
   // MARK: - Keywords
 
-  static let keywords: Set<String> = [
+  nonisolated static let keywords: Set<String> = [
     // DDL
     "CREATE", "ALTER", "DROP", "TABLE", "INDEX", "VIEW", "DATABASE", "SCHEMA",
     "CONSTRAINT", "PRIMARY", "KEY", "FOREIGN", "REFERENCES", "UNIQUE", "CHECK",
@@ -76,7 +76,7 @@ enum SQLSyntaxHighlighter {
 
   /// MySQL-only keywords, highlighted only for the MySQL dialect. `REPLACE` stays a function
   /// when followed by `(`.
-  static let mysqlKeywords: Set<String> = [
+  nonisolated static let mysqlKeywords: Set<String> = [
     "SHOW", "DESCRIBE", "REPLACE", "IGNORE", "DUPLICATE", "USE", "DELIMITER",
     "AUTO_INCREMENT", "ENGINE", "UNSIGNED", "ZEROFILL", "CHARSET", "COLLATE",
     "MODIFY", "CHANGE", "RENAME", "COLUMN", "COLUMNS", "TABLES", "DATABASES", "STATUS",

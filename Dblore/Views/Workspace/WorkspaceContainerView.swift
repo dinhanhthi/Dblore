@@ -359,6 +359,7 @@ struct WorkspaceContainerView: View {
     .structureEditorPanel(workspaceManager: workspaceManager)
     .dataDictionaryExportSheet(workspaceManager: workspaceManager)
     .schemaCompareSheet(workspaceManager: workspaceManager)
+    .crossTableSearchSheet(workspaceManager: workspaceManager)
     .sidePanelOverlay(
       isPresented: Binding(
         get: { isImportPresented },

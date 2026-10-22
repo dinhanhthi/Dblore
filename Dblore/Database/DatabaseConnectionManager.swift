@@ -198,7 +198,10 @@ actor DatabaseConnectionManager {
   ) -> ClientCertificateStoreFactory.ConnectionMaterial? {
     let account = ClientCertificateStoreFactory.account(for: config)
     let identityAccount = ClientCertificateStoreFactory.account(for: identity)
-    guard identityAccount != account else { return activeUnrememberedCertificate }
+    // Only a secret of `config`'s own account: never the one of a connection switched to since
+    guard identityAccount != account else {
+      return activeUnrememberedCertificate.flatMap { $0.account == account ? $0 : nil }
+    }
     let material: ClientCertificateMaterial?
     if let active = activeUnrememberedCertificate, active.account == identityAccount {
       material = active.material
@@ -215,9 +218,10 @@ actor DatabaseConnectionManager {
     identity: ConnectionConfig, config: ConnectionConfig
   ) -> SSHCredentialStoreFactory.ConnectionCredential? {
     let identityAccount = SSHCredentialStoreFactory.account(for: identity)
-    guard let account = SSHCredentialStoreFactory.account(for: config),
-      identityAccount != account
-    else { return activeUnrememberedSSHCredential }
+    guard let account = SSHCredentialStoreFactory.account(for: config) else { return nil }
+    guard identityAccount != account else {
+      return activeUnrememberedSSHCredential.flatMap { $0.account == account ? $0 : nil }
+    }
     let credential: SSHStoredCredential?
     if let active = activeUnrememberedSSHCredential, active.account == identityAccount {
       credential = active.credential

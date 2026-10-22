@@ -47,6 +47,8 @@ struct FilterCondition: Codable, Hashable, Identifiable {
   var connector: FilterConnector = .and
   /// An empty string is a real value (a foreign-key jump), not a blank form row.
   var emptyStringIsValue = false
+  /// One character for a LIKE's `ESCAPE` clause; nil renders no clause (the engine's default)
+  var likeEscape: String? = nil
 
   /// Has a column and, when the operator takes one, a value.
   /// A blank value still counts when `emptyStringIsValue` is set. An empty column does not.
@@ -57,7 +59,7 @@ struct FilterCondition: Codable, Hashable, Identifiable {
 
 extension FilterCondition {
   enum CodingKeys: String, CodingKey {
-    case id, column, op, value, connector, emptyStringIsValue
+    case id, column, op, value, connector, emptyStringIsValue, likeEscape
   }
 
   /// `emptyStringIsValue` is absent on filters saved before that flag existed.
@@ -70,6 +72,7 @@ extension FilterCondition {
     connector = try container.decode(FilterConnector.self, forKey: .connector)
     emptyStringIsValue =
       try container.decodeIfPresent(Bool.self, forKey: .emptyStringIsValue) ?? false
+    likeEscape = try container.decodeIfPresent(String.self, forKey: .likeEscape)
   }
 
   /// Same keys as the synthesized encoder, but nonisolated: with MainActor default isolation the
@@ -82,6 +85,7 @@ extension FilterCondition {
     try container.encode(value, forKey: .value)
     try container.encode(connector, forKey: .connector)
     try container.encode(emptyStringIsValue, forKey: .emptyStringIsValue)
+    try container.encodeIfPresent(likeEscape, forKey: .likeEscape)
   }
 }
 
@@ -128,7 +132,9 @@ struct TableFilter: Codable, Hashable {
     case .isNull: return "\(column) IS NULL"
     case .isNotNull: return "\(column) IS NOT NULL"
     case .like, .notLike, .ilike, .notIlike:
-      return likeSQL(column: column, value: value, op: condition.op, dialect: dialect)
+      let pattern =
+        condition.likeEscape.map { "\(value) ESCAPE \(dialect.literal(.string($0)))" } ?? value
+      return likeSQL(column: column, value: pattern, op: condition.op, dialect: dialect)
     case .in:
       let items = condition.value.split(separator: ",")
         .map { $0.trimmingCharacters(in: .whitespaces) }

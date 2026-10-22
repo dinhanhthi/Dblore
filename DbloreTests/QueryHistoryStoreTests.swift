@@ -137,6 +137,28 @@ struct QueryHistoryStoreTests {
     #expect(filtered.map(\.sql) == ["SELECT b"])
   }
 
+  @Test("Insights rows: at or after since, one connection or all, newest first, at most limit")
+  func entriesSinceWindow() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let since = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(
+      Self.entry(sql: "SELECT before", at: since.addingTimeInterval(-0.5), connectionKey: "c1"))
+    try await store.record(Self.entry(sql: "SELECT at", at: since, connectionKey: "c1"))
+    try await store.record(
+      Self.entry(sql: "SELECT other", at: since.addingTimeInterval(5), connectionKey: "c2"))
+    try await store.record(
+      Self.entry(sql: "SELECT later", at: since.addingTimeInterval(10), connectionKey: "c1"))
+
+    let all = try await store.entries(since: since, connectionKey: nil)
+    #expect(all.map(\.sql) == ["SELECT later", "SELECT other", "SELECT at"])
+    let one = try await store.entries(since: since, connectionKey: "c1")
+    #expect(one.map(\.sql) == ["SELECT later", "SELECT at"])
+    let limited = try await store.entries(since: since, connectionKey: nil, limit: 1)
+    #expect(limited.map(\.sql) == ["SELECT later"])
+  }
+
   @Test("Status combines with search and scope before paging and counting")
   func statusFilters() async throws {
     let url = temporaryDatabaseURL()

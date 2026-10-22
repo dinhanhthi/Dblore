@@ -248,6 +248,12 @@ class WorkspaceManager: Identifiable {
   /// Compare Schemas sheet. Nil hides it.
   var schemaCompare: SchemaCompareModel?
 
+  // MARK: - Find a Value in Every Table
+
+  /// The last search, kept while its sheet is hidden so its results come back. Nil until opened.
+  var crossTableSearch: CrossTableSearchModel?
+  var isCrossTableSearchPresented = false
+
   // MARK: - Command Palette
 
   /// Open palette. Nil hides it.
@@ -555,6 +561,8 @@ class WorkspaceManager: Identifiable {
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
     if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
+    // A search running with its sheet hidden must not reach the new server
+    dropCrossTableSearch()
     if !isAutoConnect { await supersedeAutoConnect() }
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
