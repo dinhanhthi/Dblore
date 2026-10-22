@@ -57,6 +57,8 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   /// SQL backup and restore. False for MongoDB (its own backup format). DuckDB dumps on the
   /// tab's own session and restores without Protected mode (no savepoints).
   let supportsSQLDump: Bool
+  /// Sequences and user-defined types (enum, domain, composite) in the sidebar. PostgreSQL only.
+  let supportsUserTypes: Bool
 
   /// A local file (or in-memory) database: the connection form shows the file picker
   /// instead of host, port, user, password, SSL and SSH.

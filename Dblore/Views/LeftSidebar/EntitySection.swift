@@ -7,7 +7,8 @@ import SwiftUI
 
 struct EntitySection<Content: View>: View {
   let title: String
-  let count: Int
+  /// Nil (not read yet) hides the count
+  let count: Int?
   let icon: String
   let isExpanded: Bool
   /// The header's "+" button, its title as tooltip; nil shows none
@@ -20,7 +21,7 @@ struct EntitySection<Content: View>: View {
 
   init(
     title: String,
-    count: Int,
+    count: Int?,
     icon: String,
     isExpanded: Bool = true,
     createTitle: String? = nil,
@@ -97,9 +98,11 @@ struct EntitySection<Content: View>: View {
           .font(.monoMedium)
           .foregroundColor(.foreground)
 
-        Text("(\(count))")
-          .font(.monoSmall)
-          .foregroundColor(.foregroundSubtle)
+        if let count {
+          Text("(\(count))")
+            .font(.monoSmall)
+            .foregroundColor(.foregroundSubtle)
+        }
 
         Spacer()
       }

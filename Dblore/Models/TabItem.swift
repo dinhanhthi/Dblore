@@ -128,10 +128,12 @@ enum TabDocumentType: String, Codable, Equatable {
   }
 }
 
-/// Identifies the routine or trigger whose definition an object source tab shows
+/// Identifies the routine, trigger, sequence or user type whose definition an object source tab
+/// shows
 nonisolated struct ObjectSourceRef: Codable, Hashable, Sendable {
   enum Kind: String, Codable, Hashable, Sendable {
-    case function, procedure, trigger
+    case function, procedure, trigger, sequence
+    case userType = "type"
   }
 
   var kind: Kind
@@ -162,7 +164,7 @@ nonisolated struct ObjectSourceRef: Codable, Hashable, Sendable {
     return "\(kind.rawValue):\(schema).\(table ?? "").\(name)"
   }
 
-  /// "name(args)" for routines, "name on table" for triggers
+  /// "name(args)" for routines, "name on table" for triggers, the bare name otherwise
   var title: String {
     switch kind {
     case .function, .procedure:
@@ -170,6 +172,8 @@ nonisolated struct ObjectSourceRef: Codable, Hashable, Sendable {
     case .trigger:
       guard let table, !table.isEmpty else { return name }
       return "\(name) on \(table)"
+    case .sequence, .userType:
+      return name
     }
   }
 }

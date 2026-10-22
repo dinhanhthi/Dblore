@@ -285,6 +285,20 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
+  /// Nil until the Sequences section has read them
+  private var filteredSequences: [DatabaseSequence]? {
+    workspaceManager.databaseSequences.items?.filter {
+      SidebarEntityFilter.matchesAll($0.name, keywords: publicKeywords)
+    }
+  }
+
+  /// Nil until the Types section has read them
+  private var filteredUserTypes: [DatabaseUserType]? {
+    workspaceManager.databaseUserTypes.items?.filter {
+      SidebarEntityFilter.matchesAll($0.name, keywords: publicKeywords)
+    }
+  }
+
   private var filteredUsers: [DatabaseUser] {
     workspaceManager.databaseUsers.filter {
       SidebarEntityFilter.matchesAll($0.name, keywords: securityKeywords)
@@ -304,14 +318,18 @@ struct WorkspaceLeftSidebarContent: View {
     var functions: [DatabaseFunction]
     var procedures: [DatabaseProcedure]
     var triggers: [DatabaseTrigger]
+    /// Nil until read (the section was never expanded)
+    var sequences: [DatabaseSequence]?
+    var userTypes: [DatabaseUserType]?
 
     var isEmpty: Bool {
       tables.isEmpty && views.isEmpty && functions.isEmpty && procedures.isEmpty
-        && triggers.isEmpty
+        && triggers.isEmpty && (sequences ?? []).isEmpty && (userTypes ?? []).isEmpty
     }
 
     var count: Int {
       tables.count + views.count + functions.count + procedures.count + triggers.count
+        + (sequences?.count ?? 0) + (userTypes?.count ?? 0)
     }
 
     func inSchema(_ schema: String) -> PublicEntities {
@@ -320,17 +338,28 @@ struct WorkspaceLeftSidebarContent: View {
         views: views.filter { $0.source.schema == schema },
         functions: functions.filter { $0.schema == schema },
         procedures: procedures.filter { $0.schema == schema },
-        triggers: triggers.filter { $0.schema == schema })
+        triggers: triggers.filter { $0.schema == schema },
+        sequences: sequences?.filter { $0.schema == schema },
+        userTypes: userTypes?.filter { $0.schema == schema })
     }
   }
 
-  /// Schemas that hold at least one object, the connection's default schema first
-  private var publicSchemas: [String] {
+  /// Schemas holding an object read with the schema (not the sequences and types read on
+  /// expand): they alone pick the flat or grouped layout, so expanding a section never flips it
+  private var schemaLoadSchemas: Set<String> {
     var names = Set(workspaceManager.databaseTables.map(\.schema))
     names.formUnion(workspaceManager.databaseViews.map(\.schema))
     names.formUnion(workspaceManager.databaseFunctions.map(\.schema))
     names.formUnion(workspaceManager.databaseProcedures.map(\.schema))
     names.formUnion(workspaceManager.databaseTriggers.map(\.schema))
+    return names
+  }
+
+  /// Schemas that hold at least one object, the connection's default schema first
+  private var publicSchemas: [String] {
+    var names = schemaLoadSchemas
+    names.formUnion((workspaceManager.databaseSequences.items ?? []).map(\.schema))
+    names.formUnion((workspaceManager.databaseUserTypes.items ?? []).map(\.schema))
     var sorted = names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     if let index = sorted.firstIndex(of: connectionDatabaseType.dialect.defaultSchema) {
       sorted.insert(sorted.remove(at: index), at: 0)
@@ -341,7 +370,8 @@ struct WorkspaceLeftSidebarContent: View {
   private var publicTabContent: some View {
     let entities = PublicEntities(
       tables: filteredTables, views: filteredViews, functions: filteredFunctions,
-      procedures: filteredProcedures, triggers: filteredTriggers)
+      procedures: filteredProcedures, triggers: filteredTriggers, sequences: filteredSequences,
+      userTypes: filteredUserTypes)
     let schemas = publicSchemas
     return VStack(spacing: 0) {
       SidebarFilterField(text: $publicFilter)
@@ -352,7 +382,7 @@ struct WorkspaceLeftSidebarContent: View {
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.sm) {
             // One schema keeps the flat layout; two or more get one group per schema
-            if schemas.count > 1 && SidebarSectionModel.groupsBySchema(queryLanguage) {
+            if schemaLoadSchemas.count > 1 && SidebarSectionModel.groupsBySchema(queryLanguage) {
               ForEach(schemas, id: \.self) { schema in
                 let inSchema = entities.inSchema(schema)
                 if !inSchema.isEmpty {
@@ -387,7 +417,12 @@ struct WorkspaceLeftSidebarContent: View {
     _ entities: PublicEntities, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool,
     schema: String?
   ) -> some View {
-    ForEach(SidebarSectionModel.sections(for: queryLanguage), id: \.kind) { section in
+    ForEach(
+      SidebarSectionModel.sections(
+        for: queryLanguage,
+        supportsUserTypes: connectionDatabaseType.capabilities.supportsUserTypes),
+      id: \.kind
+    ) { section in
       entitySection(
         section, entities, idPrefix: idPrefix, showsEmptySections: showsEmptySections,
         showsSchema: showsSchema, schema: schema)
@@ -496,7 +531,65 @@ struct WorkspaceLeftSidebarContent: View {
         }
         .id(idPrefix + (publicKeywords.isEmpty ? "triggers" : "triggers-filtered"))
       }
+
+    case .sequences:
+      // Shown unread too: expanding the section is what reads it
+      if showsEmptySections || entities.sequences?.isEmpty != true {
+        EntitySection(
+          title: section.title,
+          count: entities.sequences?.count,
+          icon: section.icon,
+          isExpanded: !publicKeywords.isEmpty && entities.sequences != nil
+        ) {
+          catalogStatus(workspaceManager.databaseSequences, isEmpty: entities.sequences?.isEmpty) {
+            await workspaceManager.loadSequencesIfNeeded()
+          }
+          ForEach(entities.sequences ?? []) { sequence in
+            SequenceRowView(
+              sequence: sequence,
+              onShowDDL: { workspaceManager.openObjectSource(.sequence(sequence)) },
+              onCopyName: { copyName(sequence.name, schema: sequence.schema) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "sequences" : "sequences-filtered"))
+      }
+
+    case .types:
+      if showsEmptySections || entities.userTypes?.isEmpty != true {
+        EntitySection(
+          title: section.title,
+          count: entities.userTypes?.count,
+          icon: section.icon,
+          isExpanded: !publicKeywords.isEmpty && entities.userTypes != nil
+        ) {
+          catalogStatus(workspaceManager.databaseUserTypes, isEmpty: entities.userTypes?.isEmpty) {
+            await workspaceManager.loadUserTypesIfNeeded()
+          }
+          ForEach(entities.userTypes ?? []) { type in
+            UserTypeRowView(
+              type: type,
+              onShowDDL: { workspaceManager.openObjectSource(.userType(type)) },
+              onCopyName: { copyName(type.name, schema: type.schema) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "types" : "types-filtered"))
+      }
     }
+  }
+
+  /// First row of a section read on expand: starts the read, then shows its progress or error
+  private func catalogStatus<Item>(
+    _ catalog: LazyCatalog<Item>, isEmpty: Bool?, load: @escaping () async -> Void
+  ) -> some View {
+    CatalogStatusRow(
+      status: catalog.status(isEmpty: isEmpty), onAppear: { Task { await load() } },
+      onRetry: { Task { await load() } })
+  }
+
+  private func copyName(_ name: String, schema: String) {
+    perform(.copyName, name: name, schema: schema, open: {})
   }
 
   private func tableRow(_ table: FilteredTable, showsSchema: Bool) -> some View {

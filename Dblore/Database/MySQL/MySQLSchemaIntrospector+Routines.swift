@@ -62,6 +62,8 @@ extension MySQLSchemaIntrospector {
       (kind, schema, name) = ("PROCEDURE", procedure.schema, procedure.name)
     case .trigger(let trigger):
       (kind, schema, name) = ("TRIGGER", trigger.schema, trigger.name)
+    case .sequence, .userType:
+      return nil
     }
     let dialect = SQLDialect.mysql
     let sql =

@@ -100,6 +100,22 @@ extension DatabaseConnectionManager {
     }
   }
 
+  // MARK: - Sequences and User Types
+
+  /// Fetch all sequences (empty where the engine has none in the sidebar)
+  func fetchSequences() async throws -> [DatabaseSequence] {
+    try await fetchCatalog("sequences") { session in
+      try await self.introspector.sequences(in: session)
+    }
+  }
+
+  /// Fetch all enums, domains and standalone composite types
+  func fetchUserTypes() async throws -> [DatabaseUserType] {
+    try await fetchCatalog("types") { session in
+      try await self.introspector.userTypes(in: session)
+    }
+  }
+
   // MARK: - Procedures
 
   /// Fetch all procedures from the database

@@ -95,6 +95,22 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
   }
 
+  /// Text for a `--` comment, in every dialect: each line break (which would end the comment
+  /// and turn the rest, e.g. of a quoted identifier, into live SQL) becomes a visible escape
+  static func lineCommentSafe(_ text: String) -> String {
+    var safe = ""
+    for scalar in text.unicodeScalars {
+      switch scalar {
+      case "\n": safe += "\\n"
+      case "\r": safe += "\\r"
+      case "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}":
+        safe += "\\u{" + String(scalar.value, radix: 16, uppercase: true) + "}"
+      default: safe.unicodeScalars.append(scalar)
+      }
+    }
+    return safe
+  }
+
   /// `quoteIdentifier(name)`, or `schema.name` when `schema` is not the default.
   func qualified(schema: String?, name: String) throws -> String {
     let quotedName = try quoteIdentifier(name)

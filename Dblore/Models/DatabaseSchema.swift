@@ -410,3 +410,108 @@ struct DatabaseRole: Identifiable, Sendable {
     return attrs
   }
 }
+
+// MARK: - Sequences and User Types
+
+/// A sequence (PostgreSQL `pg_sequence`) with its current parameters.
+nonisolated struct DatabaseSequence: Identifiable, Hashable, Sendable {
+  /// The column a sequence belongs to (serial, identity, `OWNED BY`)
+  nonisolated struct Owner: Hashable, Sendable {
+    let schema: String
+    let table: String
+    let column: String
+  }
+
+  let schema: String
+  let name: String
+  /// `smallint`, `integer` or `bigint`
+  let dataType: String
+  let start: Int
+  let increment: Int
+  let minValue: Int
+  let maxValue: Int
+  let cache: Int
+  let cycle: Bool
+  let ownedBy: Owner?
+  /// Created by its identity column
+  let isIdentity: Bool
+  /// Catalog oid
+  let oid: UInt32?
+
+  init(
+    schema: String, name: String, dataType: String, start: Int, increment: Int, minValue: Int,
+    maxValue: Int, cache: Int, cycle: Bool, ownedBy: Owner? = nil, isIdentity: Bool = false,
+    oid: UInt32? = nil
+  ) {
+    self.schema = schema
+    self.name = name
+    self.dataType = dataType
+    self.start = start
+    self.increment = increment
+    self.minValue = minValue
+    self.maxValue = maxValue
+    self.cache = cache
+    self.cycle = cycle
+    self.ownedBy = ownedBy
+    self.isIdentity = isIdentity
+    self.oid = oid
+  }
+
+  /// Stable key: the oid when known, otherwise `schema.name`.
+  var id: String {
+    if let oid { return "oid:\(oid)" }
+    return "\(schema).\(name)"
+  }
+
+  var qualifiedName: String {
+    "\(schema).\(name)"
+  }
+}
+
+/// A user-defined type: an enum, a domain or a standalone composite type.
+nonisolated struct DatabaseUserType: Identifiable, Hashable, Sendable {
+  /// A named CHECK constraint of a domain. `definition` is `pg_get_constraintdef` text.
+  nonisolated struct Constraint: Hashable, Sendable {
+    let name: String
+    let definition: String
+  }
+
+  /// An attribute of a composite type. `type` is `format_type` text.
+  nonisolated struct Attribute: Hashable, Sendable {
+    let name: String
+    let type: String
+  }
+
+  nonisolated enum Kind: Hashable, Sendable {
+    /// Labels in sort order
+    case `enum`([String])
+    /// `baseType` and `defaultExpression` are server text
+    case domain(
+      baseType: String, notNull: Bool, defaultExpression: String?, constraints: [Constraint])
+    /// Attributes in column order
+    case composite([Attribute])
+  }
+
+  let schema: String
+  let name: String
+  let kind: Kind
+  /// Catalog oid
+  let oid: UInt32?
+
+  init(schema: String, name: String, kind: Kind, oid: UInt32? = nil) {
+    self.schema = schema
+    self.name = name
+    self.kind = kind
+    self.oid = oid
+  }
+
+  /// Stable key: the oid when known, otherwise `schema.name`.
+  var id: String {
+    if let oid { return "oid:\(oid)" }
+    return "\(schema).\(name)"
+  }
+
+  var qualifiedName: String {
+    "\(schema).\(name)"
+  }
+}

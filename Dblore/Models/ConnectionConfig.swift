@@ -89,7 +89,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
   /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
-  /// without transactions, structure editing or SQL dump.
+  /// without transactions, structure editing or SQL dump. Only PostgreSQL lists sequences and
+  /// user-defined types.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -116,7 +117,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: true
       )
     case .sqlite:
       DatabaseCapabilities(
@@ -142,7 +144,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: false
       )
     case .duckdb:
       DatabaseCapabilities(
@@ -168,7 +171,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: false
       )
     case .mysql:
       DatabaseCapabilities(
@@ -194,7 +198,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: false
       )
     case .mongodb:
       DatabaseCapabilities(
@@ -220,7 +225,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .mongosh,
         supportsTransactions: false,
         supportsStructure: false,
-        supportsSQLDump: false
+        supportsSQLDump: false,
+        supportsUserTypes: false
       )
     }
   }

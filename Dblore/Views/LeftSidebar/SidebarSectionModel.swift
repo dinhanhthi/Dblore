@@ -10,6 +10,8 @@
 //  schema may change, collections add Rename and Drop, views Edit View, Duplicate and Drop.
 //  PostgreSQL, MySQL and SQLite tables add Rename and Drop Table (the structure editor's flows)
 //  and the Tables header New Table... when the schema may change; DuckDB stays view-only.
+//  PostgreSQL adds Sequences and Types (enums, domains, composite types), collapsed and read
+//  when first expanded; their rows offer Show DDL and Copy Name.
 //
 
 import Foundation
@@ -19,7 +21,7 @@ nonisolated enum SidebarSectionModel {
 
   /// A Public tab section. `tables` holds MongoDB collections.
   enum Kind: Hashable, Sendable {
-    case tables, views, functions, procedures, triggers
+    case tables, views, functions, procedures, triggers, sequences, types
   }
 
   struct Section: Equatable, Sendable {
@@ -72,8 +74,8 @@ nonisolated enum SidebarSectionModel {
     }
   }
 
-  /// Public tab sections in display order.
-  static func sections(for language: QueryLanguage) -> [Section] {
+  /// Public tab sections in display order. `supportsUserTypes` adds Sequences and Types.
+  static func sections(for language: QueryLanguage, supportsUserTypes: Bool = false) -> [Section] {
     switch language {
     case .sql:
       [
@@ -83,6 +85,12 @@ nonisolated enum SidebarSectionModel {
         Section(kind: .procedures, title: "Procedures", icon: "gearshape.2"),
         Section(kind: .triggers, title: "Triggers", icon: ObjectSourceRef.Kind.trigger.iconName),
       ]
+        + (supportsUserTypes
+          ? [
+            Section(
+              kind: .sequences, title: "Sequences", icon: ObjectSourceRef.Kind.sequence.iconName),
+            Section(kind: .types, title: "Types", icon: ObjectSourceRef.Kind.userType.iconName),
+          ] : [])
     case .mongosh:
       [
         Section(kind: .tables, title: "Collections", icon: "tablecells"),

@@ -348,6 +348,8 @@ extension WorkspaceManager {
     databaseUsers = []
     databaseRoles = []
     databaseForeignKeys = []
+    databaseSequences.reset()
+    databaseUserTypes.reset()
     schemaConnectionEpoch = nil
     mongoOverview = nil
     // The Export, Import and backup forms belong to the closed connection: stop them and close

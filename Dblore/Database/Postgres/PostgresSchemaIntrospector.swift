@@ -217,7 +217,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   }
 
   /// `pg_get_functiondef` for functions and procedures, `pg_get_triggerdef` for triggers.
-  /// Aggregates and window functions have no definition, so they get a comment stub.
+  /// Aggregates and window functions have no definition, so they get a comment stub. Sequences
+  /// and user types are rendered from their loaded catalog rows, without a query.
   func definition(
     of object: SchemaObjectRef, in session: any DatabaseSession
   ) async throws
@@ -235,6 +236,10 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       let found = try await rows(
         in: session, sql: "SELECT pg_get_triggerdef($1::oid, true)", binds: [.text(String(oid))])
       return found.first?.first.flatMap(CatalogValue.string)
+    case .sequence(let sequence):
+      return try Self.ddl(sequence)
+    case .userType(let type):
+      return try Self.ddl(type)
     }
   }
 
@@ -338,6 +343,122 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
           canCreateRole: canCreateRole, members: CatalogValue.stringList(row[5])))
     }
     return roles
+  }
+
+  /// User schemas: not a system schema, not another session's temporary schema
+  private static let userSchemaFilter = """
+    n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_toast%'
+      AND \(hideOtherTempSchemas)
+    """
+
+  /// Sequences of the user schemas, not owned by an extension. The owning column comes from the
+  /// sequence's auto ('a', serial and `OWNED BY`) or internal ('i', identity) dependency.
+  func sequences(in session: any DatabaseSession) async throws -> [DatabaseSequence] {
+    let query = """
+      SELECT n.nspname::text, c.relname::text, format_type(s.seqtypid, NULL), s.seqstart,
+        s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle, tn.nspname::text,
+        tc.relname::text, a.attname::text, d.deptype::text, c.oid::int8
+      FROM pg_sequence s
+      JOIN pg_class c ON c.oid = s.seqrelid
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = s.seqrelid
+        AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
+      LEFT JOIN pg_class tc ON tc.oid = d.refobjid
+      LEFT JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+      LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+      WHERE c.relkind = 'S' AND \(Self.userSchemaFilter)
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_depend e
+          WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid AND e.deptype = 'e')
+      ORDER BY n.nspname, c.relname
+      """
+    var sequences: [DatabaseSequence] = []
+    for row in try await rows(in: session, sql: query) {
+      guard row.count >= 14,
+        let schema = CatalogValue.string(row[0]),
+        let name = CatalogValue.string(row[1]),
+        let dataType = CatalogValue.string(row[2]),
+        let start = CatalogValue.int(row[3]),
+        let increment = CatalogValue.int(row[4]),
+        let minValue = CatalogValue.int(row[5]),
+        let maxValue = CatalogValue.int(row[6]),
+        let cache = CatalogValue.int(row[7])
+      else { continue }
+      var owner: DatabaseSequence.Owner?
+      if let ownerSchema = CatalogValue.string(row[9]), let table = CatalogValue.string(row[10]),
+        let column = CatalogValue.string(row[11])
+      {
+        owner = DatabaseSequence.Owner(schema: ownerSchema, table: table, column: column)
+      }
+      sequences.append(
+        DatabaseSequence(
+          schema: schema, name: name, dataType: dataType, start: start, increment: increment,
+          minValue: minValue, maxValue: maxValue, cache: cache,
+          cycle: CatalogValue.bool(row[8]) ?? false, ownedBy: owner,
+          isIdentity: CatalogValue.string(row[12]) == "i", oid: CatalogValue.oid(row[13])))
+    }
+    return sequences
+  }
+
+  /// Enums (labels by `enumsortorder`), domains (base type, default, NOT NULL, CHECK
+  /// constraints) and standalone composite types (`typrelid` of relkind 'c'; a table's row type
+  /// is left out) of the user schemas, not owned by an extension. One query: the kind is
+  /// `typtype` and each kind's details travel as JSON text.
+  func userTypes(in session: any DatabaseSession) async throws -> [DatabaseUserType] {
+    let query = """
+      SELECT n.nspname::text, t.typname::text, t.typtype::text,
+        (SELECT COALESCE(json_agg(e.enumlabel::text ORDER BY e.enumsortorder), '[]')::text
+          FROM pg_enum e WHERE e.enumtypid = t.oid),
+        CASE WHEN t.typtype = 'd' THEN format_type(t.typbasetype, t.typtypmod) END,
+        pg_get_expr(t.typdefaultbin, 0), t.typnotnull,
+        (SELECT COALESCE(json_agg(json_build_array(dc.conname::text, pg_get_constraintdef(dc.oid))
+            ORDER BY dc.conname), '[]')::text
+          FROM pg_constraint dc WHERE dc.contypid = t.oid AND dc.contype = 'c'),
+        (SELECT COALESCE(json_agg(json_build_array(a.attname::text,
+            format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum), '[]')::text
+          FROM pg_attribute a
+          WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped),
+        t.oid::int8
+      FROM pg_type t
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      LEFT JOIN pg_class rc ON rc.oid = t.typrelid
+      WHERE (t.typtype IN ('e', 'd') OR (t.typtype = 'c' AND rc.relkind = 'c'))
+        AND \(Self.userSchemaFilter)
+        AND NOT EXISTS (
+          SELECT 1 FROM pg_depend x
+          WHERE x.classid = 'pg_type'::regclass AND x.objid = t.oid AND x.deptype = 'e')
+      ORDER BY n.nspname, t.typname
+      """
+    var types: [DatabaseUserType] = []
+    for row in try await rows(in: session, sql: query) {
+      guard row.count >= 10,
+        let schema = CatalogValue.string(row[0]),
+        let name = CatalogValue.string(row[1])
+      else { continue }
+      let kind: DatabaseUserType.Kind
+      switch CatalogValue.string(row[2]) {
+      case "e":
+        kind = .enum(CatalogValue.stringList(row[3]))
+      case "d":
+        kind = .domain(
+          baseType: CatalogValue.string(row[4]) ?? "",
+          notNull: CatalogValue.bool(row[6]) ?? false,
+          defaultExpression: CatalogValue.string(row[5]),
+          constraints: CatalogValue.stringPairs(row[7]).map {
+            DatabaseUserType.Constraint(name: $0.0, definition: $0.1)
+          })
+      case "c":
+        kind = .composite(
+          CatalogValue.stringPairs(row[8]).map {
+            DatabaseUserType.Attribute(name: $0.0, type: $0.1)
+          })
+      default:
+        continue
+      }
+      types.append(
+        DatabaseUserType(schema: schema, name: name, kind: kind, oid: CatalogValue.oid(row[9])))
+    }
+    return types
   }
 
   func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
@@ -635,6 +756,14 @@ nonisolated enum CatalogValue {
     default:
       return []
     }
+  }
+
+  /// `[["a", "b"], ...]` JSON text (`json_agg(json_build_array(a, b))`) as pairs
+  static func stringPairs(_ value: CellValue) -> [(String, String)] {
+    guard let text = string(value), let data = text.data(using: .utf8),
+      let decoded = try? JSONDecoder().decode([[String]].self, from: data)
+    else { return [] }
+    return decoded.compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }
   }
 
   /// Parse PostgreSQL array string format: {val1,val2,val3}

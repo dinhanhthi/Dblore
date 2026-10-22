@@ -148,6 +148,14 @@ struct SQLDialectTests {
     #expect(try dialect.quoteIdentifier(name) == expected)
   }
 
+  @Test("Text for a -- comment keeps every line break as a visible escape on one line")
+  func lineCommentSafe() {
+    let text = SQLDialect.lineCommentSafe(
+      "a\r\nDROP TABLE t;\nb\rc\u{0B}d\u{0C}e\u{85}f\u{2028}g\u{2029}DROP TABLE u")
+    #expect(!text.contains { $0.isNewline })
+    #expect(text == #"a\r\nDROP TABLE t;\nb\rc\u{B}d\u{C}e\u{85}f\u{2028}g\u{2029}DROP TABLE u"#)
+  }
+
   @Test(
     "A NUL in an identifier is rejected",
     arguments: [SQLDialect.postgresql, SQLDialect.sqlite, SQLDialect.duckdb])

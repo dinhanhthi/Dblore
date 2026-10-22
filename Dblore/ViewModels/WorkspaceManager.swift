@@ -320,6 +320,10 @@ class WorkspaceManager: Identifiable {
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
+  /// Read when the sidebar's Sequences section is first expanded
+  var databaseSequences = LazyCatalog<DatabaseSequence>()
+  /// Read when the sidebar's Types section is first expanded
+  var databaseUserTypes = LazyCatalog<DatabaseUserType>()
   var isLoadingSchema: Bool = false
   var areAllEntitiesExpanded: Bool = false
 

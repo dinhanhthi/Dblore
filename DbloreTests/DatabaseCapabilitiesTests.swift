@@ -73,7 +73,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: true
   )
 
   private static let sqlite = DatabaseCapabilities(
@@ -99,7 +100,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: false
   )
 
   private static let duckdb = DatabaseCapabilities(
@@ -125,7 +127,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: false
   )
 
   private static let mysql = DatabaseCapabilities(
@@ -151,7 +154,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: false
   )
 
   private static let mongodb = DatabaseCapabilities(
@@ -177,6 +181,7 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .mongosh,
     supportsTransactions: false,
     supportsStructure: false,
-    supportsSQLDump: false
+    supportsSQLDump: false,
+    supportsUserTypes: false
   )
 }

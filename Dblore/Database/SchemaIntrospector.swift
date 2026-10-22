@@ -11,6 +11,7 @@ import Foundation
 /// when `supportsRolesAndUsers` is false. Tables, views, foreign keys, and columns stay
 /// required when `supportsSchemas` is false; that engine uses its default schema name.
 /// `triggers` (empty) and `definition(of:in:)` (nil) default for every engine until overridden.
+/// `sequences` and `userTypes` are empty when `supportsUserTypes` is false.
 nonisolated protocol SchemaIntrospector: Sendable {
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable]
 
@@ -30,6 +31,12 @@ nonisolated protocol SchemaIntrospector: Sendable {
     -> String?
 
   func users(in session: any DatabaseSession) async throws -> [DatabaseUser]
+
+  /// Sequences of every user schema, with their current parameters.
+  func sequences(in session: any DatabaseSession) async throws -> [DatabaseSequence]
+
+  /// Enums, domains and standalone composite types of every user schema.
+  func userTypes(in session: any DatabaseSession) async throws -> [DatabaseUserType]
 
   func roles(in session: any DatabaseSession) async throws -> [DatabaseRole]
 
@@ -67,6 +74,10 @@ nonisolated enum SchemaObjectRef: Sendable {
   case function(DatabaseFunction)
   case procedure(DatabaseProcedure)
   case trigger(DatabaseTrigger)
+  /// DDL rendered from the loaded parameters
+  case sequence(DatabaseSequence)
+  /// DDL rendered from the loaded definition
+  case userType(DatabaseUserType)
 }
 
 // Empty catalogs for engines that do not have them. A concrete introspector overrides a
@@ -101,6 +112,16 @@ nonisolated extension SchemaIntrospector {
 
   func roles(in session: any DatabaseSession) async throws -> [DatabaseRole] {
     guard session.capabilities.supportsRolesAndUsers else { return [] }
+    return []
+  }
+
+  func sequences(in session: any DatabaseSession) async throws -> [DatabaseSequence] {
+    guard session.capabilities.supportsUserTypes else { return [] }
+    return []
+  }
+
+  func userTypes(in session: any DatabaseSession) async throws -> [DatabaseUserType] {
+    guard session.capabilities.supportsUserTypes else { return [] }
     return []
   }
 }

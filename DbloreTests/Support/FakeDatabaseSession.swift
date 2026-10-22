@@ -547,7 +547,8 @@ extension DatabaseCapabilities {
       queryLanguage: .sql,
       supportsTransactions: true,
       supportsStructure: true,
-      supportsSQLDump: true
+      supportsSQLDump: true,
+      supportsUserTypes: false
     )
   }
 }
