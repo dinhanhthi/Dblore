@@ -3,7 +3,8 @@
 // Bound statements keep values out of the SQL. Preview text inlines literals for display.
 // MySQL: backticks, `?`, no ONLY, `() VALUES ()`, bytes through `UNHEX(?)`; an UPDATE skips
 // columns whose bind text equals the loaded value and carries a row check (0 affected rows
-// is either a same-value write or a missing row: CLIENT_FOUND_ROWS is off).
+// is either a same-value write or a missing row: CLIENT_FOUND_ROWS is off). A cell staged to its
+// column default is the `DEFAULT` keyword, never a bind, where `supportsDefaultInUpdate`.
 
 import Foundation
 
@@ -26,7 +27,8 @@ nonisolated struct BoundStatement: Equatable, Sendable {
 
 /// Builds bound DML, then a display-only preview, for a `RowChangeSet`.
 /// Statement order is every DELETE, then every UPDATE, then every INSERT.
-/// Throws `RowChangeError.noRowKey` when the set has an UPDATE or DELETE and the target no key.
+/// Throws `RowChangeError.noRowKey` when the set has an UPDATE or DELETE and the target no key,
+/// and `serverDefaultUnsupported` for a DEFAULT cell the dialect cannot write.
 nonisolated enum RowChangeSQLBuilder {
   static func statements(
     for set: RowChangeSet, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
@@ -71,10 +73,14 @@ nonisolated enum RowChangeSQLBuilder {
       draft.rewindStep = RewindPlan.Step(operation: .delete, keyBefore: row.values, keyAfter: nil)
       result.append(draft)
     }
+    if !set.serverDefaults.isEmpty, !dialect.supportsDefaultInUpdate {
+      throw RowChangeError.serverDefaultUnsupported
+    }
     for (row, changes) in set.edits {
       if var update = update(
-        row, changes: changes, originals: set.originals[row] ?? [:], relation: relation,
-        only: only, target: target, columns: columns, dialect: dialect)
+        row, changes: changes, originals: set.originals[row] ?? [:],
+        defaults: set.serverDefaults[row] ?? [], relation: relation, only: only, target: target,
+        columns: columns, dialect: dialect)
       {
         update.rewindStep = RewindPlan.Step(
           operation: .update, keyBefore: row.values, keyAfter: row.values)
@@ -109,13 +115,15 @@ nonisolated enum RowChangeSQLBuilder {
 
   private static func update(
     _ row: RowChangeSet.RowKey, changes: [String: CellValue], originals: [String: CellValue],
-    relation: String, only: Bool, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
+    defaults: Set<String>, relation: String, only: Bool, target: EditTarget,
+    columns: [ColumnInfo], dialect: SQLDialect
   ) -> StatementDraft? {
     let keys = Set(target.primaryKeyColumns)
     let edited = columns.filter { column in
       guard let value = changes[column.name], !keys.contains(column.name),
         !target.generatedColumns.contains(column.name)
       else { return false }
+      if defaults.contains(column.name) { return true }
       return !(dialect == .mysql && sameBindText(value, originals[column.name], dialect: dialect))
     }
     guard !edited.isEmpty else { return nil }
@@ -131,7 +139,11 @@ nonisolated enum RowChangeSQLBuilder {
         draft.text(", ")
       }
       draft.text("\(quote(column.name, dialect: dialect)) = ")
-      draft.value(changes[column.name] ?? .null)
+      if defaults.contains(column.name) {
+        draft.text("DEFAULT")
+      } else {
+        draft.value(changes[column.name] ?? .null)
+      }
     }
     appendWhere(row.values, columns: target.primaryKeyColumns, to: &draft, dialect: dialect)
     if dialect == .mysql {

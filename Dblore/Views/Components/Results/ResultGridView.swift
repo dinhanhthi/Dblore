@@ -37,6 +37,10 @@ struct ResultGridView: NSViewRepresentable {
   var onStageDuplicate: ((_ rows: [Int]) -> Void)? = nil
   var onStageDelete: ((_ rows: [Int]) -> Void)? = nil
   var onRevertStaged: ((_ rows: [Int]) -> Void)? = nil
+  /// Page rows, result column and one value per row of "Set Value..." or "Generate UUID(v7)"
+  var onStageCells: ((_ rows: [Int], _ column: Int, _ values: [StagedCellValue]) -> Void)? = nil
+  /// "Set Value..." offers DEFAULT
+  var offersDefaultValue = false
   /// Receives the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)? = nil
   /// Category keys hidden per column. Does not change the loaded result or its LIMIT.
@@ -207,6 +211,8 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onStageDuplicate = onStageDuplicate
     coordinator.onStageDelete = onStageDelete
     coordinator.onRevertStaged = onRevertStaged
+    coordinator.onStageCells = onStageCells
+    coordinator.offersDefaultValue = offersDefaultValue
     coordinator.onSortChange = onSortChange
     coordinator.onValueFilterChange = onValueFilterChange
     coordinator.onShowCellDetails = onShowCellDetails

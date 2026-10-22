@@ -62,6 +62,15 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
+  /// Whether `UPDATE ... SET c = DEFAULT` is valid (PostgreSQL `UPDATE`, MySQL `UPDATE` docs).
+  /// SQLite and MongoDB have none; DuckDB grid edits stay off (`supportsRowStaging`).
+  var supportsDefaultInUpdate: Bool {
+    switch engine {
+    case .postgresql, .mysql: true
+    case .sqlite, .duckdb, .mongodb: false
+    }
+  }
+
   /// SQLite and MySQL (default `_ci` collations) `LIKE` fold case, and neither has `ILIKE`.
   /// PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
   var likeIsCaseInsensitive: Bool {

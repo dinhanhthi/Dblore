@@ -35,6 +35,8 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   /// Explain Analyze is offered. The plan may be text (DuckDB) rather than JSON.
   let supportsExplainAnalyze: Bool
   let supportsUpdateOnly: Bool
+  /// `UPDATE ... SET c = DEFAULT` (PostgreSQL, MySQL), so a cell can be set to its column default.
+  let supportsDefaultInUpdate: Bool
   /// Grid edits can be staged and committed as a batch.
   let supportsRowStaging: Bool
   /// CSV / JSON import into a table.

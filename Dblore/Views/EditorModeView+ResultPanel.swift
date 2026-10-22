@@ -544,6 +544,16 @@ struct EditorResultGridView: View {
           viewModel.showToast(message, type: .error)
         }
       },
+      onStageCells: { rows, column, values in
+        guard result.columns.indices.contains(column) else { return }
+        if let message = viewModel.stageEdits(
+          rows: rows, column: result.columns[column].name, values: values)
+        {
+          viewModel.showToast(message, type: .error)
+        }
+      },
+      offersDefaultValue: viewModel.unavailableFeatureMessage(
+        "Setting a cell to DEFAULT", \.supportsDefaultInUpdate) == nil,
       onSortChange: { column, ascending in
         if viewModel.isMongoDataViewer {
           Task { @MainActor in await viewModel.setDocumentSort(column, ascending: ascending) }

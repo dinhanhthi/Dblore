@@ -538,6 +538,7 @@ extension DatabaseCapabilities {
       supportsExplainJSON: false,
       supportsExplainAnalyze: false,
       supportsUpdateOnly: false,
+      supportsDefaultInUpdate: false,
       supportsRowStaging: true,
       supportsDataImport: true,
       supportsForeignKeyLookup: true,

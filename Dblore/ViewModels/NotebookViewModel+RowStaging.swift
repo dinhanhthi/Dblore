@@ -144,27 +144,22 @@ extension NotebookViewModel {
   func stageEdit(row: Int, column: String, value: CellValue) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     if stagesDocuments { return stageDocumentInsertEdit(row: row, column: column, value: value) }
-    guard let target = stagedEditTarget, let key = rowKey(at: row, target: target) else {
-      return Self.rowNotOnPage
-    }
-    if target.generatedColumns.contains(column) { return Self.generatedColumnMessage(column) }
-    let original =
-      dataViewer?.changeSet?.originals[key]?[column] ?? loadedCell(row: row, column: column)
-      ?? .null
-    do {
-      return try changeSet("Edit Cell") { set in
-        if let tempID = key.tempID {
-          set.updateInsert(tempID: tempID, column: column, value: value)
-        } else {
-          try set.stageEdit(row: key, column: column, value: value, original: original)
-        }
-      }
-    } catch let error as RowChangeError {
-      return error.message
-    } catch {
-      return error.localizedDescription
-    }
+    return stageCells([(row, .value(value))], column: column, actionName: "Edit Cell")
   }
+
+  /// Set Value...: stages `values[i]` into `column` of `rows[i]` in one change (one undo step),
+  /// such as a distinct UUID per cell. Text takes each cell's type, as a single-cell edit does.
+  /// Nothing is staged when one cell is refused.
+  @discardableResult
+  func stageEdits(rows: [Int], column: String, values: [StagedCellValue]) -> String? {
+    if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return Self.documentCellsMessage }
+    return stageCells(
+      Array(zip(rows, values)), column: column, actionName: "Edit Cells", typesText: true)
+  }
+
+  /// Shown when several cells of a MongoDB result are set at once
+  static let documentCellsMessage = "On MongoDB, edit one document field at a time"
 
   /// Drops staged edits, deletes, and inserts for `rows`.
   @discardableResult
@@ -609,6 +604,59 @@ extension NotebookViewModel {
     return nil
   }
 
+  /// Stages each cell into `column` inside one `changeSet` mutation. A staged insert takes a
+  /// DEFAULT cell by leaving the column out of its INSERT. `typesText` converts `.string` text
+  /// with `editedCellValue` against the cell's original and the column type.
+  private func stageCells(
+    _ cells: [(row: Int, value: StagedCellValue)], column: String, actionName: String,
+    typesText: Bool = false
+  ) -> String? {
+    guard let target = stagedEditTarget else { return Self.rowNotOnPage }
+    let columnType = editorResult?.columns.first { $0.name == column }?.type ?? ""
+    var keyed: [(key: RowChangeSet.RowKey, original: CellValue, value: StagedCellValue)] = []
+    for cell in cells {
+      guard let key = rowKey(at: cell.row, target: target) else { return Self.rowNotOnPage }
+      let original =
+        dataViewer?.changeSet?.originals[key]?[column] ?? loadedCell(row: cell.row, column: column)
+        ?? .null
+      var value = cell.value
+      if typesText, case .value(.string(let text)) = value {
+        value = .value(Self.editedCellValue(text, original: original, columnType: columnType))
+      }
+      keyed.append((key, original, value))
+    }
+    if target.generatedColumns.contains(column) { return Self.generatedColumnMessage(column) }
+    let setsDefault = keyed.contains { cell in
+      if case .serverDefault = cell.value { return cell.key.tempID == nil }
+      return false
+    }
+    if setsDefault,
+      let reason = unavailableFeatureMessage("Setting a cell to DEFAULT", \.supportsDefaultInUpdate)
+    {
+      return reason
+    }
+    do {
+      return try changeSet(actionName) { set in
+        for cell in keyed {
+          switch (cell.value, cell.key.tempID) {
+          case (.value(let value), let tempID?):
+            set.updateInsert(tempID: tempID, column: column, value: value)
+          case (.serverDefault, let tempID?):
+            set.clearInsertValue(tempID: tempID, column: column)
+          case (.value(let value), nil):
+            try set.stageEdit(row: cell.key, column: column, value: value, original: cell.original)
+          case (.serverDefault, nil):
+            try set.stageServerDefault(row: cell.key, column: column, original: cell.original)
+          }
+        }
+      }
+    } catch let error as RowChangeError {
+      return error.message
+    } catch {
+      return error.localizedDescription
+    }
+  }
+
   /// Records an undo that puts `snapshot` back. Called again from that undo, it becomes the redo.
   private func registerStagedUndo(restoring snapshot: RowChangeSet?, actionName: String) {
     undoManager.registerUndo(withTarget: self) { target in
@@ -675,6 +723,8 @@ extension NotebookViewModel {
       guard !target.primaryKeyColumns.contains(column.name),
         !target.generatedColumns.contains(column.name)
       else { continue }
+      // A cell staged to DEFAULT is left out: the copy's INSERT takes the default too
+      if dataViewer?.changeSet?.isServerDefault(row: key, column: column.name) == true { continue }
       let loaded = result.rows[row].indices.contains(index) ? result.rows[row][index] : .null
       values[column.name] = dataViewer?.changeSet?.edits[key]?[column.name] ?? loaded
     }

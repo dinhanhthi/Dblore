@@ -244,6 +244,36 @@ struct RowChangeSQLBuilderTests {
         #"INSERT INTO "t" DEFAULT VALUES"#,
       ])
   }
+
+  @Test("A DEFAULT cell is the keyword on PostgreSQL, never a bind, and refused on SQLite")
+  func serverDefaultIsTheKeyword() throws {
+    let editTarget = target()
+    var set = RowChangeSet(target: editTarget)
+    try set.stageServerDefault(
+      row: RowChangeSet.RowKey(values: [.int(1)]), column: "name", original: .string("a"))
+
+    let statements = try RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+    #expect(statements.map(\.sql) == [#"UPDATE "t" SET "name" = DEFAULT WHERE "id" = $1"#])
+    #expect(statements.first?.values == ["1"])
+    #expect(
+      try RowChangeSQLBuilder.previewText(
+        for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+        == #"UPDATE "t" SET "name" = DEFAULT WHERE "id" = 1;"#)
+
+    #expect(throws: RowChangeError.serverDefaultUnsupported) {
+      try RowChangeSQLBuilder.statements(
+        for: set, target: editTarget, columns: columns(), dialect: .sqlite)
+    }
+
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(1)]), column: "name", value: .string("b"),
+      original: .string("a"))
+    let edited = try RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+    #expect(edited.map(\.sql) == [#"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#])
+    #expect(edited.first?.values == ["b", "1"])
+  }
 }
 
 private func target(

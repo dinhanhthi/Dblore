@@ -121,6 +121,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   var onStageDelete: ((_ rows: [Int]) -> Void)?
   /// Drops staged changes for the page rows
   var onRevertStaged: ((_ rows: [Int]) -> Void)?
+  /// "Set Value..." and "Generate UUID(v7)": page rows, the result column and one value per row,
+  /// staged as one change. Nil leaves those items out.
+  var onStageCells: ((_ rows: [Int], _ column: Int, _ values: [StagedCellValue]) -> Void)?
+  /// "Set Value..." offers DEFAULT (`DatabaseCapabilities.supportsDefaultInUpdate`)
+  var offersDefaultValue = false
+  /// "Set Value..." popover. Closed when the result identity changes.
+  private var setCellsPopover: NSPopover?
   /// Row values, column and page index of the cell being edited, captured when editing starts
   /// so a reload during the edit can't shift the committed row
   private var editing: (row: [CellValue], column: Int, pageIndex: Int?)?
@@ -282,6 +289,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       columnFilterPopover = nil
       referencedRowPopover?.close()
       referencedRowPopover = nil
+      setCellsPopover?.close()
+      setCellsPopover = nil
     }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
@@ -423,10 +432,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         MenuTarget(row: row, column: column))
     }
     if stagesEdits {
+      let pages = pageIndexes(in: displayedRows)
       menu.addItem(.separator())
       addItem(to: menu, "Add Row", #selector(addRow(_:)), MenuTarget(row: row, column: column))
-      addStagedRowItems(
-        to: menu, row: row, column: column, pages: pageIndexes(in: displayedRows))
+      addStagedRowItems(to: menu, row: row, column: column, pages: pages)
+      addSetCellsItems(to: menu, row: row, column: column, pages: pages)
     }
     if onHighlightCell != nil {
       menu.addItem(.separator())
@@ -482,6 +492,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     addItem(
       to: menu, "Revert Selected", #selector(revertRows(_:)),
       MenuTarget(row: row, column: column, pageIndexes: pages))
+  }
+
+  /// "Set Value..." and the UUID items for `column` of the page rows. Left out on MongoDB
+  /// documents and read-only columns; the UUID items only for a column `UUIDGenerator.fits`.
+  private func addSetCellsItems(to menu: NSMenu, row: Int, column: Int, pages: [Int]) {
+    guard onStageCells != nil, lookupDialect != .mongodb, !readOnlyColumns.contains(column),
+      !pages.isEmpty, let model
+    else { return }
+    let target = MenuTarget(row: row, column: column, pageIndexes: pages)
+    menu.addItem(.separator())
+    addItem(to: menu, "Set Value...", #selector(setCellsValue(_:)), target)
+    guard UUIDGenerator.fits(columnType: model.columns[column].type) else { return }
+    addItem(to: menu, "Generate UUID", #selector(generateUUIDs(_:)), target)
+    addItem(to: menu, "Generate UUIDv7", #selector(generateUUIDv7s(_:)), target)
   }
 
   @discardableResult
@@ -656,6 +680,53 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   @objc private func revertRows(_ sender: NSMenuItem) {
     guard let target = sender.representedObject as? MenuTarget else { return }
     onRevertStaged?(target.pageIndexes)
+  }
+
+  @objc private func setCellsValue(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    showSetCellsValue(row: target.row, column: target.column, pages: target.pageIndexes)
+  }
+
+  @objc private func generateUUIDs(_ sender: NSMenuItem) {
+    stageGeneratedValues(sender) { UUIDGenerator.v4() }
+  }
+
+  @objc private func generateUUIDv7s(_ sender: NSMenuItem) {
+    stageGeneratedValues(sender) { UUIDGenerator.v7() }
+  }
+
+  /// Stages a distinct `make()` text in each page row of the item's column
+  private func stageGeneratedValues(_ sender: NSMenuItem, _ make: () -> String) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    let values = target.pageIndexes.map { _ in StagedCellValue.value(.string(make())) }
+    onStageCells?(target.pageIndexes, target.column, values)
+  }
+
+  /// "Set Value..." popover under the clicked cell; its choice is staged in every page row.
+  private func showSetCellsValue(row: Int, column: Int, pages: [Int]) {
+    guard let model, model.columns.indices.contains(column), let tableView = gridTableView,
+      let tableColumn = tableView.tableColumns.firstIndex(where: {
+        Int($0.identifier.rawValue) == column
+      })
+    else { return }
+    let rect = tableView.frameOfCell(atColumn: tableColumn, row: row)
+    let popover = NSPopover()
+    popover.behavior = .transient
+    popover.animates = true
+    let hosting = NSHostingController(
+      rootView: SetCellsValuePopover(
+        columnName: model.columns[column].name, rowCount: pages.count,
+        offersDefault: offersDefaultValue,
+        onSet: { [weak self, weak popover] value in
+          popover?.close()
+          self?.onStageCells?(pages, column, Array(repeating: value, count: pages.count))
+        }))
+    hosting.sizingOptions = [.preferredContentSize, .intrinsicContentSize]
+    popover.contentViewController = hosting
+    setCellsPopover?.close()
+    setCellsPopover = popover
+    // The table is flipped: maxY is the bottom edge, so the popover opens under the cell.
+    popover.show(relativeTo: rect, of: tableView, preferredEdge: .maxY)
   }
 
   /// Dialect of the grid's highlight database type (PostgreSQL when the grid has not updated)

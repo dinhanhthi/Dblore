@@ -285,6 +285,14 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   }
 }
 
+/// A value staged into a grid cell: a cell value, or the column's server default (the `DEFAULT`
+/// keyword in an UPDATE, the column left out of an INSERT). Only an edit marker, never a result
+/// value, so `CellValue` keeps its cases.
+nonisolated enum StagedCellValue: Sendable {
+  case value(CellValue)
+  case serverDefault
+}
+
 /// The table an inline edit targets, as resolved by the server: OID, column names by attribute
 /// number, primary key columns in key order, and the unquoted catalog schema and table name.
 nonisolated struct EditTable: Sendable, Equatable {
