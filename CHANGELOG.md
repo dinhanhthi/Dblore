@@ -20,6 +20,8 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Sidebar folders and hidden schemas.** Group tables and views into folders per connection (Move to Folder, drag, rename, delete), and hide schemas you do not use from the sidebar with the eye menu; hidden schemas stay available to SQL, autocomplete and search. [#93f666e7](https://github.com/dinhanhthi/Dblore/commit/93f666e7)
 - **Export and import connections.** The welcome screen's Connections tab exports chosen connections, and optionally an open workspace's favorites, to a Dblore file; File > Import Connections… reads it back. Passwords, SSH secrets, keys, certificates and file databases are never exported; on import, connections already saved are skipped, a connection string pointing at other hosts is dropped, SSH tunnels and weaker settings are flagged, and favorites go into one folder without duplicates. [#78b70a1a](https://github.com/dinhanhthi/Dblore/commit/78b70a1a)
 - **Connection scripts.** A connection can run your own scripts from `~/Library/Application Scripts/ace.thi.Dblore`: one before connecting (a failure stops the connect), one after disconnecting, and a password command whose first output line is used as the password for that connect only, never saved. Scripts get the host, port, user and database as arguments; a script that times out keeps running, since macOS gives Dblore no way to stop it. Quitting Dblore runs the after-disconnect scripts. Imported connections never bring scripts with them: choose them in the connection form. [#7ba4bac7](https://github.com/dinhanhthi/Dblore/commit/7ba4bac7)
+- **xAI and Requesty.** Two more AI providers in Settings > AI, each with its own API key; the model list comes from the provider. Requests to Requesty go through its router to the model vendor. [#5c9e4e72](https://github.com/dinhanhthi/Dblore/commit/5c9e4e72)
+- **Split a chart by a column.** The chart's Split by menu draws one small chart per value of a column (up to 12), with shared axes and one legend, and the PNG export includes the whole grid. [#5c9e4e72](https://github.com/dinhanhthi/Dblore/commit/5c9e4e72)
 
 ### Improved
 
@@ -42,6 +44,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 ### Upgrade notes
 
+- AI: with xAI or Requesty as the active provider, Dblore 0.8.2 and older read the AI settings as empty, and saving any AI setting there replaces them. Switch to another provider before opening an older build.
 - MySQL: a connection with TLS set to Disable, Allow, Prefer or Require to a server that needs full password authentication (caching_sha2_password with no cached login) now fails with a message instead of sending the password. Choose Verify CA or Verify Full, or connect once from a client that verifies TLS so the server caches the login.
 - Copying rows to the clipboard prefixes formula-like text values with an apostrophe by default; turn it off in Settings > Result Table.
 
