@@ -460,6 +460,44 @@ nonisolated struct SQLSnippetsLocalDataProvider: LocalDataProvider {
   }
 }
 
+nonisolated struct SidebarFoldersLocalDataProvider: LocalDataProvider {
+  var client: LocalDefaultsClient
+  var category: LocalDataCategory { .sidebarFolders }
+
+  init(defaults: UserDefaults, domainName: String) {
+    client = LocalDefaultsClient(defaults: defaults, domainName: domainName)
+  }
+
+  func summary() async -> LocalDataSummary {
+    let data = SidebarFolderStore.storedData(
+      defaults: client.defaults, domainName: client.domainName)
+    return LocalDataSummary(
+      bytes: Int64(data?.count ?? 0), itemCount: LocalDataJSON.keyedArrayCount(data),
+      location: nil)
+  }
+
+  func export(to folder: URL) async throws {
+    let data = SidebarFolderStore.storedData(
+      defaults: client.defaults, domainName: client.domainName)
+    try LocalDataFiles.write(data, named: "sidebarFolders.json", to: folder)
+  }
+
+  /// No file (the export had no folders) clears them
+  func importData(from folder: URL) async throws {
+    SidebarFolderStore.replace(
+      LocalDataFiles.read(named: "sidebarFolders.json", from: folder),
+      defaults: client.defaults,
+      domainName: client.domainName
+    )
+    LocalDataNotifications.post(category)
+  }
+
+  func clear() async throws {
+    SidebarFolderStore.replace(nil, defaults: client.defaults, domainName: client.domainName)
+    LocalDataNotifications.post(category)
+  }
+}
+
 nonisolated struct SchemaLayoutLocalDataProvider: LocalDataProvider {
   var client: LocalDefaultsClient
   var category: LocalDataCategory { .schemaLayout }

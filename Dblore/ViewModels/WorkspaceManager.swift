@@ -548,7 +548,7 @@ class WorkspaceManager: Identifiable {
   /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
-  /// unless `aiFieldsEdited`, and its color and group unless `fromForm`.
+  /// unless `aiFieldsEdited`, its color and group unless `fromForm`, and its hidden schemas.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
     aiFieldsEdited: Bool = false, fromForm: Bool = false
@@ -584,7 +584,10 @@ class WorkspaceManager: Identifiable {
       }
       if savesConnection, config.mongoHomeDatabase == nil {
         if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
-        if !fromForm { config = Self.keepingSavedAppearance(config) }
+        config =
+          fromForm
+          ? Self.keepingSavedHiddenSchemas(config, current: workspace.connectionConfig)
+          : Self.keepingSavedAppearance(config)
         guard SessionManager.saveConnection(config) else {
           throw CertificateFormError.keychainSave
         }

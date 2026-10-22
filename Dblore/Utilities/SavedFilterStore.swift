@@ -132,8 +132,13 @@ final class SavedFilterStore {
 
   /// `databaseType|host|port|database|schema.name`
   static func key(for config: ConnectionConfig, schema: String, name: String) -> String {
+    connectionKey(for: config) + "|\(schema).\(name)"
+  }
+
+  /// `databaseType|host|port|database`, the connection part of `key(for:schema:name:)`
+  nonisolated static func connectionKey(for config: ConnectionConfig) -> String {
     [config.databaseType.rawValue, config.host, String(config.port), config.database]
-      .joined(separator: "|") + "|\(schema).\(name)"
+      .joined(separator: "|")
   }
 
   func list(for key: String) -> [SavedFilter] {

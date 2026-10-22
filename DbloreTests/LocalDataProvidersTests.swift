@@ -226,6 +226,30 @@ struct LocalDataProvidersTests {
     #expect(SQLSnippetStore.decode(stored) == snippets)
   }
 
+  @Test("Sidebar folders round-trip")
+  func sidebarFolders() async throws {
+    let suite = makeSuite()
+    setUnrelated(suite)
+    let key = SidebarFolderStore.defaultsKey
+    let folders = [
+      "PostgreSQL|h|5432|app": [
+        SidebarFolder(name: "Auth", schema: "public", members: ["public.users"]),
+        SidebarFolder(name: "Audit", schema: "audit"),
+      ]
+    ]
+    setData(try JSONEncoder().encode(folders), forKey: key, suite: suite)
+    let provider = SidebarFoldersLocalDataProvider(
+      defaults: suite.defaults, domainName: suite.name)
+
+    #expect(await provider.summary().itemCount == 2)
+    try await expectRoundTrip(provider, category: .sidebarFolders) {
+      #expect(data(forKey: key, suite: suite) == nil)
+    } afterImport: {
+      #expect(SidebarFolderStore.decode(data(forKey: key, suite: suite)) == folders)
+    }
+    expectUnrelated(suite)
+  }
+
   @Test("Schema diagram positions round-trip")
   func schemaLayout() async throws {
     let suite = makeSuite()

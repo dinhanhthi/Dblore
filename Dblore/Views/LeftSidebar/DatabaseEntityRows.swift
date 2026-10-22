@@ -3,7 +3,8 @@
 //  Dblore
 //
 //  Row views for database entities: Tables, Views, Functions, Procedures, Triggers, Sequences,
-//  Types, and Columns
+//  Types, and Columns. Table and view rows also offer the sidebar folder moves and drag onto a
+//  folder (`SidebarFolderRows.swift`).
 //
 
 import SwiftUI
@@ -31,6 +32,8 @@ struct TableRowView: View {
   /// structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
+  /// Move to Folder and Remove from Folder, and the drag onto a folder. Nil offers neither.
+  var folderActions: SidebarFolderActions? = nil
 
   @State private var isHoveringTable = false
 
@@ -126,7 +129,12 @@ struct TableRowView: View {
           Divider()
           RowActionButtons(actions: menuActions, language: language, onAction: onMenuAction)
         }
+        if let folderActions {
+          Divider()
+          SidebarFolderMenuItems(actions: folderActions)
+        }
       }
+      .sidebarFolderDrag(folderActions)
 
       // Columns (when expanded)
       if isExpanded {
@@ -200,6 +208,8 @@ struct ViewRowView: View {
   /// Menu items of a MongoDB view (SQL views have no menu)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
+  /// Move to Folder and Remove from Folder, and the drag onto a folder. Nil offers neither.
+  var folderActions: SidebarFolderActions? = nil
 
   @State private var isHovering = false
 
@@ -268,7 +278,12 @@ struct ViewRowView: View {
         RowActionButtons(
           actions: menuActions, language: databaseType.capabilities.queryLanguage,
           onAction: onMenuAction)
+        if let folderActions {
+          if !menuActions.isEmpty { Divider() }
+          SidebarFolderMenuItems(actions: folderActions)
+        }
       }
+      .sidebarFolderDrag(folderActions)
 
       // Columns (when expanded)
       if isExpanded {

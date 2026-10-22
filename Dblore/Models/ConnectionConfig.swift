@@ -395,9 +395,25 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var groupName: String? {
     didSet { groupName = Self.normalizedGroupName(groupName) }
   }
+  /// Schemas the sidebar leaves out, normalized by `normalizedHiddenSchemas`. Display only:
+  /// SQL, autocomplete, schema search and AI context still see them.
+  var hiddenSchemas: [String] = [] {
+    didSet {
+      let normalized = Self.normalizedHiddenSchemas(hiddenSchemas)
+      if normalized != hiddenSchemas { hiddenSchemas = normalized }
+    }
+  }
 
   nonisolated static let aiRulesLimit = 2_000
   nonisolated static let groupNameLimit = 64
+  nonisolated static let hiddenSchemasLimit = 500
+  nonisolated static let hiddenSchemaNameLimit = 255
+
+  /// Sorted and unique, without blank or over-long names, at most `hiddenSchemasLimit`.
+  nonisolated static func normalizedHiddenSchemas(_ names: [String]) -> [String] {
+    let kept = Set(names.filter { !$0.isEmpty && $0.count <= hiddenSchemaNameLimit })
+    return Array(kept.sorted().prefix(hiddenSchemasLimit))
+  }
 
   /// Trimmed and cut to `groupNameLimit` characters; blank becomes nil.
   nonisolated static func normalizedGroupName(_ name: String?) -> String? {
@@ -439,6 +455,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case aiAccess, aiRules
     // Color and group (absent on connections saved before them)
     case colorTag, groupName
+    // Sidebar schema filter (absent unless a schema is hidden)
+    case hiddenSchemas
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -502,6 +520,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     colorTag = rawColor.flatMap(AccentColor.init(rawValue:))
     groupName = Self.normalizedGroupName(
       try container.decodeIfPresent(String.self, forKey: .groupName))
+    // A value of the wrong type hides nothing rather than failing the connection
+    hiddenSchemas = Self.normalizedHiddenSchemas(
+      ((try? container.decodeIfPresent([String].self, forKey: .hiddenSchemas)) ?? nil) ?? [])
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -557,6 +578,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encode(aiRules, forKey: .aiRules)
     try container.encodeIfPresent(colorTag?.rawValue, forKey: .colorTag)
     try container.encodeIfPresent(groupName, forKey: .groupName)
+    if !hiddenSchemas.isEmpty {
+      try container.encode(hiddenSchemas, forKey: .hiddenSchemas)
+    }
   }
 
   nonisolated init(
