@@ -1,6 +1,9 @@
 // MCPConnectionPool.swift
 // One `DatabaseConnectionManager` per saved connection MCP uses, on read-only sessions
-// (`MCPReadOnlySessionFactory`), never the workspace's manager. Nothing here prompts: a
+// (`MCPReadOnlySessionFactory`), never the workspace's manager. An approved execute_write uses
+// a second, writable manager of that connection (`withWritableManager`), on the app's plain
+// sessions and built only on the first approved write; it is pooled, refused, idle-closed and
+// retired exactly like the read one, and no read ever runs on it. Nothing here prompts: a
 // connection that would need the user (no saved client certificate or SSH secret, or an SSH
 // host key not pinned yet) is refused. An empty password is sent as is (trust or
 // passwordless auth works; a wrong one fails with the server's error). Statements stop after
@@ -21,6 +24,12 @@ actor MCPConnectionPool {
   static let readLimits = CappedReadLimits(
     maxCellCharacters: MCPResultEncoder.maxCellCharacters, maxResultBytes: 4 * 1_024 * 1_024)
 
+  /// A connection's read-only manager, or its writable one
+  private nonisolated struct Key: Hashable, Sendable {
+    let id: UUID
+    let writable: Bool
+  }
+
   private nonisolated struct Pooled: Sendable {
     /// Tells this manager apart from a later one for the same id
     let token = UUID()
@@ -33,12 +42,14 @@ actor MCPConnectionPool {
 
   private let entry: EntryLookup
   private let sessionFactory: any DatabaseSessionFactory
+  /// The writable managers' sessions: the app's, without the read-only wrapper
+  private let writableSessionFactory: any DatabaseSessionFactory
   private let certificates: any ClientCertificateStore
   private let sshCredentials: any SSHCredentialStore
   private let knownHosts: any SSHKnownHostStore
   private let idleTimeout: Duration
   private let now: @Sendable () -> ContinuousClock.Instant
-  private var pooled: [UUID: Pooled] = [:]
+  private var pooled: [Key: Pooled] = [:]
   /// Managers replaced while in use (connection edited), by token; disconnected when the last
   /// caller releases them
   private var retired: [UUID: Pooled] = [:]
@@ -58,11 +69,12 @@ actor MCPConnectionPool {
     now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
   ) {
     self.entry = entry
-    self.sessionFactory = MCPReadOnlySessionFactory(
-      inner: sessionFactory
-        ?? AppDatabaseSessionFactory(
-          hostKeyValidator: SSHHostKeyPolicy(store: knownHosts, prompt: RejectingSSHHostKeyPrompt())
-        ))
+    let inner =
+      sessionFactory
+      ?? AppDatabaseSessionFactory(
+        hostKeyValidator: SSHHostKeyPolicy(store: knownHosts, prompt: RejectingSSHHostKeyPrompt()))
+    self.sessionFactory = MCPReadOnlySessionFactory(inner: inner)
+    self.writableSessionFactory = inner
     self.certificates = certificates
     self.sshCredentials = sshCredentials
     self.knownHosts = knownHosts
@@ -83,13 +95,28 @@ actor MCPConnectionPool {
   func withManager<T: Sendable>(
     for entryID: UUID, _ body: @Sendable (DatabaseConnectionManager) async throws -> T
   ) async throws -> T {
-    let (manager, token) = try await acquire(entryID)
+    try await with(Key(id: entryID, writable: false), body)
+  }
+
+  /// `withManager` on the connection's writable manager (plain sessions, the saved
+  /// connection's protection), for approved execute_write calls only. DuckDB is refused, as on
+  /// the read path.
+  func withWritableManager<T: Sendable>(
+    for entryID: UUID, _ body: @Sendable (DatabaseConnectionManager) async throws -> T
+  ) async throws -> T {
+    try await with(Key(id: entryID, writable: true), body)
+  }
+
+  private func with<T: Sendable>(
+    _ key: Key, _ body: @Sendable (DatabaseConnectionManager) async throws -> T
+  ) async throws -> T {
+    let (manager, token) = try await acquire(key)
     do {
       let result = try await body(manager)
-      await release(entryID, token: token)
+      await release(key, token: token)
       return result
     } catch {
-      await release(entryID, token: token)
+      await release(key, token: token)
       throw error
     }
   }
@@ -102,10 +129,20 @@ actor MCPConnectionPool {
     for item in idle.values { await Self.disconnect(item) }
   }
 
-  /// Disconnect the connection's manager (removed from the allowlist); one in use is retired
+  /// Disconnect the connection's managers (removed from the allowlist); one in use is retired
   /// and closes when its last caller is done. A later caller connects again.
   func close(id: UUID) async {
-    guard let open = pooled.removeValue(forKey: id) else { return }
+    await close(Key(id: id, writable: false))
+    await closeWritable(id: id)
+  }
+
+  /// Disconnect the connection's writable manager only (write tools off, scope back to Read).
+  func closeWritable(id: UUID) async {
+    await close(Key(id: id, writable: true))
+  }
+
+  private func close(_ key: Key) async {
+    guard let open = pooled.removeValue(forKey: key) else { return }
     if open.inUse > 0 {
       retired[open.token] = open
     } else {
@@ -124,9 +161,9 @@ actor MCPConnectionPool {
     for item in all { await Self.disconnect(item) }
   }
 
-  private func acquire(_ id: UUID) async throws -> (DatabaseConnectionManager, UUID) {
+  private func acquire(_ id: Key) async throws -> (DatabaseConnectionManager, UUID) {
     guard !closed else { throw MCPConnectionError.stopped }
-    guard let entry = await entry(id) else { throw MCPConnectionError.unknownConnection }
+    guard let entry = await entry(id.id) else { throw MCPConnectionError.unknownConnection }
     if let open = pooled[id], open.config != entry.config {
       pooled[id] = nil
       if open.inUse > 0 {
@@ -139,16 +176,21 @@ actor MCPConnectionPool {
     guard !closed else { throw MCPConnectionError.stopped }
     if pooled[id] == nil {
       try refuseUnattended(entry.config)
+      // The read wrapper refuses DuckDB; the writable sessions are not wrapped
+      if id.writable, entry.config.databaseType == .duckdb {
+        throw MCPConnectionError.duckDBNotSupported
+      }
       var config = entry.config
       config.statementTimeoutSeconds = min(
         config.statementTimeoutSeconds ?? Self.statementTimeoutSeconds,
         Self.statementTimeoutSeconds)
-      let factory = sessionFactory
+      let factory = id.writable ? writableSessionFactory : sessionFactory
       pooled[id] = Pooled(
         config: entry.config,
         connecting: Task {
+          // The writable manager reads no rows for the agent: the app's default limits
           let manager = DatabaseConnectionManager(
-            sessionFactory: factory, readLimits: Self.readLimits)
+            sessionFactory: factory, readLimits: id.writable ? nil : Self.readLimits)
           try await manager.connect(config: config)
           return manager
         }, lastUsed: now())
@@ -186,7 +228,7 @@ actor MCPConnectionPool {
 
   /// One caller is done with the manager `token`. A retired manager is disconnected once its
   /// last caller is done.
-  private func release(_ id: UUID, token: UUID) async {
+  private func release(_ id: Key, token: UUID) async {
     if var item = pooled[id], item.token == token {
       item.inUse -= 1
       item.lastUsed = now()

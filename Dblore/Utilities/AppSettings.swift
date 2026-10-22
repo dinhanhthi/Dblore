@@ -190,6 +190,34 @@ enum SafeMode: Int, Codable, CaseIterable, Sendable {
   }
 }
 
+/// What MCP's execute_write may change on an allowlisted connection. Ordered: a wider scope
+/// allows everything a narrower one does.
+nonisolated enum MCPWriteScope: String, CaseIterable, Sendable, Comparable {
+  case read
+  /// INSERT, UPDATE, DELETE, MERGE (MongoDB inserts, updates, deletes)
+  case data
+  /// Data changes plus schema changes (CREATE, ALTER, DROP; MongoDB collections and indexes)
+  case schema
+
+  var title: String {
+    switch self {
+    case .read: "Read"
+    case .data: "Read + data changes"
+    case .schema: "Read + data + schema changes"
+    }
+  }
+
+  private var rank: Int {
+    switch self {
+    case .read: 0
+    case .data: 1
+    case .schema: 2
+    }
+  }
+
+  static func < (lhs: Self, rhs: Self) -> Bool { lhs.rank < rhs.rank }
+}
+
 /// Why Touch ID could not be enabled for Safe Mode
 enum SafeModeBiometricError: LocalizedError, Equatable {
   /// Touch ID needs a Safe Mode password as its fallback
@@ -363,6 +391,8 @@ class AppSettings {
     static let mcpPort = "app.settings.mcpPort"
     static let mcpAllowedConnectionIDs = "app.settings.mcpAllowedConnectionIDs"
     static let mcpRowCap = "app.settings.mcpRowCap"
+    static let mcpWriteToolsEnabled = "app.settings.mcpWriteToolsEnabled"
+    static let mcpWriteScopes = "app.settings.mcpWriteScopes"
     static let mongoPreviewDocumentCount = "app.settings.mongoPreviewDocumentCount"
   }
 
@@ -952,6 +982,39 @@ class AppSettings {
     }
   }
 
+  /// Offer MCP's execute_write tool (each call still needs a write scope and an approval).
+  /// Default: false
+  var mcpWriteToolsEnabled: Bool = false {
+    didSet {
+      defaults.set(mcpWriteToolsEnabled, forKey: Keys.mcpWriteToolsEnabled)
+    }
+  }
+
+  /// Write scopes of allowlisted connections, by id. A missing id is `.read`.
+  /// Default: none (every connection Read)
+  var mcpWriteScopes: [UUID: MCPWriteScope] = [:] {
+    didSet {
+      defaults.set(
+        Dictionary(
+          uniqueKeysWithValues: mcpWriteScopes.filter { $0.value != .read }
+            .map { ($0.key.uuidString, $0.value.rawValue) }),
+        forKey: Keys.mcpWriteScopes)
+    }
+  }
+
+  /// The stored scopes; an unknown id or value is dropped (Read), so nothing widens.
+  static func decodeMCPWriteScopes(_ stored: Any?) -> [UUID: MCPWriteScope] {
+    guard let stored = stored as? [String: String] else { return [:] }
+    var scopes: [UUID: MCPWriteScope] = [:]
+    for (key, value) in stored {
+      guard let id = UUID(uuidString: key), let scope = MCPWriteScope(rawValue: value),
+        scope != .read
+      else { continue }
+      scopes[id] = scope
+    }
+    return scopes
+  }
+
   // MARK: - MongoDB
 
   /// Choices and default of the documents an aggregation stage preview shows
@@ -1297,6 +1360,12 @@ class AppSettings {
       mcpRowCap = defaults.integer(forKey: Keys.mcpRowCap)
     }
 
+    if defaults.object(forKey: Keys.mcpWriteToolsEnabled) != nil {
+      mcpWriteToolsEnabled = defaults.bool(forKey: Keys.mcpWriteToolsEnabled)
+    }
+
+    mcpWriteScopes = Self.decodeMCPWriteScopes(defaults.object(forKey: Keys.mcpWriteScopes))
+
     if defaults.object(forKey: Keys.mongoPreviewDocumentCount) != nil {
       // didSet does not run in init: an unknown stored value goes back to the default here
       let count = defaults.integer(forKey: Keys.mongoPreviewDocumentCount)
@@ -1377,6 +1446,8 @@ class AppSettings {
     mcpPort = Self.defaultMCPPort
     mcpAllowedConnectionIDs = []
     mcpRowCap = Self.defaultMCPRowCap
+    mcpWriteToolsEnabled = false
+    mcpWriteScopes = [:]
     mongoPreviewDocumentCount = Self.defaultMongoPreviewDocumentCount
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)

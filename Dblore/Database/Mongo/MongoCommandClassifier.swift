@@ -79,7 +79,8 @@ nonisolated enum MongoCommandClassifier {
   /// document, and an admin command's keys, options and view pipeline, so a partial filter or a
   /// validator too). Text that does not parse as one command counts as JavaScript (fail closed;
   /// the classifier calls it unknown anyway). Only callers that ask are covered: the read-only
-  /// guard, the schema sample and the Validation tab's validator; the write gate does not scan.
+  /// guard, the MCP write check (`MCPToolService.checkWrite`), the schema sample, the Validation
+  /// tab's validator and the backup restore.
   static func usesServerSideJavaScript(_ text: String) -> Bool {
     guard let command = try? MongoshParser.parse(text) else { return true }
     return arguments(of: command).contains { usesServerSideJavaScript($0) }

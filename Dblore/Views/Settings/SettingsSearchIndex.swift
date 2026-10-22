@@ -295,6 +295,14 @@ extension SettingsModal.SettingsTab {
             "Agents can use only the connections turned on here. Use a least-privilege database user."
         ),
         .init(
+          card: "Write tools", title: "Allow write tools",
+          detail:
+            "Agents ask to run one change at a time on connections with a write scope; each waits for your approval."
+        ),
+        .init(
+          card: "Connections", title: "Agent access",
+          detail: "Read, Read + data changes, Read + data + schema changes."),
+        .init(
           card: "Queries", title: "Default row cap",
           detail: "Rows an agent query returns. History is off: MCP queries are not recorded."),
         .init(card: "Clients", title: "Copy Claude Code command"),
