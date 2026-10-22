@@ -350,7 +350,9 @@ struct WorkspaceContainerView: View {
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
     // After the connection form, so they open on top of it
-    .connectionImportPanel(isPresented: $isConnectionImportPresented)
+    .connectionImportPanel(
+      isPresented: $isConnectionImportPresented, workspaceManager: workspaceManager
+    )
     .settingsModal(
       workspaceManager: workspaceManager,
       section: settingsSection,

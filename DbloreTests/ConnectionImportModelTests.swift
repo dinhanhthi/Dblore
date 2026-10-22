@@ -417,4 +417,47 @@ struct ConnectionImportModelTests {
     #expect(!summary.contains("pw"))
     #expect(model.summary(BulkSaveReport(added: 1)) == "Imported 1 connection")
   }
+
+  @Test("A Dblore export file imports its rows without passwords and its favorites")
+  func dbloreFileImportsRowsAndFavorites() async throws {
+    let folder = try Folder()
+    let config = ConnectionConfig(
+      host: "db.example.com", port: 5432, database: "sales", username: "ada", name: "Sales")
+    let file = DbloreConnectionFile(
+      connections: [try #require(DbloreConnectionFile.Connection(config: config))],
+      favorites: [.init(name: "Top", sql: "SELECT 1;")])
+    try folder.write(try file.encoded(), to: "Team Connections.json")
+    var saved: [ImportedConnection] = []
+    let model = ConnectionImportModel(
+      loadHistory: { [] }, loadSavedKeys: { [] },
+      save: {
+        saved = $0
+        return BulkSaveReport(added: $0.count)
+      })
+    model.source = .dblore
+
+    await model.load(url: folder.url.appendingPathComponent("Team Connections.json"))
+    let report = await model.importSelected()
+    let workspace = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
+    let outcome = model.importFavorites(into: workspace)
+
+    #expect(model.errorMessage == nil)
+    #expect(model.rows.map(\.name) == ["Sales"])
+    #expect(model.rows.first?.hasPassword == false)
+    #expect(saved.map(\.config.host) == ["db.example.com"])
+    #expect(saved.first?.password == nil)
+    #expect(outcome == .added(1, skipped: 0, folder: "Team Connections"))
+    let folders = workspace.workspace.favorites.folders
+    #expect(folders.map(\.name) == ["Team Connections"])
+    #expect(
+      workspace.workspace.favorites.items.map { [$0.name, $0.sql] } == [["Top", "SELECT 1;"]])
+    #expect(workspace.workspace.favorites.items.first?.folderId == folders.first?.id)
+    #expect(model.importFavorites(into: nil) == .skippedNoWorkspace(1))
+    #expect(
+      model.summary(report, favorites: outcome)
+        == "Imported 1 connection · 1 favorite added to \"Team Connections\"")
+    #expect(
+      model.summary(BulkSaveReport(), favorites: .added(3, skipped: 2, folder: "X"))
+        == "3 favorites added to \"X\", 2 already present")
+  }
 }

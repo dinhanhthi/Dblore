@@ -2,7 +2,8 @@
 //  ConnectionImportSheet.swift
 //  Dblore
 //
-//  Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip. The sidebar opens in
+//  Import connections from a Dblore export file, a URI, .pgpass, DBeaver, TablePlus or DataGrip.
+//  A Dblore export file's favorites go to the window's workspace. The sidebar opens in
 //  the frontmost document window (above the connection form), so the Welcome screen, the
 //  connection form and the File menu all open the same panel. Imported content is external input:
 //  rows are shown as plain text and never include passwords.
@@ -23,7 +24,9 @@ nonisolated enum ImportSourcePicker: Equatable, Sendable {
 
 nonisolated extension ImportSource {
   /// Order of the source picker.
-  static let sheetOrder: [ImportSource] = [.uri, .pgpass, .dbeaver, .tablePlus, .dataGrip]
+  static let sheetOrder: [ImportSource] = [
+    .dblore, .uri, .pgpass, .dbeaver, .tablePlus, .dataGrip,
+  ]
 
   var title: String {
     switch self {
@@ -32,6 +35,7 @@ nonisolated extension ImportSource {
     case .dbeaver: "DBeaver"
     case .tablePlus: "TablePlus"
     case .dataGrip: "DataGrip"
+    case .dblore: "Dblore export file"
     }
   }
 
@@ -44,13 +48,15 @@ nonisolated extension ImportSource {
     case .tablePlus:
       "Choose Connections.plist in ~/Library/Application Support/com.tinyapp.TablePlus/Data."
     case .dataGrip: "Choose the project's .idea folder."
+    case .dblore:
+      "Choose a connections file exported by Dblore. Passwords are not in it: Dblore asks for them on first connect."
     }
   }
 
   var picker: ImportSourcePicker {
     switch self {
     case .uri: .textOnly
-    case .pgpass, .tablePlus: .file
+    case .pgpass, .tablePlus, .dblore: .file
     case .dbeaver, .dataGrip: .folder
     }
   }
@@ -167,10 +173,13 @@ extension View {
     }
   }
 
-  /// The import sidebar, sliding in from the trailing edge.
-  func connectionImportPanel(isPresented: Binding<Bool>) -> some View {
+  /// The import sidebar, sliding in from the trailing edge. `workspaceManager` receives the
+  /// favorites of a Dblore export file; nil (Welcome) skips them.
+  func connectionImportPanel(
+    isPresented: Binding<Bool>, workspaceManager: WorkspaceManager? = nil
+  ) -> some View {
     sidePanelOverlay(isPresented: isPresented, width: ConnectionImportSheet.panelWidth) {
-      ConnectionImportSheet(isPresented: isPresented)
+      ConnectionImportSheet(isPresented: isPresented, workspaceManager: workspaceManager)
     }
   }
 }
@@ -179,6 +188,8 @@ extension View {
 
 struct ConnectionImportSheet: View {
   @Binding var isPresented: Bool
+  /// Receives the favorites of a Dblore export file; nil skips them.
+  var workspaceManager: WorkspaceManager?
 
   /// Width of the right sidebar the import opens in.
   static let panelWidth: CGFloat = 540
@@ -275,7 +286,7 @@ struct ConnectionImportSheet: View {
             .disabled(trimmedText.isEmpty || model.isLoading)
           chosenLabel
         }
-      case .dbeaver, .tablePlus, .dataGrip:
+      case .dbeaver, .tablePlus, .dataGrip, .dblore:
         HStack(spacing: Spacing.sm) {
           chooseButton
           chosenLabel
@@ -327,6 +338,9 @@ struct ConnectionImportSheet: View {
       }
       .font(.small)
     }
+    if !model.favorites.isEmpty {
+      favoritesNote
+    }
     if !model.warnings.isEmpty {
       VStack(alignment: .leading, spacing: Spacing.xs) {
         Button {
@@ -358,6 +372,25 @@ struct ConnectionImportSheet: View {
           .fill(Color.warning.opacity(0.1))
       )
     }
+  }
+
+  /// Where the file's favorites go, or why they are skipped.
+  private var favoritesNote: some View {
+    let count = model.favorites.count
+    let noun = "favorite\(count == 1 ? "" : "s")"
+    let hasWorkspace = workspaceManager != nil
+    return HStack(alignment: .top, spacing: Spacing.sm) {
+      Image(systemName: hasWorkspace ? "star" : "info.circle")
+        .foregroundColor(.foregroundMuted)
+      Text(
+        verbatim: hasWorkspace
+          ? "\(count) \(noun) will be added to the folder \"\(model.favoritesFolder)\" in this workspace."
+          : "\(count) \(noun) will be skipped: import from a workspace window to add them."
+      )
+      .foregroundColor(.foregroundMuted)
+      .fixedSize(horizontal: false, vertical: true)
+    }
+    .font(.small)
   }
 
   private func warningList(_ warnings: [String]) -> some View {
@@ -433,11 +466,16 @@ struct ConnectionImportSheet: View {
         .keyboardShortcut(.cancelAction)
       Button("Import", action: runImport)
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(model.selectedCount == 0 || model.isLoading || isImporting)
+        .disabled(!canImport || model.isLoading || isImporting)
     }
   }
 
   // MARK: Actions
+
+  /// Rows to save, or favorites to add to this window's workspace.
+  private var canImport: Bool {
+    model.selectedCount > 0 || (!model.favorites.isEmpty && workspaceManager != nil)
+  }
 
   private func previewText() {
     let value = trimmedText
@@ -488,13 +526,20 @@ struct ConnectionImportSheet: View {
     isImporting = true
     Task { @MainActor in
       let report = await model.importSelected()
-      let message = model.summary(report)
+      let favorites = model.importFavorites(into: workspaceManager)
+      let message = model.summary(report, favorites: favorites)
       // Welcome's recent list and open connection forms reload on this.
       LocalDataNotifications.post(.connectionHistory)
       // Close first, so the toast is not under the sidebar.
       close()
+      let skippedFavorites: Bool
+      if case .skippedNoWorkspace = favorites {
+        skippedFavorites = true
+      } else {
+        skippedFavorites = false
+      }
       WorkspaceWindowManager.shared.showToast(
-        message, type: report.failed.isEmpty ? .success : .warning)
+        message, type: report.failed.isEmpty && !skippedFavorites ? .success : .warning)
     }
   }
 }
@@ -527,7 +572,6 @@ private struct ImportPreviewRow: View {
             Image(systemName: "exclamationmark.triangle.fill")
               .font(.smallest)
               .foregroundColor(.warning)
-              .help(row.warnings.joined(separator: "\n"))
           }
         }
         Text(verbatim: row.user.isEmpty ? row.address : "\(row.user) @ \(row.address)")
@@ -539,6 +583,13 @@ private struct ImportPreviewRow: View {
           ForEach(ConnectionImportText.badges(for: row), id: \.self) { badge in
             ImportBadgeView(badge: badge)
           }
+        }
+        // Shown, not only on hover: an SSH tunnel or a weakened protection must be seen.
+        ForEach(Array(row.warnings.enumerated()), id: \.offset) { _, warning in
+          Text(verbatim: warning)
+            .font(.small)
+            .foregroundColor(.warning)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
       Spacer(minLength: 0)

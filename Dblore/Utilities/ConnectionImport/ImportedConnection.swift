@@ -14,6 +14,8 @@ nonisolated enum ImportSource: String, Equatable, Hashable, Sendable {
   case dbeaver
   case tablePlus
   case dataGrip
+  /// A connections file exported by Dblore
+  case dblore
 }
 
 /// A connection parsed from external input. `config.password` is always empty: the secret
