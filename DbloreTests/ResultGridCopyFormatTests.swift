@@ -58,6 +58,11 @@ struct ResultGridCopyFormatTests {
     #expect(
       grid.copyText(rows: IndexSet([0]), columns: [0, 1], format: .csv, neutralizesFormulas: false)
         == "=1+1,-5")
+    // A spreadsheet may split pasted text on a tab: the piece after it is prefixed and quoted
+    let tabbed = model([ColumnInfo(name: "t", type: "text")], [[.string("a\t=CMD()")]])
+    #expect(
+      tabbed.copyText(rows: IndexSet([0]), columns: [0], format: .csv, neutralizesFormulas: true)
+        == "\"a\t'=CMD()\"")
   }
 
   @Test("Markdown escapes a pipe, < and > in cells and headers and turns a line break into <br>")

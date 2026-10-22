@@ -108,12 +108,30 @@ enum DataExporter {
   }
 
   /// One CSV field quoted if needed. The formula prefix applies to text cells only, as in
-  /// `tsvField`.
+  /// `tsvField`. A field with a tab is quoted too, and a formula after a tab is prefixed: a
+  /// spreadsheet may split pasted text on tabs, and that piece must not run.
   private static func csvField(_ value: CellValue, neutralizesFormulas: Bool) -> String {
-    if neutralizesFormulas, case .string(let text) = value {
-      return escapeCSV(prefixedIfFormula(text, splitsFields: false), quote: .ifNeeded)
+    guard neutralizesFormulas, case .string(let text) = value else {
+      return escapeCSV(value.fullString, quote: .ifNeeded)
     }
-    return escapeCSV(value.fullString, quote: .ifNeeded)
+    let field = prefixedAfterTabs(prefixedIfFormula(text, splitsFields: false))
+    guard field.unicodeScalars.contains("\t") else { return escapeCSV(field, quote: .ifNeeded) }
+    return escapeCSV(field, quote: .always)
+  }
+
+  /// Adds the formula prefix to every piece of `text` that starts right after a tab
+  private static func prefixedAfterTabs(_ text: String) -> String {
+    guard text.unicodeScalars.contains("\t") else { return text }
+    var result = ""
+    var afterTab = false
+    for scalar in text.unicodeScalars {
+      if afterTab, "=+-@".unicodeScalars.contains(scalar) {
+        result.unicodeScalars.append("'")
+      }
+      result.unicodeScalars.append(scalar)
+      afterTab = scalar == "\t"
+    }
+    return result
   }
 
   /// Export result to XLSX format (ZIP-based Office Open XML)
