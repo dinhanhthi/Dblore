@@ -538,7 +538,7 @@ private struct ReopenClosedTabButton: View {
 /// Edit menu items for the focused notebook or data viewer undo stack.
 private struct CellUndoCommandButtons: View {
   @ObservedObject private var refresh = CellUndoMenuRefresh.shared
-  @FocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
+  @BridgedFocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
 
   var body: some View {
     let _ = refresh.revision
@@ -616,10 +616,10 @@ private final class CellUndoMenuRefresh: ObservableObject {
 struct TabCommands: Commands {
   // Note: All tab operations now go through WorkspaceManager
   // No fallback to legacy TabStateManager.shared
-  @FocusedValue(\.openTableImportAction) private var openTableImportAction
-  @FocusedValue(\.openSQLDumpAction) private var openSQLDumpAction
-  @FocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
-  @FocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
+  @BridgedFocusedValue(\.openTableImportAction) private var openTableImportAction
+  @BridgedFocusedValue(\.openSQLDumpAction) private var openSQLDumpAction
+  @BridgedFocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
+  @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -942,14 +942,14 @@ struct TabCommands: Commands {
 // MARK: - Notebook Commands (chỉ cho Notebook mode)
 
 struct NotebookCommands: Commands {
-  @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
-  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
-  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
-  @FocusedValue(\.openSearchAction) private var openSearchAction
-  @FocusedValue(\.findReplaceAction) private var findReplaceAction
-  @FocusedValue(\.findNextAction) private var findNextAction
-  @FocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
+  @BridgedFocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @BridgedFocusedValue(\.openSearchAction) private var openSearchAction
+  @BridgedFocusedValue(\.findReplaceAction) private var findReplaceAction
+  @BridgedFocusedValue(\.findNextAction) private var findNextAction
+  @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
 
   var body: some Commands {
     // Chỉ show Cell menu khi documentMode == .notebook
@@ -1058,13 +1058,13 @@ struct NotebookCommands: Commands {
 // MARK: - Editor Commands (chỉ cho Editor mode)
 
 struct EditorCommands: Commands {
-  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
-  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
-  @FocusedValue(\.openSearchAction) private var openSearchAction
-  @FocusedValue(\.findReplaceAction) private var findReplaceAction
-  @FocusedValue(\.findNextAction) private var findNextAction
-  @FocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @BridgedFocusedValue(\.openSearchAction) private var openSearchAction
+  @BridgedFocusedValue(\.findReplaceAction) private var findReplaceAction
+  @BridgedFocusedValue(\.findNextAction) private var findNextAction
+  @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
 
   var body: some Commands {
     // Chỉ show khi documentMode == .editor
@@ -1148,11 +1148,11 @@ struct EditorCommands: Commands {
 // MARK: - Schema Visualizer Commands
 
 struct SchemaVisualizerCommands: Commands {
-  @FocusedValue(\.isSchemaVisualizerActive) private var isSchemaVisualizerActive: Bool?
-  @FocusedValue(\.openSearchAction) private var openSearchAction
-  @FocusedValue(\.findNextAction) private var findNextAction
-  @FocusedValue(\.findPreviousAction) private var findPreviousAction
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.isSchemaVisualizerActive) private var isSchemaVisualizerActive: Bool?
+  @BridgedFocusedValue(\.openSearchAction) private var openSearchAction
+  @BridgedFocusedValue(\.findNextAction) private var findNextAction
+  @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
 
   var body: some Commands {
     // Only show when schema visualizer is active
@@ -1192,7 +1192,7 @@ struct SchemaVisualizerCommands: Commands {
 
 /// Explain actions for the Cell and Query menus. Shortcuts stay on these items.
 private struct ExplainCommandButtons: View {
-  @FocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
+  @BridgedFocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
 
   private var isDisabled: Bool {
     guard let activeViewModel else { return true }

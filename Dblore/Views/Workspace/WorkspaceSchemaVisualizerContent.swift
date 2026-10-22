@@ -21,17 +21,17 @@ struct WorkspaceSchemaVisualizerContent: View {
     }
     .background(Color.appBackground)
     // Set focused values for Cmd+F, Cmd+G shortcuts in schema visualizer
-    .focusedSceneValue(\.isSchemaVisualizerActive, true)
-    .focusedSceneValue(\.openSearchAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.isSchemaVisualizerActive, true)
+    .bridgedFocusedSceneValue(\.openSearchAction) { [workspaceManager] in
       workspaceManager.openSchemaSearch()
     }
-    .focusedSceneValue(\.findNextAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.findNextAction) { [workspaceManager] in
       workspaceManager.navigateToNextSchemaMatch()
     }
-    .focusedSceneValue(\.findPreviousAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.findPreviousAction) { [workspaceManager] in
       workspaceManager.navigateToPreviousSchemaMatch()
     }
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
   }

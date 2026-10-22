@@ -2,6 +2,31 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Improved
+
+- **Copied rows are safe to paste into a spreadsheet.** Copying rows or cells as text puts an apostrophe before a text value that starts like a formula (`=`, `+`, `-`, `@`, tab or a line break), the same rule CSV and TSV exports use. Numbers, dates and Copy Value / Copy as INSERT / Copy as IN list stay raw. Settings > Result Table turns it off. [#0a6e014c](https://github.com/dinhanhthi/Dblore/commit/0a6e014c)
+- **Large cell values open at once.** Cell Value shows a value over 256 KiB as plain text in a view that lays out only what is on screen, and Format JSON runs in the background with Cancel. [#1d82e730](https://github.com/dinhanhthi/Dblore/commit/1d82e730)
+- **MongoDB schema** labels string values in quotes, so `"5"` and `5` are told apart, and stops at 5,000 fields on collections with very many keys. The selected aggregation stage is kept when you switch sections. [#bad04b51](https://github.com/dinhanhthi/Dblore/commit/bad04b51)
+
+### Fixed
+
+- **MySQL no longer sends the full password over an unverified remote connection.** When the server asks for the full password (caching_sha2_password) and the connection does not verify the server's TLS certificate, Dblore stops and says to choose Verify CA or Verify Full; a direct connection to 127.0.0.1, ::1 or localhost is exempt. Over SSH, a rejected tunnel channel is reported as such. [#f20a02aa](https://github.com/dinhanhthi/Dblore/commit/f20a02aa)
+- **CSV and TSV exports neutralize formulas** in every line of a value, in values starting with a combining mark or a line break, and in headers; saving an export file no longer blocks the app. [#0a6e014c](https://github.com/dinhanhthi/Dblore/commit/0a6e014c)
+- **Cancelling a query in a transaction** reports what really happened on SQLite and DuckDB (the pending changes were rolled back, or the transaction was kept), and a deadlock that rolls back a MySQL transaction clears its pending changes. [#9c1cd35d](https://github.com/dinhanhthi/Dblore/commit/9c1cd35d)
+- **Read-only SQLite files** show rows still in the WAL file. MongoDB asks for the password instead of signing in with an empty one. PostgreSQL over SSH refuses Verify Full with an IP address host up front, and a timed-out test connection no longer leaves work running. [#769bd5bb](https://github.com/dinhanhthi/Dblore/commit/769bd5bb)
+- **MongoDB** index statistics only hide on a permission error (a timeout now shows), closing a collection stops its aggregation run and previews, and an inline edit on a query result in a script tab refreshes that result. [#bad04b51](https://github.com/dinhanhthi/Dblore/commit/bad04b51) [#1d82e730](https://github.com/dinhanhthi/Dblore/commit/1d82e730)
+- **MariaDB dumps** write a view after the views it reads, so the dump restores. [#1d82e730](https://github.com/dinhanhthi/Dblore/commit/1d82e730)
+- **Structure editor** index rows keep their own state when one is dropped or removed, and Beautify JSON no longer crashes on a single value such as `123`. Copy Database File can no longer hang. [#1d82e730](https://github.com/dinhanhthi/Dblore/commit/1d82e730)
+- **Menu commands work in every workspace window**, including windows opened with New Workspace: the File menu items, the Query menu and Cmd+Return.
+- Keypad Enter accepts an autocomplete suggestion like Return, and a PostgreSQL SQL dump keeps a text value that starts with a combining mark intact. [#242fd5f6](https://github.com/dinhanhthi/Dblore/commit/242fd5f6)
+
+### Upgrade notes
+
+- MySQL: a connection with TLS set to Disable, Allow, Prefer or Require to a server that needs full password authentication (caching_sha2_password with no cached login) now fails with a message instead of sending the password. Choose Verify CA or Verify Full, or connect once from a client that verifies TLS so the server caches the login.
+- Copying rows to the clipboard prefixes formula-like text values with an apostrophe by default; turn it off in Settings > Result Table.
+
 ## v0.8.2 (2026-10-21)
 
 ### Added

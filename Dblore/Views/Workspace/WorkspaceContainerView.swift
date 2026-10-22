@@ -323,10 +323,10 @@ struct WorkspaceContainerView: View {
     // Note: File opening is handled by AppDelegate.application(_:open:) in DbloreApp.swift
     // Don't use .onOpenURL here as it conflicts with NSApplicationDelegateAdaptor
     // Focused actions for keyboard shortcuts (Cmd+B, Cmd+Shift+B, etc.)
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
-    .focusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
       if let activeTabId = workspaceManager.activeTabId,
         let viewModel = workspaceManager.viewModel(for: activeTabId),
         viewModel.viewMode != .markdown
@@ -334,17 +334,17 @@ struct WorkspaceContainerView: View {
         viewModel.toggleSidebar()
       }
     }
-    .focusedSceneValue(\.toggleAIAssistantAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleAIAssistantAction) { [workspaceManager] in
       workspaceManager.toggleAIAssistant()
     }
-    .focusedSceneValue(\.openCommandPaletteAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.openCommandPaletteAction) { [workspaceManager] in
       workspaceManager.openCommandPalette()
     }
-    .focusedSceneValue(\.openTableImportAction, importAction)
-    .focusedSceneValue(\.openSQLDumpAction, backupAction(.dump))
-    .focusedSceneValue(\.openSQLRestoreAction, backupAction(.restore))
-    .focusedSceneValue(\.openDatabaseFileCopyAction, backupAction(.fileCopy))
-    .focusedSceneValue(\.activeViewModel, activeViewModel)
+    .bridgedFocusedSceneValue(\.openTableImportAction, importAction)
+    .bridgedFocusedSceneValue(\.openSQLDumpAction, backupAction(.dump))
+    .bridgedFocusedSceneValue(\.openSQLRestoreAction, backupAction(.restore))
+    .bridgedFocusedSceneValue(\.openDatabaseFileCopyAction, backupAction(.fileCopy))
+    .bridgedFocusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
     // After the connection form, so they open on top of it
@@ -671,14 +671,14 @@ struct WorkspaceTabContentView: View {
 
   var body: some View {
     contentView
-      .focusedSceneValue(\.documentMode, documentMode)
+      .bridgedFocusedSceneValue(\.documentMode, documentMode)
       .focusedSceneValue(\.activeTabId, tabId)
-      .focusedSceneValue(\.activeViewModel, viewModel)
-      .focusedSceneValue(\.toggleRightSidebarAction, toggleRightSidebarAction)
-      .focusedSceneValue(\.openSearchAction, openSearchAction)
-      .focusedSceneValue(\.findReplaceAction, findReplaceAction)
-      .focusedSceneValue(\.findNextAction, findNextAction)
-      .focusedSceneValue(\.findPreviousAction, findPreviousAction)
+      .bridgedFocusedSceneValue(\.activeViewModel, viewModel)
+      .bridgedFocusedSceneValue(\.toggleRightSidebarAction, toggleRightSidebarAction)
+      .bridgedFocusedSceneValue(\.openSearchAction, openSearchAction)
+      .bridgedFocusedSceneValue(\.findReplaceAction, findReplaceAction)
+      .bridgedFocusedSceneValue(\.findNextAction, findNextAction)
+      .bridgedFocusedSceneValue(\.findPreviousAction, findPreviousAction)
       .onAppear {
         setupDocumentChangedCallback()
         syncConnectionState()

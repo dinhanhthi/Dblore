@@ -90,7 +90,7 @@ struct MongoDatabasesView: View {
         isPresented: $showsCreate)
     }
     .mongoOverviewConfirmSheet(model: model, workspaceManager: workspaceManager)
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
   }

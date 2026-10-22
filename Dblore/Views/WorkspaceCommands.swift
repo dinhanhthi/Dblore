@@ -9,12 +9,12 @@ import SwiftUI
 // MARK: - Workspace Commands
 
 struct WorkspaceCommands: Commands {
-  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
-  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
-  @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
-  @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
-  @FocusedValue(\.openDataRewindAction) private var openDataRewindAction
+  @BridgedFocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @BridgedFocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
+  @BridgedFocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
+  @BridgedFocusedValue(\.openDataRewindAction) private var openDataRewindAction
 
   var body: some Commands {
     // Sidebar toggle commands - only show when no document is open

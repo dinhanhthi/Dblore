@@ -63,7 +63,7 @@ struct MongoCollectionsView: View {
       }
     }
     .mongoOverviewConfirmSheet(model: model, workspaceManager: workspaceManager)
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
   }
