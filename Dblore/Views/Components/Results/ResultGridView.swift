@@ -102,6 +102,9 @@ struct ResultGridView: NSViewRepresentable {
   var fontSize: CGFloat = AppSettings.shared.resultFontSize
   /// Colors values by type. The default reads Settings so a toggle refreshes the grid.
   var colorValuesByType: Bool = AppSettings.shared.colorValuesByType
+  /// Marks invisible characters in cells. The default reads Settings so a toggle refreshes the
+  /// grid (a new key rebuilds the row model and its display text).
+  var showsInvisibleCharacters: Bool = AppSettings.shared.showsInvisibleCharacters
   /// Receives, debounced, the summary of 2+ selected rows in the last clicked column; nil below
   /// two rows and when the grid goes away
   var onSelectionSummaryChange: ((ResultSelectionSummary?) -> Void)? = nil
@@ -232,7 +235,8 @@ struct ResultGridView: NSViewRepresentable {
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
       currentMatch: currentMatch, hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
       highlights: highlights, highlightDialect: highlightDialect, valueFilter: valueFilter,
-      searchMatches: searchMatches, changeSet: changeSet)
+      searchMatches: searchMatches, changeSet: changeSet,
+      showsInvisibleCharacters: showsInvisibleCharacters)
     // A font or color change alone skips `update` (the row model is unchanged). `update` may
     // also refresh only staged rows, so reload every visible cell onto the new face and colors.
     if fontChanged || colorsChanged {

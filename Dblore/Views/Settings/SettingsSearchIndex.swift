@@ -194,6 +194,9 @@ extension SettingsModal.SettingsTab {
             "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style."
         ),
         .init(
+          card: "Text", title: "Show Invisible Characters",
+          detail: InvisibleCharactersSetting.description),
+        .init(
           card: "Table", title: "Hide Column Types",
           detail:
             "When enabled, column types (e.g., VARCHAR, INTEGER) will be hidden from table headers, showing only column names."
@@ -208,6 +211,9 @@ extension SettingsModal.SettingsTab {
           detail:
             "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it."
         ),
+        .init(
+          card: "Table", title: "Copy rows as",
+          detail: CopyRowsFormatSetting.description + " TSV, CSV, with headers, JSON, Markdown."),
         .init(
           card: "Table", title: "Max Height",
           detail: "Adjust the maximum height of result tables. (Notebook only)"),

@@ -4,6 +4,13 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 ## Unreleased
 
+### Added
+
+- **Related rows before a delete.** When staged changes delete rows, Preview SQL and the Safe Mode dialog list what else the delete touches: rows deleted by cascade, rows set to NULL or to their default, and rows that still refer to the deleted ones. A foreign key that would block the delete disables Commit and names the constraint; Commit Anyway lets the database decide. The counts run on a separate read-only connection within 5 seconds, and are skipped while a transaction is open. [#d62df711](https://github.com/dinhanhthi/Dblore/commit/d62df711)
+- **Set several cells at once.** Select rows, then right-click a column: Set Value… writes the same text, NULL or DEFAULT (PostgreSQL and MySQL) into every selected cell, and Generate UUID / Generate UUIDv7 writes a different UUID into each one (uuid, text and long enough character columns). It is one change to stage and one Undo. [#2bb7d3a5](https://github.com/dinhanhthi/Dblore/commit/2bb7d3a5)
+- **Copy formats.** Copy as Markdown in the grid menu, and Settings > Result Table > "Copy rows as" chooses what Cmd+C copies: TSV (the default), TSV or CSV with headers, CSV, JSON or Markdown. JSON keeps the column order and suffixes a repeated column name (`id_2`); NaN and infinite numbers are written as text. Markdown copies and exports turn line breaks into `<br>` and escape `\`, `|`, `&`, `<` and `>`.
+- **Invisible characters.** Control characters, zero-width characters, special spaces and direction controls in a cell are shown as visible marks, with their code points in the tooltip; joiners inside emoji and words stay as they are. Copy, export and search still use the real text. Settings > Result Table turns it off.
+
 ### Improved
 
 - **Copied rows are safe to paste into a spreadsheet.** Copying rows or cells as text puts an apostrophe before a text value that starts like a formula (`=`, `+`, `-`, `@`, tab or a line break), the same rule CSV and TSV exports use. Numbers, dates and Copy Value / Copy as INSERT / Copy as IN list stay raw. Settings > Result Table turns it off. [#0a6e014c](https://github.com/dinhanhthi/Dblore/commit/0a6e014c)
@@ -12,6 +19,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 ### Fixed
 
+- **Rows of a table without a primary key** are no longer dropped silently from an update or delete: the change is refused and names the table. [#d62df711](https://github.com/dinhanhthi/Dblore/commit/d62df711)
 - **MySQL no longer sends the full password over an unverified remote connection.** When the server asks for the full password (caching_sha2_password) and the connection does not verify the server's TLS certificate, Dblore stops and says to choose Verify CA or Verify Full; a direct connection to 127.0.0.1, ::1 or localhost is exempt. Over SSH, a rejected tunnel channel is reported as such. [#f20a02aa](https://github.com/dinhanhthi/Dblore/commit/f20a02aa)
 - **CSV and TSV exports neutralize formulas** in every line of a value, in values starting with a combining mark or a line break, and in headers; saving an export file no longer blocks the app. [#0a6e014c](https://github.com/dinhanhthi/Dblore/commit/0a6e014c)
 - **Cancelling a query in a transaction** reports what really happened on SQLite and DuckDB (the pending changes were rolled back, or the transaction was kept), and a deadlock that rolls back a MySQL transaction clears its pending changes. [#9c1cd35d](https://github.com/dinhanhthi/Dblore/commit/9c1cd35d)

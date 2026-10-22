@@ -29,6 +29,12 @@ struct ResultTableSettingsSection: View {
           isOn: $appSettings.colorValuesByType
         )
 
+        SettingsToggle(
+          title: "Show Invisible Characters",
+          description: InvisibleCharactersSetting.description,
+          isOn: $appSettings.showsInvisibleCharacters
+        )
+
         // Hide Run with Query Section toggle
         SettingsToggle(
           title: "Hide Run with Query Section",
@@ -43,6 +49,8 @@ struct ResultTableSettingsSection: View {
             "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it.",
           isOn: $appSettings.neutralizesCopiedFormulas
         )
+
+        CopyRowsFormatSetting(appSettings: appSettings)
 
         // Max Height (Notebook only)
         if viewMode == .notebook {
@@ -65,6 +73,46 @@ struct ResultTableSettingsSection: View {
 
         SessionTimeoutSettings(appSettings: appSettings)
       }
+    }
+  }
+}
+
+/// Text of the "Show Invisible Characters" setting, shared by both settings views and search
+enum InvisibleCharactersSetting {
+  static let description =
+    "Marks control characters, zero-width characters, special spaces and direction controls in result cells. Copy, export and search keep the original text."
+}
+
+/// "Copy rows as": the format Cmd+C copies selected result grid rows in
+struct CopyRowsFormatSetting: View {
+  @Bindable var appSettings: AppSettings
+
+  static let description =
+    "Format of the rows Cmd+C copies from a result table. Neutralize Copied Formulas applies to TSV and CSV."
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      HStack {
+        Text("Copy rows as")
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+
+        Spacer()
+
+        CapsuleDropdown(
+          title: appSettings.copyRowsFormat.title,
+          width: 160,
+          accessibilityLabel: "Copy rows as",
+          options: Array(CopyRowsFormat.allCases),
+          optionTitle: \.title,
+          isSelected: { $0 == appSettings.copyRowsFormat },
+          onSelect: { appSettings.copyRowsFormat = $0 }
+        )
+      }
+
+      Text(Self.description)
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
     }
   }
 }

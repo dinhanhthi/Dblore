@@ -430,6 +430,12 @@ struct SettingsModalResultTableSection: View {
               "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style.",
             isOn: $appSettings.colorValuesByType
           )
+          Divider()
+          SettingsToggle(
+            title: "Show Invisible Characters",
+            description: InvisibleCharactersSetting.description,
+            isOn: $appSettings.showsInvisibleCharacters
+          )
         }
       }
 
@@ -455,6 +461,8 @@ struct SettingsModalResultTableSection: View {
               "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it.",
             isOn: $appSettings.neutralizesCopiedFormulas
           )
+          Divider()
+          CopyRowsFormatSetting(appSettings: appSettings)
           Divider()
           SettingsSlider(
             title: "Max Height",

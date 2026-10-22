@@ -73,6 +73,27 @@ enum LaunchBehavior: String, CaseIterable {
   }
 }
 
+/// What Cmd+C puts on the clipboard for the selected result grid rows
+enum CopyRowsFormat: String, CaseIterable {
+  case tsv
+  case tsvWithHeaders
+  case csv
+  case csvWithHeaders
+  case json
+  case markdown
+
+  var title: String {
+    switch self {
+    case .tsv: return "TSV"
+    case .tsvWithHeaders: return "TSV with headers"
+    case .csv: return "CSV"
+    case .csvWithHeaders: return "CSV with headers"
+    case .json: return "JSON"
+    case .markdown: return "Markdown"
+    }
+  }
+}
+
 /// Where the AI assistant panel opens
 enum AIPanelMode: String, CaseIterable {
   case sidebar
@@ -332,6 +353,8 @@ class AppSettings {
     static let resultFontSize = "app.settings.resultFontSize"
     static let colorValuesByType = "app.settings.colorValuesByType"
     static let neutralizesCopiedFormulas = "app.settings.neutralizesCopiedFormulas"
+    static let copyRowsFormat = "app.settings.copyRowsFormat"
+    static let showsInvisibleCharacters = "app.settings.showsInvisibleCharacters"
     static let editorFontSize = "app.settings.editorFontSize"
     static let notifyLongQueries = "app.settings.notifyLongQueries"
     static let longQueryThresholdSeconds = "app.settings.longQueryThresholdSeconds"
@@ -715,6 +738,23 @@ class AppSettings {
   var neutralizesCopiedFormulas: Bool = true {
     didSet {
       defaults.set(neutralizesCopiedFormulas, forKey: Keys.neutralizesCopiedFormulas)
+    }
+  }
+
+  /// Format of the result grid rows Cmd+C copies
+  /// Default: .tsv (no header row)
+  var copyRowsFormat: CopyRowsFormat = .tsv {
+    didSet {
+      defaults.set(copyRowsFormat.rawValue, forKey: Keys.copyRowsFormat)
+    }
+  }
+
+  /// Show control, zero-width and special space characters in result grid cells as marks.
+  /// Display only: copy, export and search read the raw value.
+  /// Default: true
+  var showsInvisibleCharacters: Bool = true {
+    didSet {
+      defaults.set(showsInvisibleCharacters, forKey: Keys.showsInvisibleCharacters)
     }
   }
 
@@ -1175,6 +1215,16 @@ class AppSettings {
       neutralizesCopiedFormulas = defaults.bool(forKey: Keys.neutralizesCopiedFormulas)
     }
 
+    if let raw = defaults.string(forKey: Keys.copyRowsFormat),
+      let format = CopyRowsFormat(rawValue: raw)
+    {
+      copyRowsFormat = format
+    }
+
+    if defaults.object(forKey: Keys.showsInvisibleCharacters) != nil {
+      showsInvisibleCharacters = defaults.bool(forKey: Keys.showsInvisibleCharacters)
+    }
+
     if defaults.object(forKey: Keys.historyEnabled) != nil {
       historyEnabled = defaults.bool(forKey: Keys.historyEnabled)
     }
@@ -1308,6 +1358,8 @@ class AppSettings {
     resultFontSize = Self.defaultResultFontSize
     colorValuesByType = true
     neutralizesCopiedFormulas = true
+    copyRowsFormat = .tsv
+    showsInvisibleCharacters = true
     // Same-value assignment does not run didSet, so write the review projection first.
     defaults.set(CommitStyle.review.rawValue, forKey: Keys.commitStyle)
     safeMode = CommitStyle.review.legacyProjection.safeMode
