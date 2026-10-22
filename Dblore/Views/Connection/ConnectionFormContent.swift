@@ -91,6 +91,8 @@ struct ConnectionFormContent: View {
 
   /// AI policy and rules the form was seeded with (`seedAIFields`).
   @State var aiSeed = ConnectionAIDraft()
+  /// Files of the Application Scripts folder the Scripts section offers
+  @State var availableScripts: [String] = []
 
   // Connection history
   @State private var connectionHistory: [ConnectionHistoryEntry] = []
@@ -233,6 +235,11 @@ struct ConnectionFormContent: View {
             sectionCard {
               sectionTitle("Safety")
               safetySection()
+            }
+
+            sectionCard {
+              sectionTitle("Scripts")
+              scriptsSection()
             }
           }
 

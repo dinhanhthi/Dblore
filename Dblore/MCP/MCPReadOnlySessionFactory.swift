@@ -31,6 +31,7 @@ nonisolated enum MCPConnectionError: Error, Equatable, LocalizedError {
   case certificateNotSaved
   case sshCredentialNotSaved
   case sshHostKeyNotTrusted
+  case passwordCommand
   case commandRefused
   case cursorRefused
 
@@ -52,6 +53,8 @@ nonisolated enum MCPConnectionError: Error, Equatable, LocalizedError {
         + "Dblore with Remember on."
     case .sshHostKeyNotTrusted:
       "The SSH server's host key is not trusted yet. Connect once in Dblore and trust it."
+    case .passwordCommand:
+      "This connection uses a password command; open it in Dblore instead."
     case .commandRefused:
       "MCP connections are read-only: only queries are sent."
     case .cursorRefused:

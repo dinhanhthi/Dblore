@@ -109,10 +109,11 @@ extension WorkspaceManager {
     return config
   }
 
-  /// `config` with the color, group and hidden schemas of the saved row a save of `config`
-  /// overwrites, for saves that do not come from the connection form (an opened file, a rename),
-  /// so they never erase what the form or the sidebar set, and for an opened file's config, so
-  /// the form opens on the saved values. Unchanged without that row, and with Remember off.
+  /// `config` with the color, group, hidden schemas and scripts of the saved row a save of
+  /// `config` overwrites, for saves that do not come from the connection form (an opened file, a
+  /// rename), so they never erase what the form or the sidebar set, and for an opened file's
+  /// config, so the form opens on the saved values. Unchanged without that row, and with
+  /// Remember off.
   static func keepingSavedAppearance(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -123,7 +124,21 @@ extension WorkspaceManager {
     config.colorTag = saved.colorTag
     config.groupName = saved.groupName
     config.hiddenSchemas = saved.hiddenSchemas
-    return config
+    return config.withScripts(of: saved)
+  }
+
+  /// An opened file's `config` with the scripts of its saved row (Remember on), else none: a
+  /// file from elsewhere never picks which of the user's scripts run, nor against which host.
+  static func keepingSavedScripts(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    let saved =
+      config.rememberConnection
+      ? exactSavedEntry(
+        for: config,
+        in: SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore()))?.config
+      : nil
+    return config.withScripts(of: saved)
   }
 
   /// `config` with the hidden schemas of the saved row a save of `config` overwrites, for form
@@ -421,5 +436,17 @@ extension WorkspaceManager {
     for viewModel in viewModels.values {
       viewModel.invalidateEditTargets()
     }
+  }
+}
+
+extension ConnectionConfig {
+  /// This config with the script names and timeout of `other` (none when nil).
+  fileprivate func withScripts(of other: ConnectionConfig?) -> ConnectionConfig {
+    var config = self
+    config.preConnectScript = other?.preConnectScript
+    config.postDisconnectScript = other?.postDisconnectScript
+    config.passwordCommandScript = other?.passwordCommandScript
+    config.scriptTimeoutSeconds = other?.scriptTimeoutSeconds
+    return config
   }
 }

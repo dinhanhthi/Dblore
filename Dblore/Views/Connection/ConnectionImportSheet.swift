@@ -574,11 +574,11 @@ private struct ImportPreviewRow: View {
               .foregroundColor(.warning)
           }
         }
+        // Wrapped, never cut: the whole host must be seen before it is saved
         Text(verbatim: row.user.isEmpty ? row.address : "\(row.user) @ \(row.address)")
           .font(.monoSmall)
           .foregroundColor(.foregroundMuted)
-          .lineLimit(1)
-          .truncationMode(.middle)
+          .fixedSize(horizontal: false, vertical: true)
         HStack(spacing: Spacing.xs) {
           ForEach(ConnectionImportText.badges(for: row), id: \.self) { badge in
             ImportBadgeView(badge: badge)

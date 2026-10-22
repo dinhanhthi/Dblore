@@ -8,7 +8,9 @@
 //  Each connection is copied from an explicit allow list, never by encoding ConnectionConfig:
 //  name, engine, host, port, database, user, TLS mode, SSH host/port/user/auth method, the
 //  MongoDB connection string rebuilt without userinfo, timeouts and row cap, protection, commit
-//  style, AI access and rules, color, group and hidden schemas. Never written: passwords, SSH
+//  style, AI access and rules, color, group, hidden schemas, and the connection scripts' plain
+//  file names and timeout (never a path or a script's content; an import never applies them).
+//  Never written: passwords, SSH
 //  passwords, passphrases and keys (nor the key's algorithm and fingerprint), client
 //  certificates and their metadata, file bookmarks, the remember flag and the MongoDB identity
 //  pin (the saved database is written as `database`).
@@ -21,12 +23,16 @@
 //  engines, TLS modes, timeouts) and sanitized by ConnectionConfig's own rules (color, group,
 //  hidden schemas). AI access "Always" falls back to the AI settings. Each row warns about what
 //  a file could use against the user: an SSH tunnel host, a weakened protection, custom AI
-//  rules, a connection string that names other hosts (then dropped). Warnings never carry file
+//  rules, a connection string that names other hosts (then dropped). Scripts are never imported:
+//  a file must not pick which of the user's scripts run against its host (a password command
+//  would hand the user's password to it), so the row only names the file's valid script names
+//  for the user to choose again. Warnings never carry file
 //  content beyond a short, one-line label, except the SSH host and user: they are validated
 //  (an entry with a host or user that could pass for another bastion is skipped) and shown
-//  whole. SSH hosts are ASCII DNS names, IPv4 or IPv6 literals (a bracketed IPv6 literal is
-//  saved bare); a Unicode host name is not round-tripped, so no lookalike host reaches the
-//  warning.
+//  whole. Database and SSH hosts are ASCII DNS names, IPv4 or IPv6 literals (a bracketed IPv6
+//  literal is saved bare); a Unicode host name is not round-tripped (the entry is skipped), so
+//  no lookalike host reaches a warning or the import preview. A host, user or database that
+//  starts with `-` or holds a control character skips the entry: scripts get them as arguments.
 //
 
 import Foundation
@@ -86,6 +92,11 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
     var colorTag: String?
     var groupName: String?
     var hiddenSchemas: [String]
+    /// Plain file names in the Application Scripts folder (absent from files without them)
+    var preConnectScript: String?
+    var postDisconnectScript: String?
+    var passwordCommandScript: String?
+    var scriptTimeoutSeconds: Int?
   }
 
   /// A favorite statement as plain text: no ids, no file references.
@@ -173,6 +184,7 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
         item.name, item.databaseType, item.host, item.database, item.username, item.sslMode,
         item.mongoURI, item.protectionLevel, item.commitStyle, item.aiAccess, item.colorTag,
         item.groupName, item.ssh?.host, item.ssh?.username, item.ssh?.authMethod,
+        item.preConnectScript, item.postDisconnectScript, item.passwordCommandScript,
       ]
       guard fields.allSatisfy(fits), item.aiRules.count <= ConnectionConfig.aiRulesLimit else {
         throw ReadError.fieldTooLong
@@ -246,6 +258,10 @@ nonisolated extension DbloreConnectionFile.Connection {
     colorTag = config.colorTag?.rawValue
     groupName = config.groupName
     hiddenSchemas = config.hiddenSchemas
+    preConnectScript = config.preConnectScript
+    postDisconnectScript = config.postDisconnectScript
+    passwordCommandScript = config.passwordCommandScript
+    scriptTimeoutSeconds = config.scriptTimeoutSeconds
   }
 }
 
@@ -269,6 +285,11 @@ nonisolated extension DbloreConnectionFile.Connection {
     }
     guard engine.capabilities.usesNetwork else { return skip("file databases are not imported") }
     guard !host.isEmpty else { return skip("no host") }
+    guard let savedHost = Self.normalizedHost(host) else { return skip("invalid host") }
+    guard ConnectionScriptRunner.isSafeArgument(username) else { return skip("invalid user") }
+    guard ConnectionScriptRunner.isSafeArgument(database) else {
+      return skip("invalid database")
+    }
     guard Self.validPorts.contains(port) else { return skip("invalid port") }
     guard let tls = SSLMode(rawValue: sslMode),
       let protection = ConnectionProtectionLevel(rawValue: protectionLevel),
@@ -295,7 +316,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     var warnings: [String] = []
     var tunnel: SSHTunnelConfig?
     if let ssh {
-      guard let sshHost = Self.normalizedSSHHost(ssh.host),
+      guard let sshHost = Self.normalizedHost(ssh.host),
         Self.isValidSSHUsername(ssh.username),
         Self.validPorts.contains(ssh.port),
         let method = SSHTunnelConfig.AuthMethod(rawValue: ssh.authMethod)
@@ -309,7 +330,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     }
 
     var config = ConnectionConfig(
-      databaseType: engine, host: host, port: port, database: database, username: username,
+      databaseType: engine, host: savedHost, port: port, database: database, username: username,
       sslMode: tls, sshTunnel: tunnel,
       timeoutSeconds: SessionBrakeLimits.clamp(
         timeoutSeconds, to: DbloreConnectionFile.connectTimeoutRange, default: 30),
@@ -332,8 +353,9 @@ nonisolated extension DbloreConnectionFile.Connection {
     if !protectedMode { warnings.append(Warning.protectedModeOff) }
     if access == .always { warnings.append(Warning.aiAccessClamped) }
     if !aiRules.isEmpty { warnings.append(Warning.aiRules) }
+    if let warning = scriptsWarning() { warnings.append(warning) }
     if let mongoURI {
-      switch checkedMongoURI(mongoURI, engine: engine, sslMode: tls) {
+      switch checkedMongoURI(mongoURI, host: savedHost, engine: engine, sslMode: tls) {
       case .success(let uri): config.mongoURI = uri
       case .failure(let skipped): warnings.append(skipped.message)
       }
@@ -341,10 +363,24 @@ nonisolated extension DbloreConnectionFile.Connection {
     return .success(ImportedConnection(config: config, source: .dblore, warnings: warnings))
   }
 
+  /// Scripts are never imported (see the file header): when the file names some, the row says
+  /// so, with the names that pass `ConnectionScriptRunner.isValidName` (no quote, control or
+  /// format character); others are left out.
+  private func scriptsWarning() -> String? {
+    let names = [preConnectScript, passwordCommandScript, postDisconnectScript].compactMap { $0 }
+    guard !names.isEmpty else { return nil }
+    var shown: [String] = []
+    for name in names where ConnectionScriptRunner.isValidName(name) && !shown.contains(name) {
+      shown.append(name)
+    }
+    let list = shown.isEmpty ? "" : " (\(shown.map { "\"\($0)\"" }.joined(separator: ", ")))"
+    return "Scripts named in the file are not applied: choose them in the connection form\(list)."
+  }
+
   /// The stored form of `text` when it reaches only this row's host and port (MongoSession seeds
   /// every host it names) and its tls/ssl option agrees with `sslMode`.
   private func checkedMongoURI(
-    _ text: String, engine: DatabaseType, sslMode: SSLMode
+    _ text: String, host: String, engine: DatabaseType, sslMode: SSLMode
   )
     -> Result<String, Skipped>
   {
@@ -373,12 +409,14 @@ nonisolated extension DbloreConnectionFile.Connection {
 
   private static let validPorts = 1...65535
 
-  /// The SSH host to save, or nil: a DNS name or IPv4 address (ASCII letters, digits, `.`, `-`,
-  /// `_`) or an IPv6 literal with an optional ASCII `%zone`, at most 253 characters. A bracketed
-  /// IPv6 literal is returned bare, the form the SSH connector passes on. Nothing that could pass
-  /// for another host in a warning.
-  private static func normalizedSSHHost(_ host: String) -> String? {
-    guard !host.isEmpty, host.utf8.count <= 253 else { return nil }
+  /// The database or SSH host to save, or nil: a DNS name or IPv4 address (ASCII letters,
+  /// digits, `.`, `-`, `_`; a MongoDB SRV name too) or an IPv6 literal with an optional ASCII
+  /// `%zone`, at most 253 characters, not starting with `-`. A bracketed IPv6 literal is
+  /// returned bare, the form the connectors pass on. Nothing that could pass for another host in
+  /// a warning or the preview.
+  private static func normalizedHost(_ host: String) -> String? {
+    // A leading `-` could pass for an option of a command a script hands the host to
+    guard !host.isEmpty, host.utf8.count <= 253, !host.hasPrefix("-") else { return nil }
     let isDNSName = host.allSatisfy {
       $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "." || $0 == "-" || $0 == "_")
     }

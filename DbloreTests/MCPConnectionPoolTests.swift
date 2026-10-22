@@ -247,6 +247,19 @@ struct MCPConnectionPoolTests {
     await pool.closeAll()
   }
 
+  @Test("A connection with a password command is refused: MCP never runs the user's scripts")
+  func passwordCommandRefused() async throws {
+    var config = postgres()
+    config.passwordCommandScript = "pw.sh"
+    let id = book.add(config)
+    let pool = pool()
+    await #expect(throws: MCPConnectionError.passwordCommand) {
+      _ = try await manager(pool, id)
+    }
+    #expect(factory.sessions.isEmpty)
+    await pool.closeAll()
+  }
+
   @Test("An SSH bastion without a saved secret or a pinned host key is refused")
   func untrustedSSHRefused() async throws {
     var config = postgres()

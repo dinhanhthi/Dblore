@@ -355,11 +355,12 @@ class WorkspaceManager: Identifiable {
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
-    // An opened file's AI policy never weakens the saved one, and the form opens on the saved
-    // color and group (a form connect writes what the form shows)
+    // An opened file's AI policy never weakens the saved one, the form opens on the saved
+    // color and group (a form connect writes what the form shows), and its scripts are the
+    // saved row's only
     var workspace = workspace
     workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
-      .map { Self.keepingSavedAppearance($0) }
+      .map { Self.keepingSavedScripts(Self.keepingSavedAppearance($0)) }
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -573,7 +574,7 @@ class WorkspaceManager: Identifiable {
 
     do {
       try await PerfSignpost.interval("db.connect") {
-        try await connectionManager.connect(
+        try await connectionManager.connectRunningScripts(
           config: config, extraAllowedPaths: keepsDuckDBFiles ? duckDBAllowedPaths : [])
       }
       if !keepsDuckDBFiles { releaseDuckDBFileAccess() }
@@ -659,8 +660,9 @@ class WorkspaceManager: Identifiable {
     guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
 
     var configWithPassword = config
-    // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain
-    if config.databaseType.capabilities.usesPassword {
+    // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
+    // unless a password command prints it on connect
+    if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil {
       guard let keychainKey = workspace.keychainKey,
         let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
       else {
@@ -684,10 +686,11 @@ class WorkspaceManager: Identifiable {
         category: "Workspace"
       )
     } catch {
-      await AppLogger.shared.warning(
-        "Auto-connect failed: \(error.localizedDescription)",
-        category: "Workspace"
-      )
+      // A script failure logs its exit status only, never its output
+      let reason =
+        error is ConnectionScriptRunner.ScriptError
+        ? String(describing: error) : error.localizedDescription
+      await AppLogger.shared.warning("Auto-connect failed: \(reason)", category: "Workspace")
       // Never over a newer connection: only while this attempt is still the visible one
       if !Task.isCancelled, connectionState == .connecting { connectionState = .disconnected }
       if !Task.isCancelled { presentConnectErrorIfActionable(error, config: configWithPassword) }

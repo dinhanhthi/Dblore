@@ -198,9 +198,13 @@ actor MCPConnectionPool {
     }
   }
 
-  /// Refuses what would otherwise fail on a missing secret or wait for a trust prompt.
+  /// Refuses what would otherwise fail on a missing secret or wait for a trust prompt, and a
+  /// password command: an MCP client must not run the user's scripts.
   /// Reads the Keychain stores here, off the main actor.
   private func refuseUnattended(_ config: ConnectionConfig) throws {
+    if config.passwordCommandScript != nil, config.databaseType.capabilities.usesPassword {
+      throw MCPConnectionError.passwordCommand
+    }
     if config.clientCertificate != nil,
       certificates.load(account: ClientCertificateStoreFactory.account(for: config)) == nil
     {

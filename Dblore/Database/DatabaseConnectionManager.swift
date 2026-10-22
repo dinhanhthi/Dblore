@@ -6,6 +6,7 @@
 import Foundation
 import NIOCore
 import PostgresNIO
+import os
 
 /// Actor managing PostgreSQL database connections and query execution
 actor DatabaseConnectionManager {
@@ -34,6 +35,14 @@ actor DatabaseConnectionManager {
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// SSH secret of an unremembered connection, owned only while this actor's session is active.
   var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  /// Post-disconnect script of the workspace's main connection (`connectRunningScripts`), run
+  /// once that connection is closed (`disconnect`). Nil for side managers and plain connects; an
+  /// internal reset (`reconnectWithActiveCertificate`) keeps it. Behind a lock, not the actor,
+  /// so a quit can see and start it synchronously (`hasPendingPostDisconnect`).
+  private nonisolated let postDisconnectSlot = OSAllocatedUnfairLock<PendingScript?>(
+    initialState: nil)
+  /// Runs the connection scripts (`connectRunningScripts`, `testConnection`)
+  nonisolated let scripts: ConnectionScriptRunner
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -141,8 +150,10 @@ actor DatabaseConnectionManager {
   init(
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
-    readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true
+    readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true,
+    scripts: ConnectionScriptRunner = .app
   ) {
+    self.scripts = scripts
     self.readLimits = readLimits
     self.resetsSessionAfterCappedRead = resetsSessionAfterCappedRead
     let policy = SSHHostKeyPolicy(prompt: sshHostKeyPrompt)
@@ -332,6 +343,69 @@ actor DatabaseConnectionManager {
       "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
   }
 
+  /// The workspace's main connect: closes the current connection (its post-disconnect script
+  /// runs), runs `config`'s pre-connect script (a failure aborts with its exit status and
+  /// capped stderr), then its password command, whose password replaces the Keychain one in the
+  /// connected config only: never saved, and gone with the connection. Side managers and
+  /// internal resets copy that connected config, so they reuse the password and run no script.
+  /// The post-disconnect script pairs with a pre-connect script that ran: it runs when the
+  /// connect then fails, or once the connection closes.
+  func connectRunningScripts(
+    config: ConnectionConfig, extraAllowedPaths: [String] = []
+  ) async throws {
+    let pending = config.postDisconnectScript.map {
+      PendingScript(runner: scripts, name: $0, config: config)
+    }
+    var resolved = config
+    var preConnectRan = false
+    do {
+      if config.preConnectScript != nil || config.passwordCommandScript != nil {
+        await disconnect()
+        if let name = config.preConnectScript {
+          try await scripts.runPreConnect(name, for: config)
+          preConnectRan = true
+        }
+        resolved = try await withPasswordCommand(config)
+      }
+      // `connect` closes the current connection first: the script is recorded only after it
+      try await connect(config: resolved, extraAllowedPaths: extraAllowedPaths)
+    } catch {
+      if preConnectRan { pending?.run() }
+      throw error
+    }
+    postDisconnectSlot.withLock { $0 = pending }
+  }
+
+  /// Whether `disconnect` will run a post-disconnect script.
+  nonisolated var hasPendingPostDisconnect: Bool {
+    postDisconnectSlot.withLock { $0 != nil }
+  }
+
+  /// For a quit: takes the pending post-disconnect script, so `disconnect` no longer runs it,
+  /// and returns what starts it. The quit calls it once the connection is closed, or when the
+  /// close takes too long.
+  nonisolated func takePostDisconnectForQuit() -> (@Sendable () -> Void)? {
+    guard let script = takePendingPostDisconnect() else { return nil }
+    return { script.run() }
+  }
+
+  private nonisolated func takePendingPostDisconnect() -> PendingScript? {
+    postDisconnectSlot.withLock { slot in
+      defer { slot = nil }
+      return slot
+    }
+  }
+
+  /// `config` with the password its password command prints, for engines with a password.
+  private func withPasswordCommand(_ config: ConnectionConfig) async throws -> ConnectionConfig {
+    guard let name = config.passwordCommandScript,
+      config.databaseType.capabilities.usesPassword
+    else { return config }
+    var resolved = config
+    resolved.password = try await scripts.password(from: name, for: config)
+    return resolved
+  }
+
   /// Internal reset of this connection. A fresh connect must use the active unremembered
   /// certificate and SSH secret rather than same-account Keychain items from an older saved
   /// connection, and the same picked DuckDB files.
@@ -352,16 +426,26 @@ actor DatabaseConnectionManager {
       scoped?.clear()
       scopedSSH?.clear()
     }
-    try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
-      try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-        try await connect(config: config, extraAllowedPaths: allowedPaths)
+    // The reset keeps the connection: its post-disconnect script waits for the real close
+    let keptScript = takePendingPostDisconnect()
+    do {
+      try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+        try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+          try await connect(config: config, extraAllowedPaths: allowedPaths)
+        }
       }
+    } catch {
+      keptScript?.run()
+      throw error
     }
+    postDisconnectSlot.withLock { $0 = keptScript }
   }
 
   /// Test connection without storing it.
-  /// Performs a real connection AND executes a test query to verify credentials.
+  /// Performs a real connection AND executes a test query to verify credentials. A password
+  /// command supplies the password, as on connect; no other script runs.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
+    let config = try await withPasswordCommand(config)
     switch config.databaseType {
     case .postgresql:
       return try await PostgresSession(config: config, hostKeyValidator: sshHostKeyPolicy)
@@ -434,8 +518,10 @@ actor DatabaseConnectionManager {
     sqliteFileAccessRelease = release
   }
 
-  /// Disconnect from database. The picked DuckDB files go with the connection.
+  /// Disconnect from database. The picked DuckDB files go with the connection. The main
+  /// connection's post-disconnect script runs after the close, without being awaited.
   func disconnect() async {
+    let postDisconnect = takePendingPostDisconnect()
     duckDBAllowedPaths = []
     activeUnrememberedCertificate = nil
     activeUnrememberedSSHCredential = nil
@@ -461,6 +547,7 @@ actor DatabaseConnectionManager {
 
     // After the session is closed, so a SQLite file is not yanked while it is still open.
     releaseFileAccess?()
+    postDisconnect?.run()
   }
 
   /// Forget the current connection before any suspension point: no edit can use its targets,
@@ -565,6 +652,23 @@ nonisolated struct ForgottenSession: Sendable {
   var tunnel: (any SSHTunneling)?
   /// A detached MySQL session's resources.
   var mysql: DetachedMySQLSession?
+}
+
+/// A post-disconnect script and the connection it ran for (without its password).
+private nonisolated struct PendingScript: Sendable {
+  var runner: ConnectionScriptRunner
+  var name: String
+  var config: ConnectionConfig
+
+  init(runner: ConnectionScriptRunner, name: String, config: ConnectionConfig) {
+    self.runner = runner
+    self.name = name
+    var config = config
+    config.password = ""
+    self.config = config
+  }
+
+  func run() { runner.runPostDisconnect(name, for: config) }
 }
 
 /// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL

@@ -9,6 +9,7 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+import os
 
 // MARK: - App Delegate for file handling
 
@@ -130,30 +131,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Quitting with a pending Protected transaction asks Commit / Roll back / Cancel for each
   /// workspace (Cancel keeps the app running). A force-quit skips this: the connection closes
-  /// without COMMIT, so the server rolls the transaction back.
+  /// without COMMIT, so the server rolls the transaction back. Connections with a
+  /// post-disconnect script are closed and their scripts started before the app exits.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard confirmKeyboardQuit() else { return .terminateCancel }
     let managers = WorkspaceWindowManager.shared.allWorkspaces
     // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
-    guard managers.contains(where: { !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting })
-    else {
+    let resolves = managers.contains(where: {
+      !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting
+    })
+    let scripted = managers.map(\.connectionManager).filter(\.hasPendingPostDisconnect)
+    guard resolves || !scripted.isEmpty else {
       isTerminating = true
       recordLaunchSession()
       return .terminateNow
     }
     Task { @MainActor in
-      for manager in managers {
-        guard await manager.resolvePendingTransaction(action: .quit) else {
-          NSApp.reply(toApplicationShouldTerminate: false)
-          return
+      if resolves {
+        for manager in managers {
+          guard await manager.resolvePendingTransaction(action: .quit) else {
+            NSApp.reply(toApplicationShouldTerminate: false)
+            return
+          }
         }
       }
       isTerminating = true
       recordLaunchSession()
+      await Self.closeRunningPostDisconnectScripts(scripted)
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
   }
+
+  /// Closes `connections` and starts their post-disconnect scripts (started, not awaited: they
+  /// run outside the app). After `quitCloseLimit`, the scripts of connections still closing
+  /// start anyway, so a quit never hangs on a server.
+  @concurrent nonisolated private static func closeRunningPostDisconnectScripts(
+    _ connections: [DatabaseConnectionManager]
+  ) async {
+    let scripts = connections.map { $0.takePostDisconnectForQuit() }
+    guard scripts.contains(where: { $0 != nil }) else { return }
+    let started = OSAllocatedUnfairLock(
+      initialState: [Bool](repeating: false, count: scripts.count))
+    /// Starts script `index` once, whichever of its close and the limit comes first
+    let start: @Sendable (Int) -> Void = { index in
+      let first = started.withLock { flags in
+        defer { flags[index] = true }
+        return !flags[index]
+      }
+      if first { scripts[index]?() }
+    }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      let resumed = OSAllocatedUnfairLock(initialState: false)
+      let resume: @Sendable () -> Void = {
+        let first = resumed.withLock { done in
+          defer { done = true }
+          return !done
+        }
+        if first { continuation.resume() }
+      }
+      DispatchQueue.global().asyncAfter(deadline: .now() + quitCloseLimit) {
+        scripts.indices.forEach(start)
+        resume()
+      }
+      Task {
+        await withTaskGroup(of: Void.self) { group in
+          for (index, connection) in connections.enumerated() where scripts[index] != nil {
+            group.addTask {
+              await connection.disconnect()
+              start(index)
+            }
+          }
+        }
+        resume()
+      }
+    }
+  }
+
+  /// Longest a quit waits for connections with a post-disconnect script to close
+  nonisolated private static let quitCloseLimit: TimeInterval = 3
 
   /// With "Confirm before quitting" on, Cmd+Q asks first. Quit from the Dock, logout and
   /// update relaunches come without a key event, so they never ask.

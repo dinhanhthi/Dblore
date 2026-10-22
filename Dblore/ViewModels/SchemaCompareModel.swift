@@ -404,8 +404,13 @@ final class SchemaCompareModel: Identifiable {
       guard let entry = savedEntries.first(where: { $0.id == id }) else {
         throw CompareFailure.source("The saved connection is no longer available.")
       }
-      config = await Self.withSavedPassword(entry.config, password: context.password)
       name = entry.shortDisplayName
+      do {
+        config = try await Self.withSavedPassword(entry.config, password: context.password)
+      } catch {
+        try Self.rethrowIfCancelled(error)
+        throw CompareFailure.sourceConnection(name: name, reason: Self.message(error))
+      }
     }
     let side: any SchemaCompareSourceConnection
     do {
@@ -697,12 +702,17 @@ final class SchemaCompareModel: Identifiable {
     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
   }
 
-  /// The saved connection with its password, read off the main actor (the Keychain)
+  /// The saved connection with its password, read off the main actor: printed by its password
+  /// command when it has one (it is not the live connection, so there is no resolved password to
+  /// reuse), else the Keychain's.
   @concurrent nonisolated private static func withSavedPassword(
     _ config: ConnectionConfig, password: @Sendable (ConnectionConfig) -> String?
-  ) async -> ConnectionConfig {
+  ) async throws -> ConnectionConfig {
     var config = config
-    if config.databaseType.capabilities.usesPassword, let saved = password(config) {
+    guard config.databaseType.capabilities.usesPassword else { return config }
+    if let command = config.passwordCommandScript {
+      config.password = try await ConnectionScriptRunner.app.password(from: command, for: config)
+    } else if let saved = password(config) {
       config.password = saved
     }
     return config

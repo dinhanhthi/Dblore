@@ -403,6 +403,18 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       if normalized != hiddenSchemas { hiddenSchemas = normalized }
     }
   }
+  /// Scripts in the Application Scripts folder, by plain file name (`ConnectionScriptRunner`):
+  /// run before the workspace connects, after it disconnects, and to print the password.
+  var preConnectScript: String?
+  var postDisconnectScript: String?
+  var passwordCommandScript: String?
+  /// Seconds each script may run, 1 to 300 (nil: 30).
+  var scriptTimeoutSeconds: Int? {
+    didSet {
+      let clamped = scriptTimeoutSeconds.map(ConnectionScriptRunner.clampedTimeout)
+      if clamped != scriptTimeoutSeconds { scriptTimeoutSeconds = clamped }
+    }
+  }
 
   nonisolated static let aiRulesLimit = 2_000
   nonisolated static let groupNameLimit = 64
@@ -457,6 +469,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case colorTag, groupName
     // Sidebar schema filter (absent unless a schema is hidden)
     case hiddenSchemas
+    // Connection scripts (absent unless set)
+    case preConnectScript, postDisconnectScript, passwordCommandScript, scriptTimeoutSeconds
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -523,6 +537,16 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     // A value of the wrong type hides nothing rather than failing the connection
     hiddenSchemas = Self.normalizedHiddenSchemas(
       ((try? container.decodeIfPresent([String].self, forKey: .hiddenSchemas)) ?? nil) ?? [])
+    // Likewise a script key of the wrong type runs no script
+    preConnectScript =
+      (try? container.decodeIfPresent(String.self, forKey: .preConnectScript)) ?? nil
+    postDisconnectScript =
+      (try? container.decodeIfPresent(String.self, forKey: .postDisconnectScript)) ?? nil
+    passwordCommandScript =
+      (try? container.decodeIfPresent(String.self, forKey: .passwordCommandScript)) ?? nil
+    scriptTimeoutSeconds =
+      ((try? container.decodeIfPresent(Int.self, forKey: .scriptTimeoutSeconds))
+      ?? nil).map(ConnectionScriptRunner.clampedTimeout)
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -581,6 +605,10 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     if !hiddenSchemas.isEmpty {
       try container.encode(hiddenSchemas, forKey: .hiddenSchemas)
     }
+    try container.encodeIfPresent(preConnectScript, forKey: .preConnectScript)
+    try container.encodeIfPresent(postDisconnectScript, forKey: .postDisconnectScript)
+    try container.encodeIfPresent(passwordCommandScript, forKey: .passwordCommandScript)
+    try container.encodeIfPresent(scriptTimeoutSeconds, forKey: .scriptTimeoutSeconds)
   }
 
   nonisolated init(

@@ -26,6 +26,10 @@ struct DbloreConnectionFileTests {
     config.aiAccess = .never
     config.aiRules = "Never touch billing."
     config.hiddenSchemas = ["audit", "pg_toast"]
+    config.preConnectScript = "vpn-up.sh"
+    config.postDisconnectScript = "vpn-down.sh"
+    config.passwordCommandScript = "pw.sh"
+    config.scriptTimeoutSeconds = 45
     return config
   }
 
@@ -77,7 +81,10 @@ struct DbloreConnectionFileTests {
     }
     let keys = Self.keys(in: try JSONSerialization.jsonObject(with: data))
     let forbidden = ["password", "bookmark", "certificate", "passphrase", "key", "credential"]
-    let leaked = keys.filter { key in forbidden.contains { key.lowercased().contains($0) } }
+    // The password command's key holds a script's file name, never a password
+    let leaked = keys.subtracting(["passwordCommandScript"]).filter { key in
+      forbidden.contains { key.lowercased().contains($0) }
+    }
     #expect(leaked.isEmpty, "secret-like keys: \(leaked.sorted())")
     #expect(text.contains("replicaSet=rs0"), "the connection string keeps its options")
   }
@@ -100,10 +107,20 @@ struct DbloreConnectionFileTests {
     let imported = try #require(contents.connections.first)
     #expect(imported.password == nil)
     #expect(imported.source == .dblore)
-    #expect(imported.config == config)
+    // Script names are written, never applied: the row names them instead
+    var withoutScripts = config
+    withoutScripts.preConnectScript = nil
+    withoutScripts.passwordCommandScript = nil
+    withoutScripts.postDisconnectScript = nil
+    withoutScripts.scriptTimeoutSeconds = nil
+    #expect(imported.config == withoutScripts)
     #expect(
       imported.warnings.contains(
         "SSH tunnel via host \"bastion.example.com\" port 2222, user \"jump\""))
+    #expect(
+      imported.warnings.contains(
+        "Scripts named in the file are not applied: choose them in the connection form "
+          + "(\"vpn-up.sh\", \"pw.sh\", \"vpn-down.sh\")."))
 
     // A key this version does not write (an older draft's favorite folder) is ignored.
     let lenient = try DbloreConnectionFile.decode(
@@ -154,6 +171,7 @@ struct DbloreConnectionFileTests {
     entry.protectedMode = false
     entry.aiAccess = AIAccessPolicy.always.rawValue
     entry.aiRules = String(repeating: "r", count: ConnectionConfig.aiRulesLimit)
+    entry.postDisconnectScript = "../vpn-down.sh"
 
     let contents = try DbloreConnectionFile.decode(
       try DbloreConnectionFile(connections: [entry]).encoded()
@@ -161,15 +179,22 @@ struct DbloreConnectionFileTests {
     let imported = try #require(contents.connections.first)
 
     #expect(imported.config.aiAccess == .useDefault)
+    // A file never picks the user's scripts, nor the host they run against
+    #expect(imported.config.preConnectScript == nil)
+    #expect(imported.config.passwordCommandScript == nil)
+    #expect(imported.config.postDisconnectScript == nil)
     for expected in [
       DbloreConnectionFile.Warning.tlsOff, DbloreConnectionFile.Warning.protectedModeOff,
       DbloreConnectionFile.Warning.aiAccessClamped, DbloreConnectionFile.Warning.aiRules,
       "SSH tunnel via host \"bastion.example.com\" port 2222, user \"jump\"",
+      // The traversal name is left out of the warning
+      "Scripts named in the file are not applied: choose them in the connection form "
+        + "(\"vpn-up.sh\", \"pw.sh\").",
     ] {
       #expect(imported.warnings.contains(expected), "missing \(expected)")
     }
     // Protection None and Safe Mode Silent are the defaults of a new connection: no warning
-    #expect(imported.warnings.count == 5)
+    #expect(imported.warnings.count == 6)
 
     entry.aiRules += "r"
     #expect(throws: DbloreConnectionFile.ReadError.fieldTooLong) {
@@ -217,6 +242,49 @@ struct DbloreConnectionFileTests {
       #expect(savedHost == nil)
       #expect(skipped.message == "Skipped \"Sales\": invalid SSH tunnel.")
     }
+  }
+
+  @Test(
+    "A database host that could pass for another skips the entry; a valid one is saved",
+    arguments: [
+      ("db.ex\u{00E4}mple.com", nil),
+      ("db example.com", nil),
+      ("db.example.com\u{202E}moc.evil", nil),
+      ("-oProxyCommand=evil", nil),
+      ("[2001:db8::1]", "2001:db8::1"),
+      ("db.example.com", "db.example.com"),
+    ] as [(String, String?)])
+  func databaseHostIsValidated(host: String, savedHost: String?) throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    entry.host = host
+
+    switch entry.importedConnection() {
+    case .success(let imported):
+      #expect(imported.config.host == savedHost, "kept \(host)")
+    case .failure(let skipped):
+      #expect(savedHost == nil)
+      #expect(skipped.message == "Skipped \"Sales\": invalid host.")
+    }
+  }
+
+  @Test(
+    "An option-like user or database, or one with a control character, skips the entry",
+    arguments: [
+      ("-oProxyCommand=evil", "sales", "invalid user"),
+      ("ada\nroot", "sales", "invalid user"),
+      ("ada", "-c", "invalid database"),
+      ("ada", "sa\u{202E}les", "invalid database"),
+    ])
+  func userAndDatabaseAreValidated(user: String, database: String, reason: String) throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    entry.username = user
+    entry.database = database
+
+    guard case .failure(let skipped) = entry.importedConnection() else {
+      Issue.record("kept \(user) / \(database)")
+      return
+    }
+    #expect(skipped.message == "Skipped \"Sales\": \(reason).")
   }
 
   @Test("A tunnel without a user is kept, with the importers' note to set it")
