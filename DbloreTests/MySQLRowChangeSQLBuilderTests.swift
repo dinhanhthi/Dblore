@@ -1,7 +1,7 @@
 // MySQLRowChangeSQLBuilderTests.swift
-// MySQL staged edits and inline cell saves: backtick quoting, `?` binds, no `UPDATE ONLY`, no
-// statement without a primary key, `() VALUES ()` for an empty insert, MySQL bind text for
-// booleans, dates and bytes (`UNHEX(?)`), unchanged-value UPDATEs skipped, and the row check
+// MySQL staged edits and inline cell saves: backtick quoting, `?` binds, no `UPDATE ONLY`,
+// `() VALUES ()` for an empty insert, MySQL bind text for booleans, dates and bytes
+// (`UNHEX(?)`), unchanged-value UPDATEs skipped, and the row check
 // that tells a same-value UPDATE (0 affected: CLIENT_FOUND_ROWS is off) from a deleted row.
 // BIGINT / BIGINT UNSIGNED / DECIMAL keys bound as text hit exactly their row (no double
 // comparison above 2^53).
@@ -38,7 +38,7 @@ struct MySQLRowChangeSQLBuilderTests {
       original: .string("a"))
     set.stageInsert(values: ["id": .int(3), "na`me": .string("c")])
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns, dialect: .mysql)
     #expect(
       statements.map(\.sql) == [
@@ -49,7 +49,7 @@ struct MySQLRowChangeSQLBuilderTests {
     #expect(statements.map(\.values) == [["1"], ["b", "2"], ["3", "c"]])
     #expect(statements.allSatisfy { $0.expectedRows == 1 })
     #expect(
-      RowChangeSQLBuilder.previewText(
+      try RowChangeSQLBuilder.previewText(
         for: set, target: editTarget, columns: columns, dialect: .mysql
       )
       .contains("UPDATE `db`.`t` SET `na``me` = 'b' WHERE `id` = 2;"))
@@ -65,7 +65,7 @@ struct MySQLRowChangeSQLBuilderTests {
     set.stageInsert(values: ["v": .int(1)])
     let tableColumns = columns + [ColumnInfo(name: "v", type: "INT")]
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: tableColumns, dialect: .mysql)
     #expect(statements.count == 3)
     #expect(statements[0].rowCheck == nil)
@@ -77,17 +77,17 @@ struct MySQLRowChangeSQLBuilderTests {
     #expect(statements[2].rowCheck == nil)
 
     // PostgreSQL reports matched rows: no check.
-    let postgres = RowChangeSQLBuilder.statements(
+    let postgres = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql)
     #expect(postgres.allSatisfy { $0.rowCheck == nil })
   }
 
   @Test("An empty insert is () VALUES ()")
-  func emptyInsert() {
+  func emptyInsert() throws {
     let editTarget = target()
     var set = RowChangeSet(target: editTarget)
     set.stageInsert(values: [:])
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns, dialect: .mysql)
     #expect(statements.map(\.sql) == ["INSERT INTO `db`.`t` () VALUES ()"])
     #expect(statements.first?.values == [])
@@ -102,44 +102,26 @@ struct MySQLRowChangeSQLBuilderTests {
     // Typed text "5" for the loaded integer 5: a different CellValue, the same bind text.
     try set.stageEdit(row: key, column: "v", value: .string("5"), original: .int(5))
     #expect(
-      RowChangeSQLBuilder.statements(
+      try RowChangeSQLBuilder.statements(
         for: set, target: editTarget, columns: tableColumns, dialect: .mysql
       ).isEmpty)
 
     try set.stageEdit(row: key, column: "na`me", value: .string("z"), original: .string("a"))
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: tableColumns, dialect: .mysql)
     #expect(statements.map(\.sql) == ["UPDATE `db`.`t` SET `na``me` = ? WHERE `id` = ?"])
     #expect(statements.first?.values == ["z", "1"])
   }
 
-  @Test("Without a primary key no UPDATE or DELETE is built")
-  func noPrimaryKeyNoStatement() throws {
-    let editTarget = target(primaryKeyColumns: [])
-    var edit = RowChangeSet(target: editTarget)
-    try edit.stageEdit(
-      row: RowChangeSet.RowKey(values: []), column: "na`me", value: .string("b"),
-      original: .string("a"))
-    var delete = RowChangeSet(target: editTarget)
-    delete.stageDelete(row: RowChangeSet.RowKey(values: []))
-    for set in [edit, delete] {
-      for dialect in [SQLDialect.mysql, .postgresql] {
-        let statements = RowChangeSQLBuilder.statements(
-          for: set, target: editTarget, columns: columns, dialect: dialect)
-        #expect(statements.isEmpty, "\(dialect)")
-      }
-    }
-  }
-
   @Test("Booleans, dates and bytes bind as MySQL text; bytes through UNHEX")
-  func mysqlBindText() {
+  func mysqlBindText() throws {
     let editTarget = target(primaryKeyColumns: ["id"])
     var set = RowChangeSet(target: editTarget)
     let date = Date(timeIntervalSince1970: 1_704_164_645.5)  // 2024-01-02 03:04:05.5 UTC
     set.stageDelete(row: RowChangeSet.RowKey(values: [.data(Data([0xDE, 0xAD]))]))
     set.stageInsert(values: ["id": .date(date), "na`me": .bool(true)])
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns, dialect: .mysql)
     #expect(statements.map(\.sql).first == "DELETE FROM `db`.`t` WHERE `id` = UNHEX(?)")
     #expect(statements.map(\.values) == [["dead"], ["2024-01-02 03:04:05.500000", "1"]])
@@ -152,7 +134,7 @@ struct MySQLRowChangeSQLBuilderTests {
     try set.stageEdit(
       row: RowChangeSet.RowKey(values: [.int(1)]), column: "a\0b", value: .string("x"),
       original: .string("y"))
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: [ColumnInfo(name: "a\0b", type: "TEXT")],
       dialect: .mysql)
     #expect(statements.map(\.sql) == ["UPDATE `db`.`t` SET `a\0b` = ? WHERE `id` = ?"])

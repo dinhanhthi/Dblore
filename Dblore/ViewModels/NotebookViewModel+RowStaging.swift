@@ -212,8 +212,10 @@ extension NotebookViewModel {
     resolveStagedLeavePrompt(.cancel)
   }
 
-  /// Drops every staged change. A Safe Mode dialog for this batch is cancelled with it.
+  /// Drops every staged change. A Safe Mode dialog or blocker prompt for this batch is
+  /// cancelled with it.
   func discardStaged() {
+    resolveStagedBlockerPrompt(commitAnyway: false)
     dataViewer?.changeSet = nil
     dataViewer?.documentChangeSet = nil
     dataViewer?.pendingDocumentEditor = nil
@@ -228,12 +230,21 @@ extension NotebookViewModel {
   /// Display SQL for the staged batch. Not sent to the server.
   func previewStagedSQL() -> String {
     if stagesDocuments { return stagedDocumentBatch()?.preview ?? "" }
-    return stagedBatch()?.preview ?? ""
+    do {
+      return try stagedBatch()?.preview ?? ""
+    } catch let error as RowChangeError {
+      return error.message
+    } catch {
+      return error.localizedDescription
+    }
   }
 
   /// Confirms the preview in Safe Mode when needed, then sends the bound batch.
   /// Success reloads the page and clears the set. Failure keeps the set and shows the error.
-  func commitStaged() async {
+  /// Staged deletes are counted first (`stagedDeleteImpact`): a blocker with rows asks Commit
+  /// Anyway or Cancel first, unless `ignoringBlockers` (the preview sheet's Commit Anyway); a
+  /// count not computed does not. Safe Mode confirms after either way.
+  func commitStaged(ignoringBlockers: Bool = false) async {
     if stagesDocuments {
       await commitStagedDocuments()
       return
@@ -243,7 +254,37 @@ extension NotebookViewModel {
     // The key lookup awaited: the page may have reloaded (no target: keep the set) or the table
     // changed (discard with the warning). Only a live, valid set may clear silently below.
     guard discardsInvalidatedStagedSet() == false else { return }
-    guard let batch = stagedBatch() else {
+    let checkedDeletes = dataViewer?.changeSet?.deletes
+    isCheckingStagedDeletes = true
+    let impact = await stagedDeleteImpact()
+    isCheckingStagedDeletes = false
+    guard discardsInvalidatedStagedSet() == false else { return }
+    if impact != nil, dataViewer?.changeSet?.deletes != checkedDeletes {
+      showToast(
+        "The staged deletes changed while related rows were checked. Commit again.",
+        type: .warning)
+      return
+    }
+    if let impact, impact.blocksCommit, !ignoringBlockers {
+      guard await confirmCommitPastBlockers(impact) else { return }
+      // The prompt awaited: the page may have reloaded or the staged deletes changed
+      guard discardsInvalidatedStagedSet() == false else { return }
+      guard dataViewer?.changeSet?.deletes == checkedDeletes else {
+        showToast("The staged deletes changed. Commit again.", type: .warning)
+        return
+      }
+    }
+    let built: PendingStagedBatch?
+    do {
+      built = try stagedBatch()
+    } catch let error as RowChangeError {
+      showToast(error.message, type: .error)
+      return
+    } catch {
+      showToast(error.localizedDescription, type: .error)
+      return
+    }
+    guard let batch = built else {
       // MySQL skips edits that write the loaded value: nothing left to send is a commit.
       if hasPendingStagedChanges {
         dataViewer?.changeSet = nil
@@ -251,13 +292,36 @@ extension NotebookViewModel {
       }
       return
     }
-    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+    if presentConfirmationIfNeeded(
+      for: batch.preview, cellId: nil, alsoAffected: impact?.lines ?? [])
+    {
       pendingExplainSQL = nil
       pendingStagedBatch = batch
       return
     }
     pendingStagedBatch = nil
     await runConfirmedStagedBatch(batch)
+  }
+
+  /// Shows the blockers with Commit Anyway / Cancel; true for Commit Anyway. A prompt that is
+  /// already open refuses the new request with a toast.
+  private func confirmCommitPastBlockers(_ impact: CascadeImpactSummary) async -> Bool {
+    guard stagedBlockerContinuation == nil else {
+      showToast("Answer the open Commit Anyway prompt first.", type: .warning)
+      return false
+    }
+    return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+      stagedBlockerContinuation = continuation
+      stagedBlockerPrompt = impact
+    }
+  }
+
+  /// Resumes the blocker prompt. A second call does nothing (the dialog also dismisses).
+  func resolveStagedBlockerPrompt(commitAnyway: Bool) {
+    guard let continuation = stagedBlockerContinuation else { return }
+    stagedBlockerContinuation = nil
+    stagedBlockerPrompt = nil
+    continuation.resume(returning: commitAnyway)
   }
 
   /// Nil without a live target (nothing to do, the set stays). True when the set no longer
@@ -487,34 +551,35 @@ extension NotebookViewModel {
 
   /// Live data-viewer target with a primary key, when every column origin names that table.
   /// Notebook results are not a staging target.
-  private var stagedEditTarget: EditTarget? {
+  var stagedEditTarget: EditTarget? {
     guard dataViewer != nil, let result = editorResult, let target = result.editTarget,
       !target.primaryKeyColumns.isEmpty, Self.columnTableID(result.columns) == target.tableID
     else { return nil }
     return target
   }
 
-  private var stagingDialect: SQLDialect {
+  var stagingDialect: SQLDialect {
     dataViewer?.databaseType.dialect ?? notebook.connectionConfig?.databaseType.dialect
       ?? .postgresql
   }
 
-  private func stagedBatch() -> PendingStagedBatch? {
+  /// Throws `RowChangeError.noRowKey` for an UPDATE or DELETE the builder cannot key.
+  private func stagedBatch() throws -> PendingStagedBatch? {
     guard let target = stagedEditTarget, let set = dataViewer?.changeSet, !set.isEmpty,
       set.invalidated(by: target) == nil
     else { return nil }
     let columns = editorResult?.columns ?? []
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: target, columns: columns, dialect: stagingDialect)
     guard !statements.isEmpty else { return nil }
     return PendingStagedBatch(
       statements: statements,
-      preview: RowChangeSQLBuilder.previewText(
+      preview: try RowChangeSQLBuilder.previewText(
         for: set, target: target, columns: columns, dialect: stagingDialect),
       connectionEpoch: target.connectionEpoch,
       rewindPlan: RewindPlan.make(
         target: target, resultColumns: columns, editKind: .staged,
-        steps: RowChangeSQLBuilder.rewindSteps(
+        steps: try RowChangeSQLBuilder.rewindSteps(
           for: set, target: target, columns: columns, dialect: stagingDialect),
         engine: notebook.connectionConfig?.databaseType,
         enabled: historySettings.rewindEnabled))

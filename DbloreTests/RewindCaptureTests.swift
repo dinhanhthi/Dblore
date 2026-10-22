@@ -57,12 +57,12 @@ struct RewindCaptureTests {
       original: .string("a"))
     set.stageInsert(values: ["id": .int(10), "label": .string("n")])
     set.stageInsert(values: ["label": .string("generated")])
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: target, columns: Self.columns, dialect: .sqlite)
     let plan = try #require(
       RewindPlan.make(
         target: target, resultColumns: Self.columns, editKind: .staged,
-        steps: RowChangeSQLBuilder.rewindSteps(
+        steps: try RowChangeSQLBuilder.rewindSteps(
           for: set, target: target, columns: Self.columns, dialect: .sqlite),
         engine: .sqlite, enabled: true))
 

@@ -150,6 +150,8 @@ struct QueryConfirmationState: Equatable, Sendable {
   var statements: [StatementConfirmation] = []  // Statements that need confirmation
   /// Binds captured when the dialog was created. Empty when the script has no `:name`.
   var parameterValues: [String: SQLBindValue] = [:]
+  /// Staged commit with deletes: what foreign keys also change (`CascadeImpactSummary.lines`)
+  var alsoAffected: [String] = []
 
   // Run All Cells confirmation (destructive or safety-critical cells)
   var showRunAllConfirmation: Bool = false
@@ -174,7 +176,8 @@ struct QueryConfirmationState: Equatable, Sendable {
     if affectsAllRows { lead.append("⚠️ " + allRowsWarning) }
     if likePatternAffectsAllRows { lead.append(StatementConfirmation.likePatternAllRowsReason) }
     if lead.isEmpty { lead.append("These statements need confirmation:") }
-    return (lead + [statementSummary, "Are you sure you want to proceed?"])
+    let affected = alsoAffected.isEmpty ? [] : [alsoAffected.joined(separator: "\n")]
+    return (lead + [statementSummary] + affected + ["Are you sure you want to proceed?"])
       .joined(separator: "\n\n")
   }
 
@@ -190,6 +193,7 @@ struct QueryConfirmationState: Equatable, Sendable {
     requiresPassword = false
     statements = []
     parameterValues = [:]
+    alsoAffected = []
     runAllAwaitingUnlock = false
   }
 

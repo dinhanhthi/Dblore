@@ -1331,6 +1331,7 @@ class WorkspaceManager: Identifiable {
       dataRewind?.model.sheetDisappeared()
       dataRewind = nil
     }
+    viewModels[id]?.resolveStagedBlockerPrompt(commitAnyway: false)
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
     notebookDocuments.removeValue(forKey: id)

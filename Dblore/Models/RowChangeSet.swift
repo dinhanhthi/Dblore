@@ -46,6 +46,8 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
   case deletedRow
   /// `column` is one of the target's primary-key columns.
   case primaryKeyColumn(String)
+  /// An UPDATE or DELETE on `table` (its SQL name), which has no key to name one row.
+  case noRowKey(table: String)
 
   var message: String {
     switch self {
@@ -53,6 +55,9 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
       "This row is staged for deletion. Revert the delete before editing it."
     case .primaryKeyColumn(let column):
       "Primary key column \"\(column)\" can't be edited here. Use SQL to change it."
+    case .noRowKey(let table):
+      "Rows of \(table) can't be updated or deleted here: the table has no primary key that "
+        + "identifies a row."
     }
   }
 }

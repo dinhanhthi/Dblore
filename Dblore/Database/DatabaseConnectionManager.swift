@@ -154,6 +154,18 @@ actor DatabaseConnectionManager {
       of: SessionResetEvent.self, bufferingPolicy: .bufferingNewest(8))
   }
 
+  /// A single-use manager, not connected, for an app check that must not run on this session:
+  /// its sessions come from this manager's factory, made read-only by
+  /// `MCPReadOnlySessionFactory` (DuckDB is refused). SQLite opens like the SQL dump
+  /// (`SQLDumpSessionFactory`): read-only with normal locking, never `immutable=1`, which would
+  /// miss rows still in the WAL. The caller connects and disconnects it.
+  nonisolated func makeReadOnlySideManager() -> DatabaseConnectionManager {
+    DatabaseConnectionManager(
+      sessionFactory: MCPReadOnlySessionFactory(
+        inner: SQLDumpSessionFactory(inner: sessionFactory)),
+      resetsSessionAfterCappedRead: false)
+  }
+
   deinit {
     sqliteFileAccessRelease?()
     sessionEventsContinuation.finish()

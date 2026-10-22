@@ -18,7 +18,7 @@ struct RowChangeSQLBuilderTests {
       original: .string("a"))
     set.stageInsert(values: ["name": .string("c")])
 
-    let sql = RowChangeSQLBuilder.statements(
+    let sql = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql
     ).map(\.sql)
     #expect(sql.count == 3)
@@ -26,7 +26,7 @@ struct RowChangeSQLBuilderTests {
     #expect(sql[1].hasPrefix("UPDATE "))
     #expect(sql[2].hasPrefix("INSERT "))
 
-    let lines = RowChangeSQLBuilder.previewText(
+    let lines = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql
     ).split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     #expect(lines.count == 3)
@@ -37,12 +37,12 @@ struct RowChangeSQLBuilderTests {
   }
 
   @Test("A composite primary key is AND-ed in key order with per-statement placeholders")
-  func compositePrimaryKeyWhere() {
+  func compositePrimaryKeyWhere() throws {
     let editTarget = target(primaryKeyColumns: ["order_id", "line_no"])
     var set = RowChangeSet(target: editTarget)
     set.stageDelete(row: RowChangeSet.RowKey(values: [.int(10), .int(2)]))
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(statements.count == 1)
     #expect(
@@ -52,7 +52,7 @@ struct RowChangeSQLBuilderTests {
   }
 
   @Test("A NULL primary-key component binds nil and the preview writes NULL")
-  func nullPrimaryKeyBindsNil() {
+  func nullPrimaryKeyBindsNil() throws {
     let editTarget = target(primaryKeyColumns: ["id", "sub"])
     var set = RowChangeSet(target: editTarget)
     set.stageDelete(row: RowChangeSet.RowKey(values: [.null, .string("a")]))
@@ -61,7 +61,7 @@ struct RowChangeSQLBuilderTests {
       ColumnInfo(name: "sub", type: "text"),
     ]
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql)
     #expect(statements.count == 1)
     #expect(statements[0].sql == #"DELETE FROM "t" WHERE "id" = $1 AND "sub" = $2"#)
@@ -69,9 +69,29 @@ struct RowChangeSQLBuilderTests {
     #expect(statements[0].binds == [.null, .text("a")])
     #expect(!statements[0].sql.contains("'a'"))
 
-    let preview = RowChangeSQLBuilder.previewText(
+    let preview = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql)
     #expect(preview == #"DELETE FROM "t" WHERE "id" = NULL AND "sub" = 'a';"#)
+  }
+
+  @Test("A keyless UPDATE or DELETE throws and names the table instead of being dropped")
+  func keylessChangeThrows() throws {
+    let editTarget = target(primaryKeyColumns: [])
+    var edit = RowChangeSet(target: editTarget)
+    try edit.stageEdit(
+      row: RowChangeSet.RowKey(values: []), column: "name", value: .string("b"),
+      original: .string("a"))
+    var delete = RowChangeSet(target: editTarget)
+    delete.stageDelete(row: RowChangeSet.RowKey(values: []))
+    for set in [edit, delete] {
+      for dialect in [SQLDialect.mysql, .postgresql] {
+        let error = #expect(throws: RowChangeError.self) {
+          try RowChangeSQLBuilder.statements(
+            for: set, target: editTarget, columns: columns(), dialect: dialect)
+        }
+        #expect(error?.message.contains(#""t""#) == true, "\(dialect)")
+      }
+    }
   }
 
   @Test("A column name with a quote is doubled")
@@ -82,7 +102,7 @@ struct RowChangeSQLBuilderTests {
       row: RowChangeSet.RowKey(values: [.int(1)]), column: "na\"me", value: .string("b"),
       original: .string("a"))
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set,
       target: editTarget,
       columns: [ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "na\"me", type: "text")],
@@ -100,14 +120,14 @@ struct RowChangeSQLBuilderTests {
       original: .string("a"))
     set.stageInsert(values: ["name": .string("c")])
 
-    let postgres = RowChangeSQLBuilder.statements(
+    let postgres = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(postgres[0].sql == #"DELETE FROM ONLY "t" WHERE "id" = $1"#)
     #expect(postgres[1].sql == #"UPDATE ONLY "t" SET "name" = $1 WHERE "id" = $2"#)
     #expect(postgres[2].sql == #"INSERT INTO "t" ("name") VALUES ($1)"#)
     #expect(!postgres[2].sql.contains("ONLY"))
 
-    let sqlite = RowChangeSQLBuilder.statements(
+    let sqlite = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .sqlite)
     #expect(sqlite[0].sql == #"DELETE FROM "t" WHERE "id" = ?1"#)
     #expect(sqlite[1].sql == #"UPDATE "t" SET "name" = ?1 WHERE "id" = ?2"#)
@@ -116,36 +136,36 @@ struct RowChangeSQLBuilderTests {
   }
 
   @Test("An insert can include a primary key supplied after the row was staged")
-  func insertIncludesPrimaryKey() {
+  func insertIncludesPrimaryKey() throws {
     let editTarget = target()
     var set = RowChangeSet(target: editTarget)
     let tempID = set.stageInsert(values: ["name": .string("chi")])
     set.updateInsert(tempID: tempID, column: "id", value: .int(3))
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(statements.count == 1)
     #expect(statements[0].sql == #"INSERT INTO "t" ("id", "name") VALUES ($1, $2)"#)
     #expect(statements[0].values == ["3", "chi"])
 
-    let preview = RowChangeSQLBuilder.previewText(
+    let preview = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(preview == #"INSERT INTO "t" ("id", "name") VALUES (3, 'chi');"#)
   }
 
   @Test("An insert with no values is DEFAULT VALUES and binds nothing")
-  func emptyInsertIsDefaultValues() {
+  func emptyInsertIsDefaultValues() throws {
     let editTarget = target()
     var set = RowChangeSet(target: editTarget)
     set.stageInsert(values: [:])
 
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(statements.count == 1)
     #expect(statements[0].sql == #"INSERT INTO "t" DEFAULT VALUES"#)
     #expect(statements[0].values.isEmpty)
 
-    let preview = RowChangeSQLBuilder.previewText(
+    let preview = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(preview == #"INSERT INTO "t" DEFAULT VALUES;"#)
   }
@@ -158,9 +178,9 @@ struct RowChangeSQLBuilderTests {
       row: RowChangeSet.RowKey(values: [.int(1)]), column: "name", value: .string("o'brien"),
       original: .string("a"))
 
-    let bound = RowChangeSQLBuilder.statements(
+    let bound = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
-    let preview = RowChangeSQLBuilder.previewText(
+    let preview = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
 
     #expect(bound[0].sql == #"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#)
@@ -182,7 +202,7 @@ struct RowChangeSQLBuilderTests {
       row: RowChangeSet.RowKey(values: [.date(edited)]), column: "name", value: .string("b"),
       original: .string("a"))
 
-    let bound = RowChangeSQLBuilder.statements(
+    let bound = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
 
     #expect(bound.count == 2)
@@ -213,7 +233,7 @@ struct RowChangeSQLBuilderTests {
     set.stageInsert(values: ["g": .int(6), "name": .string("c")])
     set.stageInsert(values: ["g": .int(8)])
 
-    let sql = RowChangeSQLBuilder.statements(
+    let sql = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql
     ).map(\.sql)
 

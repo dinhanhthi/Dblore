@@ -252,6 +252,12 @@ private struct QueryConfirmationModifier: ViewModifier {
             .foregroundColor(.foregroundMuted)
             .lineLimit(5)
         }
+        // Staged deletes: what foreign keys also change
+        ForEach(viewModel.queryConfirmationState.alsoAffected, id: \.self) { line in
+          Text(line)
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
+        }
       }
     }
     .frame(maxHeight: 200)
