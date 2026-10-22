@@ -398,6 +398,8 @@ struct SettingsModalEditorSection: View {
           )
         }
       }
+
+      SQLSnippetsCard()
     }
   }
 }

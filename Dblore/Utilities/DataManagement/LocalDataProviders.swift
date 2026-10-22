@@ -425,6 +425,41 @@ nonisolated struct SavedFiltersLocalDataProvider: LocalDataProvider {
   }
 }
 
+nonisolated struct SQLSnippetsLocalDataProvider: LocalDataProvider {
+  var client: LocalDefaultsClient
+  var category: LocalDataCategory { .sqlSnippets }
+
+  init(defaults: UserDefaults, domainName: String) {
+    client = LocalDefaultsClient(defaults: defaults, domainName: domainName)
+  }
+
+  func summary() async -> LocalDataSummary {
+    let data = SQLSnippetStore.storedData(defaults: client.defaults, domainName: client.domainName)
+    return LocalDataSummary(
+      bytes: Int64(data?.count ?? 0), itemCount: LocalDataJSON.arrayCount(data), location: nil)
+  }
+
+  func export(to folder: URL) async throws {
+    let data = SQLSnippetStore.storedData(defaults: client.defaults, domainName: client.domainName)
+    try LocalDataFiles.write(data, named: "sqlSnippets.json", to: folder)
+  }
+
+  /// No file (the export had no snippets) clears the list
+  func importData(from folder: URL) async throws {
+    SQLSnippetStore.replace(
+      LocalDataFiles.read(named: "sqlSnippets.json", from: folder),
+      defaults: client.defaults,
+      domainName: client.domainName
+    )
+    LocalDataNotifications.post(category)
+  }
+
+  func clear() async throws {
+    SQLSnippetStore.replace(nil, defaults: client.defaults, domainName: client.domainName)
+    LocalDataNotifications.post(category)
+  }
+}
+
 nonisolated struct SchemaLayoutLocalDataProvider: LocalDataProvider {
   var client: LocalDefaultsClient
   var category: LocalDataCategory { .schemaLayout }

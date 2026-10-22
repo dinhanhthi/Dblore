@@ -266,10 +266,14 @@ extension SQLTextView {
     // Find the token being completed
     let cursorPosition = selectedRange().location
 
-    // Replace token with suggestion
+    // Replace token with suggestion; a snippet inserts its expanded body and starts its stops
     if let tokenRange = findTokenRange(in: string, at: cursorPosition) {
-      setSelectedRange(tokenRange)
-      insertText(suggestion.text, replacementRange: tokenRange)
+      if case .snippet(let snippet) = suggestion.type {
+        insertSnippet(snippet.body, replacing: tokenRange)
+      } else {
+        setSelectedRange(tokenRange)
+        insertText(suggestion.text, replacementRange: tokenRange)
+      }
     }
 
     // Hide autocomplete after accepting

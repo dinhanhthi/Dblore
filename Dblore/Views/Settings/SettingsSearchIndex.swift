@@ -137,6 +137,11 @@ extension SettingsModal.SettingsTab {
           detail:
             "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file. (Editor only)"
         ),
+        .init(
+          card: "Snippets", title: "SQL snippets",
+          detail:
+            "Add, edit or delete snippets: a trigger typed in a SQL editor expands a template with tab stops. ${1:default}, ${1}, $0 and \\$ for a literal dollar sign. Tab and Shift-Tab move between the placeholders."
+        ),
       ]
     case .ai:
       return [

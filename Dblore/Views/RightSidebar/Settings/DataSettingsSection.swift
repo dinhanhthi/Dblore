@@ -398,6 +398,7 @@ enum DataSettingsProduction {
       RecentItemsLocalDataProvider(defaults: defaults, domainName: domain),
       OpenTabsLocalDataProvider(defaults: defaults, domainName: domain),
       SavedFiltersLocalDataProvider(defaults: defaults, domainName: domain),
+      SQLSnippetsLocalDataProvider(defaults: defaults, domainName: domain),
       SchemaLayoutLocalDataProvider(defaults: defaults, domainName: domain),
       AIChatsLocalDataProvider(root: AIConversationStore.defaultRoot),
       AISettingsLocalDataProvider(defaults: defaults, domainName: domain),
@@ -446,7 +447,7 @@ enum DataSettingsGroup: CaseIterable {
   private static func group(of category: LocalDataCategory) -> DataSettingsGroup {
     switch category {
     case .queryHistory, .dataRewind, .connectionHistory, .recentItems: .history
-    case .openTabs, .savedFilters, .schemaLayout: .workspace
+    case .openTabs, .savedFilters, .sqlSnippets, .schemaLayout: .workspace
     case .aiChats, .aiSettings, .localModels: .assistant
     case .logs, .appSettings: .app
     }

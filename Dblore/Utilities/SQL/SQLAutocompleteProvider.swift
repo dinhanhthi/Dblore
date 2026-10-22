@@ -17,6 +17,8 @@ enum AutocompleteSuggestionType {
   case keyword
   case table
   case column(tableName: String)
+  /// Accepting it inserts the snippet's expanded body (see SQLTextView+Snippets.swift)
+  case snippet(SQLSnippet)
 }
 
 struct AutocompleteSuggestion: Identifiable, Equatable {
@@ -37,6 +39,8 @@ class SQLAutocompleteProvider {
   // Schema cache (tables and columns)
   var tables: [DatabaseTable] = []
   var columnsByTable: [String: [DatabaseColumn]] = [:]  // key: "schema.table"
+  /// Snippets offered by trigger prefix in SQL; tests swap in their own
+  var snippets: @MainActor () -> [SQLSnippet] = { SQLSnippetStore.shared.snippets }
 
   // MARK: - Schema
 
@@ -103,6 +107,15 @@ class SQLAutocompleteProvider {
         type: .table,
         description: "Table (\(table.schema))"
       )
+    }
+
+    // Add snippet suggestions (trigger prefix, any case)
+    let snippetMatches = snippets().filter { snippet in
+      snippet.trigger.lowercased().hasPrefix(token.lowercased())
+    }
+    suggestions += snippetMatches.map { snippet in
+      AutocompleteSuggestion(
+        text: snippet.trigger, type: .snippet(snippet), description: snippet.name)
     }
 
     // Add column suggestions (context-aware)

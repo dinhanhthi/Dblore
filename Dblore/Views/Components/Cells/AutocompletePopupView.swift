@@ -97,6 +97,8 @@ struct AutocompleteSuggestionRow: View {
       return "tablecells"
     case .column:
       return "list.bullet"
+    case .snippet:
+      return "text.insert"
     }
   }
 
@@ -108,6 +110,8 @@ struct AutocompleteSuggestionRow: View {
       return .green
     case .column:
       return .orange
+    case .snippet:
+      return .purple
     }
   }
 }
