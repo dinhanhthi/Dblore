@@ -1,5 +1,5 @@
 // ChartDataExtractorTests.swift
-// Point extraction: finite y values, temporal order, and LTTB downsampling.
+// Point extraction: finite y values, temporal order, LTTB downsampling, and facets.
 
 import Foundation
 import Testing
@@ -116,6 +116,112 @@ struct ChartDataExtractorTests {
       ]
     )
     #expect(series.points.map(\.y) == [3, 8, 1])
+  }
+
+  @Test("Facets split the points per value in first-seen order, NULL as its own facet")
+  func facetsSplitPerValue() throws {
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "region", type: "text"),
+        ColumnInfo(name: "value", type: "int4"),
+      ],
+      rows: [
+        [.string("west"), .int(1)],
+        [.null, .int(5)],
+        [.string("east"), .int(2)],
+        [.string("west"), .int(3)],
+      ]
+    )
+    let spec = ChartSpec(
+      kind: .bar, xColumn: nil, yColumns: ["value"], seriesColumn: nil, facetColumn: "region")
+    let faceted = try #require(ChartDataExtractor.facets(result: result, spec: spec))
+
+    #expect(faceted.facets.map(\.label) == ["west", "NULL", "east"])
+    #expect(faceted.facets.map { $0.series.points.map(\.y) } == [[1, 3], [5], [2]])
+    #expect(faceted.omittedFacetCount == 0)
+  }
+
+  @Test("At most 12 facets are drawn; the rest are counted as omitted")
+  func facetCountIsCapped() throws {
+    let rows: [[CellValue]] = (0..<15).map { [.string("f\($0)"), .int($0)] }
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "name", type: "text"),
+        ColumnInfo(name: "value", type: "int4"),
+      ],
+      rows: rows
+    )
+    let spec = ChartSpec(
+      kind: .bar, xColumn: nil, yColumns: ["value"], seriesColumn: nil, facetColumn: "name")
+    let faceted = try #require(ChartDataExtractor.facets(result: result, spec: spec))
+
+    #expect(faceted.facets.map(\.label) == (0..<12).map { "f\($0)" })
+    #expect(faceted.omittedFacetCount == 3)
+  }
+
+  @Test("Each facet is downsampled to the point cap and the cut is reported")
+  func facetPointsAreCapped() throws {
+    var rows: [[CellValue]] = (0..<30).map { [.string("big"), .int($0)] }
+    rows += (0..<5).map { [.string("small"), .int($0)] }
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "name", type: "text"),
+        ColumnInfo(name: "value", type: "int4"),
+      ],
+      rows: rows
+    )
+    let spec = ChartSpec(
+      kind: .line, xColumn: nil, yColumns: ["value"], seriesColumn: nil, facetColumn: "name")
+    let faceted = try #require(ChartDataExtractor.facets(result: result, spec: spec, maxPoints: 10))
+
+    #expect(faceted.facets.map { $0.series.points.count } == [10, 5])
+    #expect(faceted.facets.map(\.removedByDownsample) == [20, 0])
+    #expect(faceted.downsampledFacetCount == 1)
+  }
+
+  @Test("The y domain is shared across all facets")
+  func facetsShareTheYDomain() throws {
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "name", type: "text"),
+        ColumnInfo(name: "value", type: "float8"),
+      ],
+      rows: [
+        [.string("low"), .double(1)],
+        [.string("low"), .double(2)],
+        [.string("high"), .double(-4)],
+        [.string("high"), .double(40)],
+      ]
+    )
+    let spec = ChartSpec(
+      kind: .point, xColumn: nil, yColumns: ["value"], seriesColumn: nil, facetColumn: "name")
+    let faceted = try #require(ChartDataExtractor.facets(result: result, spec: spec))
+
+    #expect(faceted.yDomain == -4...40)
+  }
+
+  @Test("A facet whose own x values are dates still follows the result-wide temporal decision")
+  func facetsShareTheTemporalDecision() throws {
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "kind", type: "text"),
+        ColumnInfo(name: "seen", type: "mixed"),
+        ColumnInfo(name: "value", type: "float8"),
+      ],
+      rows: [
+        [.string("dated"), .date(start.addingTimeInterval(20)), .double(20)],
+        [.string("dated"), .date(start), .double(10)],
+        [.string("named"), .string("later"), .double(5)],
+      ]
+    )
+    let spec = ChartSpec(
+      kind: .line, xColumn: "seen", yColumns: ["value"], seriesColumn: nil, facetColumn: "kind")
+    let faceted = try #require(ChartDataExtractor.facets(result: result, spec: spec))
+
+    #expect(!faceted.xIsTemporal)
+    // Not temporal: the dated facet keeps row order instead of sorting by date
+    #expect(faceted.facets.map { $0.series.points.map(\.y) } == [[20, 10], [5]])
   }
 
   private func queryResult(columns: [ColumnInfo], rows: [[CellValue]]) -> QueryResult {

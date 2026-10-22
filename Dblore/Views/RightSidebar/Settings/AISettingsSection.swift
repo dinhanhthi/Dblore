@@ -220,7 +220,13 @@ struct AISettingsSection: View {
     case .anthropic:
       return
         "Claude Pro/Max subscriptions can't be used here — Anthropic's terms don't allow third-party apps to reuse them. Use an Anthropic API key."
-    case .openAI, .gemini, .openRouter, .ollama, .lmStudio, .mlxServer, .custom, .localMLX:
+    case .requesty:
+      return
+        "Requests go through Requesty's router to the model vendor; both their data policies apply."
+    case .openRouter:
+      return
+        "Requests go through OpenRouter's router to the model vendor; both their data policies apply."
+    case .openAI, .gemini, .xAI, .ollama, .lmStudio, .mlxServer, .custom, .localMLX:
       return nil
     }
   }

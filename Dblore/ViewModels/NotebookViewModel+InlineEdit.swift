@@ -535,6 +535,8 @@ extension NotebookViewModel {
     updated.skippedStatements = result.skippedStatements
     updated.skippedQueuedCells = result.skippedQueuedCells
     updated.aiSessionKey = result.aiSessionKey
+    // Same run, new rows: the timestamp stays (display mode, filters), the revision moves
+    updated.dataRevision = result.dataRevision + 1
     editorResult = updated
     syncRowDetail(cellId: nil, result: updated)
   }

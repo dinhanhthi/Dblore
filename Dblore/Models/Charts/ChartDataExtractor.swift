@@ -1,10 +1,10 @@
 // ChartDataExtractor.swift
-// Finite chart points from a query result, downsampled with LTTB.
+// Finite chart points from a query result, downsampled with LTTB, optionally split in facets.
 
 import Foundation
 
 /// Horizontal position. A category keeps the label next to its first-seen index.
-nonisolated enum ChartX: Equatable, Sendable {
+nonisolated enum ChartX: Hashable, Sendable {
   case number(Double)
   case category(index: Int, label: String)
 }
@@ -22,6 +22,35 @@ nonisolated struct ChartSeries: Equatable, Sendable {
   var droppedCount: Int
 }
 
+/// One small chart of a faceted spec. `removedByDownsample` counts the points LTTB left out.
+nonisolated struct ChartFacet: Equatable, Sendable {
+  var label: String
+  var series: ChartSeries
+  var removedByDownsample: Int
+}
+
+/// Small multiples for a spec with a facet column.
+nonisolated struct ChartFacets: Equatable, Sendable {
+  var facets: [ChartFacet]
+  /// Distinct facet values past the facet cap. Their rows are not drawn.
+  var omittedFacetCount: Int
+  /// Lowest and highest plotted y across every facet, so the small charts share one y scale.
+  /// Nil when nothing is plotted.
+  var yDomain: ClosedRange<Double>?
+  /// Point cap each series of each facet was downsampled to.
+  var maxPoints: Int
+  /// The x column is temporal in the whole result (numbers on x are seconds since 1970).
+  var xIsTemporal: Bool
+
+  var downsampledFacetCount: Int {
+    facets.filter { $0.removedByDownsample > 0 }.count
+  }
+
+  var droppedCount: Int {
+    facets.reduce(0) { $0 + $1.series.droppedCount }
+  }
+}
+
 /// Builds `ChartPoint` values for a `ChartSpec`.
 ///
 /// Y is coerced to `Double`. Nulls and non-finite numbers are omitted and counted.
@@ -29,19 +58,24 @@ nonisolated struct ChartSeries: Equatable, Sendable {
 /// downsampled with Largest-Triangle-Three-Buckets, which keeps the first point,
 /// the last point, and the largest triangle in every bucket (so a lone peak survives).
 nonisolated enum ChartDataExtractor {
+  /// `xIsTemporal` overrides the temporal decision taken on `result`'s own rows (a facet takes
+  /// the one of the whole result). Nil decides on `result`.
   static func points(
-    result: QueryResult, spec: ChartSpec, maxPoints: Int = 2_000
+    result: QueryResult, spec: ChartSpec, maxPoints: Int = 2_000, xIsTemporal: Bool? = nil
   ) -> ChartSeries {
     let xIndex = index(of: spec.xColumn, in: result.columns)
     let yIndexes = spec.yColumns.map { index(of: $0, in: result.columns) }
     let seriesIndex = index(of: spec.seriesColumn, in: result.columns)
     let temporal =
-      xIndex.map { index in
+      xIsTemporal
+      ?? xIndex.map { index in
         ChartSpec.isTemporal(
           result.columns[index], values: ChartSpec.columnValues(result, at: index))
       } ?? false
     let splitBySeries = spec.seriesColumn != nil
     let nameYColumns = spec.yColumns.count > 1
+    // One per extraction, not shared: extraction runs off the main thread
+    let dateFormatter = ISO8601DateFormatter()
 
     var categories: [String: Int] = [:]
     var droppedCount = 0
@@ -62,7 +96,8 @@ nonisolated enum ChartDataExtractor {
             rowIndex: rowIndex,
             xColumn: spec.xColumn,
             temporal: temporal,
-            categories: &categories
+            categories: &categories,
+            dateFormatter: dateFormatter
           )
           resolvedX = true
         }
@@ -72,7 +107,8 @@ nonisolated enum ChartDataExtractor {
         }
         let series = seriesName(
           yColumn: spec.yColumns[offset],
-          split: splitBySeries ? seriesLabel(cell(row, at: seriesIndex)) : nil,
+          split: splitBySeries
+            ? seriesLabel(cell(row, at: seriesIndex), dateFormatter: dateFormatter) : nil,
           nameYColumns: nameYColumns
         )
         let point = ChartPoint(x: x, y: y, series: series)
@@ -94,6 +130,80 @@ nonisolated enum ChartDataExtractor {
     }
     return ChartSeries(points: points, droppedCount: droppedCount)
   }
+
+  /// Splits `result` per value of `spec.facetColumn` and runs `points` on each facet, so every
+  /// facet gets the same null handling, temporal order and LTTB. Facets come in order of first
+  /// appearance (the order category x values use). At most `maxFacets` facets: rows of later
+  /// values are left out and counted in `omittedFacetCount`. `maxPoints` caps each series of a
+  /// facet, as it caps each series of a single chart. A NULL facet value is its own facet,
+  /// labelled like a NULL cell. No facets when the facet column is missing from the result.
+  /// Nil when the current task is cancelled (checked every `cancellationStride` rows and before
+  /// each facet).
+  static func facets(
+    result: QueryResult, spec: ChartSpec, maxFacets: Int = 12, maxPoints: Int = 2_000
+  ) -> ChartFacets? {
+    guard let facetIndex = index(of: spec.facetColumn, in: result.columns) else {
+      return ChartFacets(
+        facets: [], omittedFacetCount: 0, yDomain: nil, maxPoints: maxPoints, xIsTemporal: false)
+    }
+    // nil is the NULL facet, kept apart from a text value that reads "NULL"
+    var order: [String?] = []
+    var rowsByFacet: [String?: [[CellValue]]] = [:]
+    var omitted: Set<String?> = []
+    let dateFormatter = ISO8601DateFormatter()
+    for (rowIndex, row) in result.rows.enumerated() {
+      if rowIndex % cancellationStride == 0, Task.isCancelled { return nil }
+      let key = seriesLabel(cell(row, at: facetIndex), dateFormatter: dateFormatter)
+      if rowsByFacet[key] == nil {
+        guard order.count < maxFacets else {
+          omitted.insert(key)
+          continue
+        }
+        order.append(key)
+        rowsByFacet[key] = []
+      }
+      rowsByFacet[key]?.append(row)
+    }
+
+    let xIsTemporal =
+      index(of: spec.xColumn, in: result.columns).map { index in
+        ChartSpec.isTemporal(
+          result.columns[index], values: ChartSpec.columnValues(result, at: index))
+      } ?? false
+    var facetSpec = spec
+    facetSpec.facetColumn = nil
+    var facets: [ChartFacet] = []
+    var low = Double.infinity
+    var high = -Double.infinity
+    for key in order {
+      if Task.isCancelled { return nil }
+      let rows = rowsByFacet[key] ?? []
+      let subset = QueryResult(
+        columns: result.columns, rows: rows, rowCount: rows.count,
+        executionTime: result.executionTime)
+      let series = points(
+        result: subset, spec: facetSpec, maxPoints: maxPoints, xIsTemporal: xIsTemporal)
+      for point in series.points {
+        low = min(low, point.y)
+        high = max(high, point.y)
+      }
+      let sourceCount = rows.count * spec.yColumns.count
+      facets.append(
+        ChartFacet(
+          label: key ?? CellValue.null.displayString,
+          series: series,
+          removedByDownsample: sourceCount - series.droppedCount - series.points.count))
+    }
+    return ChartFacets(
+      facets: facets,
+      omittedFacetCount: omitted.count,
+      yDomain: low <= high ? low...high : nil,
+      maxPoints: maxPoints,
+      xIsTemporal: xIsTemporal)
+  }
+
+  /// Rows between two cancellation checks of `facets`
+  private static let cancellationStride = 1_024
 
   private static func index(of name: String?, in columns: [ColumnInfo]) -> Int? {
     guard let name else { return nil }
@@ -127,7 +237,8 @@ nonisolated enum ChartDataExtractor {
     rowIndex: Int,
     xColumn: String?,
     temporal: Bool,
-    categories: inout [String: Int]
+    categories: inout [String: Int],
+    dateFormatter: ISO8601DateFormatter
   ) -> ChartX? {
     guard xColumn != nil else { return .number(Double(rowIndex)) }
     guard let cell else { return nil }
@@ -144,7 +255,7 @@ nonisolated enum ChartDataExtractor {
       if temporal {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let number = Double(trimmed), number.isFinite { return .number(number) }
-        if let date = ISO8601DateFormatter().date(from: trimmed) {
+        if let date = dateFormatter.date(from: trimmed) {
           return .number(date.timeIntervalSince1970)
         }
         return nil
@@ -162,7 +273,9 @@ nonisolated enum ChartDataExtractor {
     return index
   }
 
-  private static func seriesLabel(_ value: CellValue?) -> String? {
+  private static func seriesLabel(
+    _ value: CellValue?, dateFormatter: ISO8601DateFormatter
+  ) -> String? {
     switch value {
     case .string(let text), .json(let text):
       return text
@@ -173,7 +286,7 @@ nonisolated enum ChartDataExtractor {
     case .bool(let flag):
       return flag ? "true" : "false"
     case .date(let date):
-      return ISO8601DateFormatter().string(from: date)
+      return dateFormatter.string(from: date)
     case .data(let data):
       return data.base64EncodedString()
     case .none, .null:

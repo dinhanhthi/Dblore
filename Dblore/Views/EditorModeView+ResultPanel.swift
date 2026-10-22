@@ -375,7 +375,7 @@ struct EditorResultGridView: View {
     ) {
       ChartableResult(
         result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
-        showsPicker: showsDisplayPicker
+        showsPicker: showsDisplayPicker, statementIndex: viewModel.selectedStatementIndex
       ) {
         if showsDocuments {
           documentCards

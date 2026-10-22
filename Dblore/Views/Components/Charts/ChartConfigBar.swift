@@ -2,7 +2,7 @@
 //  ChartConfigBar.swift
 //  Dblore
 //
-//  Kind, axes, and PNG export for a result chart.
+//  Kind, axes, split, and PNG export for a result chart.
 //
 
 import AppKit
@@ -94,10 +94,13 @@ struct ResultDisplayPicker: View {
   }
 }
 
-/// Edits a `ChartSpec`: mark, x column, up to five y columns, and an optional series.
+/// Edits a `ChartSpec`: mark, x column, up to five y columns, an optional series, and an
+/// optional split into small charts.
 struct ChartConfigBar: View {
   let columns: [ColumnInfo]
   @Binding var spec: ChartSpec
+  /// Off while the facets of a split chart load
+  var exportEnabled = true
   let onExport: () -> Void
 
   private static let maxYColumns = 5
@@ -144,12 +147,25 @@ struct ChartConfigBar: View {
           }
         }
       }
+      labeled("Split by") {
+        capsuleMenu(spec.facetColumn ?? "None", help: "One small chart per value, up to 12") {
+          menuChoice("None", selected: spec.facetColumn == nil) {
+            spec.facetColumn = nil
+          }
+          ForEach(facetNames, id: \.self) { name in
+            menuChoice(name, selected: spec.facetColumn == name) {
+              spec.facetColumn = name
+            }
+          }
+        }
+      }
       Spacer(minLength: Spacing.sm)
       Button(action: onExport) {
         Image(systemName: "square.and.arrow.up")
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .controlSize(.small)
+      .disabled(!exportEnabled)
       .help("Export chart as PNG")
     }
   }
@@ -213,6 +229,10 @@ struct ChartConfigBar: View {
     names(including: spec.seriesColumn)
   }
 
+  private var facetNames: [String] {
+    names(including: spec.facetColumn)
+  }
+
   private func names(including extra: String?) -> [String] {
     var names = columns.map(\.name)
     if let extra, !names.contains(extra) {
@@ -247,12 +267,18 @@ struct ChartConfigBar: View {
 
 /// Renders the chart to PNG and asks where to save it. The panel is non-blocking.
 enum ChartPNGExporter {
+  /// `facets` are the loaded facets of a faceted spec; nothing is exported until they load.
+  /// The grid is laid out in full and the image is as tall as it needs.
   @MainActor
-  static func export(result: CellResult, spec: ChartSpec) {
-    let content = ResultChartView(result: result, spec: spec)
-      .frame(width: 960, height: 540)
-      .padding(Spacing.lg)
-      .background(Color.appBackground)
+  static func export(result: CellResult, spec: ChartSpec, facets: ChartFacets? = nil) {
+    let faceted = ResultChartView.isFaceted(spec, columns: result.columns)
+    guard !faceted || facets != nil else { return }
+    let content = ResultChartView(
+      result: result, spec: spec, facets: facets, scrollsFacets: false
+    )
+    .frame(width: 960, height: faceted ? nil : 540)
+    .padding(Spacing.lg)
+    .background(Color.appBackground)
     let renderer = ImageRenderer(content: content)
     renderer.scale = 2
     guard let image = renderer.nsImage,

@@ -88,6 +88,25 @@ struct DataModelDocumentTests {
     #expect(decoded.connectionConfig?.host == "localhost")
   }
 
+  @Test("Chart spec round-trips through the file coder, series and split columns included")
+  func chartSpecRoundTripsThroughDocumentCoder() throws {
+    let spec = ChartSpec(
+      kind: .line, xColumn: "day", yColumns: ["total"], seriesColumn: "status",
+      facetColumn: "region")
+    let notebook = DbloreNotebook(
+      id: UUID(),
+      cells: [NotebookCell(content: "SELECT 1", chartSpec: spec)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Charts"),
+      connectionConfig: nil,
+      settings: NotebookSettings()
+    )
+
+    let data = try DocumentCoder.encode(notebook, includeResultsOnSave: false)
+    let decoded = try DocumentCoder.decode(from: data)
+
+    #expect(decoded.cells.first?.chartSpec == spec)
+  }
+
   @Test("Malformed statement result entries decode to an empty result")
   func malformedStatementResultDecodesEmpty() throws {
     let json: [String: Any] = [

@@ -244,6 +244,9 @@ enum DocumentCoder {
     if let seriesColumn = spec.seriesColumn {
       object["seriesColumn"] = seriesColumn
     }
+    if let facetColumn = spec.facetColumn {
+      object["facetColumn"] = facetColumn
+    }
     return object
   }
 
@@ -283,7 +286,8 @@ enum DocumentCoder {
       kind: kind,
       xColumn: dict["xColumn"] as? String,
       yColumns: yColumns,
-      seriesColumn: dict["seriesColumn"] as? String
+      seriesColumn: dict["seriesColumn"] as? String,
+      facetColumn: dict["facetColumn"] as? String
     )
   }
 

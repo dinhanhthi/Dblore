@@ -192,6 +192,9 @@ struct CellResult: Codable, Sendable {
   /// the query was sent. The AI Fix action offers an error, and `@results` a result, only while
   /// the tab is on that connection; nil (a file, an unstamped result) never is.
   var aiSessionKey: String? = nil
+  /// Session-only: bumped when the rows are replaced under the same `timestamp` (the inline
+  /// edit refresh), so views keyed on the rows of a run rebuild.
+  var dataRevision = 0
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
