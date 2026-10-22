@@ -201,9 +201,7 @@ extension NotebookViewModel {
         config.statementTimeoutSeconds ?? cascadeImpactBudgetSeconds),
       cascadeImpactBudgetSeconds)
     do {
-      try await side.reconnectWithActiveCertificate(
-        config: config, material: await manager.activeUnrememberedCertificate,
-        sshCredential: await manager.activeUnrememberedSSHCredential)
+      try await manager.connectSideManager(side, config: config)
     } catch is CancellationError {
       throw CancellationError()
     } catch {

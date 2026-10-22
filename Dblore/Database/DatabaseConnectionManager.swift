@@ -166,6 +166,27 @@ actor DatabaseConnectionManager {
       resetsSessionAfterCappedRead: false)
   }
 
+  /// `makeReadOnlySideManager` without the read-only wrapper, for an app read that sends its own
+  /// `BEGIN … READ ONLY` and `SET LOCAL` (which `MCPReadOnlySession` refuses): sessions from this
+  /// manager's factory, SQLite read-only as in the SQL dump. The caller connects and disconnects
+  /// it.
+  nonisolated func makeSnapshotSideManager() -> DatabaseConnectionManager {
+    DatabaseConnectionManager(
+      sessionFactory: SQLDumpSessionFactory(inner: sessionFactory),
+      resetsSessionAfterCappedRead: false)
+  }
+
+  /// Connects the single-use `side` like this manager: `config` (this manager's when nil), its
+  /// unremembered certificate and SSH secret.
+  func connectSideManager(
+    _ side: DatabaseConnectionManager, config: ConnectionConfig? = nil
+  ) async throws {
+    guard let config = config ?? self.config else { throw DatabaseError.notConnected }
+    try await side.reconnectWithActiveCertificate(
+      config: config, material: activeUnrememberedCertificate,
+      sshCredential: activeUnrememberedSSHCredential)
+  }
+
   deinit {
     sqliteFileAccessRelease?()
     sessionEventsContinuation.finish()

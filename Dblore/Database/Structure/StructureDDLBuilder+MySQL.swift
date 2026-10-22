@@ -226,7 +226,7 @@ nonisolated extension StructureDDLBuilder {
 
   /// MySQL reads an expression default (EXTRA DEFAULT_GENERATED) back without its parentheses;
   /// `DEFAULT uuid()` is a syntax error, so it is restated as `DEFAULT (uuid())`.
-  private static func restatedDefault(
+  static func restatedDefault(
     _ text: String, column: TableStructure.Column, server: MySQLServerInfo
   ) -> String {
     let isExpression = (column.extra ?? "").uppercased().contains("DEFAULT_GENERATED")
@@ -273,7 +273,7 @@ nonisolated extension StructureDDLBuilder {
   }
 
   /// The attributes in a column's EXTRA that a definition must restate
-  private struct MySQLExtra {
+  struct MySQLExtra {
     var autoIncrement = false
     var onUpdate: String?
     var invisible = false
