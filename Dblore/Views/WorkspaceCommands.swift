@@ -106,6 +106,11 @@ struct OpenDatabaseFileCopyActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Export Data Dictionary (File menu): nil unless `WorkspaceManager.canExportDataDictionary`
+struct OpenDataDictionaryActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -140,6 +145,11 @@ extension FocusedValues {
   var openDatabaseFileCopyAction: (() -> Void)? {
     get { self[OpenDatabaseFileCopyActionKey.self] }
     set { self[OpenDatabaseFileCopyActionKey.self] = newValue }
+  }
+
+  var openDataDictionaryAction: (() -> Void)? {
+    get { self[OpenDataDictionaryActionKey.self] }
+    set { self[OpenDataDictionaryActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

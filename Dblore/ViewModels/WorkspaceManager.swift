@@ -238,6 +238,11 @@ class WorkspaceManager: Identifiable {
   /// Commit, dropped on any other end
   @ObservationIgnored var pendingTableChanges: [StructureEditorModel.TableChange] = []
 
+  // MARK: - Data Dictionary
+
+  /// Export Data Dictionary sheet. Nil hides it.
+  var dataDictionaryExport: DataDictionaryExportModel?
+
   // MARK: - Command Palette
 
   /// Open palette. Nil hides it.

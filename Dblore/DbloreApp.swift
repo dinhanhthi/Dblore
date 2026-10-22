@@ -620,6 +620,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openSQLDumpAction) private var openSQLDumpAction
   @BridgedFocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
   @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
+  @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -730,6 +731,12 @@ struct TabCommands: Commands {
 
       Button(isMongo ? "Restore Backup..." : "Restore SQL Dump...") { openSQLRestoreAction?() }
         .disabled(openSQLRestoreAction == nil)
+
+      // SQL engines only: MongoDB collections have no catalog structure to document
+      if !isMongo {
+        Button("Export Data Dictionary...") { openDataDictionaryAction?() }
+          .disabled(openDataDictionaryAction == nil)
+      }
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }
         .disabled(openDatabaseFileCopyAction == nil)

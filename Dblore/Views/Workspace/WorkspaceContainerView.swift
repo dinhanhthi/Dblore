@@ -344,6 +344,7 @@ struct WorkspaceContainerView: View {
     .bridgedFocusedSceneValue(\.openSQLDumpAction, backupAction(.dump))
     .bridgedFocusedSceneValue(\.openSQLRestoreAction, backupAction(.restore))
     .bridgedFocusedSceneValue(\.openDatabaseFileCopyAction, backupAction(.fileCopy))
+    .bridgedFocusedSceneValue(\.openDataDictionaryAction, dataDictionaryAction)
     .bridgedFocusedSceneValue(\.activeViewModel, activeViewModel)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
@@ -355,6 +356,7 @@ struct WorkspaceContainerView: View {
       openToken: settingsOpenToken
     )
     .structureEditorPanel(workspaceManager: workspaceManager)
+    .dataDictionaryExportSheet(workspaceManager: workspaceManager)
     .sidePanelOverlay(
       isPresented: Binding(
         get: { isImportPresented },
@@ -477,6 +479,11 @@ struct WorkspaceContainerView: View {
       backupTabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
       backupSheet = sheet
     }
+  }
+
+  private var dataDictionaryAction: (() -> Void)? {
+    guard workspaceManager.canExportDataDictionary else { return nil }
+    return { [workspaceManager] in workspaceManager.openDataDictionaryExport() }
   }
 
   private func requestImport(for table: DatabaseTable? = nil) {

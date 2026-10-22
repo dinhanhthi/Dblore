@@ -405,6 +405,13 @@ struct WorkspaceLeftSidebarContent: View {
           .padding(.vertical, Spacing.sm)
           .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // The database's menu: section headers and empty space (rows keep their own menus)
+        .contextMenu {
+          if queryLanguage == .sql {
+            Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
+              .disabled(!workspaceManager.canExportDataDictionary)
+          }
+        }
       }
     }
   }

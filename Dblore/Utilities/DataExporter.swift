@@ -719,7 +719,7 @@ enum DataExporter {
   /// A backslash and then a pipe are escaped (so `\|` in the data cannot end the cell), `&`, `<`
   /// and `>` become `&amp;`, `&lt;` and `&gt;` (no HTML or entity in a rendered table), and then
   /// a line break (CRLF, LF or CR) becomes `<br>`, so a cell or header stays one table row
-  private static func escapeMarkdown(_ value: String) -> String {
+  nonisolated static func escapeMarkdown(_ value: String) -> String {
     value.replacingOccurrences(of: "\\", with: "\\\\")
       .replacingOccurrences(of: "|", with: "\\|")
       .replacingOccurrences(of: "&", with: "&amp;")
