@@ -2,7 +2,7 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
-## Unreleased
+## v0.8.3 (2026-10-23)
 
 ### Added
 
@@ -32,6 +32,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Copied rows are safe to paste into a spreadsheet.** Copying rows or cells as text puts an apostrophe before a text value that starts like a formula (`=`, `+`, `-`, `@`, tab or a line break), the same rule CSV and TSV exports use. Numbers, dates and Copy Value / Copy as INSERT / Copy as IN list stay raw. Settings > Result Table turns it off. [#0a6e014c](https://github.com/dinhanhthi/Dblore/commit/0a6e014c)
 - **Large cell values open at once.** Cell Value shows a value over 256 KiB as plain text in a view that lays out only what is on screen, and Format JSON runs in the background with Cancel. [#1d82e730](https://github.com/dinhanhthi/Dblore/commit/1d82e730)
 - **MongoDB schema** labels string values in quotes, so `"5"` and `5` are told apart, and stops at 5,000 fields on collections with very many keys. The selected aggregation stage is kept when you switch sections. [#bad04b51](https://github.com/dinhanhthi/Dblore/commit/bad04b51)
+- **Matching controls.** Tab groups (Contains / Equals, 24 h / 7 d / 30 d, Cell / Row and similar) use the same capsule tabs as Grid / Chart, and dropdowns use the capsule style of the Download menu instead of the system pop-up. [#8d6f7881](https://github.com/dinhanhthi/Dblore/commit/8d6f7881) [#f5a6991e](https://github.com/dinhanhthi/Dblore/commit/f5a6991e) [#27d08f43](https://github.com/dinhanhthi/Dblore/commit/27d08f43) [#f4b42297](https://github.com/dinhanhthi/Dblore/commit/f4b42297)
 
 ### Fixed
 
@@ -45,6 +46,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **Structure editor** index rows keep their own state when one is dropped or removed, and Beautify JSON no longer crashes on a single value such as `123`. Copy Database File can no longer hang. [#1d82e730](https://github.com/dinhanhthi/Dblore/commit/1d82e730)
 - **Menu commands work in every workspace window**, including windows opened with New Workspace: the File menu items, the Query menu and Cmd+Return.
 - Keypad Enter accepts an autocomplete suggestion like Return, and a PostgreSQL SQL dump keeps a text value that starts with a combining mark intact. [#242fd5f6](https://github.com/dinhanhthi/Dblore/commit/242fd5f6)
+- **Enum values** whose text is 4, 8 or 12 bytes long (such as `refunded`) are no longer shown as a pgvector number list. [#760bf557](https://github.com/dinhanhthi/Dblore/commit/760bf557)
 
 ### Upgrade notes
 
