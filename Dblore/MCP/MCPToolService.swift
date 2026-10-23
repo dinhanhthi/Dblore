@@ -24,13 +24,17 @@
 // unquoted names in ASCII, exactly one statement classified for the dialect
 // (`SQLStatementClassifier`, `MongoCommandClassifier` on MongoDB) whose own kind the scope allows
 // (data: DML; schema: DML and DDL on tables, indexes, views, sequences, schemas, types, domains
-// and MySQL databases, TRUNCATE, COMMENT ON, DROP of functions, procedures and triggers; reads,
-// EXPLAIN, transaction control, SET, utility, unrecognized statements, brake or privilege
-// changes, account, policy and server changes, a CREATE or ALTER of a function, procedure or
-// trigger (what it runs later is not checked), switching triggers or rules on or off, CREATE
+// and MySQL databases, TRUNCATE, COMMENT ON; on MongoDB createCollection, createIndex,
+// dropIndex, drop and renameCollection; reads, EXPLAIN, transaction control, SET, utility,
+// unrecognized statements, brake or privilege changes, account, policy and server changes, a
+// CREATE, ALTER or DROP of a function, procedure or trigger (what it runs later is not checked,
+// and a dropped one no longer enforces anything), switching triggers or rules on or off, CREATE
 // SCHEMA with schema elements, extensions, replication, foreign data,
 // tablespaces and MySQL data directories, MySQL executable comments, DuckDB file reads,
-// PostgreSQL side-effect functions and MongoDB server-side JavaScript are refused), the saved
+// PostgreSQL side-effect functions, MongoDB server-side JavaScript, MongoDB database commands,
+// collMod, hideIndex, unhideIndex and createView, `system.*` collections, and a `$out`,
+// `$merge`, `$lookup`, `$graphLookup` or `$unionWith` the check cannot place in the
+// connection's database (`isCoveredMongoCommand`) are refused), the saved
 // connection's protection level, and its commit style: Review and Password need the user in
 // Dblore, so they are refused; Immediate and Confirm are covered by the approval. Then the user
 // approves that one call (`MCPWriteApproving`; Deny, the 120 s timeout once shown, a full queue
@@ -173,10 +177,14 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .writeNotVerifiable:
       "execute_write runs only data changes (INSERT, UPDATE, DELETE, ...) and schema changes: "
         + "CREATE, ALTER, DROP or COMMENT ON a table, index, view, materialized view, sequence, "
-        + "schema (a database on MySQL), type or domain; TRUNCATE; RENAME TABLE; DROP or COMMENT "
-        + "ON a function, procedure or trigger. Functions, procedures and triggers cannot be "
-        + "created or changed through MCP, because what they do later cannot be checked here. "
-        + "Create them in the SQL editor. Other object kinds, transaction control, SET, CALL, "
+        + "schema (a database on MySQL), type or domain; TRUNCATE; RENAME TABLE; COMMENT ON a "
+        + "function, procedure or trigger; on MongoDB createCollection, createIndex, dropIndex, "
+        + "drop and renameCollection. Functions, procedures and triggers cannot be created, "
+        + "changed or dropped through MCP, because what they do later cannot be checked here and "
+        + "dropping one removes what it enforces. Use the SQL editor. On MongoDB, database "
+        + "commands, users and roles, collMod, hideIndex, unhideIndex, createView, system.* "
+        + "collections, and $out, $merge, $lookup, $graphLookup or $unionWith naming another "
+        + "database are refused. Other object kinds, transaction control, SET, CALL, "
         + "COPY, GRANT, EXPLAIN, account, privilege, ownership, policy or server setting changes, "
         + "tablespaces, MySQL DATA DIRECTORY and INDEX DIRECTORY, partition attach and detach, "
         + "enabling or disabling triggers and rules, CREATE SCHEMA with schema elements, "
@@ -298,19 +306,22 @@ nonisolated struct MCPToolService: Sendable {
       + "(INSERT, UPDATE, DELETE, ...; on MongoDB inserts, updates and deletes) or, where "
       + "allowed, a schema change: CREATE, ALTER, DROP or COMMENT ON a table, index, view, "
       + "materialized view, sequence, schema (a database on MySQL), type or domain, TRUNCATE, "
-      + "RENAME TABLE, DROP or COMMENT ON a function, procedure or trigger; on MongoDB "
-      + "collections and indexes. Creating or changing a function, procedure or trigger is "
-      + "refused (create them in Dblore's SQL editor), as are changes outside the connection's "
-      + "scope, other object kinds, reads, transaction control, SET, CALL, COPY, GRANT, EXPLAIN, "
-      + "account, privilege, ownership, policy and server setting changes, tablespaces, MySQL "
-      + "DATA DIRECTORY and INDEX DIRECTORY, partition attach and detach, enabling or disabling "
-      + "triggers and rules, CREATE SCHEMA with schema elements, MySQL engines other than local "
-      + "storage, extensions, replication, foreign data, file access, statements over 16 KB or "
-      + "200 lines, invisible characters, non-ASCII keywords or unquoted names (quote such "
-      + "names) and several statements, before anything is asked. The user must approve every "
-      + "call in Dblore; a call not approved within 2 minutes of being shown is denied and "
-      + "nothing runs; requests wait in line behind others. Returns the affected row count. "
-      + "Changes are recorded in Dblore's History.",
+      + "RENAME TABLE, COMMENT ON a function, procedure or trigger; on MongoDB createCollection, "
+      + "createIndex, dropIndex, drop and renameCollection. Creating, changing or dropping a "
+      + "function, procedure or trigger is refused (use Dblore's SQL editor), as are changes "
+      + "outside the connection's scope, other object kinds, reads, transaction control, SET, "
+      + "CALL, COPY, GRANT, EXPLAIN, account, privilege, ownership, policy and server setting "
+      + "changes, tablespaces, MySQL DATA DIRECTORY and INDEX DIRECTORY, partition attach and "
+      + "detach, enabling or disabling triggers and rules, CREATE SCHEMA with schema elements, "
+      + "MySQL engines other than local storage, extensions, replication, foreign data, file "
+      + "access, statements over 16 KB or 200 lines, invisible characters, non-ASCII keywords or "
+      + "unquoted names (quote such names) and several statements, before anything is asked. On "
+      + "MongoDB, database commands, users and roles, collMod, hideIndex, unhideIndex, "
+      + "createView, system.* collections, and $out, $merge, $lookup, $graphLookup or "
+      + "$unionWith naming another database are refused too. The user must "
+      + "approve every call in Dblore; a call not approved within 2 minutes of being shown is "
+      + "denied and nothing runs; requests wait in line behind others. Returns the affected row "
+      + "count. Changes are recorded in Dblore's History.",
     inputSchema: schema(
       [
         "connection_id": connectionIDProperty,
@@ -557,7 +568,8 @@ nonisolated struct MCPToolService: Sendable {
     scope: MCPWriteScope, writes: MCPWriteAccess
   ) async throws -> (statement: ClassifiedStatement, policy: ProtectionPolicy) {
     let statement = try checkWrite(
-      sql, statements: statements, dialect: config.databaseType.dialect, scope: scope)
+      sql, statements: statements, dialect: config.databaseType.dialect, scope: scope,
+      database: config.database)
     let policy = ProtectionPolicy(config: config)
     try checkProtection(
       statement, config: config, policy: policy,
@@ -572,15 +584,19 @@ nonisolated struct MCPToolService: Sendable {
   /// keyword), account, privilege, ownership, policy and server changes
   /// (`changesAccountsOrServer`), code outside SQL, extensions, replication, foreign data and
   /// MySQL engines other than local storage (`runsUncheckedCode`), DDL on an object kind schema
-  /// scope does not cover, a CREATE or ALTER of a function, procedure or trigger, tablespaces
-  /// and MySQL data directories (`isCoveredSchemaChange`), MySQL executable
+  /// scope does not cover, a CREATE, ALTER or DROP of a function, procedure or trigger,
+  /// tablespaces and MySQL data directories (`isCoveredSchemaChange`), MySQL executable
   /// comments, anything but DML (data) and DDL or a table-creating statement (schema),
   /// PostgreSQL side-effect functions, DuckDB file reads (`readsDuckDBFile`), MongoDB
-  /// server-side JavaScript. MySQL side-effect functions, LOAD DATA and INTO OUTFILE / DUMPFILE,
-  /// SQLite ATTACH / DETACH / load_extension and DuckDB INSTALL / LOAD / ATTACH / COPY are
-  /// classified as utilities, so they are refused as such.
+  /// server-side JavaScript, a MongoDB command off the allowlist, on a `system.*` collection or
+  /// with a pipeline collection outside `database`, the connection's database
+  /// (`isCoveredMongoCommand`). MySQL side-effect
+  /// functions, LOAD DATA and INTO OUTFILE / DUMPFILE, SQLite ATTACH / DETACH / load_extension
+  /// and DuckDB INSTALL / LOAD / ATTACH / COPY are classified as utilities, so they are refused
+  /// as such.
   static func checkWrite(
-    _ sql: String, statements: [ClassifiedStatement], dialect: SQLDialect, scope: MCPWriteScope
+    _ sql: String, statements: [ClassifiedStatement], dialect: SQLDialect, scope: MCPWriteScope,
+    database: String
   ) throws -> ClassifiedStatement {
     guard !hasHiddenCharacters(sql, dialect: dialect) else {
       throw MCPToolError.writeHiddenCharacters
@@ -607,6 +623,9 @@ nonisolated struct MCPToolService: Sendable {
       {
         throw MCPToolError.writeNotVerifiable
       }
+    } else if !isCoveredMongoCommand(statement.text, database: database) {
+      // Before the scope, so a write into another database is refused in every scope
+      throw MCPToolError.writeNotVerifiable
     }
     // The statement's own kind: EXPLAIN is refused, never unwrapped to what it explains
     var needed: MCPWriteScope
@@ -733,19 +752,20 @@ nonisolated struct MCPToolService: Sendable {
   ]
 
   /// Objects that hold code the database runs later, which no check here sees (a plpgsql or
-  /// routine body is one literal token): schema scope covers only their DROP and COMMENT ON.
+  /// routine body is one literal token), and whose DROP removes what they enforce (an audit
+  /// trigger): schema scope covers only their COMMENT ON.
   private static let routineObjects: Set<String> = ["FUNCTION", "PROCEDURE", "TRIGGER"]
 
   /// A DDL statement schema scope covers: TRUNCATE; CREATE, ALTER or DROP of one of
   /// `schemaObjects` (TEMPORARY or UNLOGGED TABLE, UNIQUE INDEX, MATERIALIZED VIEW, ...; MySQL
-  /// DATABASE); DROP of one of `routineObjects`; MySQL RENAME TABLE; COMMENT ON one of them, a
-  /// COLUMN or a CONSTRAINT. A CREATE or ALTER that names a TABLESPACE (at any depth: a
+  /// DATABASE); MySQL RENAME TABLE; COMMENT ON one of them, one of `routineObjects`, a COLUMN or
+  /// a CONSTRAINT. A CREATE or ALTER that names a TABLESPACE (at any depth: a
   /// constraint's `USING INDEX TABLESPACE`, a partition's), a MySQL DATA DIRECTORY or INDEX
   /// DIRECTORY (any depth), or (outside parentheses) an ACCESS METHOD, or attaches or detaches a
   /// partition, is not covered; nor is a CREATE SCHEMA with schema elements (a second CREATE
   /// outside parentheses, on all but MySQL: `CREATE SCHEMA s CREATE TRIGGER ...`) or an ALTER
   /// TABLE that enables or disables a trigger or rule (`switchesTriggersOrRules`: an audit
-  /// trigger switched off). Anything else fails closed: a CREATE or ALTER of a function,
+  /// trigger switched off). Anything else fails closed: a CREATE, ALTER or DROP of a function,
   /// procedure or trigger (CONSTRAINT TRIGGER too), other object kinds (LANGUAGE, EXTENSION,
   /// RULE, CAST, OPERATOR, PostgreSQL DATABASE, SQLite VIRTUAL TABLE, MySQL EVENT, ...), SQLite
   /// PRAGMA assignments, and any verb the classifier adds to DDL later.
@@ -759,8 +779,7 @@ nonisolated struct MCPToolService: Sendable {
       return schemaObjects.contains(object) || routineObjects.contains(object)
         || ["COLUMN", "CONSTRAINT"].contains(object)
     case "DROP":
-      return schemaObjects.contains(object) || routineObjects.contains(object)
-        || (dialect == .mysql && object == "DATABASE")
+      return schemaObjects.contains(object) || (dialect == .mysql && object == "DATABASE")
     case "CREATE", "ALTER":
       guard schemaObjects.contains(object) || (dialect == .mysql && object == "DATABASE") else {
         return false
@@ -796,6 +815,123 @@ nonisolated struct MCPToolService: Sendable {
       if next < words.count, ["REPLICA", "ALWAYS"].contains(words[next]) { next += 1 }
       return next < words.count && ["TRIGGER", "RULE"].contains(words[next])
     }
+  }
+
+  /// A MongoDB command a write scope may cover (the scope itself is checked after): text
+  /// `MongoshParser` reads as one command on no `isSystemCollection` (source and target of a
+  /// rename too), and then reads (refused later as such), inserts, updates, `replaceOne` and
+  /// deletes, an aggregate whose every collection stays in `database` (`pipelineStaysIn`), and
+  /// the schema changes createCollection, createIndex, dropIndex, drop and renameCollection
+  /// (always within the connection's database). Not covered: dropDatabase and a database
+  /// created through getSiblingDB, collMod (a validator, validation level or action can switch
+  /// validation off), hideIndex, unhideIndex and createView. The parser already refuses users,
+  /// roles, `use`, `adminCommand`, any other `runCommand` and any other getSiblingDB.
+  private static func isCoveredMongoCommand(_ text: String, database: String) -> Bool {
+    guard let command = try? MongoshParser.parse(text) else { return false }
+    return isCovered(command, database: database)
+  }
+
+  private static func isCovered(_ command: MongoCommand, database: String) -> Bool {
+    if let name = command.collection, isSystemCollection(name) { return false }
+    switch command {
+    case .aggregate(_, let pipeline, _):
+      return pipelineStaysIn(.array(pipeline), database: database)
+    case .explain(let inner, _): return isCovered(inner, database: database)
+    case .admin(let admin):
+      switch admin {
+      case .renameCollection(_, let target): return !isSystemCollection(target)
+      case .createCollection, .createIndex, .dropIndex, .drop: return true
+      case .collMod, .setIndexHidden, .createView, .createDatabase, .dropDatabase: return false
+      }
+    case .find, .countDocuments, .distinct, .listCollections, .insertOne, .insertMany,
+      .updateOne, .updateMany, .replaceOne, .deleteOne, .deleteMany:
+      return true
+    }
+  }
+
+  /// Every `$out`, `$merge`, `$lookup`, `$graphLookup` and `$unionWith` key in `value`, at any
+  /// depth (as `MongoCommandClassifier` counts `$out` and `$merge`), names only collections of
+  /// `database`: `$out` a collection name or `isLocalNamespace` (`timeseries` too), `$merge`
+  /// `mergesIntoLocal`, `$lookup` and `$graphLookup` `looksUpLocal`, `$unionWith`
+  /// `unionsWithLocal`. Any other shape fails closed.
+  private static func pipelineStaysIn(_ value: MongoValue, database: String) -> Bool {
+    switch value {
+    case .document(let fields):
+      return fields.allSatisfy { field in
+        let covered: Bool
+        switch field.key {
+        case "$out": covered = names(field.value, in: database, otherKeys: ["timeseries"])
+        case "$merge": covered = mergesIntoLocal(field.value, database: database)
+        case "$lookup", "$graphLookup": covered = looksUpLocal(field.value, database: database)
+        case "$unionWith": covered = unionsWithLocal(field.value, database: database)
+        default: covered = true
+        }
+        return covered && pipelineStaysIn(field.value, database: database)
+      }
+    case .array(let items): return items.allSatisfy { pipelineStaysIn($0, database: database) }
+    default: return true
+    }
+  }
+
+  /// A `$lookup` or `$graphLookup` stage: a document whose every `from` `names` a collection
+  /// (none: a `$lookup` on a `$documents` pipeline).
+  private static func looksUpLocal(_ value: MongoValue, database: String) -> Bool {
+    guard case .document(let options) = value else { return false }
+    return options.allSatisfy { $0.key != "from" || names($0.value, in: database) }
+  }
+
+  /// A `$unionWith` stage: a collection name, or a document whose keys but `pipeline` are
+  /// `isLocalNamespace` (none: a `$documents` pipeline).
+  private static func unionsWithLocal(_ value: MongoValue, database: String) -> Bool {
+    if case .string = value { return names(value, in: database) }
+    guard case .document(let options) = value else { return false }
+    let namespace = options.filter { $0.key != "pipeline" }
+    return namespace.isEmpty
+      || isLocalNamespace(.document(namespace), database: database, otherKeys: [])
+  }
+
+  /// A `$merge` target: a collection name, or options whose every `into` (one at least)
+  /// `names` one.
+  private static func mergesIntoLocal(_ value: MongoValue, database: String) -> Bool {
+    if case .string = value { return names(value, in: database) }
+    guard case .document(let options) = value else { return false }
+    let targets = options.filter { $0.key == "into" }
+    return !targets.isEmpty && targets.allSatisfy { names($0.value, in: database) }
+  }
+
+  /// `value` is a collection name (of the connection's database) but `isSystemCollection`, or
+  /// `isLocalNamespace`.
+  private static func names(
+    _ value: MongoValue, in database: String, otherKeys: Set<String> = []
+  ) -> Bool {
+    if case .string(let name) = value { return !isSystemCollection(name) }
+    return isLocalNamespace(value, database: database, otherKeys: otherKeys)
+  }
+
+  /// A `{db, coll}` document of `database`: a `coll` string but `isSystemCollection`, `db`
+  /// (optional) exactly `database` and never when `database` is empty (the server's default
+  /// cannot be checked here), and no keys but `otherKeys`. A repeated key is checked each time.
+  private static func isLocalNamespace(
+    _ value: MongoValue, database: String, otherKeys: Set<String>
+  ) -> Bool {
+    guard case .document(let fields) = value, fields.contains(where: { $0.key == "coll" }) else {
+      return false
+    }
+    return fields.allSatisfy { field in
+      switch field.key {
+      case "db": return !database.isEmpty && field.value == .string(database)
+      case "coll":
+        if case .string(let name) = field.value { return !isSystemCollection(name) }
+        return false
+      default: return otherKeys.contains(field.key)
+      }
+    }
+  }
+
+  /// A collection of the server's own (`system.views`, `system.js`, `system.profile`, ...): the
+  /// `system.` prefix in any letter case (fail closed).
+  private static func isSystemCollection(_ name: String) -> Bool {
+    name.lowercased().hasPrefix("system.")
   }
 
   /// The kind of object a DDL statement names: the first top-level token after the verb (after

@@ -2,10 +2,11 @@
 // MCP execute_write: listed only while write tools are on and a connection has a write scope;
 // a statement outside the scope or the connection's protection, or that the approval could not
 // show as it runs, a non-ASCII keyword or unquoted name, or a schema change on an object kind
-// schema scope does not cover (a CREATE or ALTER of a function, procedure or trigger), is refused
+// schema scope does not cover (a CREATE, ALTER or DROP of a function, procedure or trigger; on
+// MongoDB a database, account or validation change, a `system.*` collection, or a `$out` /
+// `$merge` or `$lookup` / `$graphLookup` / `$unionWith` naming another database), is refused
 // before any approval; an allowed one (emoji joiners and unusual spaces in a literal, the
-// covered object kinds, DROP of a function or trigger) reaches it; a denied or
-// timed-out call executes nothing, and so does an approved one whose settings or saved
+// covered object kinds) reaches it; a denied or timed-out call executes nothing, and so does an approved one whose settings or saved
 // connection changed during the wait; an approved one runs once on the writable manager,
 // recorded as `.mcp`, even if the client disconnects meanwhile (a cancelled run is an unknown
 // outcome), while the read tools keep the read-only manager.
@@ -202,15 +203,16 @@ struct MCPWriteToolTests {
     let sqlite = Self.entry(.sqlite)
     let duckdb = Self.entry(.duckdb)
     let sqliteSchema = Self.entry(.sqlite)
+    let mongoSchema = Self.entry(.mongodb)
     let service = service(
       [
         data, readScope, readOnly, review, password, mongo, schema, mysql, sqlite, duckdb,
-        sqliteSchema,
+        sqliteSchema, mongoSchema,
       ],
       scopes: [
         data.id: .data, readOnly.id: .schema, review.id: .data, password.id: .data,
         mongo.id: .data, schema.id: .schema, mysql.id: .schema, sqlite.id: .data,
-        duckdb.id: .data, sqliteSchema.id: .schema,
+        duckdb.id: .data, sqliteSchema.id: .schema, mongoSchema.id: .schema,
       ], approver: approver, writes: source)
     let longLiteral = String(repeating: "x", count: MCPToolService.maxWriteBytes)
     let manyLines = String(repeating: "\n", count: MCPToolService.maxWriteLines)
@@ -228,6 +230,53 @@ struct MCPWriteToolTests {
       (review, "UPDATE t SET a = 1 WHERE id = 1", .writeCommitStyle),
       (password, "UPDATE t SET a = 1 WHERE id = 1", .writeCommitStyle),
       (mongo, "db.users.drop()", .writeOutOfScope(needed: .schema)),
+      (mongo, "db.c.aggregate([{$out: \"local_coll\"}])", .writeOutOfScope(needed: .schema)),
+      // MongoDB schema scope covers collections and indexes of the connection's database only
+      (mongoSchema, "db.dropDatabase()", .writeNotVerifiable),
+      (mongoSchema, "db.getSiblingDB(\"other\").createCollection(\"c\")", .writeNotVerifiable),
+      (mongoSchema, "db.getSiblingDB(\"admin\").users.drop()", .writeNotVerifiable),
+      (mongoSchema, "db.createUser({user: \"u\", pwd: \"p\", roles: []})", .writeNotVerifiable),
+      (
+        mongoSchema, "db.runCommand({collMod: \"c\", validationLevel: \"off\"})",
+        .writeNotVerifiable
+      ),
+      (
+        mongoSchema, "db.c.aggregate([{$out: {db: \"other\", coll: \"x\"}}])",
+        .writeNotVerifiable
+      ),
+      (
+        mongo, "db.c.aggregate([{$merge: {into: {db: \"other\", coll: \"x\"}}}])",
+        .writeNotVerifiable
+      ),
+      // The server's own collections, in every scope and as any target
+      (mongoSchema, "db.getCollection(\"system.views\").drop()", .writeNotVerifiable),
+      (mongo, "db.getCollection(\"system.js\").insertOne({_id: \"f\"})", .writeNotVerifiable),
+      (mongoSchema, "db.c.renameCollection(\"system.js\")", .writeNotVerifiable),
+      (mongoSchema, "db.c.aggregate([{$out: \"system.js\"}])", .writeNotVerifiable),
+      (mongo, "db.c.aggregate([{$merge: {into: \"system.views\"}}])", .writeNotVerifiable),
+      (mongo, "db.c.aggregate([{$merge: \"system.js\"}])", .writeNotVerifiable),
+      // Reads from another database, at any depth, or of a shape the check cannot verify
+      (
+        mongo,
+        "db.c.aggregate([{$lookup: {from: {db: \"other\", coll: \"u\"}, localField: \"a\", "
+          + "foreignField: \"b\", as: \"y\"}}, {$merge: \"x\"}])",
+        .writeNotVerifiable
+      ),
+      (
+        mongo,
+        "db.c.aggregate([{$facet: {f: [{$graphLookup: {from: {db: \"other\", coll: \"u\"}, "
+          + "startWith: \"$a\", connectFromField: \"a\", connectToField: \"b\", as: \"y\"}}]}}, "
+          + "{$merge: \"x\"}])",
+        .writeNotVerifiable
+      ),
+      (
+        mongo, "db.c.aggregate([{$unionWith: {db: \"other\", coll: \"u\"}}, {$merge: \"x\"}])",
+        .writeNotVerifiable
+      ),
+      (
+        mongo, "db.c.aggregate([{$lookup: {from: [\"u\"], as: \"y\"}}, {$merge: \"x\"}])",
+        .writeNotVerifiable
+      ),
       // What the approval shows must be what runs
       (data, "UPDATE t SET a = 'x\u{202E}y' WHERE id = 1", .writeHiddenCharacters),
       (data, "UPDATE t SET a = 1 WHERE id = 1\u{200B}", .writeHiddenCharacters),
@@ -346,7 +395,11 @@ struct MCPWriteToolTests {
       ),
       (sqliteSchema, "CREATE VIRTUAL TABLE v USING fts5(a)", .writeNotVerifiable),
       (sqliteSchema, "PRAGMA writable_schema = ON", .writeNotVerifiable),
-      // Functions, procedures and triggers run code later that no check here sees
+      // Functions, procedures and triggers run code later that no check here sees, and dropping
+      // one removes what it enforced (an audit trigger)
+      (schema, "DROP FUNCTION f()", .writeNotVerifiable),
+      (schema, "DROP TRIGGER t ON x", .writeNotVerifiable),
+      (schema, "DROP PROCEDURE p", .writeNotVerifiable),
       (
         schema,
         "CREATE OR REPLACE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$",
@@ -427,11 +480,12 @@ struct MCPWriteToolTests {
     let mysqlData = Self.entry(.mysql)
     let sqlite = Self.entry(.sqlite)
     let mongo = Self.entry(.mongodb)
+    let mongoData = Self.entry(.mongodb)
     let service = service(
-      [data, schema, mysql, mysqlData, sqlite, mongo],
+      [data, schema, mysql, mysqlData, sqlite, mongo, mongoData],
       scopes: [
         data.id: .data, schema.id: .schema, mysql.id: .schema, mysqlData.id: .data,
-        sqlite.id: .schema, mongo.id: .schema,
+        sqlite.id: .schema, mongo.id: .schema, mongoData.id: .data,
       ], approver: approver, writes: source)
     let cases: [(ConnectionHistoryEntry, String)] = [
       (
@@ -466,13 +520,20 @@ struct MCPWriteToolTests {
       (mysql, "ALTER TABLE files ADD INDEX (directory)"),
       (mysql, "CREATE INDEX i ON t (data, directory)"),
       (mysqlData, "UPDATE cars SET engine = 'connect' WHERE id = 1"),
-      // Dropping a function or trigger adds no code
-      (schema, "DROP FUNCTION f()"),
-      (schema, "DROP TRIGGER t ON x"),
       (sqlite, "CREATE TABLE t (a int)"),
       (mongo, "db.createCollection('c')"),
       (mongo, "db.users.createIndex({a: 1})"),
       (mongo, "db.users.drop()"),
+      (mongo, "db.users.renameCollection(\"people\")"),
+      (mongo, "db.users.aggregate([{$out: \"local_coll\"}])"),
+      (mongo, "db.users.aggregate([{$out: {db: \"db\", coll: \"x\"}}])"),
+      (mongoData, "db.c.insertOne({a: 1})"),
+      (mongoData, "db.c.aggregate([{$merge: {into: \"x\"}}])"),
+      (
+        mongoData,
+        "db.c.aggregate([{$lookup: {from: \"u\", localField: \"a\", foreignField: \"b\", "
+          + "as: \"y\"}}, {$merge: {into: \"x\"}}])"
+      ),
     ]
     for (entry, sql) in cases {
       let result = await write(service, entry.id, sql)

@@ -64,7 +64,7 @@ struct MCPSettingsSection: View {
             "Changes run with the connection's protection and commit style. Connections that use Review or Password refuse agent changes: set Confirm or Immediate to allow them."
           )
           note(
-            "Schema changes cover tables, indexes, views, sequences, schemas, types, domains and MySQL databases, TRUNCATE, RENAME TABLE, COMMENT ON, and dropping functions, procedures and triggers. Agents cannot create or change functions, procedures or triggers, because what they run later cannot be checked: create them in the SQL editor."
+            "Schema changes cover tables, indexes, views, sequences, schemas, types, domains and MySQL databases, TRUNCATE, RENAME TABLE and COMMENT ON; on MongoDB, collections and indexes. Agents cannot create, change or drop functions, procedures or triggers, because what they run later cannot be checked and dropping one removes what it enforces: use the SQL editor. MongoDB system collections and pipelines that name another database are refused."
           )
           warning(
             "Approve only statements you have read. An agent can be steered by text stored in the database."
