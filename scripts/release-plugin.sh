@@ -5,10 +5,11 @@
 # Developer ID (hardened runtime) and notarize it. --install-dev copies it into the
 # gitignored .plugin-dev/ for tests; --publish (user-run only) uploads it to GitHub
 # and rewrites that plugin's catalog entry, leaving the other entries as they are.
-# For local-ai (not in the catalog yet, so never published): archive the DbloreLocalAI.bundle
-# plugin (loaded in the app's process) from Plugins/LocalAI, re-sign it inside out, notarize it,
-# staple it, and zip it into dist/plugins/local-ai/ with its source fingerprint (only when
-# notarized); --install-dev also fills .plugin-dev/local-ai/.
+# For local-ai: archive the DbloreLocalAI.bundle plugin (loaded in the app's process) from
+# Plugins/LocalAI, re-sign it inside out, notarize it, staple it, and zip it into
+# dist/plugins/local-ai/ with its source fingerprint (only when notarized); --install-dev also
+# fills .plugin-dev/local-ai/. Its --publish (user-run only) never rebuilds and never rewrites
+# the catalog: it uploads that zip only when it matches the catalog's local-ai entry.
 
 set -euo pipefail
 
@@ -24,6 +25,7 @@ LOCAL_AI_DIR="Plugins/LocalAI"
 LOCAL_AI_PROTOCOL="Dblore/Utilities/AI/LocalAIProtocol.swift"
 LOCAL_AI_BUNDLE="DbloreLocalAI.bundle"
 LOCAL_AI_ZIP="DbloreLocalAI.zip"
+LOCAL_AI_DIST="dist/plugins/local-ai"
 
 usage() {
   cat <<EOF
@@ -39,15 +41,19 @@ notarizes it and prints its SHA-256. Build recipes:
             notarized, writes $LOCAL_AI_ZIP and source.sha256 to dist/plugins/local-ai/
 
   --plugin <id>     Plugin id in $CATALOG (default duckdb);
-                    an id not in the catalog is refused, except local-ai
+                    an id not in the catalog is refused, except local-ai, which builds
+                    without an entry
   --install-dev     duckdb: write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
                     into .plugin-dev/ at the repo root. local-ai: write the zip, an
                     ad-hoc-signed zip and their own dev-catalog.json into .plugin-dev/local-ai/
-  --publish         Upload to GitHub release plugin-<id>-v<version> (--latest=false) and
-                    rewrite only the <id> entry of $CATALOG.
+  --publish         Upload to GitHub release plugin-<id>-v<version> (--latest=false).
                     Manual, user-run only; afterwards
                     scripts/release-local.sh --check-plugin-only verifies the asset.
-                    Refused for local-ai until catalog schema 3
+                    duckdb: builds, uploads and rewrites only the duckdb entry of the catalog.
+                    local-ai: no build, no catalog change; uploads
+                    $LOCAL_AI_DIST/$LOCAL_AI_ZIP only when its SHA-256 is the entry's,
+                    the bundle in it is signed under $TEAM_ID with the entry's cdhash,
+                    and its source.sha256 is the current source fingerprint
   --yes             Skip the interactive confirmation of --publish
   --skip-notarize   Sign only (not allowed with --publish); local-ai leaves dist/ untouched
   --print-source-fingerprint
@@ -96,38 +102,75 @@ OUT_DIR="$PWD/.plugin-dev"
 
 [[ $PUBLISH -eq 1 && $SKIP_NOTARIZE -eq 1 ]] && fail "--publish requires notarization; drop --skip-notarize"
 
-# Prints the libraryFileName of catalog entry <id>; exits non-zero when the catalog is not
-# schema version 2 or does not list <id> exactly once.
-catalog_library_file_name() {
+# Prints the kind, asset, version, sha256 and url of catalog entry <id>, plus the cdhash for a
+# bundle, tab-separated. The asset is the libraryFileName, or <Name>.zip for a <Name>.bundle.
+# Exits 3 when the catalog does not list <id>, and 1 when it is not schema version 3, lists <id>
+# twice, or the entry has an unknown kind or a missing field.
+catalog_entry() {
   python3 -I - "$1" "$2" <<'PY'
-import json, sys
+import json, re, sys
 path, plugin_id = sys.argv[1:]
 with open(path) as f:
     data = json.load(f)
-if data.get("schemaVersion") != 2 or not isinstance(data.get("plugins"), list):
-    sys.exit("not a schema version 2 catalog: " + path)
+if data.get("schemaVersion") != 3 or not isinstance(data.get("plugins"), list):
+    sys.exit("not a schema version 3 catalog: " + path)
 matches = [p for p in data["plugins"] if isinstance(p, dict) and p.get("id") == plugin_id]
+if not matches:
+    sys.exit(3)
 if len(matches) != 1:
-    sys.exit(1)
-print(matches[0]["libraryFileName"])
+    sys.exit("plugin %s is listed more than once in %s" % (plugin_id, path))
+entry = matches[0]
+kind = entry.get("kind")
+if kind == "library":
+    asset = entry.get("libraryFileName")
+elif kind == "bundle":
+    name = entry.get("bundleName")
+    if not isinstance(name, str) or not re.fullmatch(r".+\.bundle", name):
+        sys.exit("plugin %s bundleName is not <Name>.bundle in %s" % (plugin_id, path))
+    asset = name[: -len(".bundle")] + ".zip"
+else:
+    sys.exit("plugin %s has an unsupported kind in %s: %r" % (plugin_id, path, kind))
+fields = [kind, asset, entry.get("version"), entry.get("sha256"), entry.get("url")]
+if kind == "bundle":
+    fields.append(entry.get("cdhash"))
+if not all(isinstance(v, str) and re.fullmatch(r"\S+", v) for v in fields):
+    sys.exit("plugin %s has a missing or malformed field in %s" % (plugin_id, path))
+print("\t".join(fields))
 PY
 }
 
-# Sets version, url and sha256 of catalog entry <id> only, after checking them against the
-# rules of PluginCatalog.swift; its other fields and the other entries are kept as they are.
+# Sets version, url and sha256 of catalog entry <id> only (and cdhash, a 6th argument a bundle
+# needs), after checking them against the rules of PluginCatalog.swift; its other fields (kind,
+# libraryFileName, bundleName, bundleIdentifier) and the other entries are kept as they are.
 rewrite_catalog_entry() {
-  python3 -I - "$1" "$2" "$3" "$4" "$5" <<'PY'
+  python3 -I - "$@" <<'PY'
 import json, os, re, sys
-path, plugin_id, version, url, sha = sys.argv[1:]
+if len(sys.argv) not in (6, 7):
+    sys.exit("rewrite_catalog_entry: expected 5 or 6 arguments")
+path, plugin_id, version, url, sha = sys.argv[1:6]
+cdhash = sys.argv[6] if len(sys.argv) == 7 else None
 with open(path) as f:
     data = json.load(f)
-if data.get("schemaVersion") != 2 or not isinstance(data.get("plugins"), list):
-    sys.exit("not a schema version 2 catalog: " + path)
+if data.get("schemaVersion") != 3 or not isinstance(data.get("plugins"), list):
+    sys.exit("not a schema version 3 catalog: " + path)
 matches = [p for p in data["plugins"] if isinstance(p, dict) and p.get("id") == plugin_id]
 if len(matches) != 1:
     sys.exit("plugin %s is not listed exactly once in %s" % (plugin_id, path))
 entry = matches[0]
-library = entry.get("libraryFileName", "")
+kind = entry.get("kind")
+if kind == "library":
+    if cdhash is not None:
+        sys.exit("plugin %s is a library: it has no cdhash" % plugin_id)
+    library = entry.get("libraryFileName", "")
+elif kind == "bundle":
+    if cdhash is None or not re.fullmatch(r"[0-9a-f]{40}", cdhash):
+        sys.exit("plugin %s is a bundle: it needs a cdhash of 40 lowercase hex digits" % plugin_id)
+    name = entry.get("bundleName")
+    if not isinstance(name, str) or not re.fullmatch(r".+\.bundle", name):
+        sys.exit("plugin %s bundleName is not <Name>.bundle in %s" % (plugin_id, path))
+    library = name[: -len(".bundle")] + ".zip"
+else:
+    sys.exit("plugin %s has an unsupported kind in %s: %r" % (plugin_id, path, kind))
 if not re.fullmatch(r"[0-9]+(\.[0-9]+)*", version):
     sys.exit("invalid version: " + version)
 if not re.fullmatch(r"[0-9a-f]{64}", sha):
@@ -137,6 +180,8 @@ asset = r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/
 if not re.fullmatch(asset, url):
     sys.exit("url is not the release asset plugin-%s-v%s/%s: %s" % (plugin_id, version, library, url))
 entry.update({"version": version, "url": url, "sha256": sha})
+if cdhash is not None:
+    entry["cdhash"] = cdhash
 tmp = path + ".tmp"
 with open(tmp, "w") as f:
     json.dump(data, f, indent=2)
@@ -323,6 +368,73 @@ PY
   fi
 }
 
+# Offline preflight of a local-ai --publish: the catalog's local-ai entry must pin the zip in
+# dist/plugins/local-ai/ (its SHA-256, and the cdhash of the bundle in it, whose signature must
+# verify under the Team ID), and that zip must come from the current source tree.
+check_local_ai_publish() {
+  local dist_zip="$LOCAL_AI_DIST/$LOCAL_AI_ZIP" expected_url zip_sha recorded_fp current_fp
+  local unpacked bundle sig_info bundle_cdhash
+  [[ "$ENTRY_KIND" == "bundle" ]] || fail "plugin local-ai is a $ENTRY_KIND in $CATALOG, not a bundle"
+  [[ "$ASSET_NAME" == "$LOCAL_AI_ZIP" ]] ||
+    fail "$CATALOG names the asset $ASSET_NAME for local-ai; the build produces $LOCAL_AI_ZIP"
+  [[ "$ENTRY_VERSION" == "$PLUGIN_VERSION" ]] ||
+    fail "the local-ai entry of $CATALOG is version $ENTRY_VERSION; $LOCAL_AI_DIR/project.yml is $PLUGIN_VERSION"
+  expected_url="https://github.com/$REPO/releases/download/$TAG/$LOCAL_AI_ZIP"
+  [[ "$ENTRY_URL" == "$expected_url" ]] ||
+    fail "the local-ai url in $CATALOG is $ENTRY_URL; the upload lands at $expected_url"
+  [[ "$ENTRY_CDHASH" =~ ^[0-9a-f]{40}$ ]] || fail "the local-ai cdhash in $CATALOG is not 40 lowercase hex digits"
+  [[ -f "$dist_zip" ]] ||
+    fail "$dist_zip not found; a rebuild gives a new zip, so its sha256 and cdhash go into $CATALOG first"
+  [[ -f "$LOCAL_AI_DIST/source.sha256" ]] || fail "$LOCAL_AI_DIST/source.sha256 not found"
+  zip_sha=$(shasum -a 256 "$dist_zip" | awk '{ print $1 }')
+  [[ "$zip_sha" == "$ENTRY_SHA256" ]] ||
+    fail "SHA-256 mismatch: $dist_zip is $zip_sha, the local-ai entry of $CATALOG pins $ENTRY_SHA256; nothing was published"
+  # Unpacked into WORK_DIR, which the EXIT trap deletes when a check fails.
+  WORK_DIR=$(mktemp -d -t dblore-plugin)
+  unpacked="$WORK_DIR/unpacked"
+  mkdir "$unpacked"
+  ditto -x -k "$dist_zip" "$unpacked" || fail "cannot unpack $dist_zip; nothing was published"
+  [[ "$(ls -A "$unpacked")" == "$LOCAL_AI_BUNDLE" ]] ||
+    fail "$dist_zip does not hold exactly $LOCAL_AI_BUNDLE; nothing was published"
+  bundle="$unpacked/$LOCAL_AI_BUNDLE"
+  codesign --verify --strict --deep "$bundle" ||
+    fail "codesign --verify --strict --deep failed for $LOCAL_AI_BUNDLE in $dist_zip; nothing was published"
+  sig_info=$(codesign -dvvv "$bundle" 2>&1) ||
+    fail "cannot read the signature of $LOCAL_AI_BUNDLE in $dist_zip; nothing was published"
+  grep -qx "TeamIdentifier=$TEAM_ID" <<<"$sig_info" ||
+    fail "the signature TeamIdentifier of $LOCAL_AI_BUNDLE in $dist_zip is not $TEAM_ID; nothing was published"
+  bundle_cdhash=$(sed -n 's/^CDHash=//p' <<<"$sig_info")
+  [[ "$bundle_cdhash" == "$ENTRY_CDHASH" ]] ||
+    fail "cdhash mismatch: $LOCAL_AI_BUNDLE in $dist_zip is ${bundle_cdhash:-unreadable}, the local-ai entry of $CATALOG pins $ENTRY_CDHASH; nothing was published"
+  rm -rf "$WORK_DIR"
+  WORK_DIR=""
+  recorded_fp=$(<"$LOCAL_AI_DIST/source.sha256")
+  current_fp=$(local_ai_source_fingerprint)
+  [[ "$recorded_fp" == "$current_fp" ]] ||
+    fail "source fingerprint mismatch: $dist_zip was built from $recorded_fp, the tree is now $current_fp (scripts/release-plugin.sh --print-source-fingerprint); nothing was published"
+  echo "local-ai: $dist_zip matches $CATALOG (sha256 $zip_sha, cdhash $bundle_cdhash, source fingerprint $current_fp)"
+}
+
+# Uploads exactly the checked dist zip to release $TAG; the catalog is not touched.
+publish_local_ai() {
+  local zip zip_sha
+  WORK_DIR=$(mktemp -d -t dblore-plugin)
+  zip="$WORK_DIR/$LOCAL_AI_ZIP"
+  cp "$LOCAL_AI_DIST/$LOCAL_AI_ZIP" "$zip"
+  zip_sha=$(shasum -a 256 "$zip" | awk '{ print $1 }')
+  [[ "$zip_sha" == "$ENTRY_SHA256" ]] ||
+    fail "$LOCAL_AI_DIST/$LOCAL_AI_ZIP changed after the preflight ($zip_sha); nothing was published"
+  echo "==> Publishing GitHub release $TAG"
+  # --latest=false keeps releases/latest pointing at the app DMG.
+  gh release create "$TAG" "$zip" \
+    --repo "$REPO" --latest=false \
+    --title "On-device AI plugin $PLUGIN_VERSION" \
+    --notes "$LOCAL_AI_BUNDLE $PLUGIN_VERSION, signed with Developer ID ($TEAM_ID), notarized and stapled. $LOCAL_AI_ZIP sha256: $zip_sha, bundle cdhash: $ENTRY_CDHASH" ||
+    fail "gh release create failed; the catalog was not changed"
+  echo "release: $(gh release view "$TAG" --repo "$REPO" --json url -q .url)"
+  echo "$CATALOG is unchanged; run scripts/release-local.sh --check-plugin-only --plugin local-ai"
+}
+
 if [[ $PRINT_SOURCE_FINGERPRINT -eq 1 ]]; then
   local_ai_source_fingerprint
   exit 0
@@ -330,23 +442,36 @@ fi
 
 [[ "$PLUGIN_ID" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid plugin id: $PLUGIN_ID"
 [[ -f "$CATALOG" ]] || fail "$CATALOG not found"
-# local-ai gets its catalog entry with catalog schema 3
-if [[ "$PLUGIN_ID" != "local-ai" ]]; then
-  LIBRARY_FILE_NAME=$(catalog_library_file_name "$CATALOG" "$PLUGIN_ID") ||
+# local-ai builds without a catalog entry; only its --publish reads one
+if [[ "$PLUGIN_ID" != "local-ai" || $PUBLISH -eq 1 ]]; then
+  entry_status=0
+  entry=$(catalog_entry "$CATALOG" "$PLUGIN_ID") || entry_status=$?
+  if [[ $entry_status -eq 3 ]]; then
+    [[ "$PLUGIN_ID" == "local-ai" ]] &&
+      fail "plugin local-ai is not in $CATALOG; add the local-ai entry first"
     fail "plugin $PLUGIN_ID is not in $CATALOG"
+  fi
+  [[ $entry_status -eq 0 ]] || fail "the $PLUGIN_ID entry of $CATALOG is not usable"
+  IFS=$'\t' read -r ENTRY_KIND ASSET_NAME ENTRY_VERSION ENTRY_SHA256 ENTRY_URL ENTRY_CDHASH <<<"$entry"
 fi
 
 case "$PLUGIN_ID" in
   duckdb)
     PLUGIN_VERSION="$DUCKDB_VERSION"
+    [[ "$ENTRY_KIND" == "library" ]] || fail "plugin duckdb is a $ENTRY_KIND in $CATALOG, not a library"
+    LIBRARY_FILE_NAME="$ASSET_NAME"
     [[ "$LIBRARY_FILE_NAME" == "libduckdb.dylib" ]] ||
       fail "$CATALOG names $LIBRARY_FILE_NAME for duckdb; the build produces libduckdb.dylib"
+    PUBLISH_SUMMARY="uploads $LIBRARY_FILE_NAME to it and rewrites the $PLUGIN_ID entry of $CATALOG."
     ;;
   local-ai)
-    [[ $PUBLISH -eq 1 ]] && fail "local-ai publishing arrives with catalog schema 3"
     PLUGIN_VERSION=$(awk '$1 == "MARKETING_VERSION:" { print $2 }' "$LOCAL_AI_DIR/project.yml")
     [[ "$PLUGIN_VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]] ||
       fail "$LOCAL_AI_DIR/project.yml needs exactly one MARKETING_VERSION (got: $PLUGIN_VERSION)"
+    if [[ $PUBLISH -eq 1 ]]; then
+      [[ $INSTALL_DEV -eq 0 ]] || fail "--publish --plugin local-ai never rebuilds; drop --install-dev"
+      PUBLISH_SUMMARY="uploads $LOCAL_AI_DIST/$LOCAL_AI_ZIP to it; $CATALOG is not changed."
+    fi
     ;;
   *)
     fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb and local-ai have one)"
@@ -361,13 +486,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> Preflight"
-identities=$(security find-identity -v -p codesigning)
-grep -qF "$SIGN_IDENTITY" <<<"$identities" || fail "signing identity not found: $SIGN_IDENTITY"
+if [[ "$PLUGIN_ID" == "local-ai" && $PUBLISH -eq 1 ]]; then
+  check_local_ai_publish
+fi
 
-if [[ $SKIP_NOTARIZE -eq 0 ]]; then
-  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 ||
-    fail "notary profile $NOTARY_PROFILE not found (or use --skip-notarize)"
+echo "==> Preflight"
+# A local-ai --publish signs and notarizes nothing
+if [[ "$PLUGIN_ID" != "local-ai" || $PUBLISH -eq 0 ]]; then
+  identities=$(security find-identity -v -p codesigning)
+  grep -qF "$SIGN_IDENTITY" <<<"$identities" || fail "signing identity not found: $SIGN_IDENTITY"
+
+  if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+    xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 ||
+      fail "notary profile $NOTARY_PROFILE not found (or use --skip-notarize)"
+  fi
 fi
 
 if [[ $PUBLISH -eq 1 ]]; then
@@ -379,7 +511,7 @@ if [[ $PUBLISH -eq 1 ]]; then
 
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 !! --publish creates a PUBLIC GitHub release $TAG on $REPO,
-!! uploads $LIBRARY_FILE_NAME to it and rewrites the $PLUGIN_ID entry of $CATALOG.
+!! $PUBLISH_SUMMARY
 !! Every user installing the $PLUGIN_ID plugin downloads this file.
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
@@ -392,7 +524,11 @@ EOF
 fi
 
 if [[ "$PLUGIN_ID" == "local-ai" ]]; then
-  release_local_ai
+  if [[ $PUBLISH -eq 1 ]]; then
+    publish_local_ai
+  else
+    release_local_ai
+  fi
   echo "==> Done"
   exit 0
 fi

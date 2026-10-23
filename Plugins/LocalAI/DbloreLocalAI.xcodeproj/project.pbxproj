@@ -12,11 +12,13 @@
 		C257549AB5EFE6CFCBA723F8 /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 718955FD6171A9D6164186BC /* MLXHuggingFace */; };
 		CB4E57A6B881A4A4C6C246C5 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 3D53613F0F6E0E93C3CB6276 /* Tokenizers */; };
 		DFCA88D40E97566E6EB7DD5D /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 1906D8053EEA9C1149A87EA2 /* MLXLLM */; };
+		E3E8AE747BF8614105BBE47E /* LocalAIProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE71A6BEAD38251AA83F78A /* LocalAIProtocol.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		5A9885DA83BE76FCAB6172D9 /* DbloreLocalAI.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreLocalAI.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		624CB3E9E8FDF5D19171E092 /* LocalAIEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAIEntry.swift; sourceTree = "<group>"; };
+		7AE71A6BEAD38251AA83F78A /* LocalAIProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAIProtocol.swift; sourceTree = "<group>"; };
 		DF3E3BCAFA0348B643E6A7C4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -35,6 +37,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		034D6EF183230D640B932488 /* Dblore */ = {
+			isa = PBXGroup;
+			children = (
+				0F6298E75D1500DDDE3A43C3 /* Dblore */,
+			);
+			name = Dblore;
+			path = ../..;
+			sourceTree = "<group>";
+		};
+		0F6298E75D1500DDDE3A43C3 /* Dblore */ = {
+			isa = PBXGroup;
+			children = (
+				AE817B7AB3895413418C7012 /* Utilities */,
+			);
+			path = Dblore;
+			sourceTree = "<group>";
+		};
 		5701CE5ED4F466B77EAA9CD0 /* DbloreLocalAI */ = {
 			isa = PBXGroup;
 			children = (
@@ -47,9 +66,26 @@
 		6882B8216EC657531260B56E = {
 			isa = PBXGroup;
 			children = (
+				034D6EF183230D640B932488 /* Dblore */,
 				5701CE5ED4F466B77EAA9CD0 /* DbloreLocalAI */,
 				FAF91D5E484357E0D05B5E3D /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		AE817B7AB3895413418C7012 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				E0BE5DC4271CB2B1A982189D /* AI */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		E0BE5DC4271CB2B1A982189D /* AI */ = {
+			isa = PBXGroup;
+			children = (
+				7AE71A6BEAD38251AA83F78A /* LocalAIProtocol.swift */,
+			);
+			path = AI;
 			sourceTree = "<group>";
 		};
 		FAF91D5E484357E0D05B5E3D /* Products */ = {
@@ -129,6 +165,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				79B10690A13371AB38B1E128 /* LocalAIEntry.swift in Sources */,
+				E3E8AE747BF8614105BBE47E /* LocalAIProtocol.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

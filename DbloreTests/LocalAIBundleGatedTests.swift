@@ -1,7 +1,9 @@
 // LocalAIBundleGatedTests.swift
 // The On-device AI plugin bundle loads in process from the sandboxed test host: the notarized
 // bundle the host unpacks itself (so the sandbox quarantines it) passes PluginLoader.loadBundle,
-// exports its two C entry points, and answers hello and gpuProbe through the C callback.
+// exports its two C entry points, and answers hello and gpuProbe through the C callback. The
+// shipped catalog's local-ai entry pins that notarized zip, which installs with that entry through
+// PluginManager with the production verifier.
 
 import Darwin
 import Foundation
@@ -9,7 +11,8 @@ import Testing
 
 @testable import Dblore
 
-/// The loaded bundle stays in the test process until it exits, so this suite holds one test.
+/// The loaded bundle stays in the test process until it exits, so only one case loads it; the
+/// install case unpacks and verifies another copy but never loads it.
 @Suite(.serialized, .requiresLocalAIPlugin) struct LocalAIBundleGatedTests {
   private typealias ProtocolFunction = @convention(c) () -> Int32
   private typealias Emit = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>) -> Void
@@ -20,6 +23,7 @@ import Testing
 
   private struct DevCatalog: Decodable {
     let version: String
+    let sha256: String
     let cdhash: String
     let bundleName: String
     let notarized: Bool
@@ -57,6 +61,9 @@ import Testing
       }
     }
   }
+
+  /// Constant; the dev catalog does not carry it.
+  private static let bundleIdentifier = "ace.thi.Dblore.LocalAI"
 
   private static let pluginDev = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
@@ -152,5 +159,50 @@ import Testing
     #expect(gpuEvent["event"] as? String == "gpu")
     #expect(gpuEvent["ok"] as? Bool == true)
     #expect((gpuEvent["value"] as? NSNumber)?.doubleValue == 12)
+  }
+
+  /// Guards the shipped pins and the real install path: the local-ai entry of the bundled
+  /// PluginCatalog.json pins the notarized artifact (its version, zip SHA-256, bundle name,
+  /// identifier and cdhash), and with that entry the notarized zip installs through PluginManager
+  /// with the production verifier (Team ID, pinned cdhash, sealed resources) at
+  /// `local-ai/<version>/<bundleName>`, and a fresh manager's launch check reads it as installed.
+  /// The root is a per-run folder in the container's Application Support, where the real one lives.
+  @MainActor @Test func notarizedZipInstallsWithTheProductionVerifier() async throws {
+    let catalog = try Self.devCatalog()
+    let zip = try Data(contentsOf: Self.pluginDev.appendingPathComponent("DbloreLocalAI.zip"))
+    let support = try #require(
+      FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+    let parent = support.appendingPathComponent("Dblore/Plugins/local-ai-test", isDirectory: true)
+    let root = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer {
+      try? FileManager.default.removeItem(at: root)
+      // Only removed when no other run's root is left in it.
+      rmdir(parent.path)
+    }
+    // The shipped entry itself, not one rebuilt from the dev catalog: a stale or mistyped pin
+    // fails here rather than in every user's install.
+    let entry = try #require(PluginCatalog.bundled().entry(id: "local-ai"))
+    #expect(entry.sha256 == catalog.sha256)
+    #expect(entry.version == catalog.version)
+    #expect(
+      entry.kind
+        == .bundle(
+          name: catalog.bundleName, identifier: Self.bundleIdentifier, cdhash: catalog.cdhash))
+    PluginStubURLProtocol.respond(with: zip)
+    let manager = PluginManager(
+      entry: entry, root: root, session: PluginStubURLProtocol.makeSession())
+    await manager.refresh()
+    #expect(manager.state == .notInstalled)
+
+    await manager.install()
+
+    #expect(manager.isInstalled, "\(manager.state)")
+    #expect(
+      manager.installedURL?.path
+        == root.path + "/local-ai/\(catalog.version)/\(catalog.bundleName)")
+    let fresh = PluginManager(
+      entry: entry, root: root, session: PluginStubURLProtocol.makeSession())
+    await fresh.refresh()
+    #expect(fresh.isInstalled, "\(fresh.state)")
   }
 }

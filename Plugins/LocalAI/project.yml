@@ -36,6 +36,8 @@ targets:
     platform: macOS
     sources:
       - path: DbloreLocalAI
+      # Protocol v1 has one definition, owned by the app; the plugin compiles the app's file
+      - path: ../../Dblore/Utilities/AI/LocalAIProtocol.swift
     info:
       path: DbloreLocalAI/Info.plist
       properties:
