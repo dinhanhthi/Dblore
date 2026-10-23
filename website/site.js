@@ -171,3 +171,37 @@
     close();
   });
 })();
+
+// Screenshot strip: show two rows of thumbnails. The last one shown says "+N" for the rest, which
+// stay in the lightbox; clicking it opens that screenshot.
+(() => {
+  const strip = document.querySelector(".shots");
+  if (!strip) return;
+  const shots = [...strip.querySelectorAll(".shot")];
+  const label = shots[0]?.getAttribute("aria-label") ?? "";
+
+  const layout = () => {
+    shots.forEach((shot) => (shot.hidden = false));
+    // Collapsed auto-fit tracks report 0px, so count only the real columns.
+    const columns = getComputedStyle(strip)
+      .gridTemplateColumns.split(" ")
+      .filter((track) => parseFloat(track) > 0).length;
+    const shown = Math.min(shots.length, Math.max(columns, 1) * 2);
+    const more = shots.length - shown;
+    shots.forEach((shot, i) => {
+      shot.hidden = i >= shown;
+      const last = more > 0 && i === shown - 1;
+      shot.classList.toggle("shot--more", last);
+      if (last) {
+        shot.dataset.more = `+${more}`;
+        shot.setAttribute("aria-label", `${label}, ${more} more in the viewer`);
+      } else {
+        delete shot.dataset.more;
+        shot.setAttribute("aria-label", label);
+      }
+    });
+  };
+
+  layout();
+  new ResizeObserver(layout).observe(strip);
+})();
