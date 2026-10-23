@@ -27,7 +27,7 @@ struct DataRewindPanel: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .focusedSceneValue(\.openDataRewindAction, openAction)
+      .bridgedFocusedSceneValue(\.openDataRewindAction, openAction)
       .sidePanelOverlay(isPresented: isPresented, width: DataRewindSheet.panelWidth) {
         if let request = workspaceManager.dataRewind {
           DataRewindSheet(

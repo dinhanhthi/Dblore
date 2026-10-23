@@ -233,10 +233,12 @@ nonisolated struct ExportOptions: Equatable, Sendable {
 
 extension DataExporter {
   /// Sensitive columns, then nulls, then line breaks and formula prefixes when that format offers them.
+  /// Column names are text, so they get the same formula prefix as text cells.
   static func applying(_ options: ExportOptions, to result: CellResult) -> CellResult {
     let emptyNulls = options.emptiesNulls
     let flatten = options.convertLineBreaksToSpace && options.format.offersLineBreakToSpace
     let sanitize = options.sanitizeFormulas && options.format.offersFormulaSanitize
+    let splitsFields = options.format.offersQuote && options.quote == .never
     if options.redactedColumns.isEmpty && !emptyNulls && !flatten && !sanitize {
       return result
     }
@@ -253,13 +255,20 @@ extension DataExporter {
           next = flatteningLineBreaks(next)
         }
         if sanitize {
-          next = sanitizingFormula(next)
+          next = sanitizingFormula(next, splitsFields: splitsFields)
         }
         return next
       }
     }
+    let columns =
+      sanitize
+      ? result.columns.map { column in
+        ColumnInfo(
+          name: prefixedIfFormula(column.name, splitsFields: splitsFields), type: column.type,
+          origin: column.origin, sourceName: column.sourceName)
+      } : result.columns
     return CellResult(
-      columns: result.columns,
+      columns: columns,
       rows: rows,
       executionTime: result.executionTime,
       rowCount: rows.count,
@@ -297,22 +306,44 @@ extension DataExporter {
       .replacingOccurrences(of: "\r", with: " ")
   }
 
-  /// A leading `=`, `+`, `-`, `@`, tab, or CR marks a spreadsheet formula. Numbers stay numbers.
-  private static func sanitizingFormula(_ value: CellValue) -> CellValue {
+  /// A first unicode scalar `=`, `+`, `-`, `@`, tab, CR, or LF marks a spreadsheet formula, so
+  /// CRLF and a starter with a combining mark count. Numbers stay numbers. `splitsFields`
+  /// (unquoted CSV) also checks each field start inside the value: after a line break, where a
+  /// reader begins a new row, and after a comma, where it begins a new field.
+  static func sanitizingFormula(_ value: CellValue, splitsFields: Bool) -> CellValue {
     switch value {
     case .string(let text):
-      return .string(prefixedIfFormula(text))
+      return .string(prefixedIfFormula(text, splitsFields: splitsFields))
     case .json(let text):
-      return .json(prefixedIfFormula(text))
+      return .json(prefixedIfFormula(text, splitsFields: splitsFields))
     default:
       return value
     }
   }
 
-  private static let formulaStarters: Set<Character> = ["=", "+", "-", "@", "\t", "\r"]
+  private static let formulaStarters: Set<Unicode.Scalar> = ["=", "+", "-", "@", "\t", "\r", "\n"]
 
-  private static func prefixedIfFormula(_ text: String) -> String {
-    guard let first = text.first, formulaStarters.contains(first) else { return text }
-    return "'" + text
+  /// A leading space is not a starter. Inside the value a CR or LF only moves the field start,
+  /// so a CRLF is never split and a blank line is not prefixed. With `splitsFields`, a field
+  /// start that is a double quote is prefixed too, so a reader never strips it as quoting.
+  static func prefixedIfFormula(_ text: String, splitsFields: Bool) -> String {
+    guard splitsFields else {
+      guard let first = text.unicodeScalars.first, formulaStarters.contains(first) else {
+        return text
+      }
+      return "'" + text
+    }
+    var result = ""
+    var atFieldStart = false
+    for (index, scalar) in text.unicodeScalars.enumerated() {
+      let isBreak = scalar == "\r" || scalar == "\n"
+      let isStarter = formulaStarters.contains(scalar) || scalar == "\""
+      if isStarter && (index == 0 || (atFieldStart && !isBreak)) {
+        result.unicodeScalars.append("'")
+      }
+      result.unicodeScalars.append(scalar)
+      atFieldStart = isBreak || scalar == ","
+    }
+    return result
   }
 }

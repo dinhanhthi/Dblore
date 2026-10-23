@@ -74,7 +74,7 @@ struct TablePlusImporterTests {
     #expect(prod.config.sshTunnel == nil)
     #expect(prod.password == nil)
     #expect(prod.source == .tablePlus)
-    #expect(prod.warnings == [TablePlusImporter.passwordWarning])
+    #expect(prod.warnings.isEmpty)
     let unnamed = try #require(result.connections.first { $0.config.host == "localhost" })
     #expect(unnamed.config.name == "bob@localhost/postgres")
     #expect(unnamed.config.port == 5432)
@@ -119,7 +119,7 @@ struct TablePlusImporterTests {
     let maria = try #require(result.connections.first { $0.config.name == "Maria" })
     #expect(maria.config.databaseType == .mysql)
     #expect(maria.config.port == 3306)
-    #expect(maria.warnings == [TablePlusImporter.passwordWarning])
+    #expect(maria.warnings.isEmpty)
   }
 
   @Test("maps tLSMode 0 to prefer and warns on a mode it cannot map")
@@ -134,7 +134,7 @@ struct TablePlusImporterTests {
 
     let first = try #require(result.connections.first { $0.config.name == "A" })
     #expect(first.config.sslMode == .prefer)
-    #expect(first.warnings == [TablePlusImporter.passwordWarning])
+    #expect(first.warnings.isEmpty)
     let second = try #require(result.connections.first { $0.config.name == "B" })
     #expect(second.config.sslMode == .prefer)
     #expect(second.warnings.contains { $0.contains("TLS mode") })

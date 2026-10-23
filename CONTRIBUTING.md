@@ -72,6 +72,23 @@ exact revision, never a branch or a version range. To change the driver (maintai
    no other pin moved, and run the MySQL suites (`TEST_RUNNER_MYSQL_TESTS=1`, containers from
    `docker/mysql`) before committing.
 
+The MySQL full-authentication guard (`Dblore/Database/MySQL/MySQLFullAuthGuard.swift`) depends
+on this fork's pipeline layout: the fork appends its codec and connection handler at `.last`
+and puts `NIOSSLClientHandler` at `.first`, so the guard, added before
+`MySQLConnection.connect(over:)`, sees decrypted packets before the packet decoder. Check
+that layout, and the guard's tests, whenever you bump the fork.
+
+## Connection scripts
+
+A connection can run scripts before connecting, after disconnecting and as a password
+command. They run through `NSUserUnixTask` (`Dblore/Utilities/ConnectionScriptRunner.swift`)
+from `~/Library/Application Scripts/ace.thi.Dblore`, the only place a sandboxed app may run
+user scripts: a script is a plain file name in that folder, never a path. Scripts receive
+host, port, user and database as arguments (refused if one starts with `-` or holds a control
+character). `NSUserUnixTask` cannot stop a script, so a timed-out script is abandoned, still
+running. Do not log script output or the password command's result. Dblore has no socket
+entitlement (only network client and server): PostgreSQL Unix sockets are not supported.
+
 ## Markdown editor bundle
 
 The WYSIWYG preview of Markdown notes runs [Milkdown](https://milkdown.dev) in a
@@ -142,6 +159,11 @@ locally with `python3 -m http.server -d website`. Pushes to `main` that touch `w
 deploy it through `.github/workflows/pages.yml`, which also publishes `appcast.xml` (the
 Sparkle update feed), so keep that file at the repo root.
 
+- **Features catalog:** every entry of `website/features-data.js` needs a stable, unique
+  numeric `id` (never reused or renumbered), a `version` that is a released tag, the project
+  version, `Unreleased` or `Unknown`, existing `sources`, a `commit` and `evidence`.
+  `node --test website/features.test.js` enforces this; never weaken that test to make an entry
+  pass.
 - **One-time setup (manual):** Settings > Pages > Source = "GitHub Actions" (keep it set,
   otherwise the Sparkle feed breaks). For the custom domain `dblore.dinhanhthi.com`, add a
   DNS CNAME record `dblore` -> `dinhanhthi.github.io`, then set the custom domain in

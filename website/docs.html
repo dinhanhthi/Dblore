@@ -86,19 +86,24 @@
             <ul>
               <li><a href="#install">Install</a></li>
               <li><a href="#connect">Connect</a></li>
+              <li><a href="#connection-scripts">Connection scripts</a></li>
               <li><a href="#workspaces">Workspaces &amp; tabs</a></li>
               <li><a href="#notebooks">Notebooks</a></li>
               <li><a href="#editor">SQL editor</a></li>
+              <li><a href="#snippets">SQL snippets</a></li>
               <li><a href="#sidebar">Sidebar</a></li>
               <li><a href="#results">Results grid</a></li>
               <li><a href="#mongodb">MongoDB</a></li>
               <li><a href="#structure">Structure editor</a></li>
+              <li><a href="#schema-compare">Compare Schemas</a></li>
               <li><a href="#charts">Charts</a></li>
               <li><a href="#export">Export</a></li>
               <li><a href="#import">Import data</a></li>
               <li><a href="#safe-mode">Safe Mode</a></li>
               <li><a href="#ai">AI assistant</a></li>
               <li><a href="#mcp">MCP server</a></li>
+              <li><a href="#mcp-write">MCP write tools</a></li>
+              <li><a href="#outside-mcp">Outside MCP servers</a></li>
               <li><a href="#plugins">Plugins</a></li>
               <li><a href="#settings">Settings &amp; data</a></li>
             </ul>
@@ -121,6 +126,7 @@
             <li><strong>PostgreSQL:</strong> host, port, user, database. SSL modes from <code>disable</code> to <code>verify-full</code>, timeouts, retry on failure, read-only mode.</li>
             <li><strong>MySQL and MariaDB:</strong> host, port, user and database (required; the sidebar shows only that database). Direct or through an SSH tunnel. Users with <code>caching_sha2_password</code> or <code>mysql_native_password</code>; <code>sha256_password</code> and MariaDB ed25519 are not supported.</li>
             <li><strong>MySQL SSL:</strong> only <strong>Verify CA</strong> and <strong>Verify Full</strong> check the server certificate. Allow, Prefer and Require encrypt the connection without checking it, so on an untrusted network an active attacker could read the traffic and the password. Allow and Prefer also fall back to plain text when the server offers no SSL. A client certificate needs Require, Verify CA or Verify Full.</li>
+            <li><strong>MySQL full password:</strong> when the server asks for the full password (<code>caching_sha2_password</code> with no cached login) and the connection does not verify the server's certificate, Dblore stops instead of sending it and says to choose Verify CA or Verify Full. A direct connection to <code>127.0.0.1</code>, <code>::1</code> or <code>localhost</code> is exempt.</li>
             <li><strong>SSH tunnel</strong> (PostgreSQL, MySQL, MariaDB and MongoDB; MongoDB takes a single host, no <code>mongodb+srv://</code>): password or ed25519/ECDSA private key (RSA is not supported). A key passphrase is never stored. The first connection asks you to trust the host key; a changed host key blocks the connection.</li>
             <li><strong>Client certificate:</strong> authenticate with a certificate, keep its passphrase in the Keychain and pick a custom certificate authority. A custom CA also works on its own, without a certificate.</li>
             <li>Statement, lock and idle-in-transaction timeouts: global in <strong>Settings &gt; Results</strong>, overridable per connection.</li>
@@ -128,9 +134,23 @@
             <li><strong>MongoDB:</strong> a <code>mongodb://</code> or <code>mongodb+srv://</code> string, or the form. See <a href="#mongodb">MongoDB</a>.</li>
             <li><strong>SQLite:</strong> pick a file in the connect modal. Features the engine cannot support are hidden.</li>
             <li><strong>DuckDB:</strong> needs the <a href="#plugins">plugin</a>.</li>
-            <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL, <code>mysql://</code> or <code>mariadb://</code> URI, DBeaver (with saved passwords), TablePlus and DataGrip. Preview and pick before importing; duplicates are flagged.</li>
+            <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL, <code>mysql://</code> or <code>mariadb://</code> URI, DBeaver (with saved passwords), TablePlus and DataGrip, and a Dblore connections file. Preview and pick before importing; duplicates are flagged.</li>
+            <li><strong>Export connections:</strong> the welcome screen's Connections tab exports chosen connections, and optionally an open workspace's favorites, to a Dblore file. Passwords, SSH secrets, keys, certificates and file databases are never exported. On import, connections already saved are skipped, a connection string pointing at other hosts is dropped, SSH tunnels and weaker settings are flagged, and favorites go into one folder without duplicates.</li>
+            <li><strong>Scripts:</strong> a connection can run your own scripts and get its password from a command. See <a href="#connection-scripts">Connection scripts</a>.</li>
             <li>The welcome screen lists saved and recent connections (up to 50). Hover a card to remove it.</li>
             <li>The footer shows the connection name, the Safe Mode cues and a <strong>No SSL</strong> badge when the connection is not encrypted. A MySQL connection encrypted without a checked certificate shows <strong>Unverified SSL</strong>.</li>
+</ul>
+          </section>
+
+          <section id="connection-scripts" class="doc">
+            <h2>Connection scripts</h2>
+<ul class="list">
+            <li>The <strong>Scripts</strong> section of the connection form picks up to three scripts: <strong>Before connecting</strong> runs first, and a failure stops the connect; <strong>Password command</strong> prints the password on its first output line, used for that connect only and never saved (engines that use a password); <strong>After disconnecting</strong> runs once the connection is closed, or when the connect fails after the first script. Quitting Dblore runs the after-disconnect scripts.</li>
+            <li>Scripts live in <code>~/Library/Application Scripts/ace.thi.Dblore</code>, the only folder macOS lets Dblore run your scripts from. <strong>Open Scripts Folder</strong> opens it in Finder, creating it when missing. A script is a plain file name in that folder: anything that resolves outside it is refused.</li>
+            <li>Arguments: the connection's host, port, user and database, in that order. Quote them in your script and pass <code>--</code> before them to other commands. A host, user or database that starts with <code>-</code> or holds a control character is refused, and the script does not run.</li>
+            <li><strong>Script timeout</strong>: 1 to 300 seconds, 30 by default. A script that times out keeps running: macOS gives Dblore no way to stop it.</li>
+            <li>Scripts run with your own environment, outside the app sandbox. Their output is never logged or stored, since a password command prints a secret. Only a before-connect failure shows the start of its error output, in the message to you; logs see the script name and exit status only.</li>
+            <li>Imported connections never bring scripts with them: choose them in the connection form.</li>
 </ul>
           </section>
 
@@ -170,6 +190,18 @@
             <li>Table- and column-aware autocomplete: <kbd>Up</kbd> / <kbd>Down</kbd> to choose, <kbd>Enter</kbd> or <kbd>Tab</kbd> to accept.</li>
             <li>Toggle comment with <kbd>Cmd+/</kbd>. Format SQL, word wrap and syntax highlight toggles sit in the editor toolbar.</li>
             <li>Explain with <kbd>Cmd+E</kbd>, Explain Analyze with <kbd>Cmd+Shift+E</kbd> (runs the statement, so it asks first).</li>
+            <li>Snippets: type a trigger word and accept it from autocomplete. See <a href="#snippets">SQL snippets</a>.</li>
+</ul>
+          </section>
+
+          <section id="snippets" class="doc">
+            <h2>SQL snippets</h2>
+<ul class="list">
+            <li>Write snippets in <strong>Settings &gt; Editor &gt; Snippets</strong>: <strong>Add snippet</strong>, then a name, a trigger and a body, with a preview. Up to 200 snippets.</li>
+            <li>Trigger: 1 to 32 letters, digits, underscores or hyphens, unique. Type it in a SQL editor; autocomplete offers the snippet, and accepting it inserts the body in place of the trigger.</li>
+            <li>In the body, <code>${1:default}</code> is tab stop 1 with its default text, <code>${1}</code> an empty tab stop, <code>$0</code> where the caret ends (the end of the text when there is none) and <code>\$</code> a literal dollar sign. A bare <code>$1</code> stays as written, so PostgreSQL parameters are safe.</li>
+            <li><kbd>Tab</kbd> moves to the next tab stop and <kbd>Shift+Tab</kbd> to the previous one, in number order. Reaching the final caret, or moving the caret out of the current stop (a click, an arrow key), ends the snippet.</li>
+            <li>Snippets are local data: <strong>Settings &gt; Data</strong> exports and clears them with the rest.</li>
 </ul>
           </section>
 
@@ -182,7 +214,11 @@
             <li>Type in the filter field of a tab for a loose fuzzy match.</li>
             <li>Favorites: save SQL snippets in folders, double-click to insert.</li>
             <li>History: every query is recorded locally. Filter by status, or show only writes. Search also matches the source or kind badge, such as "AI Assistant".</li>
-            <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle.</li>
+            <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle. It can copy or save the tables shown as Mermaid or Graphviz DOT.</li>
+            <li>PostgreSQL: <strong>Sequences</strong> and <strong>Types</strong> sections (enums, domains and composite types), loaded when opened, with Show DDL and Copy Name.</li>
+            <li>Folders: group tables and views into folders per connection with <strong>Move to Folder</strong> or a drag; rename or delete a folder from its menu. The eye menu hides schemas you do not use from the sidebar; SQL, autocomplete and search still see them.</li>
+            <li><strong>Find a value in every table</strong>: the button next to the schema filter (or the command palette) searches the text of every column in up to 500 tables, one at a time on a separate read-only connection, with Contains or Equals, 50 rows and 10 seconds per table, and Cancel. Click a match to open the table filtered to it. PostgreSQL, MySQL/MariaDB and SQLite.</li>
+            <li><strong>Query Insights</strong>: the History tab's chart button groups the queries you ran by shape (values replaced by <code>?</code>, <code>IN</code> lists folded) over 24 hours, 7 or 30 days, per connection: runs, average, p95 and slowest time, error rate and last run, sortable, with Open in Editor.</li>
             <li>Right sidebar (<kbd>Cmd+Shift+B</kbd>) shows cell details, column filters and highlights.</li>
 </ul>
           </section>
@@ -201,6 +237,11 @@
             <li><strong>Add Row</strong> in the grid menu opens a form in the right sidebar: one field per column, a NULL button, checked against the column type. An empty field is left out of the <code>INSERT</code>, and Add stages the row.</li>
             <li><strong>Settings &gt; Results &gt; Color Values by Type</strong> shows numbers, text, dates, booleans and JSON in their own soft colors.</li>
             <li>View Query shows the exact SQL sent, including the row limit.</li>
+            <li><strong>Several cells at once:</strong> select rows, then right-click a column. <strong>Set Value…</strong> writes the same text, NULL or DEFAULT (PostgreSQL and MySQL) into every selected cell; <strong>Generate UUID</strong> / <strong>Generate UUIDv7</strong> writes a different UUID into each one (uuid, text and long enough character columns). One staged change, one Undo.</li>
+            <li><strong>Copy:</strong> Copy as Markdown in the grid menu, and <strong>Settings &gt; Results &gt; Copy rows as</strong> chooses what <kbd>Cmd+C</kbd> copies: TSV (the default), TSV or CSV with headers, CSV, JSON or Markdown. A copied text value that starts like a formula gets an apostrophe in front, as in CSV exports; <strong>Neutralize Copied Formulas</strong> in Settings &gt; Results turns it off.</li>
+            <li><strong>Invisible characters</strong> (control, zero-width, special spaces and direction controls) show as visible marks, with their code points in the tooltip. Copy, export and search use the real text. <strong>Show Invisible Characters</strong> in Settings &gt; Results turns it off.</li>
+            <li><strong>Cell Value</strong> draws PostGIS geometry and geography and MySQL <code>GEOMETRY</code> values, with the shape type, point count, SRID and Copy WKT. pgvector <code>vector</code>, <code>halfvec</code> and <code>sparsevec</code> values show their dimension, norm, minimum, maximum and first values. A value over 256 KiB opens as plain text at once.</li>
+            <li>Updates and deletes need a primary key: a change to a table without one is refused and names the table.</li>
 </ul>
           </section>
 
@@ -243,11 +284,23 @@
 </ul>
           </section>
 
+          <section id="schema-compare" class="doc">
+            <h2>Compare Schemas</h2>
+<ul class="list">
+            <li><strong>File &gt; Compare Schemas…</strong> compares two schemas of the same engine: PostgreSQL, MySQL/MariaDB or SQLite. The target is a schema of this tab's connection, the only place a script ever runs. The source is another schema of this connection, or a saved connection of the same engine, read on a short-lived connection that is closed after the read.</li>
+            <li>Compared: tables only in the source (create) or only in the target (drop), and in tables of both, columns added, dropped or changed (type, nullability, default), indexes and foreign keys added, dropped or changed. Views, routines, types, primary keys, unique and check constraints, comments, identity and generated columns are not compared. A renamed table, column or index shows as a drop plus an add.</li>
+            <li>Tick the items to include. The script pane shows the exact SQL that Run sends, with <strong>Copy Script</strong> and <strong>Save Script…</strong>.</li>
+            <li>Drops of tables, columns, indexes and foreign keys are unticked by default; ticked drops ask first (<strong>Run with Drops</strong>), since their data cannot be recovered. Lossy type changes are flagged, and changes that cannot be scripted are listed to make by hand instead of run.</li>
+            <li>Run goes through Safe Mode like the <a href="#structure">structure editor</a>: on PostgreSQL and SQLite the script runs as one and joins the pending transaction in Protected mode; on MySQL each statement commits on its own, stopping at the first failure, with a report of what ran. A connection that changed since the compare is refused before anything is sent. Compare again after a run.</li>
+</ul>
+          </section>
+
           <section id="charts" class="doc">
             <h2>Charts</h2>
 <ul class="list">
             <li>Switch any result between grid and chart with the toggle beside the result actions.</li>
             <li>Chart types: bar, line, area, point.</li>
+            <li><strong>Split by</strong> draws one small chart per value of a column (up to 12), with shared axes and one legend. The PNG export includes the whole grid.</li>
 </ul>
           </section>
 
@@ -258,6 +311,7 @@
             <li>Copy results as SQL <code>INSERT</code> or an <code>IN</code> list.</li>
             <li>Per-format options with reset, redaction, wrapping and a size check.</li>
             <li><strong>File &gt; Export SQL Dump…</strong> writes a PostgreSQL, MySQL/MariaDB or SQLite database to a <code>.sql</code> file (all tables or a few, with or without data). <strong>File &gt; Restore SQL Dump…</strong> checks every statement of a Dblore dump before running it. <strong>File &gt; Copy Database File…</strong> saves an open SQLite database as one file. A dump holds your data in clear text.</li>
+            <li><strong>File &gt; Export Data Dictionary…</strong> writes the columns, indexes and foreign keys of every table as a Markdown or a standalone HTML file (no scripts, no remote content).</li>
 </ul>
           </section>
 
@@ -277,6 +331,7 @@
             <li>Pending transactions show a Commit / Rollback banner; <strong>View Details</strong> shows every pending statement in full. Touch ID, or your Safe Mode password, unlocks changes.</li>
             <li><strong>Commit style</strong> (footer or <strong>Settings &gt; Security</strong>): Immediate, Confirm, Review or Password, for dialogs, unlocks and inline edits.</li>
             <li>Read-only connections block writes.</li>
+            <li><strong>Related rows before a delete:</strong> when staged changes delete rows, Preview SQL and the Safe Mode dialog list what else the delete touches: rows deleted by cascade, rows set to NULL or to their default, and rows that still refer to the deleted ones. A foreign key that would block the delete disables Commit and names the constraint; <strong>Commit Anyway</strong> lets the database decide. The counts run on a separate read-only connection within 5 seconds, and are skipped while a transaction is open.</li>
             <li>Large reads inside transactions are capped with a server-side cursor (PostgreSQL).</li>
             <li>MySQL commits implicitly before DDL, <code>TRUNCATE</code>, <code>LOCK TABLES</code>, grants and similar statements, so Protected mode refuses them. Turn Protected mode off for the connection to run them.</li>
 </ul>
@@ -287,13 +342,14 @@
 <ul class="list">
             <li>Toggle the chat panel with <kbd>Cmd+L</kbd>. It writes SQL from plain-language questions and explains or fixes queries.</li>
             <li>Bubble mode: the detach button in the panel header turns it into a floating circle at the bottom of the window. Click the circle to expand or collapse the chat, drag it left or right to move it, hover it and click the small x to hide it, and press <kbd>Esc</kbd> to collapse it. Choose the default in Settings &gt; AI &gt; Panel (Right sidebar or Bubble).</li>
-            <li>Providers: Anthropic, OpenAI, OpenRouter, ChatGPT sign-in, Ollama, LM Studio, <code>mlx_lm.server</code>, any custom OpenAI-compatible endpoint, or on-device MLX models (Qwen3.5 2B, 4B and 9B, Gemma 4 12B). <strong>Settings &gt; AI &gt; Unused model files</strong> removes files of models that are no longer offered.</li>
+            <li>Providers: Anthropic, OpenAI, Google Gemini, OpenRouter, xAI, Requesty (its router forwards requests to the model vendor), ChatGPT sign-in, Ollama, LM Studio, <code>mlx_lm.server</code>, any custom OpenAI-compatible endpoint, or on-device MLX models (Qwen3.5 2B, 4B and 9B, Gemma 4 12B). <strong>Settings &gt; AI &gt; Unused model files</strong> removes files of models that are no longer offered.</li>
             <li>Bring your own API key. Claude Pro/Max subscriptions are not supported.</li>
             <li>Sent automatically: table and column names, types and keys.</li>
             <li>Sent only after you review and press Send: query text and error messages.</li>
             <li>Row data is never sent on its own. Generated SQL does not run automatically.</li>
             <li><strong>Run read-only queries</strong> (<strong>Settings &gt; AI &gt; Privacy</strong>, off by default): the assistant writes a query, Dblore runs it and shows you the rows. Only a single read-only statement runs, in a read-only transaction; anything else is refused and shown as SQL. Row values and errors are never sent to the model.</li>
             <li>In bubble mode, drag an edge of the card to resize it.</li>
+            <li>The chat can also call tools of MCP servers you add, one approved call at a time. See <a href="#outside-mcp">Outside MCP servers</a>.</li>
             <li>For fully local use, point it at Ollama, LM Studio or <code>mlx_lm.server</code>.</li>
 </ul>
           </section>
@@ -305,11 +361,39 @@
             <li>The server listens on this Mac only, at <code>http://127.0.0.1:&lt;port&gt;/mcp</code> (default port 41730). Use only the port Settings shows as running.</li>
             <li>Every request needs the Bearer token from <strong>Settings &gt; MCP</strong>. <strong>Copy Claude Code command</strong> copies a <code>claude mcp add</code> command to paste in a terminal; <strong>Copy Cursor JSON</strong> copies the entry for Cursor's <code>mcp.json</code>. <strong>Regenerate</strong> creates a new token; clients with the old one stop working until you copy the setup again.</li>
             <li>Agents see only the connections you turn on in the list. DuckDB connections cannot be shared.</li>
-            <li>Tools: <code>list_connections</code>, <code>list_tables</code>, <code>describe_table</code> and <code>run_query</code>.</li>
-            <li>Read-only: one statement per query, checked first and then run in a read-only transaction (SQLite files open read-only). Writes, DDL, <code>SET</code>, <code>CALL</code> and several statements are refused. A query returns 200 rows by default (at most 1000), cells are cut at 2000 characters and a query stops after 30 seconds.</li>
+            <li>Tools: <code>list_connections</code>, <code>list_tables</code>, <code>describe_table</code> and <code>run_query</code>, plus <code>execute_write</code> when write tools are allowed (see <a href="#mcp-write">MCP write tools</a>).</li>
+            <li><code>run_query</code> is read-only: one statement per query, checked first and then run in a read-only transaction (SQLite files open read-only). Writes, DDL, <code>SET</code>, <code>CALL</code> and several statements are refused. A query returns 200 rows by default (at most 1000), cells are cut at 2000 characters and a query stops after 30 seconds.</li>
             <li>Use a least-privilege database user: an agent can read everything the connection's role can read, including other databases on the same server.</li>
             <li>Query results go to the agent. Treat them as untrusted data: text stored in a table can try to give the agent instructions.</li>
             <li>Agent queries are recorded in History (when History is on). They do not see uncommitted changes in Dblore's own open transaction.</li>
+</ul>
+          </section>
+
+          <section id="mcp-write" class="doc">
+            <h2>MCP write tools</h2>
+<ul class="list">
+            <li>Off by default: turn on <strong>Allow write tools</strong> in <strong>Settings &gt; MCP</strong>. Agents can then ask to run one change at a time through the <code>execute_write</code> tool.</li>
+            <li>Once write tools are on, each connection turned on in the list gets an <strong>Agent access</strong> scope: <strong>Read</strong> (the default, no changes), <strong>Read + data changes</strong> (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code> and <code>MERGE</code>; MongoDB inserts, updates and deletes) or <strong>Read + data + schema changes</strong>.</li>
+            <li>Schema changes cover tables, indexes, views, sequences, schemas, types, domains and MySQL databases, <code>TRUNCATE</code>, <code>RENAME TABLE</code> and <code>COMMENT ON</code>; on MongoDB, <code>createCollection</code>, <code>createIndex</code>, <code>dropIndex</code>, <code>drop</code> and <code>renameCollection</code> in the same database.</li>
+            <li>Refused before anything is asked: creating, changing or dropping functions, procedures or triggers (use the SQL editor); on MongoDB, <code>collMod</code>, hiding or unhiding an index, <code>createView</code>, <code>dropDatabase</code>, system collections and pipelines that name another database; statements with hidden characters, privilege or account changes, extensions, foreign data or file access; more than one statement.</li>
+            <li>Changes run with the connection's protection and commit style. A connection whose commit style is Review or Password refuses agent changes: set Confirm or Immediate to allow them.</li>
+            <li>Every call opens the <strong>MCP Write Request</strong> panel, even when only the welcome window is open. It shows the connection and engine, the kind of change, the exact statement and the client name (as the client reports it, unverified). <strong>Approve once</strong> runs it once; <strong>Deny</strong> or <strong>Deny all</strong> refuse. Return never approves, and Approve is ignored for a moment after a request shows, so a click meant for something else never approves it.</li>
+            <li>There are no standing grants: every call asks again. Requests show one at a time, at most three wait (a further one is refused at once), and a request not answered 2 minutes after it shows is denied. Turning off write tools or MCP, or taking a connection's scope away, denies the waiting requests.</li>
+            <li>Approve only statements you have read: an agent can be steered by text stored in the database.</li>
+</ul>
+          </section>
+
+          <section id="outside-mcp" class="doc">
+            <h2>Outside MCP servers</h2>
+<ul class="list">
+            <li><strong>Settings &gt; MCP &gt; Outside MCP servers</strong> adds an MCP server whose tools the AI chat may call: a name, a URL and an optional token.</li>
+            <li>The URL must be <code>https</code>, or plain <code>http</code> to <code>127.0.0.1</code>, <code>::1</code> or <code>localhost</code>. Redirects are never followed.</li>
+            <li>The token is sent as a Bearer token and kept in the Keychain. It is listed and deleted with the other secrets in <strong>Settings &gt; Data</strong>.</li>
+            <li>A new server starts turned off, with no tools allowed. <strong>Test</strong> connects to it and lists its tools; tick the ones the AI chat may use, then turn the server on.</li>
+            <li>If the server later changes a tool's description or schema, the tool shows <strong>Changed</strong> and is unticked until you review it and tick it again. Text from the server is shown with hidden and direction characters removed.</li>
+            <li><strong>In the AI chat:</strong> on a connection whose AI access allows it, the chat can offer the allowed tools of enabled servers, never with an on-device model. Each call shows a card with the server, the tool and the exact arguments. Nothing is sent until you press <strong>Run once</strong>, which accepts clicks only after the card has been shown for a moment; every call asks again. <strong>Deny</strong> tells the assistant the call was denied.</li>
+            <li>Results are untrusted: the tool's result goes back to the assistant marked as data from a third party, never as instructions, and nothing in it can run SQL. Arguments the card cannot show exactly (hidden characters, or longer than the card) are refused. A server that does not answer within 10 seconds is left out of that turn, with a note in the chat.</li>
+            <li>Add only servers you trust: a server can return text that tries to steer the AI.</li>
 </ul>
           </section>
 

@@ -141,9 +141,27 @@ struct SSHLoopbackForwarderTests {
     let forwarder = try await SSHLoopbackForwarder.start(
       tunnel: tunnel, targetHost: "db", targetPort: 3306)
     let client = try await ForwarderClient.connect(port: forwarder.localPort)
+    let clientPort = try #require(client.channel.localAddress?.port)
 
     #expect(await eventually { !client.channel.isActive })
     #expect(tunnel.opens.count == 1)
+    // Kept for that client only, and reported once.
+    #expect(forwarder.takeOpenError(clientPort: clientPort + 1) == nil)
+    #expect(
+      forwarder.takeOpenError(clientPort: clientPort) as? SSHTunnelError == .channelOpenRejected)
+    #expect(forwarder.takeOpenError(clientPort: clientPort) == nil)
+
+    // A later connection from the same port is never told the earlier one's error.
+    let failed = try await ForwarderClient.connect(port: forwarder.localPort)
+    let reusedPort = try #require(failed.channel.localAddress?.port)
+    #expect(await eventually { !failed.channel.isActive })
+    tunnel.openError = nil
+    let reused = try await ForwarderClient.connect(
+      port: forwarder.localPort, localPort: reusedPort)
+    try await reused.send("x")
+    #expect(await reused.receive(count: 1) == Array("x".utf8))
+    #expect(forwarder.takeOpenError(clientPort: reusedPort) == nil)
+    try await reused.channel.close()
 
     await forwarder.stop()
     await tunnel.close()
@@ -261,9 +279,12 @@ private final class ForwarderClient: Sendable {
     self.inbox = inbox
   }
 
-  static func connect(port: Int, autoRead: Bool = true) async throws -> ForwarderClient {
+  /// From 127.0.0.1:`localPort` when given (SO_REUSEADDR, so a port just closed is reused).
+  static func connect(
+    port: Int, autoRead: Bool = true, localPort: Int? = nil
+  ) async throws -> ForwarderClient {
     let inbox = Inbox()
-    let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+    var bootstrap = ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
       .connectTimeout(.seconds(5))
       .channelOption(ChannelOptions.autoRead, value: autoRead)
       .channelInitializer { channel in
@@ -271,8 +292,11 @@ private final class ForwarderClient: Sendable {
           try channel.pipeline.syncOperations.addHandler(Collector(inbox: inbox))
         }
       }
-      .connect(host: "127.0.0.1", port: port)
-      .get()
+    if let localPort {
+      bootstrap = bootstrap.channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+        .bind(to: try SocketAddress(ipAddress: "127.0.0.1", port: localPort))
+    }
+    let channel = try await bootstrap.connect(host: "127.0.0.1", port: port).get()
     return ForwarderClient(channel: channel, inbox: inbox)
   }
 

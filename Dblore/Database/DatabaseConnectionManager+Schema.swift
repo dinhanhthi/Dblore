@@ -66,6 +66,78 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// Schema Compare on PostgreSQL: the structures of `tables` in `schema`, in order, read in one
+  /// read-only transaction with `search_path` empty, so every user type and sequence the catalog
+  /// prints names its schema (`public.mood`, `nextval('public.orders_id_seq'::regclass)`),
+  /// whatever the session's own path. The reads run one by one on a private connection opened
+  /// like this one (`makeSnapshotSideManager`), never on this session, and closed on every path.
+  /// Refused while a transaction is open here (the other connection cannot see its uncommitted
+  /// work; nothing is opened). Cancelling stops after the read in flight. A cancellation and a
+  /// lost connection are thrown as they are; another failed read as `queryFailed`.
+  func fetchQualifiedTableStructures(
+    schema: String, tables: [String], progress: (@Sendable (Int, Int) -> Void)?
+  ) async throws -> [TableStructure] {
+    guard let databaseType else { throw DatabaseError.notConnected }
+    guard databaseType == .postgresql else {
+      throw SchemaCompareError.unsupportedEngine(databaseType.rawValue)
+    }
+    guard isOutsideAnyTransaction else { throw SchemaCompareError.transactionOpen }
+    _ = try catalogConnection()
+    let side = makeSnapshotSideManager()
+    do {
+      try await connectSideManager(side)
+      try Task.checkCancellation()
+      let structures = try await side.readQualifiedTableStructures(
+        schema: schema, tables: tables, progress: progress)
+      await side.disconnect()
+      return structures
+    } catch {
+      await side.disconnect()
+      throw error
+    }
+  }
+
+  /// `fetchQualifiedTableStructures` on this single-use manager's session. ROLLBACK is always
+  /// sent; a failed one is left to the caller's disconnect.
+  private func readQualifiedTableStructures(
+    schema: String, tables: [String], progress: (@Sendable (Int, Int) -> Void)?
+  ) async throws -> [TableStructure] {
+    try await withSession { session in
+      let result: Result<[TableStructure], Error>
+      do {
+        _ = try await session.command(
+          "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY", binds: [])
+        _ = try await session.command("SET LOCAL search_path = ''", binds: [])
+        let reader = DumpSnapshotReader(session: session, dialect: .postgresql)
+        var structures: [TableStructure] = []
+        for table in tables {
+          try Task.checkCancellation()
+          structures.append(
+            try await PostgresSchemaIntrospector().tableStructure(
+              schema: schema, table: table, in: reader))
+          progress?(structures.count, tables.count)
+        }
+        result = .success(structures)
+      } catch let error as CancellationError {
+        result = .failure(error)
+      } catch let error as DatabaseError {
+        if case .connectionLost = error {
+          result = .failure(error)
+        } else {
+          result = .failure(Self.tableStructureReadError(error))
+        }
+      } catch {
+        result = .failure(Self.tableStructureReadError(error))
+      }
+      _ = try? await session.command("ROLLBACK", binds: [])
+      return try result.get()
+    }
+  }
+
+  private nonisolated static func tableStructureReadError(_ error: Error) -> DatabaseError {
+    .queryFailed("Failed to fetch table structure: \(error.localizedDescription)", 0)
+  }
+
   // MARK: - Views
 
   /// Fetch all views from the database
@@ -97,6 +169,22 @@ extension DatabaseConnectionManager {
   func fetchDefinition(of object: SchemaObjectRef) async throws -> String? {
     try await fetchCatalog("definition") { session in
       try await self.introspector.definition(of: object, in: session)
+    }
+  }
+
+  // MARK: - Sequences and User Types
+
+  /// Fetch all sequences (empty where the engine has none in the sidebar)
+  func fetchSequences() async throws -> [DatabaseSequence] {
+    try await fetchCatalog("sequences") { session in
+      try await self.introspector.sequences(in: session)
+    }
+  }
+
+  /// Fetch all enums, domains and standalone composite types
+  func fetchUserTypes() async throws -> [DatabaseUserType] {
+    try await fetchCatalog("types") { session in
+      try await self.introspector.userTypes(in: session)
     }
   }
 

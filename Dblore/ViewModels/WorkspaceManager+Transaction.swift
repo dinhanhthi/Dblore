@@ -328,6 +328,11 @@ extension WorkspaceManager {
     }
     autoConnectTask?.cancel()
     cancelSchemaLoad()
+    // Before the session closes: a structure read failing on the closed connection must find the
+    // export already cancelled (silent, no "Export Failed" alert)
+    dataDictionaryExport?.cancel()
+    schemaCompare?.close()
+    dropCrossTableSearch()
     await connectionManager.disconnect()
     // After the session closed: the picked files belong to that connection
     releaseDuckDBFileAccess()
@@ -348,6 +353,8 @@ extension WorkspaceManager {
     databaseUsers = []
     databaseRoles = []
     databaseForeignKeys = []
+    databaseSequences.reset()
+    databaseUserTypes.reset()
     schemaConnectionEpoch = nil
     mongoOverview = nil
     // The Export, Import and backup forms belong to the closed connection: stop them and close
@@ -360,6 +367,8 @@ extension WorkspaceManager {
     mongoBackup = nil
     dataRewind?.model.sheetDisappeared()
     dataRewind = nil
+    dataDictionaryExport = nil
+    schemaCompare = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

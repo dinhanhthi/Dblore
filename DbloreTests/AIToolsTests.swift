@@ -83,6 +83,74 @@ struct AIToolsTests {
     #expect(required == [[], ["table"], ["sql"], ["sql", "reason"]])
   }
 
+  // MARK: - Outside tools
+
+  private static func outsideTool(_ name: String, schemaPad: Int = 0) -> MCPClientTool {
+    var schema: [String: JSONValue] = ["type": .string("object")]
+    if schemaPad > 0 { schema["description"] = .string(String(repeating: "x", count: schemaPad)) }
+    return MCPClientTool(name: name, description: "Does \(name)", inputSchema: .object(schema))
+  }
+
+  /// An enabled server with every tool of `listed` ticked
+  private static func outsideServer(
+    _ name: String, _ listed: [MCPClientTool]
+  ) -> (server: OutsideMCPServer, listed: [MCPClientTool]) {
+    let server = OutsideMCPServer(
+      name: name, url: "https://mcp.example/mcp", isEnabled: true,
+      allowedTools: Dictionary(uniqueKeysWithValues: listed.map { ($0.name, $0.fingerprint) }))
+    return (server, listed)
+  }
+
+  @Test("Outside tool names follow the provider rule, never collide and map back to server + tool")
+  func outsideToolNames() throws {
+    let first = Self.outsideServer(
+      "My DB!",
+      [Self.outsideTool("query"), Self.outsideTool("list_tables"), Self.outsideTool("a.b")])
+    // Same slug, a colliding tool, and a name long enough to be cut
+    let second = Self.outsideServer(
+      "my db", [Self.outsideTool("query"), Self.outsideTool(String(repeating: "t", count: 100))])
+    let tools = AITools.outsideTools([first, second])
+
+    let builtIns = Set(AITools.specs(runsQueries: true, isMongo: false).map(\.name))
+    #expect(tools.count == 5)
+    #expect(Set(tools.map(\.name)).count == 5)
+    #expect(tools.allSatisfy { !builtIns.contains($0.name) })
+    #expect(
+      tools.allSatisfy { tool in
+        (1...64).contains(tool.name.utf8.count)
+          && tool.name.utf8.allSatisfy {
+            (0x30...0x39).contains($0) || (0x41...0x5A).contains($0)
+              || (0x61...0x7A).contains($0) || $0 == 0x5F || $0 == 0x2D
+          }
+      })
+    #expect(
+      tools.map(\.name).prefix(4) == [
+        "my-db__query", "my-db__list_tables", "my-db__a_b", "my-db__query-2",
+      ])
+    #expect(tools.map(\.spec.name) == tools.map(\.name))
+    // The map back is by the offered name, never by parsing it
+    let map = Dictionary(uniqueKeysWithValues: tools.map { ($0.name, $0) })
+    let collided = try #require(map["my-db__query-2"])
+    #expect(collided.serverID == second.server.id && collided.tool == "query")
+    #expect(map["my-db__a_b"]?.tool == "a.b")
+    #expect(map["my-db__query"]?.serverID == first.server.id)
+    #expect(AITools.outsideTools([first, second]) == tools)
+  }
+
+  @Test("At most 20 outside tools a turn; a schema over 8 KiB drops its tool; the note is first")
+  func outsideToolCaps() throws {
+    let big = Self.outsideTool("big", schemaPad: AITools.maxOutsideSchemaBytes)
+    let many = (1...25).map { Self.outsideTool("t\($0)") }
+    let tools = AITools.outsideTools([Self.outsideServer("A", [big] + many)])
+
+    #expect(tools.count == AITools.maxOutsideTools)
+    #expect(!tools.contains { $0.tool == "big" })
+    #expect(tools.map(\.tool) == (1...20).map { "t\($0)" })
+    let description = try #require(tools.first?.spec.description)
+    #expect(description.hasPrefix("From the outside MCP server \"A\""))
+    #expect(description.hasSuffix("Does t1"))
+  }
+
   // MARK: - Decoding
 
   @Test("Valid arguments decode; an empty or null schema counts as absent")

@@ -17,6 +17,10 @@
 // returned unwrapped, so nothing is refused here for it: read-only rests on
 // `ReadOnlyQueryGuard`, the manager's read-only policy and `MongoSession.query`, which runs
 // reads only.
+//
+// MCP write path: an approved execute_write runs on the pool's second, writable manager
+// (`MCPConnectionPool.withWritableManager`), whose sessions are the app's, not wrapped here;
+// the read tools never use it.
 
 import Foundation
 
@@ -31,6 +35,7 @@ nonisolated enum MCPConnectionError: Error, Equatable, LocalizedError {
   case certificateNotSaved
   case sshCredentialNotSaved
   case sshHostKeyNotTrusted
+  case passwordCommand
   case commandRefused
   case cursorRefused
 
@@ -52,6 +57,8 @@ nonisolated enum MCPConnectionError: Error, Equatable, LocalizedError {
         + "Dblore with Remember on."
     case .sshHostKeyNotTrusted:
       "The SSH server's host key is not trusted yet. Connect once in Dblore and trust it."
+    case .passwordCommand:
+      "This connection uses a password command; open it in Dblore instead."
     case .commandRefused:
       "MCP connections are read-only: only queries are sent."
     case .cursorRefused:

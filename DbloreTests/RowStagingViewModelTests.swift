@@ -115,6 +115,41 @@ struct RowStagingViewModelTests {
     #expect(viewModel.dataViewer?.changeSet?.isEmpty == false)
   }
 
+  @Test("Setting several cells is one undo step")
+  func settingSeveralCellsIsOneUndoStep() {
+    let viewModel = makeViewModel(
+      primaryKey: ["id"], rows: [[.int(1), .string("old")], [.int(2), .string("older")]])
+
+    #expect(
+      viewModel.stageEdits(
+        rows: [0, 1], column: "nickname", values: Array(repeating: .value(.string("neo")), count: 2)
+      )
+        == nil)
+    #expect(viewModel.dataViewer?.changeSet?.counts.edits == 2)
+
+    viewModel.undoManager.undo()
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    #expect(!viewModel.undoManager.canUndo)
+  }
+
+  @Test("Set Value text takes the cell's type, as a single-cell edit does")
+  func setValueTextTakesTheCellType() {
+    let viewModel = makeViewModel(
+      primaryKey: ["nickname"], rows: [[.int(42), .string("a")], [.int(42), .string("b")]])
+
+    #expect(
+      viewModel.stageEdits(
+        rows: [0, 1], column: "id", values: Array(repeating: .value(.string("42")), count: 2))
+        == nil)
+    #expect(viewModel.dataViewer?.changeSet == nil)
+
+    #expect(
+      viewModel.stageEdits(rows: [0], column: "id", values: [.value(.string("7"))]) == nil)
+    #expect(
+      viewModel.dataViewer?.changeSet?.edits[RowChangeSet.RowKey(values: [.string("a")])]?["id"]
+        == .int(7))
+  }
+
   @Test("Discard clears the change set")
   func discardClearsTheSet() {
     let viewModel = makeViewModel(primaryKey: ["id"])
@@ -211,7 +246,8 @@ struct RowStagingViewModelTests {
 
   private func makeViewModel(
     primaryKey: [String], epoch: UInt64 = 0, safeMode: SafeMode = .silent,
-    columnTableID: TableRef = RowStagingViewModelTests.usersID
+    columnTableID: TableRef = RowStagingViewModelTests.usersID,
+    rows: [[CellValue]] = [[.int(1), .string("old")]]
   ) -> NotebookViewModel {
     let viewModel = NotebookViewModel()
     viewModel.viewMode = .editor
@@ -229,8 +265,8 @@ struct RowStagingViewModelTests {
           name: "nickname", type: "text",
           origin: ColumnOrigin(tableID: columnTableID, columnOrdinal: 2)),
       ],
-      rows: [[.int(1), .string("old")]],
-      rowCount: 1,
+      rows: rows,
+      rowCount: rows.count,
       editTarget: EditTarget(
         qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: primaryKey,
         connectionEpoch: epoch, updateOnly: true))

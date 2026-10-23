@@ -666,7 +666,7 @@ struct NotebookResultGridView: View {
     ExplainableResult(result: result) {
       ChartableResult(
         result: result, chartSpec: chartSpecBinding, mode: displayMode,
-        showsPicker: showsDisplayPicker
+        showsPicker: showsDisplayPicker, statementIndex: cell?.selectedStatementIndex
       ) {
         if showsDocuments {
           documentCards

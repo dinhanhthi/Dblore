@@ -2,8 +2,9 @@
 //  MCPSettingsSection.swift
 //  Dblore
 //
-//  Settings > MCP: run the read-only MCP server, choose the connections agents may use, and
-//  copy the client setup for Claude Code or Cursor.
+//  Settings > MCP: run the MCP server, choose the connections agents may use (each Read
+//  unless write tools are on and it is given a write scope), copy the client setup for
+//  Claude Code or Cursor, and add the outside MCP servers the AI chat may call.
 //
 
 import SwiftUI
@@ -46,6 +47,27 @@ struct MCPSettingsSection: View {
           Divider()
           warning(
             "Use a least-privilege database user. An agent can read everything the connection's role can read, including other databases on the same server."
+          )
+        }
+      }
+
+      SettingsGroupCard(title: "Write tools") {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          SettingsToggle(
+            title: "Allow write tools",
+            description:
+              "Lets agents ask to run one change at a time on the connections given a write scope above. Every change waits for you to approve it in Dblore; it is denied 2 minutes after it is shown.",
+            isOn: $appSettings.mcpWriteToolsEnabled
+          )
+          Divider()
+          note(
+            "Changes run with the connection's protection and commit style. Connections that use Review or Password refuse agent changes: set Confirm or Immediate to allow them."
+          )
+          note(
+            "Schema changes cover tables, indexes, views, sequences, schemas, types, domains and MySQL databases, TRUNCATE, RENAME TABLE and COMMENT ON; on MongoDB, collections and indexes. Agents cannot create, change or drop functions, procedures or triggers, because what they run later cannot be checked and dropping one removes what it enforces: use the SQL editor. MongoDB system collections and pipelines that name another database are refused."
+          )
+          warning(
+            "Approve only statements you have read. An agent can be steered by text stored in the database."
           )
         }
       }
@@ -102,9 +124,14 @@ struct MCPSettingsSection: View {
         }
       }
 
+      OutsideMCPServersSection()
+
       SettingsGroupCard(title: "About MCP") {
         VStack(alignment: .leading, spacing: Spacing.sm) {
           note("Read-only: one statement per query, checked first, then run read-only.")
+          note(
+            "Write tools are off unless you allow them: each change is checked against its scope, then waits for your approval."
+          )
           note("Dblore must be running for agents to connect.")
           note("Agent reads do not see uncommitted changes in Dblore's own open transaction.")
           warning(
@@ -175,15 +202,34 @@ struct MCPSettingsSection: View {
       entry.config.name.isEmpty
       ? (entry.config.database as NSString).lastPathComponent : entry.config.name
     let engine = entry.config.databaseType.displayName
-    return SettingsToggle(
-      title: name,
-      description: available ? engine : "\(engine), not available over MCP",
-      isOn: Binding(
-        get: { available && model.isAllowed(entry.id) },
-        set: { model.setAllowed(entry.id, $0) }
-      ),
-      isDisabled: !available
-    )
+    return VStack(alignment: .leading, spacing: Spacing.sm) {
+      SettingsToggle(
+        title: name,
+        description: available ? engine : "\(engine), not available over MCP",
+        isOn: Binding(
+          get: { available && model.isAllowed(entry.id) },
+          set: { model.setAllowed(entry.id, $0) }
+        ),
+        isDisabled: !available
+      )
+      if available, appSettings.mcpWriteToolsEnabled, model.isAllowed(entry.id) {
+        scopeRow(entry.id)
+      }
+    }
+  }
+
+  private func scopeRow(_ id: UUID) -> some View {
+    let scope = model.scope(for: id)
+    return HStack {
+      Text("Agent access")
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
+      Spacer()
+      CapsuleDropdown(
+        title: scope.title, accessibilityLabel: "Agent access: \(scope.title)",
+        options: MCPWriteScope.allCases, optionTitle: \.title, isSelected: { $0 == scope },
+        onSelect: { model.setScope($0, for: id) })
+    }
   }
 
   private var rowCapRow: some View {

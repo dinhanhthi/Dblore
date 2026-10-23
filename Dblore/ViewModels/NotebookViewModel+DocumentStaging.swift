@@ -575,7 +575,7 @@ extension NotebookViewModel {
     let batch = PendingStagedBatch(
       statements: [], preview: preview, connectionEpoch: target.connectionEpoch,
       mongoCommands: commands,
-      mongoInlineEdit: PendingStagedBatch.MongoInlineEdit(cellId: cellId))
+      mongoInlineEdit: PendingStagedBatch.MongoInlineEdit(cellId: cellId, target: target))
     if presentConfirmationIfNeeded(for: preview, cellId: cellId) {
       pendingExplainSQL = nil
       pendingStagedBatch = batch
@@ -597,13 +597,37 @@ extension NotebookViewModel {
     return results.first { $0.editTarget == target }?.columns
   }
 
-  /// After `applied` commands of `batch` reached the server: a notebook cell re-runs; a staged
-  /// commit drops the applied changes from the set by identity (changes staged meanwhile stay);
-  /// the data viewer reloads its page, or, while changes stay staged, re-reads its rows keeping
-  /// the target they were staged against.
+  /// After `applied` commands of `batch` reached the server: a notebook cell re-runs; an SQL
+  /// file's editor result runs its own query again while it is still shown (one statement of a
+  /// multi-statement run, whose other results stay); a staged commit drops the applied
+  /// changes from the set by identity (changes staged meanwhile stay); the data viewer reloads
+  /// its page, or, while changes stay staged, re-reads its rows keeping the target they were
+  /// staged against.
   private func refreshAfterDocumentBatch(_ batch: PendingStagedBatch, applied: Int) async {
     if let cellId = batch.mongoInlineEdit?.cellId {
       await runCell(id: cellId)
+      return
+    }
+    if let target = batch.mongoInlineEdit?.target, dataViewer == nil {
+      // Only while the edited result is still shown: another statement picked or a run started
+      // during the commit skips the refresh, so nothing but that result's own read runs again.
+      // Its query, not the editor text, which may have changed since
+      guard !isEditorQueryRunning, let shown = editorResult, shown.editTarget == target,
+        let query = shown.sourceQuery
+      else { return }
+      let statements = editorStatementResults
+      let index = statements.firstIndex { $0.result.editTarget == target } ?? -1
+      let totalTime = totalExecutionTime
+      await executeEditorQuery(query, source: .internal)
+      // A multi-statement run re-ran only the edited statement: the other results stay
+      guard statements.indices.contains(index), let result = editorResult else { return }
+      var refreshed = statements
+      refreshed[index] = StatementResult(
+        id: statements[index].id, queryText: statements[index].queryText, result: result,
+        statementIndex: statements[index].statementIndex)
+      editorStatementResults = refreshed
+      selectedStatementIndex = index
+      totalExecutionTime = totalTime
       return
     }
     guard dataViewer != nil, let connectionManager else { return }

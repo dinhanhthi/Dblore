@@ -31,6 +31,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   private var groupStorage: EventLoopGroup?
   private var tunnelStorage: (any SSHTunneling)?
   private var watchStorage: ConnectionCloseWatch?
+  /// Extension type names by OID for this database (`viewerExtensionTypesSQL`), read at open.
+  private var extensionTypesStorage: [UInt32: String] = [:]
   private var didEmitClose = false
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
 
@@ -73,6 +75,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   func open() async throws {
     if config.sshTunnel != nil {
       try await openThroughTunnel()
+      await loadExtensionTypes()
       return
     }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -110,6 +113,33 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     conn.closeFuture.whenComplete { [weak self] _ in
       self?.emit(.connectionLost)
     }
+    await loadExtensionTypes()
+  }
+
+  /// Best effort: without it, extension columns keep the generic USER-DEFINED type.
+  private func loadExtensionTypes() async {
+    do {
+      let types = try await runWatched {
+        guard let connection = self.connection else { throw ConnectionClosedError() }
+        let rows = try await connection.query(
+          PostgresQuery(unsafeSQL: DatabaseConnectionManager.viewerExtensionTypesSQL),
+          logger: Logger(label: "dblore.session"))
+        var types: [UInt32: String] = [:]
+        for try await (oid, name) in rows.decode((Int64, String).self) {
+          if let oid = UInt32(exactly: oid) { types[oid] = name }
+        }
+        return types
+      }
+      lock.withLock { extensionTypesStorage = types }
+    } catch {
+      await AppLogger.shared.warning(
+        "Extension types not read (geometry and vector columns show as USER-DEFINED): "
+          + String(describing: error), category: "Database")
+    }
+  }
+
+  private var extensionTypes: [UInt32: String] {
+    lock.withLock { extensionTypesStorage }
   }
 
   /// Test connection without storing it on the actor. Same probe as before: real connect,
@@ -130,22 +160,33 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     }
 
     let postgresConfig = Self.postgresConfiguration(config, tls: tlsConfig)
+    // The probe work outlives a timeout or cancel. The group shuts down when that work ends,
+    // so a connect retry never lands on a shut-down loop.
+    let shutdown = ProbeTeardown(
+      grace: .nanoseconds(postgresConfig.options.connectTimeout.nanoseconds) + .seconds(5)
+    ) { try? await group.shutdownGracefully() }
     do {
       try await withTimeout(of: .seconds(config.timeoutSeconds)) {
         try await self.probeConnectAndQuery {
-          try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+          do {
+            try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+          } catch {
+            await shutdown.run()
+            throw error
+          }
+          await shutdown.run()
         }
       }
       return true
     } catch is TimeoutError {
-      try? await group.shutdownGracefully()
+      shutdown.runAfterGrace()
       throw DatabaseError.connectionFailed(
         "Connection timeout after \(config.timeoutSeconds) seconds")
     } catch let error as PSQLError {
-      try? await group.shutdownGracefully()
+      shutdown.runAfterGrace()
       throw DatabaseError.connectionFailed(formatPostgresError(error))
     } catch {
-      try? await group.shutdownGracefully()
+      shutdown.runAfterGrace()
       throw DatabaseError.connectionFailed(error.localizedDescription)
     }
   }
@@ -180,7 +221,6 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
     try await Self.runTestQuery(on: conn)
     try await conn.close()
-    try await group.shutdownGracefully()
   }
 
   /// `SELECT 1 as test` on `conn`. Closes `conn` before rethrowing a failure.
@@ -229,20 +269,26 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       guard let connection = self.connection else { throw ConnectionClosedError() }
       return try await connection.query(query, logger: Logger(label: "dblore"))
     }
-    let columns = Self.columnInfos(stream.columns)
+    let extensionTypes = self.extensionTypes
+    let columns = Self.columnInfos(stream.columns, extensionTypes: extensionTypes)
     let pull = RowPull(stream.makeAsyncIterator())
     let rows = AsyncThrowingStream<[CellValue], Error>(unfolding: {
       guard let row = try await pull.next() else { return nil }
-      return row.makeRandomAccess().map { DatabaseConnectionManager.parseCellValue(from: $0) }
+      return row.makeRandomAccess().map {
+        DatabaseConnectionManager.parseCellValue(from: $0, extensionTypes: extensionTypes)
+      }
     })
     return SessionRowSource(columns: columns, rows: rows)
   }
 
-  private static func columnInfos(_ columns: PostgresColumns) -> [ColumnInfo] {
+  private static func columnInfos(
+    _ columns: PostgresColumns, extensionTypes: [UInt32: String]
+  ) -> [ColumnInfo] {
     columns.map { column in
       ColumnInfo(
         name: column.name,
-        type: DatabaseConnectionManager.postgresDataTypeName(column.dataType),
+        type: DatabaseConnectionManager.postgresDataTypeName(
+          column.dataType, extensionTypes: extensionTypes),
         origin: column)
     }
   }
@@ -257,6 +303,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       guard let connection = self.connection else { throw ConnectionClosedError() }
       return try await connection.query(query, logger: Logger(label: "dblore"))
     }
+    let extensionTypes = self.extensionTypes
     var collected = CollectedRows()
     for try await row in stream {
       collected.total += 1
@@ -271,11 +318,15 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
           collected.columns.append(
             ColumnInfo(
               name: cell.columnName,
-              type: DatabaseConnectionManager.postgresDataTypeName(cell.dataType),
+              type: DatabaseConnectionManager.postgresDataTypeName(
+                cell.dataType, extensionTypes: extensionTypes),
               origin: stream.columns.dropFirst(index).first))
         }
       }
-      collected.rows.append(randomAccess.map { DatabaseConnectionManager.parseCellValue(from: $0) })
+      collected.rows.append(
+        randomAccess.map {
+          DatabaseConnectionManager.parseCellValue(from: $0, extensionTypes: extensionTypes)
+        })
     }
     return collected
   }
@@ -580,6 +631,37 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     watchStorage = watch
     tunnelStorage = tunnel
     lock.unlock()
+  }
+
+  /// Tears a probe's resources down once (its event-loop group, or its SSH tunnel). `run` is
+  /// called when the probe work ends. `runAfterGrace` covers work that never ends (a query the
+  /// server never answers): the grace outlasts the connect step, so none is in flight by then.
+  final class ProbeTeardown: @unchecked Sendable {
+    private let lock = NSLock()
+    private let grace: Duration
+    private let teardown: @Sendable () async -> Void
+    private var done = false
+
+    init(grace: Duration, teardown: @escaping @Sendable () async -> Void) {
+      self.grace = grace
+      self.teardown = teardown
+    }
+
+    func run() async {
+      let alreadyDone = lock.withLock {
+        defer { done = true }
+        return done
+      }
+      if !alreadyDone { await teardown() }
+    }
+
+    func runAfterGrace() {
+      guard !lock.withLock({ done }) else { return }
+      Task {
+        try? await Task.sleep(for: grace)
+        await run()
+      }
+    }
   }
 
   /// One resume of a probe continuation. A result that wins the race with cancel is kept

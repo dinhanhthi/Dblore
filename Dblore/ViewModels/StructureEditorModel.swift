@@ -112,9 +112,18 @@ final class StructureEditorModel {
     var id: ColumnRef { loadedName.map(ColumnRef.loaded) ?? .added(column.name) }
   }
 
-  struct WorkingIndex: Equatable {
+  /// A loaded index by its position, or one created in this session by its name and occurrence:
+  /// unchanged when an earlier row is dropped or removed, or a column it uses is renamed (the
+  /// sheet keys its rows by it)
+  enum IndexRowID: Hashable {
+    case loaded(Int)
+    case added(name: String, occurrence: Int)
+  }
+
+  struct WorkingIndex: Identifiable, Equatable {
     var index: TableStructure.Index
     var state: StagedState
+    var id: IndexRowID
   }
 
   /// A loaded constraint by its position, or one added in this session by its content and
@@ -533,18 +542,22 @@ final class StructureEditorModel {
   }
 
   var workingIndexes: [WorkingIndex] {
-    let loaded = (structure?.indexes ?? []).map { index in
+    let loaded = (structure?.indexes ?? []).enumerated().map { position, index in
       WorkingIndex(
         index: index,
-        state: changes.contains(.dropIndex(name: index.name)) ? .dropped : .unchanged)
+        state: changes.contains(.dropIndex(name: index.name)) ? .dropped : .unchanged,
+        id: .loaded(position))
     }
+    var occurrences: [String: Int] = [:]
     let added = changes.compactMap { change -> WorkingIndex? in
       guard case .createIndex(let new) = change else { return nil }
+      let occurrence = occurrences[new.name, default: 0]
+      occurrences[new.name] = occurrence + 1
       return WorkingIndex(
         index: TableStructure.Index(
           name: new.name, keys: new.columns.map { .column($0) }, isUnique: new.isUnique,
           isPrimary: false, method: new.method, isPartial: false, predicate: nil),
-        state: .added)
+        state: .added, id: .added(name: new.name, occurrence: occurrence))
     }
     return loaded + added
   }

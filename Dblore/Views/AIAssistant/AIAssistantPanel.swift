@@ -307,7 +307,10 @@ struct AIAssistantPanel: View {
               onMongoAction: mongoActionHandler,
               isStreaming: assistant.isGenerating && index == messages.count - 1,
               onApplyReview: reviewApplyHandler,
-              onRunProposal: assistant.proposalRunner)
+              onRunProposal: assistant.proposalRunner,
+              onDecideOutsideCall: assistant.isAwaitingOutsideApproval(entry.id)
+                ? { assistant.decideOutsideCall(entry.id, approved: $0) } : nil,
+              outsideRunEnabled: assistant.isOutsideRunEnabled(entry.id))
           }
           Color.clear.frame(height: 1).id(Self.bottomID)
         }

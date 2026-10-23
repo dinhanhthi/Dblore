@@ -1462,6 +1462,32 @@ extension SQLRestoreGateTests {
     #expect(factory.statements.isEmpty)
   }
 
+  /// DuckDB's interrupt aborts the batch's own transaction; no user or app transaction owes the
+  /// cancel's ROLLBACK, so the batch's own ROLLBACK must still be sent
+  @Test("DuckDB: a restore cancelled mid-batch still sends its ROLLBACK", .timeLimit(.minutes(1)))
+  func duckdbCancelledRestoreRollsBack() async throws {
+    let (manager, factory) = try await connectDuckDB()
+    let session = try #require(factory.sessions.last)
+    session.holdNextCommand(containing: "INSERT")
+    let plan = try Self.plan(Self.duckdbDump, .duckdb)
+    let epoch = await manager.connectionEpoch
+    let policy = open
+    let restore = Task {
+      try await manager.executeGatedRestore(plan, policy: policy, connectionEpoch: epoch)
+    }
+    while session.heldCommandCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+    let status = await manager.runningStatementStatus()
+    let outcome = await manager.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    session.releaseHeldCommands()
+
+    await #expect(throws: (any Error).self) { try await restore.value }
+    #expect(session.statements.last == "ROLLBACK")
+    #expect(!session.statements.contains("COMMIT"))
+  }
+
   // MARK: - SQLite file
 
   private static func makeDatabase() throws -> URL {

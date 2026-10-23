@@ -203,20 +203,6 @@ func withSyntaxHighlightingEnabled<T>(_ body: () throws -> T) rethrows -> T {
   return try body()
 }
 
-enum PerfBench {
-  /// Median wall time of `n` runs of `body` in milliseconds, after `warmup` unmeasured runs
-  static func median(of n: Int, warmup: Int = 1, _ body: () -> Void) -> Double {
-    for _ in 0..<warmup { body() }
-    var samples: [Double] = []
-    for _ in 0..<n {
-      let d = ContinuousClock().measure { body() }
-      samples.append(Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15)
-    }
-    samples.sort()
-    return samples[samples.count / 2]
-  }
-}
-
 /// stdout is not visible in xcodebuild output for the app-hosted runner, so every result is
 /// also appended to files: the runner's temp dir and /tmp (best effort)
 enum PerfReport {

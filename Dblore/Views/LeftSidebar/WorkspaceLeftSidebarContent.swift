@@ -4,6 +4,9 @@
 //
 //  Left sidebar content that displays schema directly from WorkspaceManager
 //  Used when workspace is connected but no document is open
+//  The Public tab leaves out the connection's hidden schemas (only here: the loaded schema,
+//  autocomplete, schema search and AI context keep them), and lists each schema's folders
+//  (`SidebarFolderStore`) above its ungrouped tables and views.
 //
 
 import SwiftUI
@@ -23,6 +26,11 @@ struct WorkspaceLeftSidebarContent: View {
   @State private var aggregationBuilder: AggregationBuilderModel?
   /// The Create Table sheet opened from the Tables header
   @State private var createTable: CreateTableModel?
+  @State private var folderStore = SidebarFolderStore.shared
+  /// Folders the user closed; a new folder starts open
+  @State private var collapsedFolders: Set<UUID> = []
+  /// The New Folder or Rename Folder sheet
+  @State private var folderPrompt: SidebarFolderPrompt?
 
   enum SidebarTab: String, CaseIterable {
     case `public` = "Public"
@@ -68,6 +76,11 @@ struct WorkspaceLeftSidebarContent: View {
         isConnected: workspaceManager.connectionState == .connected,
         isShown: { [weak model] in model != nil && createTable === model },
         onClose: closeCreateTable)
+    }
+    .sheet(item: $folderPrompt) { prompt in
+      SidebarFolderNameSheet(
+        prompt: prompt, onSave: { saveFolderName($0, for: prompt) },
+        onClose: { folderPrompt = nil })
     }
   }
 
@@ -171,7 +184,7 @@ struct WorkspaceLeftSidebarContent: View {
     case .postgresql, .sqlite, .duckdb, .mongodb:
       fallback = connectionDatabaseType.dialect.defaultSchema
     }
-    var schemas = publicSchemas
+    var schemas = publicSchemas.listed
     // The default schema stays pickable but goes last, so "+" on a flat list targets its schema
     if !fallback.isEmpty, !schemas.contains(fallback) { schemas.append(fallback) }
     return schemas
@@ -206,11 +219,13 @@ struct WorkspaceLeftSidebarContent: View {
     SidebarEntityFilter.keywords(in: securityFilter)
   }
 
-  private struct FilteredTable: Identifiable {
+  private struct FilteredTable: Identifiable, SidebarFolderItem {
     let source: DatabaseTable
     let columns: [DatabaseColumn]
     let expandForMatch: Bool
+    let folderMember: String
     var id: UUID { source.id }
+    var folderSchema: String { source.schema }
 
     var display: DatabaseTable {
       var copy = source
@@ -219,11 +234,13 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
-  private struct FilteredView: Identifiable {
+  private struct FilteredView: Identifiable, SidebarFolderItem {
     let source: DatabaseView
     let columns: [DatabaseColumn]
     let expandForMatch: Bool
+    let folderMember: String
     var id: UUID { source.id }
+    var folderSchema: String { source.schema }
 
     var display: DatabaseView {
       var copy = source
@@ -232,57 +249,51 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
-  private var filteredTables: [FilteredTable] {
-    workspaceManager.databaseTables.compactMap { table in
-      guard
+  /// Schemas the Public tab leaves out; none on engines without the schema filter
+  private var hiddenSchemas: Set<String> {
+    guard SidebarSectionModel.filtersSchemas(connectionDatabaseType) else { return [] }
+    return Set(workspaceManager.workspace.connectionConfig?.hiddenSchemas ?? [])
+  }
+
+  private func isListed(_ schema: String) -> Bool {
+    !hiddenSchemas.contains(schema)
+  }
+
+  /// The Public tab's objects of the listed schemas (`hidden` left out) that match the filter
+  private func publicEntities(hidden: Set<String>) -> PublicEntities {
+    let keywords = publicKeywords
+    func matches(_ schema: String, _ text: String) -> Bool {
+      !hidden.contains(schema) && SidebarEntityFilter.matchesAll(text, keywords: keywords)
+    }
+    let tables = workspaceManager.databaseTables.compactMap { table -> FilteredTable? in
+      guard !hidden.contains(table.schema),
         let match = SidebarEntityFilter.matchColumns(
-          name: table.name,
-          columns: table.columns,
-          keywords: publicKeywords
-        )
+          name: table.name, columns: table.columns, keywords: keywords)
       else { return nil }
       return FilteredTable(
-        source: table,
-        columns: match.columns,
-        expandForMatch: match.expandForMatch
-      )
+        source: table, columns: match.columns, expandForMatch: match.expandForMatch,
+        folderMember: SidebarFolder.member(schema: table.schema, name: table.name))
     }
-  }
-
-  private var filteredViews: [FilteredView] {
-    workspaceManager.databaseViews.compactMap { view in
-      guard
+    let views = workspaceManager.databaseViews.compactMap { view -> FilteredView? in
+      guard !hidden.contains(view.schema),
         let match = SidebarEntityFilter.matchColumns(
-          name: view.name,
-          columns: view.columns,
-          keywords: publicKeywords
-        )
+          name: view.name, columns: view.columns, keywords: keywords)
       else { return nil }
       return FilteredView(
-        source: view,
-        columns: match.columns,
-        expandForMatch: match.expandForMatch
-      )
+        source: view, columns: match.columns, expandForMatch: match.expandForMatch,
+        folderMember: SidebarFolder.member(schema: view.schema, name: view.name))
     }
-  }
-
-  private var filteredFunctions: [DatabaseFunction] {
-    workspaceManager.databaseFunctions.filter {
-      SidebarEntityFilter.matchesAll($0.name, keywords: publicKeywords)
-    }
-  }
-
-  private var filteredProcedures: [DatabaseProcedure] {
-    workspaceManager.databaseProcedures.filter {
-      SidebarEntityFilter.matchesAll($0.name, keywords: publicKeywords)
-    }
-  }
-
-  /// A keyword may hit the trigger name or its table
-  private var filteredTriggers: [DatabaseTrigger] {
-    workspaceManager.databaseTriggers.filter {
-      SidebarEntityFilter.matchesAll("\($0.name) \($0.table)", keywords: publicKeywords)
-    }
+    return PublicEntities(
+      tables: tables, views: views,
+      functions: workspaceManager.databaseFunctions.filter { matches($0.schema, $0.name) },
+      procedures: workspaceManager.databaseProcedures.filter { matches($0.schema, $0.name) },
+      // A keyword may hit the trigger name or its table
+      triggers: workspaceManager.databaseTriggers.filter {
+        matches($0.schema, "\($0.name) \($0.table)")
+      },
+      // Nil until the Sequences or Types section has read them
+      sequences: workspaceManager.databaseSequences.items?.filter { matches($0.schema, $0.name) },
+      userTypes: workspaceManager.databaseUserTypes.items?.filter { matches($0.schema, $0.name) })
   }
 
   private var filteredUsers: [DatabaseUser] {
@@ -304,14 +315,18 @@ struct WorkspaceLeftSidebarContent: View {
     var functions: [DatabaseFunction]
     var procedures: [DatabaseProcedure]
     var triggers: [DatabaseTrigger]
+    /// Nil until read (the section was never expanded)
+    var sequences: [DatabaseSequence]?
+    var userTypes: [DatabaseUserType]?
 
     var isEmpty: Bool {
       tables.isEmpty && views.isEmpty && functions.isEmpty && procedures.isEmpty
-        && triggers.isEmpty
+        && triggers.isEmpty && (sequences ?? []).isEmpty && (userTypes ?? []).isEmpty
     }
 
     var count: Int {
       tables.count + views.count + functions.count + procedures.count + triggers.count
+        + (sequences?.count ?? 0) + (userTypes?.count ?? 0)
     }
 
     func inSchema(_ schema: String) -> PublicEntities {
@@ -320,84 +335,306 @@ struct WorkspaceLeftSidebarContent: View {
         views: views.filter { $0.source.schema == schema },
         functions: functions.filter { $0.schema == schema },
         procedures: procedures.filter { $0.schema == schema },
-        triggers: triggers.filter { $0.schema == schema })
+        triggers: triggers.filter { $0.schema == schema },
+        sequences: sequences?.filter { $0.schema == schema },
+        userTypes: userTypes?.filter { $0.schema == schema })
     }
   }
 
-  /// Schemas that hold at least one object, the connection's default schema first
-  private var publicSchemas: [String] {
-    var names = Set(workspaceManager.databaseTables.map(\.schema))
-    names.formUnion(workspaceManager.databaseViews.map(\.schema))
-    names.formUnion(workspaceManager.databaseFunctions.map(\.schema))
-    names.formUnion(workspaceManager.databaseProcedures.map(\.schema))
-    names.formUnion(workspaceManager.databaseTriggers.map(\.schema))
-    var sorted = names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-    if let index = sorted.firstIndex(of: connectionDatabaseType.dialect.defaultSchema) {
-      sorted.insert(sorted.remove(at: index), at: 0)
+  /// A folder and its listed rows (members the schema no longer has, or the filter hides, are
+  /// left out)
+  private typealias FolderContent = SidebarFolderLayout<FilteredTable, FilteredView>.Group
+
+  /// The open connection's folders, sorted by name, read once per render
+  private struct FolderIndex {
+    let key: String
+    let sorted: [SidebarFolder]
+    let bySchema: [String: [SidebarFolder]]
+
+    func folders(in schemas: Set<String>) -> [SidebarFolder] {
+      sorted.filter { schemas.contains($0.schema) }
     }
-    return sorted
+  }
+
+  /// Folder key of the open connection
+  private var folderKey: String? {
+    workspaceManager.workspace.connectionConfig.map(SidebarFolderStore.key(for:))
+  }
+
+  /// The open connection's folders, nil without a connection
+  private var folderIndex: FolderIndex? {
+    guard let folderKey else { return nil }
+    let sorted = folderStore.folders(for: folderKey)
+      .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    return FolderIndex(
+      key: folderKey, sorted: sorted, bySchema: Dictionary(grouping: sorted, by: \.schema))
+  }
+
+  /// `entities` split into `folders` and the ungrouped rest (`SidebarFolderLayout`)
+  private func foldered(
+    _ entities: PublicEntities, folders: [SidebarFolder]
+  ) -> (folders: [FolderContent], rest: PublicEntities) {
+    let layout = SidebarFolderLayout.build(
+      folders: folders, tables: entities.tables, views: entities.views,
+      isFiltering: !publicKeywords.isEmpty)
+    var rest = entities
+    rest.tables = layout.tables
+    rest.views = layout.views
+    return (layout.groups, rest)
+  }
+
+  private static func member(_ table: DatabaseTable) -> String {
+    SidebarFolder.member(schema: table.schema, name: table.name)
+  }
+
+  private static func member(_ view: DatabaseView) -> String {
+    SidebarFolder.member(schema: view.schema, name: view.name)
+  }
+
+  /// Tables and views of `schema` the sidebar lists, as folder members (what a drop may move)
+  private func listedMembers(in schema: String) -> Set<String> {
+    guard isListed(schema) else { return [] }
+    var members = Set(
+      workspaceManager.databaseTables.filter { $0.schema == schema }.map(Self.member))
+    members.formUnion(
+      workspaceManager.databaseViews.filter { $0.schema == schema }.map(Self.member))
+    return members
+  }
+
+  /// The row menu's folder items for the row `member` of `schema` in folder `current`
+  private func folderActions(
+    member: String, schema: String, current: UUID?, index: FolderIndex?
+  ) -> SidebarFolderActions? {
+    guard let index else { return nil }
+    let folderKey = index.key
+    return SidebarFolderActions(
+      member: member, folders: index.bySchema[schema] ?? [], currentFolderID: current,
+      onMove: { folderStore.move(member, toFolder: $0, for: folderKey) },
+      onNewFolder: { folderPrompt = .create(schema: schema, member: member) },
+      onRemove: { folderStore.removeMember(member, for: folderKey) })
+  }
+
+  /// Moves the dropped rows of the folder's schema in; anything else (another schema, text from
+  /// another app) is refused
+  private func dropOnFolder(_ items: [String], folder: SidebarFolder) -> Bool {
+    guard let folderKey else { return false }
+    let listed = listedMembers(in: folder.schema)
+    let accepted = items.filter { listed.contains($0) }
+    for member in accepted {
+      folderStore.move(member, toFolder: folder.id, for: folderKey)
+    }
+    if !accepted.isEmpty { collapsedFolders.remove(folder.id) }
+    return !accepted.isEmpty
+  }
+
+  private func saveFolderName(_ name: String, for prompt: SidebarFolderPrompt) {
+    folderPrompt = nil
+    guard let folderKey else { return }
+    switch prompt {
+    case .create(let schema, let member):
+      if let folder = folderStore.createFolder(named: name, schema: schema, for: folderKey) {
+        folderStore.move(member, toFolder: folder.id, for: folderKey)
+      }
+    case .rename(let folder):
+      folderStore.renameFolder(id: folder.id, to: name, for: folderKey)
+    }
+  }
+
+  private func folderSection(
+    _ content: FolderContent, showsSchema: Bool, folderIndex: FolderIndex?
+  ) -> some View {
+    let folder = content.folder
+    return SidebarFolderSection(
+      folder: folder, count: content.count,
+      isExpanded: !publicKeywords.isEmpty || !collapsedFolders.contains(folder.id),
+      onToggle: {
+        // A filter keeps every folder open
+        guard publicKeywords.isEmpty else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+          if collapsedFolders.contains(folder.id) {
+            collapsedFolders.remove(folder.id)
+          } else {
+            collapsedFolders.insert(folder.id)
+          }
+        }
+      },
+      onRename: { folderPrompt = .rename(folder) },
+      onDelete: {
+        guard let folderKey else { return }
+        folderStore.deleteFolder(id: folder.id, for: folderKey)
+      },
+      onDrop: { dropOnFolder($0, folder: folder) }
+    ) {
+      ForEach(content.tables) { table in
+        tableRow(table, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folder.id)
+      }
+      ForEach(content.views) { view in
+        viewRow(view, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folder.id)
+      }
+    }
+  }
+
+  /// The Public tab's schemas, read once per render
+  private struct PublicSchemas {
+    /// Schemas the tab leaves out; none on engines without the schema filter
+    let hidden: Set<String>
+    /// Schemas that hold at least one object, hidden ones included
+    let all: Set<String>
+    /// Listed schemas holding an object read with the schema (not the sequences and types read
+    /// on expand): they alone pick the flat or grouped layout, so expanding a section never
+    /// flips it
+    let schemaLoad: Set<String>
+    /// Listed schemas that hold at least one object, the connection's default schema first
+    let listed: [String]
+
+    /// Every schema with an object is hidden: the tab says so instead of showing empty sections
+    var isEverySchemaHidden: Bool { listed.isEmpty && !all.isDisjoint(with: hidden) }
+  }
+
+  private var publicSchemas: PublicSchemas {
+    let hidden = hiddenSchemas
+    var loaded = Set(workspaceManager.databaseTables.map(\.schema))
+    loaded.formUnion(workspaceManager.databaseViews.map(\.schema))
+    loaded.formUnion(workspaceManager.databaseFunctions.map(\.schema))
+    loaded.formUnion(workspaceManager.databaseProcedures.map(\.schema))
+    loaded.formUnion(workspaceManager.databaseTriggers.map(\.schema))
+    var all = loaded
+    all.formUnion((workspaceManager.databaseSequences.items ?? []).map(\.schema))
+    all.formUnion((workspaceManager.databaseUserTypes.items ?? []).map(\.schema))
+    return PublicSchemas(
+      hidden: hidden, all: all, schemaLoad: loaded.subtracting(hidden),
+      listed: SidebarSectionModel.listedSchemas(
+        all, hidden: hidden, defaultSchema: connectionDatabaseType.dialect.defaultSchema))
+  }
+
+  /// The filter menu: on engines with the filter, once there is a choice or a schema is hidden
+  private func showsSchemaFilter(_ schemas: PublicSchemas) -> Bool {
+    SidebarSectionModel.filtersSchemas(connectionDatabaseType)
+      && (schemas.all.count > 1 || !schemas.all.isDisjoint(with: schemas.hidden))
+  }
+
+  private func schemaFilterMenu(_ schemas: PublicSchemas) -> some View {
+    SidebarSchemaFilterMenu(
+      schemas: SidebarSectionModel.listedSchemas(
+        schemas.all, hidden: [], defaultSchema: connectionDatabaseType.dialect.defaultSchema),
+      hidden: schemas.hidden,
+      onChange: { workspaceManager.setHiddenSchemas($0) })
   }
 
   private var publicTabContent: some View {
-    let entities = PublicEntities(
-      tables: filteredTables, views: filteredViews, functions: filteredFunctions,
-      procedures: filteredProcedures, triggers: filteredTriggers)
-    let schemas = publicSchemas
+    let schemaState = publicSchemas
+    let entities = publicEntities(hidden: schemaState.hidden)
+    let schemas = schemaState.listed
+    let index = folderIndex
+    let showsFilterMenu = showsSchemaFilter(schemaState)
+    let searchesEveryTable = WorkspaceManager.searchesEveryTable(connectionDatabaseType)
     return VStack(spacing: 0) {
-      SidebarFilterField(text: $publicFilter)
+      if searchesEveryTable || showsFilterMenu {
+        SidebarFilterField(text: $publicFilter, trailingSpacing: Spacing.xs) {
+          HStack(spacing: Spacing.xs) {
+            if showsFilterMenu {
+              schemaFilterMenu(schemaState)
+            }
+            if searchesEveryTable {
+              Button {
+                workspaceManager.openCrossTableSearch()
+              } label: {
+                Image(systemName: "text.magnifyingglass")
+              }
+              .buttonStyle(GhostButtonStyle(iconOnly: true))
+              .controlSize(.small)
+              .disabled(!workspaceManager.canSearchEveryTable)
+              .help("Find a Value in Every Table")
+            }
+          }
+        }
+      } else {
+        SidebarFilterField(text: $publicFilter)
+      }
 
-      if !publicKeywords.isEmpty && entities.isEmpty {
+      if schemaState.isEverySchemaHidden {
+        everySchemaHiddenState
+      } else if !publicKeywords.isEmpty && entities.isEmpty {
         noMatchesState
       } else {
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.sm) {
             // One schema keeps the flat layout; two or more get one group per schema
-            if schemas.count > 1 && SidebarSectionModel.groupsBySchema(queryLanguage) {
+            if schemaState.schemaLoad.count > 1
+              && SidebarSectionModel.groupsBySchema(queryLanguage)
+            {
               ForEach(schemas, id: \.self) { schema in
                 let inSchema = entities.inSchema(schema)
                 if !inSchema.isEmpty {
+                  let grouped = foldered(
+                    inSchema, folders: index?.bySchema[schema] ?? [])
                   EntitySection(title: schema, count: inSchema.count, icon: "folder") {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                       entitySections(
-                        inSchema, idPrefix: "\(schema).", showsEmptySections: false,
-                        showsSchema: false, schema: schema)
+                        grouped.rest, folders: grouped.folders, folderIndex: index,
+                        idPrefix: "\(schema).", showsEmptySections: false, showsSchema: false,
+                        schema: schema)
                     }
                   }
                   .id(publicKeywords.isEmpty ? schema : "\(schema)-filtered")
                 }
               }
             } else {
+              let flat = foldered(
+                entities, folders: index?.folders(in: Set(schemas)) ?? [])
               entitySections(
-                entities, idPrefix: "", showsEmptySections: publicKeywords.isEmpty,
+                flat.rest, folders: flat.folders, folderIndex: index, idPrefix: "",
+                showsEmptySections: publicKeywords.isEmpty,
                 showsSchema: connectionDatabaseType.namesSchema, schema: nil)
             }
           }
           .padding(.vertical, Spacing.sm)
           .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // The database's menu: section headers and empty space (rows keep their own menus)
+        .contextMenu {
+          if queryLanguage == .sql {
+            Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
+              .disabled(!workspaceManager.canExportDataDictionary)
+          }
+          if workspaceManager.supportsSchemaCompare {
+            Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
+              .disabled(!workspaceManager.canCompareSchemas)
+          }
+        }
       }
     }
   }
 
-  /// The language's sections (`SidebarSectionModel`). `idPrefix` keeps section ids
-  /// unique per schema; `showsSchema` adds the "(schema)" label to table and view rows;
-  /// `schema` is the group the sections sit in (nil: flat list), New Table's default target.
+  /// `folders`, then the language's sections (`SidebarSectionModel`) of the ungrouped
+  /// `entities`. `idPrefix` keeps section ids unique per schema; `showsSchema` adds the
+  /// "(schema)" label to table and view rows; `schema` is the group the sections sit in (nil:
+  /// flat list), New Table's default target.
   @ViewBuilder
   private func entitySections(
-    _ entities: PublicEntities, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool,
-    schema: String?
+    _ entities: PublicEntities, folders: [FolderContent], folderIndex: FolderIndex?,
+    idPrefix: String, showsEmptySections: Bool, showsSchema: Bool, schema: String?
   ) -> some View {
-    ForEach(SidebarSectionModel.sections(for: queryLanguage), id: \.kind) { section in
+    ForEach(folders) { content in
+      folderSection(content, showsSchema: showsSchema, folderIndex: folderIndex)
+    }
+    ForEach(
+      SidebarSectionModel.sections(
+        for: queryLanguage,
+        supportsUserTypes: connectionDatabaseType.capabilities.supportsUserTypes),
+      id: \.kind
+    ) { section in
       entitySection(
-        section, entities, idPrefix: idPrefix, showsEmptySections: showsEmptySections,
-        showsSchema: showsSchema, schema: schema)
+        section, entities, folderIndex: folderIndex, idPrefix: idPrefix,
+        showsEmptySections: showsEmptySections, showsSchema: showsSchema, schema: schema)
     }
   }
 
   @ViewBuilder
   private func entitySection(
-    _ section: SidebarSectionModel.Section, _ entities: PublicEntities, idPrefix: String,
-    showsEmptySections: Bool, showsSchema: Bool, schema: String?
+    _ section: SidebarSectionModel.Section, _ entities: PublicEntities,
+    folderIndex: FolderIndex?, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool,
+    schema: String?
   ) -> some View {
     switch section.kind {
     case .tables:
@@ -411,7 +648,7 @@ struct WorkspaceLeftSidebarContent: View {
           onCreate: tablesCreateAction(schema: schema)
         ) {
           ForEach(entities.tables) { table in
-            tableRow(table, showsSchema: showsSchema)
+            tableRow(table, showsSchema: showsSchema, folderIndex: folderIndex)
           }
         }
         .id(idPrefix + (publicKeywords.isEmpty ? "tables" : "tables-filtered"))
@@ -429,7 +666,7 @@ struct WorkspaceLeftSidebarContent: View {
           onCreate: createAction(.createView)
         ) {
           ForEach(entities.views) { view in
-            viewRow(view, showsSchema: showsSchema)
+            viewRow(view, showsSchema: showsSchema, folderIndex: folderIndex)
           }
         }
         .id(idPrefix + (publicKeywords.isEmpty ? "views" : "views-filtered"))
@@ -496,10 +733,71 @@ struct WorkspaceLeftSidebarContent: View {
         }
         .id(idPrefix + (publicKeywords.isEmpty ? "triggers" : "triggers-filtered"))
       }
+
+    case .sequences:
+      // Shown unread too: expanding the section is what reads it
+      if showsEmptySections || entities.sequences?.isEmpty != true {
+        EntitySection(
+          title: section.title,
+          count: entities.sequences?.count,
+          icon: section.icon,
+          isExpanded: !publicKeywords.isEmpty && entities.sequences != nil
+        ) {
+          catalogStatus(workspaceManager.databaseSequences, isEmpty: entities.sequences?.isEmpty) {
+            await workspaceManager.loadSequencesIfNeeded()
+          }
+          ForEach(entities.sequences ?? []) { sequence in
+            SequenceRowView(
+              sequence: sequence,
+              onShowDDL: { workspaceManager.openObjectSource(.sequence(sequence)) },
+              onCopyName: { copyName(sequence.name, schema: sequence.schema) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "sequences" : "sequences-filtered"))
+      }
+
+    case .types:
+      if showsEmptySections || entities.userTypes?.isEmpty != true {
+        EntitySection(
+          title: section.title,
+          count: entities.userTypes?.count,
+          icon: section.icon,
+          isExpanded: !publicKeywords.isEmpty && entities.userTypes != nil
+        ) {
+          catalogStatus(workspaceManager.databaseUserTypes, isEmpty: entities.userTypes?.isEmpty) {
+            await workspaceManager.loadUserTypesIfNeeded()
+          }
+          ForEach(entities.userTypes ?? []) { type in
+            UserTypeRowView(
+              type: type,
+              onShowDDL: { workspaceManager.openObjectSource(.userType(type)) },
+              onCopyName: { copyName(type.name, schema: type.schema) }
+            )
+          }
+        }
+        .id(idPrefix + (publicKeywords.isEmpty ? "types" : "types-filtered"))
+      }
     }
   }
 
-  private func tableRow(_ table: FilteredTable, showsSchema: Bool) -> some View {
+  /// First row of a section read on expand: starts the read, then shows its progress or error
+  private func catalogStatus<Item>(
+    _ catalog: LazyCatalog<Item>, isEmpty: Bool?, load: @escaping () async -> Void
+  ) -> some View {
+    CatalogStatusRow(
+      status: catalog.status(isEmpty: isEmpty), onAppear: { Task { await load() } },
+      onRetry: { Task { await load() } })
+  }
+
+  private func copyName(_ name: String, schema: String) {
+    perform(.copyName, name: name, schema: schema, open: {})
+  }
+
+  /// `folderID` is the folder listing the row, nil when ungrouped
+  private func tableRow(
+    _ table: FilteredTable, showsSchema: Bool, folderIndex: FolderIndex?, folderID: UUID? = nil
+  ) -> some View {
     TableRowView(
       table: table.display,
       isExpanded: table.expandForMatch || table.source.isExpanded,
@@ -531,11 +829,17 @@ struct WorkspaceLeftSidebarContent: View {
         perform(action, name: table.source.name, schema: table.source.schema) {
           openTable(table.source)
         }
-      }
+      },
+      folderActions: folderActions(
+        member: table.folderMember, schema: table.source.schema, current: folderID,
+        index: folderIndex)
     )
   }
 
-  private func viewRow(_ view: FilteredView, showsSchema: Bool) -> some View {
+  /// `folderID` is the folder listing the row, nil when ungrouped
+  private func viewRow(
+    _ view: FilteredView, showsSchema: Bool, folderIndex: FolderIndex?, folderID: UUID? = nil
+  ) -> some View {
     ViewRowView(
       view: view.display,
       isExpanded: view.expandForMatch || view.source.isExpanded,
@@ -559,7 +863,10 @@ struct WorkspaceLeftSidebarContent: View {
         perform(action, name: view.source.name, schema: view.source.schema, view: view.source) {
           openView(view.source)
         }
-      }
+      },
+      folderActions: folderActions(
+        member: view.folderMember, schema: view.source.schema, current: folderID,
+        index: folderIndex)
     )
   }
 
@@ -703,6 +1010,18 @@ struct WorkspaceLeftSidebarContent: View {
       .font(.caption)
       .foregroundColor(.foregroundMuted)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var everySchemaHiddenState: some View {
+    VStack(spacing: Spacing.sm) {
+      Text("Every schema is hidden")
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
+      Button("Show All") { workspaceManager.setHiddenSchemas([]) }
+        .buttonStyle(FilledSecondaryButtonStyle())
+        .controlSize(.small)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var emptyState: some View {

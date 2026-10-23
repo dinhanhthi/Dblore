@@ -357,6 +357,8 @@ struct SQLDumpWriterTests {
     #expect(try pg(.string("v1.123456789012345678")) == "'1.123456789012345678'")
     #expect(try pg(.string("vit's")) == "'it''s'")
     #expect(try pg(.string("v\\xdeadbeef")) == "E'\\\\xdeadbeef'")
+    // A leading combining mark joins the "v" prefix in one character
+    #expect(try pg(.string("v\u{301}x")) == "'\u{301}x'")
     #expect(throws: SQLDumpError.unexpectedValue(table: "t", column: "t")) {
       try pg(.int(1))
     }

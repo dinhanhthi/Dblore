@@ -36,17 +36,17 @@ struct FocusedSceneActions: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .focusedSceneValue(\.documentMode, documentMode)
-      .focusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
+      .bridgedFocusedSceneValue(\.documentMode, documentMode)
+      .bridgedFocusedSceneValue(\.toggleRightSidebarAction) { [viewModel] in
         viewModel.toggleSidebar()
       }
-      .focusedSceneValue(\.openSearchAction) { [viewModel] in
+      .bridgedFocusedSceneValue(\.openSearchAction) { [viewModel] in
         viewModel.openSearch()
       }
-      .focusedSceneValue(\.findNextAction) { [viewModel] in
+      .bridgedFocusedSceneValue(\.findNextAction) { [viewModel] in
         viewModel.navigateToNextMatch()
       }
-      .focusedSceneValue(\.findPreviousAction) { [viewModel] in
+      .bridgedFocusedSceneValue(\.findPreviousAction) { [viewModel] in
         viewModel.navigateToPreviousMatch()
       }
   }
@@ -251,6 +251,12 @@ private struct QueryConfirmationModifier: ViewModifier {
             .font(.mono)
             .foregroundColor(.foregroundMuted)
             .lineLimit(5)
+        }
+        // Staged deletes: what foreign keys also change
+        ForEach(viewModel.queryConfirmationState.alsoAffected, id: \.self) { line in
+          Text(line)
+            .font(.small)
+            .foregroundColor(.foregroundSubtle)
         }
       }
     }

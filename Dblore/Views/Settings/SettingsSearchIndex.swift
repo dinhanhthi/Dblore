@@ -137,6 +137,11 @@ extension SettingsModal.SettingsTab {
           detail:
             "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file. (Editor only)"
         ),
+        .init(
+          card: "Snippets", title: "SQL snippets",
+          detail:
+            "Add, edit or delete snippets: a trigger typed in a SQL editor expands a template with tab stops. ${1:default}, ${1}, $0 and \\$ for a literal dollar sign. Tab and Shift-Tab move between the placeholders."
+        ),
       ]
     case .ai:
       return [
@@ -194,6 +199,9 @@ extension SettingsModal.SettingsTab {
             "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style."
         ),
         .init(
+          card: "Text", title: "Show Invisible Characters",
+          detail: InvisibleCharactersSetting.description),
+        .init(
           card: "Table", title: "Hide Column Types",
           detail:
             "When enabled, column types (e.g., VARCHAR, INTEGER) will be hidden from table headers, showing only column names."
@@ -203,6 +211,14 @@ extension SettingsModal.SettingsTab {
           detail:
             "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables."
         ),
+        .init(
+          card: "Table", title: "Neutralize Copied Formulas",
+          detail:
+            "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it."
+        ),
+        .init(
+          card: "Table", title: "Copy rows as",
+          detail: CopyRowsFormatSetting.description + " TSV, CSV, with headers, JSON, Markdown."),
         .init(
           card: "Table", title: "Max Height",
           detail: "Adjust the maximum height of result tables. (Notebook only)"),
@@ -279,6 +295,14 @@ extension SettingsModal.SettingsTab {
             "Agents can use only the connections turned on here. Use a least-privilege database user."
         ),
         .init(
+          card: "Write tools", title: "Allow write tools",
+          detail:
+            "Agents ask to run one change at a time on connections with a write scope; each waits for your approval."
+        ),
+        .init(
+          card: "Connections", title: "Agent access",
+          detail: "Read, Read + data changes, Read + data + schema changes."),
+        .init(
           card: "Queries", title: "Default row cap",
           detail: "Rows an agent query returns. History is off: MCP queries are not recorded."),
         .init(card: "Clients", title: "Copy Claude Code command"),
@@ -286,6 +310,16 @@ extension SettingsModal.SettingsTab {
         .init(
           card: "Clients", title: "Regenerate token",
           detail: "Clients that use the old token stop working until you copy the setup again."),
+        .init(
+          card: "Outside MCP servers", title: "Outside MCP servers",
+          detail:
+            "MCP servers whose tools the AI chat may call: test a server, tick the tools to allow, turn it on."
+        ),
+        .init(
+          card: "Outside MCP servers", title: "Add a server",
+          detail:
+            "Name, URL and token. https, or http on 127.0.0.1, ::1 or localhost. The token is kept in the Keychain."
+        ),
         .init(
           card: "About MCP", title: "About MCP",
           detail:

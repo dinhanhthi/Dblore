@@ -24,7 +24,6 @@ nonisolated enum TablePlusImporter {
   }
 
   static let maxFileSize = 10 * 1024 * 1024
-  static let passwordWarning = "Password not imported: TablePlus keeps it in its Keychain."
 
   static func importConnections(
     fromFile url: URL
@@ -104,7 +103,8 @@ nonisolated enum TablePlusImporter {
     let configuredDatabase = string(entry["DatabaseName"]).flatMap { $0.isEmpty ? nil : $0 }
     let username = string(entry["DatabaseUser"]) ?? ""
 
-    var warnings = [passwordWarning]
+    // No password note: the preview's "No password" badge already says so.
+    var warnings: [String] = []
     let database: String
     switch engine {
     case .mysql:

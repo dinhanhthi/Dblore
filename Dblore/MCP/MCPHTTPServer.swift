@@ -3,7 +3,9 @@
 // endpoint, `POST /mcp`. `MCPRequestValidator` checks each request head before any body is read;
 // the body is buffered up to the limit (413 while it streams), then the injected handler runs
 // off the event loop and its response is written back on the connection's loop. Refusals close
-// the connection; answered requests honour keep-alive. JSON-RPC lives in the handler.
+// the connection; answered requests honour keep-alive. A client that closes its connection while
+// its handler runs cancels the handler (a waiting write approval is denied). JSON-RPC lives in
+// the handler.
 
 import Foundation
 import NIOCore
@@ -185,16 +187,17 @@ private nonisolated final class MCPRequestTasks: Sendable {
 
   private let state = OSAllocatedUnfairLock(initialState: State())
 
-  /// Starts `body` unless the listener is stopping; false when refused.
-  func run(_ body: @escaping @Sendable () async -> Void) -> Bool {
+  /// Starts `body` unless the listener is stopping; nil when refused.
+  func run(_ body: @escaping @Sendable () async -> Void) -> Task<Void, Never>? {
     let id = UUID()
     return state.withLock { state in
-      guard state.accepting else { return false }
-      state.tasks[id] = Task {
+      guard state.accepting else { return nil }
+      let task = Task {
         await body()
         self.state.withLock { _ = $0.tasks.removeValue(forKey: id) }
       }
-      return true
+      state.tasks[id] = task
+      return task
     }
   }
 
@@ -222,6 +225,8 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
   /// Set once the head passed validation; nil while refusing the rest of a request.
   private var head: HTTPRequestHead?
   private var body = ByteBuffer()
+  /// The handler task of the request in flight, cancelled when the client goes away
+  private var inFlight: Task<Void, Never>?
 
   init(
     validator: MCPRequestValidator, handler: @escaping MCPHTTPServer.Handler,
@@ -262,6 +267,12 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
     }
   }
 
+  func channelInactive(context: ChannelHandlerContext) {
+    inFlight?.cancel()
+    inFlight = nil
+    context.fireChannelInactive()
+  }
+
   private func dispatch(_ head: HTTPRequestHead, body: Data, context: ChannelHandlerContext) {
     var headers: [String: String] = [:]
     for (name, value) in head.headers {
@@ -274,13 +285,15 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
     let bound = NIOLoopBound(context, eventLoop: eventLoop)
     let version = head.version
     let keepAlive = head.isKeepAlive
-    let started = tasks.run {
+    let connection = NIOLoopBound(self, eventLoop: eventLoop)
+    inFlight = tasks.run {
       let response = await handler(request)
       eventLoop.execute {
+        connection.value.inFlight = nil
         Self.write(response, version: version, keepAlive: keepAlive, context: bound.value)
       }
     }
-    if !started { context.close(promise: nil) }
+    if inFlight == nil { context.close(promise: nil) }
   }
 
   private static func write(

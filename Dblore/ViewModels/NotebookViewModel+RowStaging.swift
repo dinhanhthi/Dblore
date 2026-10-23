@@ -36,6 +36,8 @@ struct PendingStagedBatch: Sendable {
   struct MongoInlineEdit: Sendable {
     /// The notebook cell to re-run, nil for the editor or the data viewer
     var cellId: UUID?
+    /// Edit target of the edited result: the editor refresh re-runs only that result
+    var target: EditTarget
   }
 
   struct MongoStagedChanges: Sendable {
@@ -142,27 +144,22 @@ extension NotebookViewModel {
   func stageEdit(row: Int, column: String, value: CellValue) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     if stagesDocuments { return stageDocumentInsertEdit(row: row, column: column, value: value) }
-    guard let target = stagedEditTarget, let key = rowKey(at: row, target: target) else {
-      return Self.rowNotOnPage
-    }
-    if target.generatedColumns.contains(column) { return Self.generatedColumnMessage(column) }
-    let original =
-      dataViewer?.changeSet?.originals[key]?[column] ?? loadedCell(row: row, column: column)
-      ?? .null
-    do {
-      return try changeSet("Edit Cell") { set in
-        if let tempID = key.tempID {
-          set.updateInsert(tempID: tempID, column: column, value: value)
-        } else {
-          try set.stageEdit(row: key, column: column, value: value, original: original)
-        }
-      }
-    } catch let error as RowChangeError {
-      return error.message
-    } catch {
-      return error.localizedDescription
-    }
+    return stageCells([(row, .value(value))], column: column, actionName: "Edit Cell")
   }
+
+  /// Set Value...: stages `values[i]` into `column` of `rows[i]` in one change (one undo step),
+  /// such as a distinct UUID per cell. Text takes each cell's type, as a single-cell edit does.
+  /// Nothing is staged when one cell is refused.
+  @discardableResult
+  func stageEdits(rows: [Int], column: String, values: [StagedCellValue]) -> String? {
+    if let reason = rowStagingUnavailableReason { return reason }
+    if stagesDocuments { return Self.documentCellsMessage }
+    return stageCells(
+      Array(zip(rows, values)), column: column, actionName: "Edit Cells", typesText: true)
+  }
+
+  /// Shown when several cells of a MongoDB result are set at once
+  static let documentCellsMessage = "On MongoDB, edit one document field at a time"
 
   /// Drops staged edits, deletes, and inserts for `rows`.
   @discardableResult
@@ -210,8 +207,10 @@ extension NotebookViewModel {
     resolveStagedLeavePrompt(.cancel)
   }
 
-  /// Drops every staged change. A Safe Mode dialog for this batch is cancelled with it.
+  /// Drops every staged change. A Safe Mode dialog or blocker prompt for this batch is
+  /// cancelled with it.
   func discardStaged() {
+    resolveStagedBlockerPrompt(commitAnyway: false)
     dataViewer?.changeSet = nil
     dataViewer?.documentChangeSet = nil
     dataViewer?.pendingDocumentEditor = nil
@@ -226,12 +225,21 @@ extension NotebookViewModel {
   /// Display SQL for the staged batch. Not sent to the server.
   func previewStagedSQL() -> String {
     if stagesDocuments { return stagedDocumentBatch()?.preview ?? "" }
-    return stagedBatch()?.preview ?? ""
+    do {
+      return try stagedBatch()?.preview ?? ""
+    } catch let error as RowChangeError {
+      return error.message
+    } catch {
+      return error.localizedDescription
+    }
   }
 
   /// Confirms the preview in Safe Mode when needed, then sends the bound batch.
   /// Success reloads the page and clears the set. Failure keeps the set and shows the error.
-  func commitStaged() async {
+  /// Staged deletes are counted first (`stagedDeleteImpact`): a blocker with rows asks Commit
+  /// Anyway or Cancel first, unless `ignoringBlockers` (the preview sheet's Commit Anyway); a
+  /// count not computed does not. Safe Mode confirms after either way.
+  func commitStaged(ignoringBlockers: Bool = false) async {
     if stagesDocuments {
       await commitStagedDocuments()
       return
@@ -241,7 +249,37 @@ extension NotebookViewModel {
     // The key lookup awaited: the page may have reloaded (no target: keep the set) or the table
     // changed (discard with the warning). Only a live, valid set may clear silently below.
     guard discardsInvalidatedStagedSet() == false else { return }
-    guard let batch = stagedBatch() else {
+    let checkedDeletes = dataViewer?.changeSet?.deletes
+    isCheckingStagedDeletes = true
+    let impact = await stagedDeleteImpact()
+    isCheckingStagedDeletes = false
+    guard discardsInvalidatedStagedSet() == false else { return }
+    if impact != nil, dataViewer?.changeSet?.deletes != checkedDeletes {
+      showToast(
+        "The staged deletes changed while related rows were checked. Commit again.",
+        type: .warning)
+      return
+    }
+    if let impact, impact.blocksCommit, !ignoringBlockers {
+      guard await confirmCommitPastBlockers(impact) else { return }
+      // The prompt awaited: the page may have reloaded or the staged deletes changed
+      guard discardsInvalidatedStagedSet() == false else { return }
+      guard dataViewer?.changeSet?.deletes == checkedDeletes else {
+        showToast("The staged deletes changed. Commit again.", type: .warning)
+        return
+      }
+    }
+    let built: PendingStagedBatch?
+    do {
+      built = try stagedBatch()
+    } catch let error as RowChangeError {
+      showToast(error.message, type: .error)
+      return
+    } catch {
+      showToast(error.localizedDescription, type: .error)
+      return
+    }
+    guard let batch = built else {
       // MySQL skips edits that write the loaded value: nothing left to send is a commit.
       if hasPendingStagedChanges {
         dataViewer?.changeSet = nil
@@ -249,13 +287,36 @@ extension NotebookViewModel {
       }
       return
     }
-    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+    if presentConfirmationIfNeeded(
+      for: batch.preview, cellId: nil, alsoAffected: impact?.lines ?? [])
+    {
       pendingExplainSQL = nil
       pendingStagedBatch = batch
       return
     }
     pendingStagedBatch = nil
     await runConfirmedStagedBatch(batch)
+  }
+
+  /// Shows the blockers with Commit Anyway / Cancel; true for Commit Anyway. A prompt that is
+  /// already open refuses the new request with a toast.
+  private func confirmCommitPastBlockers(_ impact: CascadeImpactSummary) async -> Bool {
+    guard stagedBlockerContinuation == nil else {
+      showToast("Answer the open Commit Anyway prompt first.", type: .warning)
+      return false
+    }
+    return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+      stagedBlockerContinuation = continuation
+      stagedBlockerPrompt = impact
+    }
+  }
+
+  /// Resumes the blocker prompt. A second call does nothing (the dialog also dismisses).
+  func resolveStagedBlockerPrompt(commitAnyway: Bool) {
+    guard let continuation = stagedBlockerContinuation else { return }
+    stagedBlockerContinuation = nil
+    stagedBlockerPrompt = nil
+    continuation.resume(returning: commitAnyway)
   }
 
   /// Nil without a live target (nothing to do, the set stays). True when the set no longer
@@ -485,34 +546,35 @@ extension NotebookViewModel {
 
   /// Live data-viewer target with a primary key, when every column origin names that table.
   /// Notebook results are not a staging target.
-  private var stagedEditTarget: EditTarget? {
+  var stagedEditTarget: EditTarget? {
     guard dataViewer != nil, let result = editorResult, let target = result.editTarget,
       !target.primaryKeyColumns.isEmpty, Self.columnTableID(result.columns) == target.tableID
     else { return nil }
     return target
   }
 
-  private var stagingDialect: SQLDialect {
+  var stagingDialect: SQLDialect {
     dataViewer?.databaseType.dialect ?? notebook.connectionConfig?.databaseType.dialect
       ?? .postgresql
   }
 
-  private func stagedBatch() -> PendingStagedBatch? {
+  /// Throws `RowChangeError.noRowKey` for an UPDATE or DELETE the builder cannot key.
+  private func stagedBatch() throws -> PendingStagedBatch? {
     guard let target = stagedEditTarget, let set = dataViewer?.changeSet, !set.isEmpty,
       set.invalidated(by: target) == nil
     else { return nil }
     let columns = editorResult?.columns ?? []
-    let statements = RowChangeSQLBuilder.statements(
+    let statements = try RowChangeSQLBuilder.statements(
       for: set, target: target, columns: columns, dialect: stagingDialect)
     guard !statements.isEmpty else { return nil }
     return PendingStagedBatch(
       statements: statements,
-      preview: RowChangeSQLBuilder.previewText(
+      preview: try RowChangeSQLBuilder.previewText(
         for: set, target: target, columns: columns, dialect: stagingDialect),
       connectionEpoch: target.connectionEpoch,
       rewindPlan: RewindPlan.make(
         target: target, resultColumns: columns, editKind: .staged,
-        steps: RowChangeSQLBuilder.rewindSteps(
+        steps: try RowChangeSQLBuilder.rewindSteps(
           for: set, target: target, columns: columns, dialect: stagingDialect),
         engine: notebook.connectionConfig?.databaseType,
         enabled: historySettings.rewindEnabled))
@@ -540,6 +602,59 @@ extension NotebookViewModel {
     }
     dataViewer?.changeSet = stored
     return nil
+  }
+
+  /// Stages each cell into `column` inside one `changeSet` mutation. A staged insert takes a
+  /// DEFAULT cell by leaving the column out of its INSERT. `typesText` converts `.string` text
+  /// with `editedCellValue` against the cell's original and the column type.
+  private func stageCells(
+    _ cells: [(row: Int, value: StagedCellValue)], column: String, actionName: String,
+    typesText: Bool = false
+  ) -> String? {
+    guard let target = stagedEditTarget else { return Self.rowNotOnPage }
+    let columnType = editorResult?.columns.first { $0.name == column }?.type ?? ""
+    var keyed: [(key: RowChangeSet.RowKey, original: CellValue, value: StagedCellValue)] = []
+    for cell in cells {
+      guard let key = rowKey(at: cell.row, target: target) else { return Self.rowNotOnPage }
+      let original =
+        dataViewer?.changeSet?.originals[key]?[column] ?? loadedCell(row: cell.row, column: column)
+        ?? .null
+      var value = cell.value
+      if typesText, case .value(.string(let text)) = value {
+        value = .value(Self.editedCellValue(text, original: original, columnType: columnType))
+      }
+      keyed.append((key, original, value))
+    }
+    if target.generatedColumns.contains(column) { return Self.generatedColumnMessage(column) }
+    let setsDefault = keyed.contains { cell in
+      if case .serverDefault = cell.value { return cell.key.tempID == nil }
+      return false
+    }
+    if setsDefault,
+      let reason = unavailableFeatureMessage("Setting a cell to DEFAULT", \.supportsDefaultInUpdate)
+    {
+      return reason
+    }
+    do {
+      return try changeSet(actionName) { set in
+        for cell in keyed {
+          switch (cell.value, cell.key.tempID) {
+          case (.value(let value), let tempID?):
+            set.updateInsert(tempID: tempID, column: column, value: value)
+          case (.serverDefault, let tempID?):
+            set.clearInsertValue(tempID: tempID, column: column)
+          case (.value(let value), nil):
+            try set.stageEdit(row: cell.key, column: column, value: value, original: cell.original)
+          case (.serverDefault, nil):
+            try set.stageServerDefault(row: cell.key, column: column, original: cell.original)
+          }
+        }
+      }
+    } catch let error as RowChangeError {
+      return error.message
+    } catch {
+      return error.localizedDescription
+    }
   }
 
   /// Records an undo that puts `snapshot` back. Called again from that undo, it becomes the redo.
@@ -608,6 +723,8 @@ extension NotebookViewModel {
       guard !target.primaryKeyColumns.contains(column.name),
         !target.generatedColumns.contains(column.name)
       else { continue }
+      // A cell staged to DEFAULT is left out: the copy's INSERT takes the default too
+      if dataViewer?.changeSet?.isServerDefault(row: key, column: column.name) == true { continue }
       let loaded = result.rows[row].indices.contains(index) ? result.rows[row][index] : .null
       values[column.name] = dataViewer?.changeSet?.edits[key]?[column.name] ?? loaded
     }

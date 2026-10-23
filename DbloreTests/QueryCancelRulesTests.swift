@@ -33,6 +33,148 @@ struct QueryCancelRulesTests {
     #expect(!QueryCancelWarning.statementInterrupt.detail.contains("reset"))
   }
 
+  /// Both ViewModel paths: the cancel button (only asks when something is discarded) and the
+  /// editor Run button (`alwaysConfirm`). MongoDB has no transactions: nothing is staged.
+  @Test(
+    "MySQL and MongoDB never ask to roll back on cancel; PostgreSQL does",
+    .timeLimit(.minutes(1)), arguments: [DatabaseType.mysql, .mongodb, .postgresql])
+  @MainActor
+  func cancelPromptPerEngine(type: DatabaseType) async throws {
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(cancelStrategy: type.capabilities.cancelStrategy),
+      slowQueries: true)
+    let connection = DatabaseConnectionManager(sessionFactory: factory)
+    try await connection.connect(
+      config: ConnectionConfig(
+        databaseType: type, host: "fake", port: 1, database: "fake", username: "u",
+        password: "p", sslMode: .disable, safeMode: .silent, protectedMode: true))
+    let session = try #require(factory.sessions.first)
+    let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+    if type.capabilities.supportsTransactions {
+      _ = try await connection.execute(userSQL: "UPDATE t SET a = 1", policy: protected)
+      #expect(await connection.transactionSnapshot().pending.count == 1)
+    }
+    let read = type == .mongodb ? "db.t.find({})" : "SELECT pg_sleep(30)"
+    let running = Task { try await connection.execute(userSQL: read, policy: protected) }
+    await session.waitUntilQueryStarted()
+
+    let viewModel = NotebookViewModel()
+    viewModel.connectionManager = connection
+    var warnings: [QueryCancelWarning] = []
+    // Keep running: the statement stays in flight for the next path
+    viewModel.cancelQueryPrompt = { warning in
+      warnings.append(warning)
+      return false
+    }
+    let keeps = type.interruptKeepsTransaction
+    let rollBack = "Cancelling will roll back 1 pending change"
+
+    // Editor Run button: always asks, with the kept wording when nothing is discarded
+    #expect(
+      await viewModel.cancelRunningStatement(cancelQueue: false, alwaysConfirm: true) == false)
+    if keeps {
+      #expect(warnings == [.statementInterrupt])
+    } else {
+      #expect(warnings.map(\.title) == [rollBack])
+    }
+
+    // Cancel button: no prompt at all when the interrupt keeps the transaction (it cancels)
+    warnings = []
+    #expect(await viewModel.cancelRunningStatement(cancelQueue: false) == keeps)
+    #expect(warnings.map(\.title) == (keeps ? [] : [rollBack]))
+
+    await session.interrupt()
+    _ = try? await running.value
+    await connection.disconnect()
+  }
+
+  /// The interrupt keeps the session. SQLite may roll back the transaction (it keeps it after
+  /// a read): hedged, and its button only stops the query. DuckDB always rolls it back: definite,
+  /// with the discard button. Neither says the connection is closed or reset, or that a server
+  /// stops the statement (both run in the app).
+  @Test(
+    "SQLite and DuckDB: the prompt says the statement is stopped, not the connection closed",
+    .timeLimit(.minutes(1)), arguments: [DatabaseType.sqlite, .duckdb])
+  @MainActor
+  func interruptPromptNeverSaysClosed(type: DatabaseType) async throws {
+    // Nothing open: the editor Run button asks with the in-process interrupt wording
+    let idle = try await cancelPrompts(type: type, staged: false, alwaysConfirm: true)
+    #expect(idle == [.inProcessInterrupt])
+    #expect(!QueryCancelWarning.inProcessInterrupt.detail.contains("server"))
+    #expect(QueryCancelWarning.inProcessInterrupt.buttonTitle == QueryCancelWarning.stopTitle)
+    let pending = try await cancelPrompts(type: type, staged: true, alwaysConfirm: false)
+    if type == .duckdb {
+      #expect(pending.map(\.title) == ["Cancelling will roll back 1 pending change"])
+      #expect(pending.map(\.buttonTitle) == [QueryCancelWarning.confirmTitle])
+    } else {
+      #expect(pending.map(\.title) == ["Cancelling may roll back 1 pending change"])
+      #expect(pending.map(\.buttonTitle) == [QueryCancelWarning.stopTitle])
+    }
+  }
+
+  @Test("Interrupt: SQLite may roll back the open transaction, DuckDB will; never closed")
+  func interruptUserTransactionWording() throws {
+    let sqlite = try #require(
+      QueryCancelWarning.make(state: .idle, userTxOpen: true, interrupts: true))
+    #expect(sqlite.title == "Cancelling may roll back the open transaction")
+    #expect(sqlite.buttonTitle == QueryCancelWarning.stopTitle)
+    let duckdb = try #require(
+      QueryCancelWarning.make(
+        state: .idle, userTxOpen: true, interrupts: true, interruptRollsBack: true))
+    #expect(duckdb.title == "Cancelling will roll back the open transaction")
+    #expect(duckdb.buttonTitle == QueryCancelWarning.confirmTitle)
+    for warning in [sqlite, duckdb] {
+      #expect(!warning.detail.contains("closed"))
+      #expect(!warning.detail.contains("reset"))
+      #expect(!warning.detail.contains("server"))
+    }
+    // The connection is closed: the rollback is certain
+    let reset = try #require(QueryCancelWarning.make(state: .idle, userTxOpen: true))
+    #expect(reset.buttonTitle == QueryCancelWarning.confirmTitle)
+  }
+
+  /// The prompts the ViewModel shows (answered Keep running) for a slow read on a fake `type`
+  /// connection in Protected mode, with one pending change when `staged`
+  @MainActor
+  private func cancelPrompts(
+    type: DatabaseType, staged: Bool, alwaysConfirm: Bool
+  ) async throws -> [QueryCancelWarning] {
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(cancelStrategy: type.capabilities.cancelStrategy),
+      slowQueries: true)
+    let connection = DatabaseConnectionManager(sessionFactory: factory)
+    // In-memory and read-only: no file grant for SQLite / DuckDB
+    try await connection.connect(
+      config: ConnectionConfig(
+        databaseType: type, host: "fake", port: 1, database: DuckDBSession.inMemoryPath,
+        username: "u", password: "p", sslMode: .disable, safeMode: .silent, protectedMode: true,
+        readOnlyFile: true))
+    let session = try #require(factory.sessions.first)
+    let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+    if staged {
+      _ = try await connection.execute(userSQL: "UPDATE t SET a = 1", policy: protected)
+    }
+    // A function call: never a cursor read, so the fake's slow query runs
+    let running = Task {
+      try await connection.execute(userSQL: "SELECT pg_sleep(30)", policy: protected)
+    }
+    await session.waitUntilQueryStarted()
+    let viewModel = NotebookViewModel()
+    viewModel.connectionManager = connection
+    var warnings: [QueryCancelWarning] = []
+    viewModel.cancelQueryPrompt = { warning in
+      warnings.append(warning)
+      return false
+    }
+    #expect(
+      await viewModel.cancelRunningStatement(cancelQueue: false, alwaysConfirm: alwaysConfirm)
+        == false)
+    await session.interrupt()
+    _ = try? await running.value
+    await connection.disconnect()
+    return warnings
+  }
+
   @Test("Pending app transaction: warns with the count and the itemized review text")
   func pendingChangesWarn() {
     let pending = [

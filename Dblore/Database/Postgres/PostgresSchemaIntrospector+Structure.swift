@@ -157,3 +157,93 @@ nonisolated extension PostgresSchemaIntrospector {
     return constraints
   }
 }
+
+// MARK: - Sequence and user type DDL
+
+// Read-only DDL of a sequence, enum, domain or composite type, rendered from its loaded catalog
+// row (CREATE SEQUENCE, CREATE TYPE and CREATE DOMAIN in the PostgreSQL docs). The SQL dump has
+// its own enum, domain and sequence statements; they are not reused because the dump leaves out
+// CACHE, NO MINVALUE / NO MAXVALUE and OWNED BY (written after the data), and has no composite
+// types. A NOT VALID domain check follows its CREATE DOMAIN as ALTER DOMAIN, as in the dump.
+// Identifiers are quoted, enum labels are literals; types, defaults and constraint definitions
+// are server text, written as the catalog printed them.
+nonisolated extension PostgresSchemaIntrospector {
+  static func ddl(_ sequence: DatabaseSequence) throws -> String {
+    let dialect = SQLDialect.postgresql
+    let (typeMin, typeMax) = sequenceTypeBounds(sequence.dataType)
+    let ascending = sequence.increment > 0
+    var lines = [
+      "CREATE SEQUENCE \(try qualifiedName(sequence.schema, sequence.name))",
+      "  AS \(sequence.dataType)",
+      "  INCREMENT BY \(sequence.increment)",
+      sequence.minValue == (ascending ? 1 : typeMin)
+        ? "  NO MINVALUE" : "  MINVALUE \(sequence.minValue)",
+      sequence.maxValue == (ascending ? typeMax : -1)
+        ? "  NO MAXVALUE" : "  MAXVALUE \(sequence.maxValue)",
+      "  START WITH \(sequence.start)",
+      "  CACHE \(sequence.cache)",
+      sequence.cycle ? "  CYCLE" : "  NO CYCLE",
+    ]
+    if let owner = sequence.ownedBy {
+      let column =
+        try qualifiedName(owner.schema, owner.table) + "."
+        + dialect.quoteIdentifier(owner.column)
+      if sequence.isIdentity {
+        let note = SQLDialect.lineCommentSafe(column)
+        lines.insert("-- Identity sequence of \(note), created by its column", at: 0)
+      } else {
+        lines.append("  OWNED BY \(column)")
+      }
+    }
+    return lines.joined(separator: "\n") + ";"
+  }
+
+  static func ddl(_ type: DatabaseUserType) throws -> String {
+    let dialect = SQLDialect.postgresql
+    let name = try qualifiedName(type.schema, type.name)
+    switch type.kind {
+    case .enum(let labels):
+      let items = labels.map { "  " + dialect.literal(.string($0)) }
+      return "CREATE TYPE \(name) AS ENUM " + parenthesized(items)
+    case .composite(let attributes):
+      let items = try attributes.map { "  \(try dialect.quoteIdentifier($0.name)) \($0.type)" }
+      return "CREATE TYPE \(name) AS " + parenthesized(items)
+    case .domain(let baseType, let notNull, let defaultExpression, let constraints):
+      var lines = ["CREATE DOMAIN \(name) AS \(baseType)"]
+      if let defaultExpression { lines.append("  DEFAULT \(defaultExpression)") }
+      if notNull { lines.append("  NOT NULL") }
+      // CREATE DOMAIN cannot hold a check that is not validated: ALTER DOMAIN adds it after
+      let notValid = { (constraint: DatabaseUserType.Constraint) in
+        constraint.definition.hasSuffix(" NOT VALID")
+      }
+      for constraint in constraints where !notValid(constraint) {
+        lines.append(
+          "  CONSTRAINT \(try dialect.quoteIdentifier(constraint.name)) \(constraint.definition)")
+      }
+      let alters = try constraints.filter(notValid).map {
+        "ALTER DOMAIN \(name) ADD CONSTRAINT \(try dialect.quoteIdentifier($0.name))"
+          + " \($0.definition);"
+      }
+      return ([lines.joined(separator: "\n") + ";"] + alters).joined(separator: "\n")
+    }
+  }
+
+  /// One item per line, `();` when there is none
+  private static func parenthesized(_ items: [String]) -> String {
+    items.isEmpty ? "();" : "(\n" + items.joined(separator: ",\n") + "\n);"
+  }
+
+  private static func qualifiedName(_ schema: String, _ name: String) throws -> String {
+    let dialect = SQLDialect.postgresql
+    return try dialect.quoteIdentifier(schema) + "." + dialect.quoteIdentifier(name)
+  }
+
+  /// Range of a sequence's type, which sets its default bounds (bigint for an unknown type)
+  private static func sequenceTypeBounds(_ dataType: String) -> (min: Int, max: Int) {
+    switch dataType {
+    case "smallint": (Int(Int16.min), Int(Int16.max))
+    case "integer": (Int(Int32.min), Int(Int32.max))
+    default: (Int(Int64.min), Int(Int64.max))
+    }
+  }
+}

@@ -18,6 +18,9 @@ nonisolated struct ChartSpec: Codable, Equatable, Sendable {
   /// At most five names when the spec comes from `suggested(for:)`.
   var yColumns: [String]
   var seriesColumn: String?
+  /// Small multiples: one chart per value of this column. Optional, so the synthesized coding
+  /// reads it with `decodeIfPresent` (specs saved before facets) and writes it only when set.
+  var facetColumn: String? = nil
 
   /// A chart for `result`, or nil when no column can be plotted as y.
   /// Y is an int/double column, or a numeric SQL type (including numeric strings).

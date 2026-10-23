@@ -2,7 +2,9 @@
 //  DatabaseEntityRows.swift
 //  Dblore
 //
-//  Row views for database entities: Tables, Views, Functions, Procedures, Triggers, and Columns
+//  Row views for database entities: Tables, Views, Functions, Procedures, Triggers, Sequences,
+//  Types, and Columns. Table and view rows also offer the sidebar folder moves and drag onto a
+//  folder (`SidebarFolderRows.swift`).
 //
 
 import SwiftUI
@@ -30,6 +32,8 @@ struct TableRowView: View {
   /// structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
+  /// Move to Folder and Remove from Folder, and the drag onto a folder. Nil offers neither.
+  var folderActions: SidebarFolderActions? = nil
 
   @State private var isHoveringTable = false
 
@@ -125,7 +129,12 @@ struct TableRowView: View {
           Divider()
           RowActionButtons(actions: menuActions, language: language, onAction: onMenuAction)
         }
+        if let folderActions {
+          Divider()
+          SidebarFolderMenuItems(actions: folderActions)
+        }
       }
+      .sidebarFolderDrag(folderActions)
 
       // Columns (when expanded)
       if isExpanded {
@@ -199,6 +208,8 @@ struct ViewRowView: View {
   /// Menu items of a MongoDB view (SQL views have no menu)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
+  /// Move to Folder and Remove from Folder, and the drag onto a folder. Nil offers neither.
+  var folderActions: SidebarFolderActions? = nil
 
   @State private var isHovering = false
 
@@ -267,7 +278,12 @@ struct ViewRowView: View {
         RowActionButtons(
           actions: menuActions, language: databaseType.capabilities.queryLanguage,
           onAction: onMenuAction)
+        if let folderActions {
+          if !menuActions.isEmpty { Divider() }
+          SidebarFolderMenuItems(actions: folderActions)
+        }
       }
+      .sidebarFolderDrag(folderActions)
 
       // Columns (when expanded)
       if isExpanded {
@@ -527,6 +543,162 @@ struct TriggerRowView: View {
       Button("View Source", action: onViewSource)
     }
     .help(trigger.sidebarSubtitle)
+  }
+}
+
+// MARK: - Sequence and Type Rows
+
+/// A sequence (data type, owning column). A click opens its DDL read-only.
+struct SequenceRowView: View {
+  let sequence: DatabaseSequence
+  let onShowDDL: () -> Void
+  let onCopyName: () -> Void
+
+  var body: some View {
+    CatalogObjectRow(
+      name: sequence.name, subtitle: subtitle, icon: ObjectSourceRef.Kind.sequence.iconName,
+      onShowDDL: onShowDDL, onCopyName: onCopyName)
+  }
+
+  /// "integer · owned by orders.id", "bigint · identity of orders.id"
+  private var subtitle: String {
+    guard let owner = sequence.ownedBy else { return sequence.dataType }
+    let role = sequence.isIdentity ? "identity of" : "owned by"
+    return "\(sequence.dataType) · \(role) \(owner.table).\(owner.column)"
+  }
+}
+
+/// An enum, domain or composite type. A click opens its DDL read-only.
+struct UserTypeRowView: View {
+  let type: DatabaseUserType
+  let onShowDDL: () -> Void
+  let onCopyName: () -> Void
+
+  var body: some View {
+    CatalogObjectRow(
+      name: type.name, subtitle: subtitle, icon: ObjectSourceRef.Kind.userType.iconName,
+      onShowDDL: onShowDDL, onCopyName: onCopyName)
+  }
+
+  /// "enum · 3 labels", "domain over integer", "composite · 2 attributes"
+  private var subtitle: String {
+    switch type.kind {
+    case .enum(let labels): "enum · \(counted(labels.count, "label"))"
+    case .domain(let baseType, _, _, _): "domain over \(baseType)"
+    case .composite(let attributes): "composite · \(counted(attributes.count, "attribute"))"
+    }
+  }
+
+  private func counted(_ count: Int, _ noun: String) -> String {
+    "\(count) \(noun)\(count == 1 ? "" : "s")"
+  }
+}
+
+/// Name and subtitle of a sequence or type, with Show DDL and Copy Name
+private struct CatalogObjectRow: View {
+  let name: String
+  let subtitle: String
+  let icon: String
+  let onShowDDL: () -> Void
+  let onCopyName: () -> Void
+
+  @State private var isHovering = false
+
+  var body: some View {
+    HStack(alignment: .top, spacing: Spacing.xs) {
+      Image(systemName: icon)
+        .font(.system(size: 12))
+        .foregroundColor(.accent)
+        .frame(width: 12)
+        .padding(.top, 2)  // Fine-tune alignment with text
+        .padding(.leading, 12 + Spacing.xs)  // Align with chevron rows
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(name)
+          .font(.monoMedium)
+          .foregroundColor(.foreground)
+
+        Text(subtitle)
+          .font(.monoSmall)
+          .foregroundColor(.foregroundSubtle)
+          .lineLimit(1)
+      }
+
+      Spacer()
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      onShowDDL()
+    }
+    .padding(.horizontal, Spacing.md)
+    .padding(.vertical, Spacing.xs)
+    .background(
+      RoundedRectangle(cornerRadius: CornerRadius.sm)
+        .fill(isHovering ? Color.hoverFill : Color.clear)
+    )
+    .onHover { hovering in
+      isHovering = hovering
+      if hovering {
+        NSCursor.pointingHand.push()
+      } else {
+        NSCursor.pop()
+      }
+    }
+    .contextMenu {
+      Button("Show DDL", action: onShowDDL)
+      Button("Copy Name", action: onCopyName)
+    }
+    .help(subtitle)
+  }
+}
+
+/// Loading, failure (with Retry) or empty state of a section read on expand. Unread shows
+/// Loading: the row appearing (each time the section opens) starts the read, and a lazy stack
+/// never shows a zero-size row. Back to Loading (a reset on disconnect) starts it again.
+struct CatalogStatusRow: View {
+  let status: CatalogStatus
+  /// Starts the read when needed, in a task of its own: collapsing does not cancel it
+  let onAppear: () -> Void
+  let onRetry: () -> Void
+
+  var body: some View {
+    // A stack, not a Group: the handlers stay on one view while the state below changes, so a
+    // failed read is not started again by the error row appearing
+    VStack(alignment: .leading, spacing: 0) {
+      switch status {
+      case .loading:
+        HStack(spacing: Spacing.xs) {
+          ProgressView()
+            .controlSize(.small)
+          Text("Loading…")
+            .font(.monoSmall)
+            .foregroundColor(.foregroundSubtle)
+        }
+      case .failed(let error):
+        HStack(spacing: Spacing.xs) {
+          Text(error)
+            .font(.monoSmall)
+            .foregroundColor(.foregroundSubtle)
+            .lineLimit(2)
+            .help(error)
+          Button("Retry", action: onRetry)
+            .buttonStyle(GhostButtonStyle())
+            .controlSize(.small)
+        }
+      case .empty:
+        Text("None")
+          .font(.monoSmall)
+          .foregroundColor(.foregroundSubtle)
+      case .rows:
+        Color.clear.frame(height: 0)
+      }
+    }
+    .padding(.horizontal, Spacing.md)
+    .padding(.vertical, status == .rows ? 0 : Spacing.xs)
+    .onAppear(perform: onAppear)
+    .onChange(of: status) { _, status in
+      if status == .loading { onAppear() }
+    }
   }
 }
 

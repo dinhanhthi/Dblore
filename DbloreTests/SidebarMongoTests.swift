@@ -28,6 +28,9 @@ struct SidebarMongoTests {
       SidebarSectionModel.sections(for: language).map(\.title) == [
         "Tables", "Views", "Functions", "Procedures", "Triggers",
       ])
+    #expect(
+      SidebarSectionModel.sections(for: language, supportsUserTypes: true).map(\.title).suffix(2)
+        == ["Sequences", "Types"])
     #expect(SidebarSectionModel.groupsBySchema(language))
     #expect(SidebarSectionModel.showsSecurityTab(language))
     #expect(SidebarSectionModel.structureMenuTitle(for: .postgresql) != nil)

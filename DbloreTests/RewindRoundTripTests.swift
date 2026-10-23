@@ -114,11 +114,11 @@ struct RewindRoundTripTests {
       let plan = try #require(
         RewindPlan.make(
           target: target, resultColumns: columns, editKind: .staged,
-          steps: RowChangeSQLBuilder.rewindSteps(
+          steps: try RowChangeSQLBuilder.rewindSteps(
             for: set, target: target, columns: columns, dialect: .sqlite),
           engine: .sqlite, enabled: true))
       _ = try await manager.executeGatedBatch(
-        RowChangeSQLBuilder.statements(
+        try RowChangeSQLBuilder.statements(
           for: set, target: target, columns: columns, dialect: .sqlite),
         policy: RewindRoundTripTests.open, connectionEpoch: target.connectionEpoch, rewind: plan)
     }

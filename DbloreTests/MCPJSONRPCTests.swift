@@ -29,9 +29,11 @@ struct MCPJSONRPCTests {
   }
 
   private func handler(
-    delay: Duration? = nil, timeout: Duration = .seconds(60)
+    delay: Duration? = nil, timeout: Duration = .seconds(60),
+    writeTimeout: Duration = .seconds(60)
   ) -> MCPHTTPServer.Handler {
-    MCPJSONRPC.handler(tools: FakeTools(delay: delay), version: "9.9", timeout: timeout)
+    MCPJSONRPC.handler(
+      tools: FakeTools(delay: delay), version: "9.9", timeout: timeout, writeTimeout: writeTimeout)
   }
 
   private func request(
@@ -221,6 +223,34 @@ struct MCPJSONRPCTests {
       request(rpc("tools/call", params: #"{"name":"list_connections"}"#)))
     #expect(response.status == 504)
     #expect(ContinuousClock.now - start < .seconds(5))
+  }
+
+  @Test("An execute_write call gets the write timeout, not the short one")
+  func writeTimeout() async {
+    let handle = handler(
+      delay: .seconds(1), timeout: .milliseconds(300), writeTimeout: .seconds(3))
+    let response = await handle(
+      request(rpc("tools/call", params: #"{"name":"execute_write"}"#)))
+    #expect(response.status == 200)
+  }
+
+  @Test(
+    "Only a body that cannot call execute_write gets the short timeout",
+    arguments: [
+      (
+        #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_connections"}}"#,
+        true
+      ),
+      (#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#, true),
+      (#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_write"}}"#, false),
+      (
+        #"[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"execute_write"}}]"#,
+        false
+      ),
+      ("{not json", false),
+    ])
+  func shortTimeoutOnlyWithoutWrite(body: String, short: Bool) {
+    #expect(MCPJSONRPC.cannotCallWrite(Data(body.utf8)) == short)
   }
 
   @Test(

@@ -38,6 +38,8 @@ struct ResultGridModel {
   /// Displayed row of each index into `CellResult.rows`
   private let displayedRowByOriginalRow: [Int]
   private let columnIndexByName: [String: Int]
+  /// Display text shows invisible characters as marks (`InvisibleCharacters`)
+  private let marksInvisibleCharacters: Bool
   /// Lazily filled display text of loaded cells. Staged edits and inserts skip it, so a copy
   /// that does not share the overlay still reads the loaded text. A new model (empty cache) is
   /// built whenever the result or sort changes.
@@ -52,9 +54,10 @@ struct ResultGridModel {
 
   init(
     result: CellResult, sortColumn: String?, ascending: Bool,
-    valueFilter: ColumnValueFilter = ColumnValueFilter()
+    valueFilter: ColumnValueFilter = ColumnValueFilter(), marksInvisibleCharacters: Bool = true
   ) {
     columns = result.columns
+    self.marksInvisibleCharacters = marksInvisibleCharacters
     var indexByName: [String: Int] = [:]
     for (index, column) in result.columns.enumerated() where indexByName[column.name] == nil {
       indexByName[column.name] = index
@@ -185,19 +188,39 @@ struct ResultGridModel {
 
   /// Text shown in a cell, the same as the result table (NULL shows as "NULL"), on one line
   /// (line breaks become spaces) and at most `maxDisplayLength` characters: the single-line
-  /// text field still lays out every line of a long multi-line value, which made scrolling lag
+  /// text field still lays out every line of a long multi-line value, which made scrolling lag.
+  /// With `marksInvisibleCharacters`, other invisible characters show as marks.
   func displayText(row: Int, column: Int) -> String {
-    // Staged text must not land in the shared cache: a copy of this model keeps the loaded rows.
-    if row >= loadedRows.count || isCellEdited(row: row, column: column) {
-      return computeDisplayText(row: row, column: column)
-    }
-    if let cached = textCache.text(row: row, column: column) { return cached }
-    let text = computeDisplayText(row: row, column: column)
-    textCache.store(text, row: row, column: column, columnCount: columns.count)
-    return text
+    display(row: row, column: column).text
   }
 
-  private func computeDisplayText(row: Int, column: Int) -> String {
+  /// Code point and name of each invisible character marked in the cell's display text, one
+  /// per line in first-seen order. Nil when there is none or marks are off.
+  func invisibleCharacterTooltip(row: Int, column: Int) -> String? {
+    display(row: row, column: column).tooltip
+  }
+
+  private func display(row: Int, column: Int) -> CellDisplay {
+    // Staged text must not land in the shared cache: a copy of this model keeps the loaded rows.
+    if row >= loadedRows.count || isCellEdited(row: row, column: column) {
+      return computeDisplay(row: row, column: column)
+    }
+    if let cached = textCache.display(row: row, column: column) { return cached }
+    let display = computeDisplay(row: row, column: column)
+    textCache.store(display, row: row, column: column, columnCount: columns.count)
+    return display
+  }
+
+  private func computeDisplay(row: Int, column: Int) -> CellDisplay {
+    let flat = flatText(row: row, column: column)
+    guard marksInvisibleCharacters else { return CellDisplay(text: flat, tooltip: nil) }
+    let text = InvisibleCharacters.marked(flat)
+    // `marked` returns its argument when nothing is marked
+    return CellDisplay(
+      text: text, tooltip: text == flat ? nil : InvisibleCharacters.tooltip(for: flat))
+  }
+
+  private func flatText(row: Int, column: Int) -> String {
     let text = value(row: row, column: column).displayString
     let prefix = text.prefix(Self.maxDisplayLength)
     let flat = prefix.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
@@ -220,13 +243,34 @@ struct ResultGridModel {
 
   /// Tab-separated selected cells (no header, no trailing newline), full values like the
   /// TSV copy, `columns` (model column indices) in the given order. A value with a tab,
-  /// newline or quote is quoted with quotes doubled, as in CSV.
-  func tsv(rows: IndexSet, columns: [Int]) -> String {
+  /// newline or quote is quoted with quotes doubled, as in CSV. `neutralizesFormulas`
+  /// prefixes formula-like text cells as in CSV; other cell types stay raw.
+  func tsv(rows: IndexSet, columns: [Int], neutralizesFormulas: Bool) -> String {
     rows.map { row in
-      columns.map { DataExporter.escapeTSV(value(row: row, column: $0).fullString) }
-        .joined(separator: "\t")
+      columns.map {
+        DataExporter.tsvField(
+          value(row: row, column: $0), neutralizesFormulas: neutralizesFormulas)
+      }
+      .joined(separator: "\t")
     }
     .joined(separator: "\n")
+  }
+
+  /// Selected cells in the "Copy rows as" `format`, `columns` (model column indices) in the
+  /// given order. TSV is `tsv(rows:columns:neutralizesFormulas:)`; the other formats come from
+  /// `DataExporter.copyText`, headers being the column names.
+  func copyText(
+    rows: IndexSet, columns: [Int], format: CopyRowsFormat, neutralizesFormulas: Bool
+  ) -> String {
+    if format == .tsv {
+      return tsv(rows: rows, columns: columns, neutralizesFormulas: neutralizesFormulas)
+    }
+    let selected = CellResult(
+      columns: columns.map { self.columns[$0] },
+      rows: rows.map { row in columns.map { value(row: row, column: $0) } },
+      rowCount: rows.count)
+    return DataExporter.copyText(
+      result: selected, format: format, neutralizesFormulas: neutralizesFormulas)
   }
 
   private func values(at row: Int) -> [CellValue] {
@@ -340,6 +384,149 @@ struct ResultGridModel {
   }
 }
 
+/// Marks for characters a cell would otherwise show as nothing or as a plain space, or that
+/// silently reorder the text around them. Line breaks are not marked (the grid shows them as
+/// spaces).
+/// - A C0 control (U+0000-U+001F, tab included) shows as its Unicode Control Picture
+///   (U+2400 + code), DEL as U+2421 SYMBOL FOR DELETE.
+/// - A zero-width or format character (U+00AD, U+200B-U+200D, U+2060-U+2064, U+FEFF, a tag
+///   U+E0000-U+E007F) shows as U+2422 BLANK SYMBOL.
+/// - A special space (U+00A0, U+2000-U+200A, U+202F, U+205F, U+3000, U+3164, U+FFA0) shows as
+///   U+2423 OPEN BOX.
+/// - A direction control (U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) shows as U+21C4
+///   RIGHTWARDS ARROW OVER LEFTWARDS ARROW; as a mark it no longer reorders the cell text.
+/// A joiner (U+200C, U+200D) between two non-ASCII letters, combining marks or emoji belongs to
+/// the text (an emoji sequence, a Persian or Indic word) and stays, as do the tags of a
+/// well-formed subdivision flag (U+1F3F4 WAVING BLACK FLAG, 2 to 7 tag digits or lowercase
+/// letters, U+E007F CANCEL TAG); every other tag is marked. Every mark is one UTF-16 unit
+/// (`isMark`).
+enum InvisibleCharacters {
+  /// Whether `value` is a mark glyph (U+2400-U+2423 or U+21C4)
+  static func isMark(_ value: UInt32) -> Bool {
+    (0x2400...0x2423).contains(value) || value == 0x21C4
+  }
+
+  /// `text` with each invisible character replaced by its mark. Returns `text` itself, with no
+  /// allocation, when there is none (a plain ASCII value scans its bytes only).
+  static func marked(_ text: String) -> String {
+    guard mayContainInvisible(text), text.unicodeScalars.contains(where: isCandidate) else {
+      return text
+    }
+    var result = String.UnicodeScalarView()
+    var changed = false
+    forEachScalar(in: text) { scalar, marks in
+      changed = changed || marks
+      result.append(marks ? mark(for: scalar) : scalar)
+    }
+    return changed ? String(result) : text
+  }
+
+  /// "U+200B ZERO WIDTH SPACE" lines for the characters `marked` replaces in `text`, first-seen
+  /// order, no repeats. Nil when there is none.
+  static func tooltip(for text: String) -> String? {
+    guard mayContainInvisible(text), text.unicodeScalars.contains(where: isCandidate) else {
+      return nil
+    }
+    var seen = Set<UInt32>()
+    var lines: [String] = []
+    forEachScalar(in: text) { scalar, marks in
+      guard marks, seen.insert(scalar.value).inserted else { return }
+      lines.append("U+\(String(format: "%04X", scalar.value)) \(name(of: scalar))")
+    }
+    return lines.isEmpty ? nil : lines.joined(separator: "\n")
+  }
+
+  /// False only when every byte is printable ASCII
+  private static func mayContainInvisible(_ text: String) -> Bool {
+    text.utf8.contains { $0 < 0x20 || $0 >= 0x7F }
+  }
+
+  /// A character that may be marked; `forEachScalar` keeps a joiner or a tag by its neighbours
+  private static func isCandidate(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x00...0x1F, 0x7F, 0xA0, 0xAD, 0x061C, 0x2000...0x200F, 0x202A...0x202F, 0x205F,
+      0x2060...0x2064, 0x2066...0x2069, 0x3000, 0x3164, 0xFEFF, 0xFFA0, 0xE0000...0xE007F:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private static let tags: ClosedRange<UInt32> = 0xE0000...0xE007F
+
+  /// Calls `body` with each scalar of `text` and whether it shows as a mark
+  private static func forEachScalar(in text: String, _ body: (Unicode.Scalar, Bool) -> Void) {
+    let scalars = Array(text.unicodeScalars)
+    // Index of the U+E007F CANCEL TAG that ends the last subdivision flag
+    var flagEnd = -1
+    for (index, scalar) in scalars.enumerated() {
+      var marks = isCandidate(scalar)
+      if scalar.value == 0x200C || scalar.value == 0x200D {
+        marks =
+          !(index > 0 && index + 1 < scalars.count && joins(scalars[index - 1])
+          && joins(scalars[index + 1]))
+      } else if tags.contains(scalar.value) {
+        marks = index > flagEnd
+      } else if scalar.value == 0x1F3F4, let end = subdivisionFlagEnd(scalars, flag: index) {
+        flagEnd = end
+      }
+      body(scalar, marks)
+    }
+  }
+
+  /// Index of the cancel tag when the U+1F3F4 at `flag` starts a subdivision flag: 2 to 7 tag
+  /// digits or lowercase letters (U+E0030-U+E0039, U+E0061-U+E007A), then U+E007F CANCEL TAG
+  private static func subdivisionFlagEnd(_ scalars: [Unicode.Scalar], flag: Int) -> Int? {
+    var end = flag + 1
+    while end < scalars.count, end - flag <= 7,
+      (0xE0030...0xE0039).contains(scalars[end].value)
+        || (0xE0061...0xE007A).contains(scalars[end].value)
+    {
+      end += 1
+    }
+    let count = end - flag - 1
+    guard (2...7).contains(count), end < scalars.count, scalars[end].value == 0xE007F else {
+      return nil
+    }
+    return end
+  }
+
+  /// A non-ASCII letter, combining mark (a virama, a variation selector) or emoji, which a
+  /// joiner next to it may belong to
+  private static func joins(_ scalar: Unicode.Scalar) -> Bool {
+    guard !scalar.isASCII else { return false }
+    let properties = scalar.properties
+    switch properties.generalCategory {
+    case .nonspacingMark, .spacingMark, .enclosingMark:
+      return true
+    default:
+      // Skin tone modifiers are emoji too
+      return properties.isAlphabetic || properties.isEmoji
+    }
+  }
+
+  private static func mark(for scalar: Unicode.Scalar) -> Unicode.Scalar {
+    let value: UInt32
+    switch scalar.value {
+    case 0x00...0x1F: value = 0x2400 + scalar.value
+    case 0x7F: value = 0x2421
+    case 0xAD, 0x200B...0x200D, 0x2060...0x2064, 0xFEFF, 0xE0000...0xE007F: value = 0x2422
+    case 0x061C, 0x200E, 0x200F, 0x202A...0x202E, 0x2066...0x2069: value = 0x21C4
+    default: value = 0x2423
+    }
+    return Unicode.Scalar(value) ?? scalar
+  }
+
+  /// Unicode has no name for a control character, so its control picture's name stands in
+  /// ("SYMBOL FOR START OF HEADING" gives "START OF HEADING")
+  private static func name(of scalar: Unicode.Scalar) -> String {
+    if let name = scalar.properties.name { return name }
+    let pictureName = mark(for: scalar).properties.name ?? ""
+    return pictureName.hasPrefix("SYMBOL FOR ")
+      ? String(pictureName.dropFirst("SYMBOL FOR ".count)) : pictureName
+  }
+}
+
 /// Staged overlay currently shown. Empty arrays mean every loaded row is unchanged.
 private struct Staging: Equatable {
   struct StagedInsert: Equatable {
@@ -353,25 +540,31 @@ private struct Staging: Equatable {
   var inserts: [StagedInsert] = []
 }
 
+/// Display text of a cell and the tooltip naming its invisible-character marks
+private struct CellDisplay {
+  let text: String
+  let tooltip: String?
+}
+
 /// Per-cell display text of one `ResultGridModel`, filled on first request. A row's array is
 /// allocated on first store, so memory stays proportional to the cells actually shown. Main
 /// actor only, like the model (the project's default isolation), so no locking is needed.
 private final class DisplayTextCache {
-  private var rows: [[String?]?]
+  private var rows: [[CellDisplay?]?]
 
   init(rowCount: Int) {
     rows = Array(repeating: nil, count: rowCount)
   }
 
-  func text(row: Int, column: Int) -> String? {
+  func display(row: Int, column: Int) -> CellDisplay? {
     guard let cells = rows[row], column < cells.count else { return nil }
     return cells[column]
   }
 
-  func store(_ text: String, row: Int, column: Int, columnCount: Int) {
+  func store(_ display: CellDisplay, row: Int, column: Int, columnCount: Int) {
     // A column past the model's columns (a short row shows NULL) is not cached
     guard column < columnCount else { return }
     if rows[row] == nil { rows[row] = Array(repeating: nil, count: columnCount) }
-    rows[row]?[column] = text
+    rows[row]?[column] = display
   }
 }

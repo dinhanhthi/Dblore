@@ -16,6 +16,8 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
   case recentItems
   case openTabs
   case savedFilters
+  case sqlSnippets
+  case sidebarFolders
   case schemaLayout
   case aiChats
   case aiSettings
@@ -40,6 +42,8 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
     case .recentItems: "Recent Workspaces and Files"
     case .openTabs: "Open Tabs"
     case .savedFilters: "Saved Filters and Highlights"
+    case .sqlSnippets: "SQL Snippets"
+    case .sidebarFolders: "Sidebar Folders"
     case .schemaLayout: "Schema Diagram Layout"
     case .aiChats: "AI Chats"
     case .aiSettings: "AI Settings"
@@ -58,6 +62,8 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
     case .recentItems: "clock"
     case .openTabs: "square.stack"
     case .savedFilters: "line.3.horizontal.decrease.circle"
+    case .sqlSnippets: "curlybraces"
+    case .sidebarFolders: "folder"
     case .schemaLayout: "point.3.connected.trianglepath.dotted"
     case .aiChats: "bubble.left.and.bubble.right"
     case .aiSettings: "slider.horizontal.3"
@@ -75,6 +81,8 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
     case .recentItems: "Workspaces and files you opened recently"
     case .openTabs: "Tabs restored at the next launch. Open tabs stay until you quit."
     case .savedFilters: "Filters, highlights, MongoDB queries and view modes saved for tables"
+    case .sqlSnippets: "Snippets the SQL editor inserts by their trigger"
+    case .sidebarFolders: "Folders of tables and views in the sidebar, per connection"
     case .schemaLayout: "Positions of tables on the schema diagram"
     case .aiChats: "Conversations with the AI assistant"
     case .aiSettings: "Provider and model choices, without API keys"

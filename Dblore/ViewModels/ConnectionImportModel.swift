@@ -52,12 +52,23 @@ final class ConnectionImportModel {
   private(set) var errorMessage: String?
   /// History slots left before the saved-connection limit.
   private(set) var freeSlots = SessionManager.maxConnectionHistorySize
+  /// Favorites of a Dblore export file, added to a workspace after the connections are saved.
+  private(set) var favorites: [DbloreConnectionFile.Favorite] = []
+  /// Folder the favorites go to: the file's name.
+  private(set) var favoritesFolder = ""
 
   var selectedCount: Int { rows.count { $0.isSelected } }
   var overLimit: Bool { selectedCount > freeSlots }
 
   private var connections: [ImportedConnection] = []
   private var loadGeneration = 0
+
+  /// One parsed input: rows, warnings, and the favorites of a Dblore export file.
+  private struct Loaded: Sendable {
+    var result: ImportResult
+    var favorites: [DbloreConnectionFile.Favorite] = []
+    var favoritesFolder = ""
+  }
 
   private let importFile: @Sendable (ImportSource, URL) throws -> ImportResult
   private let importText: @Sendable (ImportSource, String) throws -> ImportResult
@@ -101,25 +112,48 @@ final class ConnectionImportModel {
     connections = []
     warnings = []
     rows = []
+    favorites = []
+    favoritesFolder = ""
   }
 
   // MARK: - Loading
 
-  /// Reads a file (.pgpass, TablePlus) or folder (DBeaver `.dbeaver`, DataGrip `.idea`).
+  /// Reads a file (.pgpass, TablePlus, Dblore export) or folder (DBeaver `.dbeaver`, DataGrip
+  /// `.idea`).
   func load(url: URL) async {
     let source = source
+    guard source != .dblore else {
+      let folder = Self.favoritesFolderName(for: url)
+      await run {
+        let contents = try DbloreConnectionFile.read(from: url)
+        return Loaded(
+          result: (contents.connections, contents.warnings), favorites: contents.favorites,
+          favoritesFolder: folder)
+      }
+      return
+    }
     let importFile = importFile
-    await run { try importFile(source, url) }
+    await run { Loaded(result: try importFile(source, url)) }
   }
 
   /// Parses pasted .pgpass or URI text.
   func loadText(_ text: String) async {
     let source = source
     let importText = importText
-    await run { try importText(source, text) }
+    await run { Loaded(result: try importText(source, text)) }
   }
 
-  private func run(_ work: @escaping @Sendable () throws -> ImportResult) async {
+  /// The file name without its extension, on one line (no control, format or line separator
+  /// characters) and at most a folder name long.
+  nonisolated static func favoritesFolderName(for url: URL) -> String {
+    let name = url.deletingPathExtension().lastPathComponent
+    let removed = CharacterSet.controlCharacters.union(.newlines)
+    let line = String(name.unicodeScalars.filter { !removed.contains($0) })
+    let cut = String(line.trimmingCharacters(in: .whitespaces).prefix(64))
+    return cut.isEmpty ? "Imported favorites" : cut
+  }
+
+  private func run(_ work: @escaping @Sendable () throws -> Loaded) async {
     loadGeneration += 1
     let generation = loadGeneration
     isLoading = true
@@ -132,9 +166,13 @@ final class ConnectionImportModel {
     isLoading = false
     switch result {
     case .success(let value):
-      apply(value)
+      apply(value.result)
+      favorites = value.favorites
+      favoritesFolder = value.favoritesFolder
     case .failure(let error):
       apply(([], []))
+      favorites = []
+      favoritesFolder = ""
       errorMessage = Self.message(for: error)
     }
   }
@@ -195,9 +233,30 @@ final class ConnectionImportModel {
     return PerfSignpost.interval("connections.import.save") { save(selected) }
   }
 
-  /// One-line toast text, e.g. "Imported 5 connections · 2 duplicates skipped".
-  func summary(_ report: BulkSaveReport) -> String {
-    var parts = ["Imported \(Self.count(report.added, "connection"))"]
+  /// What happened to the favorites of a Dblore export file.
+  enum FavoritesOutcome: Equatable {
+    /// `skipped`: already in the folder.
+    case added(Int, skipped: Int, folder: String)
+    /// No workspace to add them to (an import from the Welcome window).
+    case skippedNoWorkspace(Int)
+  }
+
+  /// Adds the file's favorites to `workspace` under a folder named after the file. Nil when the
+  /// file has none.
+  func importFavorites(into workspace: WorkspaceManager?) -> FavoritesOutcome? {
+    guard !favorites.isEmpty else { return nil }
+    guard let workspace else { return .skippedNoWorkspace(favorites.count) }
+    let added = workspace.importFavorites(favorites, folderName: favoritesFolder)
+    return .added(added.added, skipped: added.skipped, folder: favoritesFolder)
+  }
+
+  /// One-line toast text, e.g. "Imported 5 connections · 2 duplicates skipped". A favorites-only
+  /// import leaves out "Imported 0 connections".
+  func summary(_ report: BulkSaveReport, favorites: FavoritesOutcome? = nil) -> String {
+    var parts: [String] = []
+    if favorites == nil || report != BulkSaveReport() {
+      parts.append("Imported \(Self.count(report.added, "connection"))")
+    }
     if !report.skippedDuplicates.isEmpty {
       parts.append("\(Self.count(report.skippedDuplicates.count, "duplicate")) skipped")
     }
@@ -208,6 +267,15 @@ final class ConnectionImportModel {
     }
     if !report.failed.isEmpty {
       parts.append("\(report.failed.count) failed")
+    }
+    switch favorites {
+    case .added(let count, let skipped, let folder):
+      var part = "\(Self.count(count, "favorite")) added to \"\(folder)\""
+      if skipped > 0 { part += ", \(skipped) already present" }
+      parts.append(part)
+    case .skippedNoWorkspace(let count):
+      parts.append("\(Self.count(count, "favorite")) skipped: open a workspace to import them")
+    case nil: break
     }
     return parts.joined(separator: " · ")
   }
@@ -237,7 +305,8 @@ final class ConnectionImportModel {
     case .tablePlus: return try TablePlusImporter.importConnections(fromFile: url)
     case .dataGrip: return try DataGripImporter.importConnections(fromIdeaFolder: url)
     case .pgpass: return PgpassParser.parse(try readPgpass(url))
-    case .uri: throw ReadError.unsupportedSource
+    // Read by `load(url:)`, with its favorites.
+    case .uri, .dblore: throw ReadError.unsupportedSource
     }
   }
 
@@ -249,7 +318,7 @@ final class ConnectionImportModel {
     switch source {
     case .pgpass: return PgpassParser.parse(text)
     case .uri: return ([try PostgresURIParser.parse(text)], [])
-    case .dbeaver, .tablePlus, .dataGrip: throw ReadError.unsupportedSource
+    case .dbeaver, .tablePlus, .dataGrip, .dblore: throw ReadError.unsupportedSource
     }
   }
 
@@ -292,6 +361,17 @@ final class ConnectionImportModel {
       case .dataSourcesNotFound: return "No dataSources.xml was found in this DataGrip folder."
       case .fileTooLarge: return "The DataGrip file is too large to import."
       case .malformedDataSources: return "The DataGrip dataSources.xml could not be read."
+      }
+    case let error as DbloreConnectionFile.ReadError:
+      switch error {
+      case .fileNotFound: return "The Dblore export file was not found."
+      case .fileTooLarge: return "The Dblore export file is too large to import."
+      case .malformed: return "The Dblore export file could not be read."
+      case .unknownFormat: return "This is not a Dblore connections export file."
+      case .newerVersion:
+        return "This file was exported by a newer version of Dblore. Update Dblore to import it."
+      case .tooManyEntries: return "The Dblore export file has too many entries to import."
+      case .fieldTooLong: return "The Dblore export file has a value that is too long to import."
       }
     case let error as PostgresURIParser.ParseError:
       switch error {

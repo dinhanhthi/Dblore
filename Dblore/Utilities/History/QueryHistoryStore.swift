@@ -14,7 +14,8 @@ actor QueryHistoryStore {
   }
 
   private static let pruneInterval = 500
-  private static let maxSQLCharacters = 100_000
+  /// Longer SQL is cut when recorded. Query Insights groups such rows by their own text.
+  nonisolated static let maxSQLCharacters = 100_000
   private static let truncationMarker = "\n-- truncated"
   private static let dedupeWindow: TimeInterval = 2
   private static let columns = """
@@ -146,6 +147,26 @@ actor QueryHistoryStore {
     return try fetch(
       match: Self.matchExpression(for: text), scope: scope, status: status, limit: limit,
       offset: offset, writesOnly: writesOnly)
+  }
+
+  /// Query Insights rows, read only: those that ran at or after `since`, newest first, at most
+  /// `limit`, on one connection when `connectionKey` is set.
+  func entries(
+    since: Date, connectionKey: String?, limit: Int = QueryInsightsAggregator.maxRows
+  ) throws -> [QueryHistoryEntry] {
+    try prepare()
+    var listing = Self.listing(
+      match: nil, scope: connectionKey.map(Scope.connection) ?? .all)
+    listing.conditions.append("history.executed_at >= ?")
+    listing.values.append(.double(since.timeIntervalSince1970))
+    let statement = try database.prepare(
+      "SELECT \(Self.columns) FROM history WHERE "
+        + listing.conditions.joined(separator: " AND ")
+        + " ORDER BY history.executed_at DESC, history.id DESC LIMIT ?")
+    for (index, value) in (listing.values + [.int(limit)]).enumerated() {
+      try statement.bind(Int32(index + 1), value)
+    }
+    return try readEntries(statement)
   }
 
   func delete(ids: [Int64]) throws {
@@ -384,7 +405,7 @@ actor QueryHistoryStore {
   /// `databaseType|host|port|database|username`: the prefix picks that engine's dialect. An
   /// unknown prefix (a row from a newer build, or a hand-edited file) keeps PostgreSQL, the
   /// classifier's default and the rule every row used before engines had their own dialect.
-  private static func dialect(for connectionKey: String) -> SQLDialect {
+  nonisolated static func dialect(for connectionKey: String) -> SQLDialect {
     let prefix = connectionKey.split(separator: "|", maxSplits: 1).first.map(String.init) ?? ""
     return DatabaseType(rawValue: prefix)?.dialect ?? .postgresql
   }

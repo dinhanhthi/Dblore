@@ -1,7 +1,10 @@
 // MCPSettingsModelTests.swift
 // Settings > MCP without the view: the allowlist toggles write the setting (DuckDB never,
-// MongoDB allowed), a committed port is clamped and the running server moves to it, and the copy
+// MongoDB allowed), write tools are off and every connection Read by default and in old
+// settings, a committed port is clamped and the running server moves to it, and the copy
 // buttons put the client snippets with the token on the pasteboard without logging the token.
+// The server denies the waiting write approvals of a connection whose scope narrows to Read,
+// and all of them when write tools are turned off, the token is regenerated or MCP is disabled.
 
 import Foundation
 import Testing
@@ -60,6 +63,93 @@ struct MCPSettingsModelTests {
 
     model.setAllowed(postgres.id, false)
     #expect(settings.mcpAllowedConnectionIDs.isEmpty)
+  }
+
+  @Test("Write tools are off and every connection is Read by default and in old settings")
+  func writeScopesDefaultToRead() throws {
+    defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+    let fresh = try makeSettings()
+    #expect(!fresh.mcpWriteToolsEnabled)
+    #expect(fresh.mcpWriteScopes.isEmpty)
+
+    // Settings saved before write scopes: an allowlist only. An unknown or malformed stored
+    // scope never widens either.
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defaults.set([postgres.id.uuidString], forKey: "app.settings.mcpAllowedConnectionIDs")
+    defaults.set(
+      [mongo.id.uuidString: "everything", "not-a-uuid": MCPWriteScope.schema.rawValue],
+      forKey: "app.settings.mcpWriteScopes")
+    let old = AppSettings(defaults: defaults)
+    #expect(!old.mcpWriteToolsEnabled)
+    #expect(old.mcpAllowedConnectionIDs == [postgres.id])
+    #expect(old.mcpWriteScopes.isEmpty)
+    let (model, _) = makeModel(old)
+    model.load()
+    #expect(model.scope(for: postgres.id) == .read)
+
+    // A scope set here is kept only while the connection stays allowlisted
+    model.setScope(.data, for: postgres.id)
+    #expect(AppSettings(defaults: defaults).mcpWriteScopes == [postgres.id: .data])
+    model.setAllowed(postgres.id, false)
+    model.setAllowed(postgres.id, true)
+    #expect(model.scope(for: postgres.id) == .read)
+    model.setScope(.schema, for: duckdb.id)
+    #expect(model.scope(for: duckdb.id) == .read)
+  }
+
+  @Test("Waiting approvals are denied on a narrowed scope, write tools off, new token, MCP off")
+  func narrowedSettingsDenyWaitingApprovals() async throws {
+    let settings = try makeSettings()
+    defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+    let other = UUID()
+    settings.mcpPort = try await freePort()
+    settings.mcpEnabled = true
+    settings.mcpAllowedConnectionIDs = [postgres.id, other]
+    settings.mcpWriteToolsEnabled = true
+    settings.mcpWriteScopes = [postgres.id: .data, other: .data]
+    let center = MCPWriteApprovalCenter(timeout: .seconds(30), approveDelay: .zero)
+    let controller = MCPServerController(
+      settings: settings, tokens: InMemoryMCPTokenStore(), savedConnections: { [] },
+      password: { _ in nil }, recorder: InMemoryQueryHistoryRecorder(), approver: center)
+    controller.activate()
+    defer { Task { await controller.stop() } }
+    try await waitFor(controller, .running(port: settings.mcpPort))
+    let request = { (id: UUID) in
+      MCPWriteApprovalRequest(
+        connectionID: id, clientName: "agent", connectionName: "Orders", engine: "PostgreSQL",
+        statement: "DELETE FROM t WHERE id = 1", classification: "Data modification",
+        warnings: [])
+    }
+    let waiting = [postgres.id, other].map { id in Task { try await center.request(request(id)) } }
+    try await waitUntil { center.queue.count == 2 }
+
+    settings.mcpWriteScopes = [postgres.id: .read, other: .data]
+    #expect(try await !waiting[0].value)
+    #expect(center.queue.map(\.connectionID) == [other])
+    settings.mcpWriteToolsEnabled = false
+    #expect(try await !waiting[1].value)
+    #expect(center.queue.isEmpty)
+
+    // A new token or MCP turned off: no request of the old server stays answerable
+    settings.mcpWriteToolsEnabled = true
+    for revoke in [
+      { await controller.regenerateToken() }, { settings.mcpEnabled = false },
+    ] as [@MainActor () async -> Void] {
+      let pending = Task { try await center.request(request(other)) }
+      try await waitUntil { center.queue.count == 1 }
+      await revoke()
+      // Denied at once, well before the 30 s timeout
+      try await waitUntil { center.queue.isEmpty }
+      #expect(try await !pending.value)
+    }
+  }
+
+  private func waitUntil(_ condition: () -> Bool) async throws {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !condition(), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    try #require(condition())
   }
 
   @Test("A committed port is clamped and the running server moves to it")

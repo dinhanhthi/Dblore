@@ -36,6 +36,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let dateTextColor = NSColor(Color.gridDate)
   static let booleanTextColor = NSColor(Color.gridBoolean)
   static let jsonTextColor = NSColor(Color.gridJSON)
+  /// Marks of invisible characters (`InvisibleCharacters`), quieter than the cell text
+  static let invisibleMarkColor = NSColor(Color.foregroundMuted)
   /// Brighter text color for normal cells on emphasized selection
   static let selectedTextColor = NSColor.alternateSelectedControlTextColor
   /// Brighter text color for NULL cells on emphasized selection (distinct from normal values)
@@ -86,6 +88,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let highlights: [TableHighlight]
     let highlightDialect: DatabaseType
     let valueFilter: ColumnValueFilter
+    let showsInvisibleCharacters: Bool
   }
 
   private(set) var model: ResultGridModel?
@@ -121,6 +124,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   var onStageDelete: ((_ rows: [Int]) -> Void)?
   /// Drops staged changes for the page rows
   var onRevertStaged: ((_ rows: [Int]) -> Void)?
+  /// "Set Value..." and "Generate UUID(v7)": page rows, the result column and one value per row,
+  /// staged as one change. Nil leaves those items out.
+  var onStageCells: ((_ rows: [Int], _ column: Int, _ values: [StagedCellValue]) -> Void)?
+  /// "Set Value..." offers DEFAULT (`DatabaseCapabilities.supportsDefaultInUpdate`)
+  var offersDefaultValue = false
+  /// "Set Value..." popover. Closed when the result identity changes.
+  private var setCellsPopover: NSPopover?
   /// Row values, column and page index of the cell being edited, captured when editing starts
   /// so a reload during the edit can't shift the committed row
   private var editing: (row: [CellValue], column: Int, pageIndex: Int?)?
@@ -254,7 +264,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     highlights: [TableHighlight] = [], highlightDialect: DatabaseType = .postgresql,
     valueFilter: ColumnValueFilter = ColumnValueFilter(),
     searchMatches: [SearchMatch] = [],
-    changeSet: RowChangeSet? = nil
+    changeSet: RowChangeSet? = nil, showsInvisibleCharacters: Bool = true
   )
     -> Bool
   {
@@ -266,7 +276,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       currentMatchId: currentMatch?.id,
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
       hiddenColumns: hiddenColumns, highlights: highlights, highlightDialect: highlightDialect,
-      valueFilter: valueFilter)
+      valueFilter: valueFilter, showsInvisibleCharacters: showsInvisibleCharacters)
     let nextChangeSet = Self.normalizedChangeSet(changeSet)
     if newKey == key {
       guard nextChangeSet != stagedChangeSet else { return false }
@@ -282,6 +292,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       columnFilterPopover = nil
       referencedRowPopover?.close()
       referencedRowPopover = nil
+      setCellsPopover?.close()
+      setCellsPopover = nil
     }
     if newKey.columnNames != key?.columnNames {
       rebuildColumns(tableView, columns: result.columns)
@@ -301,7 +313,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     self.valueFilter = valueFilter
     PerfSignpost.interval("grid.reload") {
       var model = ResultGridModel(
-        result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter)
+        result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter,
+        marksInvisibleCharacters: showsInvisibleCharacters)
       _ = model.apply(changeSet: nextChangeSet)
       self.model = model
       self.stagedChangeSet = nextChangeSet
@@ -376,6 +389,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let column: Int
     var style: HighlightStyle = .cell
     var color: HighlightColor = .yellow
+    /// Displayed rows for "Copy as Markdown"
+    var copyRows = IndexSet()
     /// Indexes into `CellResult.rows` for "Copy as INSERT"
     var insertRows: [Int] = []
     /// Values for "Copy as IN list" (empty when the selection spans more than one column)
@@ -400,6 +415,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let menu = NSMenu()
     menu.autoenablesItems = false
     addItem(to: menu, "Copy Value", #selector(copyValue(_:)), MenuTarget(row: row, column: column))
+    addItem(
+      to: menu, "Copy as Markdown", #selector(copyAsMarkdown(_:)),
+      MenuTarget(row: row, column: column, copyRows: displayedRows))
     // SQL text: nothing to paste into a MongoDB cell
     if lookupDialect != .mongodb {
       addItem(
@@ -423,10 +441,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         MenuTarget(row: row, column: column))
     }
     if stagesEdits {
+      let pages = pageIndexes(in: displayedRows)
       menu.addItem(.separator())
       addItem(to: menu, "Add Row", #selector(addRow(_:)), MenuTarget(row: row, column: column))
-      addStagedRowItems(
-        to: menu, row: row, column: column, pages: pageIndexes(in: displayedRows))
+      addStagedRowItems(to: menu, row: row, column: column, pages: pages)
+      addSetCellsItems(to: menu, row: row, column: column, pages: pages)
     }
     if onHighlightCell != nil {
       menu.addItem(.separator())
@@ -482,6 +501,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     addItem(
       to: menu, "Revert Selected", #selector(revertRows(_:)),
       MenuTarget(row: row, column: column, pageIndexes: pages))
+  }
+
+  /// "Set Value..." and the UUID items for `column` of the page rows. Left out on MongoDB
+  /// documents and read-only columns; the UUID items only for a column `UUIDGenerator.fits`.
+  private func addSetCellsItems(to menu: NSMenu, row: Int, column: Int, pages: [Int]) {
+    guard onStageCells != nil, lookupDialect != .mongodb, !readOnlyColumns.contains(column),
+      !pages.isEmpty, let model
+    else { return }
+    let target = MenuTarget(row: row, column: column, pageIndexes: pages)
+    menu.addItem(.separator())
+    addItem(to: menu, "Set Value...", #selector(setCellsValue(_:)), target)
+    guard UUIDGenerator.fits(columnType: model.columns[column].type) else { return }
+    addItem(to: menu, "Generate UUID", #selector(generateUUIDs(_:)), target)
+    addItem(to: menu, "Generate UUIDv7", #selector(generateUUIDv7s(_:)), target)
   }
 
   @discardableResult
@@ -627,6 +660,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     onClearHighlight?()
   }
 
+  @objc private func copyAsMarkdown(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget, let model, let gridTableView
+    else { return }
+    let rows = target.copyRows.filteredIndexSet { $0 < model.rowCount }
+    guard !rows.isEmpty else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(
+      selectionText(rows, in: gridTableView, format: .markdown), forType: .string)
+  }
+
   @objc private func copyAsInsert(_ sender: NSMenuItem) {
     guard let target = sender.representedObject as? MenuTarget, let sourceResult else { return }
     DataExporter.copyInsert(
@@ -658,6 +701,53 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     onRevertStaged?(target.pageIndexes)
   }
 
+  @objc private func setCellsValue(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    showSetCellsValue(row: target.row, column: target.column, pages: target.pageIndexes)
+  }
+
+  @objc private func generateUUIDs(_ sender: NSMenuItem) {
+    stageGeneratedValues(sender) { UUIDGenerator.v4() }
+  }
+
+  @objc private func generateUUIDv7s(_ sender: NSMenuItem) {
+    stageGeneratedValues(sender) { UUIDGenerator.v7() }
+  }
+
+  /// Stages a distinct `make()` text in each page row of the item's column
+  private func stageGeneratedValues(_ sender: NSMenuItem, _ make: () -> String) {
+    guard let target = sender.representedObject as? MenuTarget else { return }
+    let values = target.pageIndexes.map { _ in StagedCellValue.value(.string(make())) }
+    onStageCells?(target.pageIndexes, target.column, values)
+  }
+
+  /// "Set Value..." popover under the clicked cell; its choice is staged in every page row.
+  private func showSetCellsValue(row: Int, column: Int, pages: [Int]) {
+    guard let model, model.columns.indices.contains(column), let tableView = gridTableView,
+      let tableColumn = tableView.tableColumns.firstIndex(where: {
+        Int($0.identifier.rawValue) == column
+      })
+    else { return }
+    let rect = tableView.frameOfCell(atColumn: tableColumn, row: row)
+    let popover = NSPopover()
+    popover.behavior = .transient
+    popover.animates = true
+    let hosting = NSHostingController(
+      rootView: SetCellsValuePopover(
+        columnName: model.columns[column].name, rowCount: pages.count,
+        offersDefault: offersDefaultValue,
+        onSet: { [weak self, weak popover] value in
+          popover?.close()
+          self?.onStageCells?(pages, column, Array(repeating: value, count: pages.count))
+        }))
+    hosting.sizingOptions = [.preferredContentSize, .intrinsicContentSize]
+    popover.contentViewController = hosting
+    setCellsPopover?.close()
+    setCellsPopover = popover
+    // The table is flipped: maxY is the bottom edge, so the popover opens under the cell.
+    popover.show(relativeTo: rect, of: tableView, preferredEdge: .maxY)
+  }
+
   /// Dialect of the grid's highlight database type (PostgreSQL when the grid has not updated)
   private var exportDialect: SQLDialect {
     key?.highlightDialect.dialect ?? .postgresql
@@ -683,16 +773,27 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// TSV of the selected rows, all columns in on-screen order (after a column move)
   func selectionTSV(_ tableView: NSTableView) -> String {
-    guard let model else { return "" }
-    return model.tsv(
-      rows: tableView.selectedRowIndexes,
-      columns: tableView.tableColumns.compactMap { Int($0.identifier.rawValue) })
+    selectionText(tableView.selectedRowIndexes, in: tableView, format: .tsv)
   }
 
+  /// Displayed `rows` in `format`, all columns in on-screen order (after a column move)
+  private func selectionText(
+    _ rows: IndexSet, in tableView: NSTableView, format: CopyRowsFormat
+  ) -> String {
+    guard let model else { return "" }
+    return model.copyText(
+      rows: rows, columns: tableView.tableColumns.compactMap { Int($0.identifier.rawValue) },
+      format: format, neutralizesFormulas: AppSettings.shared.neutralizesCopiedFormulas)
+  }
+
+  /// Cmd+C: the selected rows in Settings → Result Table → Copy rows as
   func copySelection(_ tableView: NSTableView) {
     guard !tableView.selectedRowIndexes.isEmpty else { return }
     NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(selectionTSV(tableView), forType: .string)
+    NSPasteboard.general.setString(
+      selectionText(
+        tableView.selectedRowIndexes, in: tableView, format: AppSettings.shared.copyRowsFormat),
+      forType: .string)
   }
 
   // MARK: - Selection summary
@@ -760,11 +861,14 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       let tableColumn = tableView.tableColumns.firstIndex(where: {
         $0.identifier.rawValue == String(column)
       }),
-      let textField =
-        (tableView.view(atColumn: tableColumn, row: row, makeIfNecessary: true)
-        as? NSTableCellView)?.textField
+      let cellView =
+        tableView.view(atColumn: tableColumn, row: row, makeIfNecessary: true)
+        as? NSTableCellView,
+      let textField = cellView.textField
     else { return false }
     editing = (model.row(at: row), column, pageIndex(forDisplayedRow: row))
+    // The raw value has no marks to repaint, and a repaint mid-edit would reset the caret
+    (cellView as? ResultGridCell)?.hasInvisibleMarks = false
     textField.isEditable = true
     textField.stringValue = model.value(row: row, column: column).fullString
     textField.textColor = Self.textColor
@@ -946,17 +1050,29 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let isEmphasized = isSelected && (tableView.window?.isKeyWindow ?? true)
     cell.backgroundStyle = isEmphasized ? .emphasized : .normal
     let text = model.displayText(row: row, column: column)
+    let invisibles = model.invisibleCharacterTooltip(row: row, column: column)
+    cell.hasInvisibleMarks = invisibles != nil
+    if cell.toolTip != invisibles { cell.toolTip = invisibles }
     let textColor = cell.desiredTextColor(isEmphasized: isEmphasized)
+    let markColor = isEmphasized ? Self.selectedNullTextColor : Self.invisibleMarkColor
     cell.textField?.font = Self.font
     if cell.textField?.textColor != textColor { cell.textField?.textColor = textColor }
     let cellID = ObjectIdentifier(cell)
     if let key, !key.searchQuery.isEmpty {
       highlightedCells.insert(cellID)
       cell.hasSearchHighlight = true
-      cell.textField?.attributedStringValue = Self.highlighted(
-        text, query: key.searchQuery, caseSensitive: key.caseSensitive,
-        wholeWord: key.wholeWord, textColor: textColor,
-        isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column)
+      let highlighted = NSMutableAttributedString(
+        attributedString: Self.highlighted(
+          text, query: key.searchQuery, caseSensitive: key.caseSensitive,
+          wholeWord: key.wholeWord, textColor: textColor,
+          isCurrentMatch: currentMatchCell?.row == row && currentMatchCell?.column == column))
+      if invisibles != nil { Self.tintInvisibleMarks(in: highlighted, color: markColor) }
+      cell.textField?.attributedStringValue = highlighted
+    } else if invisibles != nil {
+      highlightedCells.insert(cellID)
+      cell.hasSearchHighlight = false
+      cell.textField?.attributedStringValue = Self.invisibleMarked(
+        text, textColor: textColor, markColor: markColor)
     } else {
       cell.hasSearchHighlight = false
       if highlightedCells.remove(cellID) != nil || cell.textField?.stringValue != text {
@@ -1152,6 +1268,32 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     return string
   }
 
+  /// `text` in `textColor` with its invisible-character marks in `markColor`
+  static func invisibleMarked(
+    _ text: String, font: NSFont = font, textColor: NSColor, markColor: NSColor
+  ) -> NSAttributedString {
+    let string = NSMutableAttributedString(
+      string: text, attributes: [.font: font, .foregroundColor: textColor])
+    tintInvisibleMarks(in: string, color: markColor)
+    return string
+  }
+
+  /// Every mark is one UTF-16 unit (`InvisibleCharacters.isMark`). A mark inside a search match
+  /// (a background color) keeps the match's text color.
+  static func tintInvisibleMarks(in string: NSMutableAttributedString, color: NSColor) {
+    var location = 0
+    for scalar in string.string.unicodeScalars {
+      let length = scalar.utf16.count
+      if InvisibleCharacters.isMark(scalar.value),
+        string.attribute(.backgroundColor, at: location, effectiveRange: nil) == nil
+      {
+        string.addAttribute(
+          .foregroundColor, value: color, range: NSRange(location: location, length: length))
+      }
+      location += length
+    }
+  }
+
   /// Width of the "#" column: the digits of the last row number plus the cell padding, and at
   /// least room for the details button when it shows row details (`showsRowDetails`)
   static func rowNumberWidth(
@@ -1229,6 +1371,8 @@ final class ResultGridCell: NSTableCellView {
 
   /// Whether the cell is currently showing search match highlights (attributed string)
   var hasSearchHighlight = false
+  /// Whether the cell's attributed text tints invisible-character marks
+  var hasInvisibleMarks = false
 
   override var backgroundStyle: NSView.BackgroundStyle {
     didSet {
@@ -1239,11 +1383,7 @@ final class ResultGridCell: NSTableCellView {
   }
 
   func desiredTextColor(isEmphasized: Bool? = nil) -> NSColor {
-    let emphasized =
-      isEmphasized
-      ?? (backgroundStyle == .emphasized
-        || ((superview as? NSTableRowView)?.isSelected == true
-          && (superview as? NSTableRowView)?.isEmphasized == true))
+    let emphasized = showsEmphasis(isEmphasized)
     if isNull {
       return emphasized
         ? ResultGridCoordinator.selectedNullTextColor
@@ -1255,9 +1395,26 @@ final class ResultGridCell: NSTableCellView {
     }
   }
 
+  /// `isEmphasized`, else whether the cell or its selected row shows emphasis
+  private func showsEmphasis(_ isEmphasized: Bool?) -> Bool {
+    isEmphasized
+      ?? (backgroundStyle == .emphasized
+        || ((superview as? NSTableRowView)?.isSelected == true
+          && (superview as? NSTableRowView)?.isEmphasized == true))
+  }
+
   func updateTextColor(isEmphasized: Bool? = nil) {
     guard !hasSearchHighlight else { return }
     let color = desiredTextColor(isEmphasized: isEmphasized)
+    if hasInvisibleMarks, let textField {
+      // A text color would repaint the marks too, so the marked text is rebuilt
+      textField.attributedStringValue = ResultGridCoordinator.invisibleMarked(
+        textField.stringValue, font: textField.font ?? ResultGridCoordinator.font,
+        textColor: color,
+        markColor: showsEmphasis(isEmphasized)
+          ? ResultGridCoordinator.selectedNullTextColor : ResultGridCoordinator.invisibleMarkColor)
+      return
+    }
     if textField?.textColor != color {
       textField?.textColor = color
     }

@@ -62,6 +62,8 @@ extension DatabaseConnectionManager {
     // (see `cancelError(since:generation:)`)
     let epoch = connectionEpoch
     let cancelGeneration = batchCancellationGeneration
+    // Its statements are refused after a DuckDB interrupt cancel since (`withSession`)
+    let admission = UserStatementAdmission(epoch: epoch, generation: cancelGeneration)
     try await adoptUserTransactionIfNeeded(protectedMode: protectedMode, caller: caller)
 
     let start = Date()
@@ -112,6 +114,28 @@ extension DatabaseConnectionManager {
         || (!protectedMode && userTxOpen
           && ProtectedTransactionRules.beginCommitsOpenTransaction(
             statement, dialect: Self.dialect(of: config)))
+      // DuckDB: a cancel aborted this transaction and a COMMIT would answer success. Never
+      // sent: rolled back instead (`settleInterruptAbort`)
+      if commitsUserTransaction, interruptRollbackOwed == connectionEpoch {
+        await settleInterruptAbort()
+        throw Self.commitAfterInterruptError
+      }
+      // DuckDB: a user ROLLBACK while the cancel's ROLLBACK is owed is that ROLLBACK: sent alone
+      // it would fail with no transaction left
+      if interruptRollbackOwed == connectionEpoch,
+        ProtectedTransactionRules.rolledBackUserTransaction(
+          statement, dialect: Self.dialect(of: config))
+      {
+        await settleInterruptAbort()
+        results.append(
+          (
+            queryText: shownText(at: index),
+            result: QueryResult(
+              columns: [], rows: [], rowCount: 0, executionTime: 0, affectedRows: 0)
+          ))
+        continue
+      }
+      await scriptCheckpointHook?(.beforeSend(caller: caller, index: results.count))
       // What the user's COMMIT did to the Data Rewind entries (`sendUserCommit`)
       var commitState: RewindEntry.State? = .committed
       do {
@@ -120,23 +144,36 @@ extension DatabaseConnectionManager {
         let inTransaction = !txState.isIdle || userTxOpen
         let statementBinds = binds.indices.contains(index) ? binds[index] : []
         if userCommit, statement.kind == .tcl {
-          let sent = await sendUserCommit(statement.text, binds: statementBinds)
+          let sent = await Self.$userStatementAdmission.withValue(admission) {
+            await sendUserCommit(statement.text, binds: statementBinds)
+          }
           commitState = sent.rewindState
           result = try sent.result.get()
         } else {
-          result = try await executeSingleStatement(
-            statement.text, maxRows: maxRows, inTransaction: inTransaction, binds: statementBinds)
+          result = try await Self.$userStatementAdmission.withValue(admission) {
+            try await executeSingleStatement(
+              statement.text, maxRows: maxRows, inTransaction: inTransaction,
+              binds: statementBinds)
+          }
         }
       } catch {
-        // The session is gone: nothing of the old transaction state applies any more
-        if let cancelled = cancelError(since: epoch, generation: cancelGeneration) {
+        // The session is gone, or the interrupt's effect on the transaction is observed
+        if let cancelled = await cancelErrorAfterInterrupt(
+          since: epoch, generation: cancelGeneration)
+        {
           throw cancelled
         }
+        // A MySQL deadlock already ended the user's transaction and discarded its Data Rewind
+        // entries, on the raw error (`queryFailure`)
         if !protectedMode {
           noteUserTransaction(after: statement, succeeded: false, commitState: commitState)
           await confirmUserTransactionWithServer(after: statement, succeeded: false)
         }
         throw await transactionFailure(error, openedHere: openedHere)
+      }
+      // A cancel interrupted the connection while this COMMIT was in flight
+      if commitsUserTransaction {
+        try await noteUserCommitAfterInterrupt(since: epoch, generation: cancelGeneration)
       }
       if action != .run {
         recordPending(
@@ -192,6 +229,11 @@ extension DatabaseConnectionManager {
     if !txState.isIdle, commitGuard.refusesCommit(expectedGeneration: expectedGeneration) {
       throw DatabaseError.commitRefusedTransactionChanged
     }
+    // DuckDB: a cancel aborted the transaction (an edit, or a statement it missed): rolled back
+    if !txState.isIdle, interruptRollbackOwed == connectionEpoch {
+      await settleInterruptAbort()
+      throw Self.commitAfterInterruptError
+    }
     switch txState {
     case .idle:
       return
@@ -244,6 +286,11 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// A COMMIT of a transaction a DuckDB interrupt cancel aborted (`settleInterruptAbort`)
+  static let commitAfterInterruptError = DatabaseError.transactionAborted(
+    "The commit may not have been applied: cancelling the running statement rolled back the "
+      + "open transaction. Check the data before running it again.")
+
   /// Roll back the app transaction (also allowed when aborted). No-op when idle.
   /// - Throws: `DatabaseError.transactionEnding` while Commit / Rollback is in progress and
   ///   `DatabaseError.rollbackRefusedStatementRunning` while a gated statement or edit runs (its
@@ -256,6 +303,11 @@ extension DatabaseConnectionManager {
     guard !previous.isIdle else { return }
     try refuseIfEnding()
     if commitGuard.refusesRollback { throw DatabaseError.rollbackRefusedStatementRunning }
+    // DuckDB: a cancel aborted the transaction, its ROLLBACK is the one owed
+    if interruptRollbackOwed == connectionEpoch {
+      await settleInterruptAbort()
+      return
+    }
     // Marked before the first suspension: statements entering meanwhile are refused
     txState = .ending(kind: .rollback, pending: previous.pending)
     await transactionEndHook?(.rollback)
@@ -604,9 +656,14 @@ extension DatabaseConnectionManager {
 
   func sendTransactionControl(_ sql: String) async throws -> CommandResult {
     let startTime = Date()
+    // A ROLLBACK (also to a savepoint) writes nothing: a staged batch's cleanup after a DuckDB
+    // interrupt cancel is still sent (`withSession`)
+    let admission = sql.hasPrefix("ROLLBACK") ? nil : Self.userStatementAdmission
     do {
-      return try await withSession { session in
-        try await session.command(sql, binds: [])
+      return try await Self.$userStatementAdmission.withValue(admission) {
+        try await withSession { session in
+          try await session.command(sql, binds: [])
+        }
       }
     } catch {
       throw transactionControlError(error, sql: sql, startTime: startTime)

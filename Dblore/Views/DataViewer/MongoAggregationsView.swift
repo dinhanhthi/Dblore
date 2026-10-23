@@ -19,7 +19,7 @@
 import SwiftUI
 
 struct MongoAggregationsView: View {
-  let model: MongoCollectionModel
+  @Bindable var model: MongoCollectionModel
   /// The tab: connection, rules and history of Create View
   let viewModel: NotebookViewModel
   /// Opens a new query tab holding the command; nil disables Open in Query
@@ -36,7 +36,6 @@ struct MongoAggregationsView: View {
   /// The connection and collection the pipelines are saved for; nil disables saved pipelines
   var savedPipelineKey: String? = nil
 
-  @State private var selectedStage: AggregationBuilderModel.Stage.ID?
   @State private var exportRequest: MongoExportCodeSheet.Request?
   @State private var showsOptions = false
   /// Create View: the command of the form opened last and the pipeline it starts from
@@ -62,7 +61,7 @@ struct MongoAggregationsView: View {
         }
         Divider()
         AggregationBuilderBody(
-          model: builder, selectedStage: $selectedStage, fieldSource: fieldSource
+          model: builder, selectedStage: $model.selectedStage, fieldSource: fieldSource
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -141,7 +140,7 @@ struct MongoAggregationsView: View {
         )
         .frame(height: MongoQueryField.styledLineHeight)
         MongoAggregationWizardButton(builder: builder) { id in
-          selectedStage = id
+          model.selectedStage = id
           builder.showsRunResults = false
         }
         .disabled(isText)

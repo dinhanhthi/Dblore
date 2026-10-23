@@ -3,7 +3,8 @@
 //  Dblore
 //
 //  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge,
-//  the result card of a query the app ran for the assistant, or a proposal card
+//  the result card of a query the app ran for the assistant, a proposal card, or the card of an
+//  outside MCP tool call
 //
 
 import AppKit
@@ -37,6 +38,11 @@ struct AIMessageView: View {
   /// Runs a proposal after the user pressed Run on its card (`WorkspaceManager.runAIProposal`);
   /// nil disables Run
   var onRunProposal: ((AIProposal, String?) -> WorkspaceManager.AIProposalRunOutcome)? = nil
+  /// Run once (true) or Deny (false) on this entry's outside tool card; nil unless the call
+  /// waits for the user
+  var onDecideOutsideCall: ((Bool) -> Void)? = nil
+  /// False while Run once on this entry's outside tool card is still ignored
+  var outsideRunEnabled = false
 
   @State private var isHovering = false
   @State private var isEditing = false
@@ -55,6 +61,10 @@ struct AIMessageView: View {
         // The entry's text is only the history placeholder of the proposal
         AIProposalCardView(
           proposal: proposal, dialect: dialect, onInsert: onInsert, onRun: onRunProposal)
+      } else if let call = entry.outsideCall {
+        // The entry's text is only a label: outside calls are never replayed
+        AIOutsideToolCardView(
+          call: call, onDecide: onDecideOutsideCall, canRun: outsideRunEnabled)
       } else if let review = entry.review, !entry.isError, !isStreaming, !entry.text.isEmpty {
         AIReviewCardView(
           request: review, text: entry.text,

@@ -238,6 +238,22 @@ class WorkspaceManager: Identifiable {
   /// Commit, dropped on any other end
   @ObservationIgnored var pendingTableChanges: [StructureEditorModel.TableChange] = []
 
+  // MARK: - Data Dictionary
+
+  /// Export Data Dictionary sheet. Nil hides it.
+  var dataDictionaryExport: DataDictionaryExportModel?
+
+  // MARK: - Schema Compare
+
+  /// Compare Schemas sheet. Nil hides it.
+  var schemaCompare: SchemaCompareModel?
+
+  // MARK: - Find a Value in Every Table
+
+  /// The last search, kept while its sheet is hidden so its results come back. Nil until opened.
+  var crossTableSearch: CrossTableSearchModel?
+  var isCrossTableSearchPresented = false
+
   // MARK: - Command Palette
 
   /// Open palette. Nil hides it.
@@ -320,6 +336,10 @@ class WorkspaceManager: Identifiable {
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
+  /// Read when the sidebar's Sequences section is first expanded
+  var databaseSequences = LazyCatalog<DatabaseSequence>()
+  /// Read when the sidebar's Types section is first expanded
+  var databaseUserTypes = LazyCatalog<DatabaseUserType>()
   var isLoadingSchema: Bool = false
   var areAllEntitiesExpanded: Bool = false
 
@@ -335,11 +355,12 @@ class WorkspaceManager: Identifiable {
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
-    // An opened file's AI policy never weakens the saved one, and the form opens on the saved
-    // color and group (a form connect writes what the form shows)
+    // An opened file's AI policy never weakens the saved one, the form opens on the saved
+    // color and group (a form connect writes what the form shows), and its scripts are the
+    // saved row's only
     var workspace = workspace
     workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
-      .map { Self.keepingSavedAppearance($0) }
+      .map { Self.keepingSavedScripts(Self.keepingSavedAppearance($0)) }
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -384,6 +405,7 @@ class WorkspaceManager: Identifiable {
         call, dialect: dialect, sessionKey: sessionKey, mongoDatabase: mongoDatabase,
         runsQueries: runsQueries, sendsResultRows: sendsResultRows)
     }
+    aiAssistant.makeOutsideToolSession = { OutsideMCPTurnTools() }
     aiAssistant.proposalRunner = { [weak self] proposal, confirmedName in
       self?.runAIProposal(proposal, confirmedName: confirmedName)
         ?? .refused("Not connected to a database.")
@@ -528,7 +550,7 @@ class WorkspaceManager: Identifiable {
   /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
-  /// unless `aiFieldsEdited`, and its color and group unless `fromForm`.
+  /// unless `aiFieldsEdited`, its color and group unless `fromForm`, and its hidden schemas.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
     aiFieldsEdited: Bool = false, fromForm: Bool = false
@@ -541,6 +563,8 @@ class WorkspaceManager: Identifiable {
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
     if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
+    // A search running with its sheet hidden must not reach the new server
+    dropCrossTableSearch()
     if !isAutoConnect { await supersedeAutoConnect() }
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
@@ -551,7 +575,7 @@ class WorkspaceManager: Identifiable {
 
     do {
       try await PerfSignpost.interval("db.connect") {
-        try await connectionManager.connect(
+        try await connectionManager.connectRunningScripts(
           config: config, extraAllowedPaths: keepsDuckDBFiles ? duckDBAllowedPaths : [])
       }
       if !keepsDuckDBFiles { releaseDuckDBFileAccess() }
@@ -562,7 +586,10 @@ class WorkspaceManager: Identifiable {
       }
       if savesConnection, config.mongoHomeDatabase == nil {
         if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
-        if !fromForm { config = Self.keepingSavedAppearance(config) }
+        config =
+          fromForm
+          ? Self.keepingSavedHiddenSchemas(config, current: workspace.connectionConfig)
+          : Self.keepingSavedAppearance(config)
         guard SessionManager.saveConnection(config) else {
           throw CertificateFormError.keychainSave
         }
@@ -634,8 +661,9 @@ class WorkspaceManager: Identifiable {
     guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
 
     var configWithPassword = config
-    // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain
-    if config.databaseType.capabilities.usesPassword {
+    // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
+    // unless a password command prints it on connect
+    if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil {
       guard let keychainKey = workspace.keychainKey,
         let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
       else {
@@ -659,10 +687,11 @@ class WorkspaceManager: Identifiable {
         category: "Workspace"
       )
     } catch {
-      await AppLogger.shared.warning(
-        "Auto-connect failed: \(error.localizedDescription)",
-        category: "Workspace"
-      )
+      // A script failure logs its exit status only, never its output
+      let reason =
+        error is ConnectionScriptRunner.ScriptError
+        ? String(describing: error) : error.localizedDescription
+      await AppLogger.shared.warning("Auto-connect failed: \(reason)", category: "Workspace")
       // Never over a newer connection: only while this attempt is still the visible one
       if !Task.isCancelled, connectionState == .connecting { connectionState = .disconnected }
       if !Task.isCancelled { presentConnectErrorIfActionable(error, config: configWithPassword) }
@@ -1331,6 +1360,7 @@ class WorkspaceManager: Identifiable {
       dataRewind?.model.sheetDisappeared()
       dataRewind = nil
     }
+    viewModels[id]?.resolveStagedBlockerPrompt(commitAnyway: false)
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
     notebookDocuments.removeValue(forKey: id)
@@ -1614,7 +1644,10 @@ class WorkspaceManager: Identifiable {
       }
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
-      if !tab.title.hasSuffix(".sql") {
+      if tab.title.lowercased().hasSuffix(".js") {
+        panel.nameFieldStringValue = String(tab.title.dropLast(3))
+      }
+      if !panel.nameFieldStringValue.hasSuffix(".sql") {
         panel.nameFieldStringValue += ".sql"
       }
     case .markdown:

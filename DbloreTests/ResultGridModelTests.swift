@@ -2,6 +2,7 @@
 // The grid model only knows displayed (sorted) rows: every table row index maps to the
 // displayed row, never to `result.rows` re-indexed by the display position.
 
+import AppKit
 import Foundation
 import Testing
 
@@ -60,10 +61,124 @@ struct ResultGridModelTests {
     #expect(model.value(row: 1, column: 0).fullString == "a\r\nb")
   }
 
+  @Test("Invisible characters show as marks; the value, TSV and an ASCII cell stay raw")
+  func invisibleCharacterMarks() {
+    let values: [CellValue] = [
+      .string("a\u{200B}b\u{00A0}c"), .string("\u{01}\tx\u{7F}"), .string("plain text"),
+    ]
+    let result = CellResult(
+      columns: [ColumnInfo(name: "t", type: "text")], rows: values.map { [$0] }, rowCount: 3)
+    let marked = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    #expect(
+      (0..<3).map { marked.displayText(row: $0, column: 0) } == [
+        "a\u{2422}b\u{2423}c", "\u{2401}\u{2409}x\u{2421}", "plain text",
+      ])
+    #expect(
+      marked.invisibleCharacterTooltip(row: 1, column: 0)
+        == "U+0001 START OF HEADING\nU+0009 HORIZONTAL TABULATION\nU+007F DELETE")
+    #expect(marked.invisibleCharacterTooltip(row: 2, column: 0) == nil)
+    // Copy and edit read the raw value
+    #expect(marked.value(row: 0, column: 0).fullString == "a\u{200B}b\u{00A0}c")
+    #expect(
+      marked.tsv(rows: IndexSet([0, 1]), columns: [0], neutralizesFormulas: false)
+        == "a\u{200B}b\u{00A0}c\n\"\u{01}\tx\u{7F}\"")
+
+    let unmarked = ResultGridModel(
+      result: result, sortColumn: nil, ascending: true, marksInvisibleCharacters: false)
+    #expect(unmarked.displayText(row: 0, column: 0) == "a\u{200B}b\u{00A0}c")
+    #expect(unmarked.invisibleCharacterTooltip(row: 0, column: 0) == nil)
+  }
+
+  @Test("A joiner inside an emoji sequence or a word stays; one at an edge or by ASCII is marked")
+  func invisibleJoinerContext() {
+    let kept = [
+      "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",  // family
+      "\u{2764}\u{FE0F}\u{200D}\u{1F525}",  // heart on fire (variation selector)
+      "\u{1F469}\u{1F3FD}\u{200D}\u{1F4BB}",  // skin tone modifier
+      "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}",  // Persian
+      "\u{0915}\u{094D}\u{200D}\u{0937}",  // Devanagari conjunct (virama)
+      "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}",  // England flag
+      "\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}",  // Scotland flag
+    ]
+    for text in kept {
+      #expect(InvisibleCharacters.marked(text) == text)
+      #expect(InvisibleCharacters.tooltip(for: text) == nil)
+    }
+    #expect(InvisibleCharacters.marked("a\u{200D}") == "a\u{2422}")
+    #expect(InvisibleCharacters.marked("\u{200C}\u{0645}") == "\u{2422}\u{0645}")
+    #expect(InvisibleCharacters.marked("a\u{200D}b") == "a\u{2422}b")
+    #expect(InvisibleCharacters.marked("a\u{E0041}") == "a\u{2422}")
+    // Only a well-formed subdivision flag keeps its tags: no hidden tag text after a flag
+    #expect(InvisibleCharacters.marked("\u{1F3F4} a\u{E0041}") == "\u{1F3F4} a\u{2422}")
+    let longRun = "\u{1F3F4}" + String(repeating: "\u{E0061}", count: 20) + "\u{E007F}"
+    #expect(
+      InvisibleCharacters.marked(longRun)
+        == "\u{1F3F4}" + String(repeating: "\u{2422}", count: 21))
+    let pirate = "\u{1F3F4}\u{200D}\u{2620}\u{FE0F}"
+    #expect(InvisibleCharacters.marked(pirate + "\u{E0041}") == pirate + "\u{2422}")
+    #expect(InvisibleCharacters.tooltip(for: "a\u{200D}") == "U+200D ZERO WIDTH JOINER")
+  }
+
+  @Test("Direction controls and a soft hyphen are marked and named")
+  func invisibleBidiControls() {
+    let bidi: [UInt32] = Array(0x202A...0x202E) + Array(0x2066...0x2069) + [0x200E, 0x200F, 0x061C]
+    for value in bidi {
+      let control = String(Unicode.Scalar(value)!)
+      #expect(InvisibleCharacters.marked("a\(control)b") == "a\u{21C4}b", "U+\(value)")
+    }
+    #expect(InvisibleCharacters.marked("a\u{00AD}b") == "a\u{2422}b")
+    #expect(
+      InvisibleCharacters.tooltip(for: "x\u{202E}y\u{2066}")
+        == "U+202E RIGHT-TO-LEFT OVERRIDE\nU+2066 LEFT-TO-RIGHT ISOLATE")
+  }
+
+  @Test("Marks are tinted at their UTF-16 location, except inside a search match")
+  func invisibleMarkTintRange() {
+    let marked = ResultGridCoordinator.invisibleMarked(
+      "\u{1F600}\u{2422}x", textColor: .red, markColor: .blue)
+    func color(_ string: NSAttributedString, _ location: Int) -> NSColor? {
+      string.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor
+    }
+    #expect(color(marked, 0) == .red)
+    #expect(color(marked, 2) == .blue)
+    #expect(color(marked, 3) == .red)
+
+    let matched = NSMutableAttributedString(
+      string: "\u{2422}\u{2422}", attributes: [.foregroundColor: NSColor.red])
+    matched.addAttributes(
+      [.backgroundColor: NSColor.yellow, .foregroundColor: NSColor.black],
+      range: NSRange(location: 0, length: 1))
+    ResultGridCoordinator.tintInvisibleMarks(in: matched, color: .blue)
+    #expect(color(matched, 0) == .black)
+    #expect(color(matched, 1) == .blue)
+  }
+
   @Test("TSV columns follow the given order")
   func tsvColumnOrder() {
     let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
-    #expect(model.tsv(rows: IndexSet([0, 1]), columns: [1, 0]) == "a\t1\nNULL\t2")
+    #expect(
+      model.tsv(rows: IndexSet([0, 1]), columns: [1, 0], neutralizesFormulas: false)
+        == "a\t1\nNULL\t2")
+  }
+
+  @Test("Cmd+C TSV prefixes formula-like text when on, never numbers or dates")
+  func tsvNeutralizesFormulaText() {
+    let date = Date(timeIntervalSince1970: 0)
+    let model = ResultGridModel(
+      result: CellResult(
+        columns: [
+          ColumnInfo(name: "t", type: "text"), ColumnInfo(name: "n", type: "int4"),
+          ColumnInfo(name: "d", type: "date"),
+        ],
+        rows: [[.string("=1+1"), .int(-5), .date(date)]], rowCount: 1),
+      sortColumn: nil, ascending: true)
+    let iso = CellValue.date(date).fullString
+    #expect(
+      model.tsv(rows: IndexSet([0]), columns: [0, 1, 2], neutralizesFormulas: true)
+        == "'=1+1\t-5\t\(iso)")
+    #expect(
+      model.tsv(rows: IndexSet([0]), columns: [0, 1, 2], neutralizesFormulas: false)
+        == "=1+1\t-5\t\(iso)")
   }
 
   @Test("A displayed row maps back to its index in result.rows")
@@ -83,7 +198,7 @@ struct ResultGridModelTests {
       ],
       rowCount: 3)
     let model = ResultGridModel(result: result, sortColumn: "id", ascending: true)
-    let tsv = model.tsv(rows: IndexSet([0, 1]), columns: [0, 1])
+    let tsv = model.tsv(rows: IndexSet([0, 1]), columns: [0, 1], neutralizesFormulas: false)
     #expect(tsv == "1\t\"a\tb\"\n2\t\"line1\nline2\"")
   }
 

@@ -160,3 +160,71 @@ extension WorkspaceManager {
     selectedGraphNodeId = nil
   }
 }
+
+// MARK: - Find a Value in Every Table
+
+extension WorkspaceManager {
+  /// Connected to PostgreSQL, MySQL or SQLite with a schema read since the last connect. DuckDB
+  /// has no second connection to its file, and MongoDB is not SQL.
+  var canSearchEveryTable: Bool {
+    guard connectionState.isConnected, schemaConnectionEpoch != nil,
+      let type = workspace.connectionConfig?.databaseType
+    else { return false }
+    return Self.searchesEveryTable(type)
+  }
+
+  /// The engines Find a Value in Every Table runs on
+  nonisolated static func searchesEveryTable(_ type: DatabaseType) -> Bool {
+    type.capabilities.queryLanguage == .sql && type != .duckdb
+  }
+
+  /// Shows the search sheet: the last search of this schema read with its results, else a new one
+  func openCrossTableSearch() {
+    guard canSearchEveryTable, let epoch = schemaConnectionEpoch,
+      let type = workspace.connectionConfig?.databaseType
+    else { return }
+    if crossTableSearch?.schemaEpoch != epoch {
+      crossTableSearch?.cancel()
+      let model = CrossTableSearchModel(
+        schemaEpoch: epoch, dialect: type.dialect, connectionManager: connectionManager
+      ) { [weak self] in
+        self?.crossTableSearchTargets(dialect: type.dialect) ?? []
+      }
+      model.onClose = { [weak self] in self?.isCrossTableSearchPresented = false }
+      model.onOpen = { [weak self] result, filter in
+        // Closes the sheet without cancelling: the search goes on, shown when it reopens
+        self?.isCrossTableSearchPresented = false
+        self?.openDataViewer(
+          schema: result.schema, name: result.name, orderColumns: result.primaryKeys,
+          filter: filter)
+        self?.mongoOverview = nil
+      }
+      crossTableSearch = model
+    }
+    isCrossTableSearchPresented = true
+  }
+
+  /// Stops the search and drops it (disconnect: its tables belong to the closed connection)
+  func dropCrossTableSearch() {
+    crossTableSearch?.cancel()
+    crossTableSearch = nil
+    isCrossTableSearchPresented = false
+  }
+
+  /// The sidebar's tables, without temporary ones (only the tab's session sees them), and their
+  /// columns without virtual-table hidden ones
+  private func crossTableSearchTargets(dialect: SQLDialect) -> [CrossTableSearchModel.Target] {
+    databaseTables.compactMap { table in
+      let temporary =
+        dialect == .sqlite
+        ? table.schema.caseInsensitiveCompare("temp") == .orderedSame
+        : dialect == .postgresql && table.schema.hasPrefix("pg_temp")
+      guard !temporary else { return nil }
+      return CrossTableSearchModel.Target(
+        schema: table.schema, name: table.name,
+        columns: table.columns.filter { !$0.isHidden }.map {
+          .init(name: $0.name, type: $0.type, isPrimaryKey: $0.isPrimaryKey)
+        })
+    }
+  }
+}

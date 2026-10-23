@@ -80,7 +80,14 @@ struct FilterConditionsEditor: View {
             op.displayName,
             isOn: Binding(
               get: { op == condition.wrappedValue.op },
-              set: { _ in condition.wrappedValue.op = op }))
+              set: { _ in
+                // A pattern written for the search's escape character means something else
+                // outside the LIKE family
+                if !(Self.isLike(condition.wrappedValue.op) && Self.isLike(op)) {
+                  condition.wrappedValue.likeEscape = nil
+                }
+                condition.wrappedValue.op = op
+              }))
         }
       } label: {
         Text(condition.wrappedValue.op.displayName)
@@ -91,7 +98,7 @@ struct FilterConditionsEditor: View {
 
       if condition.wrappedValue.op.needsValue {
         TextField(
-          condition.wrappedValue.op == .in ? "a, b, c" : "value", text: condition.value
+          condition.wrappedValue.op == .in ? "a, b, c" : "value", text: editedValue(condition)
         )
         .textFieldStyle(.plain)
         .inputCapsuleStyle()
@@ -102,6 +109,25 @@ struct FilterConditionsEditor: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(Color.cellBackground, in: RoundedRectangle(cornerRadius: CornerRadius.lg))
     .overlay(HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.lg)))
+  }
+
+  /// The operators whose SQL takes the pattern's `ESCAPE` clause
+  private static func isLike(_ op: FilterOperator) -> Bool {
+    switch op {
+    case .like, .notLike, .ilike, .notIlike: true
+    default: false
+    }
+  }
+
+  /// The value field: an edit drops the search's escape character, so a typed `!` stays itself
+  private func editedValue(_ condition: Binding<FilterCondition>) -> Binding<String> {
+    Binding(
+      get: { condition.wrappedValue.value },
+      set: {
+        guard $0 != condition.wrappedValue.value else { return }
+        condition.wrappedValue.value = $0
+        condition.wrappedValue.likeEscape = nil
+      })
   }
 
   /// Table columns, plus a column of a loaded saved filter that the table no longer has

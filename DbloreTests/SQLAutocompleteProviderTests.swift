@@ -48,6 +48,23 @@ struct SQLAutocompleteProviderTests {
     #expect(!suggestions.contains { $0.text == "zeta_total" })
   }
 
+  @Test("a snippet is offered by its trigger prefix in SQL, never on MongoDB")
+  func snippetsByTriggerPrefix() {
+    let provider = SQLAutocompleteProvider()
+    let snippet = SQLSnippet(name: "Select from", trigger: "selfrom", body: "SELECT * FROM $0")
+    provider.snippets = { [snippet] }
+    let sql = provider.getSuggestions(for: "SELF", at: 4, dialect: .postgresql)
+    let match = sql.first { $0.text == "selfrom" }
+    guard case .snippet(let offered) = match?.type else {
+      Issue.record("no snippet suggestion")
+      return
+    }
+    #expect(offered == snippet)
+    #expect(provider.getSuggestions(for: "selx", at: 4, dialect: .postgresql).isEmpty)
+    let mongo = provider.getSuggestions(for: "self", at: 4, dialect: .mongodb)
+    #expect(!mongo.contains { $0.text == "selfrom" })
+  }
+
   // MARK: - UTF-16 cursor and statement window
 
   private func utf16Length(_ text: String) -> Int { (text as NSString).length }

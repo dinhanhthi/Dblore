@@ -10,6 +10,10 @@
 //  schema may change, collections add Rename and Drop, views Edit View, Duplicate and Drop.
 //  PostgreSQL, MySQL and SQLite tables add Rename and Drop Table (the structure editor's flows)
 //  and the Tables header New Table... when the schema may change; DuckDB stays view-only.
+//  PostgreSQL adds Sequences and Types (enums, domains, composite types), collapsed and read
+//  when first expanded; their rows offer Show DDL and Copy Name.
+//  PostgreSQL, SQLite and DuckDB can hide schemas from the Public tab (`listedSchemas`); only the
+//  sidebar leaves them out.
 //
 
 import Foundation
@@ -19,7 +23,7 @@ nonisolated enum SidebarSectionModel {
 
   /// A Public tab section. `tables` holds MongoDB collections.
   enum Kind: Hashable, Sendable {
-    case tables, views, functions, procedures, triggers
+    case tables, views, functions, procedures, triggers, sequences, types
   }
 
   struct Section: Equatable, Sendable {
@@ -72,8 +76,8 @@ nonisolated enum SidebarSectionModel {
     }
   }
 
-  /// Public tab sections in display order.
-  static func sections(for language: QueryLanguage) -> [Section] {
+  /// Public tab sections in display order. `supportsUserTypes` adds Sequences and Types.
+  static func sections(for language: QueryLanguage, supportsUserTypes: Bool = false) -> [Section] {
     switch language {
     case .sql:
       [
@@ -83,6 +87,12 @@ nonisolated enum SidebarSectionModel {
         Section(kind: .procedures, title: "Procedures", icon: "gearshape.2"),
         Section(kind: .triggers, title: "Triggers", icon: ObjectSourceRef.Kind.trigger.iconName),
       ]
+        + (supportsUserTypes
+          ? [
+            Section(
+              kind: .sequences, title: "Sequences", icon: ObjectSourceRef.Kind.sequence.iconName),
+            Section(kind: .types, title: "Types", icon: ObjectSourceRef.Kind.userType.iconName),
+          ] : [])
     case .mongosh:
       [
         Section(kind: .tables, title: "Collections", icon: "tablecells"),
@@ -94,6 +104,32 @@ nonisolated enum SidebarSectionModel {
   /// Two or more schemas get one group each. A MongoDB connection lists one database, flat.
   static func groupsBySchema(_ language: QueryLanguage) -> Bool {
     language == .sql
+  }
+
+  /// Whether the Public tab offers the schema filter menu: the SQL engines that name schemas
+  /// (MySQL lists one database, MongoDB one database too)
+  static func filtersSchemas(_ type: DatabaseType) -> Bool {
+    type.capabilities.queryLanguage == .sql && type.namesSchema
+  }
+
+  /// Schemas the Public tab lists: `schemas` without `hidden`, in name order, `defaultSchema`
+  /// first. Every schema hidden lists none.
+  static func listedSchemas(
+    _ schemas: some Sequence<String>, hidden: Set<String>, defaultSchema: String
+  ) -> [String] {
+    var sorted = Set(schemas).subtracting(hidden)
+      .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    if let index = sorted.firstIndex(of: defaultSchema) {
+      sorted.insert(sorted.remove(at: index), at: 0)
+    }
+    return sorted
+  }
+
+  /// "N hidden" of the filter menu: hidden schemas the connection still has (a dropped schema
+  /// kept in the list does not count). Nil when none is hidden.
+  static func hiddenSchemasLabel(_ schemas: some Sequence<String>, hidden: Set<String>) -> String? {
+    let count = Set(schemas).intersection(hidden).count
+    return count == 0 ? nil : "\(count) hidden"
   }
 
   /// The Security tab (Users and Roles). MongoDB has none.

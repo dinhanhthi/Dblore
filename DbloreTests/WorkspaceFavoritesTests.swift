@@ -116,4 +116,30 @@ struct WorkspaceManagerFavoritesTests {
     #expect(manager.isDirty)
   }
 
+  @Test("importing the same favorites twice adds them once, to one folder")
+  func importFavoritesTwice() {
+    let manager = makeManager()
+    let favorites: [DbloreConnectionFile.Favorite] = [
+      .init(name: "Top", sql: "SELECT 1"), .init(name: " ", sql: "SELECT 2"),
+    ]
+
+    let first = manager.importFavorites(favorites, folderName: "Team")
+    let second = manager.importFavorites(favorites, folderName: "Team")
+
+    #expect(first == FavoritesImportResult(added: 2, skipped: 0))
+    #expect(second == FavoritesImportResult(added: 0, skipped: 2))
+    #expect(manager.workspace.favorites.folders.map(\.name) == ["Team"])
+    #expect(manager.workspace.favorites.items.count == 2)
+  }
+
+  @Test("an imported favorite name is one line without control characters, at most 200 long")
+  func importedFavoriteNameIsSanitized() {
+    let manager = makeManager()
+    let name = "Top\u{202E}\nrows" + String(repeating: "x", count: 300)
+
+    manager.importFavorites([.init(name: name, sql: "SELECT 1")], folderName: "Team")
+
+    let stored = manager.workspace.favorites.items.map(\.name)
+    #expect(stored == [String(("Toprows" + String(repeating: "x", count: 300)).prefix(200))])
+  }
 }

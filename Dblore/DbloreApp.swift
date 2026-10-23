@@ -9,6 +9,7 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 import UserNotifications
+import os
 
 // MARK: - App Delegate for file handling
 
@@ -130,30 +131,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Quitting with a pending Protected transaction asks Commit / Roll back / Cancel for each
   /// workspace (Cancel keeps the app running). A force-quit skips this: the connection closes
-  /// without COMMIT, so the server rolls the transaction back.
+  /// without COMMIT, so the server rolls the transaction back. Connections with a
+  /// post-disconnect script are closed and their scripts started before the app exits.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard confirmKeyboardQuit() else { return .terminateCancel }
     let managers = WorkspaceWindowManager.shared.allWorkspaces
     // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
-    guard managers.contains(where: { !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting })
-    else {
+    let resolves = managers.contains(where: {
+      !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting
+    })
+    let scripted = managers.map(\.connectionManager).filter(\.hasPendingPostDisconnect)
+    guard resolves || !scripted.isEmpty else {
       isTerminating = true
       recordLaunchSession()
       return .terminateNow
     }
     Task { @MainActor in
-      for manager in managers {
-        guard await manager.resolvePendingTransaction(action: .quit) else {
-          NSApp.reply(toApplicationShouldTerminate: false)
-          return
+      if resolves {
+        for manager in managers {
+          guard await manager.resolvePendingTransaction(action: .quit) else {
+            NSApp.reply(toApplicationShouldTerminate: false)
+            return
+          }
         }
       }
       isTerminating = true
       recordLaunchSession()
+      await Self.closeRunningPostDisconnectScripts(scripted)
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
   }
+
+  /// Closes `connections` and starts their post-disconnect scripts (started, not awaited: they
+  /// run outside the app). After `quitCloseLimit`, the scripts of connections still closing
+  /// start anyway, so a quit never hangs on a server.
+  @concurrent nonisolated private static func closeRunningPostDisconnectScripts(
+    _ connections: [DatabaseConnectionManager]
+  ) async {
+    let scripts = connections.map { $0.takePostDisconnectForQuit() }
+    guard scripts.contains(where: { $0 != nil }) else { return }
+    let started = OSAllocatedUnfairLock(
+      initialState: [Bool](repeating: false, count: scripts.count))
+    /// Starts script `index` once, whichever of its close and the limit comes first
+    let start: @Sendable (Int) -> Void = { index in
+      let first = started.withLock { flags in
+        defer { flags[index] = true }
+        return !flags[index]
+      }
+      if first { scripts[index]?() }
+    }
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      let resumed = OSAllocatedUnfairLock(initialState: false)
+      let resume: @Sendable () -> Void = {
+        let first = resumed.withLock { done in
+          defer { done = true }
+          return !done
+        }
+        if first { continuation.resume() }
+      }
+      DispatchQueue.global().asyncAfter(deadline: .now() + quitCloseLimit) {
+        scripts.indices.forEach(start)
+        resume()
+      }
+      Task {
+        await withTaskGroup(of: Void.self) { group in
+          for (index, connection) in connections.enumerated() where scripts[index] != nil {
+            group.addTask {
+              await connection.disconnect()
+              start(index)
+            }
+          }
+        }
+        resume()
+      }
+    }
+  }
+
+  /// Longest a quit waits for connections with a post-disconnect script to close
+  nonisolated private static let quitCloseLimit: TimeInterval = 3
 
   /// With "Confirm before quitting" on, Cmd+Q asks first. Quit from the Dock, logout and
   /// update relaunches come without a key event, so they never ask.
@@ -538,7 +594,7 @@ private struct ReopenClosedTabButton: View {
 /// Edit menu items for the focused notebook or data viewer undo stack.
 private struct CellUndoCommandButtons: View {
   @ObservedObject private var refresh = CellUndoMenuRefresh.shared
-  @FocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
+  @BridgedFocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
 
   var body: some View {
     let _ = refresh.revision
@@ -616,10 +672,12 @@ private final class CellUndoMenuRefresh: ObservableObject {
 struct TabCommands: Commands {
   // Note: All tab operations now go through WorkspaceManager
   // No fallback to legacy TabStateManager.shared
-  @FocusedValue(\.openTableImportAction) private var openTableImportAction
-  @FocusedValue(\.openSQLDumpAction) private var openSQLDumpAction
-  @FocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
-  @FocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
+  @BridgedFocusedValue(\.openTableImportAction) private var openTableImportAction
+  @BridgedFocusedValue(\.openSQLDumpAction) private var openSQLDumpAction
+  @BridgedFocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
+  @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
+  @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
+  @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -730,6 +788,18 @@ struct TabCommands: Commands {
 
       Button(isMongo ? "Restore Backup..." : "Restore SQL Dump...") { openSQLRestoreAction?() }
         .disabled(openSQLRestoreAction == nil)
+
+      // SQL engines only: MongoDB collections have no catalog structure to document
+      if !isMongo {
+        Button("Export Data Dictionary...") { openDataDictionaryAction?() }
+          .disabled(openDataDictionaryAction == nil)
+      }
+
+      // PostgreSQL, MySQL / MariaDB and SQLite only
+      if WorkspaceWindowManager.shared.activeWorkspaceManager?.supportsSchemaCompare != false {
+        Button("Compare Schemas...") { openSchemaCompareAction?() }
+          .disabled(openSchemaCompareAction == nil)
+      }
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }
         .disabled(openDatabaseFileCopyAction == nil)
@@ -942,14 +1012,14 @@ struct TabCommands: Commands {
 // MARK: - Notebook Commands (chỉ cho Notebook mode)
 
 struct NotebookCommands: Commands {
-  @FocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
-  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
-  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
-  @FocusedValue(\.openSearchAction) private var openSearchAction
-  @FocusedValue(\.findReplaceAction) private var findReplaceAction
-  @FocusedValue(\.findNextAction) private var findNextAction
-  @FocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.isCellValueEditing) private var isCellValueEditing: Bool?
+  @BridgedFocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @BridgedFocusedValue(\.openSearchAction) private var openSearchAction
+  @BridgedFocusedValue(\.findReplaceAction) private var findReplaceAction
+  @BridgedFocusedValue(\.findNextAction) private var findNextAction
+  @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
 
   var body: some Commands {
     // Chỉ show Cell menu khi documentMode == .notebook
@@ -1058,13 +1128,13 @@ struct NotebookCommands: Commands {
 // MARK: - Editor Commands (chỉ cho Editor mode)
 
 struct EditorCommands: Commands {
-  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
-  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
-  @FocusedValue(\.openSearchAction) private var openSearchAction
-  @FocusedValue(\.findReplaceAction) private var findReplaceAction
-  @FocusedValue(\.findNextAction) private var findNextAction
-  @FocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @BridgedFocusedValue(\.openSearchAction) private var openSearchAction
+  @BridgedFocusedValue(\.findReplaceAction) private var findReplaceAction
+  @BridgedFocusedValue(\.findNextAction) private var findNextAction
+  @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
 
   var body: some Commands {
     // Chỉ show khi documentMode == .editor
@@ -1148,11 +1218,11 @@ struct EditorCommands: Commands {
 // MARK: - Schema Visualizer Commands
 
 struct SchemaVisualizerCommands: Commands {
-  @FocusedValue(\.isSchemaVisualizerActive) private var isSchemaVisualizerActive: Bool?
-  @FocusedValue(\.openSearchAction) private var openSearchAction
-  @FocusedValue(\.findNextAction) private var findNextAction
-  @FocusedValue(\.findPreviousAction) private var findPreviousAction
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.isSchemaVisualizerActive) private var isSchemaVisualizerActive: Bool?
+  @BridgedFocusedValue(\.openSearchAction) private var openSearchAction
+  @BridgedFocusedValue(\.findNextAction) private var findNextAction
+  @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
 
   var body: some Commands {
     // Only show when schema visualizer is active
@@ -1192,7 +1262,7 @@ struct SchemaVisualizerCommands: Commands {
 
 /// Explain actions for the Cell and Query menus. Shortcuts stay on these items.
 private struct ExplainCommandButtons: View {
-  @FocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
+  @BridgedFocusedValue(\.activeViewModel) private var activeViewModel: NotebookViewModel?
 
   private var isDisabled: Bool {
     guard let activeViewModel else { return true }

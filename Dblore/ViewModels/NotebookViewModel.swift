@@ -156,6 +156,8 @@ class NotebookViewModel {
   /// Staged data-viewer batch waiting on the Safe Mode dialog. Confirmation runs this
   /// through `executeGatedBatch`, not the preview text as user SQL.
   @ObservationIgnored var pendingStagedBatch: PendingStagedBatch?
+  /// Commit is counting what the staged deletes also change (`stagedDeleteImpact`)
+  var isCheckingStagedDeletes = false
   /// Inline grid edit waiting on Confirm or Password. Acceptance sends it through
   /// `sendInlineEdit`, not as user SQL.
   @ObservationIgnored var pendingInlineEdit: PendingInlineEdit?
@@ -237,6 +239,10 @@ class NotebookViewModel {
   /// True while that prompt is open. The data viewer header presents it.
   var stagedLeavePromptVisible = false
   @ObservationIgnored var stagedLeaveContinuation: CheckedContinuation<StagedLeaveChoice, Never>?
+  /// The counted blockers while Commit asks "Commit Anyway" or Cancel. The data viewer header
+  /// presents it.
+  var stagedBlockerPrompt: CascadeImpactSummary?
+  @ObservationIgnored var stagedBlockerContinuation: CheckedContinuation<Bool, Never>?
   /// Filter form of the data viewer: edited freely, only `applyFilter()` copies it to
   /// `dataViewer.filter`
   var filterDraft = TableFilter(conditions: [])

@@ -47,19 +47,34 @@ struct ConnectionAppearanceSyncTests {
     try body(defaults)
   }
 
-  @Test("A save from outside the form takes the saved row's color and group")
+  @Test("A save from outside the form takes the saved row's color, group and scripts")
   func keepsSavedAppearance() throws {
     try Self.withDefaults { defaults in
-      let saved = Self.config(.pink, group: "Prod")
+      var saved = Self.config(.pink, group: "Prod")
+      saved.preConnectScript = "vpn-up.sh"
       #expect(
         SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
 
       var file = saved
       file.colorTag = nil
       file.groupName = nil
+      file.preConnectScript = nil
+      file.passwordCommandScript = "other.sh"
       let kept = WorkspaceManager.keepingSavedAppearance(file, defaults: defaults)
       #expect(kept.colorTag == .pink)
       #expect(kept.groupName == "Prod")
+      #expect(kept.preConnectScript == "vpn-up.sh")
+      #expect(kept.passwordCommandScript == nil)
+      let opened = WorkspaceManager.keepingSavedScripts(file, defaults: defaults)
+      #expect(opened.preConnectScript == "vpn-up.sh")
+      #expect(opened.passwordCommandScript == nil)
+
+      // An opened file without a saved row runs none of the user's scripts
+      var stranger = Self.config()
+      stranger.passwordCommandScript = "pw.sh"
+      #expect(
+        WorkspaceManager.keepingSavedScripts(stranger, defaults: defaults).passwordCommandScript
+          == nil)
 
       // Remember off writes nothing, so the live values stay
       file.rememberConnection = false

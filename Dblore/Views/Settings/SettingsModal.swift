@@ -398,6 +398,8 @@ struct SettingsModalEditorSection: View {
           )
         }
       }
+
+      SQLSnippetsCard()
     }
   }
 }
@@ -430,6 +432,12 @@ struct SettingsModalResultTableSection: View {
               "Show numbers, text, dates, booleans and JSON in their own soft colors. NULL keeps its faint style.",
             isOn: $appSettings.colorValuesByType
           )
+          Divider()
+          SettingsToggle(
+            title: "Show Invisible Characters",
+            description: InvisibleCharactersSetting.description,
+            isOn: $appSettings.showsInvisibleCharacters
+          )
         }
       }
 
@@ -448,6 +456,15 @@ struct SettingsModalResultTableSection: View {
               "When enabled, the 'Run with query' section (with query text and download button) will be hidden from result tables.",
             isOn: $appSettings.hideRunWithQuerySection
           )
+          Divider()
+          SettingsToggle(
+            title: "Neutralize Copied Formulas",
+            description:
+              "Adds ' before copied text that starts with =, +, -, @ so spreadsheets don't run it.",
+            isOn: $appSettings.neutralizesCopiedFormulas
+          )
+          Divider()
+          CopyRowsFormatSetting(appSettings: appSettings)
           Divider()
           SettingsSlider(
             title: "Max Height",

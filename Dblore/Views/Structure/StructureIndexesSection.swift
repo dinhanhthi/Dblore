@@ -35,7 +35,7 @@ struct StructureIndexesSection: View {
         } else {
           header
         }
-        ForEach(Array(model.workingIndexes.enumerated()), id: \.offset) { position, item in
+        ForEach(Array(model.workingIndexes.enumerated()), id: \.element.id) { position, item in
           StructureIndexRow(model: model, item: item, isReadOnly: model.isReadOnly)
             .structureTableRow(isFirst: position == 0)
         }

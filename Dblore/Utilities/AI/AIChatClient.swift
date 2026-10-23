@@ -104,8 +104,8 @@ nonisolated struct AIModelListResult: Sendable, Equatable {
   var isFallback: Bool
 }
 
-extension AIChatClient {
-  nonisolated var supportsNativeTools: Bool { false }
+nonisolated extension AIChatClient {
+  var supportsNativeTools: Bool { false }
 
   func listModelsResult() async throws -> AIModelListResult {
     AIModelListResult(models: try await listModels(), isFallback: false)

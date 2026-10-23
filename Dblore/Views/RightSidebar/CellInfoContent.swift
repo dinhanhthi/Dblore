@@ -24,7 +24,15 @@ struct CellInfoContent: View {
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
   @State private var isWordWrapEnabled = true
+  /// Off-main Format JSON of a large value; nil when idle
+  @State private var formatTask: Task<Void, Never>?
+  /// Geometry or vector viewer for the value, parsed off the main actor; nil for other values
+  @State private var preview: CellValuePreview?
   @FocusState private var isTextEditorFocused: Bool
+
+  /// Values above this many UTF-8 bytes are never beautified or highlighted on the main actor:
+  /// they show raw in a LargeTextView, and Format JSON pretty-prints them off the main actor
+  static let maxHighlightedBytes = 256 * 1024
 
   @Environment(NotebookViewModel.self) private var viewModel
 
@@ -107,8 +115,8 @@ struct CellInfoContent: View {
           } else {
             // Word Wrap, Beautify, Edit and Copy buttons (for non-boolean types)
 
-            // Word Wrap button (only for string type)
-            if isStringValue {
+            // Word Wrap button (only for string type, not under a geometry or vector viewer)
+            if isStringValue && preview == nil {
               FloatingPanelToggleButton(
                 icon: "text.alignleft",
                 helpText: "Word Wrap",
@@ -117,13 +125,25 @@ struct CellInfoContent: View {
               )
             }
 
-            // Beautify button (only for string type)
-            if isStringValue {
+            // Beautify button (only for string type, not under a geometry or vector viewer)
+            if isStringValue && preview == nil && formatTask != nil {
+              ProgressView()
+                .controlSize(.small)
+
+              FloatingPanelButton(
+                icon: "xmark",
+                helpText: "Cancel Format JSON",
+                useSymbolEffect: false,
+                action: cancelFormat
+              )
+            } else if isStringValue && preview == nil {
               FloatingPanelToggleButton(
                 icon: "curlybraces",
-                helpText: isBeautified ? "Show Original" : "Beautify JSON",
+                helpText: isBeautified
+                  ? "Show Original" : isLargeValue ? "Format JSON" : "Beautify JSON",
                 isActive: isBeautified,
-                action: isBeautified ? showOriginal : { beautifyJSON() }
+                action: isBeautified
+                  ? showOriginal : isLargeValue ? formatLargeJSON : { beautifyJSON() }
               )
             }
 
@@ -199,7 +219,23 @@ struct CellInfoContent: View {
         }
       } else {
         // Read-only view for non-boolean types
-        if isBeautified {
+        if let preview {
+          switch preview {
+          case .geometry(let sketch):
+            GeometryPreview(sketch: sketch)
+          case .vector(let vector):
+            VectorPreview(vector: vector, text: value.fullString)
+          }
+        } else if isLargeValue {
+          // Too large for a SwiftUI Text: lazily laid-out text view, never highlighted
+          LargeTextView(
+            text: isBeautified ? beautifiedJSON : value.fullString,
+            wrapsLines: isWordWrapEnabled
+          )
+          .frame(maxHeight: .infinity, alignment: .top)
+          .background(Color.tableHeaderBackground)
+          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+        } else if isBeautified {
           // Nested ScrollViews for both axes to avoid centering issue
           // Horizontal outside so scrollbar is always visible at bottom
           if isWordWrapEnabled {
@@ -270,8 +306,16 @@ struct CellInfoContent: View {
       }
       beautifyJSON(silent: true)
     }
+    .onDisappear(perform: cancelFormat)
+    .task(id: CellValuePreview.Source(value: value, columnType: columnType)) {
+      preview = nil
+      let parsed = await CellValuePreview.make(value: value, columnType: columnType)
+      guard !Task.isCancelled else { return }
+      preview = parsed
+    }
     .onChange(of: value) { _, newValue in
       // Reset beautified state when value changes
+      cancelFormat()
       isBeautified = false
       beautifiedJSON = ""
 
@@ -311,6 +355,18 @@ struct CellInfoContent: View {
     return false
   }
 
+  /// Sized from the value, without building its text (base64 of a whole blob for `.data`)
+  private var isLargeValue: Bool {
+    switch value {
+    case .string(let text), .json(let text):
+      text.utf8.count > Self.maxHighlightedBytes
+    case .data(let data):
+      (data.count + 2) / 3 * 4 > Self.maxHighlightedBytes
+    case .int, .double, .bool, .null, .date:
+      false
+    }
+  }
+
   private var hasBooleanValueChanged: Bool {
     editedBoolValue != originalBoolValue
   }
@@ -326,6 +382,7 @@ struct CellInfoContent: View {
   }
 
   private func startEdit() {
+    cancelFormat()
     editedValue = value.fullString
     isEditing = true
     isTextEditorFocused = true
@@ -392,7 +449,7 @@ struct CellInfoContent: View {
 
   /// `silent` is used for automatic beautification: no toasts, and only for JSON objects/arrays.
   private func beautifyJSON(silent: Bool = false) {
-    guard case .string(let stringValue) = value else { return }
+    guard case .string(let stringValue) = value, !isLargeValue else { return }
 
     if silent {
       let first = stringValue.first(where: { !$0.isWhitespace })
@@ -416,7 +473,8 @@ struct CellInfoContent: View {
 
       // Check if entire data was consumed by trying to parse again from start
       // If there's trailing data, JSONSerialization will only parse the first valid object
-      let serializedData = try JSONSerialization.data(withJSONObject: parsedObject, options: [])
+      let serializedData = try JSONSerialization.data(
+        withJSONObject: parsedObject, options: .fragmentsAllowed)
 
       // Compare original data length with serialized length
       // If original is significantly longer, there's likely trailing invalid JSON
@@ -431,7 +489,7 @@ struct CellInfoContent: View {
       // Generate pretty printed version
       let prettyData = try JSONSerialization.data(
         withJSONObject: parsedObject,
-        options: .prettyPrinted
+        options: [.prettyPrinted, .fragmentsAllowed]
       )
 
       guard let prettyString = String(data: prettyData, encoding: .utf8) else {
@@ -455,6 +513,107 @@ struct CellInfoContent: View {
   private func showOriginal() {
     isBeautified = false
     beautifiedJSON = ""
+  }
+
+  /// Format JSON for a large value: pretty-prints off the main actor, shown raw (no highlight)
+  private func formatLargeJSON() {
+    guard case .string(let stringValue) = value, formatTask == nil else { return }
+    formatTask = Task {
+      let pretty = await Self.prettyPrintedJSON(stringValue)
+      guard !Task.isCancelled else { return }
+      formatTask = nil
+      guard let pretty else {
+        viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error)
+        return
+      }
+      beautifiedJSON = pretty
+      isBeautified = true
+    }
+  }
+
+  private func cancelFormat() {
+    formatTask?.cancel()
+    formatTask = nil
+  }
+
+  /// Pretty-printed `json`, or nil when it is not valid JSON. `@concurrent` leaves the main actor.
+  @concurrent nonisolated private static func prettyPrintedJSON(_ json: String) async -> String? {
+    guard let data = json.data(using: .utf8),
+      let object = try? JSONSerialization.jsonObject(with: data, options: .allowFragments),
+      let pretty = try? JSONSerialization.data(
+        withJSONObject: object, options: [.prettyPrinted, .fragmentsAllowed])
+    else { return nil }
+    return String(data: pretty, encoding: .utf8)
+  }
+}
+
+// MARK: - Geometry and vector viewers
+
+/// What the Cell Value viewers show. Chosen by the column type (PostGIS geometry / geography,
+/// MySQL GEOMETRY, pgvector vector / halfvec / sparsevec), or by a value that parses as one.
+/// Text is read as a vector only for a vector column or one of unknown type, so a JSON array
+/// in a TEXT column stays text.
+enum CellValuePreview: Sendable {
+  case geometry(GeometrySketch)
+  case vector(VectorValue)
+
+  /// What `make` reads: a new value or column type parses again.
+  struct Source: Equatable {
+    let value: CellValue
+    let columnType: String
+  }
+
+  /// nil when the value is neither. `@concurrent` leaves the main actor: a geometry can hold a
+  /// million points.
+  @concurrent nonisolated static func make(
+    value: CellValue, columnType: String
+  ) async
+    -> CellValuePreview?
+  {
+    let type = columnType.uppercased()
+    let isSpatialType = type.contains("GEOMETRY") || type.contains("GEOGRAPHY")
+    let isVectorType = ["VECTOR", "HALFVEC", "SPARSEVEC"].contains { type.hasPrefix($0) }
+    let mayBeVector =
+      isVectorType || type.isEmpty || type.hasPrefix("USER-DEFINED") || type.hasPrefix("UNKNOWN")
+    switch value {
+    case .data(let data):
+      guard isSpatialType || mayBeWKB(data), let parsed = try? GeometryWKB.parse(data) else {
+        return nil
+      }
+      return .geometry(GeometrySketch(parsed))
+    case .string(let text):
+      let first = text.first(where: { !$0.isWhitespace })
+      if mayBeVector, first == "[" || first == "{", let vector = VectorValue(text: text) {
+        return .vector(vector)
+      }
+      guard !isVectorType, isSpatialType || mayBeWKBHex(text),
+        let parsed = try? GeometryWKB.parse(hex: text)
+      else { return nil }
+      return .geometry(GeometrySketch(parsed))
+    case .int, .double, .bool, .null, .json, .date:
+      return nil
+    }
+  }
+
+  /// A WKB header (byte order, known type code) first, or after MySQL's 4-byte SRID, so an
+  /// unrelated blob is never copied for a parse.
+  private nonisolated static func mayBeWKB(_ data: Data) -> Bool {
+    let bytes = [UInt8](data.prefix(9))
+    return hasWKBHeader(bytes, at: 0) || hasWKBHeader(bytes, at: 4)
+  }
+
+  private nonisolated static func hasWKBHeader(_ bytes: [UInt8], at offset: Int) -> Bool {
+    guard bytes.count >= offset + 5, bytes[offset] <= 1 else { return false }
+    let word = bytes[(offset + 1)...(offset + 4)].enumerated().reduce(UInt32(0)) {
+      $0 | UInt32($1.element) << (bytes[offset] == 1 ? 8 * $1.offset : 8 * (3 - $1.offset))
+    }
+    let code = word & 0x1FFF_FFFF
+    return code / 1000 <= 3 && (1...7).contains(code % 1000)
+  }
+
+  /// Hex of a WKB value: the byte order `00` / `01` first.
+  private nonisolated static func mayBeWKBHex(_ text: String) -> Bool {
+    text.utf8.count >= 42 && (text.hasPrefix("00") || text.hasPrefix("01"))
   }
 }
 

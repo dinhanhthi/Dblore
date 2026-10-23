@@ -1,6 +1,8 @@
 // MCPSettingsModel.swift
-// Settings > MCP: the allowlist of saved connections, the port (applied on commit, so typing
-// never restarts the server), token regenerate and the client snippets for the copy buttons.
+// Settings > MCP: the allowlist of saved connections, the write scope of each allowlisted one
+// (Read unless set; removing a connection from the allowlist drops its scope), the port
+// (applied on commit, so typing never restarts the server), token regenerate and the client
+// snippets for the copy buttons. Write scopes never touch the token.
 // The token is read through the controller (off the main actor) and never logged.
 
 import AppKit
@@ -73,7 +75,20 @@ final class MCPSettingsModel {
       settings.mcpAllowedConnectionIDs.insert(id)
     } else {
       settings.mcpAllowedConnectionIDs.remove(id)
+      settings.mcpWriteScopes[id] = nil
     }
+  }
+
+  /// `.read` unless the connection is allowlisted and was given a write scope.
+  func scope(for id: UUID) -> MCPWriteScope {
+    guard isAllowed(id) else { return .read }
+    return settings.mcpWriteScopes[id] ?? .read
+  }
+
+  /// Sets an allowlisted connection's write scope; others stay Read.
+  func setScope(_ scope: MCPWriteScope, for id: UUID) {
+    guard isAllowed(id) else { return }
+    settings.mcpWriteScopes[id] = scope == .read ? nil : scope
   }
 
   /// Applies the port field (clamped by the settings); a running server restarts on it.

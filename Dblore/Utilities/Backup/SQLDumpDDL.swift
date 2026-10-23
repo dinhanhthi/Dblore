@@ -91,8 +91,8 @@ nonisolated enum SQLDumpDDL {
     /// PostgreSQL `pg_get_viewdef` text; MySQL `SHOW CREATE VIEW` text; SQLite `sqlite_master.sql`
     var sql: String
     /// Objects the view reads (PostgreSQL `pg_depend`/`pg_rewrite`, MySQL
-    /// `information_schema.VIEW_TABLE_USAGE`). Only other views affect the order; empty when
-    /// unknown.
+    /// `information_schema.VIEW_TABLE_USAGE`, MariaDB the views its `VIEW_DEFINITION` names).
+    /// Only other views affect the order; empty when unknown.
     var dependsOn: [ObjectName]
   }
 

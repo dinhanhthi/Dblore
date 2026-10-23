@@ -35,6 +35,8 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   /// Explain Analyze is offered. The plan may be text (DuckDB) rather than JSON.
   let supportsExplainAnalyze: Bool
   let supportsUpdateOnly: Bool
+  /// `UPDATE ... SET c = DEFAULT` (PostgreSQL, MySQL), so a cell can be set to its column default.
+  let supportsDefaultInUpdate: Bool
   /// Grid edits can be staged and committed as a batch.
   let supportsRowStaging: Bool
   /// CSV / JSON import into a table.
@@ -55,6 +57,8 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   /// SQL backup and restore. False for MongoDB (its own backup format). DuckDB dumps on the
   /// tab's own session and restores without Protected mode (no savepoints).
   let supportsSQLDump: Bool
+  /// Sequences and user-defined types (enum, domain, composite) in the sidebar. PostgreSQL only.
+  let supportsUserTypes: Bool
 
   /// A local file (or in-memory) database: the connection form shows the file picker
   /// instead of host, port, user, password, SSL and SSH.

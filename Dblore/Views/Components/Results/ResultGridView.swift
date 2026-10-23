@@ -37,6 +37,10 @@ struct ResultGridView: NSViewRepresentable {
   var onStageDuplicate: ((_ rows: [Int]) -> Void)? = nil
   var onStageDelete: ((_ rows: [Int]) -> Void)? = nil
   var onRevertStaged: ((_ rows: [Int]) -> Void)? = nil
+  /// Page rows, result column and one value per row of "Set Value..." or "Generate UUID(v7)"
+  var onStageCells: ((_ rows: [Int], _ column: Int, _ values: [StagedCellValue]) -> Void)? = nil
+  /// "Set Value..." offers DEFAULT
+  var offersDefaultValue = false
   /// Receives the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)? = nil
   /// Category keys hidden per column. Does not change the loaded result or its LIMIT.
@@ -98,6 +102,9 @@ struct ResultGridView: NSViewRepresentable {
   var fontSize: CGFloat = AppSettings.shared.resultFontSize
   /// Colors values by type. The default reads Settings so a toggle refreshes the grid.
   var colorValuesByType: Bool = AppSettings.shared.colorValuesByType
+  /// Marks invisible characters in cells. The default reads Settings so a toggle refreshes the
+  /// grid (a new key rebuilds the row model and its display text).
+  var showsInvisibleCharacters: Bool = AppSettings.shared.showsInvisibleCharacters
   /// Receives, debounced, the summary of 2+ selected rows in the last clicked column; nil below
   /// two rows and when the grid goes away
   var onSelectionSummaryChange: ((ResultSelectionSummary?) -> Void)? = nil
@@ -207,6 +214,8 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onStageDuplicate = onStageDuplicate
     coordinator.onStageDelete = onStageDelete
     coordinator.onRevertStaged = onRevertStaged
+    coordinator.onStageCells = onStageCells
+    coordinator.offersDefaultValue = offersDefaultValue
     coordinator.onSortChange = onSortChange
     coordinator.onValueFilterChange = onValueFilterChange
     coordinator.onShowCellDetails = onShowCellDetails
@@ -226,7 +235,8 @@ struct ResultGridView: NSViewRepresentable {
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
       currentMatch: currentMatch, hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
       highlights: highlights, highlightDialect: highlightDialect, valueFilter: valueFilter,
-      searchMatches: searchMatches, changeSet: changeSet)
+      searchMatches: searchMatches, changeSet: changeSet,
+      showsInvisibleCharacters: showsInvisibleCharacters)
     // A font or color change alone skips `update` (the row model is unchanged). `update` may
     // also refresh only staged rows, so reload every visible cell onto the new face and colors.
     if fontChanged || colorsChanged {

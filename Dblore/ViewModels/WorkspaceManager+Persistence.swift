@@ -211,6 +211,44 @@ extension WorkspaceManager {
 
 // MARK: - Schema Loading
 
+/// A sidebar catalog read only when its section is expanded (PostgreSQL sequences and types)
+nonisolated struct LazyCatalog<Item: Sendable>: Sendable {
+  /// Nil until a read succeeded
+  var items: [Item]?
+  var isLoading = false
+  /// Display text of the last failed read
+  var error: String?
+  /// Only the latest read assigns its result
+  var generation = 0
+
+  /// Back to unread; a read still running is superseded
+  mutating func reset() {
+    self = LazyCatalog(generation: generation + 1)
+  }
+
+  /// What the section's status row shows; `isEmpty` tells whether no row is left after the
+  /// filter (nil: unread). Unread shows Loading too: the row must take space, since a lazy
+  /// stack never shows a zero-size row and the row appearing is what starts the read.
+  func status(isEmpty: Bool?) -> CatalogStatus {
+    if isLoading { return .loading }
+    if let error { return .failed(error) }
+    guard items != nil else { return .loading }
+    return isEmpty == true ? .empty : .rows
+  }
+}
+
+/// Status row of a sidebar section read on expand
+nonisolated enum CatalogStatus: Equatable, Sendable {
+  /// Reading, or not read yet
+  case loading
+  /// The last read failed (offers Retry)
+  case failed(String)
+  /// Read, no row (left after the filter)
+  case empty
+  /// Read, its rows follow (the status row takes no space)
+  case rows
+}
+
 extension WorkspaceManager {
   /// Start the schema load in the background, replacing a running one
   func startSchemaLoad() {
@@ -342,9 +380,97 @@ extension WorkspaceManager {
 
         // Sync to tab ViewModels
         syncConnectionStateToTabs()
+        reloadLoadedCatalogs()
       } catch {
         await AppLogger.shared.error("Failed to load schema: \(error)", category: "Schema")
       }
+    }
+  }
+
+  /// Read the sequences when their sidebar section is first expanded (and again after a failure)
+  func loadSequencesIfNeeded() async {
+    guard databaseSequences.items == nil, !databaseSequences.isLoading else { return }
+    await loadCatalog(\.databaseSequences, what: "sequences") { try await $0.fetchSequences() }
+  }
+
+  /// Read the enums, domains and composite types when their sidebar section is first expanded
+  func loadUserTypesIfNeeded() async {
+    guard databaseUserTypes.items == nil, !databaseUserTypes.isLoading else { return }
+    await loadCatalog(\.databaseUserTypes, what: "types") { try await $0.fetchUserTypes() }
+  }
+
+  /// Schema refresh: read again, in the background, the catalogs a section has already loaded
+  /// or failed to load (e.g. refused while a transaction was open). The ones never expanded
+  /// stay unread.
+  private func reloadLoadedCatalogs() {
+    if databaseSequences.items != nil || databaseSequences.error != nil {
+      Task {
+        await loadCatalog(\.databaseSequences, what: "sequences") { try await $0.fetchSequences() }
+      }
+    }
+    if databaseUserTypes.items != nil || databaseUserTypes.error != nil {
+      Task {
+        await loadCatalog(\.databaseUserTypes, what: "types") { try await $0.fetchUserTypes() }
+      }
+    }
+  }
+
+  /// Reads one lazy catalog on the connection actor (`supportsUserTypes` engines, connected
+  /// only). Only the latest read assigns, and only while the connection it read is still open.
+  private func loadCatalog<Item: Sendable>(
+    _ keyPath: ReferenceWritableKeyPath<WorkspaceManager, LazyCatalog<Item>>, what: String,
+    fetch: (DatabaseConnectionManager) async throws -> [Item]
+  ) async {
+    let capabilities = (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities
+    guard capabilities.supportsUserTypes else { return }
+    // Not a silent return: an unread section shows Loading until this read ends. The next
+    // schema load reads it again (`reloadLoadedCatalogs`).
+    guard connectionState == .connected else {
+      if self[keyPath: keyPath].items == nil {
+        self[keyPath: keyPath].error = "Not connected"
+      }
+      return
+    }
+    // The actor refuses catalog reads while a Protected transaction is pending
+    guard !isSchemaPaused else {
+      if self[keyPath: keyPath].items == nil {
+        self[keyPath: keyPath].error = "Unavailable while a transaction is open"
+      }
+      return
+    }
+    self[keyPath: keyPath].generation += 1
+    let generation = self[keyPath: keyPath].generation
+    self[keyPath: keyPath].isLoading = true
+    let epoch = await connectionManager.connectionEpoch
+    let result: Result<[Item], Error>
+    do {
+      result = .success(try await fetch(connectionManager))
+    } catch {
+      result = .failure(error)
+    }
+    let currentEpoch = await connectionManager.connectionEpoch
+    let sameConnection = connectionState == .connected && currentEpoch == epoch
+    // A newer read (or a reset) owns the catalog
+    guard self[keyPath: keyPath].generation == generation else { return }
+    self[keyPath: keyPath].isLoading = false
+    guard sameConnection else {
+      // The read belongs to a closed connection: drop it, but leave a Retry, not a blank section
+      if self[keyPath: keyPath].items == nil {
+        self[keyPath: keyPath].error = "The connection changed. Retry."
+      }
+      return
+    }
+    switch result {
+    case .success(let items):
+      self[keyPath: keyPath].items = items
+      self[keyPath: keyPath].error = nil
+    case .failure(let error):
+      // A failed refresh keeps the list it already has; only a first read shows the error
+      if self[keyPath: keyPath].items == nil {
+        self[keyPath: keyPath].error = "Could not load \(what): \(error.localizedDescription)"
+      }
+      await AppLogger.shared.warning(
+        "Failed to load \(what): \(error.localizedDescription)", category: "Schema")
     }
   }
 

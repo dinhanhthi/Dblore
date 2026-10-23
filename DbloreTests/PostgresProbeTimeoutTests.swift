@@ -1,6 +1,7 @@
 // PostgresProbeTimeoutTests.swift
 // probe() must time out when startup finishes and SELECT 1 never returns.
 // A silent accept only hits attemptConnection; this server completes v3 startup first.
+// A timeout against a closed port must not leave a connect retry running on a shut-down loop.
 
 import Darwin
 import Foundation
@@ -191,5 +192,33 @@ struct PostgresProbeTimeoutTests {
     #expect(elapsed >= .milliseconds(500))
     #expect(elapsed < .seconds(10))
     #expect(server.didSeeTestQuery)
+  }
+
+  /// Port 1 refuses at once, so the first retry wakes after 1 s, when the 1 s probe timeout
+  /// fires. A retry that reaches a shut-down loop drops a promise (debug builds crash).
+  @Test(
+    "repeated probe timeouts on a closed port return the timeout error promptly",
+    .timeLimit(.minutes(1))
+  )
+  func probeTimeoutOnClosedPortStaysClean() async throws {
+    let timeoutSeconds = 1
+    let config = ConnectionConfig(
+      host: "127.0.0.1", port: 1, database: "db", username: "user", password: "pw",
+      sslMode: .disable, timeoutSeconds: timeoutSeconds)
+    let clock = ContinuousClock()
+    for _ in 0..<5 {
+      let started = clock.now
+      do {
+        _ = try await PostgresSession(config: config).probe()
+        Issue.record("probe returned; expected a timeout")
+      } catch let DatabaseError.connectionFailed(message) {
+        #expect(message.contains("Connection timeout after \(timeoutSeconds) seconds"))
+      }
+      let elapsed = clock.now - started
+      #expect(elapsed >= .milliseconds(500))
+      #expect(elapsed < .seconds(5))
+    }
+    // Let the last probe's retry window pass inside this test.
+    try await Task.sleep(for: .milliseconds(500))
   }
 }

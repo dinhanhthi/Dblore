@@ -47,6 +47,10 @@ nonisolated enum ScriptCheckpoint: Sendable, Equatable {
   case beforeStatement(caller: UUID?, index: Int)
   /// A read was cut by the row cap; whether the session is reset is decided next
   case beforeCapReset
+  /// Statement `index` of the script run for `caller` passed its last check and is sent next
+  case beforeSend(caller: UUID?, index: Int)
+  /// `cancelRunningStatement` confirmed the cancel and is about to stop the statement
+  case cancelling
 }
 
 /// Rows read from a stream, at most the row cap.

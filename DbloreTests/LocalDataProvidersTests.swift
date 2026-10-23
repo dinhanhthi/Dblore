@@ -187,6 +187,69 @@ struct LocalDataProvidersTests {
     #expect(keys.dropFirst().allSatisfy { data(forKey: $0, suite: suite) == nil })
   }
 
+  @Test("SQL snippets round-trip; an imported file keeps only its valid entries")
+  func sqlSnippets() async throws {
+    let suite = makeSuite()
+    setUnrelated(suite)
+    let key = SQLSnippetStore.defaultsKey
+    let snippets = [
+      SQLSnippet(name: "Select", trigger: "sel", body: "SELECT ${1:*} FROM ${2}"),
+      SQLSnippet(name: "Count", trigger: "cnt", body: "SELECT count(*) FROM $0"),
+    ]
+    setData(try JSONEncoder().encode(snippets), forKey: key, suite: suite)
+    let provider = SQLSnippetsLocalDataProvider(defaults: suite.defaults, domainName: suite.name)
+
+    let summary = await provider.summary()
+    #expect(summary.itemCount == 2)
+    #expect(summary.location == nil)
+
+    try await expectRoundTrip(provider, category: .sqlSnippets) {
+      #expect(data(forKey: key, suite: suite) == nil)
+    } afterImport: {
+      #expect(SQLSnippetStore.decode(data(forKey: key, suite: suite)) == snippets)
+    }
+    expectUnrelated(suite)
+
+    // A hand-edited file: the invalid entries are not saved
+    let edited = try makeFolder()
+    defer { remove(edited) }
+    var entries = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(snippets)) as? [Any])
+    entries.append(
+      ["id": UUID().uuidString, "name": "Bad", "trigger": "two words", "body": "SELECT 1"])
+    entries.append("not a snippet")
+    try JSONSerialization.data(withJSONObject: entries)
+      .write(to: edited.appendingPathComponent("sqlSnippets.json"))
+    try await provider.importData(from: edited)
+    let stored = try #require(data(forKey: key, suite: suite))
+    #expect((try JSONSerialization.jsonObject(with: stored) as? [Any])?.count == 2)
+    #expect(SQLSnippetStore.decode(stored) == snippets)
+  }
+
+  @Test("Sidebar folders round-trip")
+  func sidebarFolders() async throws {
+    let suite = makeSuite()
+    setUnrelated(suite)
+    let key = SidebarFolderStore.defaultsKey
+    let folders = [
+      "PostgreSQL|h|5432|app": [
+        SidebarFolder(name: "Auth", schema: "public", members: ["public.users"]),
+        SidebarFolder(name: "Audit", schema: "audit"),
+      ]
+    ]
+    setData(try JSONEncoder().encode(folders), forKey: key, suite: suite)
+    let provider = SidebarFoldersLocalDataProvider(
+      defaults: suite.defaults, domainName: suite.name)
+
+    #expect(await provider.summary().itemCount == 2)
+    try await expectRoundTrip(provider, category: .sidebarFolders) {
+      #expect(data(forKey: key, suite: suite) == nil)
+    } afterImport: {
+      #expect(SidebarFolderStore.decode(data(forKey: key, suite: suite)) == folders)
+    }
+    expectUnrelated(suite)
+  }
+
   @Test("Schema diagram positions round-trip")
   func schemaLayout() async throws {
     let suite = makeSuite()

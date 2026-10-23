@@ -75,44 +75,4 @@ struct PerformanceBenchmarkTests {
       }
     }
   }
-
-  private func autocompleteProvider() -> SQLAutocompleteProvider {
-    let provider = SQLAutocompleteProvider()
-    provider.update(
-      tables: ["users", "orders", "order_items", "products", "sessions"].map {
-        DatabaseTable(
-          schema: "public", name: $0,
-          columns: [DatabaseColumn(name: "id", type: "integer")])
-      })
-    return provider
-  }
-
-  /// One statement with no ";". The SELECT list grows to `minUTF8Bytes`, then `joins` JOINs.
-  private func hugeStatement(minUTF8Bytes: Int, joins: Int) -> String {
-    var text = "SELECT "
-    var i = 0
-    while text.utf8.count < minUTF8Bytes {
-      text += "u\(i).id, o\(i).total, p\(i).name, "
-      i += 1
-    }
-    text += "x FROM users u0 JOIN orders o0 ON o0.id = u0.id"
-    for j in 0..<joins { text += " JOIN products p\(j) ON p\(j).id = u0.id" }
-    text += " WHERE us"
-    return text
-  }
-
-  private func suggestionMedian(
-    _ provider: SQLAutocompleteProvider, text: String
-  ) -> (count: Int, ms: Double) {
-    let cursor = (text as NSString).length  // UTF-16 offset, as NSTextView reports it
-    var count = 0
-    let ms = PerfBench.median(of: 20) {
-      count = provider.getSuggestions(for: text, at: cursor, dialect: .postgresql).count
-    }
-    return (count, ms)
-  }
-
-  private func milliseconds(_ d: Duration) -> Double {
-    Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15
-  }
 }

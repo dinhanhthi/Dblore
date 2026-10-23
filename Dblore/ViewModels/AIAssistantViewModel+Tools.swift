@@ -3,8 +3,31 @@
 // gate is asked on every call), send the results back and continue, at most `maxToolSteps`
 // requests. Native tool calls where the wire has them, the text protocol otherwise. Each call
 // becomes one chat entry; later turns replay it as labelled text and never run it again.
+// An outside MCP tool call shows a card and is sent only after the user presses Run once on it;
+// its result goes back in a block labelled as untrusted data and is never replayed.
 
 import Foundation
+
+/// The outside MCP tools of one turn: listed when it starts, called only after Run once.
+/// `OutsideMCPTurnTools` in the app.
+protocol AIOutsideToolSession: AnyObject {
+  /// The enabled servers with a ticked tool and their latest tools/list, as read after the
+  /// listing; a server that cannot be listed is left out, and so is one that did not answer
+  /// before the listing's deadline (named in `late`)
+  func list() async -> AIOutsideToolListing
+  /// tools/call through `MCPClient.callTool` (the gate, on the live server). Throws
+  /// `MCPClientError` for a refusal or a failure.
+  func call(
+    serverID: UUID, tool: String, arguments: [String: JSONValue]
+  ) async throws -> MCPClientToolResult
+}
+
+/// What `AIOutsideToolSession.list` read
+struct AIOutsideToolListing {
+  var servers: [(server: OutsideMCPServer, listed: [MCPClientTool])] = []
+  /// Shown names of the servers that did not answer before the deadline
+  var late: [String] = []
+}
 
 extension AIAssistantViewModel {
   /// Requests one turn sends at most; a reply that still calls tools after them ends the turn
@@ -36,6 +59,12 @@ extension AIAssistantViewModel {
     }
   }
 
+  /// The outside tools a turn offers and the session that calls them
+  struct OutsideTurn {
+    let session: any AIOutsideToolSession
+    let tools: [AIOutsideTool]
+  }
+
   private enum StepEnd {
     case finished(calls: [AIToolCall], stop: AIStopReason?)
     case failed(Error)
@@ -57,11 +86,15 @@ extension AIAssistantViewModel {
 
   /// Runs the turn's steps into `entryId` and the entries after it. `tools` is fixed for the
   /// turn: nothing a reply or a tool result says changes it. Ends on an answer without tool
-  /// calls, an error, Stop, a stale `token` or the step limit.
+  /// calls, an error, Stop, a stale `token` or the step limit. A call to one of `outside`'s
+  /// tools goes to `runOutsideTool`.
   func runToolLoop(
-    _ base: AIChatRequest, tools: [AIToolSpec], context: TurnContext, entryId: UUID, token: Int
+    _ base: AIChatRequest, tools: [AIToolSpec], context: TurnContext, entryId: UUID, token: Int,
+    outside: OutsideTurn? = nil
   ) async {
     let names = Set(tools.map(\.name))
+    let outsideTools = Dictionary(
+      (outside?.tools ?? []).map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
     var native =
       context.client.supportsNativeTools
       && !(context.toolEndpoint.map(Self.textToolEndpoints.contains) ?? false)
@@ -122,7 +155,10 @@ extension AIAssistantViewModel {
       var results: [AIToolResult] = []
       for (index, call) in calls.enumerated() {
         let result: AIToolResult?
-        if index < Self.maxToolCallsPerStep {
+        if index < Self.maxToolCallsPerStep, let tool = outsideTools[call.name], let outside {
+          result = await runOutsideTool(
+            call, tool, session: outside.session, context: context, token: token)
+        } else if index < Self.maxToolCallsPerStep {
           result = await runTool(call, context: context, names: names, token: token)
         } else {
           result = refuseTool(call, .tooManyCalls, context: context)
@@ -234,6 +270,154 @@ extension AIAssistantViewModel {
     }
     saveConversation()
     return outcome.result
+  }
+
+  /// Runs one outside call: arguments checked (`AITools.outsideArguments`: the card shows them
+  /// all, as they are), then a card waits for Run once or Deny. Deny answers
+  /// `AITools.ToolError.deniedByUser` and sends nothing. Run once asks the AI access gate again
+  /// and checks that the card's text is the pretty JSON of what is sent, then `session.call`;
+  /// the answer goes back labelled as untrusted data
+  /// (`AIPrompts.outsideToolResult`), a failure as an error result holding the sanitized
+  /// message, labelled the same. Nothing in a result runs: SQL still needs a propose_sql card.
+  /// Nil once stopped or stale: nothing more is sent.
+  private func runOutsideTool(
+    _ call: AIToolCall, _ tool: AIOutsideTool, session: any AIOutsideToolSession,
+    context: TurnContext, token: Int
+  ) async -> AIToolResult? {
+    let arguments: [String: JSONValue]
+    let shown: String
+    do {
+      (arguments, shown) = try AITools.outsideArguments(call)
+    } catch {
+      return refuseTool(call, error as? AITools.ToolError ?? .invalidArguments, context: context)
+    }
+    let id = UUID()
+    messages.append(
+      AIChatEntry(
+        id: id, role: .assistant, text: "Outside tool \(tool.tool) on \(tool.serverName)",
+        isError: false,
+        outsideCall: AIOutsideCall(
+          serverName: tool.serverName, tool: tool.tool, arguments: shown, state: .waiting)))
+    let approved = await outsideApproval(id)
+    guard let approved, !Task.isCancelled, token == generation else { return nil }
+    func answer(
+      _ state: AIOutsideCall.State, message: String? = nil, _ content: String
+    )
+      -> AIToolResult
+    {
+      if let index = messages.firstIndex(where: { $0.id == id }) {
+        messages[index].outsideCall?.state = state
+        messages[index].outsideCall?.message = message
+      }
+      saveConversation()
+      return AIToolResult(id: call.id, content: content, isError: state != .ran)
+    }
+    guard approved else {
+      return answer(.denied, AITools.errorContent(.deniedByUser))
+    }
+    // The connection or its policy can change while the card waits
+    guard aiAccessCheck().decision == .allowed else {
+      return answer(
+        .failed, message: AITools.ToolError.accessOff.message,
+        AITools.errorContent(.accessOff))
+    }
+    // The text the user approved must be exactly what is sent
+    guard let index = messages.firstIndex(where: { $0.id == id }),
+      let approvedText = messages[index].outsideCall?.arguments,
+      approvedText == AITools.prettyArguments(arguments)
+    else {
+      return answer(
+        .failed, message: Self.outsideMismatch, AITools.errorPrefix + Self.outsideMismatch)
+    }
+    messages[index].outsideCall?.state = .running
+    do {
+      let reply = try await session.call(
+        serverID: tool.serverID, tool: tool.tool, arguments: arguments)
+      guard !Task.isCancelled, token == generation else { return nil }
+      let content = AIPrompts.outsideToolResult(
+        server: tool.serverName, tool: tool.tool, content: reply.untrustedText)
+      return reply.isError
+        ? answer(.failed, message: "The server answered with an error.", content)
+        : answer(.ran, content)
+    } catch {
+      guard !Task.isCancelled, token == generation else { return nil }
+      let message = OutsideMCPText.display(
+        error.localizedDescription, limit: Self.outsideErrorScalars)
+      return answer(
+        .failed, message: message,
+        AITools.errorPrefix + "The call failed.\n"
+          + AIPrompts.outsideToolResult(
+            server: tool.serverName, tool: tool.tool, content: message))
+    }
+  }
+
+  /// Longest failure text of an outside call
+  private static let outsideErrorScalars = 1_000
+  private static let outsideMismatch =
+    "The arguments to send differ from the ones shown on the card. Nothing was sent."
+
+  /// Waits for Run once (true) or Deny (false) on the card `id`; nil when stopped. Run once is
+  /// ignored for `outsideApproveDelay` from when the card shows, so a click meant for something
+  /// else never runs it; Deny counts at once.
+  private func outsideApproval(_ id: UUID) async -> Bool? {
+    guard !Task.isCancelled else { return nil }
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        outsideApprovals[id] = continuation
+        enableRunOnce(id)
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.outsideRunEnabled.remove(id)
+        self?.outsideApprovals.removeValue(forKey: id)?.resume(returning: nil)
+      }
+    }
+  }
+
+  /// Turns Run once on for the waiting card `id` after `outsideApproveDelay`
+  private func enableRunOnce(_ id: UUID) {
+    let delay = outsideApproveDelay
+    guard delay > .zero else {
+      outsideRunEnabled.insert(id)
+      return
+    }
+    Task { @MainActor [weak self] in
+      try? await Task.sleep(for: delay)
+      guard let self, self.outsideApprovals[id] != nil else { return }
+      self.outsideRunEnabled.insert(id)
+    }
+  }
+
+  /// True while the card `id` waits for Run once or Deny
+  func isAwaitingOutsideApproval(_ id: UUID) -> Bool {
+    outsideApprovals[id] != nil
+  }
+
+  /// True once Run once counts on the waiting card `id` (`outsideApproveDelay` has passed)
+  func isOutsideRunEnabled(_ id: UUID) -> Bool {
+    outsideRunEnabled.contains(id)
+  }
+
+  /// Run once (`approved`) or Deny on the card `id`; ignored unless it waits, and Run once is
+  /// ignored until `isOutsideRunEnabled`. One answer per call: nothing is remembered for the
+  /// next one.
+  func decideOutsideCall(_ id: UUID, approved: Bool) {
+    if approved, !outsideRunEnabled.contains(id) { return }
+    outsideRunEnabled.remove(id)
+    outsideApprovals.removeValue(forKey: id)?.resume(returning: approved)
+  }
+
+  /// Stop: every waiting card resumes as stopped, and every waiting or running call shows as
+  /// stopped (its answer never reaches the model)
+  func stopOutsideCalls() {
+    let waiting = outsideApprovals
+    outsideApprovals = [:]
+    outsideRunEnabled = []
+    for continuation in waiting.values { continuation.resume(returning: nil) }
+    for index in messages.indices
+    where [.waiting, .running].contains(messages[index].outsideCall?.state) {
+      messages[index].outsideCall?.state = .stopped
+    }
   }
 
   /// A call the app does not run: shown as a failed tool entry, answered with `error`

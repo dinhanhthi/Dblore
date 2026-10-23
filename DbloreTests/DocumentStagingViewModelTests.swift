@@ -649,6 +649,76 @@ struct DocumentStagingViewModelTests {
     await fixture.manager.disconnect()
   }
 
+  @Test("An SQL-file editor result commits a field edit and runs its query once again")
+  func editorResultEditReruns() async throws {
+    let fixture = try await Self.connected()
+    let viewModel = fixture.viewModel
+    await viewModel.executeEditorQuery("db.users.find()")
+    #expect(viewModel.editorResult?.editTarget != nil)
+
+    try Self.gridEdit(viewModel, row: 0, column: "name", text: "zoe")
+    let expected = Self.setCommand(Self.first, "name", .string("zoe"))
+    #expect(viewModel.pendingStagedBatch?.mongoCommands == [expected])
+    let sent = fixture.factory.statements.count
+    await viewModel.executePendingQuery()
+    let after = Array(fixture.factory.statements.dropFirst(sent))
+    #expect(after.first == expected)
+    #expect(after.count == 2 && after[1].hasPrefix("db.users.find("))
+    await fixture.manager.disconnect()
+  }
+
+  @Test("A multi-statement run refreshes only the edited statement's result")
+  func multiStatementEditRefreshesSelectedResult() async throws {
+    let fixture = try await Self.connected()
+    let viewModel = fixture.viewModel
+    await viewModel.executeEditorQuery("db.users.find(); db.orders.find()")
+    try #require(viewModel.editorStatementResults.count == 2)
+    viewModel.selectEditorStatement(at: 0)
+    let other = viewModel.editorStatementResults[1]
+    let before = viewModel.editorStatementResults[0].result.timestamp
+
+    try Self.gridEdit(viewModel, row: 0, column: "name", text: "zoe")
+    let expected = Self.setCommand(Self.first, "name", .string("zoe"))
+    let sent = fixture.factory.statements.count
+    await viewModel.executePendingQuery()
+    let after = Array(fixture.factory.statements.dropFirst(sent))
+    #expect(after.count == 2 && after.first == expected)
+    #expect(after.last?.hasPrefix("db.users.find(") == true)
+    #expect(viewModel.editorStatementResults.count == 2)
+    #expect(viewModel.selectedStatementIndex == 0)
+    #expect(viewModel.editorStatementResults.last?.id == other.id)
+    #expect(viewModel.editorStatementResults.last?.result.timestamp == other.result.timestamp)
+    let refreshed = viewModel.editorStatementResults.first?.result.timestamp
+    #expect(refreshed != before && refreshed == viewModel.editorResult?.timestamp)
+    await fixture.manager.disconnect()
+  }
+
+  @Test("Picking another statement during the commit skips the refresh, never runs it")
+  func statementPickedDuringCommitIsNotRun() async throws {
+    let fixture = try await Self.connected()
+    let viewModel = fixture.viewModel
+    await viewModel.executeEditorQuery("db.users.find(); db.orders.find()")
+    try #require(viewModel.editorStatementResults.count == 2)
+    viewModel.selectEditorStatement(at: 0)
+
+    try Self.gridEdit(viewModel, row: 0, column: "name", text: "zoe")
+    let expected = Self.setCommand(Self.first, "name", .string("zoe"))
+    let pause = CommitPause()
+    await fixture.manager.setBatchCheckpointHook { _ in await pause.checkpoint() }
+    let sent = fixture.factory.statements.count
+    let commit = Task { await viewModel.executePendingQuery() }
+    await pause.waitUntilArrived()
+    viewModel.selectEditorStatement(at: 1)
+    await pause.resume()
+    await commit.value
+    await fixture.manager.setBatchCheckpointHook(nil)
+
+    // Only the `$set`: the shown result is no longer the edited one, so nothing re-runs
+    #expect(Array(fixture.factory.statements.dropFirst(sent)) == [expected])
+    #expect(viewModel.selectedStatementIndex == 1)
+    await fixture.manager.disconnect()
+  }
+
   // MARK: - Grid overlay
 
   @Test("The grid overlay keeps its staged insert ids until the staged documents change")

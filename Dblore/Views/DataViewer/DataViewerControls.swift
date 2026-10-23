@@ -87,7 +87,38 @@ struct DataViewerControls: View {
           "Commit or discard staged row changes before continuing. Cancel keeps them."
         )
       }
+      .confirmationDialog(
+        "Foreign key may block this delete",
+        isPresented: blockerPromptPresented,
+        titleVisibility: .visible
+      ) {
+        Button("Commit Anyway", role: .destructive) {
+          viewModel.resolveStagedBlockerPrompt(commitAnyway: true)
+        }
+        Button("Cancel", role: .cancel) {
+          viewModel.resolveStagedBlockerPrompt(commitAnyway: false)
+        }
+      } message: {
+        Text(
+          ((viewModel.stagedBlockerPrompt?.blockers.map(\.text) ?? [])
+            + [Self.commitAnywayNote]).joined(separator: "\n\n"))
+      }
     }
+  }
+
+  /// Next to Commit Anyway: the counts are advisory, the server enforces the keys
+  static let commitAnywayNote =
+    "The database decides: it refuses the delete if these rows still refer to it."
+
+  /// Dismissal without a button choice cancels on the next turn, as for the leave prompt
+  private var blockerPromptPresented: Binding<Bool> {
+    Binding(
+      get: { viewModel.stagedBlockerPrompt != nil },
+      set: { isPresented in
+        guard !isPresented else { return }
+        Task { @MainActor in viewModel.resolveStagedBlockerPrompt(commitAnyway: false) }
+      }
+    )
   }
 
   /// Dialog dismissal without a button choice cancels on the next turn, after a button
@@ -250,18 +281,27 @@ struct DataViewerControls: View {
   private var commitButtonBase: some View {
     Button(action: { Task { await viewModel.commitStaged() } }) {
       dataViewerCapsuleLabel(fill: .accentFill, bordered: false) {
-        Text("Commit")
-          .font(.system(size: 11))
-          // Matches the selected slider segment
-          .foregroundColor(.onAccentFill)
+        HStack(spacing: Spacing.xs) {
+          if viewModel.isCheckingStagedDeletes {
+            ProgressView().controlSize(.mini)
+          }
+          Text("Commit")
+            .font(.system(size: 11))
+            // Matches the selected slider segment
+            .foregroundColor(.onAccentFill)
+        }
       }
     }
     .buttonStyle(.plain)
     .linkPointer()
     .fixedSize()
     .opacity(viewModel.stagingEnabled ? 1 : 0.5)
-    .disabled(!viewModel.stagingEnabled)
-    .help(viewModel.rowStagingUnavailableReason ?? "Commit staged changes")
+    .disabled(!viewModel.stagingEnabled || viewModel.isCheckingStagedDeletes)
+    .help(
+      viewModel.rowStagingUnavailableReason
+        ?? (viewModel.isCheckingStagedDeletes
+          ? "Checking related rows…" : "Commit staged changes")
+    )
     .overlay { disabledStagingHelp }
   }
 

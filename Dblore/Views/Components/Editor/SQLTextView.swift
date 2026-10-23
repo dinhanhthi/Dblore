@@ -39,6 +39,12 @@ class SQLTextView: NSTextView {
 
   /// Observers of the clip views around the editor (see `observeGhostTextScrolling`)
   var ghostTextScrollObservers: [NSObjectProtocol] = []
+  /// Tab stops of the snippet being filled in (see SQLTextView+Snippets.swift); nil when none
+  var snippetSession: SnippetSession?
+  /// Text storage observer that moves the stops with the edits, while a session lasts
+  var snippetEditObserver: NSObjectProtocol?
+  /// Set while Tab selects a stop, so that selection does not end the session
+  var isSelectingSnippetStop = false
 
   // Autocomplete state
   private var autocompleteSuggestions: [AutocompleteSuggestion] = []
@@ -126,6 +132,7 @@ class SQLTextView: NSTextView {
       // Hide autocomplete
       hideAutocomplete()
       inlineCompletion?.focusLost()
+      endSnippetSession()
     }
     return result
   }
@@ -143,6 +150,7 @@ class SQLTextView: NSTextView {
     super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelectingFlag)
     if isEditorMode { needsDisplay = true }
     ghostTextSelectionDidChange()
+    snippetSelectionDidChange()
   }
 
   override func drawBackground(in rect: NSRect) {
@@ -187,7 +195,8 @@ class SQLTextView: NSTextView {
     if !autocompleteSuggestions.isEmpty, handleAutocompleteNavigation(with: event) {
       return  // Handled, don't pass to super
     }
-    // Ghost text: Tab accepts, Esc dismisses (the popup above takes them first while open)
+    // Snippet stops (Tab, Shift-Tab, Esc), then ghost text: Tab accepts, Esc dismisses (the
+    // popup above takes them first while open)
     if handleGhostTextKey(with: event) {
       return  // Handled, don't pass to super
     }

@@ -5,7 +5,8 @@ import Foundation
 import Observation
 
 nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
-  case anthropic, openAI, gemini, openRouter, ollama, lmStudio, mlxServer, custom, chatGPT, localMLX
+  case anthropic, openAI, gemini, openRouter, xAI, requesty, ollama, lmStudio, mlxServer, custom
+  case chatGPT, localMLX
 
   var displayName: String {
     switch self {
@@ -13,6 +14,8 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .openAI: return "OpenAI"
     case .gemini: return "Google Gemini"
     case .openRouter: return "OpenRouter"
+    case .xAI: return "xAI"
+    case .requesty: return "Requesty"
     case .ollama: return "Ollama"
     case .lmStudio: return "LM Studio"
     case .mlxServer: return "mlx_lm.server"
@@ -37,6 +40,8 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .openAI: return "https://api.openai.com/v1"
     case .gemini: return "https://generativelanguage.googleapis.com/v1beta"
     case .openRouter: return "https://openrouter.ai/api/v1"
+    case .xAI: return "https://api.x.ai/v1"
+    case .requesty: return "https://router.requesty.ai/v1"
     case .ollama: return "http://127.0.0.1:11434/v1"
     case .lmStudio: return "http://127.0.0.1:1234/v1"
     case .mlxServer: return "http://127.0.0.1:8080/v1"
@@ -48,7 +53,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
 
   var requiresAPIKey: Bool {
     switch self {
-    case .anthropic, .openAI, .gemini, .openRouter: return true
+    case .anthropic, .openAI, .gemini, .openRouter, .xAI, .requesty: return true
     case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT, .localMLX: return false
     }
   }
@@ -62,7 +67,8 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .openRouter:
       return ["anthropic/claude-sonnet-4.5", "openai/gpt-4.1", "google/gemini-2.5-pro"]
     case .chatGPT: return ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"]
-    case .ollama, .lmStudio, .mlxServer, .custom, .localMLX: return []
+    // xAI and Requesty: models come from their /models list only
+    case .xAI, .requesty, .ollama, .lmStudio, .mlxServer, .custom, .localMLX: return []
     }
   }
 }
@@ -145,7 +151,9 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
   // A dictionary with enum keys encodes as a flat array by default; use string keys instead
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    activeProvider = try container.decodeIfPresent(AIProviderKind.self, forKey: .activeProvider)
+    // An unknown provider (e.g. from a newer version) decodes as none
+    activeProvider = try container.decodeIfPresent(String.self, forKey: .activeProvider)
+      .flatMap(AIProviderKind.init(rawValue:))
     let raw =
       try container.decodeIfPresent([String: AIProviderConfig].self, forKey: .configs) ?? [:]
     // Unknown provider keys (e.g. from a newer version) are dropped

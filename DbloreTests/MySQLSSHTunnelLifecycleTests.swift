@@ -1,9 +1,9 @@
 // MySQLSSHTunnelLifecycleTests.swift
 // MySQLSession over an SSH tunnel without a bastion or a database server: an `EchoSSHTunnel`
 // whose channels reach the `NoTLSServer` fixture (a MySQL greeting without TLS, every login
-// refused with 1045), and the manager's host-key policy against an in-process SSH server that
-// accepts no user. The live login, TLS, KILL QUERY, close order and tunnel loss run in
-// SSHTunnelIntegrationTests against mysql-ssh.
+// refused with 1045 or asked for full authentication), and the manager's host-key policy against
+// an in-process SSH server that accepts no user. The live login, TLS, KILL QUERY, close order
+// and tunnel loss run in SSHTunnelIntegrationTests against mysql-ssh.
 
 import Foundation
 import NIOCore
@@ -72,6 +72,37 @@ struct MySQLSSHTunnelLifecycleTests {
     }
   }
 
+  /// The connect path's own bootstrap arms the guard over SSH, whatever the database host is:
+  /// the forwarder's loopback address never counts as a direct loopback connection.
+  @Test("Over SSH, a server asking for the full password gets nothing after the scramble")
+  func sshLoginRefusesFullAuthentication() async throws {
+    let server = try await NoTLSServer.start(
+      loginReply: MySQLWireFixtures.frame(
+        sequence: 2, MySQLWireFixtures.performFullAuthentication))
+    let config = Self.config("guard")
+    Self.saveCredential(for: config)
+    let session = MySQLSession(
+      config: config, tunnelFactory: EchoSSHTunnelFactory(targetPort: server.port),
+      hostKeyValidator: AcceptAnySSHHostKey())
+    do {
+      try await session.open()
+      Issue.record("The guard refuses full authentication")
+    } catch DatabaseError.connectionFailed(let message) {
+      // Unguarded, mysql-nio refuses it with the plain-TCP text instead.
+      #expect(message == MySQLSession.fullAuthRefusedMessage, "\(message)")
+    }
+    await session.close()
+    // Prefer: the TLS attempt, then the plain retry that reaches the login.
+    let connections = try await server.closedConnections(2)
+    await server.stop()
+    #expect(connections.count == 2)
+    #expect(NoTLSServer.sentNoLogin(connections[0]))
+    let login = try #require(connections.last)
+    #expect(NoTLSServer.payloads(login).count == 1, "\(login)")
+    #expect(NoTLSServer.contains(login, Array("ada".utf8)))
+    #expect(!NoTLSServer.contains(login, Array("secret".utf8)))
+  }
+
   @Test("A refused bastion keeps its typed error in open and probe")
   func bastionErrorStaysTyped() async {
     let config = Self.config("typed")
@@ -89,6 +120,28 @@ struct MySQLSSHTunnelLifecycleTests {
       }
       await session.close()
       #expect(factory.connectCount == 1)
+    }
+  }
+
+  @Test("A bastion that refuses the channel to the database host says so in open and probe")
+  func channelOpenRejectionStaysTyped() async throws {
+    let config = Self.config("channel")
+    Self.saveCredential(for: config)
+    for isProbe in [false, true] {
+      let factory = RejectingSSHTunnelFactory()
+      let session = MySQLSession(
+        config: config, tunnelFactory: factory, hostKeyValidator: AcceptAnySSHHostKey())
+      do {
+        if isProbe { _ = try await session.probe() } else { try await session.open() }
+        Issue.record("A rejected channel must fail")
+      } catch {
+        // Not mysql-nio's "connection closed": the forwarder's open error, worded as PostgreSQL.
+        #expect(error as? SSHTunnelError == .channelOpenRejected, "\(error)")
+      }
+      await session.close()
+      let tunnel = try #require(factory.inner.tunnels.first)
+      #expect(tunnel.opens.first == .init(host: "db-channel.invalid", port: 3306, autoRead: false))
+      #expect(tunnel.isClosed)
     }
   }
 
@@ -147,5 +200,24 @@ struct MySQLSSHTunnelLifecycleTests {
     }
     store.remove(host: "127.0.0.1", port: ssh.port)
     await ssh.stop()
+  }
+}
+
+/// Echo tunnels whose every channel open is refused, like a bastion that cannot reach the
+/// database host.
+private struct RejectingSSHTunnelFactory: SSHTunnelFactory {
+  let inner = EchoSSHTunnelFactory(targetPort: 1)
+
+  func connect(
+    host: String, port: Int, username: String, authentication: SSHTunnelAuthentication,
+    hostKeyValidator: @escaping SSHHostKeyValidator, connectTimeout: TimeAmount,
+    handshakeTimeout: TimeAmount
+  ) async throws -> any SSHTunneling {
+    let tunnel = try await inner.connect(
+      host: host, port: port, username: username, authentication: authentication,
+      hostKeyValidator: hostKeyValidator, connectTimeout: connectTimeout,
+      handshakeTimeout: handshakeTimeout)
+    (tunnel as? EchoSSHTunnel)?.openError = SSHTunnelError.channelOpenRejected
+    return tunnel
   }
 }

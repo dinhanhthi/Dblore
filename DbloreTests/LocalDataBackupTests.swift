@@ -536,6 +536,8 @@ struct LocalDataBackupTests {
         RecentItemsLocalDataProvider(defaults: defaults, domainName: name),
         OpenTabsLocalDataProvider(defaults: defaults, domainName: name),
         SavedFiltersLocalDataProvider(defaults: defaults, domainName: name),
+        SQLSnippetsLocalDataProvider(defaults: defaults, domainName: name),
+        SidebarFoldersLocalDataProvider(defaults: defaults, domainName: name),
         SchemaLayoutLocalDataProvider(defaults: defaults, domainName: name),
         AIChatsLocalDataProvider(root: chats),
         AISettingsLocalDataProvider(defaults: defaults, domainName: name),

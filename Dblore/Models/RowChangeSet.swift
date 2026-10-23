@@ -46,6 +46,10 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
   case deletedRow
   /// `column` is one of the target's primary-key columns.
   case primaryKeyColumn(String)
+  /// An UPDATE or DELETE on `table` (its SQL name), which has no key to name one row.
+  case noRowKey(table: String)
+  /// A cell set to DEFAULT on an engine whose UPDATE has no `DEFAULT` (`supportsDefaultInUpdate`).
+  case serverDefaultUnsupported
 
   var message: String {
     switch self {
@@ -53,6 +57,11 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
       "This row is staged for deletion. Revert the delete before editing it."
     case .primaryKeyColumn(let column):
       "Primary key column \"\(column)\" can't be edited here. Use SQL to change it."
+    case .noRowKey(let table):
+      "Rows of \(table) can't be updated or deleted here: the table has no primary key that "
+        + "identifies a row."
+    case .serverDefaultUnsupported:
+      "This database can't set a cell to its column default in an UPDATE."
     }
   }
 }
@@ -71,6 +80,12 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
   private(set) var edits: [RowKey: [String: CellValue]]
   /// Cell values from before staging, kept so an edit can be previewed and restored.
   private(set) var originals: [RowKey: [String: CellValue]]
+  /// Columns of `edits` set to the column default (`StagedCellValue.serverDefault`). Their
+  /// `edits` value is only `serverDefaultDisplay`, never sent.
+  private(set) var serverDefaults: [RowKey: Set<String>]
+
+  /// What the grid shows for a cell staged to its column default
+  static let serverDefaultDisplay = CellValue.string("DEFAULT")
 
   /// A row that is not on the server yet.
   nonisolated struct StagedInsert: Identifiable, Equatable, Sendable {
@@ -159,6 +174,7 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     deletes = []
     edits = [:]
     originals = [:]
+    serverDefaults = [:]
   }
 
   static func == (lhs: RowChangeSet, rhs: RowChangeSet) -> Bool {
@@ -166,7 +182,7 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
       && lhs.connectionEpoch == rhs.connectionEpoch
       && lhs.primaryKeyColumns == rhs.primaryKeyColumns && lhs.inserts == rhs.inserts
       && lhs.deletes == rhs.deletes && editMapsEqual(lhs.edits, rhs.edits)
-      && editMapsEqual(lhs.originals, rhs.originals)
+      && editMapsEqual(lhs.originals, rhs.originals) && lhs.serverDefaults == rhs.serverDefaults
   }
 
   var isEmpty: Bool {
@@ -199,6 +215,31 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
       clearColumn(column, on: row)
       return
     }
+    setEdit(value, column: column, on: row, original: original)
+    unmarkServerDefault(column, on: row)
+  }
+
+  /// Stages one cell to its column default: an UPDATE writes `DEFAULT` there. Refused like
+  /// `stageEdit`.
+  mutating func stageServerDefault(row: RowKey, column: String, original: CellValue) throws {
+    if deletes.contains(row) {
+      throw RowChangeError.deletedRow
+    }
+    if primaryKeyColumns.contains(column) {
+      throw RowChangeError.primaryKeyColumn(column)
+    }
+    setEdit(Self.serverDefaultDisplay, column: column, on: row, original: original)
+    serverDefaults[row, default: []].insert(column)
+  }
+
+  /// True when `column` of `row` is staged to its column default
+  func isServerDefault(row: RowKey, column: String) -> Bool {
+    serverDefaults[row]?.contains(column) == true
+  }
+
+  private mutating func setEdit(
+    _ value: CellValue, column: String, on row: RowKey, original: CellValue
+  ) {
     var staged = edits[row] ?? [:]
     staged[column] = value
     edits[row] = staged
@@ -209,6 +250,12 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     originals[row] = baseline
   }
 
+  private mutating func unmarkServerDefault(_ column: String, on row: RowKey) {
+    guard var columns = serverDefaults[row] else { return }
+    columns.remove(column)
+    serverDefaults[row] = columns.isEmpty ? nil : columns
+  }
+
   /// Drops a staged insert, or marks an existing row deleted and discards its pending edits.
   mutating func stageDelete(row: RowKey) {
     if let tempID = row.tempID {
@@ -217,6 +264,7 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     }
     edits.removeValue(forKey: row)
     originals.removeValue(forKey: row)
+    serverDefaults.removeValue(forKey: row)
     deletes.insert(row)
   }
 
@@ -257,6 +305,12 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     inserts[index].values[column] = value
   }
 
+  /// Leaves `column` out of a staged insert, so the INSERT takes the column default.
+  mutating func clearInsertValue(tempID: UUID, column: String) {
+    guard let index = inserts.firstIndex(where: { $0.tempID == tempID }) else { return }
+    inserts[index].values.removeValue(forKey: column)
+  }
+
   /// Drops edits and the delete mark for each existing row, and drops inserts named by `tempID`.
   mutating func revert(rows: [RowKey]) {
     for row in rows {
@@ -266,6 +320,7 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
       }
       edits.removeValue(forKey: row)
       originals.removeValue(forKey: row)
+      serverDefaults.removeValue(forKey: row)
       deletes.remove(row)
     }
   }
@@ -276,9 +331,11 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     deletes.removeAll()
     edits.removeAll()
     originals.removeAll()
+    serverDefaults.removeAll()
   }
 
   private mutating func clearColumn(_ column: String, on row: RowKey) {
+    unmarkServerDefault(column, on: row)
     guard var staged = edits[row] else { return }
     staged.removeValue(forKey: column)
     var baseline = originals[row] ?? [:]

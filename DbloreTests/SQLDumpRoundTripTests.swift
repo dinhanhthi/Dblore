@@ -396,10 +396,9 @@ struct SQLDumpRoundTripTests {
       _ = try await admin.executeInternal("CREATE DATABASE \(name) CHARACTER SET utf8mb4")
       _ = try await admin.executeInternal("CREATE DATABASE \(restored) CHARACTER SET utf8mb4")
       let config = Self.mysqlConfig(server, name)
-      // A view on a view only on MySQL: MariaDB has no VIEW_TABLE_USAGE, so the dump writes
-      // its views in name order (docs/later/2026-10-15-mariadb-dump-view-order.md)
-      let viewOnView =
-        server == .mysql ? ["CREATE VIEW big_order_ids AS SELECT id FROM big_orders"] : []
+      // A view on a view whose name sorts first: MySQL orders it by VIEW_TABLE_USAGE, MariaDB
+      // by the views its VIEW_DEFINITION names
+      let viewOnView = ["CREATE VIEW big_order_ids AS SELECT id FROM big_orders"]
       _ = try await Self.values(config, Self.mysqlSeed + viewOnView)
       let text = try await Self.dump(config, into: directory)
 
@@ -414,8 +413,10 @@ struct SQLDumpRoundTripTests {
       #expect(relations == (try await Self.mysqlRelations(restoredConfig)))
       #expect(
         relations.map(\.name)
-          == ["a_child", "b_parent"] + (server == .mysql ? ["big_order_ids"] : [])
-          + ["big_orders", "customers", "employees", "orders"])
+          == [
+            "a_child", "b_parent", "big_order_ids", "big_orders", "customers", "employees",
+            "orders",
+          ])
       let checksums =
         ["SET SESSION group_concat_max_len = 1073741824"]
         + relations.map { relation in

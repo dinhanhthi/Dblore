@@ -139,6 +139,32 @@ struct SecretInventoryTests {
     #expect(hostKey.label == hostAccount)
   }
 
+  @Test("xAI and Requesty keys are listed as AI keys and deleted with them")
+  func presetKeysAreDeletedWithAIKeys() async throws {
+    let presetKeys = [AIProviderKind.xAI, .requesty].map { kind in
+      SecretItem.listed(
+        service: KeychainAIKeyStore.serviceName,
+        account: AIKeyStoreFactory.apiKeyAccount(kind.rawValue))
+    }
+    #expect(presetKeys.allSatisfy { $0.kind == .aiKey })
+    let inventory = InMemorySecretInventory(items: planted() + presetKeys)
+    try await inventory.deleteAll(kind: .aiKey)
+    let remaining = await inventory.items()
+    #expect(!remaining.contains { presetKeys.contains($0) })
+    #expect(remaining.count == planted().count - 2)
+  }
+
+  @Test("Outside MCP server tokens are their own kind and deleted with it")
+  func outsideMCPTokensAreTheirOwnKind() async throws {
+    let token = SecretItem.listed(
+      service: KeychainOutsideMCPTokenStore.serviceName, account: UUID().uuidString)
+    #expect(token.kind == .outsideMCPToken)
+    #expect(KeychainOutsideMCPTokenStore.serviceName == "ace.thi.dblore.mcp-client")
+    let inventory = InMemorySecretInventory(items: planted() + [token])
+    try await inventory.deleteAll(kind: .outsideMCPToken)
+    #expect(await inventory.items() == planted())
+  }
+
   @Test("The default inventory is in-memory under the test host")
   func defaultInventoryIsInMemory() {
     #expect(SecretInventoryFactory.makeDefault() is InMemorySecretInventory)
@@ -156,5 +182,6 @@ struct SecretInventoryTests {
     #expect(text.contains("removePassword"))
     #expect(text.contains("KeychainSSHCredentialStore.serviceName"))
     #expect(text.contains("KeychainSSHKnownHostStore.serviceName"))
+    #expect(text.contains("KeychainOutsideMCPTokenStore.serviceName,"))
   }
 }

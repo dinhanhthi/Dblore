@@ -147,13 +147,30 @@ extension SQLTextView {
   }
 }
 
-// MARK: - Ghost Text Keys
+// MARK: - Snippet and Ghost Text Keys
 
 extension SQLTextView {
 
-  /// Tab accepts the AI ghost text and Esc dismisses it, without modifiers and only while it
-  /// shows. `keyDown` hands keys to an open autocomplete popup first; this checks it too.
+  /// While a snippet session lasts, Tab goes to the next stop, Shift-Tab to the previous one and
+  /// Esc ends it; the popup takes the keys first while open
+  func handleSnippetKey(with event: NSEvent) -> Bool {
+    guard snippetSession != nil, getAutocompleteSuggestions().isEmpty else { return false }
+    let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+    switch (event.keyCode, flags) {
+    case (48, []): moveSnippetStop(by: 1)
+    case (48, .shift): moveSnippetStop(by: -1)
+    case (53, []): endSnippetSession()
+    default: return false
+    }
+    return true
+  }
+
+  /// A snippet session takes the keys first (`handleSnippetKey`). Else Tab accepts the AI ghost
+  /// text and Esc dismisses it, without modifiers and only while it shows. `keyDown` hands keys
+  /// to an open autocomplete popup first; this checks it too. The workspace Esc monitor calls
+  /// this as well, so Esc ends a session before it unfocuses the editor.
   func handleGhostTextKey(with event: NSEvent) -> Bool {
+    if handleSnippetKey(with: event) { return true }
     let isTab = event.keyCode == 48
     let isEscape = event.keyCode == 53
     guard isTab || isEscape, getAutocompleteSuggestions().isEmpty else { return false }

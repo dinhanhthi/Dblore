@@ -1,7 +1,8 @@
 // MCPHTTPListenerTests.swift
 // The MCP HTTP listener over a real loopback socket on an ephemeral port: request-head refusals,
-// the streamed body limit, the handler hand-off, keep-alive, and start/stop lifecycle. Requests
-// are written raw so the Host header is exactly what the test sends.
+// the streamed body limit, the handler hand-off, keep-alive, a client disconnect cancelling its
+// handler, and start/stop lifecycle. Requests are written raw so the Host header is exactly what
+// the test sends.
 
 import Darwin
 import Foundation
@@ -161,6 +162,33 @@ struct MCPHTTPListenerTests {
     #expect(await server.port == nil)
   }
 
+  @Test("A client that disconnects while its handler runs cancels the handler")
+  func disconnectCancelsHandler() async throws {
+    let cancelled = OSAllocatedUnfairLock(initialState: false)
+    let started = OSAllocatedUnfairLock(initialState: false)
+    let server = MCPHTTPServer { _ in
+      started.withLock { $0 = true }
+      try? await Task.sleep(for: .seconds(30))
+      cancelled.withLock { $0 = Task.isCancelled }
+      return .text(200, "")
+    }
+    let port = try await server.start(configuration())
+    let raw = request(port)
+    try await withCheckedThrowingContinuation {
+      (continuation: CheckedContinuation<Void, any Error>) in
+      DispatchQueue.global().async {
+        continuation.resume(with: Result { _ = try rawExchange(port, raw, read: false) })
+      }
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while !cancelled.withLock({ $0 }), ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(started.withLock { $0 })
+    #expect(cancelled.withLock { $0 })
+    await server.stop()
+  }
+
   // MARK: - Raw socket client
 
   /// Runs the blocking socket exchange off the cooperative pool, where the handler task runs.
@@ -179,9 +207,10 @@ private struct RawResponse {
   var body: String { raw.components(separatedBy: "\r\n\r\n").dropFirst().joined() }
 }
 
-/// Writes `raw` to `address:port`, then reads until the server closes or 5 s pass.
+/// Writes `raw` to `address:port`, then reads until the server closes or 5 s pass (without
+/// `read`, closes once written).
 private func rawExchange(
-  _ port: Int, _ raw: String, address: String = "127.0.0.1"
+  _ port: Int, _ raw: String, address: String = "127.0.0.1", read: Bool = true
 ) throws
   -> RawResponse
 {
@@ -225,6 +254,7 @@ private func rawExchange(
     guard count > 0 else { break }
     sent += count
   }
+  guard read else { return RawResponse(raw: "") }
   var received = [UInt8]()
   var buffer = [UInt8](repeating: 0, count: 4096)
   while true {

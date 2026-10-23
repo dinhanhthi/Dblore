@@ -2,8 +2,13 @@
 // Runs the MCP server from the settings: started at launch only while `mcpEnabled`, restarted
 // on a port change or a new token, stopped when disabled and on quit. Each start builds a new
 // pool, tool service and listener (a closed pool refuses, the listener's handler is fixed).
-// Transitions run one at a time. An allowlist change needs no restart: the service reads the
-// allowlist on every call, and the pool closes the managers of removed connections.
+// Transitions run one at a time. An allowlist or write settings change needs no restart: the
+// service reads them on every call, and the pool closes the managers of removed connections and
+// the writable managers of connections that lost their write scope (or all of them when write
+// tools are turned off). Write approvals go to `MCPWriteApprovalCenter`; the waiting ones of
+// those connections are denied (all of them when write tools or MCP are turned off and when the
+// server stops or restarts, as for a new token), and the service checks the settings again
+// after an approval.
 // Nothing here blocks the main actor: the Keychain (token, passwords) is read off main; the
 // main actor is used only to read the settings and the saved connections.
 
@@ -40,10 +45,13 @@ final class MCPServerController {
   @ObservationIgnored private let recorder: any QueryHistoryRecording
   @ObservationIgnored private let sessionFactory: (any DatabaseSessionFactory)?
   @ObservationIgnored private let requestTimeout: Duration
+  @ObservationIgnored private let approver: any MCPWriteApproving
   @ObservationIgnored private var running: Running?
   @ObservationIgnored private var cachedToken: String?
   /// The allowlist the running pool was last told about
   @ObservationIgnored private var allowed: Set<UUID> = []
+  /// Ids the running pool may keep a writable manager for (write tools on, a write scope)
+  @ObservationIgnored private var writable: Set<UUID> = []
   @ObservationIgnored private var transition: Task<Void, Never>?
   @ObservationIgnored private var isActive = false
   /// Bumped by `activate`, so an observation armed before a stop never re-arms
@@ -66,7 +74,8 @@ final class MCPServerController {
     },
     recorder: any QueryHistoryRecording = NotebookViewModel.defaultHistoryRecorder(),
     requestTimeout: Duration = MCPJSONRPC.defaultTimeout,
-    sessionFactory: (any DatabaseSessionFactory)? = nil
+    sessionFactory: (any DatabaseSessionFactory)? = nil,
+    approver: any MCPWriteApproving = MCPWriteApprovalCenter.shared
   ) {
     self.settings = settings
     self.tokens = tokens
@@ -75,6 +84,7 @@ final class MCPServerController {
     self.recorder = recorder
     self.requestTimeout = requestTimeout
     self.sessionFactory = sessionFactory
+    self.approver = approver
   }
 
   /// Follows the settings from now on: starts the server when enabled.
@@ -135,7 +145,10 @@ final class MCPServerController {
   private func observeSettings(_ generation: Int) {
     guard isActive, generation == observation else { return }
     withObservationTracking {
-      _ = (settings.mcpEnabled, settings.mcpPort, settings.mcpAllowedConnectionIDs)
+      _ = (
+        settings.mcpEnabled, settings.mcpPort, settings.mcpAllowedConnectionIDs,
+        settings.mcpWriteToolsEnabled, settings.mcpWriteScopes
+      )
     } onChange: { [weak self] in
       Task { @MainActor in self?.observeSettings(generation) }
     }
@@ -159,10 +172,20 @@ final class MCPServerController {
     let enabled = settings.mcpEnabled
     let port = settings.mcpPort
     let allowlist = settings.mcpAllowedConnectionIDs
+    let writableNow = Self.writableIDs(settings: settings)
     if let running {
       for id in allowed.subtracting(allowlist) { await running.pool.close(id: id) }
+      for id in writable.subtracting(writableNow) { await running.pool.closeWritable(id: id) }
+    }
+    // A waiting approval never outlives the scope it was asked under
+    if !enabled || !settings.mcpWriteToolsEnabled {
+      await approver.denyAllWaiting()
+    } else {
+      let narrowed = allowed.subtracting(allowlist).union(writable.subtracting(writableNow))
+      if !narrowed.isEmpty { await approver.denyWaiting(connections: narrowed) }
     }
     allowed = allowlist
+    writable = writableNow
     if let running, restart || !enabled || running.port != port {
       await stopRunning()
     }
@@ -178,7 +201,8 @@ final class MCPServerController {
         settings: settings, savedConnections: savedConnections, password: password),
       sessionFactory: sessionFactory)
     let service = Self.makeService(
-      pool: pool, settings: settings, savedConnections: savedConnections, recorder: recorder)
+      pool: pool, settings: settings, savedConnections: savedConnections, recorder: recorder,
+      approver: approver)
     let server = MCPHTTPServer(
       handler: MCPJSONRPC.handler(tools: service, timeout: requestTimeout))
     do {
@@ -194,9 +218,11 @@ final class MCPServerController {
     }
   }
 
+  /// Denies every waiting approval first: none outlives the server (and token) it came through.
   private func stopRunning() async {
     guard let running else { return }
     self.running = nil
+    await approver.denyAllWaiting()
     await running.server.stop()
     await running.pool.closeAll()
   }
@@ -206,6 +232,14 @@ final class MCPServerController {
       return "Port \(port) is already in use. Choose another port."
     }
     return "The MCP server could not start on port \(port): \(error.localizedDescription)"
+  }
+
+  /// Allowlisted ids with a write scope while write tools are on.
+  private static func writableIDs(settings: AppSettings) -> Set<UUID> {
+    guard settings.mcpWriteToolsEnabled else { return [] }
+    return Set(
+      settings.mcpWriteScopes.filter { $0.value != .read }.keys
+    ).intersection(settings.mcpAllowedConnectionIDs)
   }
 
   /// Saved connections on the allowlist, without passwords.
@@ -238,7 +272,7 @@ final class MCPServerController {
   private nonisolated static func makeService(
     pool: MCPConnectionPool, settings: AppSettings,
     savedConnections: @escaping @MainActor @Sendable () -> [ConnectionHistoryEntry],
-    recorder: any QueryHistoryRecording
+    recorder: any QueryHistoryRecording, approver: any MCPWriteApproving
   ) -> MCPToolService {
     MCPToolService(
       // Every saved row: their AI policies tighten an allowlisted one of the same identity. The
@@ -249,7 +283,12 @@ final class MCPServerController {
       source: MCPSQLReadSource(pool: pool),
       recorder: MCPNotifyingHistoryRecorder(inner: recorder),
       historyEnabled: { await MainActor.run { settings.historyEnabled } },
-      defaultMaxRows: { await MainActor.run { settings.mcpRowCap } })
+      defaultMaxRows: { await MainActor.run { settings.mcpRowCap } },
+      writes: MCPWriteAccess(
+        enabled: { await MainActor.run { settings.mcpWriteToolsEnabled } },
+        scopes: { await MainActor.run { settings.mcpWriteScopes } },
+        defaultCommitStyle: { await MainActor.run { settings.commitStyle } },
+        approver: approver, source: MCPSQLWriteSource(pool: pool)))
   }
 }
 

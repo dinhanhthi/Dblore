@@ -6,10 +6,11 @@
 // prompt and no classifier, like `MongoSchemaIntrospector`.
 //
 // Indexes: `listIndexes` errors propagate, except on a view (`CommandNotSupportedOnView`, 166),
-// which answers `.view`. `$indexStats` and `$collStats` need their own privileges: a failure
-// leaves their columns nil (see `MongoIndexInfo.merge`). Commands run in the session's database
-// (`MongoSession.databaseName`, the data viewer's `schema` on MongoDB). Index specs: the raw
-// `listIndexes` documents alone, for the backup writer (a view has none).
+// which answers `.view`. `$indexStats` and `$collStats` need their own privileges: an
+// authorization failure (`MongoSessionError.isUnauthorized`) leaves their columns nil (see
+// `MongoIndexInfo.merge`); any other failure (a timeout, a cancel) propagates. Commands run in
+// the session's database (`MongoSession.databaseName`, the data viewer's `schema` on MongoDB).
+// Index specs: the raw `listIndexes` documents alone, for the backup writer (a view has none).
 //
 // Collection info: `listCollections` filtered by name, for the Validation tab. Views answer
 // `type: "view"` (no code 166 here); a missing namespace is an error. Existing names: one
@@ -106,10 +107,20 @@ extension DatabaseConnectionManager {
       {
         return .view
       }
-      let stats = try? await mongo.catalogDocuments(
-        MongoIndexInfo.indexStatsCommand(collection: collection), cap: Self.mongoIndexStatsCap)
-      let collStats = try? await mongo.catalogDocuments(
-        MongoIndexInfo.collStatsCommand(collection: collection), cap: Self.mongoCollStatsCap)
+      let stats: [MongoValue]?
+      do {
+        stats = try await mongo.catalogDocuments(
+          MongoIndexInfo.indexStatsCommand(collection: collection), cap: Self.mongoIndexStatsCap)
+      } catch let error as MongoSessionError where error.isUnauthorized {
+        stats = nil
+      }
+      let collStats: [MongoValue]?
+      do {
+        collStats = try await mongo.catalogDocuments(
+          MongoIndexInfo.collStatsCommand(collection: collection), cap: Self.mongoCollStatsCap)
+      } catch let error as MongoSessionError where error.isUnauthorized {
+        collStats = nil
+      }
       return .indexes(MongoIndexInfo.merge(indexes: indexes, stats: stats, collStats: collStats))
     }
   }

@@ -64,6 +64,7 @@ struct DatabaseCapabilitiesTests {
     supportsExplainJSON: true,
     supportsExplainAnalyze: true,
     supportsUpdateOnly: true,
+    supportsDefaultInUpdate: true,
     supportsRowStaging: true,
     supportsDataImport: true,
     supportsForeignKeyLookup: true,
@@ -72,7 +73,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: true
   )
 
   private static let sqlite = DatabaseCapabilities(
@@ -89,6 +91,7 @@ struct DatabaseCapabilitiesTests {
     supportsExplainJSON: false,
     supportsExplainAnalyze: false,
     supportsUpdateOnly: false,
+    supportsDefaultInUpdate: false,
     supportsRowStaging: true,
     supportsDataImport: true,
     supportsForeignKeyLookup: true,
@@ -97,7 +100,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: false
   )
 
   private static let duckdb = DatabaseCapabilities(
@@ -114,6 +118,7 @@ struct DatabaseCapabilitiesTests {
     supportsExplainJSON: false,
     supportsExplainAnalyze: true,
     supportsUpdateOnly: false,
+    supportsDefaultInUpdate: false,
     supportsRowStaging: false,
     supportsDataImport: false,
     supportsForeignKeyLookup: false,
@@ -122,7 +127,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: false
   )
 
   private static let mysql = DatabaseCapabilities(
@@ -139,6 +145,7 @@ struct DatabaseCapabilitiesTests {
     supportsExplainJSON: true,
     supportsExplainAnalyze: true,
     supportsUpdateOnly: false,
+    supportsDefaultInUpdate: true,
     supportsRowStaging: true,
     supportsDataImport: true,
     supportsForeignKeyLookup: true,
@@ -147,7 +154,8 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .sql,
     supportsTransactions: true,
     supportsStructure: true,
-    supportsSQLDump: true
+    supportsSQLDump: true,
+    supportsUserTypes: false
   )
 
   private static let mongodb = DatabaseCapabilities(
@@ -164,6 +172,7 @@ struct DatabaseCapabilitiesTests {
     supportsExplainJSON: false,
     supportsExplainAnalyze: false,
     supportsUpdateOnly: false,
+    supportsDefaultInUpdate: false,
     supportsRowStaging: false,
     supportsDataImport: false,
     supportsForeignKeyLookup: false,
@@ -172,6 +181,7 @@ struct DatabaseCapabilitiesTests {
     queryLanguage: .mongosh,
     supportsTransactions: false,
     supportsStructure: false,
-    supportsSQLDump: false
+    supportsSQLDump: false,
+    supportsUserTypes: false
   )
 }

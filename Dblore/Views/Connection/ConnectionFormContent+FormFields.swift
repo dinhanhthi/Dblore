@@ -788,9 +788,11 @@ extension ConnectionFormContent {
       VStack(alignment: .leading, spacing: 2) {
         Text("Read-only")
           .font(.body)
-        Text("Open this file without writing to it")
-          .font(.caption)
-          .foregroundColor(.foregroundMuted)
+        Text(
+          "Open this file without writing to it. SQLite may still create its -wal and -shm files next to a WAL database, as reads need them."
+        )
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
       }
 
       Spacer()

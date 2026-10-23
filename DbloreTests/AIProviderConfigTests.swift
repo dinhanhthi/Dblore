@@ -68,6 +68,20 @@ struct AIProviderConfigTests {
     #expect(decoded == config)
   }
 
+  @Test("An unknown active provider decodes as none and keeps the rest of the configuration")
+  func unknownActiveProviderDecodes() throws {
+    let future = """
+      {"activeProvider":"fromTheFuture","configs":{"ollama":{"baseURL":"u","model":"m"}},\
+      "defaultConnectionAccess":"never",\
+      "customCommands":[{"id":"\(UUID().uuidString)","name":"summary","template":"T"}]}
+      """
+    let decoded = try JSONDecoder().decode(AIConfiguration.self, from: Data(future.utf8))
+    #expect(decoded.activeProvider == nil)
+    #expect(decoded.configs[.ollama]?.model == "m")
+    #expect(decoded.defaultConnectionAccess == .never)
+    #expect(decoded.customCommands.map(\.name) == ["summary"])
+  }
+
   @Test("configuration saved before Gemini decodes unchanged; Gemini round-trips")
   func geminiCoding() throws {
     let old =

@@ -100,7 +100,7 @@ extension WorkspaceManager {
   }
 
   /// A rename retargets the table's data viewer tabs and the editor; a drop closes them
-  private func applyTableChange(_ change: StructureEditorModel.TableChange) {
+  func applyTableChange(_ change: StructureEditorModel.TableChange) {
     switch change {
     case .renamed(let schema, let name, let newName):
       renameDataViewerTabs(schema: schema, from: name, to: newName)

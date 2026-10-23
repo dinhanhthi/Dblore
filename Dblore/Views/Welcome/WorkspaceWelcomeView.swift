@@ -76,10 +76,10 @@ struct WorkspaceWelcomeView: View {
       recentManager.refreshRecentDocuments()
     }
     // Propagate focused actions for keyboard shortcuts
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
-    .focusedSceneValue(\.toggleRightSidebarAction) {
+    .bridgedFocusedSceneValue(\.toggleRightSidebarAction) {
       // No-op: Right sidebar is per-tab, and welcome view has no active tab
     }
   }

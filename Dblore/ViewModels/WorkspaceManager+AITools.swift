@@ -4,6 +4,7 @@
 //
 //  Runs the tool calls of an AI chat turn on the workspace connection: catalog reads from the
 //  loaded schema, guarded read-only queries through `runAIQuery`, and proposals that never run.
+//  `OutsideMCPTurnTools` lists and calls the outside MCP tools of one turn.
 //
 
 import Foundation
@@ -206,4 +207,83 @@ extension WorkspaceManager {
 
   /// Longest server error text a tool result carries
   private static let aiToolErrorCharacters = 1_000
+}
+
+/// The outside MCP tools of one AI chat turn: one `MCPClient` per enabled server with a ticked
+/// tool, made with its token when the turn starts and dropped with the turn. No client outlives
+/// its turn, so a removed server, Delete all, a deleted token or an edit never reaches a later
+/// one; within the turn `MCPClient.callTool` reads the live server before every call (a server
+/// removed, turned off or unticked meanwhile is refused). Servers are listed at the same time,
+/// all within `listDeadline`; one whose token cannot be read or that fails to list is left out,
+/// and so is one still listing at the deadline (cancelled, named in `late`).
+final class OutsideMCPTurnTools: AIOutsideToolSession {
+  static let defaultListDeadline = Duration.seconds(10)
+
+  private let store: OutsideMCPServerStore
+  private let listDeadline: Duration
+  private var clients: [UUID: MCPClient] = [:]
+
+  init(store: OutsideMCPServerStore = .shared, listDeadline: Duration = defaultListDeadline) {
+    self.store = store
+    self.listDeadline = listDeadline
+  }
+
+  func list() async -> AIOutsideToolListing {
+    var made: [(id: UUID, client: MCPClient)] = []
+    for server in store.servers where server.isEnabled && !server.allowedTools.isEmpty {
+      do {
+        let token = try await store.token(for: server.id)
+        let client = try MCPClient(
+          url: try MCPClient.endpoint(server.url), token: token, serverID: server.id)
+        made.append((server.id, client))
+      } catch {
+        continue
+      }
+    }
+    guard !made.isEmpty else { return AIOutsideToolListing() }
+    let deadline = listDeadline
+    // nil is the deadline; a server's nil tools is a failed listing
+    let (listed, answered) = await withTaskGroup(of: (UUID, [MCPClientTool]?)?.self) { group in
+      for (id, client) in made {
+        group.addTask { (id, try? await client.listTools()) }
+      }
+      group.addTask {
+        try? await Task.sleep(for: deadline)
+        return nil
+      }
+      var listed: [UUID: [MCPClientTool]] = [:]
+      var answered: Set<UUID> = []
+      for await item in group {
+        guard case (let id, let tools)? = item else { break }
+        answered.insert(id)
+        listed[id] = tools
+        if answered.count == made.count { break }
+      }
+      group.cancelAll()
+      return (listed, answered)
+    }
+    var listing = AIOutsideToolListing()
+    for (id, client) in made {
+      // Read again after the listing: a server removed by now is left out (one turned off or
+      // unticked offers nothing: `OutsideMCPToolGate.offeredTools` checks that)
+      guard let server = store.servers.first(where: { $0.id == id }) else { continue }
+      guard answered.contains(id) else {
+        listing.late.append(OutsideMCPText.display(server.name, limit: OutsideMCPServer.nameLimit))
+        continue
+      }
+      guard let tools = listed[id] else { continue }
+      clients[id] = client
+      listing.servers.append((server, tools))
+    }
+    return listing
+  }
+
+  func call(
+    serverID: UUID, tool: String, arguments: [String: JSONValue]
+  ) async throws -> MCPClientToolResult {
+    guard let client = clients[serverID] else { throw MCPClientError.serverRemoved }
+    let store = store
+    return try await client.callTool(
+      tool, arguments: arguments, current: { id in store.servers.first { $0.id == id } })
+  }
 }

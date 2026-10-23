@@ -34,6 +34,9 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
   /// `AIAccessGate.sessionKey` of the connection a tool entry ran on; later turns replay it only
   /// on that connection
   var toolSessionKey: String? = nil
+  /// Set on the entry of an outside MCP tool call: what its card shows. Never replayed to later
+  /// turns and never run again.
+  var outsideCall: AIOutsideCall? = nil
 
   enum QueryOutcome: String, Codable {
     /// The database (or the connection) returned an error
@@ -53,6 +56,34 @@ struct AIProposal: Codable, Equatable {
   var sessionKey: String? = nil
   /// Database of that connection: the target of a MongoDB `db.dropDatabase()` the card names
   var database: String? = nil
+}
+
+/// An outside MCP tool call (`+Tools`) as its card shows it: nothing is sent until the user
+/// presses Run once. Saved chats are plain JSON: the card sanitizes every field again, and a
+/// saved call never waits or runs.
+struct AIOutsideCall: Codable, Equatable {
+  /// The server's name as shown
+  let serverName: String
+  /// The tool's name on its server
+  let tool: String
+  /// The arguments as pretty JSON (`AITools.outsideArguments`): exactly what Run once sends.
+  /// A saved chat keeps only their start (`AITools.savedArguments`).
+  var arguments: String
+  var state: State
+  /// Why a call failed (sanitized), for the card
+  var message: String? = nil
+
+  enum State: String, Codable {
+    /// Waits for Run once or Deny
+    case waiting
+    case running
+    case denied
+    case ran
+    /// The server answered with an error, or the call failed
+    case failed
+    /// Stopped before an answer reached the assistant
+    case stopped
+  }
 }
 
 /// Structure-only snapshot of the connected database, read at send time
@@ -192,6 +223,16 @@ final class AIAssistantViewModel {
         _ runsQueries: Bool, _ sendsResultRows: Bool
       ) async -> WorkspaceManager.AIToolOutcome
     )?
+  /// Makes the outside MCP tools of one turn (`OutsideMCPTurnTools`), asked when a turn that
+  /// offers tools starts; nil offers none
+  @ObservationIgnored var makeOutsideToolSession: (() -> any AIOutsideToolSession)?
+  /// Outside calls waiting for Run once (true) or Deny (false), by card entry id; nil resumes a
+  /// stopped one
+  @ObservationIgnored var outsideApprovals: [UUID: CheckedContinuation<Bool?, Never>] = [:]
+  /// How long Run once is ignored after an outside call's card shows
+  @ObservationIgnored var outsideApproveDelay = Duration.seconds(1)
+  /// Waiting outside cards whose Run once counts (`outsideApproveDelay` has passed)
+  var outsideRunEnabled: Set<UUID> = []
   /// Catalog-only context of a reviewed statement with the shown plan, read when a Review or
   /// Optimize turn the gate allows is sent; "" sends none. Nil means not connected.
   @ObservationIgnored var queryContextSource: ((String, ExplainPlan?) async throws -> String)?
@@ -488,6 +529,7 @@ final class AIAssistantViewModel {
     isGenerating = false
     toolTurnSessionKey = nil
     isLoadingModel = false
+    stopOutsideCalls()
     removeEmptyAssistantEntries()
     saveConversation()
   }
@@ -532,8 +574,14 @@ final class AIAssistantViewModel {
     guard id != conversationId, let conversation = conversations.first(where: { $0.id == id })
     else { return }
     stop()
-    // A query still running when the app quit never finished
-    messages = conversation.messages.filter { $0.isRunning != true }
+    // A query still running when the app quit never finished, nor did an outside call
+    messages = conversation.messages.filter { $0.isRunning != true }.map { entry in
+      var entry = entry
+      if [.waiting, .running].contains(entry.outsideCall?.state) {
+        entry.outsideCall?.state = .stopped
+      }
+      return entry
+    }
     conversationId = id
     privateNote = nil
   }
@@ -619,13 +667,13 @@ final class AIAssistantViewModel {
 
   /// History of the conversation (which already ends with the new question). Query results and
   /// errors are placeholders (`historyMessage`), tool entries of the current connection text
-  /// (`toolHistoryMessages`); running queries are left out.
+  /// (`toolHistoryMessages`); running queries and outside tool calls are left out.
   func makeHistory() -> [AIChatMessage] {
     let key = Self.sessionKey(aiAccessSource())
     let sent =
       messages
       .filter {
-        !$0.isError && $0.isRunning != true
+        !$0.isError && $0.isRunning != true && $0.outsideCall == nil
           && (!$0.text.isEmpty || $0.queryResult != nil || $0.toolCalls != nil)
       }
       .suffix(Self.historyLimit)

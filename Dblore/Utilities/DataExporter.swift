@@ -30,17 +30,21 @@ enum DataExporter {
     return csv
   }
 
-  /// Export result to TSV format (tab-separated, Excel-compatible)
-  static func toTSV(result: CellResult) -> String {
+  /// Export result to TSV format (tab-separated, Excel-compatible). `neutralizesFormulas`
+  /// prefixes formula-like text cells and headers as in CSV; other cell types stay raw.
+  /// Headers are escaped like cells either way.
+  static func toTSV(result: CellResult, neutralizesFormulas: Bool) -> String {
     var tsv = ""
 
     // Header row
-    let headers = result.columns.map { $0.name }
+    let headers = result.columns.map {
+      tsvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
+    }
     tsv += headers.joined(separator: "\t") + "\n"
 
     // Data rows
     for row in result.rows {
-      let values = row.map { escapeTSV($0.fullString) }
+      let values = row.map { tsvField($0, neutralizesFormulas: neutralizesFormulas) }
       tsv += values.joined(separator: "\t") + "\n"
     }
 
@@ -54,6 +58,80 @@ enum DataExporter {
       return value
     }
     return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+  }
+
+  /// One escaped TSV field. The formula prefix (text cells only, first scalar only: the
+  /// quoting keeps every line in this field) is added before escaping, so it lands inside the
+  /// quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`.
+  static func tsvField(_ value: CellValue, neutralizesFormulas: Bool) -> String {
+    if neutralizesFormulas, case .string(let text) = value {
+      return escapeTSV(prefixedIfFormula(text, splitsFields: false))
+    }
+    return escapeTSV(value.fullString)
+  }
+
+  /// Grid selection copy in `format`, rows joined by LF with no trailing line break (JSON and
+  /// Markdown keep their export text). `neutralizesFormulas` prefixes formula-like text cells,
+  /// and headers, in the TSV and CSV formats; other cell types stay raw. CSV quotes as the
+  /// export's "if needed".
+  static func copyText(
+    result: CellResult, format: CopyRowsFormat, neutralizesFormulas: Bool
+  ) -> String {
+    switch format {
+    case .tsv, .tsvWithHeaders:
+      let header = result.columns.map {
+        tsvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
+      }
+      let rows = result.rows.map { row in
+        row.map { tsvField($0, neutralizesFormulas: neutralizesFormulas) }
+      }
+      return lines(header: format == .tsvWithHeaders ? header : nil, rows: rows, separator: "\t")
+    case .csv, .csvWithHeaders:
+      let header = result.columns.map {
+        csvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
+      }
+      let rows = result.rows.map { row in
+        row.map { csvField($0, neutralizesFormulas: neutralizesFormulas) }
+      }
+      return lines(header: format == .csvWithHeaders ? header : nil, rows: rows, separator: ",")
+    case .json:
+      return toJSON(result: result)
+    case .markdown:
+      return toMarkdown(result: result)
+    }
+  }
+
+  private static func lines(header: [String]?, rows: [[String]], separator: String) -> String {
+    ((header.map { [$0] } ?? []) + rows)
+      .map { $0.joined(separator: separator) }
+      .joined(separator: "\n")
+  }
+
+  /// One CSV field quoted if needed. The formula prefix applies to text cells only, as in
+  /// `tsvField`. A field with a tab is quoted too, and a formula after a tab is prefixed: a
+  /// spreadsheet may split pasted text on tabs, and that piece must not run.
+  private static func csvField(_ value: CellValue, neutralizesFormulas: Bool) -> String {
+    guard neutralizesFormulas, case .string(let text) = value else {
+      return escapeCSV(value.fullString, quote: .ifNeeded)
+    }
+    let field = prefixedAfterTabs(prefixedIfFormula(text, splitsFields: false))
+    guard field.unicodeScalars.contains("\t") else { return escapeCSV(field, quote: .ifNeeded) }
+    return escapeCSV(field, quote: .always)
+  }
+
+  /// Adds the formula prefix to every piece of `text` that starts right after a tab
+  private static func prefixedAfterTabs(_ text: String) -> String {
+    guard text.unicodeScalars.contains("\t") else { return text }
+    var result = ""
+    var afterTab = false
+    for scalar in text.unicodeScalars {
+      if afterTab, "=+-@".unicodeScalars.contains(scalar) {
+        result.unicodeScalars.append("'")
+      }
+      result.unicodeScalars.append(scalar)
+      afterTab = scalar == "\t"
+    }
+    return result
   }
 
   /// Export result to XLSX format (ZIP-based Office Open XML)
@@ -255,31 +333,115 @@ enum DataExporter {
     return xml
   }
 
-  /// Export result to JSON format
+  /// Export result to JSON format: one object per row, keys in column order. A repeated column
+  /// name gets a suffix (`id`, `id_2`, `id_3`, skipping a name another column already has), so
+  /// no value is lost. Written by hand because a dictionary would drop the order.
   static func toJSON(
     result: CellResult, pretty: Bool = true, includeNull: Bool = true, valuesAsString: Bool = false
   ) -> String {
-    var objects: [[String: Any]] = []
-
-    for row in result.rows {
-      var obj: [String: Any] = [:]
-      for (index, column) in result.columns.enumerated() {
-        let value = row[index]
-        if !includeNull && value.isNull { continue }
-        obj[column.name] = valuesAsString ? value.fullString : cellValueToJSON(value)
+    let keys = jsonKeys(result.columns.map(\.name)).map(jsonString)
+    let objects = result.rows.map { row in
+      let members = keys.indices.compactMap { index -> (String, String)? in
+        let value = index < row.count ? row[index] : .null
+        if !includeNull && value.isNull { return nil }
+        let json = valuesAsString ? jsonString(value.fullString) : jsonValue(value, pretty: pretty)
+        return (keys[index], json)
       }
-      objects.append(obj)
+      return jsonContainer(
+        members.map { pretty ? "\($0.0) : \($0.1)" : "\($0.0):\($0.1)" }, open: "{",
+        close: "}", pretty: pretty)
     }
+    return jsonContainer(objects, open: "[", close: "]", pretty: pretty)
+  }
 
-    let writing: JSONSerialization.WritingOptions = pretty ? .prettyPrinted : []
-    guard
-      let jsonData = try? JSONSerialization.data(withJSONObject: objects, options: writing),
-      let jsonString = String(data: jsonData, encoding: .utf8)
-    else {
-      return "[]"
+  /// Column names made unique: a repeat gets the first free `name_2`, `name_3`, ...
+  private static func jsonKeys(_ names: [String]) -> [String] {
+    var used = Set(names)
+    var seen = Set<String>()
+    return names.map { name in
+      guard seen.insert(name).inserted else {
+        var suffix = 2
+        while used.contains("\(name)_\(suffix)") { suffix += 1 }
+        used.insert("\(name)_\(suffix)")
+        return "\(name)_\(suffix)"
+      }
+      return name
     }
+  }
 
-    return jsonString
+  /// One cell as JSON text. Only a finite double (its number format) and a parsed `.json` value
+  /// go through `JSONSerialization`; the rest is written here as it would write it.
+  private static func jsonValue(_ value: CellValue, pretty: Bool) -> String {
+    switch value {
+    case .int(let int):
+      return String(int)
+    case .bool(let bool):
+      return bool ? "true" : "false"
+    case .null:
+      return "null"
+    case .double(let double) where double.isFinite:
+      return serializedJSON(double, pretty: false) ?? jsonString(value.fullString)
+    case .json:
+      // A parsed value can still be unwritable (`-1e400` parses as an infinity), and an invalid
+      // one raises an Objective-C exception that `try` cannot catch, so it is checked first
+      let object = cellValueToJSON(value)
+      guard !(object is String), JSONSerialization.isValidJSONObject(object) else {
+        return jsonString(object as? String ?? value.fullString)
+      }
+      return serializedJSON(object, pretty: pretty) ?? jsonString(value.fullString)
+    default:
+      return jsonString(cellValueToJSON(value) as? String ?? value.fullString)
+    }
+  }
+
+  /// `object` (a valid JSON value) as `JSONSerialization` writes it
+  private static func serializedJSON(_ object: Any, pretty: Bool) -> String? {
+    let options: JSONSerialization.WritingOptions =
+      pretty ? [.fragmentsAllowed, .prettyPrinted] : [.fragmentsAllowed]
+    guard let data = try? JSONSerialization.data(withJSONObject: object, options: options) else {
+      return nil
+    }
+    return String(decoding: data, as: UTF8.self)
+  }
+
+  /// `text` as a JSON string, byte for byte as `JSONSerialization` writes it: `"`, `\` and `/`
+  /// get a backslash, a control character its short form (`\b`, `\t`, `\n`, `\f`, `\r`) or
+  /// `\u00xx` (lowercase hex), and every other character stays as it is
+  private static func jsonString(_ text: String) -> String {
+    guard text.utf8.contains(where: { $0 < 0x20 || $0 == 0x22 || $0 == 0x5C || $0 == 0x2F })
+    else { return "\"" + text + "\"" }
+    var result = String.UnicodeScalarView()
+    result.reserveCapacity(text.utf8.count + 16)
+    result.append("\"")
+    for scalar in text.unicodeScalars {
+      switch scalar.value {
+      case 0x22: result.append(contentsOf: "\\\"".unicodeScalars)
+      case 0x5C: result.append(contentsOf: "\\\\".unicodeScalars)
+      case 0x2F: result.append(contentsOf: "\\/".unicodeScalars)
+      case 0x08: result.append(contentsOf: "\\b".unicodeScalars)
+      case 0x09: result.append(contentsOf: "\\t".unicodeScalars)
+      case 0x0A: result.append(contentsOf: "\\n".unicodeScalars)
+      case 0x0C: result.append(contentsOf: "\\f".unicodeScalars)
+      case 0x0D: result.append(contentsOf: "\\r".unicodeScalars)
+      case 0x00...0x1F:
+        let hex = String(scalar.value, radix: 16)
+        result.append(contentsOf: ("\\u00" + (hex.count < 2 ? "0" : "") + hex).unicodeScalars)
+      default: result.append(scalar)
+      }
+    }
+    result.append("\"")
+    return String(result)
+  }
+
+  /// `items` in `open`/`close`, one per line indented two spaces when `pretty` (a nested value
+  /// keeps its own lines one level deeper: JSON text has no raw line break inside a string)
+  private static func jsonContainer(
+    _ items: [String], open: String, close: String, pretty: Bool
+  ) -> String {
+    guard !items.isEmpty else { return open + close }
+    guard pretty else { return open + items.joined(separator: ",") + close }
+    let body = items.map { "  " + $0.replacingOccurrences(of: "\n", with: "\n  ") }
+    return open + "\n" + body.joined(separator: ",\n") + "\n" + close
   }
 
   /// Export result to Markdown table format
@@ -291,7 +453,7 @@ enum DataExporter {
     var markdown = ""
 
     if includeHeader {
-      let headers = result.columns.map { "| \($0.name) " }
+      let headers = result.columns.map { "| \(escapeMarkdown($0.name)) " }
       markdown += headers.joined() + "|\n"
       let separators = result.columns.map { _ in "| --- " }
       markdown += separators.joined() + "|\n"
@@ -413,13 +575,6 @@ enum DataExporter {
 
   // MARK: - Download Functions
 
-  /// Download result as CSV file
-  static func downloadCSV(result: CellResult, filename: String? = nil, queryIndex: Int? = nil) {
-    let csv = toCSV(result: result)
-    let defaultName = filename ?? generateFilename(extension: "csv", queryIndex: queryIndex)
-    saveFile(content: csv, defaultFilename: defaultName, allowedFileTypes: ["csv"])
-  }
-
   /// Download result as Excel file (.xlsx format - ZIP-based OOXML)
   static func downloadExcel(result: CellResult, filename: String? = nil, queryIndex: Int? = nil) {
     guard let xlsxData = toXLSX(result: result) else {
@@ -474,7 +629,8 @@ enum DataExporter {
 
   /// Copy result to clipboard in TSV format (Excel-compatible)
   static func copyTSV(result: CellResult) {
-    let tsv = toTSV(result: result)
+    let tsv = toTSV(
+      result: result, neutralizesFormulas: AppSettings.shared.neutralizesCopiedFormulas)
     copyToClipboard(tsv)
   }
 
@@ -551,8 +707,8 @@ enum DataExporter {
     case .never:
       return value
     case .ifNeeded:
-      if value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")
-      {
+      // Per unicode scalar, so a CRLF counts as a line break.
+      if value.unicodeScalars.contains(where: { ",\"\n\r".unicodeScalars.contains($0) }) {
         let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
         return "\"\(escaped)\""
       }
@@ -560,9 +716,18 @@ enum DataExporter {
     }
   }
 
-  private static func escapeMarkdown(_ value: String) -> String {
-    // Escape pipe characters in markdown tables
-    return value.replacingOccurrences(of: "|", with: "\\|")
+  /// A backslash and then a pipe are escaped (so `\|` in the data cannot end the cell), `&`, `<`
+  /// and `>` become `&amp;`, `&lt;` and `&gt;` (no HTML or entity in a rendered table), and then
+  /// a line break (CRLF, LF or CR) becomes `<br>`, so a cell or header stays one table row
+  nonisolated static func escapeMarkdown(_ value: String) -> String {
+    value.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "|", with: "\\|")
+      .replacingOccurrences(of: "&", with: "&amp;")
+      .replacingOccurrences(of: "<", with: "&lt;")
+      .replacingOccurrences(of: ">", with: "&gt;")
+      .replacingOccurrences(of: "\r\n", with: "<br>")
+      .replacingOccurrences(of: "\n", with: "<br>")
+      .replacingOccurrences(of: "\r", with: "<br>")
   }
 
   private static func escapeXML(_ value: String) -> String {
@@ -642,6 +807,11 @@ enum DataExporter {
     case .int(let int):
       return int
     case .double(let double):
+      // JSON has no NaN or infinity, so they are written as text ("NaN", "Infinity",
+      // "-Infinity"), as JavaScript names them
+      guard double.isFinite else {
+        return double.isNaN ? "NaN" : (double < 0 ? "-Infinity" : "Infinity")
+      }
       return double
     case .bool(let bool):
       return bool
@@ -684,10 +854,9 @@ enum DataExporter {
         completion(false)
         return
       }
-      completion(
-        completeSave(url) {
-          try content.write(to: url, atomically: true, encoding: .utf8)
-        })
+      completeSave(url, completion: completion) {
+        try content.write(to: url, atomically: true, encoding: .utf8)
+      }
     }
   }
 
@@ -700,31 +869,44 @@ enum DataExporter {
     savePanel.begin { response in
       guard response == .OK, let url = savePanel.url else { return }
       completeSave(url) {
-        try data.write(to: url)
+        try data.write(to: url, options: .atomic)
       }
     }
   }
 
-  /// Writes the file, then asks whether to open it or reveal it. Cancel leaves the saved file as is.
-  /// False when the write failed.
-  @discardableResult
-  private static func completeSave(_ url: URL, write: () throws -> Void) -> Bool {
-    do {
-      try write()
-    } catch {
-      let alert = NSAlert()
-      alert.messageText = "Export Failed"
-      alert.informativeText = "Could not save file: \(error.localizedDescription)"
-      alert.alertStyle = .critical
-      alert.runModal()
-      return false
-    }
+  /// Writes the file off the main actor, then asks whether to open it or reveal it. Cancel leaves
+  /// the saved file as is. `completion` gets false when the write failed (after its alert).
+  /// `write` only captures Sendable values (the text or bytes and the URL).
+  private static func completeSave(
+    _ url: URL, completion: @escaping @MainActor (Bool) -> Void = { _ in },
+    write: @escaping @Sendable () throws -> Void
+  ) {
+    Task {
+      do {
+        try await performWrite(write)
+      } catch {
+        let alert = NSAlert()
+        alert.messageText = "Export Failed"
+        alert.informativeText = "Could not save file: \(error.localizedDescription)"
+        alert.alertStyle = .critical
+        alert.runModal()
+        completion(false)
+        return
+      }
 
-    // The save panel is still dismissing. Presenting now stacks the two modals.
-    DispatchQueue.main.async {
-      presentSavedFile(url)
+      // The save panel may still be dismissing. Presenting now stacks the two modals.
+      DispatchQueue.main.async {
+        presentSavedFile(url)
+      }
+      completion(true)
     }
-    return true
+  }
+
+  /// Runs a file write off the main actor (`@concurrent` leaves it).
+  @concurrent nonisolated private static func performWrite(
+    _ write: @Sendable () throws -> Void
+  ) async throws {
+    try write()
   }
 
   /// The Open File / Open Location alert after a file was saved.

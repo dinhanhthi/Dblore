@@ -32,6 +32,9 @@ struct AppWelcomeView: View {
   @State private var editingWorkspace: WorkspaceHistoryEntry?
   @State private var isWorkspaceEditPresented = false
   @State private var isImportPresented = false
+  /// Kept after close so the panel keeps its content while it slides out.
+  @State private var exportModel: ConnectionExportModel?
+  @State private var isExportPresented = false
   @State private var isNativeTabBarVisible = false
   @Environment(\.controlActiveState) private var controlActiveState
 
@@ -67,6 +70,7 @@ struct AppWelcomeView: View {
           onOpenConnection: openConnectionAsWorkspace,
           onEditConnection: editConnection,
           onRemoveConnection: { recentManager.removeConnection(id: $0.id) },
+          onExportConnections: showConnectionExport,
           onNewWorkspace: createNewWorkspace,
           onConnect: showConnectionForm
         )
@@ -89,6 +93,11 @@ struct AppWelcomeView: View {
     )
     // After the connection form, so they open on top of it
     .connectionImportPanel(isPresented: $isImportPresented)
+    .sidePanelOverlay(isPresented: $isExportPresented, width: ConnectionExportSheet.panelWidth) {
+      if let exportModel {
+        ConnectionExportSheet(model: exportModel, isPresented: $isExportPresented)
+      }
+    }
     .settingsModal(
       isPresented: $isShowingSettings, viewMode: nil, section: settingsSection,
       openToken: settingsToken
@@ -227,6 +236,13 @@ struct AppWelcomeView: View {
     isShowingConnectionSidebar = true
   }
 
+  /// A fresh picker each time: all saved connections checked, favorites of no workspace.
+  private func showConnectionExport() {
+    exportModel = ConnectionExportModel(
+      connections: recentManager.recentConnections, workspaces: windowManager.allWorkspaces)
+    isExportPresented = true
+  }
+
   private func editConnection(_ entry: ConnectionHistoryEntry) {
     editingConnectionId = entry.id
     editingConnectionConfig = entry.config
@@ -315,7 +331,8 @@ struct WelcomeSidebar: View {
         title: "Connect to Database", systemImage: "server.rack", action: onConnect)
       WelcomeActionButton(
         title: "Import Connections...", systemImage: "square.and.arrow.down",
-        help: "Import connections from a URI, .pgpass, DBeaver, TablePlus or DataGrip",
+        help:
+          "Import connections from a Dblore export file, a URI, .pgpass, DBeaver, TablePlus or DataGrip",
         action: onImport)
     } footer: {
       HStack(spacing: Spacing.sm) {
@@ -371,6 +388,7 @@ struct WelcomeRecents: View {
   let onOpenConnection: (ConnectionHistoryEntry) -> Void
   let onEditConnection: (ConnectionHistoryEntry) -> Void
   let onRemoveConnection: (ConnectionHistoryEntry) -> Void
+  let onExportConnections: () -> Void
   /// Start actions offered when there is nothing recent yet
   let onNewWorkspace: () -> Void
   let onConnect: () -> Void
@@ -427,6 +445,14 @@ struct WelcomeRecents: View {
             CapsuleTabLabel(text: tabTitle(item), isSelected: tab == item)
           }
           .fitsContent()
+          if tab == .connections && !connections.isEmpty {
+            Button(action: onExportConnections) {
+              Image(systemName: "square.and.arrow.up")
+            }
+            .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+            .help("Export Connections...")
+            .accessibilityLabel("Export Connections...")
+          }
         }
 
         // The list scrolls inside its own card, which ends above the bottom edge
@@ -950,6 +976,7 @@ private struct PreviewWelcome: View {
         onOpenConnection: { _ in },
         onEditConnection: { _ in },
         onRemoveConnection: { _ in },
+        onExportConnections: {},
         onNewWorkspace: {},
         onConnect: {}
       )

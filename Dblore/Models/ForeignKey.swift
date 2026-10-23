@@ -14,7 +14,7 @@ enum ForeignKeyAction: String, Sendable, Codable, CaseIterable {
   case setDefault = "d"
 
   /// Human-readable display name
-  var displayName: String {
+  nonisolated var displayName: String {
     switch self {
     case .noAction: return "NO ACTION"
     case .restrict: return "RESTRICT"

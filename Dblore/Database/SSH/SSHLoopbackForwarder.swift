@@ -77,6 +77,13 @@ nonisolated final class SSHLoopbackForwarder: Sendable {
     defer { state.endDial() }
     return try await dial()
   }
+
+  /// Why the tunnel channel of the connection a client dialed from 127.0.0.1:`clientPort` could
+  /// not open (the bastion refused it), once: the client only saw its connection closed. Only
+  /// the last failed connection is kept, so an error is never reported to another connection.
+  func takeOpenError(clientPort: Int?) -> (any Error)? {
+    state.takeOpenError(clientPort: clientPort)
+  }
 }
 
 /// The listener and the accepted connections, shared by the forwarder, its connectors and the
@@ -89,6 +96,8 @@ nonisolated final class SSHForwarderState: @unchecked Sendable {
   /// `whileListening` dials under way, and what waits for them to end.
   private var dials = 0
   private var dialsEnded: [CheckedContinuation<Void, Never>] = []
+  /// The last accepted connection whose tunnel channel failed to open, by its client's port.
+  private var lastOpenFailure: (clientPort: Int, error: any Error)?
 
   func setListener(_ channel: any Channel) {
     let stopped = lock.withLock {
@@ -107,6 +116,10 @@ nonisolated final class SSHForwarderState: @unchecked Sendable {
         return false
       }
       accepted[id] = channel
+      // A reused client port is never told an earlier connection's error.
+      if let failure = lastOpenFailure, failure.clientPort == channel.remoteAddress?.port {
+        lastOpenFailure = nil
+      }
       return true
     }
     guard registered else { return false }
@@ -157,6 +170,20 @@ nonisolated final class SSHForwarderState: @unchecked Sendable {
     for waiter in waiters { waiter.resume() }
   }
 
+  /// Call before closing the connection, so its client finds the error once it sees the close.
+  func recordOpenError(_ error: any Error, for channel: any Channel) {
+    guard let port = channel.remoteAddress?.port else { return }
+    lock.withLock { lastOpenFailure = (port, error) }
+  }
+
+  func takeOpenError(clientPort: Int?) -> (any Error)? {
+    lock.withLock {
+      guard let failure = lastOpenFailure, failure.clientPort == clientPort else { return nil }
+      lastOpenFailure = nil
+      return failure.error
+    }
+  }
+
   /// Returns once no dial is under way (none starts once stopping).
   private func dialsDone() async {
     await withCheckedContinuation { continuation in
@@ -195,20 +222,24 @@ nonisolated final class SSHForwardingConnector: ChannelInboundHandler {
       inbound.close(promise: nil)
       return
     }
-    let (tunnel, targetHost, targetPort) = (self.tunnel, self.targetHost, self.targetPort)
+    let (tunnel, targetHost, targetPort, state) = (
+      self.tunnel, self.targetHost, self.targetPort, self.state
+    )
     Task {
-      await Self.connect(inbound, through: tunnel, to: targetHost, port: targetPort)
+      await Self.connect(inbound, through: tunnel, to: targetHost, port: targetPort, state: state)
     }
   }
 
   private static func connect(
-    _ inbound: any Channel, through tunnel: any SSHTunneling, to host: String, port: Int
+    _ inbound: any Channel, through tunnel: any SSHTunneling, to host: String, port: Int,
+    state: SSHForwarderState
   ) async {
     let outbound: any Channel
     do {
       outbound = try await tunnel.openDirectTCPIP(
         targetHost: host, targetPort: port, autoRead: false)
     } catch {
+      state.recordOpenError(error, for: inbound)
       inbound.close(promise: nil)
       return
     }

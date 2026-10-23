@@ -150,6 +150,23 @@ struct MongoshAutocompleteProviderTests {
     #expect(stage.getSuggestions(for: "{ st", at: 4, dialect: .mongodb).map(\.text) == ["status"])
   }
 
+  @Test("A stage body whose stage name is not $ and ASCII letters offers nothing")
+  func untrustedStageName() {
+    let tables = [
+      DatabaseTable(
+        schema: "shop", name: "users", columns: [DatabaseColumn(name: "status", type: "string")])
+    ]
+    func texts(_ op: String) -> [String] {
+      MongoshAutocompleteProvider.documentSuggestions(
+        for: "{ st", at: 4, collection: "users", mode: .stage(op), tables: tables
+      ).map(\.text)
+    }
+    #expect(texts("$project") == ["status"])
+    for op in ["$match: {}}, {$project", "project", "$", "$project1"] {
+      #expect(texts(op).isEmpty, "\(op)")
+    }
+  }
+
   @Test("An update's second argument offers update operators at its top level")
   func updateOperators() {
     #expect(suggest("db.users.updateOne({_id: 1}, {$s|") == ["{$set"])

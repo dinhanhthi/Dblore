@@ -62,6 +62,15 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
+  /// Whether `UPDATE ... SET c = DEFAULT` is valid (PostgreSQL `UPDATE`, MySQL `UPDATE` docs).
+  /// SQLite and MongoDB have none; DuckDB grid edits stay off (`supportsRowStaging`).
+  var supportsDefaultInUpdate: Bool {
+    switch engine {
+    case .postgresql, .mysql: true
+    case .sqlite, .duckdb, .mongodb: false
+    }
+  }
+
   /// SQLite and MySQL (default `_ci` collations) `LIKE` fold case, and neither has `ILIKE`.
   /// PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
   var likeIsCaseInsensitive: Bool {
@@ -84,6 +93,22 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       throw SQLDialectError.nulInIdentifier
     }
     return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
+  }
+
+  /// Text for a `--` comment, in every dialect: each line break (which would end the comment
+  /// and turn the rest, e.g. of a quoted identifier, into live SQL) becomes a visible escape
+  static func lineCommentSafe(_ text: String) -> String {
+    var safe = ""
+    for scalar in text.unicodeScalars {
+      switch scalar {
+      case "\n": safe += "\\n"
+      case "\r": safe += "\\r"
+      case "\u{0B}", "\u{0C}", "\u{85}", "\u{2028}", "\u{2029}":
+        safe += "\\u{" + String(scalar.value, radix: 16, uppercase: true) + "}"
+      default: safe.unicodeScalars.append(scalar)
+      }
+    }
+    return safe
   }
 
   /// `quoteIdentifier(name)`, or `schema.name` when `schema` is not the default.

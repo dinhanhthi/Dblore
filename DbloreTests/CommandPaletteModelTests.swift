@@ -215,14 +215,27 @@ struct CommandPaletteModelTests {
     body(captured)
   }
 
+  /// Waits on the model's observed changes (no polling) until `condition` holds. A loaded
+  /// full-suite run can hold the main actor for tens of seconds, so the deadline is generous.
   private func waitUntil(
-    timeout: Duration = .seconds(30), _ condition: @MainActor () -> Bool
+    timeout: Duration = .seconds(120), _ condition: @MainActor () -> Bool
   ) async -> Bool {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-      if condition() { return true }
-      try? await Task.sleep(for: .milliseconds(15))
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+      // Reading inside the tracking subscribes before the check, so no change is missed
+      let (changes, continuation) = AsyncStream<Void>.makeStream()
+      let satisfied = withObservationTracking {
+        condition()
+      } onChange: {
+        continuation.finish()
+      }
+      if satisfied { return true }
+      let timer = Task {
+        try? await ContinuousClock().sleep(until: deadline)
+        continuation.finish()
+      }
+      for await _ in changes {}
+      timer.cancel()
     }
     return condition()
   }

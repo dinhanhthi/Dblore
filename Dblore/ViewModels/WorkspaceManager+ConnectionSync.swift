@@ -7,7 +7,8 @@
 //  An opened file's AI policy never weakens the saved connection's, and AI features ask the
 //  strictest of the live policy and of every saved row of the connection's identity. A save
 //  keeps the saved row's AI policy and rules unless the AI fields themselves were edited, and
-//  its color and group unless the save comes from the connection form.
+//  its color and group unless the save comes from the connection form. Its hidden schemas are
+//  always kept: only the sidebar sets them, and saves the row when there is one.
 //  Connecting to the same database with weaker settings goes through the same Safe Mode unlock
 //  as a runtime change.
 //
@@ -108,10 +109,11 @@ extension WorkspaceManager {
     return config
   }
 
-  /// `config` with the color and group of the saved row a save of `config` overwrites, for saves
-  /// that do not come from the connection form (an opened file, a rename), so they never erase
-  /// what the form set, and for an opened file's config, so the form opens on the saved values.
-  /// Unchanged without that row, and with Remember off.
+  /// `config` with the color, group, hidden schemas and scripts of the saved row a save of
+  /// `config` overwrites, for saves that do not come from the connection form (an opened file, a
+  /// rename), so they never erase what the form or the sidebar set, and for an opened file's
+  /// config, so the form opens on the saved values. Unchanged without that row, and with
+  /// Remember off.
   static func keepingSavedAppearance(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -121,6 +123,45 @@ extension WorkspaceManager {
     var config = config
     config.colorTag = saved.colorTag
     config.groupName = saved.groupName
+    config.hiddenSchemas = saved.hiddenSchemas
+    return config.withScripts(of: saved)
+  }
+
+  /// An opened file's `config` with the scripts of its saved row (Remember on), else none: a
+  /// file from elsewhere never picks which of the user's scripts run, nor against which host.
+  static func keepingSavedScripts(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    let saved =
+      config.rememberConnection
+      ? exactSavedEntry(
+        for: config,
+        in: SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore()))?.config
+      : nil
+    return config.withScripts(of: saved)
+  }
+
+  /// `config` with the hidden schemas of the saved row a save of `config` overwrites, for form
+  /// saves: no form edits them, so a new draft of a saved connection never clears them. Without
+  /// that row (or with Remember off) the draft keeps its own only while it still targets
+  /// `current`, the workspace's connection they were set on (same saved-row key); a draft
+  /// retargeted at another connection gets none.
+  static func keepingSavedHiddenSchemas(
+    _ config: ConnectionConfig, current: ConnectionConfig? = nil,
+    defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    var config = config
+    if config.rememberConnection,
+      let saved = exactSavedEntry(
+        for: config,
+        in: SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore()))?.config
+    {
+      config.hiddenSchemas = saved.hiddenSchemas
+    } else if current.map(ConnectionKeychainKey.password(for:))
+      != ConnectionKeychainKey.password(for: config)
+    {
+      config.hiddenSchemas = []
+    }
     return config
   }
 
@@ -193,6 +234,32 @@ extension WorkspaceManager {
     markDirtyAndScheduleAutoSave()
     syncConnectionStateToTabs()
     // A switched MongoDB connection renames its saved entry, which keeps the home database
+    SessionManager.saveConnection(
+      current.mongoHomeDatabase == nil
+        ? current : Self.switchedMongoConfig(current, to: current.identityDatabase),
+      defaults: defaults, passwords: passwords)
+  }
+
+  /// Set the schemas the sidebar hides for the active connection (workspace, editing copy and,
+  /// when it has one, its saved row, saved as a rename is). Only the sidebar reads them. A
+  /// connection without a saved row gets none: the save would add one to Recents and could
+  /// push out the oldest row with its Keychain items.
+  func setHiddenSchemas(
+    _ schemas: [String], defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+  ) {
+    let normalized = ConnectionConfig.normalizedHiddenSchemas(schemas)
+    guard var current = workspace.connectionConfig, current.hiddenSchemas != normalized else {
+      return
+    }
+    current = Self.keepingSavedAIFields(current, defaults: defaults)
+    current = Self.keepingSavedAppearance(current, defaults: defaults)
+    current.hiddenSchemas = normalized
+    workspace.connectionConfig = current
+    editingConnectionConfig.hiddenSchemas = normalized
+    markDirtyAndScheduleAutoSave()
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    guard Self.exactSavedEntry(for: current, in: history) != nil else { return }
     SessionManager.saveConnection(
       current.mongoHomeDatabase == nil
         ? current : Self.switchedMongoConfig(current, to: current.identityDatabase),
@@ -369,5 +436,17 @@ extension WorkspaceManager {
     for viewModel in viewModels.values {
       viewModel.invalidateEditTargets()
     }
+  }
+}
+
+extension ConnectionConfig {
+  /// This config with the script names and timeout of `other` (none when nil).
+  fileprivate func withScripts(of other: ConnectionConfig?) -> ConnectionConfig {
+    var config = self
+    config.preConnectScript = other?.preConnectScript
+    config.postDisconnectScript = other?.postDisconnectScript
+    config.passwordCommandScript = other?.passwordCommandScript
+    config.scriptTimeoutSeconds = other?.scriptTimeoutSeconds
+    return config
   }
 }

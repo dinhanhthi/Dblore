@@ -28,6 +28,7 @@ private enum CommandPaletteAction: String, CaseIterable {
   case showMongoCollections = "show-mongo-collections"
   case switchMongoDatabase = "switch-mongo-database"
   case dataRewind = "data-rewind"
+  case findValueInEveryTable = "find-value-in-every-table"
 
   var title: String {
     switch self {
@@ -50,6 +51,7 @@ private enum CommandPaletteAction: String, CaseIterable {
     case .showMongoCollections: "Show Collections"
     case .switchMongoDatabase: "Switch Database..."
     case .dataRewind: "Data Rewind..."
+    case .findValueInEveryTable: "Find a Value in Every Table..."
     }
   }
 
@@ -136,7 +138,8 @@ extension WorkspaceManager {
 
   /// "Query Parquet/CSV File..." only for a DuckDB workspace (connected or not). The MongoDB
   /// overview screens only for a connected MongoDB workspace. Data Rewind only where edits are
-  /// recorded (`canOpenDataRewind`).
+  /// recorded (`canOpenDataRewind`). Find a Value in Every Table only where it can run
+  /// (`canSearchEveryTable`).
   private func paletteActions() -> [CommandPaletteAction] {
     CommandPaletteAction.allCases.filter {
       switch $0 {
@@ -144,6 +147,7 @@ extension WorkspaceManager {
       case .showMongoDatabases, .showMongoCollections, .switchMongoDatabase:
         canShowMongoOverview
       case .dataRewind: canOpenDataRewind
+      case .findValueInEveryTable: canSearchEveryTable
       default: true
       }
     }
@@ -227,6 +231,9 @@ extension WorkspaceManager {
     case .dataRewind:
       guard canOpenDataRewind else { return false }
       openDataRewind()
+    case .findValueInEveryTable:
+      guard canSearchEveryTable else { return false }
+      openCrossTableSearch()
     }
     return true
   }

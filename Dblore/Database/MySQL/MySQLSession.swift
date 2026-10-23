@@ -68,19 +68,9 @@ nonisolated struct MySQLSessionError: Error, Equatable, Sendable, LocalizedError
           "The server does not support TLS, and this connection's SSL mode requires it. Turn "
           + "on SSL on the server or choose another SSL mode.")
     case MySQLError.publicKeyRetrievalNotAllowed:
-      self.init(
-        message:
-          "The server asked for full authentication over an unencrypted connection, which would "
-          + "send the password protected only by a key Dblore cannot verify. Enable SSL on the "
-          + "server and use an SSL mode other than Disable, or connect once over SSL so the "
-          + "server caches the login. (Allowing public key retrieval in the connection settings "
-          + "is not available yet.)")
+      self.init(message: MySQLSession.plaintextFullAuthRefusedMessage)
     case MySQLError.unsupportedAuthPlugin(let name):
-      self.init(
-        message:
-          "The server asked for the \(name) authentication method, which Dblore does not "
-          + "support (sha256_password and MariaDB ed25519 are not supported). Use "
-          + "caching_sha2_password or mysql_native_password for this user.")
+      self.init(message: MySQLSession.unsupportedAuthPluginMessage(name))
     case let error as MySQLError:
       self.init(message: error.message)
     case let error as DatabaseError:
@@ -530,7 +520,7 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
       // Not the session's own loop: it may be busy decoding the rows this kill should stop.
       return try await Self.connect(
         to: address, config: self.config, tls: tls,
-        on: MultiThreadedEventLoopGroup.singleton.next())
+        on: MultiThreadedEventLoopGroup.singleton.next(), forwarder: forwarder)
     }
     do {
       // Over SSH, never dial a stopped forwarder's port (any local process may hold it by then,
@@ -580,18 +570,24 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
     to addresses: [SocketAddress], tls: TLSConfiguration?, on loop: any EventLoop
   ) async throws -> (MySQLConnection, SocketAddress, TLSConfiguration?, Bool) {
     var lastError: (any Error)?
+    let forwarder = lock.withLock { forwarderStorage }
     for address in addresses {
       let connection: MySQLConnection
       var usedTLS = tls
       do {
         do {
-          connection = try await Self.connect(to: address, config: config, tls: tls, on: loop)
+          connection = try await Self.connect(
+            to: address, config: config, tls: tls, on: loop, forwarder: forwarder)
         } catch MySQLError.tlsNotSupportedByServer
           where tls != nil && Self.mayFallBack(config.sslMode)
         {
           usedTLS = nil
-          connection = try await Self.connect(to: address, config: config, tls: nil, on: loop)
+          connection = try await Self.connect(
+            to: address, config: config, tls: nil, on: loop, forwarder: forwarder)
         }
+      } catch let error as SSHTunnelError {
+        // Typed like the bastion's own errors, so it reads as it does for PostgreSQL.
+        throw error
       } catch {
         lastError = error
         if Self.isTransportError(error) { continue }
@@ -613,35 +609,89 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
 
   /// One handshake, bounded by the connection timeout. A connection that completes after the
   /// timeout is closed. TLS checks `config.host`, whatever `address` is (the SSH forwarder's
-  /// loopback address included).
+  /// loopback address included). The bootstrap sets what mysql-nio's `connect(to:)` sets, and
+  /// adds the full-authentication guard in front of the handlers the login appends. Through
+  /// `forwarder`, a connection closed because the bastion refused its tunnel channel fails with
+  /// that refusal instead of mysql-nio's `.closed`.
   static func connect(
     to address: SocketAddress, config: ConnectionConfig, tls: TLSConfiguration?,
-    on loop: any EventLoop
+    on loop: any EventLoop, forwarder: SSHLoopbackForwarder?
   ) async throws -> MySQLConnection {
     let result = loop.makePromise(of: MySQLConnection.self)
     let seconds = config.timeoutSeconds
     let timer = loop.scheduleTask(in: .seconds(Int64(seconds))) {
       result.fail(DatabaseError.connectionFailed("Connection timeout after \(seconds) seconds"))
     }
+    let refusal = FullAuthRefusal()
+    let armed = armsFullAuthGuard(
+      tlsMode: config.sslMode, host: config.host, usesSSH: config.sshTunnel != nil)
+    ClientBootstrap(group: loop)
+      .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
+      .channelInitializer { channel in
+        channel.eventLoop.makeCompletedFuture {
+          try channel.pipeline.syncOperations.addHandler(
+            MySQLFullAuthGuard(armed: armed, refusal: refusal))
+        }
+      }
+      .connect(to: address)
+      // On the channel's loop as the connect completes, before the greeting is read.
+      .flatMap { channel in
+        // Read while connected: a closed channel no longer has its address.
+        let clientPort = channel.localAddress?.port
+        return login(over: channel, config: config, tls: tls, refusal: refusal)
+          .flatMapErrorThrowing { error in
+            // A guard refusal is already worded by `login` and is no longer `.closed`.
+            guard case MySQLError.closed = error, let forwarder,
+              let openError = forwarder.takeOpenError(clientPort: clientPort)
+            else { throw error }
+            throw openError
+          }
+      }
+      .whenComplete { outcome in
+        timer.cancel()
+        switch outcome {
+        case .success(let connection):
+          result.futureResult.whenFailure { _ in _ = connection.close() }
+          result.succeed(connection)
+        case .failure(let error):
+          result.fail(error)
+        }
+      }
+    return try await result.futureResult.get()
+  }
+
+  /// The login over `channel`, whose pipeline holds the full-authentication guard. Call it on
+  /// the channel's event loop before any data arrives. Disarms the guard once the login
+  /// succeeded, before the connection is returned (so before any command); a refused login
+  /// fails with the refusal's text instead of mysql-nio's `.closed`.
+  static func login(
+    over channel: any Channel, config: ConnectionConfig, tls: TLSConfiguration?,
+    refusal: FullAuthRefusal
+  ) -> EventLoopFuture<MySQLConnection> {
     MySQLConnection.connect(
-      to: address, username: config.username, database: config.database,
+      over: channel, username: config.username, database: config.database,
       password: config.password, tlsConfiguration: tls,
       serverHostname: tls == nil ? nil : serverHostname(for: config.host),
-      // Never fetch the server's RSA key over plain TCP: after a stripped-TLS fallback the
-      // key could be the attacker's. A connection setting may opt in later (phase 9).
+      // Never fetch the server's RSA key over plain TCP: after a stripped-TLS fallback the key
+      // could be the attacker's. The guard's allow-list relies on this, and an armed guard
+      // would block an RSA key retrieval opt-in over plain TCP.
       allowPublicKeyRetrieval: false,
-      logger: Logger(label: "dblore.mysql"), on: loop
-    ).whenComplete { outcome in
-      timer.cancel()
-      switch outcome {
-      case .success(let connection):
-        result.futureResult.whenFailure { _ in _ = connection.close() }
-        result.succeed(connection)
-      case .failure(let error):
-        result.fail(error)
+      logger: Logger(label: "dblore.mysql")
+    )
+    .flatMapThrowing { connection in
+      do {
+        try channel.pipeline.syncOperations.handler(type: MySQLFullAuthGuard.self).disarm()
+      } catch {
+        channel.close(promise: nil)
+        throw error
       }
+      return connection
     }
-    return try await result.futureResult.get()
+    .flatMapErrorThrowing { error in
+      // The guard closed the channel, so mysql-nio reports `.closed`: say what the server asked.
+      guard let reason = refusal.reason else { throw error }
+      throw MySQLSessionError(message: loginRefusalMessage(reason))
+    }
   }
 
   /// The host's addresses (getaddrinfo off the cooperative pool), IP literals as they are.

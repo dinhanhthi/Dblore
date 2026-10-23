@@ -218,7 +218,7 @@ struct ResultExportSheet: View {
         optionPicker(
           "Quote", selection: $options.quote,
           help:
-            "Quote if needed wraps a field with a comma, a quote, or a line break. Never can split a field."
+            "Quote if needed wraps a field with a comma, a quote, or a line break. Never can split a field; formulas are then neutralized on every line."
         ) {
           ForEach(ExportQuote.allCases) { quote in
             Text(quote.title).tag(quote)

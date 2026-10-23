@@ -97,28 +97,50 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.groupName == nil)
   }
 
-  @Test("Color tag and group round-trip; nil omits the keys and an unknown color decodes as nil")
+  @Test(
+    "Color, group, hidden schemas and scripts round-trip; unset omits the keys, unknown decodes as unset"
+  )
   func colorAndGroupCoding() throws {
     #expect(try encodedObject(ConnectionConfig(host: "h"))["colorTag"] == nil)
     #expect(try encodedObject(ConnectionConfig(host: "h"))["groupName"] == nil)
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["hiddenSchemas"] == nil)
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["preConnectScript"] == nil)
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["scriptTimeoutSeconds"] == nil)
 
-    let config = ConnectionConfig(
+    var config = ConnectionConfig(
       host: "localhost", database: "app", colorTag: .pink, groupName: "Prod")
+    config.hiddenSchemas = ["pg_toast", "audit", "audit", ""]
+    #expect(config.hiddenSchemas == ["audit", "pg_toast"])
+    config.preConnectScript = "vpn-up.sh"
+    config.passwordCommandScript = "pw.sh"
+    config.scriptTimeoutSeconds = 900
+    #expect(config.scriptTimeoutSeconds == 300)
     let object = try encodedObject(config)
+    #expect(object["preConnectScript"] as? String == "vpn-up.sh")
+    #expect(object["postDisconnectScript"] == nil)
     #expect(object["colorTag"] as? String == "Pink")
     #expect(object["groupName"] as? String == "Prod")
+    #expect(object["hiddenSchemas"] as? [String] == ["audit", "pg_toast"])
     let decoded = try JSONDecoder().decode(
       ConnectionConfig.self, from: try JSONEncoder().encode(config))
     #expect(decoded.colorTag == .pink)
     #expect(decoded.groupName == "Prod")
+    #expect(decoded.hiddenSchemas == ["audit", "pg_toast"])
     #expect(decoded == config)
 
     var future = object
     future["colorTag"] = "Teal"
+    future["hiddenSchemas"] = "audit"
+    future["scriptTimeoutSeconds"] = 0
+    future["preConnectScript"] = 5
     let unknown = try JSONDecoder().decode(
       ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: future))
     #expect(unknown.colorTag == nil)
     #expect(unknown.groupName == "Prod")
+    #expect(unknown.hiddenSchemas.isEmpty)
+    #expect(unknown.scriptTimeoutSeconds == 1)
+    #expect(unknown.preConnectScript == nil)
+    #expect(unknown.passwordCommandScript == "pw.sh")
   }
 
   @Test("Group names are trimmed, cut to 64 characters, and blank becomes nil, on set and decode")

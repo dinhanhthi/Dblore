@@ -1,6 +1,7 @@
 // DataSettingsModel.swift
 // Settings model for local data: summaries, export, import, and removal.
-// Secret values never enter this type. Removal asks the inventory to delete accounts.
+// Secret values never enter this type. Removal asks the inventory to delete accounts. Clear All
+// with credentials also removes the outside MCP servers, which are kept with their tokens.
 
 import Foundation
 import Observation
@@ -41,11 +42,16 @@ final class DataSettingsModel {
 
   @ObservationIgnored private let providers: [any LocalDataProvider]
   @ObservationIgnored private let inventory: any SecretInventory
+  @ObservationIgnored private let outsideServers: OutsideMCPServerStore
   @ObservationIgnored private var pending: PendingAction?
 
-  init(providers: [any LocalDataProvider], inventory: any SecretInventory) {
+  init(
+    providers: [any LocalDataProvider], inventory: any SecretInventory,
+    outsideServers: OutsideMCPServerStore = .shared
+  ) {
     self.providers = providers
     self.inventory = inventory
+    self.outsideServers = outsideServers
     rows = providers.map {
       DataSettingsRow(category: $0.category, summary: nil, loading: false, error: nil)
     }
@@ -130,6 +136,8 @@ final class DataSettingsModel {
     let failures = await Self.clear(providers)
     var secretFailure: String?
     if includeSecrets {
+      // The list goes with its tokens: names, URLs and ticked tools, not a secret by itself.
+      await outsideServers.removeAll()
       do {
         try await Self.removeSecrets(inventory)
       } catch {
@@ -152,6 +160,10 @@ final class DataSettingsModel {
     do {
       try await Self.delete(item, from: inventory)
       error = nil
+      // A server without its token would only be refused: turn it off.
+      if item.kind == .outsideMCPToken, let id = UUID(uuidString: item.account) {
+        outsideServers.setEnabled(false, for: id)
+      }
     } catch {
       self.error = error.localizedDescription
     }
@@ -265,7 +277,7 @@ final class DataSettingsModel {
   @concurrent private static func removeSecrets(_ inventory: any SecretInventory) async throws {
     let kinds: [SecretKind] = [
       .dbPassword, .aiKey, .chatGPTToken, .safeModePassword, .clientCertificate, .sshCredential,
-      .sshHostKey,
+      .sshHostKey, .outsideMCPToken,
     ]
     for kind in kinds {
       try await inventory.deleteAll(kind: kind)

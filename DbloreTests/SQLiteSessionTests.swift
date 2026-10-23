@@ -183,8 +183,10 @@ struct SQLiteSessionTests {
     }
   }
 
-  @Test("A snapshot read-only open sees rows still in another connection's WAL")
-  func snapshotReadOnlyOpenReadsWAL() async throws {
+  @Test(
+    "A read-only open (tab or snapshot) sees rows still in another connection's WAL",
+    arguments: [false, true])
+  func readOnlyOpenReadsWAL(snapshotReadOnly: Bool) async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
     let writing = SQLiteSession(config: makeConfig(path: url.path))
@@ -195,7 +197,7 @@ struct SQLiteSessionTests {
     _ = try await writing.command("INSERT INTO notes (body) VALUES ('in the wal')", binds: [])
 
     let reading = SQLiteSession(
-      config: makeConfig(path: url.path, readOnlyFile: true), snapshotReadOnly: true)
+      config: makeConfig(path: url.path, readOnlyFile: true), snapshotReadOnly: snapshotReadOnly)
     try await reading.open()
     let visible = try await collect(reading, "SELECT body FROM notes")
     #expect(visible.rows == [[.string("in the wal")]])
@@ -203,6 +205,65 @@ struct SQLiteSessionTests {
       try await reading.command("INSERT INTO notes (body) VALUES ('x')", binds: [])
     }
     await reading.close()
+    let unchanged = try await collect(writing, "SELECT body FROM notes")
+    #expect(unchanged.rows == [[.string("in the wal")]])
+    await writing.close()
+  }
+
+  @Test("A read-only WAL file whose -shm cannot be created still opens (immutable fallback)")
+  func readOnlyOpenFallsBackWhenSidecarsDenied() async throws {
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-sqlite-ro-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let url = folder.appendingPathComponent("locked.db")
+    let writing = SQLiteSession(config: makeConfig(path: url.path))
+    try await writing.open()
+    _ = try await collect(writing, "PRAGMA journal_mode = WAL")
+    _ = try await writing.command("CREATE TABLE notes (body TEXT)", binds: [])
+    _ = try await writing.command("INSERT INTO notes (body) VALUES ('checkpointed')", binds: [])
+    _ = try await collect(writing, "PRAGMA wal_checkpoint(TRUNCATE)")
+    await writing.close()
+    // The system SQLite keeps empty sidecars after the last close. Without them, and in a folder
+    // the process cannot write, a normal read-only open cannot create the -shm.
+    let fileManager = FileManager.default
+    try? fileManager.removeItem(atPath: url.path + "-wal")
+    try? fileManager.removeItem(atPath: url.path + "-shm")
+    try fileManager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+    defer {
+      try? fileManager.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: folder.path)
+    }
+    let reading = SQLiteSession(config: makeConfig(path: url.path, readOnlyFile: true))
+    try await reading.open()
+    let visible = try await collect(reading, "SELECT body FROM notes")
+    #expect(visible.rows == [[.string("checkpointed")]])
+    // A normal read-only open would have created the -shm: none means immutable=1 ran
+    #expect(!fileManager.fileExists(atPath: url.path + "-shm"))
+    await #expect(throws: SQLiteSessionError.self) {
+      try await reading.command("INSERT INTO notes (body) VALUES ('x')", binds: [])
+    }
+    await reading.close()
+  }
+
+  @Test("A read-only open of a file another connection holds EXCLUSIVE reads the committed rows")
+  func readOnlyOpenFallsBackWhenExclusivelyLocked() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let writing = SQLiteSession(config: makeConfig(path: url.path))
+    try await writing.open()
+    _ = try await writing.command("CREATE TABLE notes (body TEXT)", binds: [])
+    _ = try await writing.command("INSERT INTO notes (body) VALUES ('committed')", binds: [])
+    _ = try await writing.command("BEGIN EXCLUSIVE", binds: [])
+    _ = try await writing.command("INSERT INTO notes (body) VALUES ('pending')", binds: [])
+
+    // Waits out the busy timeout, then opens with immutable=1 as before the mode=ro probe
+    let reading = SQLiteSession(config: makeConfig(path: url.path, readOnlyFile: true))
+    try await reading.open()
+    let visible = try await collect(reading, "SELECT body FROM notes")
+    #expect(visible.rows == [[.string("committed")]])
+    await reading.close()
+    _ = try await writing.command("ROLLBACK", binds: [])
     await writing.close()
   }
 

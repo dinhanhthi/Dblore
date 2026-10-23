@@ -53,8 +53,21 @@ extension ColumnInfo {
 // MARK: - PostgreSQL Type Mapping & Parsing
 
 extension DatabaseConnectionManager {
-  /// Map PostgreSQL data type to display name
-  nonisolated static func postgresDataTypeName(_ dataType: PostgresDataType) -> String {
+  /// Extension types the Cell Value viewers read, found by name and owned by an extension:
+  /// their OIDs differ from one database to the next, so they are never hardcoded.
+  nonisolated static let viewerExtensionTypesSQL = """
+    SELECT t.oid::int8, t.typname::text FROM pg_type t
+    WHERE t.typname IN ('geometry', 'geography', 'vector', 'halfvec', 'sparsevec')
+      AND EXISTS (
+        SELECT 1 FROM pg_depend d
+        WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e')
+    """
+
+  /// Map PostgreSQL data type to display name. `extensionTypes` names extension types by OID
+  /// (`viewerExtensionTypesSQL`), shown uppercased like the schema's `udt_name`.
+  nonisolated static func postgresDataTypeName(
+    _ dataType: PostgresDataType, extensionTypes: [UInt32: String] = [:]
+  ) -> String {
     switch dataType {
     case .bool:
       return "BOOLEAN"
@@ -112,6 +125,10 @@ extension DatabaseConnectionManager {
       // Check if this is a user-defined type (e.g., pgvector's vector type)
       // PostgresNIO doesn't have built-in support for custom types, so we need to
       // identify them by their name
+      if let name = extensionTypes[dataType.rawValue] {
+        return name.uppercased()
+      }
+
       let typeName = "\(dataType)"
 
       // PostgresNIO names known array types "INTEGER[]", "TEXT[]", ...
@@ -129,8 +146,10 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// Parse a cell value from PostgresCell
-  nonisolated static func parseCellValue(from cell: PostgresCell) -> CellValue {
+  /// Parse a cell value from PostgresCell. `extensionTypes` as in `postgresDataTypeName`.
+  nonisolated static func parseCellValue(
+    from cell: PostgresCell, extensionTypes: [UInt32: String] = [:]
+  ) -> CellValue {
     // Check for NULL first
     // PostgresNIO represents NULL as nil bytes
     guard let bytes = cell.bytes, bytes.readableBytes > 0 else {
@@ -255,6 +274,21 @@ extension DatabaseConnectionManager {
       if let value = arrayLiteral(cell, String.self, quoteArrayElement) { return value }
 
     default:
+      // geometry_send / geography_send write EWKB, which the Cell Value viewer reads.
+      // halfvec / sparsevec binary is not the float32 layout below: decoded to their text
+      // form, or else kept as bytes, never misread as a vector.
+      if let name = extensionTypes[cell.dataType.rawValue],
+        ["geometry", "geography", "halfvec", "sparsevec"].contains(name)
+      {
+        if cell.format == .binary, name == "halfvec", let text = halfvecText(from: bytes) {
+          return .string(text)
+        }
+        if cell.format == .binary, name == "sparsevec", let text = sparsevecText(from: bytes) {
+          return .string(text)
+        }
+        return .data(Data(buffer: bytes))
+      }
+
       // Check if this is a user-defined type (e.g., pgvector's vector type)
       let typeName = "\(cell.dataType)"
 
@@ -299,6 +333,49 @@ extension DatabaseConnectionManager {
     }
 
     return .null
+  }
+
+  /// halfvec_send: dim (UInt16), unused (UInt16), then dim IEEE half floats, all big-endian.
+  /// `[1, 2, 3]`; nil unless the bytes are exactly that long and dim is within
+  /// `VectorValue.maxDimensions`.
+  private nonisolated static func halfvecText(from buffer: ByteBuffer) -> String? {
+    var buffer = buffer
+    guard let dimension = buffer.readInteger(endianness: .big, as: UInt16.self),
+      buffer.readInteger(endianness: .big, as: UInt16.self) != nil,
+      (1...VectorValue.maxDimensions).contains(Int(dimension)),
+      buffer.readableBytes == Int(dimension) * 2
+    else { return nil }
+    var values: [String] = []
+    for _ in 0..<dimension {
+      guard let bits = buffer.readInteger(endianness: .big, as: UInt16.self) else { return nil }
+      values.append(String(format: "%.9g", Float(Float16(bitPattern: bits))))
+    }
+    return "[" + values.joined(separator: ", ") + "]"
+  }
+
+  /// sparsevec_send: dim, nnz, unused (Int32 each), then nnz 0-based indices (Int32) and nnz
+  /// values (Float32), all big-endian. pgvector's text form `{1:0.5,3:2}/5`, indices 1-based;
+  /// nil unless the bytes are exactly that long and nnz <= dim <= `VectorValue.maxDimensions`.
+  private nonisolated static func sparsevecText(from buffer: ByteBuffer) -> String? {
+    var buffer = buffer
+    guard let dimension = buffer.readInteger(endianness: .big, as: Int32.self),
+      let count = buffer.readInteger(endianness: .big, as: Int32.self),
+      buffer.readInteger(endianness: .big, as: Int32.self) != nil,
+      (1...VectorValue.maxDimensions).contains(Int(dimension)),
+      (0...dimension).contains(count),
+      buffer.readableBytes == Int(count) * 8
+    else { return nil }
+    var indices: [Int] = []
+    for _ in 0..<count {
+      guard let index = buffer.readInteger(endianness: .big, as: Int32.self) else { return nil }
+      indices.append(Int(index) + 1)
+    }
+    var entries: [String] = []
+    for index in indices {
+      guard let bits = buffer.readInteger(endianness: .big, as: UInt32.self) else { return nil }
+      entries.append("\(index):" + String(format: "%.9g", Float(bitPattern: bits)))
+    }
+    return "{" + entries.joined(separator: ",") + "}/\(dimension)"
   }
 
   /// Decode a one-dimensional array cell and render it as a PostgreSQL array literal, `{1,2}`.

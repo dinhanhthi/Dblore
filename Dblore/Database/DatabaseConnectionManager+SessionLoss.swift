@@ -61,9 +61,25 @@ extension DatabaseConnectionManager {
   /// Run `operation` on the current session. A closed or replaced PostgreSQL socket becomes
   /// `DatabaseError.connectionLost` (session forgotten, event published). Row iteration of a
   /// returned stream stays inside `operation` so a close during the read is mapped the same way.
+  /// A ROLLBACK owed after a DuckDB interrupt cancel is sent before `operation`. A user
+  /// statement (`userStatementAdmission`) is not run (`sentAfterInterruptError`) when that
+  /// ROLLBACK ended an open transaction, or when an interrupt cancel came after it was
+  /// admitted (another caller may have sent the ROLLBACK). App reads go through.
   func withSession<T: Sendable>(
     _ operation: (any DatabaseSession) async throws -> T
   ) async throws -> T {
+    // DuckDB: the ROLLBACK an interrupt cancel owes goes first (`settleInterruptAbort`). It
+    // ended the transaction a user statement was meant for: never sent in autocommit instead
+    var settled = false
+    if interruptRollbackOwed != nil { settled = await settleInterruptAbort() }
+    // Both: one admitted after the cancel but before this ROLLBACK chose its path against the
+    // transaction it just ended (a Protected write would autocommit)
+    if let admission = Self.userStatementAdmission,
+      config?.databaseType.interruptAbortsTransaction == true,
+      settled || cancelError(since: admission.epoch, generation: admission.generation) != nil
+    {
+      throw Self.sentAfterInterruptError
+    }
     let epoch = connectionEpoch
     guard let current = session else { throw DatabaseError.notConnected }
     if let postgres = current as? PostgresSession {

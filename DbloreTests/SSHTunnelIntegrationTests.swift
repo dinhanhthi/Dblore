@@ -438,11 +438,29 @@ extension SSHTunnelIntegrationTests {
     return rows
   }
 
-  /// One TLS login (Require), so a plain-text login after it finds the auth cache warm.
+  /// One verified TLS login, so a plain-text login after it finds the auth cache warm (the
+  /// full-authentication guard refuses a cold cache on every unverified mode over SSH).
   private static func primeMySQLAuthCache(_ harness: Harness) async throws {
-    let session = harness.mysqlSession(mysqlConfig(sslMode: .require))
-    try await session.open()
-    await session.close()
+    try await withVerifiedMySQLSession(harness) { _ in }
+  }
+
+  /// Opens a Verify Full session with the fixture CA, runs `body`, closes it. Verify Full checks
+  /// the certificate's name, DNS:mysql-ssh, not the forwarder's 127.0.0.1.
+  private static func withVerifiedMySQLSession(
+    _ harness: Harness, _ body: (MySQLSession) async throws -> Void
+  ) async throws {
+    var verified = mysqlConfig(sslMode: .verifyFull)
+    verified.clientCertificate = ClientCertificateInfo(subject: nil, expiry: nil, hasCA: true)
+    let caPEM = try String(contentsOf: fixtures.appendingPathComponent("ca.crt"), encoding: .utf8)
+    let scoped = ClientCertificateStoreFactory.ScopedMaterial(
+      account: ClientCertificateStoreFactory.account(for: verified),
+      material: ClientCertificateMaterial(caPEM: caPEM))
+    try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+      let session = harness.mysqlSession(verified)
+      try await session.open()
+      try await body(session)
+      await session.close()
+    }
   }
 
   private static func mysqlConnectionID(_ manager: DatabaseConnectionManager) async throws -> Int {
@@ -458,21 +476,10 @@ extension SSHTunnelIntegrationTests {
     let harness = Harness(config: Self.mysqlConfig())
     _ = harness.makeManager()  // saves the SSH credential
 
-    // Verify Full checks the certificate's name, DNS:mysql-ssh, not the forwarder's 127.0.0.1.
-    var verified = Self.mysqlConfig(sslMode: .verifyFull)
-    verified.clientCertificate = ClientCertificateInfo(subject: nil, expiry: nil, hasCA: true)
-    let caPEM = try String(
-      contentsOf: Self.fixtures.appendingPathComponent("ca.crt"), encoding: .utf8)
-    let scoped = ClientCertificateStoreFactory.ScopedMaterial(
-      account: ClientCertificateStoreFactory.account(for: verified),
-      material: ClientCertificateMaterial(caPEM: caPEM))
-    try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
-      let session = harness.mysqlSession(verified)
-      try await session.open()
+    try await Self.withVerifiedMySQLSession(harness) { session in
       #expect(session.transport == .verified)
       let cipher = try await Self.mysqlRows(session, "SHOW SESSION STATUS LIKE 'Ssl_cipher'")
       #expect(cipher.first?.last != .string(""))
-      await session.close()
     }
 
     let session = harness.mysqlSession(harness.config)

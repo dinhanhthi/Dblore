@@ -12,6 +12,7 @@ struct HistoryTabContent: View {
 
   /// Stays false until the first refresh finishes, so an empty store does not flash the empty state.
   @State private var hasLoaded = false
+  @State private var showsInsights = false
 
   private var historyList: HistoryListModel { workspaceManager.historyList }
 
@@ -23,6 +24,7 @@ struct HistoryTabContent: View {
         HStack(spacing: Spacing.sm) {
           writesFilter
           filterMenu
+          insightsButton
         }
         .fixedSize(horizontal: true, vertical: false)
       }
@@ -34,6 +36,23 @@ struct HistoryTabContent: View {
         hasLoaded = true
       }
     }
+    .sheet(isPresented: $showsInsights) {
+      QueryInsightsView(workspaceManager: workspaceManager, onClose: { showsInsights = false })
+    }
+  }
+
+  /// Opens Query Insights: run statistics per statement over a time window.
+  private var insightsButton: some View {
+    Button {
+      showsInsights = true
+    } label: {
+      Image(systemName: "chart.bar.xaxis")
+    }
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
+    .frame(height: SidebarFilterMetrics.controlHeight)
+    .help("Query Insights")
+    .accessibilityLabel("Query Insights")
   }
 
   /// Same capsule and height as the scope menu. On keeps `kind == write`.

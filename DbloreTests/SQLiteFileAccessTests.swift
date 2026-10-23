@@ -126,6 +126,7 @@ struct SQLiteFileAccessTests {
     hooks.addPresenter = { presenter in
       log.add("add:\(presenter.presentedItemURL?.path ?? "")")
     }
+    hooks.waitForPresenters = { log.add("wait") }
     hooks.removePresenter = { _ in log.add("remove") }
     hooks.probe = { _ in
       log.add("probe")
@@ -136,7 +137,7 @@ struct SQLiteFileAccessTests {
     #expect(
       log.list == ["start"]
         + SQLiteFileAccess.sidecarSuffixes.map { "add:\(databaseURL.path)\($0)" }
-        + ["probe", "folder"])
+        + ["wait", "probe", "folder"])
     #expect(folderURL == databaseURL)
     #expect(grant.readOnly == true)
     #expect(grant.bannerReason == SQLiteFileAccess.readOnlyBannerReason)

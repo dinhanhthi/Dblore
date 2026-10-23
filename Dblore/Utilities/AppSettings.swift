@@ -73,6 +73,27 @@ enum LaunchBehavior: String, CaseIterable {
   }
 }
 
+/// What Cmd+C puts on the clipboard for the selected result grid rows
+enum CopyRowsFormat: String, CaseIterable {
+  case tsv
+  case tsvWithHeaders
+  case csv
+  case csvWithHeaders
+  case json
+  case markdown
+
+  var title: String {
+    switch self {
+    case .tsv: return "TSV"
+    case .tsvWithHeaders: return "TSV with headers"
+    case .csv: return "CSV"
+    case .csvWithHeaders: return "CSV with headers"
+    case .json: return "JSON"
+    case .markdown: return "Markdown"
+    }
+  }
+}
+
 /// Where the AI assistant panel opens
 enum AIPanelMode: String, CaseIterable {
   case sidebar
@@ -167,6 +188,34 @@ enum SafeMode: Int, Codable, CaseIterable, Sendable {
   var requiresPassword: Bool {
     self == .safeRead || self == .safeAll
   }
+}
+
+/// What MCP's execute_write may change on an allowlisted connection. Ordered: a wider scope
+/// allows everything a narrower one does.
+nonisolated enum MCPWriteScope: String, CaseIterable, Sendable, Comparable {
+  case read
+  /// INSERT, UPDATE, DELETE, MERGE (MongoDB inserts, updates, deletes)
+  case data
+  /// Data changes plus schema changes (CREATE, ALTER, DROP; MongoDB collections and indexes)
+  case schema
+
+  var title: String {
+    switch self {
+    case .read: "Read"
+    case .data: "Read + data changes"
+    case .schema: "Read + data + schema changes"
+    }
+  }
+
+  private var rank: Int {
+    switch self {
+    case .read: 0
+    case .data: 1
+    case .schema: 2
+    }
+  }
+
+  static func < (lhs: Self, rhs: Self) -> Bool { lhs.rank < rhs.rank }
 }
 
 /// Why Touch ID could not be enabled for Safe Mode
@@ -331,6 +380,9 @@ class AppSettings {
     static let showExperimentalEngines = "app.settings.showExperimentalEngines"
     static let resultFontSize = "app.settings.resultFontSize"
     static let colorValuesByType = "app.settings.colorValuesByType"
+    static let neutralizesCopiedFormulas = "app.settings.neutralizesCopiedFormulas"
+    static let copyRowsFormat = "app.settings.copyRowsFormat"
+    static let showsInvisibleCharacters = "app.settings.showsInvisibleCharacters"
     static let editorFontSize = "app.settings.editorFontSize"
     static let notifyLongQueries = "app.settings.notifyLongQueries"
     static let longQueryThresholdSeconds = "app.settings.longQueryThresholdSeconds"
@@ -339,6 +391,8 @@ class AppSettings {
     static let mcpPort = "app.settings.mcpPort"
     static let mcpAllowedConnectionIDs = "app.settings.mcpAllowedConnectionIDs"
     static let mcpRowCap = "app.settings.mcpRowCap"
+    static let mcpWriteToolsEnabled = "app.settings.mcpWriteToolsEnabled"
+    static let mcpWriteScopes = "app.settings.mcpWriteScopes"
     static let mongoPreviewDocumentCount = "app.settings.mongoPreviewDocumentCount"
   }
 
@@ -708,6 +762,32 @@ class AppSettings {
     }
   }
 
+  /// Prefix copied text cells that start with =, +, -, @ (TSV copies) so spreadsheets
+  /// don't run them as formulas
+  /// Default: true
+  var neutralizesCopiedFormulas: Bool = true {
+    didSet {
+      defaults.set(neutralizesCopiedFormulas, forKey: Keys.neutralizesCopiedFormulas)
+    }
+  }
+
+  /// Format of the result grid rows Cmd+C copies
+  /// Default: .tsv (no header row)
+  var copyRowsFormat: CopyRowsFormat = .tsv {
+    didSet {
+      defaults.set(copyRowsFormat.rawValue, forKey: Keys.copyRowsFormat)
+    }
+  }
+
+  /// Show control, zero-width and special space characters in result grid cells as marks.
+  /// Display only: copy, export and search read the raw value.
+  /// Default: true
+  var showsInvisibleCharacters: Bool = true {
+    didSet {
+      defaults.set(showsInvisibleCharacters, forKey: Keys.showsInvisibleCharacters)
+    }
+  }
+
   /// Safe Mode level for query protection
   /// Default: .alertRead (confirm modification queries)
   var safeMode: SafeMode = .alertRead {
@@ -900,6 +980,39 @@ class AppSettings {
       }
       defaults.set(mcpRowCap, forKey: Keys.mcpRowCap)
     }
+  }
+
+  /// Offer MCP's execute_write tool (each call still needs a write scope and an approval).
+  /// Default: false
+  var mcpWriteToolsEnabled: Bool = false {
+    didSet {
+      defaults.set(mcpWriteToolsEnabled, forKey: Keys.mcpWriteToolsEnabled)
+    }
+  }
+
+  /// Write scopes of allowlisted connections, by id. A missing id is `.read`.
+  /// Default: none (every connection Read)
+  var mcpWriteScopes: [UUID: MCPWriteScope] = [:] {
+    didSet {
+      defaults.set(
+        Dictionary(
+          uniqueKeysWithValues: mcpWriteScopes.filter { $0.value != .read }
+            .map { ($0.key.uuidString, $0.value.rawValue) }),
+        forKey: Keys.mcpWriteScopes)
+    }
+  }
+
+  /// The stored scopes; an unknown id or value is dropped (Read), so nothing widens.
+  static func decodeMCPWriteScopes(_ stored: Any?) -> [UUID: MCPWriteScope] {
+    guard let stored = stored as? [String: String] else { return [:] }
+    var scopes: [UUID: MCPWriteScope] = [:]
+    for (key, value) in stored {
+      guard let id = UUID(uuidString: key), let scope = MCPWriteScope(rawValue: value),
+        scope != .read
+      else { continue }
+      scopes[id] = scope
+    }
+    return scopes
   }
 
   // MARK: - MongoDB
@@ -1161,6 +1274,20 @@ class AppSettings {
       colorValuesByType = defaults.bool(forKey: Keys.colorValuesByType)
     }
 
+    if defaults.object(forKey: Keys.neutralizesCopiedFormulas) != nil {
+      neutralizesCopiedFormulas = defaults.bool(forKey: Keys.neutralizesCopiedFormulas)
+    }
+
+    if let raw = defaults.string(forKey: Keys.copyRowsFormat),
+      let format = CopyRowsFormat(rawValue: raw)
+    {
+      copyRowsFormat = format
+    }
+
+    if defaults.object(forKey: Keys.showsInvisibleCharacters) != nil {
+      showsInvisibleCharacters = defaults.bool(forKey: Keys.showsInvisibleCharacters)
+    }
+
     if defaults.object(forKey: Keys.historyEnabled) != nil {
       historyEnabled = defaults.bool(forKey: Keys.historyEnabled)
     }
@@ -1233,6 +1360,12 @@ class AppSettings {
       mcpRowCap = defaults.integer(forKey: Keys.mcpRowCap)
     }
 
+    if defaults.object(forKey: Keys.mcpWriteToolsEnabled) != nil {
+      mcpWriteToolsEnabled = defaults.bool(forKey: Keys.mcpWriteToolsEnabled)
+    }
+
+    mcpWriteScopes = Self.decodeMCPWriteScopes(defaults.object(forKey: Keys.mcpWriteScopes))
+
     if defaults.object(forKey: Keys.mongoPreviewDocumentCount) != nil {
       // didSet does not run in init: an unknown stored value goes back to the default here
       let count = defaults.integer(forKey: Keys.mongoPreviewDocumentCount)
@@ -1293,6 +1426,9 @@ class AppSettings {
     hideColumnTypes = false
     resultFontSize = Self.defaultResultFontSize
     colorValuesByType = true
+    neutralizesCopiedFormulas = true
+    copyRowsFormat = .tsv
+    showsInvisibleCharacters = true
     // Same-value assignment does not run didSet, so write the review projection first.
     defaults.set(CommitStyle.review.rawValue, forKey: Keys.commitStyle)
     safeMode = CommitStyle.review.legacyProjection.safeMode
@@ -1310,6 +1446,8 @@ class AppSettings {
     mcpPort = Self.defaultMCPPort
     mcpAllowedConnectionIDs = []
     mcpRowCap = Self.defaultMCPRowCap
+    mcpWriteToolsEnabled = false
+    mcpWriteScopes = [:]
     mongoPreviewDocumentCount = Self.defaultMongoPreviewDocumentCount
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)

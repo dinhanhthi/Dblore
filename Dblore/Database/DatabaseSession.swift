@@ -85,8 +85,18 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
   /// session instead.
   func interrupt() async
 
+  /// After an interrupt cancel ended the running statement: whether the transaction opened
+  /// with BEGIN is still open. Nil when the session cannot tell: the caller keeps its state.
+  /// Not asked when the engine's interrupt always aborts the transaction
+  /// (`DatabaseType.interruptAbortsTransaction`): the manager rolls it back.
+  func transactionOpenAfterInterrupt() async -> Bool?
+
   /// User-facing text for a driver error.
   func formatError(_ error: Error) -> String
+}
+
+nonisolated extension DatabaseSession {
+  func transactionOpenAfterInterrupt() async -> Bool? { nil }
 }
 
 /// Builds a session that is not open yet. `open()` connects. Throws when the engine cannot
@@ -101,7 +111,7 @@ nonisolated protocol DatabaseSessionFactory: Sendable {
   ) async throws -> any DatabaseSession
 }
 
-extension DatabaseSessionFactory {
+nonisolated extension DatabaseSessionFactory {
   func makeSession(
     config: ConnectionConfig, extraAllowedPaths: [String]
   ) async throws -> any DatabaseSession {

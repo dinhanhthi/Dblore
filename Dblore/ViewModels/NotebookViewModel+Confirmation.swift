@@ -11,7 +11,11 @@ import Foundation
 extension NotebookViewModel {
   /// Shows the confirmation dialog for `query` if the connection's commit style asks for one.
   /// Returns true if the dialog was shown (the caller must not run the query).
-  func presentConfirmationIfNeeded(for query: String, cellId: UUID?) -> Bool {
+  /// `alsoAffected`: a staged commit's cascade lines (`CascadeImpactSummary.lines`), shown
+  /// under the statements.
+  func presentConfirmationIfNeeded(
+    for query: String, cellId: UUID?, alsoAffected: [String] = []
+  ) -> Bool {
     let commitStyle =
       notebook.connectionConfig?.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
       ?? AppSettings.shared.commitStyle
@@ -37,6 +41,7 @@ extension NotebookViewModel {
       classified, parameters: parameters, dialect: sqlDialect)
     queryConfirmationState.requiresPassword = commitStyle.requiresPassword
     queryConfirmationState.statements = statements
+    queryConfirmationState.alsoAffected = alsoAffected
     // A dialog dismissed without Cancel (Escape, click outside) leaves its pending action armed.
     // Drop it so Execute Query runs what this dialog shows; the caller re-arms its own after.
     pendingExplainSQL = nil

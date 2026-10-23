@@ -1,7 +1,7 @@
 // WorkspaceManager+ObjectSource.swift
-// Read-only routine and trigger source tabs: one tab per object (keyed by `ObjectSourceRef.key`),
-// opened at once in a loading state while the definition is read off the main actor. The
-// result is dropped if the tab closed (or was reloaded) in the meantime.
+// Read-only routine, trigger, sequence and user type source tabs: one tab per object (keyed by
+// `ObjectSourceRef.key`), opened at once in a loading state while the definition is read off
+// the main actor. The result is dropped if the tab closed (or was reloaded) in the meantime.
 
 import Foundation
 
@@ -40,6 +40,10 @@ extension ObjectSourceRef {
       self.init(
         kind: .trigger, schema: trigger.schema, name: trigger.name, table: trigger.table,
         oid: trigger.oid)
+    case .sequence(let sequence):
+      self.init(kind: .sequence, schema: sequence.schema, name: sequence.name, oid: sequence.oid)
+    case .userType(let type):
+      self.init(kind: .userType, schema: type.schema, name: type.name, oid: type.oid)
     }
   }
 }
@@ -51,6 +55,8 @@ nonisolated extension ObjectSourceRef.Kind {
     case .function: "Function"
     case .procedure: "Procedure"
     case .trigger: "Trigger"
+    case .sequence: "Sequence"
+    case .userType: "Type"
     }
   }
 
@@ -60,6 +66,8 @@ nonisolated extension ObjectSourceRef.Kind {
     case .function: "function"
     case .procedure: "gearshape.2"
     case .trigger: "bolt"
+    case .sequence: "number"
+    case .userType: "t.square"
     }
   }
 }
@@ -86,7 +94,8 @@ extension WorkspaceManager {
   static let objectSourceLoadingText = "-- Loading source…"
 
   /// The live schema object for a ref: by oid when it has one, else by schema and name (plus
-  /// table for triggers, arguments for routines). Nil when the object is not in the schema.
+  /// table for triggers, arguments for routines). Nil when the object is not in the schema
+  /// (sequences and types only once their sidebar section has loaded them).
   func schemaObjectRef(for ref: ObjectSourceRef) -> SchemaObjectRef? {
     switch ref.kind {
     case .function:
@@ -112,6 +121,18 @@ extension WorkspaceManager {
           $0.schema == ref.schema && $0.name == ref.name && $0.table == (ref.table ?? "")
         }
       return match.map { .trigger($0) }
+    case .sequence:
+      let sequences = databaseSequences.items ?? []
+      let match =
+        sequences.first { ref.oid != nil && $0.oid == ref.oid }
+        ?? sequences.first { $0.schema == ref.schema && $0.name == ref.name }
+      return match.map { .sequence($0) }
+    case .userType:
+      let types = databaseUserTypes.items ?? []
+      let match =
+        types.first { ref.oid != nil && $0.oid == ref.oid }
+        ?? types.first { $0.schema == ref.schema && $0.name == ref.name }
+      return match.map { .userType($0) }
     }
   }
 
@@ -142,8 +163,17 @@ extension WorkspaceManager {
     else { return }
     guard let object = schemaObjectRef(for: ref) else {
       objectSourceLoads.removeValue(forKey: tabId)?.cancel()
-      let message =
-        "Object not found in the loaded schema — reconnect or refresh the schema, then retry"
+      // Sequences and types are read when their section is expanded: unread, say so
+      let message: String
+      switch ref.kind {
+      case .sequence where databaseSequences.items == nil:
+        message = "Expand Sequences in the sidebar, then retry."
+      case .userType where databaseUserTypes.items == nil:
+        message = "Expand Types in the sidebar, then retry."
+      default:
+        message =
+          "Object not found in the loaded schema — reconnect or refresh the schema, then retry"
+      }
       viewModel.editorContent = "-- \(message)"
       viewModel.objectSourceLoad = .failed(message)
       return
@@ -181,12 +211,12 @@ extension WorkspaceManager {
       viewModel.editorContent = source
       viewModel.objectSourceLoad = .loaded
     case .success(nil):
-      viewModel.editorContent = "-- Source not available for \(ref.kind.rawValue) \(ref.name)"
+      let name = SQLDialect.lineCommentSafe(ref.name)
+      viewModel.editorContent = "-- Source not available for \(ref.kind.rawValue) \(name)"
       viewModel.objectSourceLoad = .unavailable
     case .failure(let error):
       let message = ObjectSourceLoadState.message(for: error)
-      let oneLine = message.replacingOccurrences(of: "\n", with: " ")
-      viewModel.editorContent = "-- \(oneLine)"
+      viewModel.editorContent = "-- \(SQLDialect.lineCommentSafe(message))"
       viewModel.objectSourceLoad = .failed(message)
     }
   }

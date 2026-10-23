@@ -79,11 +79,18 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     }
   }
 
+  /// An interrupt cancel always aborts an open transaction, whatever the statement was doing
+  /// (DuckDB, reads too). SQLite rolls it back only when the interrupted statement was writing.
+  nonisolated var interruptAbortsTransaction: Bool {
+    self == .duckdb
+  }
+
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
   /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
-  /// without transactions, structure editing or SQL dump.
+  /// without transactions, structure editing or SQL dump. Only PostgreSQL lists sequences and
+  /// user-defined types.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -101,6 +108,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsExplainJSON: true,
         supportsExplainAnalyze: true,
         supportsUpdateOnly: true,
+        supportsDefaultInUpdate: true,
         supportsRowStaging: true,
         supportsDataImport: true,
         supportsForeignKeyLookup: true,
@@ -109,7 +117,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: true
       )
     case .sqlite:
       DatabaseCapabilities(
@@ -126,6 +135,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsExplainJSON: false,
         supportsExplainAnalyze: false,
         supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
         supportsRowStaging: true,
         supportsDataImport: true,
         supportsForeignKeyLookup: true,
@@ -134,7 +144,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: false
       )
     case .duckdb:
       DatabaseCapabilities(
@@ -151,6 +162,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsExplainJSON: false,
         supportsExplainAnalyze: true,
         supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
         supportsRowStaging: false,
         supportsDataImport: false,
         supportsForeignKeyLookup: false,
@@ -159,7 +171,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: false
       )
     case .mysql:
       DatabaseCapabilities(
@@ -176,6 +189,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsExplainJSON: true,
         supportsExplainAnalyze: true,
         supportsUpdateOnly: false,
+        supportsDefaultInUpdate: true,
         supportsRowStaging: true,
         supportsDataImport: true,
         supportsForeignKeyLookup: true,
@@ -184,7 +198,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .sql,
         supportsTransactions: true,
         supportsStructure: true,
-        supportsSQLDump: true
+        supportsSQLDump: true,
+        supportsUserTypes: false
       )
     case .mongodb:
       DatabaseCapabilities(
@@ -201,6 +216,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsExplainJSON: false,
         supportsExplainAnalyze: false,
         supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
         supportsRowStaging: false,
         supportsDataImport: false,
         supportsForeignKeyLookup: false,
@@ -209,7 +225,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         queryLanguage: .mongosh,
         supportsTransactions: false,
         supportsStructure: false,
-        supportsSQLDump: false
+        supportsSQLDump: false,
+        supportsUserTypes: false
       )
     }
   }
@@ -378,9 +395,37 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var groupName: String? {
     didSet { groupName = Self.normalizedGroupName(groupName) }
   }
+  /// Schemas the sidebar leaves out, normalized by `normalizedHiddenSchemas`. Display only:
+  /// SQL, autocomplete, schema search and AI context still see them.
+  var hiddenSchemas: [String] = [] {
+    didSet {
+      let normalized = Self.normalizedHiddenSchemas(hiddenSchemas)
+      if normalized != hiddenSchemas { hiddenSchemas = normalized }
+    }
+  }
+  /// Scripts in the Application Scripts folder, by plain file name (`ConnectionScriptRunner`):
+  /// run before the workspace connects, after it disconnects, and to print the password.
+  var preConnectScript: String?
+  var postDisconnectScript: String?
+  var passwordCommandScript: String?
+  /// Seconds each script may run, 1 to 300 (nil: 30).
+  var scriptTimeoutSeconds: Int? {
+    didSet {
+      let clamped = scriptTimeoutSeconds.map(ConnectionScriptRunner.clampedTimeout)
+      if clamped != scriptTimeoutSeconds { scriptTimeoutSeconds = clamped }
+    }
+  }
 
   nonisolated static let aiRulesLimit = 2_000
   nonisolated static let groupNameLimit = 64
+  nonisolated static let hiddenSchemasLimit = 500
+  nonisolated static let hiddenSchemaNameLimit = 255
+
+  /// Sorted and unique, without blank or over-long names, at most `hiddenSchemasLimit`.
+  nonisolated static func normalizedHiddenSchemas(_ names: [String]) -> [String] {
+    let kept = Set(names.filter { !$0.isEmpty && $0.count <= hiddenSchemaNameLimit })
+    return Array(kept.sorted().prefix(hiddenSchemasLimit))
+  }
 
   /// Trimmed and cut to `groupNameLimit` characters; blank becomes nil.
   nonisolated static func normalizedGroupName(_ name: String?) -> String? {
@@ -422,6 +467,10 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case aiAccess, aiRules
     // Color and group (absent on connections saved before them)
     case colorTag, groupName
+    // Sidebar schema filter (absent unless a schema is hidden)
+    case hiddenSchemas
+    // Connection scripts (absent unless set)
+    case preConnectScript, postDisconnectScript, passwordCommandScript, scriptTimeoutSeconds
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -485,6 +534,19 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     colorTag = rawColor.flatMap(AccentColor.init(rawValue:))
     groupName = Self.normalizedGroupName(
       try container.decodeIfPresent(String.self, forKey: .groupName))
+    // A value of the wrong type hides nothing rather than failing the connection
+    hiddenSchemas = Self.normalizedHiddenSchemas(
+      ((try? container.decodeIfPresent([String].self, forKey: .hiddenSchemas)) ?? nil) ?? [])
+    // Likewise a script key of the wrong type runs no script
+    preConnectScript =
+      (try? container.decodeIfPresent(String.self, forKey: .preConnectScript)) ?? nil
+    postDisconnectScript =
+      (try? container.decodeIfPresent(String.self, forKey: .postDisconnectScript)) ?? nil
+    passwordCommandScript =
+      (try? container.decodeIfPresent(String.self, forKey: .passwordCommandScript)) ?? nil
+    scriptTimeoutSeconds =
+      ((try? container.decodeIfPresent(Int.self, forKey: .scriptTimeoutSeconds))
+      ?? nil).map(ConnectionScriptRunner.clampedTimeout)
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -540,6 +602,13 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encode(aiRules, forKey: .aiRules)
     try container.encodeIfPresent(colorTag?.rawValue, forKey: .colorTag)
     try container.encodeIfPresent(groupName, forKey: .groupName)
+    if !hiddenSchemas.isEmpty {
+      try container.encode(hiddenSchemas, forKey: .hiddenSchemas)
+    }
+    try container.encodeIfPresent(preConnectScript, forKey: .preConnectScript)
+    try container.encodeIfPresent(postDisconnectScript, forKey: .postDisconnectScript)
+    try container.encodeIfPresent(passwordCommandScript, forKey: .passwordCommandScript)
+    try container.encodeIfPresent(scriptTimeoutSeconds, forKey: .scriptTimeoutSeconds)
   }
 
   nonisolated init(

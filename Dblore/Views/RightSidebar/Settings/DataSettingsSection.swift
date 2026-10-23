@@ -245,7 +245,7 @@ struct DataSettingsSection: View {
 
   /// Accounts of these kinds are encoded identities, so the kind is the readable title.
   private func showsKindFirst(_ item: SecretItem) -> Bool {
-    [.clientCertificate, .sshCredential, .sshHostKey].contains(item.kind)
+    [.clientCertificate, .sshCredential, .sshHostKey, .outsideMCPToken].contains(item.kind)
   }
 
   private var clearIsPresented: Binding<Bool> {
@@ -398,6 +398,8 @@ enum DataSettingsProduction {
       RecentItemsLocalDataProvider(defaults: defaults, domainName: domain),
       OpenTabsLocalDataProvider(defaults: defaults, domainName: domain),
       SavedFiltersLocalDataProvider(defaults: defaults, domainName: domain),
+      SQLSnippetsLocalDataProvider(defaults: defaults, domainName: domain),
+      SidebarFoldersLocalDataProvider(defaults: defaults, domainName: domain),
       SchemaLayoutLocalDataProvider(defaults: defaults, domainName: domain),
       AIChatsLocalDataProvider(root: AIConversationStore.defaultRoot),
       AISettingsLocalDataProvider(defaults: defaults, domainName: domain),
@@ -446,7 +448,7 @@ enum DataSettingsGroup: CaseIterable {
   private static func group(of category: LocalDataCategory) -> DataSettingsGroup {
     switch category {
     case .queryHistory, .dataRewind, .connectionHistory, .recentItems: .history
-    case .openTabs, .savedFilters, .schemaLayout: .workspace
+    case .openTabs, .savedFilters, .sqlSnippets, .sidebarFolders, .schemaLayout: .workspace
     case .aiChats, .aiSettings, .localModels: .assistant
     case .logs, .appSettings: .app
     }
@@ -478,6 +480,7 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   case .clientCertificate: "Client certificate"
   case .sshCredential: "SSH credentials"
   case .sshHostKey: "Trusted SSH host keys"
+  case .outsideMCPToken: "Outside MCP server token"
   }
 }
 
@@ -690,9 +693,11 @@ private struct DataClearAllSheet: View {
             .toggleStyle(.checkbox)
             .font(.bodyText)
             .disabled(working)
-          Text("Saved credentials are deleted only when that box is checked.")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
+          Text(
+            "Saved credentials, and the outside MCP servers that use them, are deleted only when that box is checked."
+          )
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)

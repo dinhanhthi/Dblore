@@ -9,12 +9,12 @@ import SwiftUI
 // MARK: - Workspace Commands
 
 struct WorkspaceCommands: Commands {
-  @FocusedValue(\.documentMode) private var documentMode: DocumentMode?
-  @FocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
-  @FocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
-  @FocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
-  @FocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
-  @FocusedValue(\.openDataRewindAction) private var openDataRewindAction
+  @BridgedFocusedValue(\.documentMode) private var documentMode: DocumentMode?
+  @BridgedFocusedValue(\.toggleLeftSidebarAction) private var toggleLeftSidebarAction
+  @BridgedFocusedValue(\.toggleRightSidebarAction) private var toggleRightSidebarAction
+  @BridgedFocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
+  @BridgedFocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
+  @BridgedFocusedValue(\.openDataRewindAction) private var openDataRewindAction
 
   var body: some Commands {
     // Sidebar toggle commands - only show when no document is open
@@ -106,6 +106,16 @@ struct OpenDatabaseFileCopyActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Export Data Dictionary (File menu): nil unless `WorkspaceManager.canExportDataDictionary`
+struct OpenDataDictionaryActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// Compare Schemas (File menu): nil unless `WorkspaceManager.canCompareSchemas`
+struct OpenSchemaCompareActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -140,6 +150,16 @@ extension FocusedValues {
   var openDatabaseFileCopyAction: (() -> Void)? {
     get { self[OpenDatabaseFileCopyActionKey.self] }
     set { self[OpenDatabaseFileCopyActionKey.self] = newValue }
+  }
+
+  var openDataDictionaryAction: (() -> Void)? {
+    get { self[OpenDataDictionaryActionKey.self] }
+    set { self[OpenDataDictionaryActionKey.self] = newValue }
+  }
+
+  var openSchemaCompareAction: (() -> Void)? {
+    get { self[OpenSchemaCompareActionKey.self] }
+    set { self[OpenSchemaCompareActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

@@ -21,17 +21,17 @@ struct WorkspaceSchemaVisualizerContent: View {
     }
     .background(Color.appBackground)
     // Set focused values for Cmd+F, Cmd+G shortcuts in schema visualizer
-    .focusedSceneValue(\.isSchemaVisualizerActive, true)
-    .focusedSceneValue(\.openSearchAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.isSchemaVisualizerActive, true)
+    .bridgedFocusedSceneValue(\.openSearchAction) { [workspaceManager] in
       workspaceManager.openSchemaSearch()
     }
-    .focusedSceneValue(\.findNextAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.findNextAction) { [workspaceManager] in
       workspaceManager.navigateToNextSchemaMatch()
     }
-    .focusedSceneValue(\.findPreviousAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.findPreviousAction) { [workspaceManager] in
       workspaceManager.navigateToPreviousSchemaMatch()
     }
-    .focusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
+    .bridgedFocusedSceneValue(\.toggleLeftSidebarAction) { [workspaceManager] in
       workspaceManager.toggleLeftSidebar()
     }
   }
@@ -131,6 +131,27 @@ struct WorkspaceSchemaVisualizerContent: View {
       .help("Export as PNG")
       .disabled(workspaceManager.schemaGraph?.isEmpty ?? true)
 
+      // Diagram as text: the tables in the diagram as Mermaid or Graphviz DOT
+      Menu {
+        Button("Copy as Mermaid") { copyDiagramText(SchemaGraphTextExport.mermaid) }
+        Button("Copy as DOT") { copyDiagramText(SchemaGraphTextExport.dot) }
+        Divider()
+        Button("Save as Mermaid (.mmd)...") {
+          saveDiagramText(SchemaGraphTextExport.mermaid, fileExtension: "mmd")
+        }
+        Button("Save as DOT (.dot)...") {
+          saveDiagramText(SchemaGraphTextExport.dot, fileExtension: "dot")
+        }
+      } label: {
+        Image(systemName: "chevron.left.forwardslash.chevron.right")
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .help("Export as Text")
+      .accessibilityLabel("Export as Text")
+      .disabled(workspaceManager.schemaGraph?.isEmpty ?? true)
+
       // Refresh button
       Button(action: {
         Task {
@@ -165,6 +186,19 @@ struct WorkspaceSchemaVisualizerContent: View {
     .overlay(alignment: .bottom) {
       Divider()
     }
+  }
+
+  private func copyDiagramText(_ render: (SchemaGraph) -> String) {
+    guard let graph = workspaceManager.schemaGraph else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(render(graph), forType: .string)
+  }
+
+  private func saveDiagramText(_ render: (SchemaGraph) -> String, fileExtension: String) {
+    guard let graph = workspaceManager.schemaGraph else { return }
+    DataExporter.saveFile(
+      content: render(graph), defaultFilename: "schema_diagram.\(fileExtension)",
+      allowedFileTypes: [fileExtension])
   }
 
   // MARK: - Graph Content
