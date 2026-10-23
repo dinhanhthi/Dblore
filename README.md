@@ -26,16 +26,30 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Notebooks and SQL editor**: `.dblore` notebooks with inline results, plain `.sql` tabs
   and quick Markdown notes, in one tidy workspace
 - **Schema browser**: tables, columns and types, a quick filter and a canvas with foreign-key
-  lines
+  lines that you can copy or save as Mermaid or Graphviz DOT. Group tables and views into
+  sidebar folders, hide schemas you do not use, and find a value in the text of every table.
+  PostgreSQL also lists sequences, enums, domains and composite types
+- **Compare Schemas**: compare two schemas of the same engine (PostgreSQL, MySQL/MariaDB,
+  SQLite), review the exact script and run it through Safe Mode. Drops are unticked by default
+- **Data Dictionary**: export the columns, indexes and foreign keys of every table as Markdown
+  or standalone HTML
 - **Structure editor**: add, change and drop columns, indexes and keys, create, rename,
   comment and drop tables, with a preview of the exact SQL that runs
 - **Results grid**: sort, search, filter, edit values inline, add rows from a form, follow
   foreign keys, inspect cells as JSON, pin a result to compare re-runs, see Count, Sum and
-  Avg of a selection, and highlight cells or rows with several rules at once
+  Avg of a selection, and highlight cells or rows with several rules at once. Before a delete,
+  Preview SQL lists the rows it removes by cascade, nulls or leaves pointing at it, and a
+  change to a table without a primary key is refused instead of dropped. Set a value, NULL,
+  DEFAULT or a fresh UUID on several cells in one change, choose what Cmd+C copies (TSV, CSV,
+  JSON or Markdown, with formulas neutralized for spreadsheets), and see invisible characters
+  as marks
 - **Data Rewind**: edits made in the data viewer keep the rows before and after, so you can
   preview and run the SQL that puts them back (PostgreSQL, MySQL, SQLite). The copies stay on
   this Mac and are never backed up
-- **Charts**: switch any result between grid and chart
+- **Charts**: switch any result between grid and chart, or split a chart into one small chart
+  per value of a column
+- **Geometry and vector viewers**: draw PostGIS and MySQL geometry values, and summarize
+  pgvector values, in Cell Value
 - **Import and export**: import CSV, TSV and JSON; export to Excel, CSV, JSON, Markdown, PDF,
   TSV, SQL `INSERT` and Parquet (with the DuckDB plugin)
 - **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB database to a
@@ -43,13 +57,22 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
   transactions, Touch ID to unlock
 - **AI assistant**: write, explain, fix, review and optimize queries with your own key
-  (including Google Gemini) or a local model. Slash commands and `@` mentions attach
+  (including Google Gemini, xAI and Requesty) or a local model. Slash commands and `@` mentions attach
   context, and each connection sets whether AI may see it (default, Always, Ask once per
   session or Never). Tools read table structure, and run read-only queries only when you allow it,
   and proposed SQL waits as a card for you to run. Row values are sent only if you turn on
   "Send result rows to AI". Optional inline suggestions appear as gray text in SQL editors
-- **MCP server**: let AI agents read the connections you allow, read-only and on this Mac
-  only. Off by default
+- **Outside MCP servers**: add an MCP server by URL and let the AI chat call the tools you
+  tick, one approved call at a time
+- **MCP server**: let AI agents read the connections you allow, on this Mac only. Off by
+  default. An opt-in write tool runs one change at a time on connections you
+  give a write scope, and only after you approve the exact statement in Dblore
+- **Query Insights**: group the queries in History by shape and see runs, average, p95 and
+  slowest time and error rate over 24 hours, 7 or 30 days
+- **SQL snippets**: trigger words that expand to templates with tab stops
+- **Connections**: export chosen connections (and favorites) to a file and import it back
+  without passwords. Optional scripts run before connecting and after disconnecting, and a
+  password command supplies the password for one connect
 - **Connection colors and groups**: tell connections apart at a glance and group them on the
   welcome screen
 - **Keyboard-first**: run cells and queries without leaving the keys, find and replace in
@@ -62,7 +85,10 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **PostgreSQL**: SSL, client certificates, SSH tunnels, read-only mode, and import from
   DBeaver, TablePlus, DataGrip, `.pgpass` or a URI
 - **MySQL and MariaDB**: TLS, client certificates, SSH tunnels, staged edits by primary key
-  and an EXPLAIN plan tree on MySQL
+  and an EXPLAIN plan tree on MySQL. When the server asks for the full password, Dblore
+  refuses to send it over a connection that does not verify the server's TLS certificate
+  (choose Verify CA or Verify Full); a direct connection to 127.0.0.1, ::1 or localhost is
+  exempt
 - **MongoDB**: mongosh commands, editable document cards, a collection screen with filter,
   schema, indexes and validation, an aggregation builder, index, collection and database
   administration, bulk update and delete, JSON and CSV export and import, and backup and
