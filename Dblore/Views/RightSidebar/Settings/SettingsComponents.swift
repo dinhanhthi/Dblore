@@ -270,11 +270,15 @@ struct CapsuleDropdown<Option: Hashable>: View {
 struct CapsulePickerMenu<Content: View>: View {
   let title: String
   var width: CGFloat? = nil
+  /// Stretches to the offered width and truncates a long title, like a plain `Picker` in a row
+  var fillsWidth = false
   /// A color dot before the title, such as the highlight color
   var dotColor: Color? = nil
   @ViewBuilder let content: () -> Content
 
   @Environment(\.isEnabled) private var isEnabled
+
+  private var stretches: Bool { width != nil || fillsWidth }
 
   var body: some View {
     Menu {
@@ -286,7 +290,8 @@ struct CapsulePickerMenu<Content: View>: View {
         }
         Text(title)
           .lineLimit(1)
-        if width != nil {
+          .truncationMode(.middle)
+        if stretches {
           Spacer(minLength: Spacing.xs)
         }
         Image(systemName: "chevron.down")
@@ -297,7 +302,7 @@ struct CapsulePickerMenu<Content: View>: View {
       .foregroundColor(.foreground)
       .padding(.horizontal, ButtonMetrics.regularHorizontalPadding)
       .padding(.vertical, ButtonMetrics.regularVerticalPadding)
-      .frame(maxWidth: width == nil ? nil : .infinity, alignment: .leading)
+      .frame(maxWidth: stretches ? .infinity : nil, alignment: .leading)
       .background(Capsule().fill(Color.controlBackground))
       .overlay(HairlineBorder(shape: Capsule()))
       .contentShape(Capsule())
@@ -306,7 +311,7 @@ struct CapsulePickerMenu<Content: View>: View {
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
     .linkPointer()
-    .fixedSize(horizontal: width == nil, vertical: true)
+    .fixedSize(horizontal: !stretches, vertical: true)
     .frame(width: width, alignment: .leading)
   }
 }

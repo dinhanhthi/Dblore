@@ -58,7 +58,8 @@ struct FilterConditionsEditor: View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       HStack(spacing: Spacing.xs) {
         CapsulePickerMenu(
-          title: condition.wrappedValue.column.isEmpty ? "Column" : condition.wrappedValue.column
+          title: condition.wrappedValue.column.isEmpty ? "Column" : condition.wrappedValue.column,
+          fillsWidth: true
         ) {
           Picker("", selection: condition.column) {
             Text("Column").tag("")

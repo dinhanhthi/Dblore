@@ -60,7 +60,9 @@ struct FavoriteFormModal: View {
         }
 
         FormField(label: "Folder") {
-          CapsulePickerMenu(title: folders.first { $0.id == folderId }?.name ?? "None") {
+          CapsulePickerMenu(
+            title: folders.first { $0.id == folderId }?.name ?? "None", fillsWidth: true
+          ) {
             Picker("Folder", selection: $folderId) {
               Text("None").tag(UUID?.none)
               ForEach(folders) { folder in
