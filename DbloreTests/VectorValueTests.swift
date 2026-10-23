@@ -109,4 +109,14 @@ import Testing
   func malformedBinaryStaysBytes(_ name: String, _ bytes: [UInt8]) {
     #expect(Self.parse(bytes, as: name) == .data(Data(bytes)))
   }
+
+  /// An enum label whose length is a multiple of 4 ("refunded") was read as a 1-dim vector:
+  /// an unknown type is read as one only when the pgvector header matches its length.
+  @MainActor @Test func enumLabelIsNotReadAsVector() {
+    let label = Array("refunded".utf8)
+    #expect(DatabaseConnectionManager.parseCellValue(from: Self.cell(label)) == .string("refunded"))
+    let vector =
+      Self.bigEndian([UInt16(2), 0]) + Self.bigEndian([Float(1).bitPattern, Float(2).bitPattern])
+    #expect(DatabaseConnectionManager.parseCellValue(from: Self.cell(vector)) == .string("[1, 2]"))
+  }
 }

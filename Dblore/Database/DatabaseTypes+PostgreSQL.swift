@@ -404,10 +404,10 @@ extension DatabaseConnectionManager {
   /// Parse pgvector binary format into readable string representation.
   ///
   /// pgvector stores vectors in binary format for efficiency:
-  /// - Bytes 0-3: Header (4 bytes, format unclear - skipped)
+  /// - Bytes 0-1: dimension (UInt16, big-endian); bytes 2-3: unused (0)
   /// - Bytes 4+: Float32 values (4 bytes each, **BIG-ENDIAN**)
   ///
-  /// The actual dimension is calculated from buffer size: (total_bytes - 4) / 4
+  /// The dimension must equal (total_bytes - 4) / 4
   ///
   /// Example hex dump for vector with 1536 dimensions (6148 bytes total):
   /// ```
@@ -430,15 +430,17 @@ extension DatabaseConnectionManager {
       return nil
     }
 
-    // Read and skip the 4-byte header (format unclear, but we skip it)
-    // The header seems to be: [xx 00 00 00] where xx is some metadata
-    _ = buffer.readInteger(endianness: .little, as: UInt32.self)
+    // Header (vector_send): the dimension as a big-endian UInt16, then an unused UInt16 (0).
+    // Both must match the payload, so other bytes (an enum label such as "refunded") are not
+    // read as a vector.
+    guard let declared = buffer.readInteger(endianness: .big, as: UInt16.self),
+      buffer.readInteger(endianness: .big, as: UInt16.self) == 0
+    else { return nil }
 
-    // Calculate actual dimension from remaining bytes
-    // After skipping 4-byte header, all remaining bytes are Float32 values
+    // After the header, all remaining bytes are Float32 values
     let remainingBytes = buffer.readableBytes
-    guard remainingBytes % 4 == 0 else {
-      return nil  // Must be multiple of 4 for Float32 array
+    guard remainingBytes % 4 == 0, remainingBytes / 4 == Int(declared) else {
+      return nil
     }
 
     let dimension = remainingBytes / 4
