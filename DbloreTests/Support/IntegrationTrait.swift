@@ -1,6 +1,6 @@
 // IntegrationTrait.swift
-// Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, MySQL,
-// MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike). SKIP_INTEGRATION_TESTS or
+// Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, On-device AI
+// plugin, MySQL, MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike). SKIP_INTEGRATION_TESTS or
 // TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them all off.
 
 import Foundation
@@ -59,6 +59,17 @@ nonisolated enum DuckDBPluginGate {
   static func isEnabled(env: [String: String]) -> Bool {
     guard IntegrationGate.isEnabled(env: env),
       let value = env["DUCKDB_PLUGIN_TESTS"] ?? env["TEST_RUNNER_DUCKDB_PLUGIN_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
+nonisolated enum LocalAIPluginGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["LOCAL_AI_PLUGIN_TESTS"] ?? env["TEST_RUNNER_LOCAL_AI_PLUGIN_TESTS"]
     else {
       return false
     }
@@ -153,6 +164,14 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: DuckDBPluginGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 and run scripts/release-plugin.sh --install-dev"
+    )
+  }
+
+  /// The dev On-device AI plugin in .plugin-dev/local-ai/ is opt-in.
+  static var requiresLocalAIPlugin: Self {
+    .enabled(
+      if: LocalAIPluginGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_LOCAL_AI_PLUGIN_TESTS=1 and run scripts/release-plugin.sh --plugin local-ai --install-dev"
     )
   }
 

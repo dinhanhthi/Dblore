@@ -5,6 +5,10 @@
 # Developer ID (hardened runtime) and notarize it. --install-dev copies it into the
 # gitignored .plugin-dev/ for tests; --publish (user-run only) uploads it to GitHub
 # and rewrites that plugin's catalog entry, leaving the other entries as they are.
+# For local-ai (not in the catalog yet, so never published): archive the DbloreLocalAI.bundle
+# plugin (loaded in the app's process) from Plugins/LocalAI, re-sign it inside out, notarize it,
+# staple it, and zip it into dist/plugins/local-ai/ with its source fingerprint (only when
+# notarized); --install-dev also fills .plugin-dev/local-ai/.
 
 set -euo pipefail
 
@@ -16,25 +20,38 @@ TEAM_ID="86H6CNLN4C"
 SIGN_IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
 NOTARY_PROFILE="DbloreNotary"
 CATALOG="Dblore/Utilities/Plugins/PluginCatalog.json"
+LOCAL_AI_DIR="Plugins/LocalAI"
+LOCAL_AI_PROTOCOL="Dblore/Utilities/AI/LocalAIProtocol.swift"
+LOCAL_AI_BUNDLE="DbloreLocalAI.bundle"
+LOCAL_AI_ZIP="DbloreLocalAI.zip"
 
 usage() {
   cat <<EOF
 Usage: scripts/release-plugin.sh [--plugin <id>] [--install-dev] [--publish [--yes]] [--skip-notarize]
+       scripts/release-plugin.sh --print-source-fingerprint
 
-Builds the library of catalog plugin <id>, signs it with "$SIGN_IDENTITY",
-notarizes it and prints its SHA-256. duckdb is the only build recipe: it downloads
-DuckDB $DUCKDB_VERSION (libduckdb-osx-universal.zip) and verifies the upstream SHA-256.
+Builds the artifact of plugin <id>, signs it with "$SIGN_IDENTITY",
+notarizes it and prints its SHA-256. Build recipes:
+  duckdb    Downloads DuckDB $DUCKDB_VERSION (libduckdb-osx-universal.zip), verifies the
+            upstream SHA-256 and re-signs libduckdb.dylib
+  local-ai  Archives $LOCAL_AI_BUNDLE ($LOCAL_AI_DIR, version from project.yml), signs it
+            inside out with no entitlements, staples it and prints its CDHash too. Once
+            notarized, writes $LOCAL_AI_ZIP and source.sha256 to dist/plugins/local-ai/
 
   --plugin <id>     Plugin id in $CATALOG (default duckdb);
-                    an id not in the catalog is refused
-  --install-dev     Write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
-                    into .plugin-dev/ at the repo root
+                    an id not in the catalog is refused, except local-ai
+  --install-dev     duckdb: write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
+                    into .plugin-dev/ at the repo root. local-ai: write the zip, an
+                    ad-hoc-signed zip and their own dev-catalog.json into .plugin-dev/local-ai/
   --publish         Upload to GitHub release plugin-<id>-v<version> (--latest=false) and
                     rewrite only the <id> entry of $CATALOG.
                     Manual, user-run only; afterwards
-                    scripts/release-local.sh --check-plugin-only verifies the asset
+                    scripts/release-local.sh --check-plugin-only verifies the asset.
+                    Refused for local-ai until catalog schema 3
   --yes             Skip the interactive confirmation of --publish
-  --skip-notarize   Sign only (not allowed with --publish)
+  --skip-notarize   Sign only (not allowed with --publish); local-ai leaves dist/ untouched
+  --print-source-fingerprint
+                    Print the local-ai source fingerprint (what source.sha256 holds) and exit
   -h, --help        Show this help
 EOF
 }
@@ -49,6 +66,7 @@ INSTALL_DEV=0
 PUBLISH=0
 ASSUME_YES=0
 SKIP_NOTARIZE=0
+PRINT_SOURCE_FINGERPRINT=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --plugin)
@@ -60,6 +78,7 @@ while [[ $# -gt 0 ]]; do
     --publish) PUBLISH=1 ;;
     --yes) ASSUME_YES=1 ;;
     --skip-notarize) SKIP_NOTARIZE=1 ;;
+    --print-source-fingerprint) PRINT_SOURCE_FINGERPRINT=1 ;;
     -h | --help)
       usage
       exit 0
@@ -126,10 +145,196 @@ os.replace(tmp, path)
 PY
 }
 
+# Prints the source fingerprint of the local-ai plugin, from the repo root: one SHA-256 over
+#   { find Plugins/LocalAI -type f -not -path '*/xcuserdata/*' -not -name .DS_Store -print0
+#     printf '%s\0' Dblore/Utilities/AI/LocalAIProtocol.swift   # only when it exists
+#   } | xargs -0 shasum -a 256 | LC_ALL=C sort | shasum -a 256
+local_ai_source_fingerprint() {
+  [[ -d "$LOCAL_AI_DIR" ]] || fail "$LOCAL_AI_DIR not found"
+  {
+    find "$LOCAL_AI_DIR" -type f -not -path '*/xcuserdata/*' -not -name .DS_Store -print0
+    if [[ -f "$LOCAL_AI_PROTOCOL" ]]; then printf '%s\0' "$LOCAL_AI_PROTOCOL"; fi
+  } | xargs -0 shasum -a 256 | LC_ALL=C sort | shasum -a 256 | awk '{ print $1 }'
+}
+
+# Zips the bundle <bundle> into <zip> the way the plugin asset is shipped.
+zip_bundle() {
+  ditto -c -k --keepParent --norsrc --noextattr --noacl "$1" "$2"
+}
+
+# The local-ai recipe: archive DbloreLocalAI.bundle, sign it inside out with the Developer ID and
+# no entitlements (a loaded bundle runs with the app's), check the signature, notarize and staple
+# it (unless --skip-notarize), then zip it into dist/plugins/local-ai/ (only when notarized) and,
+# with --install-dev, into .plugin-dev/local-ai/.
+release_local_ai() {
+  local source_fp archive bundle exe item links archs kind exports symbol sig_info cdhash
+  local notary_zip notary_json notary_id notary_status staple_output gatekeeper cdhash_stapled
+  local notarized=false stapled=false zip zip_sha zip_size dist_dir dev_dir adhoc_bundle
+  source_fp=$(local_ai_source_fingerprint)
+
+  WORK_DIR=$(mktemp -d -t dblore-plugin)
+  archive="$WORK_DIR/DbloreLocalAI.xcarchive"
+  bundle="$WORK_DIR/$LOCAL_AI_BUNDLE"
+  exe="$bundle/Contents/MacOS/DbloreLocalAI"
+
+  # archive (not build) strips the executable (non-global: the C entry points stay exported).
+  # The default DerivedData is kept, as for the app, so the package checkouts (mlx-swift's
+  # submodules too) are reused instead of fetched again. Both skip flags are needed (mlx-swift
+  # CudaBuild plugin + macros); the resolved-file-only options bound that exposure to the
+  # plugin's committed Package.resolved. ARCHS=arm64 also applies to the package targets, which
+  # would otherwise build an unused x86_64 slice too.
+  echo "==> Archiving $LOCAL_AI_BUNDLE $PLUGIN_VERSION"
+  xcodebuild archive \
+    -skipPackagePluginValidation \
+    -skipMacroValidation \
+    -disableAutomaticPackageResolution \
+    -onlyUsePackageVersionsFromResolvedFile \
+    -project "$LOCAL_AI_DIR/DbloreLocalAI.xcodeproj" \
+    -scheme DbloreLocalAI \
+    -configuration Release \
+    -destination 'generic/platform=macOS' \
+    -archivePath "$archive" \
+    ARCHS=arm64 ||
+    fail "xcodebuild archive failed"
+  # project.yml installs the bundle in Library/Bundles (SKIP_INSTALL = NO)
+  [[ -d "$archive/Products/Library/Bundles/$LOCAL_AI_BUNDLE" ]] ||
+    fail "$LOCAL_AI_BUNDLE not found in $archive/Products/Library/Bundles"
+  ditto "$archive/Products/Library/Bundles/$LOCAL_AI_BUNDLE" "$bundle"
+
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist")" == "$PLUGIN_VERSION" ]] ||
+    fail "$LOCAL_AI_BUNDLE is not version $PLUGIN_VERSION; regenerate the project from project.yml (xcodegen generate)"
+  links=$(find "$bundle" -type l)
+  [[ -z "$links" ]] || fail "$LOCAL_AI_BUNDLE contains symlinks:"$'\n'"$links"
+
+  # Inside out: nested Mach-O files (the main executable goes with the bundle), then nested
+  # bundles deepest first, then the bundle itself. Never --deep for signing.
+  echo "==> Signing inside out"
+  while IFS= read -r -d '' item; do
+    [[ "$item" != "$exe" && "$(file -b "$item")" == Mach-O* ]] || continue
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$item"
+  done < <(find "$bundle/Contents" -type f -print0)
+  while IFS= read -r item; do
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$item"
+  done < <(find "$bundle/Contents" -type d \( -name '*.bundle' -o -name '*.framework' -o -name '*.app' \
+    -o -name '*.appex' -o -name '*.xpc' \) | awk -F/ '{ print NF "\t" $0 }' | sort -rn | cut -f2-)
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$bundle"
+
+  echo "==> Checking the signature"
+  codesign --verify --strict --deep "$bundle" || fail "codesign --verify --strict --deep failed"
+  sig_info=$(codesign -dvvv "$bundle" 2>&1)
+  grep -qx "TeamIdentifier=$TEAM_ID" <<<"$sig_info" || fail "signature TeamIdentifier is not $TEAM_ID"
+  grep -q '^CodeDirectory .*flags=.*runtime' <<<"$sig_info" ||
+    fail "signature lacks the hardened runtime flag"
+  codesign -d --entitlements - --xml "$bundle" 2>/dev/null | python3 -I -c '
+import plistlib, sys
+data = sys.stdin.buffer.read()
+if data.strip():
+    try:
+        ents = plistlib.loads(data)
+    except Exception as error:
+        sys.exit("unreadable entitlements: %s" % error)
+    if ents != {}:
+        sys.exit("entitlements: %r" % ents)
+' || fail "$LOCAL_AI_BUNDLE must carry no entitlements"
+  archs=$(lipo -archs "$exe")
+  [[ "$archs" == "arm64" ]] || fail "the main executable must be arm64 only (has: $archs)"
+  kind=$(file -b "$exe")
+  [[ "$kind" == "Mach-O 64-bit bundle arm64" ]] || fail "the main executable is not a Mach-O bundle: $kind"
+  exports=$(nm -gU "$exe")
+  for symbol in _dblore_localai_protocol _dblore_localai_request; do
+    grep -q " T $symbol\$" <<<"$exports" || fail "the main executable does not export $symbol"
+  done
+  cdhash=$(sed -n 's/^CDHash=//p' <<<"$sig_info")
+  [[ "$cdhash" =~ ^[0-9a-f]{40}$ ]] || fail "unexpected CDHash: $cdhash"
+
+  if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+    echo "==> Notarizing (this can take several minutes)"
+    notary_zip="$WORK_DIR/DbloreLocalAI-notarize.zip"
+    ditto -c -k --keepParent "$bundle" "$notary_zip"
+    notary_json=$(xcrun notarytool submit "$notary_zip" --keychain-profile "$NOTARY_PROFILE" \
+      --wait --output-format json) || fail "notarytool submit failed: $notary_json"
+    notary_id=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' <<<"$notary_json")
+    notary_status=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' <<<"$notary_json")
+    echo "notarization: $notary_status (submission $notary_id)"
+    [[ "$notary_status" == "Accepted" ]] ||
+      fail "notarization not accepted. Log: xcrun notarytool log $notary_id --keychain-profile $NOTARY_PROFILE"
+    notarized=true
+
+    echo "==> Stapling"
+    staple_output=$(xcrun stapler staple "$bundle" 2>&1) || fail "stapling failed: $staple_output"
+    echo "$staple_output"
+    staple_output=$(xcrun stapler validate "$bundle" 2>&1) ||
+      fail "stapling failed: stapler validate: $staple_output"
+    echo "$staple_output"
+    cdhash_stapled=$(codesign -dvvv "$bundle" 2>&1 | sed -n 's/^CDHash=//p')
+    echo "cdhash before stapling: $cdhash"
+    echo "cdhash after stapling:  $cdhash_stapled"
+    [[ "$cdhash_stapled" == "$cdhash" ]] || fail "stapling changed the CDHash"
+    stapled=true
+    # Informational only: spctl has no assessment type made for a loadable bundle.
+    gatekeeper=$(spctl --assess --type open --context context:primary-signature -vv "$bundle" 2>&1) || true
+    echo "spctl --type open (informational): $gatekeeper"
+  else
+    echo "==> Skipping notarization (--skip-notarize): not stapled"
+  fi
+
+  zip="$WORK_DIR/$LOCAL_AI_ZIP"
+  zip_bundle "$bundle" "$zip"
+  zip_sha=$(shasum -a 256 "$zip" | awk '{ print $1 }')
+  zip_size=$(stat -f %z "$zip")
+  echo "$LOCAL_AI_ZIP sha256: $zip_sha"
+  echo "$LOCAL_AI_BUNDLE cdhash: $cdhash"
+  echo "$LOCAL_AI_ZIP size: $zip_size bytes"
+
+  # Only a notarized zip goes to dist/: a sign-only run never replaces it.
+  if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+    dist_dir="$PWD/dist/plugins/local-ai"
+    mkdir -p "$dist_dir"
+    cp "$zip" "$dist_dir/$LOCAL_AI_ZIP"
+    echo "$source_fp" >"$dist_dir/source.sha256"
+    echo "dist: $dist_dir/$LOCAL_AI_ZIP (source fingerprint $source_fp)"
+  else
+    echo "==> Skipping dist/plugins/local-ai/ (--skip-notarize): left untouched"
+  fi
+
+  if [[ $INSTALL_DEV -eq 1 ]]; then
+    dev_dir="$OUT_DIR/local-ai"
+    echo "==> Installing dev artifacts into $dev_dir"
+    mkdir -p "$dev_dir"
+    cp "$zip" "$dev_dir/$LOCAL_AI_ZIP"
+    # Same bundle signed ad hoc: the app's bundle check must reject it.
+    adhoc_bundle="$WORK_DIR/adhoc/$LOCAL_AI_BUNDLE"
+    mkdir "$WORK_DIR/adhoc"
+    ditto "$bundle" "$adhoc_bundle"
+    codesign --force --deep --sign - "$adhoc_bundle"
+    zip_bundle "$adhoc_bundle" "$dev_dir/DbloreLocalAI-adhoc.zip"
+    python3 -I - "$dev_dir/dev-catalog.json" "$PLUGIN_VERSION" "$zip_sha" "$cdhash" \
+      "$LOCAL_AI_BUNDLE" "$dev_dir/$LOCAL_AI_ZIP" "$dev_dir/DbloreLocalAI-adhoc.zip" "$notarized" \
+      "$stapled" <<'PY'
+import json, sys
+out, version, sha, cdhash, bundle, zip_path, adhoc, notarized, stapled = sys.argv[1:]
+with open(out, "w") as f:
+    json.dump({"version": version, "sha256": sha, "cdhash": cdhash, "bundleName": bundle,
+               "zipPath": zip_path, "adhocZipPath": adhoc, "notarized": notarized == "true",
+               "stapled": stapled == "true"}, f, indent=2)
+    f.write("\n")
+PY
+    echo "dev catalog: $dev_dir/dev-catalog.json"
+  fi
+}
+
+if [[ $PRINT_SOURCE_FINGERPRINT -eq 1 ]]; then
+  local_ai_source_fingerprint
+  exit 0
+fi
+
 [[ "$PLUGIN_ID" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid plugin id: $PLUGIN_ID"
 [[ -f "$CATALOG" ]] || fail "$CATALOG not found"
-LIBRARY_FILE_NAME=$(catalog_library_file_name "$CATALOG" "$PLUGIN_ID") ||
-  fail "plugin $PLUGIN_ID is not in $CATALOG"
+# local-ai gets its catalog entry with catalog schema 3
+if [[ "$PLUGIN_ID" != "local-ai" ]]; then
+  LIBRARY_FILE_NAME=$(catalog_library_file_name "$CATALOG" "$PLUGIN_ID") ||
+    fail "plugin $PLUGIN_ID is not in $CATALOG"
+fi
 
 case "$PLUGIN_ID" in
   duckdb)
@@ -137,8 +342,14 @@ case "$PLUGIN_ID" in
     [[ "$LIBRARY_FILE_NAME" == "libduckdb.dylib" ]] ||
       fail "$CATALOG names $LIBRARY_FILE_NAME for duckdb; the build produces libduckdb.dylib"
     ;;
+  local-ai)
+    [[ $PUBLISH -eq 1 ]] && fail "local-ai publishing arrives with catalog schema 3"
+    PLUGIN_VERSION=$(awk '$1 == "MARKETING_VERSION:" { print $2 }' "$LOCAL_AI_DIR/project.yml")
+    [[ "$PLUGIN_VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]] ||
+      fail "$LOCAL_AI_DIR/project.yml needs exactly one MARKETING_VERSION (got: $PLUGIN_VERSION)"
+    ;;
   *)
-    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb has one)"
+    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb and local-ai have one)"
     ;;
 esac
 TAG="plugin-$PLUGIN_ID-v$PLUGIN_VERSION"
@@ -178,6 +389,12 @@ EOF
     read -r -p "Type yes to publish: " answer
     [[ "$answer" == "yes" ]] || fail "publish cancelled"
   fi
+fi
+
+if [[ "$PLUGIN_ID" == "local-ai" ]]; then
+  release_local_ai
+  echo "==> Done"
+  exit 0
 fi
 
 WORK_DIR=$(mktemp -d -t dblore-plugin)
