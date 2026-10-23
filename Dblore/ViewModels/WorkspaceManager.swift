@@ -405,6 +405,7 @@ class WorkspaceManager: Identifiable {
         call, dialect: dialect, sessionKey: sessionKey, mongoDatabase: mongoDatabase,
         runsQueries: runsQueries, sendsResultRows: sendsResultRows)
     }
+    aiAssistant.makeOutsideToolSession = { OutsideMCPTurnTools() }
     aiAssistant.proposalRunner = { [weak self] proposal, confirmedName in
       self?.runAIProposal(proposal, confirmedName: confirmedName)
         ?? .refused("Not connected to a database.")

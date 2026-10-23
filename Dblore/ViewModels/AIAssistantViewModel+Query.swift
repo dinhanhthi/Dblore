@@ -74,7 +74,8 @@ extension AIAssistantViewModel {
   /// catalog of a reviewed statement and the question's @mentions, and runs queries (never on a
   /// review turn); otherwise the
   /// request carries the new question and the dialect only. A turn that offers tools (allowed,
-  /// no review, `offersTools`) runs the tool loop instead, without run blocks.
+  /// no review, `offersTools`) runs the tool loop instead, without run blocks; only such a turn
+  /// adds the outside MCP tools, listed when it starts (`makeOutsideToolSession`).
   func runTurn(
     _ context: TurnContext, history: [AIChatMessage], entryId: UUID, token: Int
   ) async {
@@ -95,12 +96,28 @@ extension AIAssistantViewModel {
     let tools =
       allowed && review == nil && context.offersTools
       ? AITools.specs(runsQueries: runsQueries, isMongo: context.dialect == .mongodb) : []
+    // Outside tools ride on the built-in ones: never on-device, on a connection the gate does not
+    // allow, on a review turn or without a connection
+    var outside: OutsideTurn?
+    if !tools.isEmpty, let session = makeOutsideToolSession?() {
+      let listing = await session.list()
+      guard !Task.isCancelled, token == generation else { return }
+      let offered = AITools.outsideTools(listing.servers)
+      if !offered.isEmpty { outside = OutsideTurn(session: session, tools: offered) }
+      // An error entry, so later turns never send it; above the answer that follows
+      let at = messages.firstIndex(where: { $0.id == entryId }) ?? messages.endIndex
+      messages.insert(
+        contentsOf: listing.late.map {
+          AIChatEntry(
+            id: UUID(), role: .assistant, text: AIPrompts.outsideServerLate($0), isError: true)
+        }, at: at)
+    }
     let snapshot =
       allowed
       ? context.snapshot
       : AISchemaSnapshot(
         tables: [], foreignKeys: [], databaseName: nil, dialect: context.snapshot.dialect)
-    let request = await Self.buildRequest(
+    var request = await Self.buildRequest(
       model: context.model, question: context.question,
       explicit: allowed ? context.explicit : [], snapshot: snapshot,
       // Earlier turns may hold table names, SQL or filters from when the connection was allowed
@@ -111,7 +128,10 @@ extension AIAssistantViewModel {
       screen: allowed ? context.screen : nil, review: review,
       rules: allowed ? context.access?.config.aiRules ?? "" : "", tools: !tools.isEmpty)
     guard tools.isEmpty else {
-      await runToolLoop(request, tools: tools, context: context, entryId: entryId, token: token)
+      if outside != nil { request.system += "\n\n" + AIPrompts.outsideToolRules }
+      await runToolLoop(
+        request, tools: tools + (outside?.tools.map(\.spec) ?? []), context: context,
+        entryId: entryId, token: token, outside: outside)
       return
     }
     guard await streamReply(request, from: context.client, into: entryId),

@@ -35,15 +35,20 @@ final class AIConversationStore {
   }
 
   /// A database error can echo row values, so a `.failed` query entry is saved with its SQL
-  /// only; refused entries hold only app messages and are saved as they are.
+  /// only; refused entries hold only app messages and are saved as they are. An outside tool
+  /// call keeps only the start of its arguments.
   func save(_ conversations: [AIConversation]) {
     let saved = conversations.map { conversation in
       var conversation = conversation
-      for index in conversation.messages.indices
-      where conversation.messages[index].queryOutcome == .failed {
-        conversation.messages[index].text = AIPrompts.queryFailure(
-          sql: conversation.messages[index].querySQL ?? "",
-          error: "The error is not saved with the chat.")
+      for index in conversation.messages.indices {
+        if conversation.messages[index].queryOutcome == .failed {
+          conversation.messages[index].text = AIPrompts.queryFailure(
+            sql: conversation.messages[index].querySQL ?? "",
+            error: "The error is not saved with the chat.")
+        }
+        if let arguments = conversation.messages[index].outsideCall?.arguments {
+          conversation.messages[index].outsideCall?.arguments = AITools.savedArguments(arguments)
+        }
       }
       return conversation
     }
