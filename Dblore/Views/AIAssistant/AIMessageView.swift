@@ -146,12 +146,14 @@ struct AIMessageView: View {
         .lineLimit(1...8)
       HStack(spacing: Spacing.sm) {
         Button("Cancel") { isEditing = false }
+          .buttonStyle(SecondaryButtonStyle())
         Button("Send") {
           if onEdit?(editText) == true { isEditing = false }
         }
+        .buttonStyle(PrimaryButtonStyle())
         .disabled(!canSendEdit)
       }
-      .font(.labelText)
+      .controlSize(.small)
     }
     .frame(minWidth: 200, maxWidth: .infinity, alignment: .trailing)
   }
