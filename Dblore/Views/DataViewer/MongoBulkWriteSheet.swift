@@ -47,13 +47,13 @@ struct MongoBulkWriteSheet: View {
     ) {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          Picker("", selection: $model.mode) {
-            Text("Update").tag(MongoBulkWriteModel.Mode.update)
-            Text("Delete").tag(MongoBulkWriteModel.Mode.delete)
+          CapsuleTabPicker(
+            selection: $model.mode, tabs: [MongoBulkWriteModel.Mode.update, .delete], height: 28
+          ) { mode in
+            CapsuleTabLabel(text: mode == .update ? "Update" : "Delete", isSelected: model.mode == mode)
           }
-          .pickerStyle(.segmented)
-          .labelsHidden()
-          .fixedSize()
+          .fitsContent()
+          .accessibilityLabel("Write")
           .disabled(isBusy)
           documentsSection
           countSection

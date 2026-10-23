@@ -159,13 +159,14 @@ struct MongoImportSheet: View {
       }
       GridRow(alignment: .center) {
         label("Target")
-        Picker("", selection: $targetKind) {
-          Text("Existing collection").tag(TargetKind.existing)
-          Text("New collection").tag(TargetKind.new)
+        CapsuleTabPicker(selection: $targetKind, tabs: [TargetKind.existing, .new], height: 28) {
+          kind in
+          CapsuleTabLabel(
+            text: kind == .existing ? "Existing collection" : "New collection",
+            isSelected: targetKind == kind)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
+        .fitsContent()
+        .accessibilityLabel("Target")
         .disabled(collections.isEmpty && targetKind == .new)
       }
       GridRow(alignment: .center) {

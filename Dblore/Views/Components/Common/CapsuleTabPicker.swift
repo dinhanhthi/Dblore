@@ -66,6 +66,7 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
 
   @State private var tabWidths: [Int: CGFloat] = [:]
   @ReduceMotion private var reduceMotion
+  @Environment(\.isEnabled) private var isEnabled
 
   /// Slides the chip on a selection change, overriding the app-wide animation kill switch.
   /// Instant when Reduce motion is on.
@@ -93,11 +94,14 @@ struct CapsuleTabPicker<Tab: Hashable, Label: View>: View {
   }
 
   var body: some View {
-    if fitsContent {
-      contentFitPicker
-    } else {
-      expandingPicker
+    Group {
+      if fitsContent {
+        contentFitPicker
+      } else {
+        expandingPicker
+      }
     }
+    .opacity(isEnabled ? 1 : 0.5)
   }
 
   private var expandingPicker: some View {

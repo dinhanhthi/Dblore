@@ -44,14 +44,18 @@ struct TableHighlightContent: View {
 
         Spacer()
 
-        Picker("", selection: $viewModel.highlightDraft.style) {
-          Text("Cell").tag(HighlightStyle.cell)
-          Text("Row").tag(HighlightStyle.row)
+        CapsuleTabPicker(
+          selection: $viewModel.highlightDraft.style, tabs: [HighlightStyle.cell, .row],
+          height: ResultDisplayPicker.height, inset: 2, verticalInset: 2
+        ) { style in
+          let isSelected = viewModel.highlightDraft.style == style
+          Text(style == .cell ? "Cell" : "Row")
+            .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+            .foregroundColor(isSelected ? .onAccentFill : .foreground)
+            .lineLimit(1)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
-        .fixedSize()
+        .fitsContent(tabPadding: Spacing.md)
+        .accessibilityLabel("Highlight style")
         .help("Highlight the matching cell or the whole row")
       }
 

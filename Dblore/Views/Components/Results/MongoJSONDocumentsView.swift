@@ -50,13 +50,15 @@ struct MongoJSONDocumentsView: View {
 
   private var header: some View {
     HStack(spacing: Spacing.sm) {
-      Picker("", selection: $format) {
-        Text("Relaxed").tag(MongoRelaxedJSON.Format.relaxedExtendedJSON)
-        Text("Canonical").tag(MongoRelaxedJSON.Format.canonicalExtendedJSON)
+      CapsuleTabPicker(
+        selection: $format,
+        tabs: [MongoRelaxedJSON.Format.relaxedExtendedJSON, .canonicalExtendedJSON], height: 28
+      ) { value in
+        CapsuleTabLabel(
+          text: value == .relaxedExtendedJSON ? "Relaxed" : "Canonical", isSelected: format == value)
       }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .fixedSize()
+      .fitsContent()
+      .accessibilityLabel("Extended JSON format")
       .help("Extended JSON: relaxed (plain numbers and dates) or canonical (every type wrapped)")
       Spacer(minLength: Spacing.sm)
       Button(action: finder.showFindBar) {

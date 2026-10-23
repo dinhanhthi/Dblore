@@ -59,14 +59,17 @@ struct QueryInsightsView: View {
         .font(.subheading)
         .foregroundColor(.foreground)
       Spacer()
-      Picker("Window", selection: $window) {
-        ForEach(QueryInsightsWindow.allCases, id: \.self) { window in
-          Text(window.title).tag(window)
-        }
+      CapsuleTabPicker(
+        selection: $window, tabs: QueryInsightsWindow.allCases,
+        height: SidebarFilterMetrics.controlHeight, inset: 2, verticalInset: 2
+      ) { item in
+        Text(item.title)
+          .font(.system(size: 11, weight: window == item ? .semibold : .regular))
+          .foregroundColor(window == item ? .onAccentFill : .foreground)
+          .lineLimit(1)
       }
-      .pickerStyle(.segmented)
-      .labelsHidden()
-      .fixedSize()
+      .fitsContent(tabPadding: Spacing.md)
+      .accessibilityLabel("Time window")
       .help("Time window")
       connectionMenu
       Button(action: onClose) {

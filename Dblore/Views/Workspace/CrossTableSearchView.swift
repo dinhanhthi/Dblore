@@ -79,14 +79,13 @@ private struct CrossTableSearchView: View {
           .focused($valueFocused)
           .onSubmit { model.start() }
           .disabled(model.isSearching)
-        Picker("Match", selection: $model.mode) {
-          ForEach(CrossTableSearchModel.Mode.allCases) { mode in
-            Text(mode.title).tag(mode)
-          }
+        CapsuleTabPicker(
+          selection: $model.mode, tabs: Array(CrossTableSearchModel.Mode.allCases), height: 28
+        ) { mode in
+          CapsuleTabLabel(text: mode.title, isSelected: model.mode == mode)
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
+        .fitsContent()
+        .accessibilityLabel("Match")
         .disabled(model.isSearching)
         .help("Contains: the column's text includes the value. Equals: it is the value.")
         if model.isSearching {

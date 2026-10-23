@@ -145,15 +145,12 @@ struct NewRowFieldEditor: View {
     } else if field.isNull {
       placeholderBox("NULL")
     } else if field.kind == .boolean {
-      Picker("", selection: $field.text) {
-        if allowsDefault {
-          Text("Default").tag("")
-        }
-        Text("true").tag("true")
-        Text("false").tag("false")
+      CapsuleTabPicker(
+        selection: $field.text, tabs: (allowsDefault ? [""] : []) + ["true", "false"], height: 28
+      ) { value in
+        CapsuleTabLabel(text: value.isEmpty ? "Default" : value, isSelected: field.text == value)
       }
-      .labelsHidden()
-      .pickerStyle(.segmented)
+      .fitsContent()
     } else {
       TextField(
         placeholder, text: $field.text,

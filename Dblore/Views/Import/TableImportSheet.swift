@@ -285,11 +285,12 @@ struct TableImportSheet: View {
   private var destinationSection: some View {
     SettingsGroupCard(title: "Destination") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        Picker("Destination", selection: $createsNewTable) {
-          Text("New table").tag(true)
-          Text("Existing table").tag(false)
+        CapsuleTabPicker(selection: $createsNewTable, tabs: [true, false], height: 28) { isNew in
+          CapsuleTabLabel(
+            text: isNew ? "New table" : "Existing table", isSelected: createsNewTable == isNew)
         }
-        .pickerStyle(.segmented)
+        .fitsContent()
+        .accessibilityLabel("Destination")
         .onChange(of: createsNewTable) { _, _ in updateDestination() }
         HStack(spacing: Spacing.sm) {
           TextField("Schema", text: schemaName)

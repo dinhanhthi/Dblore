@@ -214,14 +214,11 @@ struct MongoExportSheet: View {
   private func segmented<Value: Hashable>(
     _ selection: Binding<Value>, _ options: [(Value, String)]
   ) -> some View {
-    Picker("", selection: selection) {
-      ForEach(options, id: \.0) { option in
-        Text(option.1).tag(option.0)
-      }
+    CapsuleTabPicker(selection: selection, tabs: options.map(\.0), height: 28) { value in
+      CapsuleTabLabel(
+        text: options.first { $0.0 == value }?.1 ?? "", isSelected: selection.wrappedValue == value)
     }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .fixedSize()
+    .fitsContent()
   }
 
   private func checked(_ path: String) -> Binding<Bool> {
