@@ -94,11 +94,14 @@ struct CreateTableSheet: View {
       HStack(alignment: .top, spacing: Spacing.md) {
         if model.schemas.count > 1 {
           labeled("Schema") {
-            Picker("Schema", selection: $model.schema) {
-              ForEach(model.schemas, id: \.self) { Text($0).tag($0) }
+            CapsulePickerMenu(title: model.schema, width: 180) {
+              Picker("Schema", selection: $model.schema) {
+                ForEach(model.schemas, id: \.self) { Text($0).tag($0) }
+              }
+              .pickerStyle(.inline)
+              .labelsHidden()
             }
-            .labelsHidden()
-            .frame(width: 180)
+            .accessibilityLabel("Schema")
           }
         }
         labeled("Name") {
@@ -314,11 +317,14 @@ private struct CreateTableConstraintsSection: View {
   private var addForm: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       HStack(spacing: Spacing.sm) {
-        Picker("Kind", selection: $kind) {
-          ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
+        CapsulePickerMenu(title: kind.rawValue, width: 130) {
+          Picker("Kind", selection: $kind) {
+            ForEach(Kind.allCases) { Text($0.rawValue).tag($0) }
+          }
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .labelsHidden()
-        .frame(width: 130)
+        .accessibilityLabel("Kind")
         TextField("Name (optional)", text: $name)
           .textFieldStyle(.plain)
           .font(.structureField)
@@ -335,14 +341,21 @@ private struct CreateTableConstraintsSection: View {
           Text("References")
             .font(.small)
             .foregroundColor(.foregroundSubtle)
-          Picker("Table", selection: $target) {
-            Text("Choose a table").tag(Int?.none)
-            ForEach(tables.indices, id: \.self) { index in
-              Text("\(tables[index].schema).\(tables[index].name)").tag(Optional(index))
+          CapsulePickerMenu(
+            title: target.flatMap { tables.indices.contains($0) ? tables[$0] : nil }
+              .map { "\($0.schema).\($0.name)" } ?? "Choose a table",
+            width: 240
+          ) {
+            Picker("Table", selection: $target) {
+              Text("Choose a table").tag(Int?.none)
+              ForEach(tables.indices, id: \.self) { index in
+                Text("\(tables[index].schema).\(tables[index].name)").tag(Optional(index))
+              }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .labelsHidden()
-          .frame(width: 240)
+          .accessibilityLabel("Table")
           TextField("Columns, comma separated", text: $targetColumns)
             .textFieldStyle(.plain)
             .font(.structureField)
@@ -362,11 +375,14 @@ private struct CreateTableConstraintsSection: View {
       Text(title)
         .font(.small)
         .foregroundColor(.foregroundSubtle)
-      Picker(title, selection: selection) {
-        ForEach(ForeignKeyAction.allCases, id: \.self) { Text($0.displayName).tag($0) }
+      CapsulePickerMenu(title: selection.wrappedValue.displayName, width: 130) {
+        Picker(title, selection: selection) {
+          ForEach(ForeignKeyAction.allCases, id: \.self) { Text($0.displayName).tag($0) }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
       }
-      .labelsHidden()
-      .frame(width: 130)
+      .accessibilityLabel(title)
     }
   }
 

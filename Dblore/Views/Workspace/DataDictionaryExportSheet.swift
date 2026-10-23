@@ -43,14 +43,16 @@ private struct DataDictionaryExportSheet: View {
               .font(.bodyText)
               .foregroundColor(.foreground)
             Spacer(minLength: Spacing.sm)
-            Picker("Format", selection: $model.format) {
-              ForEach(DataDictionaryRenderer.Format.allCases) { format in
-                Text(format.title).tag(format)
+            CapsulePickerMenu(title: model.format.title) {
+              Picker("Format", selection: $model.format) {
+                ForEach(DataDictionaryRenderer.Format.allCases) { format in
+                  Text(format.title).tag(format)
+                }
               }
+              .pickerStyle(.inline)
+              .labelsHidden()
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .fixedSize()
+            .accessibilityLabel("Format")
           }
           Text(summary)
             .font(.small)

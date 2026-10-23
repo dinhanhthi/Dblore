@@ -141,17 +141,18 @@ struct MongoViewEditorSheet: View {
       }
       GridRow(alignment: .center) {
         label("Source")
-        Picker("", selection: $draft.source) {
-          if draft.source.isEmpty {
-            Text("Choose a collection").tag("")
+        CapsulePickerMenu(title: draft.source.isEmpty ? "Choose a collection" : draft.source) {
+          Picker("", selection: $draft.source) {
+            if draft.source.isEmpty {
+              Text("Choose a collection").tag("")
+            }
+            ForEach(sourceChoices, id: \.self) { name in
+              Text(verbatim: name).tag(name)
+            }
           }
-          ForEach(sourceChoices, id: \.self) { name in
-            Text(verbatim: name).tag(name)
-          }
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
       }
     }
   }

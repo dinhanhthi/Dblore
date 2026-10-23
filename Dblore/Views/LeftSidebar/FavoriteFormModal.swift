@@ -60,13 +60,17 @@ struct FavoriteFormModal: View {
         }
 
         FormField(label: "Folder") {
-          Picker("Folder", selection: $folderId) {
-            Text("None").tag(UUID?.none)
-            ForEach(folders) { folder in
-              Text(folder.name).tag(UUID?.some(folder.id))
+          CapsulePickerMenu(title: folders.first { $0.id == folderId }?.name ?? "None") {
+            Picker("Folder", selection: $folderId) {
+              Text("None").tag(UUID?.none)
+              ForEach(folders) { folder in
+                Text(folder.name).tag(UUID?.some(folder.id))
+              }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .labelsHidden()
+          .accessibilityLabel("Folder")
         }
 
         FormField(label: "Query") {

@@ -162,13 +162,18 @@ struct TableImportSheet: View {
     SettingsGroupCard(title: "Format") {
       HStack(spacing: Spacing.lg) {
         VStack(alignment: .leading, spacing: Spacing.xs) {
-          Picker("Format", selection: formatSelection) {
-            Text("CSV").tag(0)
-            Text("TSV").tag(1)
-            Text("JSON / NDJSON").tag(2)
+          CapsulePickerMenu(
+            title: ["CSV", "TSV", "JSON / NDJSON"][formatSelection.wrappedValue], width: 170
+          ) {
+            Picker("Format", selection: formatSelection) {
+              Text("CSV").tag(0)
+              Text("TSV").tag(1)
+              Text("JSON / NDJSON").tag(2)
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .labelsHidden()
-          .frame(width: 170)
+          .accessibilityLabel("Format")
         }
         if model.format != .json {
           Toggle("First row is a header", isOn: headerSelection)
@@ -263,13 +268,19 @@ struct TableImportSheet: View {
               .textFieldStyle(.plain)
               .inputCapsuleStyle()
               .disabled(!model.mappings[index].included)
-            Picker("Type", selection: mappingKind(index)) {
-              ForEach(kinds.indices, id: \.self) { kindIndex in
-                Text(kindLabel(kinds[kindIndex])).tag(kindIndex)
+            CapsulePickerMenu(
+              title: kinds.indices.contains(mappingKind(index).wrappedValue)
+                ? kindLabel(kinds[mappingKind(index).wrappedValue]) : "", width: 125
+            ) {
+              Picker("Type", selection: mappingKind(index)) {
+                ForEach(kinds.indices, id: \.self) { kindIndex in
+                  Text(kindLabel(kinds[kindIndex])).tag(kindIndex)
+                }
               }
+              .pickerStyle(.inline)
+              .labelsHidden()
             }
-            .labelsHidden()
-            .frame(width: 125)
+            .accessibilityLabel("Type")
             .disabled(!model.mappings[index].included)
           }
           if missingColumns.contains(index) {

@@ -46,14 +46,15 @@ struct MongoAggregationOptionsPanel: View {
       GridRow(alignment: .center) {
         label("Preview documents")
         HStack(spacing: Spacing.sm) {
-          Picker("", selection: $appSettings.mongoPreviewDocumentCount) {
-            ForEach(AppSettings.mongoPreviewDocumentCounts, id: \.self) { count in
-              Text(count.formatted()).tag(count)
+          CapsulePickerMenu(title: appSettings.mongoPreviewDocumentCount.formatted()) {
+            Picker("", selection: $appSettings.mongoPreviewDocumentCount) {
+              ForEach(AppSettings.mongoPreviewDocumentCounts, id: \.self) { count in
+                Text(count.formatted()).tag(count)
+              }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .pickerStyle(.menu)
-          .labelsHidden()
-          .fixedSize()
           .help("Documents each stage preview shows, for every collection")
           .accessibilityLabel("Preview documents")
           Spacer(minLength: 0)

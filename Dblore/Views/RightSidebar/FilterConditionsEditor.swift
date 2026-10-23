@@ -57,14 +57,19 @@ struct FilterConditionsEditor: View {
   private func conditionRow(_ condition: Binding<FilterCondition>) -> some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       HStack(spacing: Spacing.xs) {
-        Picker("", selection: condition.column) {
-          Text("Column").tag("")
-          ForEach(columnChoices(including: condition.wrappedValue.column), id: \.self) {
-            Text($0).tag($0)
+        CapsulePickerMenu(
+          title: condition.wrappedValue.column.isEmpty ? "Column" : condition.wrappedValue.column
+        ) {
+          Picker("", selection: condition.column) {
+            Text("Column").tag("")
+            ForEach(columnChoices(including: condition.wrappedValue.column), id: \.self) {
+              Text($0).tag($0)
+            }
           }
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
+        .accessibilityLabel("Column")
 
         Button(action: { removeCondition(condition.wrappedValue.id) }) {
           Image(systemName: "minus")
@@ -74,7 +79,7 @@ struct FilterConditionsEditor: View {
         .help("Remove condition")
       }
 
-      Menu {
+      CapsulePickerMenu(title: condition.wrappedValue.op.displayName) {
         ForEach(FilterOperator.allCases, id: \.self) { op in
           Toggle(
             op.displayName,
@@ -89,12 +94,8 @@ struct FilterConditionsEditor: View {
                 condition.wrappedValue.op = op
               }))
         }
-      } label: {
-        Text(condition.wrappedValue.op.displayName)
-          .font(.small)
       }
-      .menuStyle(.borderlessButton)
-      .fixedSize()
+      .accessibilityLabel("Operator")
 
       if condition.wrappedValue.op.needsValue {
         TextField(

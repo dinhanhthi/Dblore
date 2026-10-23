@@ -98,14 +98,15 @@ struct MongoCreateIndexSheet: View {
           .textFieldStyle(.plain)
           .font(.monoMedium)
           .inputCapsuleStyle()
-          Picker("", selection: $key.kind) {
-            ForEach(MongoIndexDraft.KeyKind.allCases, id: \.self) { kind in
-              Text(kind.title).tag(kind)
+          CapsulePickerMenu(title: key.kind.title) {
+            Picker("", selection: $key.kind) {
+              ForEach(MongoIndexDraft.KeyKind.allCases, id: \.self) { kind in
+                Text(kind.title).tag(kind)
+              }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .pickerStyle(.menu)
-          .labelsHidden()
-          .fixedSize()
           Button {
             draft.keys.removeAll { $0.id == key.id }
           } label: {

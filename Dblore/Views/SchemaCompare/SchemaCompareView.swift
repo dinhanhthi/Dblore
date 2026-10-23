@@ -82,30 +82,41 @@ private struct SchemaCompareView: View {
 
   // MARK: - Source and target
 
+  private var sourceConnectionTitle: String {
+    guard case .saved(let id) = model.sourceConnection else { return "This connection" }
+    return model.savedConnections.first { $0.id == id }?.name ?? "This connection"
+  }
+
   private var pickers: some View {
     HStack(alignment: .bottom, spacing: Spacing.md) {
       labeled("Source") {
-        Picker("Source", selection: $model.sourceConnection) {
-          Text("This connection").tag(SchemaCompareModel.SourceConnection.current)
-          if !model.savedConnections.isEmpty {
-            Divider()
-            ForEach(model.savedConnections) { saved in
-              Text(saved.name).tag(SchemaCompareModel.SourceConnection.saved(saved.id))
+        CapsulePickerMenu(title: sourceConnectionTitle, width: 220) {
+          Picker("Source", selection: $model.sourceConnection) {
+            Text("This connection").tag(SchemaCompareModel.SourceConnection.current)
+            if !model.savedConnections.isEmpty {
+              Divider()
+              ForEach(model.savedConnections) { saved in
+                Text(saved.name).tag(SchemaCompareModel.SourceConnection.saved(saved.id))
+              }
             }
           }
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .labelsHidden()
-        .frame(width: 220)
+        .accessibilityLabel("Source")
       }
       labeled("Source \(model.schemaLabel.lowercased())") {
         // A saved connection's schemas are not listed before it is opened; MySQL lists only the
         // connected database
         if model.sourceConnection == .current, model.databaseType != .mysql {
-          Picker("Source \(model.schemaLabel)", selection: $model.sourceSchema) {
-            ForEach(model.sourceSchemas, id: \.self) { Text($0).tag($0) }
+          CapsulePickerMenu(title: model.sourceSchema, width: 180) {
+            Picker("Source \(model.schemaLabel)", selection: $model.sourceSchema) {
+              ForEach(model.sourceSchemas, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .labelsHidden()
-          .frame(width: 180)
+          .accessibilityLabel("Source \(model.schemaLabel)")
         } else {
           TextField(model.schemaLabel, text: $model.sourceSchema)
             .textFieldStyle(.plain)
@@ -119,11 +130,14 @@ private struct SchemaCompareView: View {
         .foregroundColor(.foregroundMuted)
         .padding(.bottom, Spacing.xs)
       labeled("Target \(model.schemaLabel.lowercased()) (this connection)") {
-        Picker("Target \(model.schemaLabel)", selection: $model.targetSchema) {
-          ForEach(model.targetSchemas, id: \.self) { Text($0).tag($0) }
+        CapsulePickerMenu(title: model.targetSchema, width: 180) {
+          Picker("Target \(model.schemaLabel)", selection: $model.targetSchema) {
+            ForEach(model.targetSchemas, id: \.self) { Text($0).tag($0) }
+          }
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .labelsHidden()
-        .frame(width: 180)
+        .accessibilityLabel("Target \(model.schemaLabel)")
         .disabled(model.targetSchemas.count < 2)
       }
       Spacer(minLength: Spacing.sm)

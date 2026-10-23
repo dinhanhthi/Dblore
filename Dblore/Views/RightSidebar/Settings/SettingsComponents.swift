@@ -253,14 +253,37 @@ struct CapsuleDropdown<Option: Hashable>: View {
   let onSelect: (Option) -> Void
 
   var body: some View {
-    Menu {
+    CapsulePickerMenu(title: title, width: width) {
       ForEach(options, id: \.self) { option in
         Toggle(
           optionTitle(option),
           isOn: Binding(get: { isSelected(option) }, set: { _ in onSelect(option) }))
       }
+    }
+    .accessibilityLabel(accessibilityLabel ?? title)
+  }
+}
+
+/// `CapsuleDropdown` chrome around any menu content, such as a `Picker` with
+/// `.pickerStyle(.inline)`: its choices show in the menu with the native checkmark, and
+/// dividers and optional tags work as in a plain `Picker`.
+struct CapsulePickerMenu<Content: View>: View {
+  let title: String
+  var width: CGFloat? = nil
+  /// A color dot before the title, such as the highlight color
+  var dotColor: Color? = nil
+  @ViewBuilder let content: () -> Content
+
+  @Environment(\.isEnabled) private var isEnabled
+
+  var body: some View {
+    Menu {
+      content()
     } label: {
       HStack(spacing: Spacing.xs) {
+        if let dotColor {
+          Circle().fill(dotColor).frame(width: 10, height: 10)
+        }
         Text(title)
           .lineLimit(1)
         if width != nil {
@@ -278,13 +301,13 @@ struct CapsuleDropdown<Option: Hashable>: View {
       .background(Capsule().fill(Color.controlBackground))
       .overlay(HairlineBorder(shape: Capsule()))
       .contentShape(Capsule())
+      .opacity(isEnabled ? 1 : 0.5)
     }
     .buttonStyle(.plain)
     .menuIndicator(.hidden)
     .linkPointer()
     .fixedSize(horizontal: width == nil, vertical: true)
     .frame(width: width, alignment: .leading)
-    .accessibilityLabel(accessibilityLabel ?? title)
   }
 }
 

@@ -51,14 +51,20 @@ struct ConnectionExportSheet: View {
       Text("Favorites")
         .font(.labelText)
         .foregroundColor(.foregroundMuted)
-      Picker("Favorites", selection: $model.favoritesSourceID) {
-        Text("Don't include").tag(UUID?.none)
-        ForEach(model.favoritesSources) { source in
-          Text(verbatim: "\(source.name) (\(source.count))").tag(UUID?.some(source.id))
+      CapsulePickerMenu(
+        title: model.favoritesSources.first { $0.id == model.favoritesSourceID }
+          .map { "\($0.name) (\($0.count))" } ?? "Don't include"
+      ) {
+        Picker("Favorites", selection: $model.favoritesSourceID) {
+          Text("Don't include").tag(UUID?.none)
+          ForEach(model.favoritesSources) { source in
+            Text(verbatim: "\(source.name) (\(source.count))").tag(UUID?.some(source.id))
+          }
         }
+        .pickerStyle(.inline)
+        .labelsHidden()
       }
-      .labelsHidden()
-      .fixedSize()
+      .accessibilityLabel("Favorites")
       .disabled(model.isExporting)
     }
   }

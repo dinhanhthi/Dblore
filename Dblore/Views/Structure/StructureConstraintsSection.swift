@@ -160,11 +160,14 @@ struct StructureConstraintsSection: View {
       Text(title)
         .font(.small)
         .foregroundColor(.foregroundSubtle)
-      Picker(title, selection: selection) {
-        ForEach(ForeignKeyAction.allCases, id: \.self) { Text($0.displayName).tag($0) }
+      CapsulePickerMenu(title: selection.wrappedValue.displayName, width: 130) {
+        Picker(title, selection: selection) {
+          ForEach(ForeignKeyAction.allCases, id: \.self) { Text($0.displayName).tag($0) }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
       }
-      .labelsHidden()
-      .frame(width: 130)
+      .accessibilityLabel(title)
     }
   }
 

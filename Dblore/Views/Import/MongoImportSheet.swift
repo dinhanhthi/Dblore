@@ -178,14 +178,16 @@ struct MongoImportSheet: View {
               .font(.small)
               .foregroundColor(.foregroundMuted)
           } else {
-            Picker("", selection: $existingName) {
-              ForEach(collections, id: \.self) { name in
-                Text(name).tag(name)
+            CapsulePickerMenu(title: existingName) {
+              Picker("", selection: $existingName) {
+                ForEach(collections, id: \.self) { name in
+                  Text(name).tag(name)
+                }
               }
+              .pickerStyle(.inline)
+              .labelsHidden()
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .fixedSize()
+            .accessibilityLabel("Collection")
           }
         case .new:
           TextField("e.g. events", text: $newName)
@@ -219,15 +221,19 @@ struct MongoImportSheet: View {
             Text(Self.title(column.inferred))
               .font(.small)
               .foregroundColor(.foregroundMuted)
-            Picker("", selection: override(at: index)) {
-              Text("Inferred").tag(MongoImportReader.FieldType?.none)
-              ForEach(MongoImportReader.FieldType.allCases, id: \.self) { type in
-                Text(Self.title(type)).tag(MongoImportReader.FieldType?.some(type))
+            CapsulePickerMenu(
+              title: override(at: index).wrappedValue.map { Self.title($0) } ?? "Inferred"
+            ) {
+              Picker("", selection: override(at: index)) {
+                Text("Inferred").tag(MongoImportReader.FieldType?.none)
+                ForEach(MongoImportReader.FieldType.allCases, id: \.self) { type in
+                  Text(Self.title(type)).tag(MongoImportReader.FieldType?.some(type))
+                }
               }
+              .pickerStyle(.inline)
+              .labelsHidden()
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .fixedSize()
+            .accessibilityLabel("Type")
           }
         }
       }

@@ -260,14 +260,16 @@ struct MongoValidationView: View {
       Text(title)
         .font(.small)
         .foregroundColor(.foregroundMuted)
-      Picker(title, selection: selection) {
-        ForEach(choices, id: \.self) { choice in
-          Text(verbatim: choice.rawValue).tag(choice)
+      CapsulePickerMenu(title: selection.wrappedValue.rawValue) {
+        Picker(title, selection: selection) {
+          ForEach(choices, id: \.self) { choice in
+            Text(verbatim: choice.rawValue).tag(choice)
+          }
         }
+        .pickerStyle(.inline)
+        .labelsHidden()
       }
-      .pickerStyle(.menu)
-      .labelsHidden()
-      .fixedSize()
+      .accessibilityLabel(title)
     }
   }
 

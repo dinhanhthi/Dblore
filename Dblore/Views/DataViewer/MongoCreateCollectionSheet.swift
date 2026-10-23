@@ -95,14 +95,15 @@ struct MongoCreateCollectionSheet: View {
       }
       GridRow(alignment: .center) {
         label("Kind")
-        Picker("", selection: $draft.kind) {
-          ForEach(kinds, id: \.self) { kind in
-            Text(kind.title).tag(kind)
+        CapsulePickerMenu(title: draft.kind.title) {
+          Picker("", selection: $draft.kind) {
+            ForEach(kinds, id: \.self) { kind in
+              Text(kind.title).tag(kind)
+            }
           }
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
       }
       switch draft.kind {
       case .standard:
@@ -121,15 +122,16 @@ struct MongoCreateCollectionSheet: View {
         textRow("Meta field", $draft.metaField, "Optional, e.g. sensor")
         GridRow(alignment: .center) {
           label("Granularity")
-          Picker("", selection: $draft.granularity) {
-            Text("Server default").tag(MongoCollectionDraft.Granularity?.none)
-            ForEach(MongoCollectionDraft.Granularity.allCases, id: \.self) { granularity in
-              Text(granularity.rawValue.capitalized).tag(Optional(granularity))
+          CapsulePickerMenu(title: draft.granularity?.rawValue.capitalized ?? "Server default") {
+            Picker("", selection: $draft.granularity) {
+              Text("Server default").tag(MongoCollectionDraft.Granularity?.none)
+              ForEach(MongoCollectionDraft.Granularity.allCases, id: \.self) { granularity in
+                Text(granularity.rawValue.capitalized).tag(Optional(granularity))
+              }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
           }
-          .pickerStyle(.menu)
-          .labelsHidden()
-          .fixedSize()
         }
         numberRow(
           "Expire after", $draft.expireAfterSeconds, "Never",

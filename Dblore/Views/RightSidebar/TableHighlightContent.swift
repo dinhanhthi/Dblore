@@ -25,21 +25,18 @@ struct TableHighlightContent: View {
       }
 
       HStack(spacing: Spacing.sm) {
-        Menu {
+        CapsulePickerMenu(
+          title: viewModel.highlightDraft.color.displayName,
+          dotColor: viewModel.highlightDraft.color.color
+        ) {
           ForEach(HighlightColor.allCases, id: \.self) { color in
             Button(action: { viewModel.highlightDraft.color = color }) {
               Label(color.displayName, systemImage: "circle.fill")
                 .foregroundStyle(color.color)
             }
           }
-        } label: {
-          HStack(spacing: Spacing.xs) {
-            Circle().fill(viewModel.highlightDraft.color.color).frame(width: 10, height: 10)
-            Text(viewModel.highlightDraft.color.displayName).font(.small)
-          }
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+        .accessibilityLabel("Highlight color")
         .help("Highlight color")
 
         Spacer()

@@ -146,14 +146,16 @@ struct ResultExportSheet: View {
     HStack(spacing: Spacing.sm) {
       sectionTitle("Format")
       Spacer(minLength: Spacing.sm)
-      Picker("Format", selection: $options.format) {
-        ForEach(formats) { format in
-          Text(format.title).tag(format)
+      CapsulePickerMenu(title: options.format.title) {
+        Picker("Format", selection: $options.format) {
+          ForEach(formats) { format in
+            Text(format.title).tag(format)
+          }
         }
+        .pickerStyle(.inline)
+        .labelsHidden()
       }
-      .pickerStyle(.menu)
-      .labelsHidden()
-      .fixedSize()
+      .accessibilityLabel("Format")
       .disabled(parquet.isRunning)
     }
   }
@@ -205,7 +207,7 @@ struct ResultExportSheet: View {
       }
       if options.format.offersEncoding {
         optionPicker(
-          "Encoding", selection: $options.encoding,
+          "Encoding", selection: $options.encoding, value: options.encoding.title,
           help:
             "UTF-16 LE includes a byte order mark. Windows-1252 drops characters it cannot store."
         ) {
@@ -216,7 +218,7 @@ struct ResultExportSheet: View {
       }
       if options.format.offersQuote {
         optionPicker(
-          "Quote", selection: $options.quote,
+          "Quote", selection: $options.quote, value: options.quote.title,
           help:
             "Quote if needed wraps a field with a comma, a quote, or a line break. Never can split a field; formulas are then neutralized on every line."
         ) {
@@ -227,7 +229,7 @@ struct ResultExportSheet: View {
       }
       if options.format.offersLineBreak {
         optionPicker(
-          "Line break", selection: $options.lineBreak,
+          "Line break", selection: $options.lineBreak, value: options.lineBreak.title,
           help: "Record separators and line breaks inside fields use this ending."
         ) {
           ForEach(ExportLineBreak.allCases) { lineBreak in
@@ -245,19 +247,23 @@ struct ResultExportSheet: View {
       .help(help)
   }
 
+  /// `value`: the title of the selected choice
   private func optionPicker<Selection: Hashable>(
-    _ title: String, selection: Binding<Selection>, help: String,
+    _ title: String, selection: Binding<Selection>, value: String, help: String,
     @ViewBuilder content: () -> some View
   ) -> some View {
-    HStack(spacing: Spacing.sm) {
+    let picker = Picker(title, selection: selection, content: content)
+    return HStack(spacing: Spacing.sm) {
       Text(title)
         .font(.bodyText)
         .foregroundColor(.foreground)
       Spacer(minLength: Spacing.sm)
-      Picker(title, selection: selection, content: content)
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
+      CapsulePickerMenu(title: value) {
+        picker
+          .pickerStyle(.inline)
+          .labelsHidden()
+      }
+      .accessibilityLabel(title)
     }
     .help(help)
   }
