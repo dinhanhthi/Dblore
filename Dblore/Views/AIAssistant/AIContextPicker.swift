@@ -291,23 +291,49 @@ struct AIContextPicker<Accessory: View>: View {
 
   private func tableChip(_ table: DatabaseTable) -> some View {
     let isExpanded = expanded == table.qualifiedName
-    return HStack(spacing: Spacing.xs) {
-      Button {
-        expanded = isExpanded ? nil : table.qualifiedName
-      } label: {
-        Text(table.qualifiedName)
-      }
-      .buttonStyle(AIChipButtonStyle(isActive: isExpanded))
-      .help("Show columns")
-
+    return Button {
+      expanded = isExpanded ? nil : table.qualifiedName
+    } label: {
+      // Room for the remove button that sits inside the chip
+      Text(table.qualifiedName).padding(.trailing, Spacing.lg)
+    }
+    .buttonStyle(AIChipButtonStyle(isActive: isExpanded))
+    .help("Show columns")
+    .overlay(alignment: .trailing) {
       Button {
         selected.remove(table.qualifiedName)
       } label: {
         Image(systemName: "xmark")
       }
-      .buttonStyle(GhostButtonStyle(iconOnly: true))
-      .controlSize(.small)
+      .buttonStyle(AIChipRemoveButtonStyle())
+      .padding(.trailing, 3)
       .help("Remove \(table.qualifiedName)")
+    }
+  }
+}
+
+/// Round remove button inside an `AIChipButtonStyle` chip, with its own hover fill.
+private struct AIChipRemoveButtonStyle: ButtonStyle {
+  func makeBody(configuration: Configuration) -> some View {
+    RemoveBody(configuration: configuration)
+  }
+
+  private struct RemoveBody: View {
+    let configuration: Configuration
+    @State private var isHovering = false
+
+    var body: some View {
+      configuration.label
+        .font(.system(size: 8, weight: .bold))
+        .foregroundColor(isHovering ? .foreground : .foregroundMuted)
+        .frame(width: 16, height: 16)
+        .background(
+          Circle().fill(
+            configuration.isPressed || isHovering ? Color.foreground.opacity(0.12) : .clear)
+        )
+        .contentShape(Circle())
+        .onHover { isHovering = $0 }
+        .linkPointer()
     }
   }
 }
