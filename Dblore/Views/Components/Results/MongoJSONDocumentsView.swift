@@ -55,7 +55,8 @@ struct MongoJSONDocumentsView: View {
         tabs: [MongoRelaxedJSON.Format.relaxedExtendedJSON, .canonicalExtendedJSON], height: 28
       ) { value in
         CapsuleTabLabel(
-          text: value == .relaxedExtendedJSON ? "Relaxed" : "Canonical", isSelected: format == value)
+          text: value == .relaxedExtendedJSON ? "Relaxed" : "Canonical",
+          isSelected: format == value)
       }
       .fitsContent()
       .accessibilityLabel("Extended JSON format")

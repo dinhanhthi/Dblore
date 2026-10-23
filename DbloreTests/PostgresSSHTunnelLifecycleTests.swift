@@ -210,7 +210,7 @@ struct PostgresSSHTunnelSeamTests {
     let config = Self.config("probe-timeout", timeoutSeconds: 1)
     Self.save(.password("jump-pass"), for: config)
     let factory = FakeSSHTunnelFactory(holdsOpen: true)
-    defer { factory.tunnels.forEach { $0.releaseOpen() } }
+    defer { for tunnel in factory.tunnels { tunnel.releaseOpen() } }
     let session = PostgresSession(
       config: config, tunnelFactory: factory, hostKeyValidator: AcceptAnySSHHostKey())
     do {

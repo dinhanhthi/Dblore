@@ -474,7 +474,7 @@ private nonisolated final class ScriptRun: @unchecked Sendable {
     let timers = timers
     self.timers = []
     lock.unlock()
-    timers.forEach { $0.cancel() }
+    for timer in timers { timer.cancel() }
     // The read ends stay open: their handlers keep draining until the script closes its ends
     closeWriters()
     continuation?.resume(returning: outcome)

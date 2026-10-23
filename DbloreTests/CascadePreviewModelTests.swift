@@ -95,7 +95,8 @@ struct CascadePreviewModelTests {
 
     viewModel.discardStaged()
     #expect(viewModel.stagedBlockerPrompt == nil)
-    viewModel.resolveStagedBlockerPrompt(commitAnyway: false)  // a no-op now; a regression must not hang the run
+    // A no-op now; a regression must not hang the run
+    viewModel.resolveStagedBlockerPrompt(commitAnyway: false)
     await first.value
     #expect(!factory.statements.contains { $0.contains("DELETE") })
   }
@@ -142,9 +143,8 @@ struct CascadePreviewModelTests {
       capabilities: .contract(), rows: [[.int(3)]], slowQueries: true)
     let slowManager = try await connect(slow)
     let stopped = Stopped()
-    let timedOut = await NotebookViewModel.cascadeImpact(
-      budget: .milliseconds(100), stop: { await stopped.mark() }
-    ) {
+    let stop: @Sendable () async -> Void = { await stopped.mark() }
+    let timedOut = await NotebookViewModel.cascadeImpact(budget: .milliseconds(100), stop: stop) {
       try await count(slowManager)
     }
     // The read the budget stopped waiting for is still parked in the fake: end it

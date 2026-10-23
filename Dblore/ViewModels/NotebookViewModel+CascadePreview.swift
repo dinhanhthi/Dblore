@@ -155,7 +155,8 @@ extension NotebookViewModel {
     let caller = id
     let epoch = target.connectionEpoch
     let side = connectionManager.makeReadOnlySideManager()
-    return await Self.cascadeImpact(stop: { await side.disconnect() }) {
+    let stop: @Sendable () async -> Void = { await side.disconnect() }
+    return await Self.cascadeImpact(stop: stop) {
       do {
         try await Self.connectSide(side, like: connectionManager)
         // A connect that finished after the budget or the cancel ends here: the catch below

@@ -50,7 +50,8 @@ struct MongoBulkWriteSheet: View {
           CapsuleTabPicker(
             selection: $model.mode, tabs: [MongoBulkWriteModel.Mode.update, .delete], height: 28
           ) { mode in
-            CapsuleTabLabel(text: mode == .update ? "Update" : "Delete", isSelected: model.mode == mode)
+            CapsuleTabLabel(
+              text: mode == .update ? "Update" : "Delete", isSelected: model.mode == mode)
           }
           .fitsContent()
           .accessibilityLabel("Write")

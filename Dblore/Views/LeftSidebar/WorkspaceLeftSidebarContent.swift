@@ -463,15 +463,16 @@ struct WorkspaceLeftSidebarContent: View {
         guard let folderKey else { return }
         folderStore.deleteFolder(id: folder.id, for: folderKey)
       },
-      onDrop: { dropOnFolder($0, folder: folder) }
-    ) {
-      ForEach(content.tables) { table in
-        tableRow(table, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folder.id)
+      onDrop: { dropOnFolder($0, folder: folder) },
+      content: {
+        ForEach(content.tables) { table in
+          tableRow(table, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folder.id)
+        }
+        ForEach(content.views) { view in
+          viewRow(view, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folder.id)
+        }
       }
-      ForEach(content.views) { view in
-        viewRow(view, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folder.id)
-      }
-    }
+    )
   }
 
   /// The Public tab's schemas, read once per render
