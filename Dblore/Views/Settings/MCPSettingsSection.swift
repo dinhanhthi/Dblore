@@ -3,8 +3,8 @@
 //  Dblore
 //
 //  Settings > MCP: run the MCP server, choose the connections agents may use (each Read
-//  unless write tools are on and it is given a write scope), and copy the client setup for
-//  Claude Code or Cursor.
+//  unless write tools are on and it is given a write scope), copy the client setup for
+//  Claude Code or Cursor, and add the outside MCP servers the AI chat may call.
 //
 
 import SwiftUI
@@ -123,6 +123,8 @@ struct MCPSettingsSection: View {
           .foregroundColor(model.didRegenerate ? .success : .foregroundSubtle)
         }
       }
+
+      OutsideMCPServersSection()
 
       SettingsGroupCard(title: "About MCP") {
         VStack(alignment: .leading, spacing: Spacing.sm) {

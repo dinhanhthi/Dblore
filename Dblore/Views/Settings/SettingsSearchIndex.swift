@@ -311,6 +311,16 @@ extension SettingsModal.SettingsTab {
           card: "Clients", title: "Regenerate token",
           detail: "Clients that use the old token stop working until you copy the setup again."),
         .init(
+          card: "Outside MCP servers", title: "Outside MCP servers",
+          detail:
+            "MCP servers whose tools the AI chat may call: test a server, tick the tools to allow, turn it on."
+        ),
+        .init(
+          card: "Outside MCP servers", title: "Add a server",
+          detail:
+            "Name, URL and token. https, or http on 127.0.0.1, ::1 or localhost. The token is kept in the Keychain."
+        ),
+        .init(
           card: "About MCP", title: "About MCP",
           detail:
             "Read-only. Agent reads do not see uncommitted changes. Query results are sent to the agent as untrusted data."

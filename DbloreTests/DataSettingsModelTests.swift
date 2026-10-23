@@ -66,8 +66,8 @@ struct DataSettingsModelTests {
     #expect(logs.clearCount == 1)
   }
 
-  @Test("Clear all removes secrets only when that flag is confirmed")
-  func clearAllRespectsSecretsFlag() async {
+  @Test("Clear all removes secrets, and outside MCP servers, only when that flag is confirmed")
+  func clearAllRespectsSecretsFlag() async throws {
     let logs = Store(text: "alpha", bytes: 4, itemCount: 1)
     let database = SecretItem(service: "db", account: "ada", label: "ada", kind: .dbPassword)
     let key = SecretItem(service: "ai", account: "openai", label: "openai", kind: .aiKey)
@@ -79,9 +79,16 @@ struct DataSettingsModelTests {
     let hostKey = SecretItem.listed(
       service: KeychainSSHKnownHostStore.serviceName, account: "v2|9:bastion|2:22")
     let inventory = InMemorySecretInventory(items: [database, key, certificate, ssh, hostKey])
+    let suite = "ace.thi.Dblore.tests.dataSettings.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let tokens = InMemoryOutsideMCPTokenStore()
+    let servers = OutsideMCPServerStore(defaults: defaults, tokens: tokens)
+    let server = try await servers.add(
+      name: "Tools", url: "http://127.0.0.1:7777/mcp", token: "tok-1")
     let model = DataSettingsModel(
       providers: [FakeProvider(category: .logs, store: logs)],
-      inventory: inventory)
+      inventory: inventory, outsideServers: servers)
 
     let mismatched = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: true, confirmed: mismatched)
@@ -92,11 +99,18 @@ struct DataSettingsModelTests {
     await model.clearAll(includeSecrets: false, confirmed: keepSecrets)
     #expect(logs.clearCount == 1)
     #expect(await inventory.items() == [database, key, certificate, ssh, hostKey])
+    // A server and its token are a pair: kept together with the credentials.
+    #expect(servers.servers.map(\.id) == [server.id])
+    #expect(tokens.load(serverID: server.id) == "tok-1")
 
     let removeSecrets = model.prepareClearAll(includeSecrets: true)
     await model.clearAll(includeSecrets: true, confirmed: removeSecrets)
     #expect(logs.clearCount == 2)
     #expect(await inventory.items().isEmpty)
+    #expect(servers.servers.isEmpty)
+    #expect(defaults.data(forKey: OutsideMCPServerStore.defaultsKey) == nil)
+    #expect(tokens.load(serverID: server.id) == nil)
+    #expect(OutsideMCPServerStore(defaults: defaults, tokens: tokens).servers.isEmpty)
   }
 
   @Test("Delete ignores a token from another action")
@@ -143,6 +157,26 @@ struct DataSettingsModelTests {
     await model.deleteSecret(hostKey, confirmed: model.prepareDeleteSecret(hostKey))
     #expect(await inventory.items().isEmpty)
     #expect(model.secrets.isEmpty)
+  }
+
+  @Test("Deleting one outside MCP token turns only its server off")
+  func deletingOutsideTokenTurnsServerOff() async throws {
+    let suite = "ace.thi.Dblore.tests.dataSettings.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let servers = OutsideMCPServerStore(defaults: defaults, tokens: InMemoryOutsideMCPTokenStore())
+    let first = try await servers.add(name: "One", url: "http://127.0.0.1:7777/mcp", token: "t1")
+    let second = try await servers.add(name: "Two", url: "http://127.0.0.1:7778/mcp", token: "t2")
+    servers.setEnabled(true, for: first.id)
+    servers.setEnabled(true, for: second.id)
+    let item = SecretItem.listed(
+      service: KeychainOutsideMCPTokenStore.serviceName, account: first.id.uuidString)
+    #expect(item.kind == .outsideMCPToken)
+    let model = DataSettingsModel(
+      providers: [], inventory: InMemorySecretInventory(items: [item]), outsideServers: servers)
+
+    await model.deleteSecret(item, confirmed: model.prepareDeleteSecret(item))
+    #expect(servers.servers.map(\.isEnabled) == [false, true])
   }
 
   @Test("Import reports per-category success")

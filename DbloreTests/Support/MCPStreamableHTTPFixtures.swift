@@ -7,29 +7,30 @@
 import Foundation
 
 enum MCPStreamableHTTPFixtures {
-  /// The JSON-RPC id of the request `toolsCallStream` answers.
-  static let responseID = 7
-
   /// A notification with no id, sent before the response.
   static let progressNotification =
     #"{"jsonrpc":"2.0","method":"notifications/progress","#
     + #""params":{"progressToken":"t1","progress":1,"total":2}}"#
 
   /// The tools/call response that ends the stream.
-  static let toolsCallResponse =
-    #"{"jsonrpc":"2.0","id":\#(responseID),"result":{"content":["#
-    + #"{"type":"text","text":"ok"}],"isError":false}}"#
+  static func toolsCallResponse(id: Int) -> String {
+    #"{"jsonrpc":"2.0","id":\#(id),"result":{"content":["#
+      + #"{"type":"text","text":"ok"}],"isError":false}}"#
+  }
 
   /// A JSON-RPC error response, as an SSE stream may carry instead of a result.
-  static let errorResponse =
-    #"{"jsonrpc":"2.0","id":\#(responseID),"error":{"code":-32602,"message":"Unknown tool"}}"#
+  static func errorResponse(id: Int) -> String {
+    #"{"jsonrpc":"2.0","id":\#(id),"error":{"code":-32602,"message":"Unknown tool"}}"#
+  }
 
-  /// A `text/event-stream` body: a comment, the notification, then the response, each an
-  /// `event: message` with one `data:` line and a blank line after it.
-  static let toolsCallStream = stream(progressNotification, toolsCallResponse)
+  /// A `text/event-stream` body: a comment, the notification, a response to another request,
+  /// then the response, each an `event: message` with one `data:` line and a blank line after it.
+  static func toolsCallStream(id: Int) -> String {
+    stream(progressNotification, errorResponse(id: id + 100), toolsCallResponse(id: id))
+  }
 
   /// The same framing ending with `errorResponse`.
-  static let errorStream = stream(errorResponse)
+  static func errorStream(id: Int) -> String { stream(errorResponse(id: id)) }
 
   private static func stream(_ messages: String...) -> String {
     ": keep-alive\n\n"

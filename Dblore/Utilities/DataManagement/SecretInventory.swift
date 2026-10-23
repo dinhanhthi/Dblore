@@ -13,6 +13,7 @@ nonisolated enum SecretKind: String, Sendable {
   case clientCertificate
   case sshCredential
   case sshHostKey
+  case outsideMCPToken
 }
 
 /// One Keychain account. `label` is the account name. The value itself is not here.
@@ -44,6 +45,8 @@ nonisolated struct SecretItem: Identifiable, Equatable, Sendable {
       return .sshCredential
     case KeychainSSHKnownHostStore.serviceName:
       return .sshHostKey
+    case KeychainOutsideMCPTokenStore.serviceName:
+      return .outsideMCPToken
     case KeychainAIKeyStore.serviceName:
       return account == ChatGPTTokenStorage.account ? .chatGPTToken : .aiKey
     default:
@@ -98,6 +101,7 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
     KeychainClientCertificateStore.serviceName,
     KeychainSSHCredentialStore.serviceName,
     KeychainSSHKnownHostStore.serviceName,
+    KeychainOutsideMCPTokenStore.serviceName,
   ]
 
   func items() async -> [SecretItem] {

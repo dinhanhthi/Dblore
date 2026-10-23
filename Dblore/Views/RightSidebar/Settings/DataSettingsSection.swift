@@ -245,7 +245,7 @@ struct DataSettingsSection: View {
 
   /// Accounts of these kinds are encoded identities, so the kind is the readable title.
   private func showsKindFirst(_ item: SecretItem) -> Bool {
-    [.clientCertificate, .sshCredential, .sshHostKey].contains(item.kind)
+    [.clientCertificate, .sshCredential, .sshHostKey, .outsideMCPToken].contains(item.kind)
   }
 
   private var clearIsPresented: Binding<Bool> {
@@ -480,6 +480,7 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   case .clientCertificate: "Client certificate"
   case .sshCredential: "SSH credentials"
   case .sshHostKey: "Trusted SSH host keys"
+  case .outsideMCPToken: "Outside MCP server token"
   }
 }
 
@@ -692,9 +693,11 @@ private struct DataClearAllSheet: View {
             .toggleStyle(.checkbox)
             .font(.bodyText)
             .disabled(working)
-          Text("Saved credentials are deleted only when that box is checked.")
-            .font(.small)
-            .foregroundColor(.foregroundSubtle)
+          Text(
+            "Saved credentials, and the outside MCP servers that use them, are deleted only when that box is checked."
+          )
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
