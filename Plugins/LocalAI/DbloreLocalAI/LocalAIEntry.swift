@@ -14,34 +14,55 @@ public func dbloreLocalAIProtocol() -> Int32 { Int32(LocalAIProtocol.version) }
 
 /// Answers the request JSON object `json` (UTF-8, NUL-terminated) by calling `emit` with `context`
 /// and one event JSON object (UTF-8, NUL-terminated) per call, echoing the request `id` when there
-/// is one. Today every request gets exactly one event, emitted before this returns on the caller's
-/// thread; callers must also accept calls later and from any thread. The string passed to `emit`
-/// is valid only during that call.
+/// is one. `hello`, `gpuProbe` and an invalid request get one event before this returns, on the
+/// caller's thread; `generate` and `unload` answer later, from a Task on any thread, so `emit` and
+/// `context` must stay valid for the life of the process. A `cancel` gets an event only when its
+/// target is not running (see `LocalAIRequestHandler.cancel`). The string passed to `emit` is
+/// valid only during that call.
 @_cdecl("dblore_localai_request")
 public func dbloreLocalAIRequest(
   _ json: UnsafePointer<CChar>, _ context: UnsafeMutableRawPointer?,
   _ emit: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>) -> Void
 ) {
-  let event = respond(to: Data(bytes: json, count: strlen(json)))
-  // An event that can't be encoded (e.g. a non-finite number) still answers with an error event.
-  let data =
-    (try? LocalAIProtocol.encode(event))
-    ?? (try? LocalAIProtocol.encode(invalid("The event could not be encoded", id: event.id)))
-    ?? Data(#"{"code":"invalid","event":"error","message":"The event could not be encoded"}"#.utf8)
-  String(decoding: data, as: UTF8.self).withCString { emit(context, $0) }
+  respond(to: Data(bytes: json, count: strlen(json)), sink: EventSink(context: context, emit: emit))
+}
+
+/// Serves generate, cancel and unload with the shared engine, which loads a model only on the
+/// first `generate`.
+private let handler = LocalAIRequestHandler(engine: .shared)
+
+/// The caller's callback and context, captured per request so a Task can answer later. The
+/// caller keeps `context` alive and accepts calls from any thread (see `dbloreLocalAIRequest`).
+private struct EventSink: @unchecked Sendable {
+  let context: UnsafeMutableRawPointer?
+  let emit: @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>) -> Void
+
+  func send(_ event: Event) {
+    // An event that can't be encoded (e.g. a non-finite number) still answers with an error event.
+    let data =
+      (try? LocalAIProtocol.encode(event))
+      ?? (try? LocalAIProtocol.encode(invalid("The event could not be encoded", id: event.id)))
+      ?? Data(
+        #"{"code":"invalid","event":"error","message":"The event could not be encoded"}"#.utf8)
+    String(decoding: data, as: UTF8.self).withCString { emit(context, $0) }
+  }
 }
 
 /// Marks this bundle's image for `Bundle(for:)`.
 private final class LocalAIBundleToken {}
 
-/// Answers one request with exactly one event, echoing the request `id`. Generation, cancel and
-/// unload are not available yet.
-private func respond(to data: Data) -> Event {
-  guard let request = LocalAIProtocol.decodeRequest(data) else { return invalidRequest(data) }
+/// Answers one request, echoing its `id`: the handshake, GPU probe and invalid requests here,
+/// generate, cancel and unload through the engine's request handler.
+private func respond(to data: Data, sink: EventSink) {
+  guard let request = LocalAIProtocol.decodeRequest(data) else {
+    return sink.send(invalidRequest(data))
+  }
   switch request.kind {
-  case .hello: return Event(id: request.id, kind: hello())
-  case .gpuProbe: return Event(id: request.id, kind: gpuProbe())
-  case .generate, .cancel, .unload: return invalid("not available yet", id: request.id)
+  case .hello: sink.send(Event(id: request.id, kind: hello()))
+  case .gpuProbe: sink.send(Event(id: request.id, kind: gpuProbe()))
+  case .generate(let generate): handler.generate(generate, id: request.id, emit: sink.send)
+  case .cancel(let target): handler.cancel(target: target, id: request.id, emit: sink.send)
+  case .unload(let modelID): handler.unload(modelID: modelID, id: request.id, emit: sink.send)
   }
 }
 

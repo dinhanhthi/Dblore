@@ -73,13 +73,47 @@ targets:
         # A bundle carries no entitlements (not even get-task-allow): it runs in the app's sandbox
         CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 
+  # Host-less unit tests: they compile the engine, request handler and protocol sources
+  # themselves instead of loading the bundle, so no TEST_HOST or BUNDLE_LOADER
+  DbloreLocalAITests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: DbloreLocalAITests
+      - path: DbloreLocalAI/MLXEngine.swift
+      - path: DbloreLocalAI/LocalAIRequestHandler.swift
+      - path: ../../Dblore/Utilities/AI/LocalAIProtocol.swift
+    dependencies:
+      - package: mlx-swift-lm
+        products: [MLXLMCommon, MLXHuggingFace]
+      - package: swift-transformers
+        product: Tokenizers
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.LocalAITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        ARCHS: arm64
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+
 schemes:
   DbloreLocalAI:
     build:
       targets:
         DbloreLocalAI: all
+        DbloreLocalAITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - DbloreLocalAITests
     profile:
       config: Release
     analyze:

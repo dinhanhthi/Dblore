@@ -9,11 +9,7 @@
 /* Begin PBXBuildFile section */
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
 		D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC222EF71234009A0E5A /* Sparkle */; };
-		D3E0FC302EF71234009A0E5A /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC312EF71234009A0E5A /* MLXLLM */; };
-		D3E0FC322EF71234009A0E5A /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC332EF71234009A0E5A /* MLXLMCommon */; };
 		D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC352EF71234009A0E5A /* HuggingFace */; };
-		D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC392EF71234009A0E5A /* Tokenizers */; };
-		D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */; };
 		D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC422EF71234009A0E5A /* NIOSSH */; };
 		D3E0FC432EF71234009A0E5A /* MySQLNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC452EF71234009A0E5A /* MySQLNIO */; };
 		D3E0FC462EF71234009A0E5A /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC472EF71234009A0E5A /* NIOCore */; };
@@ -80,11 +76,7 @@
 			files = (
 				D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */,
 				D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */,
-				D3E0FC302EF71234009A0E5A /* MLXLLM in Frameworks */,
-				D3E0FC322EF71234009A0E5A /* MLXLMCommon in Frameworks */,
 				D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */,
-				D3E0FC3B2EF71234009A0E5A /* Tokenizers in Frameworks */,
-				D3E0FC3C2EF71234009A0E5A /* MLXHuggingFace in Frameworks */,
 				D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */,
 				D3E0FC432EF71234009A0E5A /* MySQLNIO in Frameworks */,
 				D3E0FC462EF71234009A0E5A /* NIOCore in Frameworks */,
@@ -171,11 +163,7 @@
 			packageProductDependencies = (
 				D3E0FC002EF71234009A0E5B /* PostgresNIO */,
 				D3E0FC222EF71234009A0E5A /* Sparkle */,
-				D3E0FC312EF71234009A0E5A /* MLXLLM */,
-				D3E0FC332EF71234009A0E5A /* MLXLMCommon */,
 				D3E0FC352EF71234009A0E5A /* HuggingFace */,
-				D3E0FC392EF71234009A0E5A /* Tokenizers */,
-				D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */,
 				D3E0FC422EF71234009A0E5A /* NIOSSH */,
 				D3E0FC452EF71234009A0E5A /* MySQLNIO */,
 				D3E0FC472EF71234009A0E5A /* NIOCore */,
@@ -683,30 +671,10 @@
 			package = D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
 		};
-		D3E0FC312EF71234009A0E5A /* MLXLLM */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
-			productName = MLXLLM;
-		};
-		D3E0FC332EF71234009A0E5A /* MLXLMCommon */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
-			productName = MLXLMCommon;
-		};
 		D3E0FC352EF71234009A0E5A /* HuggingFace */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */;
 			productName = HuggingFace;
-		};
-		D3E0FC392EF71234009A0E5A /* Tokenizers */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */;
-			productName = Tokenizers;
-		};
-		D3E0FC3A2EF71234009A0E5A /* MLXHuggingFace */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
-			productName = MLXHuggingFace;
 		};
 		D3E0FC422EF71234009A0E5A /* NIOSSH */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -1,5 +1,6 @@
-// MLXChatClient.swift
-// On-device chat client running catalog MLX models in-process (no network access)
+// MLXEngine.swift
+// The on-device model runtime inside the plugin: one resident MLX model, loaded lazily and
+// unloaded after an idle period or on memory pressure, serving one generation at a time.
 
 import Foundation
 import MLX
@@ -7,7 +8,23 @@ import MLXHuggingFace
 import MLXLMCommon
 import Tokenizers
 
-// MARK: - Engine
+/// A failure the engine reports itself, with the protocol v1 error code it is answered with.
+nonisolated enum MLXEngineError: Error, Equatable, Sendable {
+  /// A live, non-cancelled request holds the engine
+  case busy
+
+  var code: LocalAIProtocol.Event.ErrorCode {
+    switch self {
+    case .busy: .busy
+    }
+  }
+
+  var message: String {
+    switch self {
+    case .busy: "Local model is busy"
+    }
+  }
+}
 
 /// Phase reported by the engine while serving a request.
 nonisolated enum MLXEnginePhase: Sendable, Equatable {
@@ -79,6 +96,7 @@ actor MLXEngine {
   private let idleUnloadInterval: Duration
   private let loader: Loader
   private let releaseMemory: @Sendable () -> Void
+  private let setCacheLimit: @Sendable (Int) -> Void
   private var model: (any MLXLoadedModel)?
   private var loadedID: String?
   private var loadingID: String?
@@ -89,15 +107,19 @@ actor MLXEngine {
   private(set) var idleGeneration = 0
   nonisolated(unsafe) private var memoryPressure: DispatchSourceMemoryPressure?
 
+  /// `setCacheLimit` is injectable so unit tests never start Metal: the real setter creates the
+  /// GPU device and loads the metallib.
   init(
     idleUnloadInterval: Duration = MLXEngine.idleUnloadInterval,
     loader: @escaping Loader = MLXEngine.containerLoader,
     releaseMemory: @escaping @Sendable () -> Void = { MLX.Memory.clearCache() },
+    setCacheLimit: @escaping @Sendable (Int) -> Void = { MLX.Memory.cacheLimit = $0 },
     observeMemoryPressure: Bool = false
   ) {
     self.idleUnloadInterval = idleUnloadInterval
     self.loader = loader
     self.releaseMemory = releaseMemory
+    self.setCacheLimit = setCacheLimit
     if observeMemoryPressure { memoryPressure = makeMemoryPressureSource() }
   }
 
@@ -107,7 +129,7 @@ actor MLXEngine {
 
   /// Streams chunks of generated text through `onChunk`, reporting the loading phase through
   /// `onPhase`. A request whose predecessor was cancelled (Stop) waits for it to finish; it
-  /// throws busy only while a live, non-cancelled request is running.
+  /// throws `MLXEngineError.busy` only while a live, non-cancelled request is running.
   func generate(
     modelID: String, directory: URL, messages: [Chat.Message],
     context: [String: any Sendable]?, parameters: GenerateParameters,
@@ -132,7 +154,7 @@ actor MLXEngine {
   ) async throws {
     try Task.checkCancellation()
     while let current = active {
-      guard current.isCancelled else { throw AIClientError.transport("Local model is busy") }
+      guard current.isCancelled else { throw MLXEngineError.busy }
       await waitForRelease()
       try Task.checkCancellation()
     }
@@ -198,7 +220,7 @@ actor MLXEngine {
       loadedID = nil
       releaseMemory()
     }
-    MLX.Memory.cacheLimit = Self.cacheLimitBytes
+    setCacheLimit(Self.cacheLimitBytes)
     loadingID = modelID
     defer { loadingID = nil }
     let loaded = try await loader(directory)
@@ -238,87 +260,5 @@ actor MLXEngine {
     }
     source.resume()
     return source
-  }
-}
-
-// MARK: - Client
-
-nonisolated struct MLXChatClient: AIChatClient {
-  let root: URL
-  let engine: MLXEngine
-
-  init(root: URL = LocalModelManager.defaultRoot, engine: MLXEngine = .shared) {
-    self.root = root
-    self.engine = engine
-  }
-
-  // MARK: Pure helpers
-
-  /// Greedy decoding for repeatable SQL (mlx-swift-lm picks `ArgMaxSampler` at 0).
-  static let temperature: Float = 0
-  static let maxTokensLimit = 4096
-
-  static func clampMaxTokens(_ value: Int) -> Int {
-    max(1, min(value, maxTokensLimit))
-  }
-
-  /// System prompt first (when not empty), then the conversation in order. Text blocks only:
-  /// on-device models get no tools, so `request.tools` and tool blocks are never sent.
-  static func chatMessages(for request: AIChatRequest) -> [Chat.Message] {
-    var result: [Chat.Message] = []
-    if !request.system.isEmpty { result.append(.system(request.system)) }
-    for message in request.messages {
-      switch message.role {
-      case .user: result.append(.user(message.text))
-      case .assistant: result.append(.assistant(message.text))
-      }
-    }
-    return result
-  }
-
-  /// Qwen3 and Qwen3.5 chat templates think by default (Gemma 4 does not); turn it off for
-  /// predictable SQL output.
-  static func additionalContext(forModel id: String) -> [String: any Sendable]? {
-    id.lowercased().hasPrefix("qwen3") ? ["enable_thinking": false] : nil
-  }
-
-  // MARK: AIChatClient
-
-  func stream(_ request: AIChatRequest) -> AsyncThrowingStream<AIStreamEvent, Error> {
-    AsyncThrowingStream { continuation in
-      let task = Task {
-        do {
-          guard let model = LocalModelCatalog.model(for: request.model) else {
-            throw AIClientError.missingModel
-          }
-          let directory = root.appendingPathComponent(model.id, isDirectory: true)
-          guard LocalModelManager.isInstalled(at: directory) else {
-            throw AIClientError.transport("Download the on-device model in Settings > AI first.")
-          }
-          let parameters = GenerateParameters(
-            maxTokens: Self.clampMaxTokens(request.maxTokens),
-            temperature: Self.temperature)
-          try await engine.generate(
-            modelID: model.id, directory: directory, messages: Self.chatMessages(for: request),
-            context: Self.additionalContext(forModel: model.id), parameters: parameters,
-            onPhase: { if $0 == .loading { continuation.yield(.loadingModel) } },
-            onChunk: { continuation.yield(.text($0)) })
-          continuation.finish()
-        } catch is CancellationError {
-          continuation.finish()
-        } catch let error as AIClientError {
-          continuation.finish(throwing: error)
-        } catch {
-          continuation.finish(throwing: AIClientError.transport(error.localizedDescription))
-        }
-      }
-      continuation.onTermination = { _ in task.cancel() }
-    }
-  }
-
-  func listModels() async throws -> [String] {
-    LocalModelCatalog.all.filter {
-      LocalModelManager.isInstalled(at: root.appendingPathComponent($0.id, isDirectory: true))
-    }.map(\.id)
   }
 }

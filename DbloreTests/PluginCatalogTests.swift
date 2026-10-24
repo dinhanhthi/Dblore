@@ -65,13 +65,13 @@ import Testing
     let localAI = try #require(catalog.entry(id: "local-ai"))
     #expect(localAI.version == "1.0.0")
     #expect(localAI.url.absoluteString == Self.validBundleURL)
-    #expect(localAI.sha256 == "d87bcf640a6aa36800a010ac91bfbac7222408bddad26901aeb2415a804be574")
-    #expect(localAI.maxSize == 12_183_804)
+    #expect(localAI.sha256 == "37f7f207e1928bc038f1a1693663079bc9717131ba3517bbe598a51e0849a4a1")
+    #expect(localAI.maxSize == 12_226_542)
     #expect(
       localAI.kind
         == .bundle(
           name: "DbloreLocalAI.bundle", identifier: "ace.thi.Dblore.LocalAI",
-          cdhash: "3ec922c4930ec54ad59d6b92913df9912437acb5"))
+          cdhash: "524427c3a8b9ef1743adc3d7df13238b2657fd6c"))
   }
 
   @Test func validCatalogDecodesEveryEntry() throws {

@@ -411,8 +411,9 @@ final class PluginManager {
   }
 
   /// Records that the plugin bundle was loaded into this process (call it right after
-  /// `PluginLoader.loadBundle` succeeds). A later Remove or reinstall then asks for a restart: the
-  /// loaded code stays until the app quits, and `Bundle` keeps the loaded image for that path.
+  /// `PluginLoader.loadBundle` succeeds, or fails with `bundleLoadFailed`, when part of its code
+  /// may be mapped). A later Remove or reinstall then asks for a restart: the loaded code stays
+  /// until the app quits, and `Bundle` keeps the loaded image for that path.
   nonisolated func markBundleLoaded() {
     libraryCache.markLoaded()
   }

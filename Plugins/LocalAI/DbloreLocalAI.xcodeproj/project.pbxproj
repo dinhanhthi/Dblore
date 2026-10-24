@@ -8,21 +8,46 @@
 
 /* Begin PBXBuildFile section */
 		1DE06453C7C806D81E5C11E7 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = 0B69444B6413CDDD960E2D31 /* MLXLMCommon */; };
+		24EEF749031BD947FA7A19AE /* MLXEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D110CF8CFC2555C49F24D89F /* MLXEngine.swift */; };
+		32168E1329A77FD4325A2D37 /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 3DD733A88FF1C042492126F7 /* MLXHuggingFace */; };
+		39D94D8CAAFAB59B42E6305F /* LocalAIRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ED12A653F965002969E0BDC /* LocalAIRequestHandler.swift */; };
 		79B10690A13371AB38B1E128 /* LocalAIEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 624CB3E9E8FDF5D19171E092 /* LocalAIEntry.swift */; };
+		87609844A7E444815AA6DABC /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 9D6B9974CFA31DD806B46452 /* Tokenizers */; };
+		926CCE36FF705B047E6AAF15 /* LocalAIRequestHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A2C79929FC2F7BEC92B315C /* LocalAIRequestHandlerTests.swift */; };
+		AF0B6386918405D5537DC567 /* LocalAIProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE71A6BEAD38251AA83F78A /* LocalAIProtocol.swift */; };
+		B7682E7D4F0205204E4DD842 /* LocalAIRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ED12A653F965002969E0BDC /* LocalAIRequestHandler.swift */; };
+		BDE2654C492A449983E7E654 /* MLXEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = D110CF8CFC2555C49F24D89F /* MLXEngine.swift */; };
 		C257549AB5EFE6CFCBA723F8 /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = 718955FD6171A9D6164186BC /* MLXHuggingFace */; };
 		CB4E57A6B881A4A4C6C246C5 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = 3D53613F0F6E0E93C3CB6276 /* Tokenizers */; };
+		CF2E57EFF2ECA4959C27A5A1 /* MLXEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A23D188518BB29D94EB59B5E /* MLXEngineTests.swift */; };
 		DFCA88D40E97566E6EB7DD5D /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = 1906D8053EEA9C1149A87EA2 /* MLXLLM */; };
 		E3E8AE747BF8614105BBE47E /* LocalAIProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE71A6BEAD38251AA83F78A /* LocalAIProtocol.swift */; };
+		E62B57E3F473BA73D59964C8 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = D6A95BF8EBAEB58AC80D1BF0 /* MLXLMCommon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		201175AB4DC9EDD2880E02DE /* DbloreLocalAITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreLocalAITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4A2C79929FC2F7BEC92B315C /* LocalAIRequestHandlerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAIRequestHandlerTests.swift; sourceTree = "<group>"; };
 		5A9885DA83BE76FCAB6172D9 /* DbloreLocalAI.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreLocalAI.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		624CB3E9E8FDF5D19171E092 /* LocalAIEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAIEntry.swift; sourceTree = "<group>"; };
 		7AE71A6BEAD38251AA83F78A /* LocalAIProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAIProtocol.swift; sourceTree = "<group>"; };
+		9ED12A653F965002969E0BDC /* LocalAIRequestHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalAIRequestHandler.swift; sourceTree = "<group>"; };
+		A23D188518BB29D94EB59B5E /* MLXEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXEngineTests.swift; sourceTree = "<group>"; };
+		D110CF8CFC2555C49F24D89F /* MLXEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXEngine.swift; sourceTree = "<group>"; };
 		DF3E3BCAFA0348B643E6A7C4 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		8FA85BE1A5C16D35AA36254D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E62B57E3F473BA73D59964C8 /* MLXLMCommon in Frameworks */,
+				32168E1329A77FD4325A2D37 /* MLXHuggingFace in Frameworks */,
+				87609844A7E444815AA6DABC /* Tokenizers in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A264A5D0EF15815DA01B177F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -54,11 +79,22 @@
 			path = Dblore;
 			sourceTree = "<group>";
 		};
+		19988260BED1D8CF1E213353 /* DbloreLocalAITests */ = {
+			isa = PBXGroup;
+			children = (
+				4A2C79929FC2F7BEC92B315C /* LocalAIRequestHandlerTests.swift */,
+				A23D188518BB29D94EB59B5E /* MLXEngineTests.swift */,
+			);
+			path = DbloreLocalAITests;
+			sourceTree = "<group>";
+		};
 		5701CE5ED4F466B77EAA9CD0 /* DbloreLocalAI */ = {
 			isa = PBXGroup;
 			children = (
 				DF3E3BCAFA0348B643E6A7C4 /* Info.plist */,
 				624CB3E9E8FDF5D19171E092 /* LocalAIEntry.swift */,
+				9ED12A653F965002969E0BDC /* LocalAIRequestHandler.swift */,
+				D110CF8CFC2555C49F24D89F /* MLXEngine.swift */,
 			);
 			path = DbloreLocalAI;
 			sourceTree = "<group>";
@@ -68,6 +104,7 @@
 			children = (
 				034D6EF183230D640B932488 /* Dblore */,
 				5701CE5ED4F466B77EAA9CD0 /* DbloreLocalAI */,
+				19988260BED1D8CF1E213353 /* DbloreLocalAITests */,
 				FAF91D5E484357E0D05B5E3D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -92,6 +129,7 @@
 			isa = PBXGroup;
 			children = (
 				5A9885DA83BE76FCAB6172D9 /* DbloreLocalAI.bundle */,
+				201175AB4DC9EDD2880E02DE /* DbloreLocalAITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -121,6 +159,27 @@
 			productReference = 5A9885DA83BE76FCAB6172D9 /* DbloreLocalAI.bundle */;
 			productType = "com.apple.product-type.bundle";
 		};
+		DB427B69D019F472E0A0EBE7 /* DbloreLocalAITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 19B91FE15C5E5B5C573C3FDF /* Build configuration list for PBXNativeTarget "DbloreLocalAITests" */;
+			buildPhases = (
+				113C11BD507F7F9A2F6F26D3 /* Sources */,
+				8FA85BE1A5C16D35AA36254D /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DbloreLocalAITests;
+			packageProductDependencies = (
+				D6A95BF8EBAEB58AC80D1BF0 /* MLXLMCommon */,
+				3DD733A88FF1C042492126F7 /* MLXHuggingFace */,
+				9D6B9974CFA31DD806B46452 /* Tokenizers */,
+			);
+			productName = DbloreLocalAITests;
+			productReference = 201175AB4DC9EDD2880E02DE /* DbloreLocalAITests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -131,6 +190,10 @@
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
 					D48B03D78848E538F2EBA052 = {
+						DevelopmentTeam = 86H6CNLN4C;
+						ProvisioningStyle = Manual;
+					};
+					DB427B69D019F472E0A0EBE7 = {
 						DevelopmentTeam = 86H6CNLN4C;
 						ProvisioningStyle = Manual;
 					};
@@ -155,23 +218,62 @@
 			projectRoot = "";
 			targets = (
 				D48B03D78848E538F2EBA052 /* DbloreLocalAI */,
+				DB427B69D019F472E0A0EBE7 /* DbloreLocalAITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
+		113C11BD507F7F9A2F6F26D3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AF0B6386918405D5537DC567 /* LocalAIProtocol.swift in Sources */,
+				B7682E7D4F0205204E4DD842 /* LocalAIRequestHandler.swift in Sources */,
+				926CCE36FF705B047E6AAF15 /* LocalAIRequestHandlerTests.swift in Sources */,
+				24EEF749031BD947FA7A19AE /* MLXEngine.swift in Sources */,
+				CF2E57EFF2ECA4959C27A5A1 /* MLXEngineTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		3B123E4A250E4285E5722970 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				79B10690A13371AB38B1E128 /* LocalAIEntry.swift in Sources */,
 				E3E8AE747BF8614105BBE47E /* LocalAIProtocol.swift in Sources */,
+				39D94D8CAAFAB59B42E6305F /* LocalAIRequestHandler.swift in Sources */,
+				BDE2654C492A449983E7E654 /* MLXEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		077CE52BD6FDC06F4D9B1A73 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				BUNDLE_LOADER = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = ace.thi.Dblore.LocalAITests;
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "";
+			};
+			name = Release;
+		};
 		68FC79419477387CA8498585 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -235,6 +337,30 @@
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6CC23AB9AC1991DE777BD204 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				BUNDLE_LOADER = "";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = ace.thi.Dblore.LocalAITests;
+				SDKROOT = macosx;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "";
 			};
 			name = Debug;
 		};
@@ -360,6 +486,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		19B91FE15C5E5B5C573C3FDF /* Build configuration list for PBXNativeTarget "DbloreLocalAITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6CC23AB9AC1991DE777BD204 /* Debug */,
+				077CE52BD6FDC06F4D9B1A73 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		CA163F9526EC0C7AD26143B8 /* Build configuration list for PBXProject "DbloreLocalAI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -415,10 +550,25 @@
 			package = EF1823A8453D02849DE3AF34 /* XCRemoteSwiftPackageReference "swift-transformers" */;
 			productName = Tokenizers;
 		};
+		3DD733A88FF1C042492126F7 /* MLXHuggingFace */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 61BE20FE5D9250C1410BC6C1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXHuggingFace;
+		};
 		718955FD6171A9D6164186BC /* MLXHuggingFace */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 61BE20FE5D9250C1410BC6C1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
 			productName = MLXHuggingFace;
+		};
+		9D6B9974CFA31DD806B46452 /* Tokenizers */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EF1823A8453D02849DE3AF34 /* XCRemoteSwiftPackageReference "swift-transformers" */;
+			productName = Tokenizers;
+		};
+		D6A95BF8EBAEB58AC80D1BF0 /* MLXLMCommon */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 61BE20FE5D9250C1410BC6C1 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLMCommon;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

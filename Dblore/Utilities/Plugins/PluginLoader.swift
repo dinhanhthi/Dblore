@@ -10,9 +10,11 @@ import Foundation
 import Security
 
 nonisolated enum PluginLoaderError: Error, Equatable {
-  /// dlopen or a bundle load failed, or the file could not be opened or read; carries the error
-  /// text.
+  /// dlopen failed, or a file or bundle could not be opened or read; carries the error text.
   case loadFailed(String)
+  /// The plugin bundle passed `verifyBundle`, then `Bundle.load` failed: part of its code may
+  /// already be mapped into this process. Carries the error text.
+  case bundleLoadFailed(String)
   /// The URL is not an absolute file path; carries the URL's relative path.
   case invalidPath(String)
   /// The file's SHA-256 does not match the expected digest, or it is over the size cap; dlopen
@@ -137,7 +139,8 @@ nonisolated enum PluginLoader {
   /// It verifies the bundle, then loads it by path: nothing re-checks the files (no descriptor or
   /// `stat` check) between the two, so the check-to-load race stays open. The only guard at load
   /// time is hardened-runtime library validation (same Team ID); the cdhash pin binds the checked
-  /// bundle to the catalog entry.
+  /// bundle to the catalog entry. A failure of the load itself is `bundleLoadFailed`; any other
+  /// error means nothing was loaded.
   static func loadBundle(
     at url: URL, expectedTeamID: String, expectedCDHash: String
   ) throws -> Bundle {
@@ -148,7 +151,7 @@ nonisolated enum PluginLoader {
     do {
       try bundle.loadAndReturnError()
     } catch {
-      throw PluginLoaderError.loadFailed("\(url.path): \(error.localizedDescription)")
+      throw PluginLoaderError.bundleLoadFailed("\(url.path): \(error.localizedDescription)")
     }
     return bundle
   }

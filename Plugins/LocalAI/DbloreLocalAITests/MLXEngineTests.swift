@@ -1,11 +1,10 @@
 // MLXEngineTests.swift
-// Idle-unload timing and load/cancel behavior of MLXEngine with a fake loader (no real model)
+// Idle-unload timing and load/cancel behavior of MLXEngine with a fake loader (no real model).
+// Host-less: this target compiles MLXEngine.swift and LocalAIProtocol.swift itself.
 
 import Foundation
 import MLXLMCommon
 import Testing
-
-@testable import Dblore
 
 nonisolated private final class FakeModel: MLXLoadedModel, @unchecked Sendable {
   /// When set, generate suspends until cancelled
@@ -133,7 +132,8 @@ struct MLXEngineTests {
         if let gate { await gate.wait() }
         return FakeModel(hangs: hangs, probe: probe)
       },
-      releaseMemory: { released.bump() })
+      releaseMemory: { released.bump() },
+      setCacheLimit: { _ in })
   }
 
   private func run(_ engine: MLXEngine, id: String = "a") async throws {
@@ -257,12 +257,10 @@ struct MLXEngineTests {
     do {
       try await run(engine)
       Issue.record("expected busy")
-    } catch let error as AIClientError {
-      if case .transport(let message) = error {
-        #expect(message == "Local model is busy")
-      } else {
-        Issue.record("wrong error")
-      }
+    } catch let error as MLXEngineError {
+      #expect(error == .busy)
+      #expect(error.code == .busy)
+      #expect(error.message == "Local model is busy")
     }
     #expect(await engine.isGenerating)
     first.cancel()

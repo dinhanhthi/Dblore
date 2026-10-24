@@ -1,9 +1,10 @@
 // LocalAIBundleGatedTests.swift
-// The On-device AI plugin bundle loads in process from the sandboxed test host: the notarized
-// bundle the host unpacks itself (so the sandbox quarantines it) passes PluginLoader.loadBundle,
-// exports its two C entry points, and answers hello and gpuProbe through the C callback. The
-// shipped catalog's local-ai entry pins that notarized zip, which installs with that entry through
-// PluginManager with the production verifier.
+// The On-device AI plugin, end to end in the sandboxed test host: the shipped catalog's local-ai
+// entry pins the notarized zip, which installs with that entry through PluginManager with the
+// production verifier (so the sandbox quarantines the files it writes). LocalAIRuntime's
+// production loader loads that installed bundle, a chat through LocalAIChatClient gets the
+// plugin's own model load error, and the bundle exports its two C entry points and answers hello
+// and gpuProbe through the C callback.
 
 import Darwin
 import Foundation
@@ -11,8 +12,9 @@ import Testing
 
 @testable import Dblore
 
-/// The loaded bundle stays in the test process until it exits, so only one case loads it; the
-/// install case unpacks and verifies another copy but never loads it.
+/// The loaded bundle stays in the test process until it exits, and loading it from a second path
+/// would load a second copy of its code, so only one case loads it, once, from the path its
+/// manager installed; the install case installs and verifies another copy but never loads it.
 @Suite(.serialized, .requiresLocalAIPlugin) struct LocalAIBundleGatedTests {
   private typealias ProtocolFunction = @convention(c) () -> Int32
   private typealias Emit = @convention(c) (UnsafeMutableRawPointer?, UnsafePointer<CChar>) -> Void
@@ -65,6 +67,9 @@ import Testing
   /// Constant; the dev catalog does not carry it.
   private static let bundleIdentifier = "ace.thi.Dblore.LocalAI"
 
+  /// A catalog model, so the chat client looks for its folder.
+  private static let modelID = "qwen3.5-2b"
+
   private static let pluginDev = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .deletingLastPathComponent()
@@ -88,26 +93,88 @@ import Testing
     return "present (\(String(decoding: buffer[..<length], as: UTF8.self)))"
   }
 
-  @Test func quarantinedNotarizedBundleLoadsAndAnswersHelloAndGPUProbe() throws {
-    let catalog = try Self.devCatalog()
-    let dir = FileManager.default.temporaryDirectory
-      .appendingPathComponent("local-ai-bundle-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
+  /// A per-run plugin root in the container's Application Support, where the real one lives.
+  private static func makePluginRoot() throws -> URL {
+    let support = try #require(
+      FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+    return support.appendingPathComponent(
+      "Dblore/Plugins/local-ai-test/\(UUID().uuidString)", isDirectory: true)
+  }
 
-    // The sandboxed host writes these files itself, so the sandbox may quarantine them.
-    let ditto = Process()
-    ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-    ditto.arguments = [
-      "-x", "-k", Self.pluginDev.appendingPathComponent("DbloreLocalAI.zip").path, dir.path,
-    ]
-    try ditto.run()
-    ditto.waitUntilExit()
-    try #require(ditto.terminationStatus == 0)
-    let url = dir.appendingPathComponent(catalog.bundleName, isDirectory: true)
+  /// Removes `root`, then its `local-ai-test` parent only when no other run's root is left in it.
+  private static func removePluginRoot(_ root: URL) {
+    try? FileManager.default.removeItem(at: root)
+    rmdir(root.deletingLastPathComponent().path)
+  }
+
+  /// Installs the notarized dev zip with `entry` into `root` through a dedicated PluginManager
+  /// with the production verifier; the download comes from the stub.
+  @MainActor private static func install(
+    entry: PluginCatalogEntry, root: URL
+  ) async throws -> PluginManager {
+    let zip = try Data(contentsOf: pluginDev.appendingPathComponent("DbloreLocalAI.zip"))
+    PluginStubURLProtocol.respond(with: zip)
+    let manager = PluginManager(
+      entry: entry, root: root, session: PluginStubURLProtocol.makeSession())
+    await manager.refresh()
+    #expect(manager.state == .notInstalled)
+    await manager.install()
+    try #require(manager.isInstalled, "\(manager.state)")
+    return manager
+  }
+
+  /// Guards the on-device chat path through the real plugin, and its load in the sandbox. The
+  /// plugin installed with the shipped entry (quarantined by the sandbox) is loaded by a fresh
+  /// LocalAIRuntime's production loader (Team ID, cdhash, handshake); a chat for a model folder
+  /// whose config is empty reaches the plugin's engine and fails with the plugin's load error,
+  /// not pluginMissing; unload then answers true. The same installed path, loaded again (Bundle
+  /// keeps the image it loaded), exports the C entry points, answers hello and gpuProbe, and is
+  /// among the bundles MLX searches for its metallib.
+  @MainActor @Test func installedPluginRunsAChatThroughTheRuntimeAndAnswersHelloAndGPUProbe()
+    async throws
+  {
+    let catalog = try Self.devCatalog()
+    let entry = try #require(PluginCatalog.bundled().entry(id: "local-ai"))
+    let pluginRoot = try Self.makePluginRoot()
+    let modelsRoot = FileManager.default.temporaryDirectory
+      .appendingPathComponent("LocalAIBundleGatedTests-\(UUID().uuidString)", isDirectory: true)
+    defer {
+      Self.removePluginRoot(pluginRoot)
+      try? FileManager.default.removeItem(at: modelsRoot)
+    }
+    // Counts as installed (config.json plus a .safetensors file); the empty config fails to load.
+    let model = modelsRoot.appendingPathComponent(Self.modelID, isDirectory: true)
+    try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: model.appendingPathComponent("config.json"))
+    try Data().write(to: model.appendingPathComponent("model.safetensors"))
+
+    let manager = try await Self.install(entry: entry, root: pluginRoot)
+    let url = try #require(manager.installedURL)
     print(
-      "LocalAIBundleGatedTests quarantine: bundle \(Self.quarantine(of: url)), executable \(Self.quarantine(of: url.appendingPathComponent("Contents/MacOS/DbloreLocalAI")))"
+      "LocalAIBundleGatedTests quarantine: executable \(Self.quarantine(of: url.appendingPathComponent("Contents/MacOS/DbloreLocalAI")))"
     )
+    let runtime = LocalAIRuntime(loader: LocalAIRuntime.pluginLoader(manager: manager))
+    defer { await runtime.stop() }
+
+    let client = LocalAIChatClient(root: modelsRoot, runtime: runtime)
+    let chat = AIChatRequest(
+      model: Self.modelID, system: "", messages: [AIChatMessage(role: .user, text: "hi")])
+    var events: [AIStreamEvent] = []
+    do {
+      for try await event in client.stream(chat) { events.append(event) }
+      Issue.record("the chat ended without the plugin's load error: \(events)")
+    } catch let error as AIClientError {
+      print("LocalAIBundleGatedTests chat error: \(error)")
+      #expect(error != .pluginMissing)
+      // The plugin's message names the config it could not parse; the app's own messages
+      // (download first, busy, timeout, unreadable) never mention it.
+      let message: String? = if case .transport(let message) = error { message } else { nil }
+      #expect(message?.localizedCaseInsensitiveContains("config") == true, "\(error)")
+    }
+    // The plugin's loading event came first, so the request reached its engine.
+    #expect(events == [.loadingModel])
+    let unloaded = await runtime.unload(modelID: Self.modelID)
+    #expect(unloaded)
 
     let bundle = try PluginLoader.loadBundle(
       at: url, expectedTeamID: PluginLoader.teamIdentifier, expectedCDHash: catalog.cdhash)
@@ -142,6 +209,7 @@ import Testing
       Unmanaged<EventCollector>.fromOpaque(context).takeUnretainedValue()
         .append(String(cString: json))
     }
+    // Both answer on this thread, before the call returns.
     let (hello, gpu) = withExtendedLifetime(collector) {
       let context = Unmanaged.passUnretained(collector).toOpaque()
       request(#"{"id":"1","type":"hello"}"#, context, emit)
@@ -169,16 +237,8 @@ import Testing
   /// The root is a per-run folder in the container's Application Support, where the real one lives.
   @MainActor @Test func notarizedZipInstallsWithTheProductionVerifier() async throws {
     let catalog = try Self.devCatalog()
-    let zip = try Data(contentsOf: Self.pluginDev.appendingPathComponent("DbloreLocalAI.zip"))
-    let support = try #require(
-      FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
-    let parent = support.appendingPathComponent("Dblore/Plugins/local-ai-test", isDirectory: true)
-    let root = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    defer {
-      try? FileManager.default.removeItem(at: root)
-      // Only removed when no other run's root is left in it.
-      rmdir(parent.path)
-    }
+    let root = try Self.makePluginRoot()
+    defer { Self.removePluginRoot(root) }
     // The shipped entry itself, not one rebuilt from the dev catalog: a stale or mistyped pin
     // fails here rather than in every user's install.
     let entry = try #require(PluginCatalog.bundled().entry(id: "local-ai"))
@@ -188,15 +248,8 @@ import Testing
       entry.kind
         == .bundle(
           name: catalog.bundleName, identifier: Self.bundleIdentifier, cdhash: catalog.cdhash))
-    PluginStubURLProtocol.respond(with: zip)
-    let manager = PluginManager(
-      entry: entry, root: root, session: PluginStubURLProtocol.makeSession())
-    await manager.refresh()
-    #expect(manager.state == .notInstalled)
+    let manager = try await Self.install(entry: entry, root: root)
 
-    await manager.install()
-
-    #expect(manager.isInstalled, "\(manager.state)")
     #expect(
       manager.installedURL?.path
         == root.path + "/local-ai/\(catalog.version)/\(catalog.bundleName)")

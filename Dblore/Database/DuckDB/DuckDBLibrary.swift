@@ -30,7 +30,7 @@ extension DuckDBLibraryError {
   /// The same refusal under the DuckDB error type (the payloads are unchanged).
   nonisolated init(_ error: PluginLoaderError) {
     switch error {
-    case .loadFailed(let message): self = .loadFailed(message)
+    case .loadFailed(let message), .bundleLoadFailed(let message): self = .loadFailed(message)
     case .invalidPath(let path): self = .invalidPath(path)
     case .integrityMismatch: self = .integrityMismatch
     case .teamIDMismatch(let expected, let actual):

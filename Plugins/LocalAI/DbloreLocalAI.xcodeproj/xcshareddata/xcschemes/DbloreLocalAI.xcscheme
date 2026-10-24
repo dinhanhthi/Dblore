@@ -21,6 +21,20 @@
                ReferencedContainer = "container:DbloreLocalAI.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DB427B69D019F472E0A0EBE7"
+               BuildableName = "DbloreLocalAITests.xctest"
+               BlueprintName = "DbloreLocalAITests"
+               ReferencedContainer = "container:DbloreLocalAI.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -39,7 +53,20 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DB427B69D019F472E0A0EBE7"
+               BuildableName = "DbloreLocalAITests.xctest"
+               BlueprintName = "DbloreLocalAITests"
+               ReferencedContainer = "container:DbloreLocalAI.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
+      <CommandLineArguments>
+      </CommandLineArguments>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"

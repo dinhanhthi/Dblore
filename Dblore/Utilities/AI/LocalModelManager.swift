@@ -64,7 +64,7 @@ final class LocalModelManager {
     root: URL,
     sampleInterval: Duration = .milliseconds(500),
     downloader: @escaping Downloader = LocalModelManager.hubDownload,
-    unloader: @escaping Unloader = { MLXEngine.shared.unload(modelID: $0) },
+    unloader: @escaping Unloader = { await LocalAIRuntime.shared.unload(modelID: $0) },
     scanner: @escaping Scanner = LocalModelManager.diskScan,
     remover: @escaping Remover = LocalModelManager.diskRemove
   ) {
