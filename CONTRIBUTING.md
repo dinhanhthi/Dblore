@@ -10,27 +10,14 @@ Thanks for your interest — contributions are welcome!
 
      ```bash
      SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore \
-       -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
-       -skipPackagePluginValidation -skipMacroValidation
+       -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO
      ```
 
-     Build requirements for the on-device AI models (MLX):
-
-     - **Apple Silicon only.** The project builds for arm64 only (`ARCHS = arm64`); Intel
-       Macs are not supported.
-     - **Metal toolchain.** Install it once with `xcodebuild -downloadComponent MetalToolchain`.
-     - **Every `xcodebuild` invocation** (build, test, archive) needs
-       `-skipPackagePluginValidation -skipMacroValidation`. The plugin flag is required
-       because the mlx-swift `CudaBuild` plugin otherwise blocks the build; the macro flag
-       skips the macro trust prompt of the Swift package dependencies.
-     - **Release and CI builds** (`scripts/build-release.sh`, `scripts/ci-build-check.sh`,
-       `ci.yml`) also pass `-disableAutomaticPackageResolution
-       -onlyUsePackageVersionsFromResolvedFile`. The skip flags disable trust checks for the
-       whole build, so these options limit it to the reviewed, committed `Package.resolved`
-       pins. Change dependency versions only by committing an updated `Package.resolved`.
-     - **Model revisions are pinned.** Each `LocalModelCatalog` entry carries a full commit SHA
-       (`revision`) that downloads are fixed to. Bump it deliberately, after reviewing the
-       upstream repo, never to a floating branch.
+     The project builds for Apple Silicon only (`ARCHS = arm64`). Release and CI builds
+     (`scripts/build-release.sh`, `scripts/ci-build-check.sh`, `ci.yml`) also pass
+     `-disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile`, so they use
+     only the reviewed, committed `Package.resolved` pins: change dependency versions only by
+     committing an updated `Package.resolved`.
 
      If your change touches database code, also run the integration tests against the
      test PostgreSQL container (`docker/README.md`, "Integration tests"):
@@ -39,8 +26,7 @@ Thanks for your interest — contributions are welcome!
      docker compose -f docker/postgresql/docker-compose.test.yml up -d
      TEST_RUNNER_POSTGRES_TESTS=1 xcodebuild test -scheme Dblore \
        -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
-       -parallel-testing-enabled NO \
-       -skipPackagePluginValidation -skipMacroValidation
+       -parallel-testing-enabled NO
      ```
 
      The MongoDB suites are opt-in. Start `docker/mongodb` (`docker/README.md`, "MongoDB"
@@ -51,8 +37,9 @@ Thanks for your interest — contributions are welcome!
      the `tls` compose profile. Both gates stay off with `SKIP_INTEGRATION_TESTS=true`.
 
   2. Match the existing style: the project is Swift 6 with strict concurrency, formatted
-     with `swift-format` (`.swift-format`). Check the files you changed with
-     `swift-format lint --strict <files>`.
+     with `swift-format` (`.swift-format`; format with
+     `swift-format -i -r Dblore/ DbloreTests/ Plugins/LocalAI/`). Check the files you changed
+     with `swift-format lint --strict <files>`.
   3. Keep pull requests focused, and describe what changed and why.
 
 ## mysql-nio fork
@@ -105,36 +92,70 @@ To upgrade, bump both exact pins in `scripts/markdown-editor/package.json`
 
 ## Plugins
 
-Heavy database engines and other heavy features ship as optional plugins, not inside the app
-(a C ABI library, signed with the app's Team ID, notarized, SHA-pinned in the catalog). The
-on-device AI runtime is the one exception and stays built in. DuckDB is the only plugin so
-far: users install it from Settings > Plugins, which downloads the `libduckdb.dylib` named by
-the `duckdb` entry of the plugin catalog `Dblore/Utilities/Plugins/PluginCatalog.json` and
-refuses it unless its SHA-256 matches.
+A new feature or engine ships as a plugin by default when its dependency adds 5 MB or more, or
+it holds a lot of memory or runs a process; it sits behind a narrow interface and needs no
+private copy of the shared networking stack. Plugins load into Dblore's own process: a
+sandboxed app cannot run a helper executable it downloaded (the sandbox quarantines the files
+it writes and macOS refuses to execute them).
 
-The catalog is `schemaVersion` 2 with a `plugins` array; each entry has `id`, `version`,
-`url`, `sha256`, `maxSize` and `libraryFileName`. Decoding is strict and a bad catalog is
-refused as a whole: ids are unique and match `[a-z0-9][a-z0-9-]*`, `version` is
-dot-separated digits, `sha256` is 64 lowercase hex digits, the URL is the https github.com
-release asset named `libraryFileName` under the tag `plugin-<id>-v<version>`,
-`libraryFileName` is a `.dylib` basename and `maxSize` is positive and at most 256 MiB. The install path is
-`Plugins/<id>/<version>/<libraryFileName>`. `PluginLoader` opens the file without following
-symlinks, checks the size and SHA-256 of the opened file and the Team ID before `dlopen`.
+The catalog `Dblore/Utilities/Plugins/PluginCatalog.json` is `schemaVersion` 3 with a
+`plugins` array. Every entry has `id`, `kind`, `version`, `url`, `sha256` and `maxSize`:
 
-`scripts/release-plugin.sh --plugin <id>` (default `duckdb`; an id not in
-the catalog is refused) builds a plugin artifact; DuckDB is the only build recipe: it
-downloads the pinned official DuckDB release, checks the upstream SHA-256, re-signs the
-dylib with the Developer ID (hardened runtime) and notarizes it.
+- `library` (`duckdb`): a signed, notarized `.dylib` named by `libraryFileName`.
+  `PluginLoader` opens it without following symlinks and checks its size, SHA-256 and Team ID
+  before `dlopen`.
+- `bundle` (`local-ai`): a signed, notarized, stapled `.bundle` (`bundleName`,
+  `bundleIdentifier`) shipped as `<Name>.zip`; the zip's SHA-256 is checked before it is
+  unpacked, then `PluginLoader` checks the Team ID, the pinned `cdhash` and every sealed
+  resource before `Bundle.load`.
 
-- **Local tests:** `scripts/release-plugin.sh --install-dev` writes the signed dylib, an
-  ad-hoc-signed copy and `dev-catalog.json` into the gitignored `.plugin-dev/`. The DuckDB
-  suites that load it are gated; run them as their own command, with
-  `TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 DUCKDB_PLUGIN_TESTS=1` in front of the `xcodebuild test`
-  command above and without `SKIP_INTEGRATION_TESTS=true` (that variable turns the gate off).
-- **Publish (maintainer only, manual):** `scripts/release-plugin.sh --plugin <id> --publish`
-  creates the public GitHub release `plugin-<id>-v<version>` with `--latest=false`, so
-  `releases/latest` keeps pointing at the app DMG, and rewrites the version, URL and
-  SHA-256 of that plugin's catalog entry only. Review and commit the catalog.
+Decoding is strict and a bad catalog is refused as a whole: ids are unique and match
+`[a-z0-9][a-z0-9-]*`, `version` is dot-separated digits, `sha256` is 64 and `cdhash` 40
+lowercase hex digits, the URL is the https github.com release asset under the tag
+`plugin-<id>-v<version>`, and `maxSize` is positive and at most 256 MiB. A plugin installs to
+`Plugins/<id>/<version>/` and is never unloaded: Remove deletes its files, and loaded code
+stays until Dblore quits.
+
+**On-device AI** is the `Plugins/LocalAI` project (version in `project.yml`; regenerate
+`DbloreLocalAI.xcodeproj` with `xcodegen generate` after editing it). It shares only
+`Dblore/Utilities/AI/LocalAIProtocol.swift` (protocol v1, one JSON object per request and
+event) with the app. Only this project needs the Metal toolchain
+(`xcodebuild -downloadComponent MetalToolchain`, once) and the skip flags (mlx-swift's
+`CudaBuild` plugin and its packages' macros). They disable trust checks, so
+`scripts/release-plugin.sh` and the `local-ai-helper` CI job also pass the resolved-file
+options above, bound to the plugin's own `Package.resolved`:
+
+```bash
+xcodebuild test -project Plugins/LocalAI/DbloreLocalAI.xcodeproj -scheme DbloreLocalAI \
+  -destination 'platform=macOS,arch=arm64' -skipPackagePluginValidation -skipMacroValidation
+```
+
+Models are downloaded by the app, not the plugin: each `LocalModelCatalog` entry pins a full
+commit SHA (`revision`) and every file by name, size and SHA-256, checked before install.
+`scripts/pin-local-model.py <repo> <revision> [...]` prints those `files:` pins without
+downloading weights. Bump a revision deliberately, after reviewing the upstream repo.
+
+`scripts/release-plugin.sh --plugin <id>` (`duckdb`, the default, or `local-ai`) builds a
+plugin artifact. `duckdb` downloads the pinned official DuckDB release, checks the upstream
+SHA-256, re-signs the dylib with the Developer ID (hardened runtime) and notarizes it.
+`local-ai` archives the bundle, signs it inside out, notarizes and staples it, writes
+`dist/plugins/local-ai/DbloreLocalAI.zip` with its source fingerprint, and prints the zip's
+SHA-256 and the bundle's cdhash for the catalog.
+
+- **Local tests:** `--install-dev` writes the signed artifact, an ad-hoc-signed copy and a
+  `dev-catalog.json` into the gitignored `.plugin-dev/` (`--plugin local-ai --install-dev`:
+  `.plugin-dev/local-ai/`). The app suites that load them are gated; run them as their own
+  command, with `TEST_RUNNER_DUCKDB_PLUGIN_TESTS=1 DUCKDB_PLUGIN_TESTS=1` or
+  `TEST_RUNNER_LOCAL_AI_PLUGIN_TESTS=1 LOCAL_AI_PLUGIN_TESTS=1` (suites
+  `PluginLoaderBundleTests` and `LocalAIBundleGatedTests`, via `-only-testing:DbloreTests/<Suite>`)
+  in front of the app's `xcodebuild test` command in step 1 and without
+  `SKIP_INTEGRATION_TESTS=true` (that variable turns every gate off).
+- **Publish (maintainer only, manual):** `--publish` creates the public GitHub release
+  `plugin-<id>-v<version>` with `--latest=false`, so `releases/latest` keeps pointing at the
+  app DMG. `duckdb` builds, uploads and rewrites its catalog entry (review and commit it).
+  `local-ai` never rebuilds and never touches the catalog: put the printed SHA-256 and cdhash in
+  its entry, test with `--install-dev`, then `--publish` uploads exactly that zip, and only
+  when its SHA-256, cdhash and source fingerprint match.
 - **Before an app release:** `scripts/release-local.sh --check-plugin-only` downloads the
   published asset of every catalog entry and checks it against the catalog (add
   `--plugin <id>` to check one entry). The full release preflight runs the same check on

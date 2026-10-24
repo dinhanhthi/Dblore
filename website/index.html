@@ -282,7 +282,7 @@
             <li><strong>Safe Mode</strong>: confirmation before destructive statements, Commit / Rollback for pending transactions, Touch ID to unlock.</li>
             <li><strong>Related rows before a delete</strong>: see the rows a delete would cascade to, set to NULL or be blocked by, before you commit it.</li>
             <li><strong>Query Insights</strong>: your queries grouped by shape, with runs, average, p95 and slowest time, and error rate.</li>
-            <li><strong>AI assistant</strong>: write, explain and fix SQL with your own key or a local model. Nothing runs unless you allow read-only queries, and row values are never sent. It can call tools of outside MCP servers you add, each call only after you press Run once.</li>
+            <li><strong>AI assistant</strong>: write, explain and fix SQL with your own key or a local model (on-device models need the On-device AI plugin). Nothing runs unless you allow read-only queries, and row values are never sent. It can call tools of outside MCP servers you add, each call only after you press Run once.</li>
             <li><strong>MCP server</strong>: let Claude Code or Cursor read the connections you allow, on this Mac only. Off by default. Optional write tools run one change at a time, only after you approve it.</li>
             <li><strong>Keyboard-first</strong>: run cells and queries without leaving the keys, and find any command with <kbd>Cmd+K</kbd>.</li>
             <li><a href="features.html">All features</a></li>
@@ -301,9 +301,10 @@
 
         <section id="plugins">
           <h2>Plugins</h2>
-          <p>Optional engines, installed from Settings &gt; Plugins: a signed, notarized download, checked before every load and removable at any time.</p>
+          <p>Optional engines and features, installed from Settings &gt; Plugins: a signed, notarized download, checked before every load and removable at any time.</p>
           <ul class="list">
             <li><strong>DuckDB</strong>: open a .duckdb file or an in-memory database, browse its schema and query Parquet or CSV files.</li>
+            <li><strong>On-device AI</strong>: run AI models on this Mac with MLX for the AI chat and inline suggestions. Models download separately, each file checked by its SHA-256.</li>
           </ul>
         </section>
 

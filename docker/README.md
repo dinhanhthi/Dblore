@@ -126,7 +126,7 @@ for example `TEST_RUNNER_TEST_DB_PORT` (PostgreSQL), `TEST_RUNNER_TEST_MYSQL_POR
 docker compose -f docker/postgresql/docker-compose.test.yml up -d --wait
 TEST_RUNNER_POSTGRES_TESTS=1 xcodebuild test -project Dblore.xcodeproj -scheme Dblore \
   -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
-  -parallel-testing-enabled NO -skipPackagePluginValidation -skipMacroValidation
+  -parallel-testing-enabled NO
 ```
 
 ## CI live databases
@@ -142,8 +142,7 @@ scripts/ci-live-databases.sh start postgres mysql mongo
 TEST_RUNNER_MYSQL_TESTS=1 TEST_RUNNER_MONGO_TESTS=1 TEST_RUNNER_TEST_DB_PORT=15435 \
   TEST_RUNNER_TEST_MYSQL_PORT=13307 TEST_RUNNER_TEST_MARIADB_PORT=13308 \
   TEST_RUNNER_TEST_MONGO_PORT=13018 \
-  xcodebuild test -project Dblore.xcodeproj -scheme Dblore -destination 'platform=macOS,arch=arm64' \
-  -skipPackagePluginValidation -skipMacroValidation
+  xcodebuild test -project Dblore.xcodeproj -scheme Dblore -destination 'platform=macOS,arch=arm64'
 scripts/ci-live-databases.sh stop postgres mysql mongo   # removes containers, networks and volumes
 ```
 
@@ -156,4 +155,5 @@ scripts/ci-live-databases.sh stop postgres mysql mongo   # removes containers, n
 
 `DBLORE_TEST_NAME_PREFIX` (default `dblore`) names the containers, volumes and networks.
 `start` fails with a clear message when Docker is not reachable or a CI port is taken. The
-MySQL TLS, MongoDB TLS, mTLS, SSH and DuckDB plugin suites stay local-only.
+MySQL TLS, MongoDB TLS, mTLS, SSH, DuckDB plugin and On-device AI plugin suites stay
+local-only.

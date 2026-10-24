@@ -242,23 +242,45 @@ struct AIAssistantPanel: View {
 
   // MARK: - States
 
+  /// On-device is the provider in use and its plugin is missing. Read in `body`, so the setup
+  /// card follows install and remove in Settings > Plugins.
+  private var isOnDevicePluginMissing: Bool {
+    assistant.activeProvider == .localMLX && !assistant.settings.localRuntimeInstalled()
+  }
+
   private var setupState: some View {
-    VStack(spacing: Spacing.md) {
+    let pluginMissing = isOnDevicePluginMissing
+    return VStack(spacing: Spacing.md) {
       Image(systemName: "sparkles")
         .font(.heading)
         .foregroundColor(.foregroundMuted)
-      Text("Set up an AI provider to ask questions about your database.")
-        .font(.labelText)
-        .foregroundColor(.foregroundMuted)
-        .multilineTextAlignment(.center)
-      Button("Set up a provider") {
-        NotificationCenter.default.post(
-          name: .openSettings,
-          object: nil,
-          userInfo: [SettingsPage.userInfoKey: SettingsPage.ai.rawValue]
-        )
+      if pluginMissing {
+        Text("On-device AI plugin not installed")
+          .font(.labelText)
+          .fontWeight(.medium)
+          .foregroundColor(.foreground)
+          .multilineTextAlignment(.center)
+        Text("On-device models run through the On-device AI plugin. Install it to use them.")
+          .font(.labelText)
+          .foregroundColor(.foregroundMuted)
+          .multilineTextAlignment(.center)
+        // Same Install action as the DuckDB missing-plugin rows: opens Settings > Plugins
+        Button("Install…", action: ConnectionErrorAction.postOpenPluginSettings)
+          .buttonStyle(PrimaryButtonStyle())
+      } else {
+        Text("Set up an AI provider to ask questions about your database.")
+          .font(.labelText)
+          .foregroundColor(.foregroundMuted)
+          .multilineTextAlignment(.center)
+        Button("Set up a provider") {
+          NotificationCenter.default.post(
+            name: .openSettings,
+            object: nil,
+            userInfo: [SettingsPage.userInfoKey: SettingsPage.ai.rawValue]
+          )
+        }
+        .buttonStyle(PrimaryButtonStyle())
       }
-      .buttonStyle(PrimaryButtonStyle())
     }
     .padding(Spacing.lg)
     .frame(maxWidth: .infinity, maxHeight: .infinity)

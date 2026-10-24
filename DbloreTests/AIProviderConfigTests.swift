@@ -165,16 +165,21 @@ struct AIProviderConfigTests {
     #expect(settings.isConfigured(.anthropic))
   }
 
-  @Test("isConfigured for on-device MLX needs an installed catalog model")
+  @Test("isConfigured for on-device MLX needs the plugin and an installed catalog model")
   func localMLXConfigured() {
     let (settings, _, _) = makeSettings()
     let catalogID = LocalModelCatalog.all[0].id
     settings.installedLocalModels = { [catalogID, "not-in-catalog"] }
+    settings.localRuntimeInstalled = { true }
     #expect(!settings.isConfigured(.localMLX))  // empty model
     settings.configuration.configs[.localMLX] = AIProviderConfig(
       baseURL: "", model: "not-in-catalog")
     #expect(!settings.isConfigured(.localMLX))  // not a catalog id, even if "installed"
     settings.configuration.configs[.localMLX] = AIProviderConfig(baseURL: "", model: catalogID)
+    #expect(settings.isConfigured(.localMLX))
+    settings.localRuntimeInstalled = { false }
+    #expect(!settings.isConfigured(.localMLX))  // model installed, On-device AI plugin missing
+    settings.localRuntimeInstalled = { true }
     #expect(settings.isConfigured(.localMLX))
     settings.installedLocalModels = { [] }
     #expect(!settings.isConfigured(.localMLX))  // catalog id not installed

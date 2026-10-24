@@ -57,7 +57,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
   transactions, Touch ID to unlock
 - **AI assistant**: write, explain, fix, review and optimize queries with your own key
-  (including Google Gemini, xAI and Requesty) or a local model. Slash commands and `@` mentions attach
+  (including Google Gemini, xAI and Requesty) or a local model (on-device models need the
+  On-device AI plugin). Slash commands and `@` mentions attach
   context, and each connection sets whether AI may see it (default, Always, Ask once per
   session or Never). Tools read table structure, and run read-only queries only when you allow it,
   and proposed SQL waits as a card for you to run. Row values are sent only if you turn on
@@ -98,16 +99,15 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 
 ## Plugins
 
-Heavy database engines and other heavy features ship as optional plugins instead of inside
-the app. A plugin is a native library with a C interface, signed with the same Team ID as
-Dblore, notarized and listed in a catalog that pins its SHA-256. Install them from
-**Settings > Plugins**: each plugin has its own row, Dblore downloads the library, checks its
-SHA-256 and signature before every load, and **Remove** deletes it again. The on-device AI
-runtime is the exception: it is built into the app.
+A plugin is a signed, notarized library or bundle that Dblore downloads from
+**Settings > Plugins** and checks (SHA-256, Team ID and signature) before it loads it.
+**Remove** deletes its files; a plugin already in use stays loaded until you quit Dblore. Which
+features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 
 | Plugin | Version | What it adds |
 | ------ | ------- | ------------ |
 | **DuckDB** | 1.5.6 | Open a `.duckdb` file (read-only by default, also from Finder), create one or use an in-memory database, browse its schema and query Parquet or CSV files, with a plan tree, SQL dump and restore, and Parquet export |
+| **On-device AI** | 1.0.0 | Run AI models on this Mac with MLX for the AI chat and inline suggestions. Models download separately from Hugging Face, each file checked by its SHA-256, and are kept when you remove the plugin |
 
 ## Install
 
