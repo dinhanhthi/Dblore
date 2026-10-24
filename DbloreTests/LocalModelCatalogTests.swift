@@ -28,6 +28,24 @@ struct LocalModelCatalogTests {
     }
   }
 
+  /// File names become path components of the download, so they must stay plain.
+  @Test("every model pins plain-named files by SHA-256")
+  func filesArePinned() {
+    for model in LocalModelCatalog.all {
+      let names = model.files.map(\.name)
+      #expect(!names.isEmpty, "\(model.id)")
+      #expect(names.contains("config.json"), "\(model.id)")
+      #expect(names.contains { $0.hasSuffix(".safetensors") }, "\(model.id)")
+      #expect(Set(names).count == names.count, "\(model.id)")
+      for file in model.files {
+        #expect(!file.name.isEmpty && !file.name.contains("/") && !file.name.hasPrefix("."))
+        #expect(file.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil)
+        #expect(file.size > 0)
+      }
+      #expect(model.files.map(\.size).reduce(0, +) <= model.approxSizeBytes, "\(model.id)")
+    }
+  }
+
   @Test("recommended is nil below the smallest minimum RAM")
   func recommendedBelowMinimum() {
     #expect(LocalModelCatalog.recommended(forRAM: 4 * gb) == nil)

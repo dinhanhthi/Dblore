@@ -9,7 +9,6 @@
 /* Begin PBXBuildFile section */
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
 		D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC222EF71234009A0E5A /* Sparkle */; };
-		D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC352EF71234009A0E5A /* HuggingFace */; };
 		D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC422EF71234009A0E5A /* NIOSSH */; };
 		D3E0FC432EF71234009A0E5A /* MySQLNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC452EF71234009A0E5A /* MySQLNIO */; };
 		D3E0FC462EF71234009A0E5A /* NIOCore in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC472EF71234009A0E5A /* NIOCore */; };
@@ -76,7 +75,6 @@
 			files = (
 				D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */,
 				D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */,
-				D3E0FC342EF71234009A0E5A /* HuggingFace in Frameworks */,
 				D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */,
 				D3E0FC432EF71234009A0E5A /* MySQLNIO in Frameworks */,
 				D3E0FC462EF71234009A0E5A /* NIOCore in Frameworks */,
@@ -163,7 +161,6 @@
 			packageProductDependencies = (
 				D3E0FC002EF71234009A0E5B /* PostgresNIO */,
 				D3E0FC222EF71234009A0E5A /* Sparkle */,
-				D3E0FC352EF71234009A0E5A /* HuggingFace */,
 				D3E0FC422EF71234009A0E5A /* NIOSSH */,
 				D3E0FC452EF71234009A0E5A /* MySQLNIO */,
 				D3E0FC472EF71234009A0E5A /* NIOCore */,
@@ -207,9 +204,6 @@
 			packageReferences = (
 				D3E0FC012EF71234009A0E5A /* XCRemoteSwiftPackageReference "postgres-nio" */,
 				D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */,
-				D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
-				D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */,
-				D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */,
 				D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */,
 				D3E0FC442EF71234009A0E5A /* XCRemoteSwiftPackageReference "mysql-nio" */,
 				D3E0FC4D2EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio" */,
@@ -594,30 +588,6 @@
 				minimumVersion = 2.9.3;
 			};
 		};
-		D3E0FC362EF71234009A0E5A /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
-			requirement = {
-				kind = exactVersion;
-				version = 3.31.4;
-			};
-		};
-		D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/huggingface/swift-huggingface.git";
-			requirement = {
-				kind = exactVersion;
-				version = 0.9.0;
-			};
-		};
-		D3E0FC382EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/huggingface/swift-transformers";
-			requirement = {
-				kind = exactVersion;
-				version = 1.3.3;
-			};
-		};
 		D3E0FC412EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-nio-ssh" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/apple/swift-nio-ssh";
@@ -670,11 +640,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D3E0FC212EF71234009A0E5A /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
-		};
-		D3E0FC352EF71234009A0E5A /* HuggingFace */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = D3E0FC372EF71234009A0E5A /* XCRemoteSwiftPackageReference "swift-huggingface" */;
-			productName = HuggingFace;
 		};
 		D3E0FC422EF71234009A0E5A /* NIOSSH */ = {
 			isa = XCSwiftPackageProductDependency;
