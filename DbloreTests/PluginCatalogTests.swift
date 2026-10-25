@@ -14,15 +14,36 @@ import Testing
     url: String = validURL,
     sha256: String = validSHA,
     maxSize: Int64 = 1024,
+    kind: String? = "library",
     libraryFileName: String = "libduckdb.dylib"
   ) -> [String: Any] {
-    [
+    var entry: [String: Any] = [
       "id": id, "version": version, "url": url, "sha256": sha256, "maxSize": maxSize,
       "libraryFileName": libraryFileName,
     ]
+    entry["kind"] = kind
+    return entry
   }
 
-  private static func json(schemaVersion: Int = 2, plugins: [[String: Any]] = [entry()]) -> Data {
+  private static let validCDHash = String(repeating: "c0", count: 20)
+  private static let validBundleURL =
+    "https://github.com/dinhanhthi/Dblore/releases/download/plugin-local-ai-v1.0.0/DbloreLocalAI.zip"
+
+  private static func bundleEntry(
+    url: String = validBundleURL,
+    bundleName: String = "DbloreLocalAI.bundle",
+    bundleIdentifier: String = "ace.thi.Dblore.LocalAI",
+    cdhash: String? = validCDHash
+  ) -> [String: Any] {
+    var entry: [String: Any] = [
+      "id": "local-ai", "version": "1.0.0", "url": url, "sha256": validSHA, "maxSize": 2048,
+      "kind": "bundle", "bundleName": bundleName, "bundleIdentifier": bundleIdentifier,
+    ]
+    entry["cdhash"] = cdhash
+    return entry
+  }
+
+  private static func json(schemaVersion: Int = 3, plugins: [[String: Any]] = [entry()]) -> Data {
     try! JSONSerialization.data(
       withJSONObject: ["schemaVersion": schemaVersion, "plugins": plugins])
   }
@@ -31,16 +52,26 @@ import Testing
 
   // MARK: - Bundled and valid
 
-  @Test func bundledCatalogPinsTheDuckDBPlugin() throws {
+  @Test func bundledCatalogPinsEveryPlugin() throws {
     let catalog = try PluginCatalog.bundled()
-    #expect(catalog.schemaVersion == 2)
-    #expect(catalog.plugins.map(\.id) == ["duckdb"])
+    #expect(catalog.schemaVersion == 3)
+    #expect(catalog.plugins.map(\.id) == ["duckdb", "local-ai"])
     let duckdb = try #require(catalog.entry(id: "duckdb"))
     #expect(duckdb.version == "1.5.6")
     #expect(duckdb.url.absoluteString == Self.validURL)
     #expect(duckdb.sha256 == "98065fe243933fe5f17831a7b960f243ef7a370b0318066e8710d661bf71b878")
     #expect(duckdb.maxSize == 134_217_728)
-    #expect(duckdb.libraryFileName == "libduckdb.dylib")
+    #expect(duckdb.kind == .library(fileName: "libduckdb.dylib"))
+    let localAI = try #require(catalog.entry(id: "local-ai"))
+    #expect(localAI.version == "1.0.0")
+    #expect(localAI.url.absoluteString == Self.validBundleURL)
+    #expect(localAI.sha256 == "37f7f207e1928bc038f1a1693663079bc9717131ba3517bbe598a51e0849a4a1")
+    #expect(localAI.maxSize == 12_226_542)
+    #expect(
+      localAI.kind
+        == .bundle(
+          name: "DbloreLocalAI.bundle", identifier: "ace.thi.Dblore.LocalAI",
+          cdhash: "524427c3a8b9ef1743adc3d7df13238b2657fd6c"))
   }
 
   @Test func validCatalogDecodesEveryEntry() throws {
@@ -49,10 +80,22 @@ import Testing
       url:
         "https://github.com/dinhanhthi/Dblore/releases/download/plugin-my-plugin-2-v0.1/libother.dylib",
       maxSize: 268_435_456, libraryFileName: "libother.dylib")
-    let catalog = try PluginCatalog.decode(Self.json(plugins: [Self.entry(), other]))
-    #expect(catalog.plugins.map(\.id) == ["duckdb", "my-plugin-2"])
+    let catalog = try PluginCatalog.decode(
+      Self.json(plugins: [Self.entry(), other, Self.bundleEntry()]))
+    #expect(catalog.plugins.map(\.id) == ["duckdb", "my-plugin-2", "local-ai"])
     #expect(catalog.entry(id: "my-plugin-2")?.maxSize == 268_435_456)
     #expect(catalog.entry(id: "missing") == nil)
+    // A bundle keeps every pin: the zip's URL and SHA-256 and the bundle's name, id and cdhash.
+    let bundle = try #require(catalog.entry(id: "local-ai"))
+    #expect(bundle.version == "1.0.0")
+    #expect(bundle.url.absoluteString == Self.validBundleURL)
+    #expect(bundle.sha256 == Self.validSHA)
+    #expect(bundle.maxSize == 2048)
+    #expect(
+      bundle.kind
+        == .bundle(
+          name: "DbloreLocalAI.bundle", identifier: "ace.thi.Dblore.LocalAI",
+          cdhash: Self.validCDHash))
   }
 
   // MARK: - Strict validation (the whole catalog fails closed)
@@ -61,10 +104,17 @@ import Testing
     entry(url: "https://github.com/dinhanhthi/Dblore/releases/download/" + suffix)
   }
 
+  private static func bundleURL(_ suffix: String) -> [String: Any] {
+    bundleEntry(url: "https://github.com/dinhanhthi/Dblore/releases/download/" + suffix)
+  }
+
   @Test(arguments: [
-    // Schema version and shape.
-    (json(schemaVersion: 1), PluginCatalogError.unsupportedSchemaVersion),
-    (json(schemaVersion: 3), .unsupportedSchemaVersion),
+    // Schema version and shape: a schema 2 file (entries without a kind) is refused.
+    (
+      json(schemaVersion: 2, plugins: [entry(kind: nil)]),
+      PluginCatalogError.unsupportedSchemaVersion
+    ),
+    (json(schemaVersion: 4), .unsupportedSchemaVersion),
     (
       try! JSONSerialization.data(withJSONObject: [
         "version": "1.5.6", "url": validURL, "sha256": validSHA, "maxSize": 1024,
@@ -72,6 +122,9 @@ import Testing
       .unsupportedSchemaVersion
     ),
     (json(["id": "duckdb", "version": "1.5.6"]), .malformed),
+    // Kind: required, and only the kinds this build installs.
+    (json(entry(kind: nil)), .malformed),
+    (json(entry(kind: "helper")), .unsupportedKind("duckdb")),
     // Ids.
     (json(plugins: [entry(), entry()]), .duplicateID("duckdb")),
     (json(entry(id: "DuckDB")), .invalidID("DuckDB")),
@@ -150,6 +203,19 @@ import Testing
     (json(entry(libraryFileName: "libduckdb\u{0}.dylib")), .invalidLibraryFileName("duckdb")),
     (json(entry(libraryFileName: "libduckdb.so")), .invalidLibraryFileName("duckdb")),
     (json(entry(libraryFileName: ".dylib")), .invalidLibraryFileName("duckdb")),
+    // Bundle: a visible <Name>.bundle, a reverse-DNS id, a 40-hex cdhash pin, asset <Name>.zip.
+    (json(bundleEntry(cdhash: nil)), .malformed),
+    (json(bundleEntry(bundleName: "DbloreLocalAI.app")), .invalidBundleName("local-ai")),
+    (json(bundleEntry(bundleName: "../DbloreLocalAI.bundle")), .invalidBundleName("local-ai")),
+    (json(bundleEntry(bundleIdentifier: "LocalAI")), .invalidBundleIdentifier("local-ai")),
+    (
+      json(bundleEntry(bundleIdentifier: "ace.thi.Dblore/LocalAI")),
+      .invalidBundleIdentifier("local-ai")
+    ),
+    (json(bundleEntry(cdhash: String(validCDHash.dropLast()))), .invalidCDHash("local-ai")),
+    (json(bundleEntry(cdhash: validCDHash.uppercased())), .invalidCDHash("local-ai")),
+    (json(bundleURL("plugin-local-ai-v1.0.0/DbloreLocalAI.bundle")), .invalidURL("local-ai")),
+    (json(bundleURL("plugin-local-ai-v1.0.0/Other.zip")), .invalidURL("local-ai")),
   ])
   func invalidCatalogIsRejected(data: Data, expected: PluginCatalogError) {
     #expect(throws: expected) { _ = try PluginCatalog.decode(data) }

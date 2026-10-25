@@ -160,7 +160,7 @@ extension SettingsModal.SettingsTab {
         .init(
           card: "Local models", title: "Local models",
           detail:
-            "Runs fully on this Mac (Apple Silicon). Nothing leaves your computer. Model downloads come from Hugging Face."
+            "Runs fully on this Mac (Apple Silicon). Nothing leaves your computer. The On-device AI plugin comes from GitHub and the models from Hugging Face."
         ),
         .init(
           card: "Inline suggestions", title: "Suggest SQL as you type",
@@ -279,7 +279,12 @@ extension SettingsModal.SettingsTab {
         .init(
           card: "DuckDB", title: "DuckDB",
           detail:
-            "Query .duckdb files and Parquet/CSV with DuckDB. Downloaded on demand (~117 MB).")
+            "Query .duckdb files and Parquet/CSV with DuckDB. Downloaded on demand (~117 MB)."),
+        .init(
+          card: "On-device AI", title: "On-device AI",
+          detail:
+            "Runs AI models on this Mac with MLX. Downloaded on demand (~6 MB); models are downloaded separately."
+        ),
       ]
     case .mcp:
       return [

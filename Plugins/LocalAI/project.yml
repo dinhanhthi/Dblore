@@ -1,0 +1,122 @@
+# project.yml
+# Source of truth for DbloreLocalAI.xcodeproj, the On-device AI plugin: a loadable bundle that
+# Dblore loads into its own process (and sandbox) and calls through C entry points.
+# After editing, regenerate from this folder with `xcodegen generate`; it also writes
+# DbloreLocalAI/Info.plist, so never edit that file by hand. Package.resolved is kept and must pin
+# every shared package exactly as Dblore.xcodeproj does.
+
+name: DbloreLocalAI
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "27.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: 86H6CNLN4C
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CLANG_CXX_LANGUAGE_STANDARD: gnu++20
+    GCC_C_LANGUAGE_STANDARD: gnu17
+    SWIFT_VERSION: "6.0"
+
+packages:
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    exactVersion: 3.31.4
+  swift-transformers:
+    url: https://github.com/huggingface/swift-transformers
+    exactVersion: 1.3.3
+
+targets:
+  DbloreLocalAI:
+    type: bundle
+    platform: macOS
+    sources:
+      - path: DbloreLocalAI
+      # Protocol v1 has one definition, owned by the app; the plugin compiles the app's file
+      - path: ../../Dblore/Utilities/AI/LocalAIProtocol.swift
+    info:
+      path: DbloreLocalAI/Info.plist
+      properties:
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+    dependencies:
+      - package: mlx-swift-lm
+        products: [MLXLLM, MLXLMCommon, MLXHuggingFace]
+      - package: swift-transformers
+        product: Tokenizers
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.LocalAI
+        PRODUCT_NAME: DbloreLocalAI
+        WRAPPER_EXTENSION: bundle
+        MACH_O_TYPE: mh_bundle
+        # A bundle is not installed by default; archive needs it in Products/Library/Bundles
+        SKIP_INSTALL: NO
+        INSTALL_PATH: $(LOCAL_LIBRARY_DIR)/Bundles
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        ARCHS: arm64
+        ENABLE_HARDENED_RUNTIME: YES
+        # Signed ad hoc for local use; scripts/release-plugin.sh re-signs Release with the Developer ID
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+        # A bundle carries no entitlements (not even get-task-allow): it runs in the app's sandbox
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  # Host-less unit tests: they compile the engine, request handler and protocol sources
+  # themselves instead of loading the bundle, so no TEST_HOST or BUNDLE_LOADER
+  DbloreLocalAITests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: DbloreLocalAITests
+      - path: DbloreLocalAI/MLXEngine.swift
+      - path: DbloreLocalAI/LocalAIRequestHandler.swift
+      - path: ../../Dblore/Utilities/AI/LocalAIProtocol.swift
+    dependencies:
+      - package: mlx-swift-lm
+        products: [MLXLMCommon, MLXHuggingFace]
+      - package: swift-transformers
+        product: Tokenizers
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.LocalAITests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        ARCHS: arm64
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+
+schemes:
+  DbloreLocalAI:
+    build:
+      targets:
+        DbloreLocalAI: all
+        DbloreLocalAITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - DbloreLocalAITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

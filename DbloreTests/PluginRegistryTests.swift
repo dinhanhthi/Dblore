@@ -19,7 +19,7 @@ struct PluginRegistryTests {
         string:
           "https://github.com/dinhanhthi/Dblore/releases/download/plugin-\(id)-v\(version)/\(library)"
       )!,
-      sha256: String(repeating: "a", count: 64), maxSize: 1024, libraryFileName: library)
+      sha256: String(repeating: "a", count: 64), maxSize: 1024, kind: .library(fileName: library))
   }
 
   @Test func catalogWithTwoEntriesGivesTwoManagersInCatalogOrder() throws {
@@ -30,7 +30,7 @@ struct PluginRegistryTests {
     ]
 
     let registry = PluginRegistry(
-      catalog: { PluginCatalog(schemaVersion: 2, plugins: entries) }, root: root,
+      catalog: { PluginCatalog(schemaVersion: 3, plugins: entries) }, root: root,
       session: PluginManager.downloadSession())
 
     #expect(registry.managers.map(\.entry.id) == ["zeta", "duckdb"])

@@ -10,8 +10,6 @@ echo ""
 
 # Build with settings similar to GitHub Actions
 xcodebuild \
-  -skipPackagePluginValidation \
-  -skipMacroValidation \
   -scheme Dblore \
   -configuration Debug \
   -destination 'platform=macOS,arch=arm64' \

@@ -175,7 +175,7 @@ struct AISettingsSection: View {
           VStack(alignment: .leading, spacing: Spacing.xs) {
             helpText("Runs fully on this Mac (Apple Silicon). Nothing leaves your computer.")
             helpText(
-              "Model downloads come from Hugging Face over HTTPS (the only network use) and are stored in the app's sandbox container."
+              "The On-device AI plugin comes from GitHub and the models from Hugging Face, downloaded over HTTPS (the only network use). Both are stored in the app's sandbox container."
             )
           }
         }
@@ -717,7 +717,10 @@ struct AIInlineCard: View {
       )
       helpText("Recommended: On-device keeps your SQL on this Mac.")
       if let provider, !settings.isConfigured(provider) {
-        helpText("Set up \(provider.displayName) in Provider above first.")
+        helpText(
+          provider == .localMLX && !settings.localRuntimeInstalled()
+            ? "Install the On-device AI plugin in Settings > Plugins first."
+            : "Set up \(provider.displayName) in Provider above first.")
       }
     }
   }

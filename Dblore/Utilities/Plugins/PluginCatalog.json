@@ -1,13 +1,25 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "plugins": [
     {
       "id": "duckdb",
+      "kind": "library",
       "version": "1.5.6",
       "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-duckdb-v1.5.6/libduckdb.dylib",
       "sha256": "98065fe243933fe5f17831a7b960f243ef7a370b0318066e8710d661bf71b878",
       "maxSize": 134217728,
       "libraryFileName": "libduckdb.dylib"
+    },
+    {
+      "id": "local-ai",
+      "kind": "bundle",
+      "version": "1.0.0",
+      "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-local-ai-v1.0.0/DbloreLocalAI.zip",
+      "sha256": "37f7f207e1928bc038f1a1693663079bc9717131ba3517bbe598a51e0849a4a1",
+      "maxSize": 12226542,
+      "bundleName": "DbloreLocalAI.bundle",
+      "bundleIdentifier": "ace.thi.Dblore.LocalAI",
+      "cdhash": "524427c3a8b9ef1743adc3d7df13238b2657fd6c"
     }
   ]
 }

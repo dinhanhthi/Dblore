@@ -88,9 +88,10 @@ trap cleanup EXIT
 check_plugin_asset() {
   echo "==> Checking the plugin assets"
   [[ -f "$PLUGIN_CATALOG" ]] || fail "$PLUGIN_CATALOG not found"
-  local schema_version count i id version url expected_sha max_size http_code actual_sha checked=0
+  local schema_version count i id kind asset bundle_name publish_hint version url expected_sha max_size
+  local http_code actual_sha checked=0
   schema_version=$(plutil -extract schemaVersion raw -o - "$PLUGIN_CATALOG") || fail "no schemaVersion in $PLUGIN_CATALOG"
-  [[ "$schema_version" == "2" ]] || fail "$PLUGIN_CATALOG has schemaVersion $schema_version, expected 2"
+  [[ "$schema_version" == "3" ]] || fail "$PLUGIN_CATALOG has schemaVersion $schema_version, expected 3"
   # raw on an array prints its element count
   count=$(plutil -extract plugins raw -o - "$PLUGIN_CATALOG") || fail "no plugins array in $PLUGIN_CATALOG"
   [[ "$count" =~ ^[0-9]+$ ]] || fail "plugins in $PLUGIN_CATALOG is not an array"
@@ -107,13 +108,31 @@ check_plugin_asset() {
     [[ "$url" == https://* ]] || fail "plugin $id url in $PLUGIN_CATALOG is not https: $url"
     [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || fail "plugin $id sha256 in $PLUGIN_CATALOG is not 64 lowercase hex characters"
     [[ "$max_size" =~ ^[0-9]+$ ]] || fail "plugin $id maxSize in $PLUGIN_CATALOG is not an integer"
+    # The release asset: the library itself, or <Name>.zip for a <Name>.bundle
+    kind=$(plutil -extract "plugins.$i.kind" raw -o - "$PLUGIN_CATALOG") || fail "no kind for $id in $PLUGIN_CATALOG"
+    case "$kind" in
+      library)
+        asset=$(plutil -extract "plugins.$i.libraryFileName" raw -o - "$PLUGIN_CATALOG") ||
+          fail "no libraryFileName for $id in $PLUGIN_CATALOG"
+        publish_hint="run scripts/release-plugin.sh --plugin $id --publish, commit the updated catalog, then rerun"
+        ;;
+      bundle)
+        bundle_name=$(plutil -extract "plugins.$i.bundleName" raw -o - "$PLUGIN_CATALOG") ||
+          fail "no bundleName for $id in $PLUGIN_CATALOG"
+        [[ "$bundle_name" == ?*.bundle ]] || fail "plugin $id bundleName in $PLUGIN_CATALOG is not <Name>.bundle: $bundle_name"
+        asset="${bundle_name%.bundle}.zip"
+        publish_hint="run scripts/release-plugin.sh --plugin $id --publish, then rerun"
+        ;;
+      *) fail "plugin $id in $PLUGIN_CATALOG has an unsupported kind: $kind (expected library or bundle)" ;;
+    esac
+    [[ "${url##*/}" == "$asset" ]] || fail "plugin $id url in $PLUGIN_CATALOG does not name its asset $asset: $url"
 
     local curl_status=0
     http_code=$(curl -sSL --proto '=https' --proto-redir '=https' --max-filesize "$max_size" \
       --connect-timeout 20 --max-time 600 -w '%{http_code}' -o "$PLUGIN_TMP/$id" "$url") ||
       curl_status=$?
     [[ "$http_code" != "404" ]] ||
-      fail "plugin $id $version asset not published ($url returned HTTP 404) — run scripts/release-plugin.sh --plugin $id --publish, commit the updated catalog, then rerun"
+      fail "plugin $id $version asset not published ($url returned HTTP 404) — $publish_hint"
     [[ $curl_status -eq 0 && "$http_code" == "200" ]] ||
       fail "could not download the plugin $id asset $url (curl exit $curl_status, HTTP ${http_code:-none}; network error, timeout or larger than $max_size bytes)"
     actual_sha=$(shasum -a 256 "$PLUGIN_TMP/$id" | awk '{ print $1 }')

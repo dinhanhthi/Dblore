@@ -214,7 +214,7 @@ struct LocalModelManagerTests {
     let fake = LocalModel(
       id: "../evil", repoID: "evil/repo", revision: String(repeating: "0", count: 40),
       displayName: "x", tier: .tiny,
-      approxSizeBytes: 1, minRAMBytes: 1, license: "x", note: "x")
+      approxSizeBytes: 1, minRAMBytes: 1, license: "x", note: "x", files: [])
     await manager.run(fake)
     #expect(!called)
     #expect(manager.state[fake.id] == nil)

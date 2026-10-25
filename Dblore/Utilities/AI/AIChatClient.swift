@@ -75,11 +75,14 @@ nonisolated enum AIClientError: LocalizedError, Equatable, Sendable {
   case invalidEndpoint(String)
   case http(status: Int, message: String)
   case transport(String)
+  /// The On-device AI plugin is not installed, or cannot be used in this process
+  case pluginMissing
 
   var errorDescription: String? {
     switch self {
     case .missingAPIKey: return "Add an API key in Settings > AI."
     case .missingModel: return "Choose a model in Settings > AI."
+    case .pluginMissing: return "Install the On-device AI plugin in Settings > Plugins."
     case .invalidEndpoint(let message): return message
     case .http(let status, let message):
       return message.isEmpty ? "The provider returned HTTP \(status)." : message
@@ -123,7 +126,7 @@ nonisolated enum AIClientFactory {
       return ChatGPTCodexClient(tokenProvider: tokenProvider, session: session)
     }
     // On-device: fully local, the base URL is ignored and nothing touches the network
-    if kind == .localMLX { return MLXChatClient() }
+    if kind == .localMLX { return LocalAIChatClient() }
     let base: URL
     do {
       base = try AIEndpoint.normalize(config.baseURL)

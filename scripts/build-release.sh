@@ -98,11 +98,8 @@ mkdir -p "$DIST"
 
 # Ship from archive + exportArchive only: a plain Release build injects get-task-allow
 echo "==> Archiving"
-# Both skip flags are needed (mlx-swift CudaBuild plugin + macros), and they are global to the
-# invocation; the resolved-file-only options bound that exposure to the committed Package.resolved.
+# The resolved-file-only options restrict the build to the committed Package.resolved.
 xcodebuild archive \
-  -skipPackagePluginValidation \
-  -skipMacroValidation \
   -disableAutomaticPackageResolution \
   -onlyUsePackageVersionsFromResolvedFile \
   -project "$PROJECT" \

@@ -1,8 +1,8 @@
 // LocalModelManager.swift
 // Downloads, tracks and deletes on-device MLX models (catalog models only)
 
+import CryptoKit
 import Foundation
-import HuggingFace
 import Observation
 
 nonisolated enum LocalModelDownloadState: Equatable, Sendable {
@@ -40,8 +40,6 @@ final class LocalModelManager {
       .appendingPathComponent("Models", isDirectory: true)
   }
 
-  nonisolated static let patterns = ["*.safetensors", "*.json", "*.jinja", "tokenizer*"]
-
   private(set) var state: [LocalModel.ID: DownloadState] = [:]
   /// Ids of installed models. Updated by background scans so views never touch the disk.
   private(set) var installedIDs: Set<LocalModel.ID> = []
@@ -63,8 +61,8 @@ final class LocalModelManager {
   init(
     root: URL,
     sampleInterval: Duration = .milliseconds(500),
-    downloader: @escaping Downloader = LocalModelManager.hubDownload,
-    unloader: @escaping Unloader = { MLXEngine.shared.unload(modelID: $0) },
+    downloader: @escaping Downloader = LocalModelManager.urlDownload,
+    unloader: @escaping Unloader = { await LocalAIRuntime.shared.unload(modelID: $0) },
     scanner: @escaping Scanner = LocalModelManager.diskScan,
     remover: @escaping Remover = LocalModelManager.diskRemove
   ) {
@@ -343,10 +341,16 @@ final class LocalModelManager {
   nonisolated private enum ManagerError: LocalizedError {
     case incomplete
     case oversize
+    case invalidFileName
+    case http(Int)
+    case checkFailed(String)
     var errorDescription: String? {
       switch self {
       case .incomplete: "Download incomplete: model files are missing."
       case .oversize: "Download larger than expected"
+      case .invalidFileName: "Invalid model file name."
+      case .http(let status): "Download failed (HTTP \(status))."
+      case .checkFailed(let name): "Download check failed for \(name)."
       }
     }
   }
@@ -387,25 +391,80 @@ final class LocalModelManager {
     return total
   }
 
-  /// Default downloader: swift-huggingface snapshot of the catalog repo (HTTPS huggingface.co),
-  /// straight into the staging dir with no shared cache copy.
-  static let hubDownload: Downloader = { model, staging, onProgress in
-    guard let repo = Repo.ID(rawValue: model.repoID) else {
-      throw LocalModelManagerError.invalidRepo
+  // MARK: - Default downloader
+
+  /// Default downloader: the pinned files over HTTPS from huggingface.co.
+  static let urlDownload = urlDownloader(session: URLSession(configuration: .ephemeral))
+
+  /// Fetches each of `model.files` from the pinned revision into `staging`, checking its size and
+  /// SHA-256. Progress counts the pinned bytes of the files done.
+  static func urlDownloader(session: URLSession) -> Downloader {
+    { model, staging, onProgress in
+      let progress = Progress(totalUnitCount: model.files.reduce(0) { $0 + $1.size })
+      for file in model.files {
+        try Task.checkCancellation()
+        try await fetch(file, of: model, into: staging, session: session)
+        progress.completedUnitCount += file.size
+        onProgress(progress)
+      }
     }
-    let client = HubClient(cache: nil)
+  }
+
+  /// Runs off the main actor: downloads one file (into `NSTemporaryDirectory()`, which the disk
+  /// sampler counts), moves it to `staging/<name>`, then checks its size and SHA-256. Any
+  /// failure removes the file.
+  @concurrent nonisolated private static func fetch(
+    _ file: LocalModel.File, of model: LocalModel, into staging: URL, session: URLSession
+  ) async throws {
+    // Catalog names are plain file names; anything else could leave `staging`
+    guard !file.name.isEmpty, !file.name.hasPrefix("."), !file.name.contains("/"),
+      let url = URL(
+        string: "https://huggingface.co/\(model.repoID)/resolve/\(model.revision)/\(file.name)")
+    else { throw ManagerError.invalidFileName }
+    let (temp, response) = try await session.download(
+      for: URLRequest(url: url), delegate: HTTPSRedirectsOnly.shared)
+    let target = staging.appendingPathComponent(file.name)
+    let fm = FileManager.default
     do {
-      _ = try await client.downloadSnapshot(
-        of: repo, to: staging, revision: model.revision, matching: patterns,
-        progressHandler: onProgress)
-    } catch HubCacheError.snapshotRequiresCacheOrDestination {
-      // swift-huggingface (<= 0.11) throws this after every file is already in `staging` when
-      // no cache is set; `verifyAndInstall` still checks the staged files.
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      guard status == 200 else { throw ManagerError.http(status) }
+      try fm.moveItem(at: temp, to: target)
+      let size = try target.resourceValues(forKeys: [.fileSizeKey]).fileSize
+      guard size.map(Int64.init) == file.size, try sha256(of: target) == file.sha256 else {
+        throw ManagerError.checkFailed(file.name)
+      }
+    } catch {
+      try? fm.removeItem(at: temp)
+      try? fm.removeItem(at: target)
+      throw error
     }
+  }
+
+  /// Lowercase hex SHA-256 of a file, read 1 MiB at a time (weights reach several GB).
+  nonisolated private static func sha256(of url: URL) throws -> String {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    var hasher = SHA256()
+    while true {
+      try Task.checkCancellation()
+      // Without the pool every chunk read stays alive until the hash ends
+      let chunk = try autoreleasepool { try handle.read(upToCount: 1 << 20) ?? Data() }
+      if chunk.isEmpty { break }
+      hasher.update(data: chunk)
+    }
+    return hasher.finalize().map { String(format: "%02x", $0) }.joined()
   }
 }
 
-nonisolated enum LocalModelManagerError: LocalizedError {
-  case invalidRepo
-  var errorDescription: String? { "Invalid model repository" }
+/// Follows a redirect only to `https` (any host: Hugging Face sends large files to its CDN).
+private nonisolated final class HTTPSRedirectsOnly: NSObject, URLSessionTaskDelegate, Sendable {
+  static let shared = HTTPSRedirectsOnly()
+
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    completionHandler(request.url?.scheme?.lowercased() == "https" ? request : nil)
+  }
 }

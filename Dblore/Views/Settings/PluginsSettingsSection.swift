@@ -47,6 +47,18 @@ private struct PluginDisplayInfo {
         ),
         removeMessage:
           "Deletes the downloaded DuckDB library. Install it again to use DuckDB connections.")
+    case "local-ai":
+      PluginDisplayInfo(
+        name: "On-device AI",
+        summary:
+          "Runs AI models on this Mac with MLX. Downloaded on demand (~6 MB); models are downloaded separately.",
+        license: (
+          "MLX is MIT licensed",
+          URL(string: "https://github.com/ml-explore/mlx-swift/blob/main/LICENSE")!
+        ),
+        removeMessage:
+          "Deletes the downloaded On-device AI plugin. Your downloaded models are kept. Install it again to use on-device models. If on-device AI is in use, its code stays loaded until you quit Dblore."
+      )
     default:
       PluginDisplayInfo(name: id, removeMessage: "Deletes the downloaded \(id) library.")
     }

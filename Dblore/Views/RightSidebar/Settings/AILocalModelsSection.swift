@@ -21,10 +21,18 @@ struct AILocalModelsSection: View {
 
   private var isActive: Bool { settings.configuration.activeProvider == .localMLX }
 
+  /// The On-device AI plugin runs the models. Read in `body`, so the row and the buttons follow
+  /// install and remove in Settings > Plugins.
+  private var isPluginMissing: Bool { !settings.localRuntimeInstalled() }
+
   var body: some View {
+    let pluginMissing = isPluginMissing
     VStack(alignment: .leading, spacing: Spacing.md) {
+      if pluginMissing {
+        missingPluginRow
+      }
       ForEach(LocalModelCatalog.all) { model in
-        row(for: model)
+        row(for: model, pluginMissing: pluginMissing)
       }
     }
     .confirmationDialog(
@@ -49,7 +57,28 @@ struct AILocalModelsSection: View {
 
   // MARK: - Rows
 
-  private func row(for model: LocalModel) -> some View {
+  /// Same Install action as the DuckDB missing-plugin rows: opens Settings > Plugins
+  private var missingPluginRow: some View {
+    HStack(spacing: Spacing.sm) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundColor(.warning)
+      Text("On-device AI plugin not installed")
+        .foregroundColor(.warning)
+      Spacer(minLength: Spacing.sm)
+      Button("Install…", action: ConnectionErrorAction.postOpenPluginSettings)
+        .buttonStyle(SecondaryButtonStyle())
+        .controlSize(.small)
+        .linkPointer()
+    }
+    .font(.caption)
+    .padding(Spacing.sm)
+    .background(
+      RoundedRectangle(cornerRadius: CornerRadius.md)
+        .fill(Color.warning.opacity(0.1))
+    )
+  }
+
+  private func row(for model: LocalModel, pluginMissing: Bool) -> some View {
     let installed = manager.isInstalled(model)
     let state = manager.state[model.id] ?? .idle
     let isSelected = selectedID == model.id
@@ -72,7 +101,9 @@ struct AILocalModelsSection: View {
             .font(.bodyText)
             .foregroundColor(.foregroundSubtle)
 
-          controls(for: model, installed: installed, state: state, isSelected: isSelected)
+          controls(
+            for: model, installed: installed, state: state, isSelected: isSelected,
+            pluginMissing: pluginMissing)
 
           if case .failed(let message) = state {
             Text(message)
@@ -95,9 +126,11 @@ struct AILocalModelsSection: View {
     }
   }
 
+  /// Download and Use stay off while the plugin is missing: nothing could run the model
   @ViewBuilder
   private func controls(
-    for model: LocalModel, installed: Bool, state: LocalModelDownloadState, isSelected: Bool
+    for model: LocalModel, installed: Bool, state: LocalModelDownloadState, isSelected: Bool,
+    pluginMissing: Bool
   ) -> some View {
     if case .downloading(let fraction) = state {
       HStack(spacing: Spacing.md) {
@@ -122,7 +155,7 @@ struct AILocalModelsSection: View {
         Button("Use") { use(model) }
           .buttonStyle(PrimaryButtonStyle())
           .controlSize(.small)
-          .disabled(isSelected && isActive)
+          .disabled((isSelected && isActive) || pluginMissing)
           .linkPointer()
         Button("Delete") { pendingDelete = model }
           .buttonStyle(FilledSecondaryButtonStyle())
@@ -134,7 +167,7 @@ struct AILocalModelsSection: View {
       Button("Download") { manager.download(model) }
         .buttonStyle(PrimaryButtonStyle())
         .controlSize(.small)
-        .disabled(manager.isBusy)
+        .disabled(manager.isBusy || pluginMissing)
         .linkPointer()
     }
   }

@@ -216,6 +216,11 @@ final class AISettings {
   @ObservationIgnored var installedLocalModels: @MainActor () -> Set<String> = {
     LocalModelManager.shared.installedIDs
   }
+  /// Whether the On-device AI plugin that runs those models is installed; a cached, observable
+  /// plugin state (no disk access while rendering)
+  @ObservationIgnored var localRuntimeInstalled: @MainActor () -> Bool = {
+    PluginRegistry.shared.manager(id: "local-ai")?.isInstalledOrPending ?? false
+  }
 
   init(defaults: UserDefaults, keyStore: AIKeyStore) {
     self.defaults = defaults
@@ -270,7 +275,7 @@ final class AISettings {
     guard !config(for: kind).model.isEmpty else { return false }
     if kind == .localMLX {
       guard let model = LocalModelCatalog.model(for: config(for: kind).model) else { return false }
-      return installedLocalModels().contains(model.id)
+      return installedLocalModels().contains(model.id) && localRuntimeInstalled()
     }
     if kind == .chatGPT { return ChatGPTTokenStorage.load(from: keyStore) != nil }
     guard kind.requiresAPIKey else { return true }

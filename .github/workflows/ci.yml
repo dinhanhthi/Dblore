@@ -5,6 +5,7 @@ name: CI
 # The test job keeps the integration suites off (SKIP_INTEGRATION_TESTS); the integration job runs
 # them against PostgreSQL, MySQL, MariaDB and MongoDB containers that scripts/ci-live-databases.sh
 # starts on their own ports (the runner may be a Mac that also runs the local test containers).
+# The local-ai-helper job builds and tests the on-device AI plugin (Plugins/LocalAI).
 
 on:
   pull_request:
@@ -13,6 +14,7 @@ on:
       - 'Dblore/**'
       - 'DbloreTests/**'
       - 'Dblore.xcodeproj/**'
+      - 'Plugins/**'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -35,7 +37,7 @@ jobs:
 
       - uses: ./.github/actions/select-xcode
 
-      # Reuses the resolved packages and compiled mlx-swift objects. Keyed on Package.resolved and
+      # Reuses the resolved packages and compiled objects. Keyed on Package.resolved and
       # the Xcode version; the restore key falls back to the latest cache when either changes.
       - name: Cache DerivedData
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -44,14 +46,8 @@ jobs:
           key: derived-debug-${{ hashFiles('.xcode-version', 'Dblore.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: derived-debug-
 
-      # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
-      - name: Download Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-
-      # -skipPackagePluginValidation: mlx-swift ships a build plugin (CudaBuild) that otherwise
-      # needs interactive trust. -skipMacroValidation: same for mlx-swift-lm macros.
-      # Both skip flags are global to the invocation; -disableAutomaticPackageResolution and
-      # -onlyUsePackageVersionsFromResolvedFile restrict the build to the committed Package.resolved.
+      # -disableAutomaticPackageResolution and -onlyUsePackageVersionsFromResolvedFile restrict the
+      # build to the committed Package.resolved.
       # The result bundle lives under RUNNER_TEMP so a failed run can upload it.
       - name: Test
         run: |
@@ -60,8 +56,6 @@ jobs:
             -destination 'platform=macOS,arch=arm64' \
             -enableCodeCoverage NO \
             -parallel-testing-enabled NO \
-            -skipPackagePluginValidation \
-            -skipMacroValidation \
             -disableAutomaticPackageResolution \
             -onlyUsePackageVersionsFromResolvedFile \
             -resultBundlePath "$RUNNER_TEMP/Dblore.xcresult" \
@@ -73,6 +67,52 @@ jobs:
         with:
           name: xcresult-${{ github.sha }}
           path: ${{ runner.temp }}/Dblore.xcresult
+          retention-days: 7
+
+  local-ai-helper:
+    runs-on: xcode-27
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/select-xcode
+
+      # Reuses the plugin's resolved packages and compiled mlx-swift objects.
+      - name: Cache DerivedData
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: derived-local-ai-${{ hashFiles('.xcode-version', 'Plugins/LocalAI/DbloreLocalAI.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: derived-local-ai-
+
+      # mlx-swift compiles Metal shaders (default.metallib); the toolchain is a separate download.
+      - name: Download Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain
+
+      # The skip flags are needed for mlx-swift's build plugin (CudaBuild) and mlx-swift-lm's macros;
+      # the resolved-file-only options bound them to the plugin's committed Package.resolved.
+      - name: Test
+        run: |
+          xcodebuild test \
+            -project Plugins/LocalAI/DbloreLocalAI.xcodeproj \
+            -scheme DbloreLocalAI \
+            -destination 'platform=macOS,arch=arm64' \
+            -enableCodeCoverage NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -resultBundlePath "$RUNNER_TEMP/DbloreLocalAI.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: xcresult-local-ai-${{ github.sha }}
+          path: ${{ runner.temp }}/DbloreLocalAI.xcresult
           retention-days: 7
 
   integration:
@@ -100,9 +140,6 @@ jobs:
           key: derived-debug-${{ hashFiles('.xcode-version', 'Dblore.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: derived-debug-
 
-      - name: Download Metal toolchain
-        run: xcodebuild -downloadComponent MetalToolchain
-
       # Compose project dblore-ci: own containers, volumes, networks and ports.
       - name: Start live databases
         run: scripts/ci-live-databases.sh start postgres mysql mongo
@@ -123,8 +160,6 @@ jobs:
             -destination 'platform=macOS,arch=arm64' \
             -enableCodeCoverage NO \
             -parallel-testing-enabled NO \
-            -skipPackagePluginValidation \
-            -skipMacroValidation \
             -disableAutomaticPackageResolution \
             -onlyUsePackageVersionsFromResolvedFile \
             -resultBundlePath "$RUNNER_TEMP/DbloreIntegration.xcresult" \
