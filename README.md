@@ -112,8 +112,8 @@ features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 
 - **Download the app:** get the latest signed &amp; notarized DMG from the
   [Releases page](https://github.com/dinhanhthi/Dblore/releases/latest), open it and
-  drag Dblore to Applications. From v0.2.0 on, it updates itself
-  (**Dblore > Check for Updates…**).
+  drag Dblore to Applications. From v0.2.0 on, it updates itself: a green update
+  button shows when a new version is out (**Dblore > Check for Updates…** checks now).
 - **Or build from source:** see below.
 
 ## Requirements

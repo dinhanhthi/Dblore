@@ -1193,6 +1193,7 @@ struct WorkspaceTitleBarTabsView: View {
   let hasLeftSidebar: Bool
   @Environment(\.trafficLightsWidth) private var trafficLightsWidth
   @Environment(\.colorScheme) private var colorScheme
+  @ObservedObject private var updater = UpdaterController.shared
 
   @State private var isHoveringNewTabButton = false
 
@@ -1257,6 +1258,17 @@ struct WorkspaceTitleBarTabsView: View {
       }
 
       HStack(spacing: Spacing.xxs) {
+        // Update button, while Sparkle has a new version waiting
+        if let version = updater.availableUpdateVersion {
+          Button(action: updater.checkForUpdates) {
+            Image(systemName: "arrow.down")
+          }
+          .buttonStyle(SuccessButtonStyle(iconOnly: true))
+          .controlSize(.small)
+          .blockDoubleClickZoom()
+          .help("Update to Dblore \(version)")
+        }
+
         // AI assistant button
         Button {
           workspaceManager.toggleAIAssistant()

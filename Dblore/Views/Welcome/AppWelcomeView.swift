@@ -365,11 +365,19 @@ struct WelcomeSidebar: View {
         action: onImport)
     } footer: {
       HStack(spacing: Spacing.sm) {
-        Button(action: updater.checkForUpdates) {
-          Image(systemName: "arrow.triangle.2.circlepath")
+        if let version = updater.availableUpdateVersion {
+          Button(action: updater.checkForUpdates) {
+            Image(systemName: "arrow.down")
+          }
+          .buttonStyle(SuccessButtonStyle(iconOnly: true))
+          .help("Update to Dblore \(version)")
+        } else {
+          Button(action: updater.checkForUpdates) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+          }
+          .help("Check for Updates")
+          .disabled(!updater.canCheckForUpdates)
         }
-        .help("Check for Updates")
-        .disabled(!updater.canCheckForUpdates)
 
         Button {
           openURL(Self.repositoryURL)

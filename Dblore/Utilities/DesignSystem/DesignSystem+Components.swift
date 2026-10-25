@@ -17,6 +17,7 @@ enum ButtonStyleVariant {
   case filledSecondary
   case danger
   case ghost
+  case success
 
   func backgroundColor(isPressed: Bool, isHovering: Bool = false) -> Color {
     switch self {
@@ -34,6 +35,8 @@ enum ButtonStyleVariant {
     case .ghost:
       // `cellBackgroundHover` vanishes on the light `appBackground`
       return isPressed || isHovering ? Color.hoverFill : Color.clear
+    case .success:
+      return isPressed ? Color.success.opacity(0.85) : Color.success
     }
   }
 
@@ -51,6 +54,8 @@ enum ButtonStyleVariant {
       return isPressed || isHovering || isActive ? .foreground : .foregroundMuted
     case .primary:
       return .onAccentFill
+    case .success:
+      return .onSuccess
     case .danger:
       return .destructive
     default:
@@ -120,6 +125,15 @@ struct DangerButtonStyle: ButtonStyle {
       variant: .danger, iconOnly: iconOnly, hPadding: hPadding,
       vPadding: vPadding, configuration: configuration
     )
+  }
+}
+
+/// Green fill for good news the user acts on (an app update is ready)
+struct SuccessButtonStyle: ButtonStyle {
+  var iconOnly: Bool = false
+
+  func makeBody(configuration: Configuration) -> some View {
+    BaseButtonStyleView(variant: .success, iconOnly: iconOnly, configuration: configuration)
   }
 }
 
