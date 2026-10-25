@@ -2,11 +2,16 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
-## Unreleased
+## v0.8.4 (2026-10-25)
 
 ### Improved
 
-- **On-device AI is a plugin.** The MLX runtime for on-device models is now the optional On-device AI plugin (about 6 MB) in Settings > Plugins, so the app is about 20 MB (31.6%) smaller. Model downloads are checked file by file: every file must match its pinned size and SHA-256 before the model is installed. [#4f9a4104](https://github.com/dinhanhthi/Dblore/commit/4f9a4104) [#05be427b](https://github.com/dinhanhthi/Dblore/commit/05be427b) [#04254e80](https://github.com/dinhanhthi/Dblore/commit/04254e80)
+- **On-device AI is a plugin.** The MLX runtime for on-device models is now the optional On-device AI plugin (about 6 MB) in Settings > Plugins, so the app is about 20 MB (31.6%) smaller. Model downloads are checked file by file: every file must match its pinned size and SHA-256 before the model is installed. [#4f9a4104](https://github.com/dinhanhthi/Dblore/commit/4f9a4104) [#05be427b](https://github.com/dinhanhthi/Dblore/commit/05be427b) [#04254e80](https://github.com/dinhanhthi/Dblore/commit/04254e80) [#7b108b41](https://github.com/dinhanhthi/Dblore/commit/7b108b41) [#c58a2b36](https://github.com/dinhanhthi/Dblore/commit/c58a2b36)
+- **Clearer on-device AI setup.** When the plugin is missing, Settings > AI and the AI panel say so and offer Install…, instead of a model that cannot load. [#c58a2b36](https://github.com/dinhanhthi/Dblore/commit/c58a2b36)
+
+### Fixed
+
+- **Table chip remove button.** The remove button of a table chip in the AI context picker sits inside the chip. [#35e79838](https://github.com/dinhanhthi/Dblore/commit/35e79838)
 
 ### Upgrade notes
 
