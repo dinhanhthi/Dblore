@@ -2,7 +2,7 @@
 //  WindowUtilities.swift
 //  Dblore
 //
-//  Utilities for window management: drag area, double-click blocking, traffic lights
+//  Utilities for window management: drag area, double-click blocking, document windows
 //
 
 import AppKit
@@ -62,179 +62,19 @@ class WindowDragBlockerView: NSView {
   override nonisolated func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-// MARK: - Traffic Light Positioner
-
-/// NSViewRepresentable that adjusts traffic light button positions
-struct TrafficLightPositioner: NSViewRepresentable {
-  let tabBarHeight: CGFloat
-  /// While the native tab bar is visible AppKit positions the traffic lights itself
-  let isTabBarVisible: Bool
-
-  func makeNSView(context: Context) -> NSView {
-    let view = TrafficLightAdjusterView(tabBarHeight: tabBarHeight)
-    view.isTabBarVisible = isTabBarVisible
-    return view
-  }
-
-  func updateNSView(_ nsView: NSView, context: Context) {
-    if let adjuster = nsView as? TrafficLightAdjusterView {
-      adjuster.isTabBarVisible = isTabBarVisible
-      adjuster.adjustTrafficLights()
-    }
-  }
-}
-
-/// Custom NSView that adjusts traffic light positions when added to window
-class TrafficLightAdjusterView: NSView {
-  let tabBarHeight: CGFloat
-  var isTabBarVisible = false
-  private var layoutObserver: NSObjectProtocol?
-  private var buttonObservers: [NSObjectProtocol] = []
-  private var wasTabBarVisible = false
-
-  init(tabBarHeight: CGFloat) {
-    self.tabBarHeight = tabBarHeight
-    super.init(frame: .zero)
-  }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) {
-    fatalError("init(coder:) has not been implemented")
-  }
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-
-    if let window = window {
-      adjustTrafficLights()
-
-      // The titlebar is laid out after the window is attached and AppKit then puts the buttons
-      // back at their default origin, so re-apply once that layout has settled
-      DispatchQueue.main.async { [weak self] in
-        guard let self, self.window != nil, !self.isTabBarVisible else { return }
-        self.window?.standardWindowButton(.closeButton)?.superview?.layoutSubtreeIfNeeded()
-        self.adjustTrafficLights()
-      }
-      observeButtonFrames(in: window)
-
-      // Observe window layout changes to re-adjust buttons
-      if layoutObserver == nil {
-        layoutObserver = NotificationCenter.default.addObserver(
-          forName: NSWindow.didResizeNotification,
-          object: window,
-          queue: .main
-        ) { [weak self] _ in
-          Task { @MainActor in
-            self?.adjustTrafficLights()
-          }
-        }
-      }
-    } else {
-      // Remove observers when removed from window
-      if let observer = layoutObserver {
-        NotificationCenter.default.removeObserver(observer)
-        layoutObserver = nil
-      }
-      buttonObservers.forEach(NotificationCenter.default.removeObserver)
-      buttonObservers.removeAll()
-    }
-  }
-
-  /// Re-adjusts whenever AppKit moves the buttons or resizes their container behind our back
-  private func observeButtonFrames(in window: NSWindow) {
-    buttonObservers.forEach(NotificationCenter.default.removeObserver)
-    buttonObservers.removeAll()
-
-    let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-    var watched: [NSView] = types.compactMap { window.standardWindowButton($0) }
-    if let container = watched.first?.superview { watched.append(container) }
-
-    for view in watched {
-      view.postsFrameChangedNotifications = true
-      buttonObservers.append(
-        NotificationCenter.default.addObserver(
-          forName: NSView.frameDidChangeNotification, object: view, queue: .main
-        ) { [weak self] _ in
-          Task { @MainActor in self?.adjustTrafficLights() }
-        })
-    }
-  }
-
-  func adjustTrafficLights() {
-    guard let window = window,
-      let closeButton = window.standardWindowButton(.closeButton),
-      let superview = closeButton.superview
-    else { return }
-
-    let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
-
-    // AppKit lays the buttons out itself while the native tab bar is visible
-    if isTabBarVisible {
-      wasTabBarVisible = true
-      return
-    }
-
-    // The tab bar just hid: buttons still sit at the tabbed origin, so make AppKit lay them out
-    // again before re-applying the custom position from the fresh layout
-    if wasTabBarVisible {
-      wasTabBarVisible = false
-      superview.needsLayout = true
-      superview.layoutSubtreeIfNeeded()
-    }
-
-    // Traffic light buttons are 12pt tall
-    let buttonHeight: CGFloat = 12
-
-    // Fine-tune vertical offset (negative = move down in screen coords)
-    let verticalAdjustment: CGFloat = -1.5
-
-    // Horizontal padding from left edge of window
-    let horizontalPadding: CGFloat = 13
-
-    // The superview contains all three buttons in a container
-    // We need to center this container vertically in the tab bar area
-    // In macOS coordinates, Y=0 is at the bottom of the superview
-
-    // Calculate where the center of buttons should be (from top of window content)
-    // tabBarHeight / 2 = center of tab bar from top
-    let centerFromTop = tabBarHeight / 2
-
-    // In the titlebar container, we want buttons centered
-    // The container's coordinate system has Y increasing upward
-    // So we need to position relative to the container's height
-    let containerHeight = superview.bounds.height
-    let newY = containerHeight - centerFromTop - (buttonHeight / 2) + verticalAdjustment
-
-    // Adjust each button's position
-    for (index, buttonType) in buttons.enumerated() {
-      guard let button = window.standardWindowButton(buttonType) else { continue }
-      var frame = button.frame
-
-      // Adjust Y position
-      frame.origin.y = newY
-
-      // Adjust X position: add left padding, buttons are 12pt wide with 8pt spacing
-      frame.origin.x = horizontalPadding + CGFloat(index) * (frame.width + 8)
-
-      // Only move when AppKit put it elsewhere, so the frame observers cannot loop
-      guard
-        abs(button.frame.origin.x - frame.origin.x) > 0.01
-          || abs(button.frame.origin.y - frame.origin.y) > 0.01
-      else { continue }
-      button.setFrameOrigin(frame.origin)
-    }
-  }
-}
-
 // MARK: - Document Window Configurator
 
 extension EnvironmentValues {
-  /// True while the native macOS tab bar is shown below the titlebar of this window
-  @Entry var isNativeTabBarVisible = false
+  /// Height of the native tab bar band below the titlebar row, 0 while it is hidden
+  @Entry var nativeTabBarHeight: CGFloat = 0
+  /// Width the traffic lights take at the leading edge of the titlebar row, trailing gap included
+  @Entry var trafficLightsWidth: CGFloat = ComponentSize.trafficLightWidth
 }
 
 /// Window and tab labels for a workspace, VSCode style: "Name (Workspace)" on the native tab and
-/// "file.ext - Name (Workspace)" in the titlebar row.
+/// "file.ext - Name (Workspace)" as the window title. The titlebar row never draws the title (it
+/// hosts the Dblore header), but `window.title` is still set: the Window menu and Mission Control
+/// show it.
 enum WorkspaceWindowTitle {
   static func tab(workspaceName: String) -> String {
     "\(workspaceName) (Workspace)"
@@ -247,20 +87,23 @@ enum WorkspaceWindowTitle {
   }
 }
 
-/// Joins the window to the shared native tab group and reports whether the native tab bar is visible.
-/// While the tab bar is shown the titlebar row shows `windowTitle`, otherwise the title stays hidden.
+/// Joins the window to the shared native tab group, gives it an empty compact toolbar so the
+/// titlebar row is as tall as the Dblore header that fills it, and reports the native tab bar:
+/// whether it is visible and the height of its band below the row. The title is never drawn (a
+/// visible title would also take the clicks meant for the header); `windowTitle` is still set for
+/// the Window menu and Mission Control. Optionally reports the width the traffic lights take.
 struct DocumentWindowConfigurator: NSViewRepresentable {
   let tabTitle: String
   var windowTitle: String? = nil
   @Binding var isTabBarVisible: Bool
+  var tabBarHeight: Binding<CGFloat>? = nil
+  var trafficLightsWidth: Binding<CGFloat>? = nil
 
   func makeNSView(context: Context) -> NSView {
     let view = DocumentWindowConfiguratorView()
     view.tabTitle = tabTitle
     view.windowTitle = windowTitle ?? tabTitle
-    view.onTabBarVisibilityChange = { isVisible in
-      if isTabBarVisible != isVisible { isTabBarVisible = isVisible }
-    }
+    connect(view)
     return view
   }
 
@@ -270,8 +113,20 @@ struct DocumentWindowConfigurator: NSViewRepresentable {
     view.windowTitle = windowTitle ?? tabTitle
     view.window?.tab.title = tabTitle
     view.window?.title = view.windowTitle
+    connect(view)
+  }
+
+  /// Each value is written only when it changes: a measured value that drives a frame must not
+  /// loop during a live resize.
+  private func connect(_ view: DocumentWindowConfiguratorView) {
     view.onTabBarVisibilityChange = { isVisible in
       if isTabBarVisible != isVisible { isTabBarVisible = isVisible }
+    }
+    view.onTabBarHeightChange = tabBarHeight.map { binding in
+      { height in if binding.wrappedValue != height { binding.wrappedValue = height } }
+    }
+    view.onTrafficLightsWidthChange = trafficLightsWidth.map { binding in
+      { width in if binding.wrappedValue != width { binding.wrappedValue = width } }
     }
   }
 }
@@ -281,10 +136,20 @@ class DocumentWindowConfiguratorView: NSView {
   var tabTitle = ""
   var windowTitle = ""
   var onTabBarVisibilityChange: ((Bool) -> Void)?
+  var onTabBarHeightChange: ((CGFloat) -> Void)?
+  var onTrafficLightsWidthChange: ((CGFloat) -> Void)?
   private var lastReported: Bool?
+  private var lastTabBarHeight: CGFloat?
+  private var lastTrafficLightsWidth: CGFloat?
   private var observations: [NSKeyValueObservation] = []
   private var tabBarObservation: NSKeyValueObservation?
+  private var toolbarObservation: NSKeyValueObservation?
+  private weak var observedToolbar: NSToolbar?
   private var notificationObservers: [NSObjectProtocol] = []
+
+  /// Gap between the zoom button and the first header control; with the zoom button's maxX at
+  /// 72 (macOS 27) the width is 88, `ComponentSize.trafficLightWidth`, the strip's width before
+  private static let trafficLightsTrailingGap: CGFloat = 16
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -295,18 +160,24 @@ class DocumentWindowConfiguratorView: NSView {
     window.tabbingMode = .automatic
     window.tab.title = tabTitle
     window.title = windowTitle
+    installToolbar()
 
     observations = [
       window.observe(\.contentLayoutRect, options: [.new]) { [weak self] _, _ in
-        Task { @MainActor in self?.reportTabBarVisibility() }
+        Task { @MainActor in self?.reportTabBar() }
       },
       // Changes when a native tab is dragged out or moved to a new window
       window.observe(\.tabGroup, options: [.new]) { [weak self] _, _ in
         Task { @MainActor in
+          self?.installToolbar()
           self?.observeTabBar()
-          self?.reportTabBarVisibility()
+          self?.reportTabBar()
           LaunchSessionCapture.schedule()
         }
+      },
+      // The window's scene can drop the toolbar when it updates its titlebar style
+      window.observe(\.toolbar, options: [.new]) { [weak self] _, _ in
+        Task { @MainActor in self?.installToolbar() }
       },
     ]
     observeTabBar()
@@ -315,33 +186,101 @@ class DocumentWindowConfiguratorView: NSView {
       notificationObservers.append(
         NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
           [weak self] _ in
-          Task { @MainActor in self?.reportTabBarVisibility() }
+          Task { @MainActor in
+            if name == NSWindow.didBecomeKeyNotification { self?.installToolbar() }
+            self?.reportTabBar()
+          }
         })
     }
-    reportTabBarVisibility()
+    observeTrafficLights(in: window)
+    reportTabBar()
+  }
+
+  /// An empty compact toolbar turns the titlebar into one row as tall as the Dblore header, with
+  /// the native tab bar below it. Re-applied whenever something resets it; every setter is guarded
+  /// so the observers cannot loop.
+  private func installToolbar() {
+    guard let window else { return }
+    if window.toolbar == nil {
+      let toolbar = NSToolbar(identifier: "app.dblore.document")
+      toolbar.allowsUserCustomization = false
+      toolbar.displayMode = .iconOnly
+      window.toolbar = toolbar
+    }
+    // A hidden toolbar would shrink the row back to a plain titlebar
+    if window.toolbar?.isVisible == false { window.toolbar?.isVisible = true }
+    if window.toolbarStyle != .unifiedCompact { window.toolbarStyle = .unifiedCompact }
+    if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+    if window.titlebarSeparatorStyle != .none { window.titlebarSeparatorStyle = .none }
+    if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
+    observeToolbarVisibility()
+  }
+
+  private func observeToolbarVisibility() {
+    guard let toolbar = window?.toolbar, toolbar !== observedToolbar else { return }
+    observedToolbar = toolbar
+    toolbarObservation = toolbar.observe(\.isVisible, options: [.new]) { [weak self] _, _ in
+      Task { @MainActor in self?.installToolbar() }
+    }
   }
 
   private func observeTabBar() {
     tabBarObservation = window?.tabGroup?.observe(\.isTabBarVisible, options: [.new]) {
       [weak self] _, _ in
-      Task { @MainActor in self?.reportTabBarVisibility() }
+      Task { @MainActor in self?.reportTabBar() }
     }
   }
 
-  private func reportTabBarVisibility() {
-    let isVisible = window?.tabGroup?.isTabBarVisible ?? false
-    guard lastReported != isVisible else { return }
-    lastReported = isVisible
-    window?.titleVisibility = isVisible ? .visible : .hidden
-    onTabBarVisibilityChange?(isVisible)
+  /// AppKit moves the traffic lights without resizing the window (tab bar shown or hidden)
+  private func observeTrafficLights(in window: NSWindow) {
+    guard let zoom = window.standardWindowButton(.zoomButton) else { return }
+    for view in [zoom, zoom.superview].compactMap({ $0 }) {
+      view.postsFrameChangedNotifications = true
+      notificationObservers.append(
+        NotificationCenter.default.addObserver(
+          forName: NSView.frameDidChangeNotification, object: view, queue: .main
+        ) { [weak self] _ in
+          Task { @MainActor in self?.reportTabBar() }
+        })
+    }
+  }
+
+  private func reportTabBar() {
+    guard let window else { return }
+    let isVisible = window.tabGroup?.isTabBarVisible ?? false
+    if lastReported != isVisible {
+      lastReported = isVisible
+      onTabBarVisibilityChange?(isVisible)
+    }
+
+    // The band below the titlebar row; full screen may lay the titlebar out differently
+    let topInset = window.frame.height - window.contentLayoutRect.maxY
+    let height = isVisible ? max(0, topInset - ComponentSize.tabBarHeight) : 0
+    if lastTabBarHeight != height {
+      lastTabBarHeight = height
+      onTabBarHeightChange?(height)
+    }
+
+    let width =
+      window.standardWindowButton(.zoomButton).map {
+        $0.convert($0.bounds, to: nil).maxX + Self.trafficLightsTrailingGap
+      } ?? ComponentSize.trafficLightWidth
+    if lastTrafficLightsWidth != width {
+      lastTrafficLightsWidth = width
+      onTrafficLightsWidthChange?(width)
+    }
   }
 
   private func stopObserving() {
     observations.removeAll()
     tabBarObservation = nil
+    toolbarObservation = nil
+    observedToolbar = nil
     notificationObservers.forEach(NotificationCenter.default.removeObserver)
     notificationObservers.removeAll()
     lastReported = nil
+    lastTabBarHeight = nil
+    lastTrafficLightsWidth = nil
   }
 }
 

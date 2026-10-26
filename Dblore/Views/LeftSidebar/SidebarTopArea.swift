@@ -13,14 +13,12 @@ import SwiftUI
 struct WorkspaceSidebarTopArea: View {
   @Bindable var workspaceManager: WorkspaceManager
   let height: CGFloat
-  @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
+  @Environment(\.trafficLightsWidth) private var trafficLightsWidth
 
   var body: some View {
     HStack(alignment: .center, spacing: 0) {
       Color.clear
-        .frame(
-          width: ComponentSize.trafficLightAndToggleWidth
-            - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0))
+        .frame(width: trafficLightsWidth + ComponentSize.sidebarToggleOffset)
 
       Spacer()
 
@@ -81,12 +79,6 @@ struct WorkspaceSidebarTopArea: View {
     }
     .frame(height: height)
     .background(WindowDragArea())
-    // With the native tab bar above, continue the tab bar's top border across the sidebar
-    .overlay(alignment: .top) {
-      if isNativeTabBarVisible {
-        Rectangle().fill(Color.border).frame(height: 1)
-      }
-    }
   }
 }
 

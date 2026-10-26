@@ -119,10 +119,6 @@ struct AppWelcomeView: View {
       DocumentWindowConfigurator(tabTitle: "Welcome", isTabBarVisible: $isNativeTabBarVisible)
     )
     .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
-    )
-    .background(
       HostWindowReader(reference: hostWindow) {
         // A request made while this window was opening finds it once the window is known
         Task { @MainActor in

@@ -13,6 +13,9 @@ struct WorkspaceContainerView: View {
   @State private var settingsSection: SettingsPage?
   @State private var settingsOpenToken = UUID()
   @State private var isNativeTabBarVisible = false
+  /// Native tab bar band below the titlebar row (0 while hidden), reported by the configurator
+  @State private var nativeTabBarHeight: CGFloat = 0
+  @State private var trafficLightsWidth = ComponentSize.trafficLightWidth
   @State private var hostWindow = HostWindowReference()
   @Environment(\.controlActiveState) private var controlActiveState
   @ReduceMotion private var reduceMotion
@@ -120,6 +123,12 @@ struct WorkspaceContainerView: View {
                 workspaceManager: workspaceManager,
                 hasLeftSidebar: workspaceManager.isLeftSidebarVisible
               )
+              // Above the views below it: the titlebar row is unsafe area, and a background or scroll
+              // view that starts at its edge extends up into the row
+              .zIndex(1)
+
+              // Room for the native tab bar, which AppKit draws below the titlebar row
+              Color.appBackground.frame(height: nativeTabBarHeight)
 
               // Pending Protected transaction (Commit / Rollback)
               if !workspaceManager.pendingTransaction.isIdle {
@@ -201,20 +210,13 @@ struct WorkspaceContainerView: View {
           HStack(spacing: 0) {
             Color.clear
               .frame(
-                width: ComponentSize.trafficLightAndToggleWidth
-                  - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
+                width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
               .background {
                 if !workspaceManager.isLeftSidebarVisible {
                   Color.appBackground
-                    // Keep the tab bar's top border (native tab bar above) across this strip
-                    .overlay(alignment: .top) {
-                      if isNativeTabBarVisible {
-                        Rectangle().fill(Color.border).frame(height: 1)
-                      }
-                    }
                 }
               }
               .overlay(alignment: .trailing) {
@@ -264,6 +266,8 @@ struct WorkspaceContainerView: View {
               activeTab: activeViewModel,
               tables: workspaceManager.databaseTables
             )
+            // The card stays below the native tab bar
+            .padding(.top, nativeTabBarHeight)
             .transition(.opacity)
             .zIndex(2)
           }
@@ -281,19 +285,19 @@ struct WorkspaceContainerView: View {
     // No min frame here: `documentWindowMode` sets the limits, and a fixed 600 overflowed the
     // 540 compact window (sidebars and the footer were cut off at the bottom)
     .background(Color.appBackground)
-    .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
-    .environment(\.isNativeTabBarVisible, isNativeTabBarVisible)
+    // The header fills the titlebar row; the native tab bar band below it gets spacers
+    .ignoresSafeArea(.all, edges: .top)
+    .environment(\.nativeTabBarHeight, nativeTabBarHeight)
+    .environment(\.trafficLightsWidth, trafficLightsWidth)
     .background(
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
         windowTitle: WorkspaceWindowTitle.window(
           fileName: workspaceManager.activeTab?.title,
           workspaceName: workspaceManager.workspace.name),
-        isTabBarVisible: $isNativeTabBarVisible)
-    )
-    .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
+        isTabBarVisible: $isNativeTabBarVisible,
+        tabBarHeight: $nativeTabBarHeight,
+        trafficLightsWidth: $trafficLightsWidth)
     )
     .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
     .pendingTransactionDialogs(workspaceManager: workspaceManager)
@@ -625,6 +629,7 @@ struct WorkspaceLeftSidebar: View {
   let maxWidth: CGFloat
   let onImportTable: (DatabaseTable) -> Void
   @Binding var mongoAdmin: SidebarMongoAdmin?
+  @Environment(\.nativeTabBarHeight) private var nativeTabBarHeight
 
   /// Effective sidebar width from workspace settings or app settings
   private var effectiveSidebarWidth: CGFloat {
@@ -639,6 +644,12 @@ struct WorkspaceLeftSidebar: View {
       VStack(spacing: 0) {
         // Top area with workspace controls
         WorkspaceSidebarTopArea(workspaceManager: workspaceManager, height: tabBarHeight)
+          // Above the list, which can extend up into the titlebar row (unsafe area)
+          .zIndex(1)
+
+        // The full-width native tab bar runs across the sidebar: start the list below it.
+        // Phase 2 removes this once the bar starts after the sidebar.
+        Color.clear.frame(height: nativeTabBarHeight)
 
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
@@ -1166,7 +1177,7 @@ extension View {
 struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
-  @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
+  @Environment(\.trafficLightsWidth) private var trafficLightsWidth
   @Environment(\.colorScheme) private var colorScheme
 
   @State private var isHoveringNewTabButton = false
@@ -1192,8 +1203,7 @@ struct WorkspaceTitleBarTabsView: View {
       if !hasLeftSidebar {
         Color.clear
           .frame(
-            width: ComponentSize.trafficLightAndToggleWidth
-              - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
+            width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
               + workspaceManager.connectionState.connectionButtonsWidth)
       } else {
         Color.clear.frame(width: 10)
@@ -1333,12 +1343,6 @@ struct WorkspaceTitleBarTabsView: View {
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.appBackground)
     .background(WindowDragArea())
-    // With the native tab bar above, match the sidebar's top edge
-    .overlay(alignment: .top) {
-      if isNativeTabBarVisible {
-        Rectangle().fill(Color.border).frame(height: 1)
-      }
-    }
   }
 
   private func goToPreviousTab() {

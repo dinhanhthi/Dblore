@@ -49,13 +49,19 @@ enum ComponentSize {
   static let parameterBlockMaxWidth: CGFloat = 320
 
   // Tab bar and title bar
-  static let tabBarHeight: CGFloat = 38
+  /// Equals the titlebar row of the compact toolbar every document window installs (40pt on
+  /// macOS 26+, 38pt before), so the Dblore header fills that row and the native tab bar sits
+  /// right below it.
+  static let tabBarHeight: CGFloat = {
+    if #available(macOS 26, *) { return 40 }
+    return 38
+  }()
   /// Width for traffic light buttons (close, minimize, zoom) + left padding:
-  /// horizontalPadding 13 + 3x12 buttons + 2x8 spacing + trailing gap 23
+  /// horizontalPadding 13 + 3x12 buttons + 2x8 spacing + trailing gap 23.
+  /// Fallback for the runtime `trafficLightsWidth` environment value.
   static let trafficLightWidth: CGFloat = 88
-  /// Width actually covered by the traffic light buttons (13 + 3x12 + 2x8). The native tab bar
-  /// moves them out of the content row, so this is the part to give back, not the trailing gap.
-  static let trafficLightButtonsWidth: CGFloat = 65
+  /// Added to the traffic lights width to place the sidebar toggle button group
+  static let sidebarToggleOffset: CGFloat = 11
   /// Width for traffic light buttons + sidebar toggle button
-  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + 11
+  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + sidebarToggleOffset
 }

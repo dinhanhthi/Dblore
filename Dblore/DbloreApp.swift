@@ -536,6 +536,10 @@ struct SharedCommands: Commands {
       .keyboardShortcut(",", modifiers: .command)
     }
 
+    // Document windows carry an empty toolbar only for its titlebar row: no
+    // Show/Hide Toolbar or Customize Toolbar items (window tab items stay).
+    CommandGroup(replacing: .toolbar) {}
+
     CommandGroup(after: .appInfo) {
       CheckForUpdatesButton()
     }

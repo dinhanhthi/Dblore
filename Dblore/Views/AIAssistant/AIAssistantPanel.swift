@@ -17,6 +17,7 @@ struct AIAssistantPanel: View {
   /// Column width (sidebar) or card width (bubble)
   var width: CGFloat = ComponentSize.sidebarWidth
 
+  @Environment(\.nativeTabBarHeight) private var nativeTabBarHeight
   @FocusState private var composerFocused: Bool
   @State private var composerIsMultiline = false
   @State private var composerTextHeight: CGFloat = 0
@@ -49,6 +50,13 @@ struct AIAssistantPanel: View {
   var body: some View {
     VStack(spacing: 0) {
       header
+        // Above the messages, which can extend up into the titlebar row (unsafe area)
+        .zIndex(1)
+      // The docked header sits in the titlebar row: leave room for the native tab bar below it.
+      // The bubble's card already sits below the bar.
+      if !isFloating {
+        Color.clear.frame(height: nativeTabBarHeight)
+      }
       if isFloating {
         // Follows the foreground so it stays visible on the tinted bubble: lighter in dark, darker in light
         Rectangle().fill(Color.foreground.opacity(0.2)).frame(height: 1)
