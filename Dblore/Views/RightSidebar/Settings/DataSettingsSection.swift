@@ -245,7 +245,8 @@ struct DataSettingsSection: View {
 
   /// Accounts of these kinds are encoded identities, so the kind is the readable title.
   private func showsKindFirst(_ item: SecretItem) -> Bool {
-    [.clientCertificate, .sshCredential, .sshHostKey, .outsideMCPToken].contains(item.kind)
+    [.clientCertificate, .sshCredential, .sshHostKey, .outsideMCPToken, .mcpServerToken]
+      .contains(item.kind)
   }
 
   private var clearIsPresented: Binding<Bool> {
@@ -481,6 +482,7 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   case .sshCredential: "SSH credentials"
   case .sshHostKey: "Trusted SSH host keys"
   case .outsideMCPToken: "Outside MCP server token"
+  case .mcpServerToken: "Dblore MCP server token"
   }
 }
 

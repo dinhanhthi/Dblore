@@ -197,6 +197,16 @@ struct ConnectionFormContent: View {
                 sqliteSimpleFields()
               }
             }
+
+            sectionCard {
+              sectionTitle("Options")
+              connectionTogglesAndPickers()
+            }
+
+            sectionCard {
+              sectionTitle("Safety")
+              safetySection()
+            }
           } else {
             sectionCard {
               sectionTitle("Connection")

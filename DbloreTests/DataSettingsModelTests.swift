@@ -66,7 +66,9 @@ struct DataSettingsModelTests {
     #expect(logs.clearCount == 1)
   }
 
-  @Test("Clear all removes secrets, and outside MCP servers, only when that flag is confirmed")
+  @Test(
+    "Clear all removes secrets, outside MCP servers and the MCP server token only when that flag is confirmed"
+  )
   func clearAllRespectsSecretsFlag() async throws {
     let logs = Store(text: "alpha", bytes: 4, itemCount: 1)
     let database = SecretItem(service: "db", account: "ada", label: "ada", kind: .dbPassword)
@@ -78,7 +80,10 @@ struct DataSettingsModelTests {
       service: KeychainSSHCredentialStore.serviceName, account: "v2|9:bastion")
     let hostKey = SecretItem.listed(
       service: KeychainSSHKnownHostStore.serviceName, account: "v2|9:bastion|2:22")
-    let inventory = InMemorySecretInventory(items: [database, key, certificate, ssh, hostKey])
+    let mcpToken = SecretItem.listed(
+      service: KeychainMCPTokenStore.serviceName, account: "bearer-token")
+    let inventory = InMemorySecretInventory(
+      items: [database, key, certificate, ssh, hostKey, mcpToken])
     let suite = "ace.thi.Dblore.tests.dataSettings.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
@@ -86,22 +91,25 @@ struct DataSettingsModelTests {
     let servers = OutsideMCPServerStore(defaults: defaults, tokens: tokens)
     let server = try await servers.add(
       name: "Tools", url: "http://127.0.0.1:7777/mcp", token: "tok-1")
+    let forgotten = HookCount()
     let model = DataSettingsModel(
       providers: [FakeProvider(category: .logs, store: logs)],
-      inventory: inventory, outsideServers: servers)
+      inventory: inventory, outsideServers: servers,
+      mcpServerTokenDeleted: { forgotten.count += 1 })
 
     let mismatched = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: true, confirmed: mismatched)
     #expect(logs.clearCount == 0)
-    #expect(await inventory.items() == [database, key, certificate, ssh, hostKey])
+    #expect(await inventory.items() == [database, key, certificate, ssh, hostKey, mcpToken])
 
     let keepSecrets = model.prepareClearAll(includeSecrets: false)
     await model.clearAll(includeSecrets: false, confirmed: keepSecrets)
     #expect(logs.clearCount == 1)
-    #expect(await inventory.items() == [database, key, certificate, ssh, hostKey])
+    #expect(await inventory.items() == [database, key, certificate, ssh, hostKey, mcpToken])
     // A server and its token are a pair: kept together with the credentials.
     #expect(servers.servers.map(\.id) == [server.id])
     #expect(tokens.load(serverID: server.id) == "tok-1")
+    #expect(forgotten.count == 0)
 
     let removeSecrets = model.prepareClearAll(includeSecrets: true)
     await model.clearAll(includeSecrets: true, confirmed: removeSecrets)
@@ -111,6 +119,7 @@ struct DataSettingsModelTests {
     #expect(defaults.data(forKey: OutsideMCPServerStore.defaultsKey) == nil)
     #expect(tokens.load(serverID: server.id) == nil)
     #expect(OutsideMCPServerStore(defaults: defaults, tokens: tokens).servers.isEmpty)
+    #expect(forgotten.count == 1)
   }
 
   @Test("Delete ignores a token from another action")
@@ -179,6 +188,26 @@ struct DataSettingsModelTests {
     #expect(servers.servers.map(\.isEnabled) == [false, true])
   }
 
+  @Test("Deleting the MCP server token makes the server forget it; other kinds do not")
+  func deletingMCPServerTokenForgetsIt() async {
+    let mcpToken = SecretItem.listed(
+      service: KeychainMCPTokenStore.serviceName, account: "bearer-token")
+    let key = SecretItem(service: "ai", account: "openai", label: "openai", kind: .aiKey)
+    let inventory = InMemorySecretInventory(items: [key, mcpToken])
+    let forgotten = HookCount()
+    let model = DataSettingsModel(
+      providers: [], inventory: inventory, mcpServerTokenDeleted: { forgotten.count += 1 })
+    await model.refresh()
+    #expect(model.secrets.map(\.kind) == [.aiKey, .mcpServerToken])
+
+    await model.deleteSecret(key, confirmed: model.prepareDeleteSecret(key))
+    #expect(forgotten.count == 0)
+    await model.deleteSecret(mcpToken, confirmed: model.prepareDeleteSecret(mcpToken))
+    #expect(await inventory.items().isEmpty)
+    #expect(model.secrets.isEmpty)
+    #expect(forgotten.count == 1)
+  }
+
   @Test("Import reports per-category success")
   func importReportsPerCategorySuccess() async throws {
     let root = try makeRoot()
@@ -223,6 +252,11 @@ struct DataSettingsModelTests {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
   }
+}
+
+@MainActor
+private final class HookCount {
+  var count = 0
 }
 
 /// Both summaries must enter `arrive` before either returns, so a sequential refresh stalls.

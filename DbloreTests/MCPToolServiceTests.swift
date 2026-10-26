@@ -50,6 +50,26 @@ private final class FakeReadSource: MCPReadSource, @unchecked Sendable {
   }
 }
 
+/// Approves every write.
+private struct ApprovingApprover: MCPWriteApproving {
+  func approve(_ request: MCPWriteApprovalRequest) async throws -> Bool { true }
+  func denyWaiting(connections: Set<UUID>) async {}
+  func denyAllWaiting() async {}
+}
+
+/// Records the writes that reached it.
+private final class RecordingWriteSource: MCPWriteSource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var sent: [String] = []
+
+  var statements: [String] { lock.withLock { sent } }
+
+  func runWrite(_ request: MCPWriteRequest) async throws -> MCPWriteResult {
+    lock.withLock { sent.append(request.sql) }
+    return MCPWriteResult(affectedRows: 1)
+  }
+}
+
 /// Toggled by a test.
 private final class HistorySwitch: @unchecked Sendable {
   private let lock = NSLock()
@@ -594,5 +614,35 @@ struct MCPToolServiceTests {
     #expect(factory.statements.contains("BEGIN TRANSACTION READ ONLY"))
     #expect(factory.statements.contains("SELECT n FROM t"))
     await pool.closeAll()
+  }
+
+  @Test("execute_write is refused when the commit style falls back to Review, protected mode off")
+  func reviewFallbackRefusesWrite() async {
+    let writes = RecordingWriteSource()
+    var fallback = Self.entry()
+    fallback.config.protectedMode = false
+    var confirm = Self.entry()
+    confirm.config.protectedMode = false
+    confirm.config.commitStyle = .confirm
+    let entries = [fallback, confirm]
+    let ids = entries.map(\.id)
+    let service = MCPToolService(
+      connections: { entries }, allowlist: { Set(ids) }, aiSettings: { .empty }, source: source,
+      recorder: history, historyEnabled: { true }, gate: gate,
+      writes: MCPWriteAccess(
+        enabled: { true }, scopes: { Dictionary(uniqueKeysWithValues: ids.map { ($0, .data) }) },
+        defaultCommitStyle: { .review }, approver: ApprovingApprover(), source: writes))
+    for (id, refused) in [(fallback.id, true), (confirm.id, false)] {
+      let result = await service.call(
+        "execute_write",
+        arguments: [
+          "connection_id": .string(id.uuidString), "sql": .string("DELETE FROM t WHERE id = 1"),
+        ])
+      #expect(result.isError == refused)
+      if refused {
+        #expect(result.text == MCPToolError.writeCommitStyleDefault.localizedDescription)
+      }
+    }
+    #expect(writes.statements == ["DELETE FROM t WHERE id = 1"])
   }
 }

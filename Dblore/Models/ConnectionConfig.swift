@@ -687,17 +687,18 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       fallback: fallback, supportsTransactions: databaseType.capabilities.supportsTransactions)
   }
 
+  /// The connection's own style or its legacy pair, before the engine and Protected mode adjust
+  /// it; nil when the connection uses the default.
+  nonisolated var ownCommitStyle: CommitStyle? {
+    commitStyle ?? CommitStyle.migrate(protectedMode: protectedMode, safeMode: safeMode)
+  }
+
   /// Without transactions (MongoDB) Review becomes Confirm, and Protected mode raises a weaker
   /// style to Confirm (a stronger one, Password, is kept).
   nonisolated func resolvedCommitStyle(
     fallback: CommitStyle, supportsTransactions: Bool
   ) -> CommitStyle {
-    let candidate: CommitStyle
-    if let commitStyle {
-      candidate = commitStyle
-    } else {
-      candidate = CommitStyle.migrate(protectedMode: protectedMode, safeMode: safeMode) ?? fallback
-    }
+    let candidate = ownCommitStyle ?? fallback
     // protectedMode is the gate's source of truth.
     if protectedMode, supportsTransactions {
       return .review

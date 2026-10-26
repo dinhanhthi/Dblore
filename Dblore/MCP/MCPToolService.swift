@@ -140,6 +140,7 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
   case writeOutOfScope(needed: MCPWriteScope)
   case writeBlockedByProtection(String)
   case writeCommitStyle
+  case writeCommitStyleDefault
   case writeDenied
   case writeHiddenCharacters
   case writeNonASCIIWord
@@ -199,6 +200,10 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .writeCommitStyle:
       "This connection's commit style (Review or Password) needs the user in Dblore, so agent "
         + "changes are refused. Nothing was sent to the database."
+    case .writeCommitStyleDefault:
+      "This connection has no commit style of its own and the default is Review, which needs the "
+        + "user in Dblore, so agent changes are refused. Pick Confirm or Immediate as the "
+        + "connection's security level in Dblore. Nothing was sent to the database."
     case .writeDenied:
       "The change was not approved in Dblore (denied, or no answer within 2 minutes of being "
         + "shown; requests wait in line behind others). Nothing was sent to the database."
@@ -1085,7 +1090,9 @@ nonisolated struct MCPToolService: Sendable {
 
   /// The saved connection's protection level must allow `statement`, and its commit style must
   /// not need the user in Dblore: Review would hold the change in a transaction nobody commits,
-  /// Password asks for a password the approval does not.
+  /// Password asks for a password the approval does not. A Review that resolves to Confirm
+  /// (Protected mode off, or no transactions) is refused too; when it is the default's, the
+  /// message says so, since the connection form shows such a connection as Confirm.
   private static func checkProtection(
     _ statement: ClassifiedStatement, config: ConnectionConfig, policy: ProtectionPolicy,
     defaultCommitStyle: CommitStyle
@@ -1097,8 +1104,12 @@ nonisolated struct MCPToolService: Sendable {
     {
       throw MCPToolError.writeBlockedByProtection(reason)
     }
-    guard style != .review, style != .password, !policy.protectedMode else {
+    let own = config.ownCommitStyle
+    guard style != .review, style != .password, !policy.protectedMode, own != .review else {
       throw MCPToolError.writeCommitStyle
+    }
+    guard own != nil || defaultCommitStyle != .review else {
+      throw MCPToolError.writeCommitStyleDefault
     }
   }
 

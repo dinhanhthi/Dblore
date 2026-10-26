@@ -165,6 +165,17 @@ struct SecretInventoryTests {
     #expect(await inventory.items() == planted())
   }
 
+  @Test("The MCP server token is its own kind and deleted with it")
+  func mcpServerTokenIsItsOwnKind() async throws {
+    let token = SecretItem.listed(
+      service: KeychainMCPTokenStore.serviceName, account: "bearer-token")
+    #expect(token.kind == .mcpServerToken)
+    #expect(KeychainMCPTokenStore.serviceName == "ace.thi.dblore.mcp")
+    let inventory = InMemorySecretInventory(items: planted() + [token])
+    try await inventory.deleteAll(kind: .mcpServerToken)
+    #expect(await inventory.items() == planted())
+  }
+
   @Test("The default inventory is in-memory under the test host")
   func defaultInventoryIsInMemory() {
     #expect(SecretInventoryFactory.makeDefault() is InMemorySecretInventory)
@@ -183,5 +194,6 @@ struct SecretInventoryTests {
     #expect(text.contains("KeychainSSHCredentialStore.serviceName"))
     #expect(text.contains("KeychainSSHKnownHostStore.serviceName"))
     #expect(text.contains("KeychainOutsideMCPTokenStore.serviceName,"))
+    #expect(text.contains("KeychainMCPTokenStore.serviceName,"))
   }
 }

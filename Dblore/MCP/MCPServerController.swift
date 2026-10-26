@@ -113,6 +113,12 @@ final class MCPServerController {
     await enqueue(restart: true).value
   }
 
+  /// After the saved token was deleted: a running server restarts with a new one, saved then.
+  func forgetToken() async {
+    cachedToken = nil
+    await enqueue(restart: true).value
+  }
+
   /// Stops the server and stops following the settings (`activate` resumes).
   func stop() async {
     isActive = false

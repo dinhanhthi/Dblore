@@ -1002,26 +1002,29 @@ extension ConnectionFormContent {
 
   // MARK: - Safety
 
-  /// Server-side session brakes and row cap override.
+  /// Server-side session brakes and row cap override. File engines have no lock or idle brake,
+  /// so they show only the statement timeout and the row cap.
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
+    let fileBased = connectionConfig.databaseType.capabilities.isFileBased
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      safetyRow(
-        brakeField(
-          "Statement timeout (seconds)", global: global.statement,
-          value: $connectionConfig.statementTimeoutSeconds,
-          range: SessionBrakeLimits.statementTimeoutRange),
-        brakeField(
-          "Lock timeout (seconds)", global: global.lock,
-          value: $connectionConfig.lockTimeoutSeconds,
-          range: SessionBrakeLimits.lockTimeoutRange))
+      if fileBased {
+        statementTimeoutField(global: global.statement)
+      } else {
+        safetyRow(
+          statementTimeoutField(global: global.statement),
+          brakeField(
+            "Lock timeout (seconds)", global: global.lock,
+            value: $connectionConfig.lockTimeoutSeconds,
+            range: SessionBrakeLimits.lockTimeoutRange))
+      }
 
-      if pairsAllSafetyFields {
+      if pairsAllSafetyFields && !fileBased {
         safetyRow(idleTimeoutField(global: global.idle), rowCapField())
       } else {
-        idleTimeoutField(global: global.idle)
+        if !fileBased { idleTimeoutField(global: global.idle) }
         rowCapField()
       }
     }
@@ -1033,6 +1036,13 @@ extension ConnectionFormContent {
       leading.frame(maxWidth: .infinity, alignment: .leading)
       trailing.frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  private func statementTimeoutField(global: Int) -> some View {
+    brakeField(
+      "Statement timeout (seconds)", global: global,
+      value: $connectionConfig.statementTimeoutSeconds,
+      range: SessionBrakeLimits.statementTimeoutRange)
   }
 
   private func idleTimeoutField(global: Int) -> some View {

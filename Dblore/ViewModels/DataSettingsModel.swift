@@ -2,6 +2,8 @@
 // Settings model for local data: summaries, export, import, and removal.
 // Secret values never enter this type. Removal asks the inventory to delete accounts. Clear All
 // with credentials also removes the outside MCP servers, which are kept with their tokens.
+// Deleting the MCP server token makes the server forget it: a running server restarts with a
+// new one.
 
 import Foundation
 import Observation
@@ -43,15 +45,20 @@ final class DataSettingsModel {
   @ObservationIgnored private let providers: [any LocalDataProvider]
   @ObservationIgnored private let inventory: any SecretInventory
   @ObservationIgnored private let outsideServers: OutsideMCPServerStore
+  @ObservationIgnored private let mcpServerTokenDeleted: @MainActor @Sendable () async -> Void
   @ObservationIgnored private var pending: PendingAction?
 
   init(
     providers: [any LocalDataProvider], inventory: any SecretInventory,
-    outsideServers: OutsideMCPServerStore = .shared
+    outsideServers: OutsideMCPServerStore = .shared,
+    mcpServerTokenDeleted: @escaping @MainActor @Sendable () async -> Void = {
+      await MCPServerController.shared.forgetToken()
+    }
   ) {
     self.providers = providers
     self.inventory = inventory
     self.outsideServers = outsideServers
+    self.mcpServerTokenDeleted = mcpServerTokenDeleted
     rows = providers.map {
       DataSettingsRow(category: $0.category, summary: nil, loading: false, error: nil)
     }
@@ -143,6 +150,7 @@ final class DataSettingsModel {
       } catch {
         secretFailure = error.localizedDescription
       }
+      await mcpServerTokenDeleted()
     }
     await refresh()
     for failure in failures {
@@ -163,6 +171,9 @@ final class DataSettingsModel {
       // A server without its token would only be refused: turn it off.
       if item.kind == .outsideMCPToken, let id = UUID(uuidString: item.account) {
         outsideServers.setEnabled(false, for: id)
+      }
+      if item.kind == .mcpServerToken {
+        await mcpServerTokenDeleted()
       }
     } catch {
       self.error = error.localizedDescription
@@ -277,7 +288,7 @@ final class DataSettingsModel {
   @concurrent private static func removeSecrets(_ inventory: any SecretInventory) async throws {
     let kinds: [SecretKind] = [
       .dbPassword, .aiKey, .chatGPTToken, .safeModePassword, .clientCertificate, .sshCredential,
-      .sshHostKey, .outsideMCPToken,
+      .sshHostKey, .outsideMCPToken, .mcpServerToken,
     ]
     for kind in kinds {
       try await inventory.deleteAll(kind: kind)
