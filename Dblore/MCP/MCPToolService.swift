@@ -43,6 +43,9 @@
 // connection's writable manager through the execution gate with the saved connection's policy.
 // Every call with a statement, after the allowlist and AI access, is recorded in History as
 // `.mcp` (a denied one as cancelled).
+// A locked connection (any identity it reaches, `LockRegistry.isLocked`, even after the user
+// unlocked it in the app) is not listed and gets the not-allowlisted refusal; its row still
+// tightens the AI access of the others.
 // Errors never show the connection's host, user, database or file: a failed connect is a
 // generic message, server text is scrubbed (`scrub`).
 // Connections are reached only through `MCPReadSource` and `MCPWriteSource` (one SQL
@@ -352,13 +355,15 @@ nonisolated struct MCPToolService: Sendable {
   private let defaultMaxRows: @Sendable () async -> Int
   /// nil: no write tool
   private let writes: MCPWriteAccess?
+  private let lockSource: LockRegistry
 
   init(
     connections: @escaping Connections, allowlist: @escaping Allowlist,
     aiSettings: @escaping AISettingsReader, source: any MCPReadSource,
     recorder: any QueryHistoryRecording, historyEnabled: @escaping @Sendable () async -> Bool,
     defaultMaxRows: @escaping @Sendable () async -> Int = { Self.defaultMaxRows },
-    gate: AIAccessGate = .shared, writes: MCPWriteAccess? = nil
+    gate: AIAccessGate = .shared, writes: MCPWriteAccess? = nil,
+    lockSource: LockRegistry = .shared
   ) {
     self.connections = connections
     self.allowlist = allowlist
@@ -369,6 +374,7 @@ nonisolated struct MCPToolService: Sendable {
     self.historyEnabled = historyEnabled
     self.defaultMaxRows = defaultMaxRows
     self.writes = writes
+    self.lockSource = lockSource
   }
 
   /// The tools to list now: the read tools, plus execute_write while write tools are on and an
@@ -420,15 +426,16 @@ nonisolated struct MCPToolService: Sendable {
     let saved = await connections()
     let listed =
       saved
-      .filter { allowed.contains($0.id) }
+      .filter { allowed.contains($0.id) && !isLocked($0) }
       .filter { decision(for: $0, saved: saved, settings: settings) != .denied }
       .map { (id: $0.id, name: Self.label(of: $0.config), engine: $0.config.databaseType.rawValue) }
       .sorted { ($0.name, $0.id.uuidString) < ($1.name, $1.id.uuidString) }
     return MCPResultEncoder.encodeConnections(listed)
   }
 
-  /// The allowlist and AI access checks every connection-scoped tool starts with. Only an
-  /// allowlisted entry is returned; every saved row of its identity tightens the decision.
+  /// The allowlist, lock and AI access checks every connection-scoped tool starts with. Only an
+  /// allowlisted, unlocked entry is returned; every saved row of its identity tightens the
+  /// decision.
   private func allowedEntry(
     _ arguments: [String: JSONValue]
   ) async throws
@@ -439,13 +446,18 @@ nonisolated struct MCPToolService: Sendable {
     }
     let saved = await connections()
     guard let id = UUID(uuidString: raw), await allowlist().contains(id),
-      let entry = saved.first(where: { $0.id == id })
+      let entry = saved.first(where: { $0.id == id }), !isLocked(entry)
     else { throw MCPToolError.connectionNotAvailable }
     switch decision(for: entry, saved: saved, settings: await readAISettings()) {
     case .allowed: return entry
     case .needsApproval: throw MCPToolError.aiAccessNotApproved
     case .denied: throw MCPToolError.connectionNotAvailable
     }
+  }
+
+  /// Whether any identity `entry` reaches is locked, unlocked in the app or not
+  private func isLocked(_ entry: ConnectionHistoryEntry) -> Bool {
+    LockIdentity.all(entry.config).contains(where: lockSource.isLocked)
   }
 
   /// The gate's decision on `entry` with the policy of every saved row of its identity, so no

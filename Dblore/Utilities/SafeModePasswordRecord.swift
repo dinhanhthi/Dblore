@@ -12,6 +12,9 @@ import Security
 /// password store. Never contains the plaintext.
 nonisolated struct SafeModePasswordRecord: Codable, Equatable, Sendable {
   static let defaultIterations = 210_000
+  /// The Lock password record and envelope wrap (offline-attackable): OWASP's PBKDF2-HMAC-SHA256
+  /// count. Safe Mode keeps `defaultIterations`
+  static let lockIterations = 600_000
   static let saltLength = 16
   static let hashLength = 32
 
@@ -36,6 +39,8 @@ nonisolated struct SafeModePasswordRecord: Codable, Equatable, Sendable {
     return Self.constantTimeEquals(candidate, hash)
   }
 
+  /// PBKDF2-HMAC-SHA256, `hashLength` bytes. Also the KDF of the Lock envelope's password wrap
+  /// (`LockEnvelope`), where the output is the AES-256 wrapping key
   static func derive(password: String, salt: Data, iterations: Int) -> Data? {
     guard iterations > 0, let rounds = UInt32(exactly: iterations) else { return nil }
     let passwordBytes = Array(password.utf8)

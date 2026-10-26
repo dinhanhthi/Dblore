@@ -273,6 +273,23 @@ extension SettingsModal.SettingsTab {
           card: "Safe Mode", title: "Safe Mode password",
           detail: "Set a password to enable protection (then Touch ID if you like)."),
         .init(card: "Safe Mode", title: "Use Touch ID"),
+        .init(
+          card: "Lock password", title: "Lock password",
+          detail:
+            "Set, change or remove the password that unlocks locked connections and workspaces, like Touch ID or the Mac password."
+        ),
+        .init(
+          card: "Lock password", title: "Change Lock password",
+          detail:
+            "Re-encrypts locked workspaces. Earlier backups and copies stay readable with the old password."
+        ),
+        .init(
+          card: "Relock", title: "Lock again after idle",
+          detail:
+            "5, 15, 30 or 60 minutes, or Never. Also when the screen locks or the Mac sleeps."),
+        .init(
+          card: "Locked items", title: "Locked items",
+          detail: "Locked connections and workspaces. Remove a lock."),
       ]
     case .plugins:
       return [

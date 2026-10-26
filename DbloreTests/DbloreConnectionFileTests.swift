@@ -58,6 +58,8 @@ struct DbloreConnectionFileTests {
     config.clientCertificate = ClientCertificateInfo(
       subject: "PLANTED-cert-subject", expiry: Date(), hasCA: true)
     config.fileBookmark = Data("PLANTED-bookmark".utf8)
+    // The lock lives on the saved row only: an export never carries it
+    config.isLocked = true
     var mongo = ConnectionConfig(
       databaseType: .mongodb, host: "mongo.example.com", port: 27017, database: "app",
       username: "ada", password: "PLANTED-mongo-password")
@@ -86,6 +88,7 @@ struct DbloreConnectionFileTests {
       forbidden.contains { key.lowercased().contains($0) }
     }
     #expect(leaked.isEmpty, "secret-like keys: \(leaked.sorted())")
+    #expect(!keys.contains("isLocked"), "the lock flag is never exported")
     #expect(text.contains("replicaSet=rs0"), "the connection string keeps its options")
   }
 

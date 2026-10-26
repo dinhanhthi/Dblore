@@ -19,7 +19,8 @@ import Foundation
 
 /// A connect held by `WorkspaceManager.connect(config:defaultCommitStyle:)`
 enum WorkspaceConnectError: Error, Equatable {
-  /// Same database with weaker safety settings: waiting for the Safe Mode unlock
+  /// Same database with weaker safety settings: waiting for the Safe Mode unlock. Also thrown,
+  /// with nothing held, when the unlock of a locked connection was cancelled
   case unlockRequired
   /// A Protected transaction is pending and the user cancelled its resolution: still
   /// connected, nothing changed
@@ -96,9 +97,9 @@ extension WorkspaceManager {
     return ((exact.map { [$0] } ?? []) + variants).map(\.config)
   }
 
-  /// `config` with the AI policy and rules of the saved row a save of `config` overwrites, so a
-  /// save never writes back an older copy over a stricter saved row. Unchanged without that row,
-  /// and with Remember off (nothing is written, so the live policy stays).
+  /// `config` with the AI policy, rules and lock of the saved row a save of `config` overwrites, so
+  /// a save never writes back an older copy over a stricter saved row. Unchanged without that
+  /// row, and with Remember off (nothing is written, so the live policy stays).
   static func keepingSavedAIFields(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -108,10 +109,11 @@ extension WorkspaceManager {
     var config = config
     config.aiAccess = saved.aiAccess
     config.aiRules = saved.aiRules
+    config.isLocked = saved.isLocked
     return config
   }
 
-  /// `config` with the color, group, hidden schemas and scripts of the saved row a save of
+  /// `config` with the color, group, hidden schemas, scripts and lock of the saved row a save of
   /// `config` overwrites, for saves that do not come from the connection form (an opened file, a
   /// rename), so they never erase what the form or the sidebar set, and for an opened file's
   /// config, so the form opens on the saved values. Unchanged without that row, and with
@@ -126,6 +128,7 @@ extension WorkspaceManager {
     config.colorTag = saved.colorTag
     config.groupName = saved.groupName
     config.hiddenSchemas = saved.hiddenSchemas
+    config.isLocked = saved.isLocked
     return config.withScripts(of: saved)
   }
 
@@ -395,7 +398,9 @@ extension WorkspaceManager {
   /// - Throws: `WorkspaceConnectError.pendingTransactionKept` when the pending transaction was
   ///   not resolved (still connected, nothing changed); `WorkspaceConnectError.unlockRequired`
   ///   when the connect is held in `pendingWeakeningConnect` (nothing changed); connect with
-  ///   `completePendingWeakeningConnect()` after the unlock.
+  ///   `completePendingWeakeningConnect()` after the unlock. A locked connection asks first
+  ///   (`LockCenter`, on this workspace's window): cancel throws `unlockRequired` with nothing
+  ///   held, connected or read.
   /// - Parameter aiFieldsEdited: true only when the user edited the AI policy or rules: the save
   ///   then writes them; otherwise the saved row's AI fields are kept.
   /// - Parameter fromForm: true when `config` comes from the connection form: the save writes its
@@ -417,6 +422,11 @@ extension WorkspaceManager {
       config.mongoHomeDatabase = nil
     }
     if !isAutoConnect { await supersedeAutoConnect() }
+    // A locked connection asks on this workspace's window before anything else; auto-connect
+    // never asks (the connection actor refuses it)
+    if !isAutoConnect, lockCenter.registry.refusal(for: config) != nil {
+      config = try await unlockedForConnect(config)
+    }
     guard
       await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
     else {
@@ -442,6 +452,30 @@ extension WorkspaceManager {
     try await connectWithoutUnlockCheck(
       config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited,
       fromForm: fromForm)
+  }
+
+  /// `config` once its blocked lock is unlocked, with its saved password when it uses one, has
+  /// no password command and none typed (a locked row loads without it). Nothing is read before
+  /// the grant.
+  /// - Parameter action: what the prompt says the unlock is for ("connect", "test it")
+  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
+  ///   changed, no error to show)
+  func unlockedForConnect(
+    _ config: ConnectionConfig, to action: String = "connect"
+  ) async throws -> ConnectionConfig {
+    let name = config.name.isEmpty ? config.displayString : config.name
+    guard
+      await lockCenter.requestUnlock(
+        for: config, reason: "Unlock \(name.prefix(80)) to \(action)",
+        anchor: NewWindowStore.shared.findWindow(for: id))
+    else { throw WorkspaceConnectError.unlockRequired }
+    guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
+      config.password.isEmpty, lockCenter.registry.refusal(for: config) == nil,
+      let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
+    else { return config }
+    var config = config
+    config.password = password
+    return config
   }
 
   /// Connect with the held config after a successful Safe Mode unlock. No-op without one.

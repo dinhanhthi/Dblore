@@ -106,6 +106,8 @@ struct Workspace: Codable, Identifiable, Sendable {
     name = try container.decode(String.self, forKey: .name)
     connectionConfig = try container.decodeIfPresent(
       ConnectionConfig.self, forKey: .connectionConfig)
+    // Locks come from the saved rows: a file's flag never reaches the first save of its row
+    connectionConfig?.isLocked = false
     connectionKeychainKey = try container.decodeIfPresent(
       String.self, forKey: .connectionKeychainKey)
     tabs = try container.decodeIfPresent([WorkspaceTabReference].self, forKey: .tabs) ?? []

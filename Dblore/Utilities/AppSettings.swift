@@ -94,6 +94,24 @@ enum CopyRowsFormat: String, CaseIterable {
   }
 }
 
+/// How long the Mac stays without input before Dblore covers its unlocked items again
+enum LockIdleTimeout: Int, CaseIterable {
+  case minutes5 = 5
+  case minutes15 = 15
+  case minutes30 = 30
+  case minutes60 = 60
+  case never = 0
+
+  var title: String {
+    self == .never ? "Never" : "\(rawValue) minutes"
+  }
+
+  /// Nil for Never
+  var seconds: TimeInterval? {
+    self == .never ? nil : TimeInterval(rawValue * 60)
+  }
+}
+
 /// Where the AI assistant panel opens
 enum AIPanelMode: String, CaseIterable {
   case sidebar
@@ -358,6 +376,7 @@ class AppSettings {
     static let defaultNewTabType = "app.settings.defaultNewTabType"
     static let launchBehavior = "app.settings.launchBehavior"
     static let confirmBeforeQuit = "app.settings.confirmBeforeQuit"
+    static let lockIdleTimeout = "app.settings.lockIdleTimeout"
     static let aiPanelOpenMode = "app.settings.aiPanelOpenMode"
     static let aiBubblePosition = "app.settings.aiBubblePosition"
     static let aiSidebarWidth = "app.settings.aiSidebarWidth"
@@ -583,6 +602,14 @@ class AppSettings {
   var confirmBeforeQuit: Bool = false {
     didSet {
       defaults.set(confirmBeforeQuit, forKey: Keys.confirmBeforeQuit)
+    }
+  }
+
+  /// Idle time after which Dblore relocks its locked items (`RelockMonitor`)
+  /// Default: 15 minutes
+  var lockIdleTimeout: LockIdleTimeout = .minutes15 {
+    didSet {
+      defaults.set(lockIdleTimeout.rawValue, forKey: Keys.lockIdleTimeout)
     }
   }
 
@@ -1185,6 +1212,12 @@ class AppSettings {
       confirmBeforeQuit = defaults.bool(forKey: Keys.confirmBeforeQuit)
     }
 
+    if defaults.object(forKey: Keys.lockIdleTimeout) != nil,
+      let timeout = LockIdleTimeout(rawValue: defaults.integer(forKey: Keys.lockIdleTimeout))
+    {
+      lockIdleTimeout = timeout
+    }
+
     if let raw = defaults.string(forKey: Keys.defaultNewTabType),
       let type = NewTabType(rawValue: raw)
     {
@@ -1407,6 +1440,7 @@ class AppSettings {
     wordWrapEnabled = true
     openWindowsAsTabs = false
     confirmBeforeQuit = false
+    lockIdleTimeout = .minutes15
     defaultNewTabType = .notebook
     launchBehavior = .welcome
     // Same-value assignment may not run didSet, so remove the snapshot here too.

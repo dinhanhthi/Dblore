@@ -319,15 +319,17 @@ actor SQLDumpWriter {
       temporaryDirectory: FileManager.default.temporaryDirectory)
   }
 
-  /// Tests: sessions from `sessionFactory`, the temporary file in `temporaryDirectory`
+  /// Tests: sessions from `sessionFactory`, the temporary file in `temporaryDirectory`, locks
+  /// from `lockSource`
   init(
     config: ConnectionConfig, material: ClientCertificateStoreFactory.ConnectionMaterial?,
     sshCredential: SSHCredentialStoreFactory.ConnectionCredential?,
-    sessionFactory: any DatabaseSessionFactory, temporaryDirectory: URL
+    sessionFactory: any DatabaseSessionFactory, temporaryDirectory: URL,
+    lockSource: LockRegistry = .shared
   ) {
     self.init(
       config: config, material: material, sshCredential: sshCredential,
-      manager: DatabaseConnectionManager(sessionFactory: sessionFactory),
+      manager: DatabaseConnectionManager(sessionFactory: sessionFactory, lockSource: lockSource),
       temporaryDirectory: temporaryDirectory)
   }
 
@@ -430,8 +432,8 @@ actor SQLDumpWriter {
   /// progress. `options` picks tables and schema only. `progress` is called on this actor after
   /// each INSERT statement and table.
   /// - Throws: `SQLDumpError` (refused destination or engine), connection and read errors,
-  ///   `CancellationError` when the task is cancelled. Nothing is left at `destination` then,
-  ///   and the temporary file is deleted.
+  ///   `DatabaseError.connectionLocked` after a relock, `CancellationError` when the task is
+  ///   cancelled. Nothing is left at `destination` then, and the temporary file is deleted.
   func write(
     to destination: URL, options: SQLDumpOptions = SQLDumpOptions(),
     progress: @escaping @Sendable (SQLDumpProgress) -> Void = { _ in }
@@ -470,6 +472,7 @@ actor SQLDumpWriter {
       if Self.isConnectedDatabaseFile(destination, config: config) {
         throw SQLDumpError.destinationIsDatabase
       }
+      try refuseIfRelocked()
       try Self.replaceItem(at: destination, withItemAt: temporary)
       return result
     } catch {
@@ -485,6 +488,11 @@ actor SQLDumpWriter {
     let handle = output
     output = nil
     try handle?.close()
+  }
+
+  /// A relock (the manager's `lockSource`) stops a long dump before its next table or batch
+  private func refuseIfRelocked() throws {
+    if let refusal = manager.lockSource.refusal(for: config) { throw refusal }
   }
 
   private func emit(_ text: String) throws {
@@ -525,6 +533,7 @@ actor SQLDumpWriter {
     try emit(assembler.opening(script, created: Date()))
     for table in tables {
       try Task.checkCancellation()
+      try refuseIfRelocked()
       try assembler.begin(table)
       let source = try await reader.query(
         SQLDumpDataRenderer.selectStatement(table, engine: engine), binds: [])
@@ -536,6 +545,7 @@ actor SQLDumpWriter {
         }
         if let statement = assembler.append(literals) {
           try Task.checkCancellation()
+          try refuseIfRelocked()
           try emit(statement)
           state.rowsWritten += pendingRows
           pendingRows = 0
@@ -543,7 +553,10 @@ actor SQLDumpWriter {
         }
         pendingRows += 1
       }
-      if let statement = assembler.finish() { try emit(statement) }
+      if let statement = assembler.finish() {
+        try refuseIfRelocked()
+        try emit(statement)
+      }
       state.rowsWritten += pendingRows
       state.tablesDone += 1
       progress(state)

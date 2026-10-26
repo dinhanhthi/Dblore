@@ -103,6 +103,40 @@ struct ConnectionAppearanceSyncTests {
     }
   }
 
+  @Test("An opened file, an older copy or a fresh form draft never clears the saved lock")
+  func savedLockIsKept() throws {
+    try Self.withDefaults { defaults in
+      var saved = Self.config()
+      saved.isLocked = true
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+
+      var copy = saved
+      copy.isLocked = false
+      #expect(WorkspaceManager.keepingSavedAppearance(copy, defaults: defaults).isLocked)
+      #expect(WorkspaceManager.keepingSavedAIFields(copy, defaults: defaults).isLocked)
+
+      // A form connect saves a fresh draft of the same connection
+      #expect(
+        SessionManager.saveConnection(copy, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.isLocked == true)
+
+      // An Edit saves a stale draft over the row
+      let row = try #require(Self.savedEntry(saved, defaults: defaults))
+      #expect(
+        SessionManager.replaceConnection(
+          id: row.id, with: copy, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.isLocked == true)
+
+      // A first save keeps the draft's own value
+      var other = Self.config()
+      other.isLocked = true
+      #expect(
+        SessionManager.saveConnection(other, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(Self.savedEntry(other, defaults: defaults)?.config.isLocked == true)
+    }
+  }
+
   @Test("Renaming the connection keeps the saved color and group")
   func renameKeepsSavedAppearance() throws {
     try Self.withDefaults { defaults in

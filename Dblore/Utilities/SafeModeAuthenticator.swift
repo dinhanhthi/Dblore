@@ -6,7 +6,8 @@
 import Foundation
 
 /// Owns the Safe Mode unlock: a password (salted PBKDF2 record in the password store, the
-/// Keychain in the app) and optional Touch ID, with the password as the fallback.
+/// Keychain in the app, through `UnlockPasswordVault`) and optional Touch ID, with the password
+/// as the fallback.
 ///
 /// Builds before the Keychain migration stored an unsalted SHA-256 hex in UserDefaults. That
 /// legacy hash keeps verifying until the first successful entry, which re-stores the password
@@ -37,7 +38,7 @@ final class SafeModeAuthenticator {
       defaults: UserDefaults(suiteName: "ace.thi.dblore.tests.safemode") ?? UserDefaults())
   }
 
-  private let store: SafeModePasswordStore
+  private let vault: UnlockPasswordVault
   private let biometrics: BiometricAuthenticator
   private let defaults: UserDefaults
 
@@ -47,16 +48,16 @@ final class SafeModeAuthenticator {
   private(set) var isBiometricEnabled: Bool = false
 
   init(store: SafeModePasswordStore, biometrics: BiometricAuthenticator, defaults: UserDefaults) {
-    self.store = store
+    vault = UnlockPasswordVault(store: store, minimumLength: 1)
     self.biometrics = biometrics
     self.defaults = defaults
-    hasPassword = store.load() != nil || legacyHash != nil
+    hasPassword = vault.hasPassword || legacyHash != nil
     isBiometricEnabled = defaults.bool(forKey: Self.biometricEnabledKey)
   }
 
   /// True when neither the Keychain nor LocalAuthentication can be reached (test host)
   var usesTestDoubles: Bool {
-    store is InMemoryPasswordStore && !(biometrics is LAContextBiometricAuthenticator)
+    vault.store is InMemoryPasswordStore && !(biometrics is LAContextBiometricAuthenticator)
   }
 
   /// Touch ID is enrolled and usable now (never prompts)
@@ -78,11 +79,7 @@ final class SafeModeAuthenticator {
   /// Returns false (nothing changed) if the password is empty or storing failed.
   @discardableResult
   func setPassword(_ password: String) -> Bool {
-    guard !password.isEmpty,
-      let record = SafeModePasswordRecord.make(password: password),
-      let data = try? JSONEncoder().encode(record),
-      store.save(data)
-    else { return false }
+    guard vault.setPassword(password) else { return false }
     defaults.removeObject(forKey: Self.legacyPasswordKey)
     hasPassword = true
     return true
@@ -91,10 +88,10 @@ final class SafeModeAuthenticator {
   /// True if `password` is the Safe Mode password. False when no password is set.
   /// A match against the legacy hash migrates it to the password store.
   func verify(password: String) -> Bool {
-    if let data = store.load(),
-      let record = try? JSONDecoder().decode(SafeModePasswordRecord.self, from: data)
-    {
-      return record.matches(password)
+    switch vault.verify(password) {
+    case .accepted: return true
+    case .rejected, .throttled: return false
+    case .noPassword, .unreadable: break
     }
     guard let legacy = legacyHash,
       SafeModePasswordRecord.matchesLegacyHash(password, legacyHex: legacy)
@@ -106,7 +103,7 @@ final class SafeModeAuthenticator {
 
   /// Removes the password (store and legacy key) and turns Touch ID off
   func removePassword() {
-    store.delete()
+    vault.removePassword()
     defaults.removeObject(forKey: Self.legacyPasswordKey)
     hasPassword = false
     disableBiometrics()

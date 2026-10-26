@@ -213,7 +213,8 @@ extension DatabaseConnectionManager {
   /// Commit the app transaction the user reviewed: `expectedGeneration` is the
   /// `transactionStatus().generation` the Commit confirmation showed. No-op when idle.
   /// While COMMIT is awaited the state is `.ending(.commit)`, so gated entries are refused.
-  /// - Throws: `DatabaseError.transactionEnding` while Commit / Rollback is already in progress;
+  /// - Throws: `DatabaseError.connectionLocked` after a relock (nothing sent, nothing changed);
+  ///   `DatabaseError.transactionEnding` while Commit / Rollback is already in progress;
   ///   `DatabaseError.commitRefusedTransactionChanged` (nothing sent) while a gated
   ///   statement or edit is running, or when the transaction changed since the review;
   ///   `DatabaseError.transactionAborted` when the transaction is aborted (only Rollback
@@ -227,6 +228,8 @@ extension DatabaseConnectionManager {
     if session == nil, let loss = lastSessionLoss {
       throw DatabaseError.connectionLost(loss.message)
     }
+    // Relocked: the staged writes stay staged (Rollback is still allowed)
+    try refuseIfRelocked(config)
     try refuseIfEnding()
     if !txState.isIdle, commitGuard.refusesCommit(expectedGeneration: expectedGeneration) {
       throw DatabaseError.commitRefusedTransactionChanged

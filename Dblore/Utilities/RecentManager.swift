@@ -5,6 +5,7 @@
 
 import AppKit
 import Foundation
+import os
 
 /// Manages recent workspaces and connections for the welcome screen.
 /// Separate from SessionManager which handles connection history for the connection form.
@@ -35,6 +36,10 @@ class RecentManager {
   private nonisolated static let maxDocumentBookmarks = 20
 
   private let defaults: UserDefaults
+  /// Where the connection history's passwords are read and saved (tests pass an in-memory one)
+  private let passwords: any ConnectionPasswordStore
+  /// Locks of the saved connections: a blocked row loads without its password
+  private let registry: LockRegistry
   /// Source of the recent .dblore/.sql list; nil under XCTest (never the user's real recents)
   private let documentController: NSDocumentController?
 
@@ -59,19 +64,28 @@ class RecentManager {
   /// Recent connections (delegated to SessionManager)
   var recentConnections: [ConnectionHistoryEntry] {
     _ = connectionsRevision
-    return SessionManager.loadHistory()
+    return SessionManager.loadHistory(defaults: defaults, passwords: passwords, registry: registry)
   }
 
   /// Bumped when the connection history changes, so views reading `recentConnections` refresh
   private var connectionsRevision = 0
 
   @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
+  /// Lock changes and relocks of `registry`: the list reloads, so a password loaded while a
+  /// row was unlocked does not stay in it after a relock
+  private let lockObservers = OSAllocatedUnfairLock<[any NSObjectProtocol]>(uncheckedState: [])
 
   // MARK: - Initialization
 
-  init(defaults: UserDefaults, documentController: NSDocumentController? = nil) {
+  init(
+    defaults: UserDefaults, documentController: NSDocumentController? = nil,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    registry: LockRegistry = .shared
+  ) {
     self.defaults = defaults
     self.documentController = documentController
+    self.passwords = passwords
+    self.registry = registry
     loadWorkspaces()
     loadDocumentBookmarks()
     refreshRecentDocuments()
@@ -82,6 +96,19 @@ class RecentManager {
       Task { @MainActor [weak self] in
         self?.reloadAfterLocalDataChange(recents: recents, connections: connections)
       }
+    }
+    let observers = [LockRegistry.didRelock, LockRegistry.didChangeLocks].map { name in
+      NotificationCenter.default.addObserver(forName: name, object: registry, queue: .main) {
+        [weak self] _ in
+        MainActor.assumeIsolated { self?.connectionsRevision += 1 }
+      }
+    }
+    lockObservers.withLockUnchecked { $0 = observers }
+  }
+
+  deinit {
+    for observer in lockObservers.withLockUnchecked({ $0 }) {
+      NotificationCenter.default.removeObserver(observer)
     }
   }
 
@@ -108,6 +135,9 @@ class RecentManager {
       entry.folderBookmark = entry.folderBookmark ?? existing.folderBookmark
       entry.iconColorName = entry.iconColorName ?? existing.iconColorName
     }
+
+    // A locked one is also kept in the durable list (Recents evicts old entries)
+    if entry.isLocked { lockedWorkspaces.add(entry) }
 
     // Remove if already exists (will re-add at top)
     recentWorkspaces.removeAll { $0.fileURL == entry.fileURL }
@@ -154,9 +184,26 @@ class RecentManager {
       addWorkspace(entry)
       return
     }
+    if entry.isLocked { lockedWorkspaces.add(entry) }
     recentWorkspaces[index] = entry
     saveWorkspaces()
   }
+
+  /// An open found an envelope at `url`: its entry is marked locked. Only ever sets the mark (a
+  /// plaintext file never clears it: that is the downgrade the open refuses); Remove Lock or
+  /// removing the entry clears it.
+  func markWorkspaceLocked(url: URL) {
+    guard let index = recentWorkspaces.firstIndex(where: { $0.fileURL == url }),
+      !recentWorkspaces[index].isLocked
+    else { return }
+    recentWorkspaces[index].isLocked = true
+    lockedWorkspaces.add(recentWorkspaces[index])
+    saveWorkspaces()
+  }
+
+  /// Locked workspace files kept apart from Recents (on the same store): a Lock password change
+  /// reaches them after they left Recents
+  var lockedWorkspaces: LockedWorkspaceList { LockedWorkspaceList(defaults: defaults) }
 
   /// Remove a workspace from recent list
   func removeWorkspace(id: UUID) {
@@ -179,7 +226,7 @@ class RecentManager {
   /// Clear all (workspaces + connections)
   func clearAll() {
     clearWorkspaces()
-    SessionManager.clearAllHistory()
+    clearConnections()
   }
 
   // MARK: - Recent Documents Management
@@ -225,27 +272,47 @@ class RecentManager {
 
   /// Add a connection to recent list
   func addConnection(_ config: ConnectionConfig) {
-    SessionManager.saveConnection(config)
+    SessionManager.saveConnection(
+      config, defaults: defaults, passwords: passwords, registry: registry)
   }
 
-  /// Replace one recent connection in place.
+  /// Replace one recent connection in place. False when refused (a blocked lock) or not saved.
   @discardableResult
   func replaceConnection(id: UUID, with config: ConnectionConfig) -> Bool {
-    guard SessionManager.replaceConnection(id: id, with: config) else { return false }
+    guard
+      SessionManager.replaceConnection(
+        id: id, with: config, defaults: defaults, passwords: passwords, registry: registry)
+    else { return false }
     connectionsRevision += 1
     return true
   }
 
-  /// Remove a connection from recent list
-  func removeConnection(id: UUID) {
-    SessionManager.removeConnection(id: id)
+  /// Remove a connection from recent list. False when refused: its lock is not unlocked.
+  @discardableResult
+  func removeConnection(id: UUID) -> Bool {
+    let removed = SessionManager.removeConnection(
+      id: id, defaults: defaults, passwords: passwords, registry: registry)
+    connectionsRevision += 1
+    return removed
+  }
+
+  /// Clear all recent connections; refused while a row's lock is not unlocked
+  func clearConnections() {
+    SessionManager.clearAllHistory(defaults: defaults, passwords: passwords, registry: registry)
     connectionsRevision += 1
   }
 
-  /// Clear all recent connections
-  func clearConnections() {
-    SessionManager.clearAllHistory()
-    connectionsRevision += 1
+  /// `config` with its saved password when it uses one, has no password command and none
+  /// typed, and no lock it reaches is blocked: a locked row comes without its password, and
+  /// an edit or connect after the unlock needs it (a save with an empty password deletes it).
+  func withSavedPassword(_ config: ConnectionConfig) -> ConnectionConfig {
+    guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
+      config.password.isEmpty, registry.refusal(for: config) == nil,
+      let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
+    else { return config }
+    var config = config
+    config.password = password
+    return config
   }
 
   // MARK: - Persistence

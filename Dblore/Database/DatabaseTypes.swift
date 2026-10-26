@@ -128,6 +128,9 @@ enum DatabaseError: LocalizedError {
   case sshHandshakeTimedOut
   /// The engine needs a plugin that is not installed (DuckDB): nothing was opened
   case engineUnavailable(DatabaseType)
+  /// The connection or file database is locked and not unlocked in this session: nothing was
+  /// opened or sent
+  case connectionLocked
 
   var errorDescription: String? {
     switch self {
@@ -227,6 +230,8 @@ enum DatabaseError: LocalizedError {
         return "\(name) connections are not available in this version of Dblore."
       }
       return "\(name) support is not installed. Install the \(name) plugin in Settings > Plugins."
+    case .connectionLocked:
+      return "This connection is locked. Unlock it to continue."
     }
   }
 

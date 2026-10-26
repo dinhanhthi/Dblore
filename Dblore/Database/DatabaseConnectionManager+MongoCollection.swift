@@ -214,6 +214,8 @@ extension DatabaseConnectionManager {
   func sampleMongoDocuments(
     database: String?, collection: String, filterText: String, size: Int = 1000
   ) async throws -> [MongoValue] {
+    // It returns documents: checked like a user read, unlike the catalog reads around it
+    try refuseIfRelocked(config)
     let text = try MongoSchemaAnalyzer.sampleCommand(
       collection: collection, filterText: filterText, size: size)
     let command = try MongoshParser.parse(text)

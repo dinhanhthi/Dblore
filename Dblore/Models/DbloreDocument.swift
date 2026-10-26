@@ -53,6 +53,9 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
   /// Callback to notify view that external reload happened
   var onExternalReload: (() -> Void)?
 
+  /// The id of the workspace whose key sealed this file (nil: plaintext); writes seal with it
+  var lockKeyId: UUID?
+
   // MARK: - NSFilePresenter Protocol
 
   var presentedItemURL: URL? { _presentedItemURL }
@@ -185,17 +188,24 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   // MARK: - Reload from Disk
 
-  /// Reload the document content from disk
-  func reloadFromDisk() throws {
+  /// Reload the document content from disk. A sealed file is read and opened off the main
+  /// actor (asking `unlock` when its workspace is not open); `holder` (the window's workspace
+  /// id) holds the session that opened it.
+  func reloadFromDisk(
+    holder: UUID, io: LockedFileIO = .shared, unlock: LockedFileIO.Unlock
+  ) async throws {
     guard let url = _presentedItemURL else {
       throw CocoaError(.fileReadNoSuchFile)
     }
 
-    let data = try Data(contentsOf: url)
-    var reloadedNotebook = try DocumentCoder.decode(from: data)
+    let read = try await io.read(from: url, unlock: unlock)
+    var reloadedNotebook = try DocumentCoder.decode(from: read.plaintext)
     reloadedNotebook.documentType = .notebook
+    if let session = read.session { io.sessions.hold(session, by: holder) }
 
     notebook = reloadedNotebook
+    // A plaintext replacement of a sealed file keeps the key: the next save seals it again
+    lockKeyId = read.session?.workspaceId ?? lockKeyId
     updateLastKnownModificationDate()
 
     // Notify view to update its state

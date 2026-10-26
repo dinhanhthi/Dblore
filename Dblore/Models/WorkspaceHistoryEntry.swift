@@ -21,6 +21,13 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   var folderBookmark: Data?
   /// Raw `AccentColor` of the folder icon on the welcome row (nil keeps the default tint)
   var iconColorName: String?
+  /// The workspace's files are sealed (Lock Workspace); false in entries saved before Lock
+  var isLocked = false
+
+  private enum CodingKeys: String, CodingKey {
+    case id, fileURL, name, connectionDisplayString, databaseType, lastOpenedAt, tabCount
+    case bookmark, folderBookmark, iconColorName, isLocked
+  }
 
   init(
     id: UUID = UUID(),
@@ -42,6 +49,21 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     self.bookmark = bookmark
   }
 
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    fileURL = try container.decode(URL.self, forKey: .fileURL)
+    name = try container.decode(String.self, forKey: .name)
+    connectionDisplayString = try container.decodeIfPresent(
+      String.self, forKey: .connectionDisplayString)
+    databaseType = try container.decodeIfPresent(DatabaseType.self, forKey: .databaseType)
+    lastOpenedAt = try container.decode(Date.self, forKey: .lastOpenedAt)
+    tabCount = try container.decode(Int.self, forKey: .tabCount)
+    bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
+    folderBookmark = try container.decodeIfPresent(Data.self, forKey: .folderBookmark)
+    isLocked = try container.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
+  }
+
   /// Bookmark bytes differ between creations of the same file, so equality ignores them
   static func == (lhs: WorkspaceHistoryEntry, rhs: WorkspaceHistoryEntry) -> Bool {
     lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.name == rhs.name
@@ -49,6 +71,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       && lhs.databaseType == rhs.databaseType
       && lhs.lastOpenedAt == rhs.lastOpenedAt && lhs.tabCount == rhs.tabCount
       && lhs.iconColorName == rhs.iconColorName
+      && lhs.isLocked == rhs.isLocked
   }
 
   /// Color picked for the folder icon; an unknown stored name reads as none
@@ -85,6 +108,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     )
     edited.folderBookmark = folderBookmark
     edited.iconColorName = iconColorName
+    edited.isLocked = isLocked
     return edited
   }
 

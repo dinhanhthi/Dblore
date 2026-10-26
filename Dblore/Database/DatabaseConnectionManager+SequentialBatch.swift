@@ -21,6 +21,7 @@ extension DatabaseConnectionManager {
     _ statements: [String], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil, expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)? = nil
   ) async throws -> [CommandResult] {
+    try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }

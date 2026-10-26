@@ -498,7 +498,7 @@ struct LocalDataProvidersTests {
       #expect(!file.contains("SecItem"))
       #expect(!file.contains("import Security"))
     }
-    let clearAll = functionBody("clearAll(defaults:", in: session)
+    let clearAll = functionBody("clearAll(", in: session)
     #expect(clearAll.contains("removeObject") || clearAll.contains("persistentDomain"))
     #expect(!clearAll.contains("SecItem"))
   }

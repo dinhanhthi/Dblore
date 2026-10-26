@@ -10,9 +10,12 @@
 // at most `statementTimeoutSeconds` (the session brake). Managers unused for `idleTimeout`
 // are disconnected, and so is one that lost its session or whose connection was edited (once
 // its running reads finish). A failed connect is reported as `MCPConnectionError.connectFailed`,
-// without the server's text.
+// without the server's text. A locked connection is never served, even after the user unlocked
+// it in the app (`LockRegistry.isLocked` on every identity it reaches): it is unknown here, and
+// the managers of one that becomes locked, or of every locked one on a relock, are retired.
 
 import Foundation
+import os
 
 actor MCPConnectionPool {
   /// The saved connection for an id, its password loaded from the Keychain; nil when unknown.
@@ -47,6 +50,9 @@ actor MCPConnectionPool {
   private let certificates: any ClientCertificateStore
   private let sshCredentials: any SSHCredentialStore
   private let knownHosts: any SSHKnownHostStore
+  private let lockSource: LockRegistry
+  /// Behind a lock only so `deinit` can remove them
+  private let lockObservers = OSAllocatedUnfairLock<[any NSObjectProtocol]>(uncheckedState: [])
   private let idleTimeout: Duration
   private let now: @Sendable () -> ContinuousClock.Instant
   private var pooled: [Key: Pooled] = [:]
@@ -65,6 +71,7 @@ actor MCPConnectionPool {
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
     knownHosts: any SSHKnownHostStore = SSHKnownHostStoreFactory.shared,
+    lockSource: LockRegistry = .shared,
     idleTimeout: Duration = .seconds(300),
     now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now }
   ) {
@@ -78,12 +85,16 @@ actor MCPConnectionPool {
     self.certificates = certificates
     self.sshCredentials = sshCredentials
     self.knownHosts = knownHosts
+    self.lockSource = lockSource
     self.idleTimeout = idleTimeout
     self.now = now
   }
 
   deinit {
     sweep?.cancel()
+    for observer in lockObservers.withLockUnchecked({ $0 }) {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   /// Runs `body` with the connection's manager, connecting it first when needed. Concurrent
@@ -150,6 +161,17 @@ actor MCPConnectionPool {
     }
   }
 
+  /// Retire the managers of every locked connection (one in use closes when its last caller is
+  /// done).
+  private func retireLocked() async {
+    for (key, item) in pooled where isLocked(item.config) { await close(key) }
+  }
+
+  /// Whether any identity `config` reaches is locked, unlocked in the app or not
+  private func isLocked(_ config: ConnectionConfig) -> Bool {
+    LockIdentity.all(config).contains(where: lockSource.isLocked)
+  }
+
   /// Disconnect every manager and refuse new callers (MCP server stopped).
   func closeAll() async {
     closed = true
@@ -163,6 +185,8 @@ actor MCPConnectionPool {
 
   private func acquire(_ id: Key) async throws -> (DatabaseConnectionManager, UUID) {
     guard !closed else { throw MCPConnectionError.stopped }
+    // Before the lock check below, so a lock that lands after it retires what is built here
+    observeLocks()
     guard let entry = await entry(id.id) else { throw MCPConnectionError.unknownConnection }
     if let open = pooled[id], open.config != entry.config {
       pooled[id] = nil
@@ -174,6 +198,10 @@ actor MCPConnectionPool {
     }
     // Checked after the awaits above: a manager built now would outlive `closeAll`
     guard !closed else { throw MCPConnectionError.stopped }
+    guard !isLocked(entry.config) else {
+      await close(id)
+      throw MCPConnectionError.unknownConnection
+    }
     if pooled[id] == nil {
       try refuseUnattended(entry.config)
       // The read wrapper refuses DuckDB; the writable sessions are not wrapped
@@ -190,7 +218,8 @@ actor MCPConnectionPool {
         connecting: Task {
           // The writable manager reads no rows for the agent: the app's default limits
           let manager = DatabaseConnectionManager(
-            sessionFactory: factory, readLimits: id.writable ? nil : Self.readLimits)
+            sessionFactory: factory, readLimits: id.writable ? nil : Self.readLimits,
+            lockSource: lockSource)
           try await manager.connect(config: config)
           return manager
         }, lastUsed: now())
@@ -260,6 +289,18 @@ actor MCPConnectionPool {
         throw MCPConnectionError.sshHostKeyNotTrusted
       }
     }
+  }
+
+  /// Follows lock changes and relocks of `lockSource` from the first caller on
+  private func observeLocks() {
+    guard lockObservers.withLockUnchecked({ $0.isEmpty }) else { return }
+    let observers = [LockRegistry.didChangeLocks, LockRegistry.didRelock].map { name in
+      NotificationCenter.default.addObserver(forName: name, object: lockSource, queue: nil) {
+        [weak self] _ in
+        Task { await self?.retireLocked() }
+      }
+    }
+    lockObservers.withLockUnchecked { $0 = observers }
   }
 
   private func startSweep() {

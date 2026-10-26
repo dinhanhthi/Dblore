@@ -96,7 +96,15 @@ private struct SchemaCompareView: View {
             if !model.savedConnections.isEmpty {
               Divider()
               ForEach(model.savedConnections) { saved in
-                Text(saved.name).tag(SchemaCompareModel.SourceConnection.saved(saved.id))
+                // A locked row asks before Compare reads it
+                Group {
+                  if saved.isLocked {
+                    Label(saved.name, systemImage: "lock.fill")
+                  } else {
+                    Text(saved.name)
+                  }
+                }
+                .tag(SchemaCompareModel.SourceConnection.saved(saved.id))
               }
             }
           }

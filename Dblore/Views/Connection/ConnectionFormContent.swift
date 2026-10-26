@@ -85,6 +85,8 @@ struct ConnectionFormContent: View {
   @State var caFilePicked = false
   @State var passphraseEdited = false
   @State var certificateRemovalAccount: String?
+  /// The saved certificate was not read: its row's lock is not unlocked in this session
+  @State var certificateDraftPending = false
 
   // SSH tunnel draft. The password and imported key stay in memory until Connect or Save.
   @State var sshDraft = SSHFormDraft()
@@ -109,6 +111,8 @@ struct ConnectionFormContent: View {
   @State private var showDeleteConfirmation = false
   @State private var showClearAllConfirmation = false
   @State private var entryToDelete: UUID?
+  /// The window this form lives in (a form sheet's own window): unlock prompts anchor to it
+  @State var hostWindow = HostWindowReference()
 
   // MARK: - Types
 
@@ -365,6 +369,7 @@ struct ConnectionFormContent: View {
       sshDraft.clearSecrets()
       unlockConnectError?.wrappedValue = nil
     }
+    .background(HostWindowReader(reference: hostWindow))
   }
 
   func sectionTitle(_ title: String) -> some View {
@@ -555,27 +560,40 @@ struct ConnectionFormContent: View {
   }
 
   /// The Recent row the form loads over its values, and the row it selects. A form opened fresh
-  /// loads the most recent row. A form opened on a draft keeps it and selects only a row with
-  /// the draft's target.
+  /// loads the most recent row, unless its lock is not unlocked in this session (it then loads
+  /// none). A form opened on a draft keeps it and selects only a row with the draft's target.
   static func openingHistory(
-    history: [ConnectionHistoryEntry], draft: ConnectionConfig, opensOnDraft: Bool
+    history: [ConnectionHistoryEntry], draft: ConnectionConfig, opensOnDraft: Bool,
+    registry: LockRegistry = .shared
   ) -> (load: ConnectionHistoryEntry?, selectedHistoryId: UUID?) {
-    guard opensOnDraft else { return (history.first, history.first?.id) }
+    guard opensOnDraft else {
+      guard let first = history.first, registry.refusal(for: first.config) == nil else {
+        return (nil, nil)
+      }
+      return (first, first.id)
+    }
     let key = connectionTargetKey(draft)
     return (nil, history.first { connectionTargetKey($0.config) == key }?.id)
   }
 
   /// Choosing a SQLite or DuckDB file. A different path drops the loaded recent row.
-  /// Name becomes the file name when it is blank or still that row's name.
+  /// Name becomes the file name when it is blank or still that row's name. A locked file, under
+  /// any of its names, shows the lock mark (its connect asks first).
   static func applyingSQLiteFile(
     path: String,
     bookmark: Data?,
     to config: ConnectionConfig,
-    selected: ConnectionHistoryEntry?
+    selected: ConnectionHistoryEntry?,
+    registry: LockRegistry = .shared
   ) -> (config: ConnectionConfig, selectedHistoryId: UUID?) {
     var updated = config
     updated.database = path
     updated.fileBookmark = bookmark
+    if !registry.lockedIdentities.isEmpty,
+      LockIdentity.all(updated).contains(where: registry.isLocked)
+    {
+      updated.isLocked = true
+    }
 
     let sameFile = selected?.config.database == path
     let loadedName = sameFile ? nil : selected?.config.name
@@ -610,7 +628,8 @@ struct ConnectionFormContent: View {
   /// Applies a DuckDB choice with the same path, name and recent-row rules as a SQLite file,
   /// then sets that choice's `readOnlyFile` default.
   static func applyingDuckDBChoice(
-    _ choice: DuckDBChoice, to config: ConnectionConfig, selected: ConnectionHistoryEntry?
+    _ choice: DuckDBChoice, to config: ConnectionConfig, selected: ConnectionHistoryEntry?,
+    registry: LockRegistry = .shared
   ) -> (config: ConnectionConfig, selectedHistoryId: UUID?) {
     let path: String
     let bookmark: Data?
@@ -623,7 +642,8 @@ struct ConnectionFormContent: View {
     case .inMemory:
       (path, bookmark, readOnly) = (DuckDBSession.inMemoryPath, nil, false)
     }
-    var applied = applyingSQLiteFile(path: path, bookmark: bookmark, to: config, selected: selected)
+    var applied = applyingSQLiteFile(
+      path: path, bookmark: bookmark, to: config, selected: selected, registry: registry)
     applied.config.readOnlyFile = readOnly
     return applied
   }
@@ -982,6 +1002,9 @@ struct ConnectionFormContent: View {
         // Edited while the test ran: the result is for values no longer in the form.
         guard formInputs == testedInputs else { return }
         testResult = success ? .success : .failure("Connection failed unexpectedly")
+      } catch WorkspaceConnectError.unlockRequired {
+        // The unlock prompt was cancelled: nothing was tested
+        isTesting = false
       } catch {
         isTesting = false
         let message = SSHHostKeyTrustCoordinator.shared.report(error)

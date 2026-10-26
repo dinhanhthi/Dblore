@@ -9,6 +9,8 @@
 // those connections are denied (all of them when write tools or MCP are turned off and when the
 // server stops or restarts, as for a new token), and the service checks the settings again
 // after an approval.
+// A locked connection is never served, even after the user unlocked it in the app: the pool's
+// lookup does not know it and the service does not list it (`lockSource`).
 // Nothing here blocks the main actor: the Keychain (token, passwords) is read off main; the
 // main actor is used only to read the settings and the saved connections.
 
@@ -46,6 +48,7 @@ final class MCPServerController {
   @ObservationIgnored private let sessionFactory: (any DatabaseSessionFactory)?
   @ObservationIgnored private let requestTimeout: Duration
   @ObservationIgnored private let approver: any MCPWriteApproving
+  @ObservationIgnored private let lockSource: LockRegistry
   @ObservationIgnored private var running: Running?
   @ObservationIgnored private var cachedToken: String?
   /// The allowlist the running pool was last told about
@@ -75,7 +78,8 @@ final class MCPServerController {
     recorder: any QueryHistoryRecording = NotebookViewModel.defaultHistoryRecorder(),
     requestTimeout: Duration = MCPJSONRPC.defaultTimeout,
     sessionFactory: (any DatabaseSessionFactory)? = nil,
-    approver: any MCPWriteApproving = MCPWriteApprovalCenter.shared
+    approver: any MCPWriteApproving = MCPWriteApprovalCenter.shared,
+    lockSource: LockRegistry = .shared
   ) {
     self.settings = settings
     self.tokens = tokens
@@ -85,6 +89,7 @@ final class MCPServerController {
     self.requestTimeout = requestTimeout
     self.sessionFactory = sessionFactory
     self.approver = approver
+    self.lockSource = lockSource
   }
 
   /// Follows the settings from now on: starts the server when enabled.
@@ -204,11 +209,12 @@ final class MCPServerController {
     let token = await token()
     let pool = MCPConnectionPool(
       entry: Self.entryLookup(
-        settings: settings, savedConnections: savedConnections, password: password),
-      sessionFactory: sessionFactory)
+        settings: settings, savedConnections: savedConnections, password: password,
+        lockSource: lockSource),
+      sessionFactory: sessionFactory, lockSource: lockSource)
     let service = Self.makeService(
       pool: pool, settings: settings, savedConnections: savedConnections, recorder: recorder,
-      approver: approver)
+      approver: approver, lockSource: lockSource)
     let server = MCPHTTPServer(
       handler: MCPJSONRPC.handler(tools: service, timeout: requestTimeout))
     do {
@@ -259,15 +265,19 @@ final class MCPServerController {
     }
   }
 
-  /// The pool's lookup: an allowlisted entry with its password, read off the main actor.
-  private nonisolated static func entryLookup(
+  /// The pool's lookup: an allowlisted entry with its password, read off the main actor; nil
+  /// for a locked one (any identity it reaches, unlocked in the app or not), before its password
+  /// is read.
+  nonisolated static func entryLookup(
     settings: AppSettings,
     savedConnections: @escaping @MainActor @Sendable () -> [ConnectionHistoryEntry],
-    password: @escaping @Sendable (ConnectionConfig) -> String?
+    password: @escaping @Sendable (ConnectionConfig) -> String?, lockSource: LockRegistry
   ) -> MCPConnectionPool.EntryLookup {
     { id in
       let entries = await allowedEntries(settings: settings, savedConnections: savedConnections)
-      guard var entry = entries.first(where: { $0.id == id }) else { return nil }
+      guard var entry = entries.first(where: { $0.id == id }),
+        !LockIdentity.all(entry.config).contains(where: lockSource.isLocked)
+      else { return nil }
       if entry.config.databaseType.capabilities.usesPassword, let saved = password(entry.config) {
         entry.config.password = saved
       }
@@ -278,7 +288,8 @@ final class MCPServerController {
   private nonisolated static func makeService(
     pool: MCPConnectionPool, settings: AppSettings,
     savedConnections: @escaping @MainActor @Sendable () -> [ConnectionHistoryEntry],
-    recorder: any QueryHistoryRecording, approver: any MCPWriteApproving
+    recorder: any QueryHistoryRecording, approver: any MCPWriteApproving,
+    lockSource: LockRegistry
   ) -> MCPToolService {
     MCPToolService(
       // Every saved row: their AI policies tighten an allowlisted one of the same identity. The
@@ -294,7 +305,8 @@ final class MCPServerController {
         enabled: { await MainActor.run { settings.mcpWriteToolsEnabled } },
         scopes: { await MainActor.run { settings.mcpWriteScopes } },
         defaultCommitStyle: { await MainActor.run { settings.commitStyle } },
-        approver: approver, source: MCPSQLWriteSource(pool: pool)))
+        approver: approver, source: MCPSQLWriteSource(pool: pool)),
+      lockSource: lockSource)
   }
 }
 

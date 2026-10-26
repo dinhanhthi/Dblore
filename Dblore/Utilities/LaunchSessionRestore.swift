@@ -220,28 +220,109 @@ enum LaunchSessionRestore {
     }
   }
 
-  /// Saved files go through `openWorkspace` with the snapshot bookmarks. Untitled workspaces
-  /// are rebuilt in memory and registered; they are not given a file.
-  private static func openContent(_ launch: LaunchWorkspace) async -> UUID? {
+  /// Saved files go through `requestWorkspace` with the snapshot bookmarks, as every opener
+  /// does: a locked workspace returns its id at once, its window shows the locked placeholder and
+  /// asks there, and its sealed text is applied once it is loaded (a second window of it joins
+  /// the same open: one ask per workspace; Cancel restores none of its windows, Recents keep it).
+  /// Plaintext snapshot text (anyone can write the snapshot) never lands in a locked workspace
+  /// or a sealed tab. Sealed text of an open or untitled workspace (a tab of another locked
+  /// workspace) is opened once its window exists, asking there when its workspace is not
+  /// unlocked (one run per workspace: its windows ask once per key); text not opened is kept for
+  /// the next snapshot. Untitled workspaces are rebuilt in memory and registered; they are not
+  /// given a file.
+  static func openContent(
+    _ launch: LaunchWorkspace, windows: WorkspaceWindowManager = .shared
+  ) async -> UUID? {
+    let sealed = launch.sealedOverlays ?? []
     if let fileURL = launch.fileURL {
       do {
-        let manager = try await WorkspaceWindowManager.shared.openWorkspace(
+        let id = try await windows.requestWorkspace(
           url: fileURL, bookmark: launch.bookmark, folderBookmark: launch.folderBookmark)
-        manager.applyLaunchOverlays(launch.textOverlays)
-        return manager.id
+        if let manager = windows.workspace(for: id) {
+          manager.applyLaunchOverlays(launch.textOverlays)
+          // Not awaited: the window is made once this returns, and the ask anchors on it
+          manager.startSealedLaunchOverlays(sealed)
+        } else {
+          windows.lockedOpens[id]?.addSealedLaunchOverlays(sealed)
+        }
+        return id
       } catch {
-        WorkspaceWindowManager.shared.showToast(
-          "Couldn't reopen \(fileURL.lastPathComponent)", type: .warning)
+        windows.showToast("Couldn't reopen \(fileURL.lastPathComponent)", type: .warning)
         return nil
       }
     }
     guard let embedded = launch.workspace else { return nil }
-    if let existing = WorkspaceWindowManager.shared.workspace(for: embedded.id) {
+    if let existing = windows.workspace(for: embedded.id) {
       return existing.id
     }
     let manager = WorkspaceManager(workspace: embedded, restoreTabs: false)
-    WorkspaceWindowManager.shared.workspaces[manager.id] = manager
+    windows.workspaces[manager.id] = manager
     await manager.restoreLaunchTabs(overlays: launch.textOverlays)
+    // Set after its tab files are read (no window yet to ask on): the sealed text asks on its
+    // window, which is made once this returns, so the run is not awaited
+    manager.unlockLockedFile = windows.makeFileUnlock(manager)
+    manager.startSealedLaunchOverlays(sealed)
     return manager.id
+  }
+
+  /// Snapshot text opened from its envelope, with the session of the key that sealed it
+  struct OpenedOverlay {
+    let overlay: LaunchTextOverlay
+    let session: WorkspaceLockSession
+    /// The envelope it was opened from (kept as is when not applied)
+    let envelope: Data
+  }
+
+  /// What `openSealedOverlays` did with its envelopes
+  struct SealedOverlayResult {
+    var opened: [OpenedOverlay] = []
+    /// Envelopes whose key was not unlocked: still sealed, kept as they are
+    var refused: [Data] = []
+    /// The keys whose unlock was refused
+    var refusedKeys: Set<UUID> = []
+  }
+
+  /// Opens sealed snapshot text off the main actor: with the open session of its key, else the
+  /// one `unlock` returns (asked at most once per key here, never for `refusedKeys`). Text whose
+  /// key was not unlocked is returned in `refused`; text that is not a snapshot overlay envelope
+  /// or does not open is dropped. The first text of a tab wins.
+  static func openSealedOverlays(
+    _ sealed: [Data], io: LockedFileIO, unlock: @escaping LockedFileIO.Unlock,
+    refusedKeys: Set<UUID> = []
+  ) async -> SealedOverlayResult {
+    var result = SealedOverlayResult(refusedKeys: refusedKeys)
+    var granted: [UUID: WorkspaceLockSession] = [:]
+    for envelope in sealed {
+      guard let header = try? LockEnvelope.sniff(envelope), header.kind == .launchOverlays
+      else { continue }
+      guard !result.refusedKeys.contains(header.workspaceId) else {
+        result.refused.append(envelope)
+        continue
+      }
+      let known = granted[header.workspaceId]
+      do {
+        let read = try await io.open(envelope, kind: .launchOverlays) { header in
+          if let known { return known }
+          // Its workspace closed meanwhile: no prompt without its window
+          guard !Task.isCancelled else { return nil }
+          return await unlock(header)
+        }
+        guard let session = read.session else { continue }
+        granted[session.workspaceId] = session
+        let overlay = try JSONDecoder().decode(LaunchTextOverlay.self, from: read.plaintext)
+        guard !result.opened.contains(where: { $0.overlay.tabId == overlay.tabId }) else {
+          continue
+        }
+        result.opened.append(OpenedOverlay(overlay: overlay, session: session, envelope: envelope))
+      } catch {
+        if case LockedFileIOError.unlockRefused(let id) = error {
+          result.refusedKeys.insert(id)
+          result.refused.append(envelope)
+        }
+        await AppLogger.shared.warning(
+          "Launch restore: the text of a locked tab was not restored", category: "Workspace")
+      }
+    }
+    return result
   }
 }

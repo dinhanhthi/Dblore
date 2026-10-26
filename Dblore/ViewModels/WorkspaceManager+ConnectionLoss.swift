@@ -70,6 +70,7 @@ extension WorkspaceManager {
       scoped?.clear()
       scopedSSH?.clear()
     }
+    let lostMessage = connectionLostMessage
     connectionLostMessage = nil
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
@@ -77,6 +78,10 @@ extension WorkspaceManager {
           try await connect(config: config)
         }
       }
+    } catch WorkspaceConnectError.unlockRequired {
+      // The unlock was cancelled (or the Safe Mode unlock is pending): still disconnected, the
+      // banner and its Reconnect stay
+      connectionLostMessage = lostMessage
     } catch {
       WorkspaceWindowManager.shared.showToast(
         "Reconnect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)

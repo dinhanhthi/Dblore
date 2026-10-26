@@ -1128,8 +1128,11 @@ private struct SidebarMongoAdminPresenter: ViewModifier {
       })
   }
 
+  /// Never over a relocked window's cover (a pending confirmation is cancelled when the cover
+  /// shows; a running one shows again after the unlock)
   private var isConfirmPresented: Binding<Bool> {
-    admin.map { MongoAdminConfirmSheet.isPresented($0.model) } ?? .constant(false)
+    guard workspaceManager.lockCoverage == nil, let admin else { return .constant(false) }
+    return MongoAdminConfirmSheet.isPresented(admin.model)
   }
 
   func body(content: Content) -> some View {

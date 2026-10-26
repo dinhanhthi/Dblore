@@ -233,6 +233,8 @@ struct SettingsModal: View {
           .font(.bodyText)
           .foregroundColor(.foregroundSubtle)
       }
+      // The app-wide Lock: also without an open tab (Welcome)
+      LockSettingsSection(appSettings: appSettings)
     case .plugins:
       PluginsSettingsSection()
     case .mcp:

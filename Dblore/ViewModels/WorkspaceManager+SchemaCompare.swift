@@ -30,9 +30,13 @@ extension WorkspaceManager {
       return
     }
     let tabID = activeTabId ?? newSQLFile()
-    guard let tab = viewModel(for: tabID), let context = SchemaCompareContext(tab: tab) else {
+    guard let tab = viewModel(for: tabID), var context = SchemaCompareContext(tab: tab) else {
       return
     }
+    // A locked saved source asks over the sheet, on this workspace's window
+    let windowID = id
+    context.lockCenter = lockCenter
+    context.unlockAnchor = { NewWindowStore.shared.findWindow(for: windowID) }
     let schemas = schemaCompareSchemas(config)
     let model = SchemaCompareModel(
       context: context, targetSchemas: schemas, targetSchema: schemas.first ?? "",

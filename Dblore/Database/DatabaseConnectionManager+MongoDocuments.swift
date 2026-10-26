@@ -102,6 +102,7 @@ extension DatabaseConnectionManager {
     onPage: @escaping @Sendable ([MongoValue]) async throws -> Void
   ) async throws -> Int {
     try await PerfSignpost.interval("mongo.streamDocuments") {
+      try refuseIfRelocked(config)
       let effective = effectivePolicy(for: policy)
       let summary = command.render()
       let statement = MongoCommandClassifier.classify(command, summary: summary)
@@ -143,10 +144,13 @@ extension DatabaseConnectionManager {
         throw MongoSessionError(message: "Reading documents needs a MongoDB session.")
       }
 
-      // killOp only stops a command in flight: a Cancel while `onPage` runs is caught here.
+      // killOp only stops a command in flight: a Cancel while `onPage` runs is caught here, and
+      // so is a relock during a long export or backup.
+      let lockedConfig = config
       let pages: @Sendable ([MongoValue]) async throws -> Void = { page in
         try await self.refuseIfSessionChanged(
           since: epoch, generation: cancelGeneration, remaining: 1)
+        try await self.refuseIfRelocked(lockedConfig)
         do { try await onPage(page) } catch { throw PageHandlerFailure(error: error) }
       }
       let startTime = Date()

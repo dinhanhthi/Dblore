@@ -2,9 +2,11 @@
 // One generic-password Keychain service, stored in the data protection keychain. Debug and
 // Release builds share its access group, while file-based keychain ACLs trusted only the
 // signature that created an item. Reads fall back to the legacy file-based keychain and copy
-// a hit into the data protection keychain; the legacy copy is kept until delete.
+// a hit into the data protection keychain; the legacy copy is kept until delete. Protected
+// items (behind user presence) live in the data protection keychain only.
 
 import Foundation
+import LocalAuthentication
 import Security
 import os
 
@@ -15,15 +17,49 @@ nonisolated enum KeychainRead: Equatable, Sendable {
   case failed(OSStatus)
 }
 
+/// Access control of a protected item. It replaces the plain accessibility.
+nonisolated enum KeychainAccessControl: Equatable, Sendable {
+  /// Touch ID or the Mac password on every read, only while a login password is set
+  /// (kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly + .userPresence).
+  case userPresence
+}
+
 /// One Keychain domain (data protection or legacy file-based). Tests inject an in-memory twin.
 nonisolated protocol KeychainBackend: Sendable {
-  func copy(service: String, account: String) -> KeychainRead
-  func add(service: String, account: String, data: Data, accessible: CFString) -> OSStatus
-  /// Updates the data and accessibility, or adds the item when it does not exist.
-  func upsert(service: String, account: String, data: Data, accessible: CFString) -> OSStatus
+  /// `context` is the caller's evaluated LAContext that satisfies a protected item's access
+  /// control; only `KeychainVault.readProtected` passes one. Without it the query is a plain
+  /// read, unchanged for every other secret. Reading a protected item that way is out of scope
+  /// (the system would prompt; no caller does it); the in-memory twin fails it closed so such a
+  /// caller surfaces in tests.
+  func copy(service: String, account: String, context: LAContext?) -> KeychainRead
+  func add(
+    service: String, account: String, data: Data, accessible: CFString,
+    accessControl: KeychainAccessControl?
+  ) -> OSStatus
+  /// Updates the data and accessibility (or access control), or adds the item when it does not
+  /// exist.
+  func upsert(
+    service: String, account: String, data: Data, accessible: CFString,
+    accessControl: KeychainAccessControl?
+  ) -> OSStatus
   func delete(service: String, account: String) -> OSStatus
   /// Account names only; item data is never read.
   func accounts(service: String) -> [String]
+}
+
+nonisolated extension KeychainBackend {
+  func copy(service: String, account: String) -> KeychainRead {
+    copy(service: service, account: account, context: nil)
+  }
+
+  func add(service: String, account: String, data: Data, accessible: CFString) -> OSStatus {
+    add(service: service, account: account, data: data, accessible: accessible, accessControl: nil)
+  }
+
+  func upsert(service: String, account: String, data: Data, accessible: CFString) -> OSStatus {
+    upsert(
+      service: service, account: account, data: data, accessible: accessible, accessControl: nil)
+  }
 }
 
 /// SecItem calls on generic-password items. No access group is set, so items land in the
@@ -50,10 +86,11 @@ nonisolated struct SecItemKeychainBackend: KeychainBackend {
     return query
   }
 
-  func copy(service: String, account: String) -> KeychainRead {
+  func copy(service: String, account: String, context: LAContext?) -> KeychainRead {
     var query = query(service: service, account: account)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
+    if let context { query[kSecUseAuthenticationContext as String] = context }
     var result: AnyObject?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     KeychainLog.status(status, "copy", domain, service, account)
@@ -66,27 +103,58 @@ nonisolated struct SecItemKeychainBackend: KeychainBackend {
     }
   }
 
-  func add(service: String, account: String, data: Data, accessible: CFString) -> OSStatus {
+  func add(
+    service: String, account: String, data: Data, accessible: CFString,
+    accessControl: KeychainAccessControl?
+  ) -> OSStatus {
     var attributes = query(service: service, account: account)
     attributes[kSecValueData as String] = data
-    attributes[kSecAttrAccessible as String] = accessible
+    guard Self.protect(&attributes, accessible: accessible, accessControl: accessControl) else {
+      return errSecParam
+    }
     let status = SecItemAdd(attributes as CFDictionary, nil)
     KeychainLog.status(status, "add", domain, service, account)
     return status
   }
 
-  func upsert(service: String, account: String, data: Data, accessible: CFString) -> OSStatus {
-    let changes: [String: Any] = [
-      kSecValueData as String: data,
-      kSecAttrAccessible as String: accessible,
-    ]
+  func upsert(
+    service: String, account: String, data: Data, accessible: CFString,
+    accessControl: KeychainAccessControl?
+  ) -> OSStatus {
+    var changes: [String: Any] = [kSecValueData as String: data]
+    guard Self.protect(&changes, accessible: accessible, accessControl: accessControl) else {
+      return errSecParam
+    }
     let status = SecItemUpdate(
       query(service: service, account: account) as CFDictionary, changes as CFDictionary)
     guard status == errSecItemNotFound else {
       KeychainLog.status(status, "update", domain, service, account)
       return status
     }
-    return add(service: service, account: account, data: data, accessible: accessible)
+    return add(
+      service: service, account: account, data: data, accessible: accessible,
+      accessControl: accessControl)
+  }
+
+  /// Sets either the access control or the plain accessibility (SecItem refuses both). False
+  /// when the access control cannot be built: the caller fails, never writes a plain item.
+  private static func protect(
+    _ attributes: inout [String: Any], accessible: CFString,
+    accessControl: KeychainAccessControl?
+  ) -> Bool {
+    guard let accessControl else {
+      attributes[kSecAttrAccessible as String] = accessible
+      return true
+    }
+    switch accessControl {
+    case .userPresence:
+      guard
+        let access = SecAccessControlCreateWithFlags(
+          nil, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly, .userPresence, nil)
+      else { return false }
+      attributes[kSecAttrAccessControl as String] = access
+      return true
+    }
   }
 
   func delete(service: String, account: String) -> OSStatus {
@@ -149,6 +217,22 @@ nonisolated struct KeychainVault: Sendable {
   func add(account: String, data: Data) -> Bool {
     modern.add(service: service, account: account, data: data, accessible: accessible)
       == errSecSuccess
+  }
+
+  /// Writes a protected item to the data protection keychain only. A failure is returned as is:
+  /// there is no plain fallback here.
+  @discardableResult func writeProtected(
+    account: String, data: Data, accessControl: KeychainAccessControl = .userPresence
+  ) -> OSStatus {
+    modern.upsert(
+      service: service, account: account, data: data, accessible: accessible,
+      accessControl: accessControl)
+  }
+
+  /// Reads with an evaluated context from the data protection keychain only: a legacy hit is
+  /// never migrated as a plain item.
+  func readProtected(account: String, context: LAContext) -> KeychainRead {
+    modern.copy(service: service, account: account, context: context)
   }
 
   /// Deletes in both keychains, legacy first: when the legacy delete fails the modern copy is

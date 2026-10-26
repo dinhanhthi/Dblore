@@ -61,6 +61,7 @@ extension DatabaseConnectionManager {
     _ userSQL: String, parameters: [String: SQLBindValue]?, policy: ProtectionPolicy,
     maxRows: Int, caller: UUID?, expectedEpoch: UInt64?
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
+    try refuseIfRelocked(config)
     guard let parameters else {
       let (statements, protectedMode) = try authorize(userSQL, policy: policy)
       return try await runUserStatements(
@@ -198,6 +199,7 @@ extension DatabaseConnectionManager {
     _ statements: [BoundStatement], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil, rewind: RewindPlan? = nil, rewinding: [Int64] = []
   ) async throws -> [Int] {
+    try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
@@ -269,6 +271,7 @@ extension DatabaseConnectionManager {
   func authorize(
     _ sql: String, policy: ProtectionPolicy
   ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
+    try refuseIfRelocked(config)
     let effective = effectivePolicy(for: policy)
     let statements = Self.classifyUserSQL(sql, config: config)
     if case .blocked(let index, let kind, let reason) = Self.evaluate(
@@ -277,6 +280,16 @@ extension DatabaseConnectionManager {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
     return (statements, effective.protectedMode)
+  }
+
+  /// Throws `DatabaseError.connectionLocked` when `config`'s identity is locked and not
+  /// unlocked in this session (after a relock), before anything is sent. Checked by every
+  /// user-initiated entry, every read that returns rows or documents (export and backup
+  /// streams, the SQL dump snapshot, the Schema tab's sample) and Commit; only catalog and
+  /// introspection refreshes and this manager's internal resets are not checked.
+  func refuseIfRelocked(_ config: ConnectionConfig?) throws {
+    guard let config, let refusal = lockSource.refusal(for: config) else { return }
+    throw refusal
   }
 
   /// Dialect of the connected database. No connection keeps today's PostgreSQL rules.

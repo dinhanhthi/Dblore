@@ -40,12 +40,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // The MCP server runs only while enabled in Settings
     if !SessionManager.isRunningAsTestHost {
       MCPServerController.shared.activate()
+      // Sleep, screen lock and idle relock the locked items
+      RelockMonitor.shared.start()
     }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
     guard !SessionManager.isRunningAsTestHost else { return }
     MCPServerController.shared.stopForQuit()
+    // After the quit's transaction prompts and flushes, which may still use an unlock
+    LockRegistry.shared.relockAll()
   }
 
   /// Set before launch finishes, so a click that launches the app is delivered too
@@ -73,9 +77,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     Task { @MainActor in
       // Open workspace files directly
+      // A locked workspace's window opens first with its locked placeholder and asks there; a
+      // file that does not open says why in a toast
       for url in workspaceURLs {
-        if let manager = try? await WorkspaceWindowManager.shared.openWorkspace(url: url) {
-          WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+        if let id = await WorkspaceWindowManager.shared.requestWorkspaceReportingError(url: url) {
+          WorkspaceWindowManager.shared.pendingWorkspaceId = id
         }
       }
 
@@ -335,6 +341,8 @@ struct DbloreApp: App {
       SessionManager.migrateIfNeeded()
       pruneQueryHistoryOnLaunch()
       RewindPrune.schedule()
+      // Publish the saved locks before any connect path runs (no Keychain read)
+      _ = SessionManager.loadHistory(passwords: NoPasswordStore())
       LaunchSessionRestore.prepare()
     }
 
@@ -579,11 +587,19 @@ private struct CheckForUpdatesButton: View {
 /// "Reopen Closed Tab" menu item. A view body tracks `closedTabs`; read straight from the
 /// `Commands` body the disabled state went stale and Cmd+Shift+T stayed off after a close.
 private struct ReopenClosedTabButton: View {
+  /// Re-renders when a lock state change covers or uncovers the key window
+  @ObservedObject private var focusRegistry = FocusedActionRegistry.shared
+
+  /// The active workspace, nil while covered
+  private var workspace: WorkspaceManager? {
+    focusRegistry.commandWorkspace(WorkspaceWindowManager.shared.activeWorkspaceManager)
+  }
+
   var body: some View {
     Button("Reopen Closed Tab") {
       Task {
         do {
-          try await WorkspaceWindowManager.shared.activeWorkspaceManager?.reopenClosedTab()
+          try await workspace?.reopenClosedTab()
         } catch {
           WorkspaceWindowManager.shared.showToast(
             "Could not reopen tab: \(error.localizedDescription)", type: .warning)
@@ -591,7 +607,7 @@ private struct ReopenClosedTabButton: View {
       }
     }
     .keyboardShortcut("t", modifiers: [.command, .shift])
-    .disabled(WorkspaceWindowManager.shared.activeWorkspaceManager?.canReopenClosedTab != true)
+    .disabled(workspace?.canReopenClosedTab != true)
   }
 }
 
@@ -682,6 +698,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
   @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
   @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
+  @BridgedFocusedValue(\.activeWorkspace) private var focusedWorkspace
 
   var body: some Commands {
     // File menu - New documents (includes workspace commands)
@@ -697,8 +714,8 @@ struct TabCommands: Commands {
 
       Button {
         Task {
-          if let manager = await openWorkspaceWithPanel() {
-            WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+          if let id = await openWorkspaceWithPanel() {
+            WorkspaceWindowManager.shared.pendingWorkspaceId = id
           }
         }
       } label: {
@@ -711,10 +728,10 @@ struct TabCommands: Commands {
         ForEach(RecentManager.shared.recentWorkspaces.prefix(10)) { workspace in
           Button(workspace.displayString) {
             Task {
-              if let manager = try? await WorkspaceWindowManager.shared.openWorkspace(
+              if let id = await WorkspaceWindowManager.shared.requestWorkspaceReportingError(
                 url: workspace.fileURL)
               {
-                WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+                WorkspaceWindowManager.shared.pendingWorkspaceId = id
               }
             }
           }
@@ -733,7 +750,7 @@ struct TabCommands: Commands {
 
       // Document commands - create workspace if needed
       Button {
-        let manager = activeWorkspaceOrNew
+        guard let manager = activeWorkspaceOrNew else { return }
         switch AppSettings.shared.defaultNewTabType {
         case .notebook: manager.newNotebook()
         case .sqlFile: manager.newSQLFile()
@@ -743,31 +760,30 @@ struct TabCommands: Commands {
         Label("New Tab", systemImage: "plus.square")
       }
       .keyboardShortcut("t", modifiers: .command)
+      .disabled(isKeyWindowCovered)
 
       Button {
-        let manager = activeWorkspaceOrNew
-        manager.newNotebook()
+        activeWorkspaceOrNew?.newNotebook()
       } label: {
         Label("New Notebook", systemImage: "doc.badge.plus")
       }
+      .disabled(isKeyWindowCovered)
 
       Button {
-        let manager = activeWorkspaceOrNew
-        manager.newSQLFile()
+        activeWorkspaceOrNew?.newSQLFile()
       } label: {
-        Label(
-          WorkspaceWindowManager.shared.activeWorkspaceManager?.newScriptLabel ?? "New SQL File",
-          systemImage: "doc.text")
+        Label(activeWorkspace?.newScriptLabel ?? "New SQL File", systemImage: "doc.text")
       }
       .keyboardShortcut("j", modifiers: [.command, .shift])
+      .disabled(isKeyWindowCovered)
 
       Button {
-        let manager = activeWorkspaceOrNew
-        manager.newMarkdownFile()
+        activeWorkspaceOrNew?.newMarkdownFile()
       } label: {
         Label("New Markdown Note", systemImage: "doc.richtext")
       }
       .keyboardShortcut("m", modifiers: [.command, .shift])
+      .disabled(isKeyWindowCovered)
 
       Divider()
 
@@ -777,6 +793,7 @@ struct TabCommands: Commands {
         Label("Open", systemImage: "folder")
       }
       .keyboardShortcut("o", modifiers: .command)
+      .disabled(isKeyWindowCovered)
 
       // Lives here: a separate CommandGroup(after: .newItem) is dropped by SwiftUI
       // because this group replaces .newItem
@@ -786,7 +803,7 @@ struct TabCommands: Commands {
         .disabled(openTableImportAction == nil)
 
       // MongoDB has its own backup file: same actions, its own titles
-      let isMongo = WorkspaceWindowManager.shared.activeWorkspaceManager?.isMongoWorkspace == true
+      let isMongo = activeWorkspace?.isMongoWorkspace == true
       Button(isMongo ? "Back Up Database..." : "Export SQL Dump...") { openSQLDumpAction?() }
         .disabled(openSQLDumpAction == nil)
 
@@ -800,7 +817,7 @@ struct TabCommands: Commands {
       }
 
       // PostgreSQL, MySQL / MariaDB and SQLite only
-      if WorkspaceWindowManager.shared.activeWorkspaceManager?.supportsSchemaCompare != false {
+      if activeWorkspace?.supportsSchemaCompare != false {
         Button("Compare Schemas...") { openSchemaCompareAction?() }
           .disabled(openSchemaCompareAction == nil)
       }
@@ -825,6 +842,7 @@ struct TabCommands: Commands {
         Text("Save")
       }
       .keyboardShortcut("s", modifiers: .command)
+      .disabled(isKeyWindowCovered)
 
       Button {
         // If active tab, save as; otherwise save workspace as
@@ -837,6 +855,7 @@ struct TabCommands: Commands {
         Text("Save As")
       }
       .keyboardShortcut("s", modifiers: [.command, .shift])
+      .disabled(isKeyWindowCovered)
 
       // Workspace save commands live here: a separate CommandGroup(after: .saveItem)
       // is dropped by SwiftUI because this group replaces .saveItem
@@ -846,21 +865,34 @@ struct TabCommands: Commands {
         saveActiveWorkspace()
       }
       .keyboardShortcut("s", modifiers: [.command, .option])
+      .disabled(activeWorkspaceForSave == nil)
 
       Button("Save Workspace As") {
         saveActiveWorkspaceAs()
       }
       .keyboardShortcut("s", modifiers: [.command, .option, .shift])
-      .disabled(WorkspaceWindowManager.shared.activeWorkspace?.workspace.isSaved != true)
+      .disabled(activeWorkspaceForSave?.workspace.isSaved != true)
+
+      Divider()
+
+      // The focused workspace window's own: the sheet opens on it at once
+      if focusedWorkspace?.lockKeyId != nil {
+        Button("Remove Lock...") { focusedWorkspace?.openLockSheet(.remove) }
+      } else {
+        Button("Lock Workspace...") { focusedWorkspace?.openLockSheet(.lock) }
+          .disabled(focusedWorkspace?.canLockWorkspace != true)
+      }
 
       Divider()
 
       Button("Close Workspace") {
+        guard !isKeyWindowCovered else { return }
         Task {
           _ = await WorkspaceWindowManager.shared.closeActiveWorkspace()
         }
       }
       .keyboardShortcut("w", modifiers: [.command, .option])
+      .disabled(isKeyWindowCovered)
     }
 
     // Window menu - Tab navigation
@@ -873,9 +905,7 @@ struct TabCommands: Commands {
       .keyboardShortcut("n", modifiers: [.command, .shift])
 
       Button("Close Tab") {
-        if let workspaceManager = WorkspaceWindowManager.shared.activeWorkspaceManager,
-          let id = workspaceManager.activeTabId
-        {
+        if let workspaceManager = activeWorkspace, let id = workspaceManager.activeTabId {
           workspaceManager.requestCloseTab(id: id)
         }
       }
@@ -887,13 +917,13 @@ struct TabCommands: Commands {
       Divider()
 
       Button("Next Tab") {
-        WorkspaceWindowManager.shared.activeWorkspaceManager?.selectNextTab()
+        activeWorkspace?.selectNextTab()
       }
       .keyboardShortcut("]", modifiers: [.command, .shift])
       .disabled(activeTabCount < 2)
 
       Button("Previous Tab") {
-        WorkspaceWindowManager.shared.activeWorkspaceManager?.selectPreviousTab()
+        activeWorkspace?.selectPreviousTab()
       }
       .keyboardShortcut("[", modifiers: [.command, .shift])
       .disabled(activeTabCount < 2)
@@ -903,32 +933,52 @@ struct TabCommands: Commands {
       // Tab shortcuts 1-9 (only show if tabs exist)
       ForEach(Array(activeTabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
         Button("Tab \(index + 1): \(tab.title)") {
-          WorkspaceWindowManager.shared.activeWorkspaceManager?.selectTab(atIndex: index + 1)
+          activeWorkspace?.selectTab(atIndex: index + 1)
         }
         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
       }
     }
   }
 
-  /// Get active workspace or create new one
-  private var activeWorkspaceOrNew: WorkspaceManager {
-    WorkspaceWindowManager.shared.activeWorkspaceManager
-      ?? WorkspaceWindowManager.shared.newWorkspace()
+  /// The active workspace for these commands: nil while the key window or that workspace is
+  /// covered by the unlock overlay, so they do nothing and the tab list is empty
+  private var activeWorkspace: WorkspaceManager? {
+    FocusedActionRegistry.shared.commandWorkspace(
+      WorkspaceWindowManager.shared.activeWorkspaceManager)
+  }
+
+  /// The key window is covered (or the active workspace is): the commands that would create a
+  /// workspace or open a panel do nothing
+  private var isKeyWindowCovered: Bool {
+    FocusedActionRegistry.shared.isKeyWindowLocked
+      || WorkspaceWindowManager.shared.activeWorkspaceManager?.lockCoverage != nil
+  }
+
+  /// Get active workspace or create new one; nil (nothing created) while covered
+  private var activeWorkspaceOrNew: WorkspaceManager? {
+    FocusedActionRegistry.shared.commandWorkspace(
+      WorkspaceWindowManager.shared.activeWorkspaceManager,
+      orNew: { WorkspaceWindowManager.shared.newWorkspace() })
+  }
+
+  /// The workspace Save Workspace / Save As act on, nil while covered
+  private var activeWorkspaceForSave: WorkspaceManager? {
+    FocusedActionRegistry.shared.commandWorkspace(WorkspaceWindowManager.shared.activeWorkspace)
   }
 
   /// Get active tab ID from workspace manager
   private var activeTabId: UUID? {
-    WorkspaceWindowManager.shared.activeWorkspaceManager?.activeTabId
+    activeWorkspace?.activeTabId
   }
 
   /// Get tab count from workspace manager
   private var activeTabCount: Int {
-    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs.count ?? 0
+    activeWorkspace?.tabs.count ?? 0
   }
 
   /// Get tabs from workspace manager
   private var activeTabs: [TabItem] {
-    WorkspaceWindowManager.shared.activeWorkspaceManager?.tabs ?? []
+    activeWorkspace?.tabs ?? []
   }
 
   private func openFile() {
@@ -940,10 +990,13 @@ struct TabCommands: Commands {
     panel.begin { response in
       guard response == .OK else { return }
       Task { @MainActor in
-        var manager = WorkspaceWindowManager.shared.activeWorkspaceManager
-        if manager == nil {
-          manager = WorkspaceWindowManager.shared.newWorkspace()
-          WorkspaceWindowManager.shared.pendingWorkspaceId = manager!.id
+        // Covered meanwhile: nothing opens into it
+        let windows = WorkspaceWindowManager.shared
+        let active = windows.activeWorkspaceManager
+        var manager = FocusedActionRegistry.shared.commandWorkspace(active)
+        if manager == nil, active == nil, !FocusedActionRegistry.shared.isKeyWindowLocked {
+          manager = windows.newWorkspace()
+          windows.pendingWorkspaceId = manager!.id
         }
         for url in panel.urls {
           try? await manager?.openFile(url: url, checksScriptKind: true)
@@ -952,8 +1005,9 @@ struct TabCommands: Commands {
     }
   }
 
-  /// Open workspace with file panel and return the manager
-  private func openWorkspaceWithPanel() async -> WorkspaceManager? {
+  /// Open workspace with file panel and return the id its window shows (a locked workspace's
+  /// window opens with its locked placeholder and asks there; a failure shows a toast)
+  private func openWorkspaceWithPanel() async -> UUID? {
     let panel = NSOpenPanel()
     panel.allowedContentTypes = UTType.sqlWorkspaceOpenTypes
     panel.allowsMultipleSelection = false
@@ -966,19 +1020,12 @@ struct TabCommands: Commands {
       }
     }
 
-    if response == .OK, let url = panel.url {
-      do {
-        return try await WorkspaceWindowManager.shared.openWorkspace(url: url)
-      } catch {
-        await AppLogger.shared.error("Failed to open workspace: \(error)", category: "Workspace")
-        return nil
-      }
-    }
-    return nil
+    guard response == .OK, let url = panel.url else { return nil }
+    return await WorkspaceWindowManager.shared.requestWorkspaceReportingError(url: url)
   }
 
   private func saveActiveTab() {
-    guard let manager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+    guard let manager = activeWorkspace,
       let id = manager.activeTabId
     else { return }
     Task {
@@ -987,7 +1034,7 @@ struct TabCommands: Commands {
   }
 
   private func saveActiveTabAs() {
-    guard let manager = WorkspaceWindowManager.shared.activeWorkspaceManager,
+    guard let manager = activeWorkspace,
       let id = manager.activeTabId,
       let index = manager.tabs.firstIndex(where: { $0.id == id })
     else { return }
@@ -999,14 +1046,14 @@ struct TabCommands: Commands {
   }
 
   private func saveActiveWorkspace() {
-    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
+    guard let workspace = activeWorkspaceForSave else { return }
     Task {
       try? await workspace.saveWorkspace()
     }
   }
 
   private func saveActiveWorkspaceAs() {
-    guard let workspace = WorkspaceWindowManager.shared.activeWorkspace else { return }
+    guard let workspace = activeWorkspaceForSave else { return }
     Task {
       try? await workspace.saveWorkspaceWithPanel()
     }

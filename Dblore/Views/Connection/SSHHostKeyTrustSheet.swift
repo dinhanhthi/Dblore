@@ -90,7 +90,17 @@ final class AppKitSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
     let window = NSWindow(contentViewController: NSHostingController(rootView: view))
     sheet = window
     observeHostGoingAway(parent, sheet: window)
-    parent.beginSheet(window)
+    // Ended from outside (a relocked window's sweep ends every sheet on it), not by `finish`,
+    // which forgets the sheet first: nobody answered, so not trusted, and the next prompt can
+    // show. On the next turn, once AppKit has detached it.
+    parent.beginSheet(window) { [weak self, weak window] _ in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          guard let self, let window, self.sheet === window else { return }
+          self.finish(false)
+        }
+      }
+    }
     return true
   }
 

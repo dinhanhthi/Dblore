@@ -415,6 +415,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       if clamped != scriptTimeoutSeconds { scriptTimeoutSeconds = clamped }
     }
   }
+  /// The saved row asks to unlock before use. Only the saved rows decide (`LockRegistry`), never
+  /// a config's own value; a save keeps the saved row's flag, and no export writes it.
+  var isLocked: Bool = false
 
   nonisolated static let aiRulesLimit = 2_000
   nonisolated static let groupNameLimit = 64
@@ -471,6 +474,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case hiddenSchemas
     // Connection scripts (absent unless set)
     case preConnectScript, postDisconnectScript, passwordCommandScript, scriptTimeoutSeconds
+    // Connection lock (absent unless locked)
+    case isLocked
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -547,6 +552,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     scriptTimeoutSeconds =
       ((try? container.decodeIfPresent(Int.self, forKey: .scriptTimeoutSeconds))
       ?? nil).map(ConnectionScriptRunner.clampedTimeout)
+    isLocked = try container.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -609,6 +615,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encodeIfPresent(postDisconnectScript, forKey: .postDisconnectScript)
     try container.encodeIfPresent(passwordCommandScript, forKey: .passwordCommandScript)
     try container.encodeIfPresent(scriptTimeoutSeconds, forKey: .scriptTimeoutSeconds)
+    if isLocked {
+      try container.encode(isLocked, forKey: .isLocked)
+    }
   }
 
   nonisolated init(

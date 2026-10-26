@@ -99,7 +99,9 @@ struct WorkspaceContainerView: View {
     }
   }
 
-  var body: some View {
+  /// Sidebars, tabs, content and footer: not built while the window is covered (relocked), so
+  /// nothing of the workspace shows through or takes keyboard input
+  private var workspaceLayout: some View {
     GeometryReader { geometry in
       // Footer below the sidebar + content area: always full window width, unaffected by the
       // left sidebar toggle
@@ -142,6 +144,11 @@ struct WorkspaceContainerView: View {
               // The server closed the connection (Reconnect)
               if workspaceManager.connectionLostMessage != nil {
                 ConnectionLostBanner(workspaceManager: workspaceManager)
+              }
+
+              // Auto-connect stopped on a locked connection (Unlock), with or without tabs
+              if workspaceManager.isConnectLocked, !workspaceManager.connectionState.isConnected {
+                LockedConnectionBanner(workspaceManager: workspaceManager)
               }
 
               // A SQLite file opened read-only because its sidecar files cannot be written
@@ -296,6 +303,19 @@ struct WorkspaceContainerView: View {
               windowWidth: geometry.size.width) : 0)
       )
     }
+  }
+
+  var body: some View {
+    // A ZStack, not a Group: a Group hands every modifier below to each branch, so a cover
+    // change rebuilt the whole chain (the window reader lost its window, the close guard its
+    // button, the sheets their state)
+    ZStack {
+      if workspaceManager.lockCoverage == nil {
+        workspaceLayout
+      } else {
+        Color.appBackground
+      }
+    }
     // No min frame here: `documentWindowMode` sets the limits, and a fixed 600 overflowed the
     // 540 compact window (sidebars and the footer were cut off at the bottom)
     .background(Color.appBackground)
@@ -308,7 +328,8 @@ struct WorkspaceContainerView: View {
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
         windowTitle: WorkspaceWindowTitle.window(
-          fileName: workspaceManager.activeTab?.title,
+          // Covered: no file name in the title either
+          fileName: workspaceManager.lockCoverage == nil ? workspaceManager.activeTab?.title : nil,
           workspaceName: workspaceManager.workspace.name),
         isTabBarVisible: $isNativeTabBarVisible,
         tabBarHeight: $nativeTabBarHeight,
@@ -316,28 +337,11 @@ struct WorkspaceContainerView: View {
         isFullScreen: $isFullScreen)
     )
     .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
-    .pendingTransactionDialogs(workspaceManager: workspaceManager)
-    .confirmationDialog(
-      "Save changes?",
-      isPresented: $workspaceManager.showingCloseConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Save") {
-        Task {
-          await workspaceManager.saveAndCloseTab()
-        }
-      }
-      Button("Don't Save", role: .destructive) {
-        workspaceManager.closeTabWithoutSaving()
-      }
-      Button("Cancel", role: .cancel) {
-        workspaceManager.cancelClose()
-      }
-    } message: {
-      if let tabId = workspaceManager.tabToClose,
-        let tab = workspaceManager.tabs.first(where: { $0.id == tabId })
-      {
-        Text("Do you want to save changes to \"\(tab.title)\"?")
+    // The window's sheets and dialogs hang on this anchor, which exists only while the window
+    // is not covered: none shows over the cover, and one open at the relock goes away
+    .background {
+      if workspaceManager.lockCoverage == nil {
+        windowPresentations
       }
     }
     // Note: File opening is handled by AppDelegate.application(_:open:) in DbloreApp.swift
@@ -367,6 +371,7 @@ struct WorkspaceContainerView: View {
     .bridgedFocusedSceneValue(\.openDataDictionaryAction, dataDictionaryAction)
     .bridgedFocusedSceneValue(\.openSchemaCompareAction, schemaCompareAction)
     .bridgedFocusedSceneValue(\.activeViewModel, activeViewModel)
+    .bridgedFocusedSceneValue(\.activeWorkspace, workspaceManager)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
     // After the connection form, so they open on top of it
@@ -379,9 +384,6 @@ struct WorkspaceContainerView: View {
       openToken: settingsOpenToken
     )
     .structureEditorPanel(workspaceManager: workspaceManager)
-    .dataDictionaryExportSheet(workspaceManager: workspaceManager)
-    .schemaCompareSheet(workspaceManager: workspaceManager)
-    .crossTableSearchSheet(workspaceManager: workspaceManager)
     .sidePanelOverlay(
       isPresented: Binding(
         get: { isImportPresented },
@@ -407,6 +409,23 @@ struct WorkspaceContainerView: View {
     .historyDetailModal(workspaceManager: workspaceManager)
     .sidebarMongoAdmin($sidebarMongoAdmin, workspaceManager: workspaceManager)
     .commandPaletteModal(workspaceManager: workspaceManager)
+    // Relocked: the panels and modals open below take no input and stay hidden under the cover
+    .disabled(workspaceManager.lockCoverage != nil)
+    .overlay {
+      if let coverage = workspaceManager.lockCoverage {
+        LockedOverlayView(coverage: coverage, workspaceManager: workspaceManager) {
+          hostWindow.window
+        }
+      }
+    }
+    // Covered: the AI request in flight stops, no field keeps the keyboard and every sheet
+    // and dialog of the window closes
+    .onChange(of: workspaceManager.lockCoverage != nil) { _, covered in
+      guard covered else { return }
+      if workspaceManager.aiAssistant.isGenerating { workspaceManager.aiAssistant.stop() }
+      hostWindow.window?.makeFirstResponder(nil)
+      dismissPresentationsForCover()
+    }
     .background(HostWindowReader(reference: hostWindow))
     .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isConnectionImportPresented)
     // Full size even with no tab open: the left sidebar opens tables from there
@@ -463,7 +482,9 @@ struct WorkspaceContainerView: View {
       WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id)
     }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
-      guard workspaceManager.isActiveWorkspace(in: hostWindow) else { return }
+      guard workspaceManager.isActiveWorkspace(in: hostWindow),
+        workspaceManager.lockCoverage == nil
+      else { return }
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
         let section = SettingsPage(rawValue: raw)
       {
@@ -474,6 +495,70 @@ struct WorkspaceContainerView: View {
         settingsSection = nil
         workspaceManager.isSettingsModalVisible.toggle()
       }
+    }
+  }
+
+  /// The window-level sheets and dialogs (each one a sheet on the window, above any overlay):
+  /// attached to an empty anchor that is not built while the window is covered
+  private var windowPresentations: some View {
+    Color.clear
+      .pendingTransactionDialogs(workspaceManager: workspaceManager)
+      .confirmationDialog(
+        "Save changes?",
+        isPresented: $workspaceManager.showingCloseConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Save") {
+          Task {
+            await workspaceManager.saveAndCloseTab()
+          }
+        }
+        Button("Don't Save", role: .destructive) {
+          workspaceManager.closeTabWithoutSaving()
+        }
+        Button("Cancel", role: .cancel) {
+          workspaceManager.cancelClose()
+        }
+      } message: {
+        if let tabId = workspaceManager.tabToClose,
+          let tab = workspaceManager.tabs.first(where: { $0.id == tabId })
+        {
+          Text("Do you want to save changes to \"\(tab.title)\"?")
+        }
+      }
+      .dataDictionaryExportSheet(workspaceManager: workspaceManager)
+      .schemaCompareSheet(workspaceManager: workspaceManager)
+      .lockWorkspaceSheet(workspaceManager: workspaceManager)
+      .crossTableSearchSheet(workspaceManager: workspaceManager)
+  }
+
+  /// The window was just covered: its sheets, dialogs and panels close (a running Lock
+  /// Workspace or schema compare keeps its sheet state and shows again after the unlock). Then,
+  /// once SwiftUI dismissed its own, any AppKit sheet still on the window (alerts, save panels)
+  /// ends as cancelled; an unlock prompt stays.
+  private func dismissPresentationsForCover() {
+    let manager = workspaceManager
+    if manager.showingCloseConfirmation { manager.cancelClose() }
+    if manager.isCommitConfirmationVisible {
+      manager.isCommitConfirmationVisible = false
+      manager.cancelCommitConfirmation()
+    }
+    if manager.isCommitUnlockVisible { manager.cancelCommitUnlock() }
+    manager.dataDictionaryExport?.cancel()
+    manager.closeSchemaCompare()
+    manager.lockSheet?.close()
+    if manager.isCrossTableSearchPresented { manager.crossTableSearch?.hide() }
+    if manager.pendingWeakeningConnect != nil { manager.cancelPendingWeakeningConnect() }
+    // MongoDB confirmations name what they act on; one that runs shows again after the unlock
+    sidebarMongoAdmin?.model.cancel()
+    if let model = manager.mongoBackup?.model, case .confirming = model.state { model.cancel() }
+    if let model = manager.mongoImport?.model, case .confirming = model.state { model.cancel() }
+    manager.isSettingsModalVisible = false
+    isConnectionImportPresented = false
+    Task {
+      try? await Task.sleep(for: .milliseconds(300))
+      guard manager.lockCoverage != nil, let window = hostWindow.window else { return }
+      UnlockPromptSheet.endSheets(on: window)
     }
   }
 

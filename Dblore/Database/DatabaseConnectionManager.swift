@@ -43,6 +43,9 @@ actor DatabaseConnectionManager {
     initialState: nil)
   /// Runs the connection scripts (`connectRunningScripts`, `testConnection`)
   nonisolated let scripts: ConnectionScriptRunner
+  /// Which identities are locked: connects and user-initiated statements of a blocked identity
+  /// are refused (`DatabaseError.connectionLocked`). `LockRegistry.shared` in the app.
+  nonisolated let lockSource: LockRegistry
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -152,9 +155,10 @@ actor DatabaseConnectionManager {
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
     readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true,
-    scripts: ConnectionScriptRunner = .app
+    scripts: ConnectionScriptRunner = .app, lockSource: LockRegistry = .shared
   ) {
     self.scripts = scripts
+    self.lockSource = lockSource
     self.readLimits = readLimits
     self.resetsSessionAfterCappedRead = resetsSessionAfterCappedRead
     let policy = SSHHostKeyPolicy(prompt: sshHostKeyPrompt)
@@ -166,16 +170,16 @@ actor DatabaseConnectionManager {
       of: SessionResetEvent.self, bufferingPolicy: .bufferingNewest(8))
   }
 
-  /// A single-use manager, not connected, for an app check that must not run on this session:
-  /// its sessions come from this manager's factory, made read-only by
-  /// `MCPReadOnlySessionFactory` (DuckDB is refused). SQLite opens like the SQL dump
+  /// A single-use manager, not connected, for an app check that must not run on this session,
+  /// with this manager's lock source: its sessions come from this manager's factory, made
+  /// read-only by `MCPReadOnlySessionFactory` (DuckDB is refused). SQLite opens like the SQL dump
   /// (`SQLDumpSessionFactory`): read-only with normal locking, never `immutable=1`, which would
   /// miss rows still in the WAL. The caller connects and disconnects it.
   nonisolated func makeReadOnlySideManager() -> DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: MCPReadOnlySessionFactory(
         inner: SQLDumpSessionFactory(inner: sessionFactory)),
-      resetsSessionAfterCappedRead: false)
+      resetsSessionAfterCappedRead: false, lockSource: lockSource)
   }
 
   /// `makeReadOnlySideManager` without the read-only wrapper, for an app read that sends its own
@@ -185,7 +189,7 @@ actor DatabaseConnectionManager {
   nonisolated func makeSnapshotSideManager() -> DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: SQLDumpSessionFactory(inner: sessionFactory),
-      resetsSessionAfterCappedRead: false)
+      resetsSessionAfterCappedRead: false, lockSource: lockSource)
   }
 
   /// Connects the single-use `side` like this manager: `config` (this manager's when nil), its
@@ -199,6 +203,8 @@ actor DatabaseConnectionManager {
   ) async throws {
     guard let config = config ?? self.config else { throw DatabaseError.notConnected }
     let identity = identity ?? config
+    // This manager's lock source: the side's own is not consulted
+    if let refusal = lockSource.refusal(for: config) { throw refusal }
     try await side.reconnectWithActiveCertificate(
       config: config, material: sideCertificate(identity: identity, config: config),
       sshCredential: sideSSHCredential(identity: identity, config: config))
@@ -262,8 +268,21 @@ actor DatabaseConnectionManager {
 
   /// Connect to PostgreSQL. The session is published only after its brakes are applied, so
   /// no user statement can run before the timeouts are set. `extraAllowedPaths`: the files the
-  /// new DuckDB session may read (`duckDBAllowedPaths` once connected).
+  /// new DuckDB session may read (`duckDBAllowedPaths` once connected). A locked identity
+  /// (`lockSource`) is refused before the current connection is closed; a bookmark that
+  /// resolves to a locked file, once resolved (after the close).
   func connect(config: ConnectionConfig, extraAllowedPaths: [String] = []) async throws {
+    if let refusal = lockSource.refusal(for: config) { throw refusal }
+    try await connectUnchecked(
+      config: config, extraAllowedPaths: extraAllowedPaths, checkingOpenedFile: true)
+  }
+
+  /// `connect` without the lock check, for this manager's own resets
+  /// (`reconnectWithActiveCertificate`): a relock never drops a live session.
+  /// `checkingOpenedFile`: refuse the locked file a bookmark resolves to (`connect` only).
+  private func connectUnchecked(
+    config: ConnectionConfig, extraAllowedPaths: [String], checkingOpenedFile: Bool = false
+  ) async throws {
     let config = config.resolvingBrakes(
       await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
@@ -284,6 +303,11 @@ actor DatabaseConnectionManager {
       prepared = try await prepareSQLiteOpen(config)
     } catch {
       throw error
+    }
+    // The saved path text may name another file than its bookmark (moved, stale, edited)
+    if checkingOpenedFile, let refusal = lockSource.refusal(for: prepared.config) {
+      prepared.release?()
+      throw refusal
     }
     let opening: any DatabaseSession
     do {
@@ -350,10 +374,12 @@ actor DatabaseConnectionManager {
   /// connected config only: never saved, and gone with the connection. Side managers and
   /// internal resets copy that connected config, so they reuse the password and run no script.
   /// The post-disconnect script pairs with a pre-connect script that ran: it runs when the
-  /// connect then fails, or once the connection closes.
+  /// connect then fails, or once the connection closes. A locked identity is refused before
+  /// any script runs.
   func connectRunningScripts(
     config: ConnectionConfig, extraAllowedPaths: [String] = []
   ) async throws {
+    if let refusal = lockSource.refusal(for: config) { throw refusal }
     let pending = config.postDisconnectScript.map {
       PendingScript(runner: scripts, name: $0, config: config)
     }
@@ -432,7 +458,7 @@ actor DatabaseConnectionManager {
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-          try await connect(config: config, extraAllowedPaths: allowedPaths)
+          try await connectUnchecked(config: config, extraAllowedPaths: allowedPaths)
         }
       }
     } catch {
@@ -444,8 +470,10 @@ actor DatabaseConnectionManager {
 
   /// Test connection without storing it.
   /// Performs a real connection AND executes a test query to verify credentials. A password
-  /// command supplies the password, as on connect; no other script runs.
+  /// command supplies the password, as on connect; no other script runs. A locked identity is
+  /// refused before the password command.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
+    if let refusal = lockSource.refusal(for: config) { throw refusal }
     let config = try await withPasswordCommand(config)
     switch config.databaseType {
     case .postgresql:
@@ -486,6 +514,11 @@ actor DatabaseConnectionManager {
   /// `SELECT 1` on a SQLite or DuckDB database, then close. The grant is released either way.
   private func probeFile(_ config: ConnectionConfig) async throws -> Bool {
     let prepared = try await prepareSQLiteOpen(config)
+    // The file the bookmark resolved to, as on connect
+    if let refusal = lockSource.refusal(for: prepared.config) {
+      prepared.release?()
+      throw refusal
+    }
     let session: any DatabaseSession
     do {
       session = try await sessionFactory.makeSession(config: prepared.config)

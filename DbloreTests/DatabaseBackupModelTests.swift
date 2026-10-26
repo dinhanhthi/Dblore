@@ -277,6 +277,37 @@ struct DatabaseBackupModelTests {
     #expect(try Self.count(destination, "notes") == 2)
   }
 
+  @Test("After relockAll the SQLite file copy is refused before the panel and after it")
+  func fileCopyRefusesARelockedDatabase() async throws {
+    let registry = LockRegistry()
+    let fixture = try await SQLiteFixture(lockSource: registry)
+    defer { fixture.remove() }
+    let destination = fixture.directory.appendingPathComponent("copy.sqlite")
+    let identity = LockIdentity(fixture.config)
+    registry.setLockedConnections([identity])
+    var asked = 0
+    var environment = fixture.realEnvironment(save: destination)
+    environment.chooseSaveURL = { _, _ in
+      asked += 1
+      return destination
+    }
+    let relocked = DatabaseBackupModel(viewModel: fixture.viewModel, environment: environment)
+    await relocked.copyDatabaseFile()
+    #expect(relocked.errorMessage == DatabaseError.connectionLocked.localizedDescription)
+    #expect(asked == 0)
+
+    registry.grant(identity)
+    environment.chooseSaveURL = { _, _ in
+      registry.relockAll()
+      return destination
+    }
+    let duringPanel = DatabaseBackupModel(viewModel: fixture.viewModel, environment: environment)
+    await duringPanel.copyDatabaseFile()
+    #expect(duringPanel.errorMessage == DatabaseError.connectionLocked.localizedDescription)
+    #expect(duringPanel.activity == nil && duringPanel.copyProgress == nil)
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+  }
+
   // MARK: - Restore
 
   private static let sqliteDump = """
@@ -784,11 +815,12 @@ struct DatabaseBackupModelTests {
     let directory: URL
     let database: URL
     let config: ConnectionConfig
-    let manager = DatabaseConnectionManager()
+    let manager: DatabaseConnectionManager
     let viewModel: NotebookViewModel
     let recorder: BackupHistoryRecorder
 
-    init(protectedMode: Bool = false) async throws {
+    init(protectedMode: Bool = false, lockSource: LockRegistry = .shared) async throws {
+      manager = DatabaseConnectionManager(lockSource: lockSource)
       recorder = BackupHistoryRecorder()
       directory = try DatabaseBackupModelTests.temporaryDirectory()
       database = directory.appendingPathComponent("source.db")
