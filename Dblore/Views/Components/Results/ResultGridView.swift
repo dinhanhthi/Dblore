@@ -444,6 +444,12 @@ final class ResultGridHeaderView: NSTableHeaderView {
 
   override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
+    // On the pinned "#" header AppKit would sort or drag the column scrolled under it
+    if let gutter = gutterHeaderRect, gutter.minX > headerRect(ofColumn: 0).minX,
+      gutter.contains(point)
+    {
+      return
+    }
     if let hit = filterButton(at: point) {
       (tableView as? ResultGridTableView)?.coordinator?.showColumnFilter(
         resultColumn: hit.column, relativeTo: hit.rect, of: self)
@@ -521,7 +527,8 @@ final class ResultGridHeaderView: NSTableHeaderView {
     }
     var columnRect = headerRect(ofColumn: index)
     if index == draggedColumn { columnRect.origin.x += draggedDistance }
-    return cell.filterButtonRect(columnRect: columnRect, headerBounds: bounds)
+    let rect = cell.filterButtonRect(columnRect: columnRect, headerBounds: bounds)
+    return rect.flatMap(visibleBesideGutter)
   }
 
   private func sortArrowRect(tableColumn index: Int) -> NSRect? {
@@ -532,7 +539,21 @@ final class ResultGridHeaderView: NSTableHeaderView {
     }
     var columnRect = headerRect(ofColumn: index)
     if index == draggedColumn { columnRect.origin.x += draggedDistance }
-    return cell.sortArrowRect(columnRect: columnRect, headerBounds: bounds)
+    return visibleBesideGutter(cell.sortArrowRect(columnRect: columnRect, headerBounds: bounds))
+  }
+
+  /// `rect`, or nil when the pinned "#" header covers it
+  private func visibleBesideGutter(_ rect: NSRect) -> NSRect? {
+    gutterHeaderRect?.intersects(rect) == true ? nil : rect
+  }
+
+  /// "#" header, pinned at the left edge like its cells. Nil without a "#" column.
+  private var gutterHeaderRect: NSRect? {
+    guard let tableView,
+      tableView.tableColumns.first?.identifier
+        == ResultGridCoordinator.rowNumberIdentifier, !tableView.tableColumns[0].isHidden
+    else { return nil }
+    return ResultGridTableView.pinnedGutterRect(headerRect(ofColumn: 0), visibleRect: visibleRect)
   }
 
   override func draw(_ dirtyRect: NSRect) {
@@ -540,14 +561,18 @@ final class ResultGridHeaderView: NSTableHeaderView {
     dirtyRect.fill()
     if let tableView {
       for (index, column) in tableView.tableColumns.enumerated() where !column.isHidden {
+        // The "#" header cell is drawn last, over the headers scrolled under it, and draws
+        // its own, stronger separator
+        guard column.identifier != ResultGridCoordinator.rowNumberIdentifier else { continue }
         var rect = headerRect(ofColumn: index)
         if index == draggedColumn { rect.origin.x += draggedDistance }
         guard rect.intersects(dirtyRect) else { continue }
         column.headerCell.draw(withFrame: rect, in: self)
-        // The "#" header cell draws its own, stronger separator
-        guard column.identifier != ResultGridCoordinator.rowNumberIdentifier else { continue }
         NSColor(Color.border).setFill()
         NSRect(x: rect.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
+      }
+      if let gutter = gutterHeaderRect, gutter.intersects(dirtyRect) {
+        tableView.tableColumns[0].headerCell.draw(withFrame: gutter, in: self)
       }
     }
     NSColor(Color.border).setFill()
@@ -588,8 +613,55 @@ final class ResultGridTableView: NSTableView {
       height: detailsButtonSize)
   }
 
+  // MARK: - Pinned "#" column
+
+  /// Left edge of the visible area the "#" cells were last moved to
+  private var pinnedGutterX: CGFloat = 0
+
+  /// `rect` of the "#" column moved to the left edge of `visibleRect` once scrolled past it,
+  /// so the gutter stays on screen while the result columns scroll under it
+  static func pinnedGutterRect(_ rect: NSRect, visibleRect: NSRect) -> NSRect {
+    var rect = rect
+    rect.origin.x = max(rect.minX, visibleRect.minX)
+    return rect
+  }
+
+  private func isGutterColumn(_ column: Int) -> Bool {
+    tableColumns.indices.contains(column)
+      && tableColumns[column].identifier == ResultGridCoordinator.rowNumberIdentifier
+  }
+
+  /// AppKit places the cell views with this on a reload, a vertical scroll or a column change
+  override func frameOfCell(atColumn column: Int, row: Int) -> NSRect {
+    let frame = super.frameOfCell(atColumn: column, row: row)
+    guard isGutterColumn(column) else { return frame }
+    return Self.pinnedGutterRect(frame, visibleRect: visibleRect)
+  }
+
+  /// Table column under `point`: "#" anywhere on the pinned gutter, else `column(at:)`
+  func tableColumnIndex(at point: NSPoint) -> Int {
+    if isGutterColumn(0), !tableColumns[0].isHidden {
+      let gutter = Self.pinnedGutterRect(rect(ofColumn: 0), visibleRect: visibleRect)
+      if point.x >= gutter.minX, point.x < gutter.maxX { return 0 }
+    }
+    return column(at: point)
+  }
+
+  /// A horizontal scroll alone lays out no row, so the "#" cells of the loaded rows and the
+  /// "#" header are moved here
+  @objc private func pinGutter(_ notification: Notification? = nil) {
+    guard visibleRect.minX != pinnedGutterX else { return }
+    pinnedGutterX = visibleRect.minX
+    headerView?.needsDisplay = true
+    guard isGutterColumn(0) else { return }
+    enumerateAvailableRowViews { rowView, row in
+      guard let cell = rowView.view(atColumn: 0) as? NSView else { return }
+      cell.frame = rowView.convert(frameOfCell(atColumn: 0, row: row), from: self)
+    }
+  }
+
   override func mouseDown(with event: NSEvent) {
-    let column = self.column(at: convert(event.locationInWindow, from: nil))
+    let column = tableColumnIndex(at: convert(event.locationInWindow, from: nil))
     if column >= 0 {
       lastClickedColumn = column
       coordinator?.noteClickedColumn(tableColumn: column, in: self)
@@ -602,7 +674,7 @@ final class ResultGridTableView: NSTableView {
   override func menu(for event: NSEvent) -> NSMenu? {
     let point = convert(event.locationInWindow, from: nil)
     let row = row(at: point)
-    let tableColumn = column(at: point)
+    let tableColumn = tableColumnIndex(at: point)
     guard row >= 0, tableColumn >= 0 else { return nil }
     let identifier = tableColumns[tableColumn].identifier
     let column = Int(identifier.rawValue)
@@ -619,8 +691,17 @@ final class ResultGridTableView: NSTableView {
     return coordinator?.contextMenu(row: row, column: column)
   }
 
+  /// The column of the click noted in `mouseDown` (`clickedColumn` is the result column under
+  /// the pinned "#" gutter), none on the blank space after the last column
+  static func doubleClickedTableColumn(clickedColumn: Int, lastClickedColumn: Int) -> Int {
+    clickedColumn >= 0 ? lastClickedColumn : -1
+  }
+
   @objc func editClickedCell(_ sender: Any?) {
-    edit(row: clickedRow, tableColumn: clickedColumn)
+    edit(
+      row: clickedRow,
+      tableColumn: Self.doubleClickedTableColumn(
+        clickedColumn: clickedColumn, lastClickedColumn: lastClickedColumn))
   }
 
   // MARK: - Details button
@@ -660,7 +741,7 @@ final class ResultGridTableView: NSTableView {
   func updateDetailsButton(at point: NSPoint) {
     let row = row(at: point)
     setHoveredRow(visibleRect.contains(point) ? row : -1)
-    let tableColumn = column(at: point)
+    let tableColumn = tableColumnIndex(at: point)
     guard row >= 0, tableColumn >= 0, visibleRect.contains(point),
       coordinator?.isEditing != true,
       tableColumns[tableColumn].identifier != ResultGridCoordinator.rowNumberIdentifier
@@ -755,6 +836,9 @@ final class ResultGridTableView: NSTableView {
     observedClipView = superview as? NSClipView
     if let observedClipView {
       observedClipView.postsBoundsChangedNotifications = true
+      center.addObserver(
+        self, selector: #selector(pinGutter(_:)), name: NSView.boundsDidChangeNotification,
+        object: observedClipView)
       center.addObserver(
         self, selector: refresh, name: NSView.boundsDidChangeNotification,
         object: observedClipView)

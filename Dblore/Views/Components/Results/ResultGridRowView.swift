@@ -98,6 +98,16 @@ final class ResultGridRowView: NSTableRowView {
     }
   }
 
+  /// Keeps the "#" cell above the result cells, which scroll under it once it is pinned. AppKit
+  /// adds a reloaded cell last.
+  override func didAddSubview(_ subview: NSView) {
+    super.didAddSubview(subview)
+    guard !(subview is ResultGridRowNumberCell),
+      let gutter = subviews.first(where: { $0 is ResultGridRowNumberCell })
+    else { return }
+    addSubview(gutter, positioned: .above, relativeTo: nil)
+  }
+
   private func redrawGutterCells() {
     for case let cell as ResultGridRowNumberCell in subviews { cell.needsDisplay = true }
   }

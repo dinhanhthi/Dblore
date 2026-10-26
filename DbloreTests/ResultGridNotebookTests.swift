@@ -146,6 +146,59 @@ struct ResultGridNotebookTests {
     #expect(cell?.items.map(\.title).contains("See More") == true)
   }
 
+  @Test("Scrolled sideways, \"#\" stays at the left edge on top of the result columns")
+  func rowNumberColumnPinnedOnHorizontalScroll() throws {
+    let columns = (0..<10).map { ColumnInfo(name: "c\($0)", type: "text") }
+    let wide = CellResult(
+      columns: columns, rows: (0..<5).map { row in columns.map { _ in .string("r\(row)") } },
+      rowCount: 5)
+    let coordinator = ResultGridCoordinator()
+    coordinator.onShowRowDetails = { _, _ in }
+    let tableView = ResultGridView.makeTableView(coordinator: coordinator)
+    let scrollView = ResultGridScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    scrollView.documentView = tableView
+    coordinator.update(tableView, result: wide, sortColumn: nil, ascending: true)
+    scrollView.layoutSubtreeIfNeeded()
+    let clip = scrollView.contentView
+    clip.scroll(to: NSPoint(x: 300, y: clip.bounds.minY))
+    scrollView.reflectScrolledClipView(clip)
+    tableView.layoutSubtreeIfNeeded()
+
+    let row = 1
+    #expect(tableView.frameOfCell(atColumn: 0, row: row).minX == 300)
+    let rowView = try #require(tableView.rowView(atRow: row, makeIfNecessary: false))
+    let gutter = try #require(rowView.view(atColumn: 0) as? ResultGridRowNumberCell)
+    #expect(rowView.convert(gutter.frame, to: tableView).minX == 300)
+    #expect(rowView.subviews.last === gutter)
+    // A result cell reloaded under the gutter stays below it
+    tableView.reloadData(forRowIndexes: [row], columnIndexes: [3])
+    #expect(rowView.subviews.last === gutter)
+
+    // The pinned gutter, not the result column scrolled under it, takes the pointer
+    let point = NSPoint(x: 305, y: tableView.rect(ofRow: row).midY)
+    #expect(tableView.column(at: point) != 0)
+    #expect(tableView.tableColumnIndex(at: point) == 0)
+    let event = try #require(
+      NSEvent.mouseEvent(
+        with: .rightMouseDown, location: tableView.convert(point, to: nil), modifierFlags: [],
+        timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+    let menu = tableView.menu(for: event)?.items.map(\.title)
+    #expect(menu?.contains("Show Row Details") == true)
+    #expect(menu?.contains("See More") == false)  // the gutter menu, not the cell menu
+  }
+
+  @Test("A double-click edits the clicked cell, keeps the pinned \"#\", edits nothing off columns")
+  func doubleClickedTableColumn() {
+    func column(clicked: Int, last: Int) -> Int {
+      ResultGridTableView.doubleClickedTableColumn(clickedColumn: clicked, lastClickedColumn: last)
+    }
+    #expect(column(clicked: 2, last: 2) == 2)
+    // "#" pinned over result column 3
+    #expect(column(clicked: 3, last: 0) == 0)
+    // Blank space right of the last column, after an earlier click on column 2
+    #expect(column(clicked: -1, last: 2) == -1)
+  }
+
   @Test("With row details, \"#\" is never narrower than the details button needs")
   func rowNumberWidthFitsDetailsButton() {
     let minimum = ResultGridTableView.detailsButtonSize + 2 * Spacing.xs
