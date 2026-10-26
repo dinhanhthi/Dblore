@@ -73,6 +73,20 @@ struct EditorModeView: View {
     )
   }
 
+  /// The editor result's chart spec, kept in the view model. A different result timestamp reads
+  /// as nil (the suggestion) until the user edits the chart of that result.
+  func editorChartSpecBinding(for result: CellResult) -> Binding<ChartSpec?> {
+    Binding(
+      get: {
+        viewModel.editorChartSpecStamp == result.timestamp ? viewModel.editorChartSpec : nil
+      },
+      set: { newValue in
+        viewModel.editorChartSpecStamp = result.timestamp
+        viewModel.editorChartSpec = newValue
+      }
+    )
+  }
+
   /// Binding shared by the result header and the plan view. A different result reads as Plan.
   func explainDisplayModeBinding(for result: CellResult) -> Binding<ExplainDisplayMode> {
     Binding(
@@ -296,7 +310,8 @@ struct EditorModeView: View {
     result: CellResult, displayMode: Binding<ResultDisplayMode>
   ) -> some View {
     EditorResultGridView(
-      result: result, viewModel: viewModel, displayMode: displayMode, showsDisplayPicker: false,
+      result: result, viewModel: viewModel, chartSpec: editorChartSpecBinding(for: result),
+      displayMode: displayMode, showsDisplayPicker: false,
       explainMode: explainDisplayModeBinding(for: result), showsExplainPicker: false
     )
     .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls

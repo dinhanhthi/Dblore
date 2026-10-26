@@ -3,9 +3,10 @@
 // mysql-nio's MySQLData accessors are lossy in the binary protocol (spike 2.3: TIME drops days
 // and sign, zero dates come back empty, BIT reads one byte, DECIMAL/JSON/YEAR `.string` is nil).
 // Integers to .int (text when beyond Int, e.g. BIGINT UNSIGNED), FLOAT/DOUBLE to .double,
-// DECIMAL as exact text, DATE/DATETIME/TIMESTAMP to .date (UTC wall clock, like a PostgreSQL
-// `timestamp`) except zero dates, TIME as text, BIT as an integer, JSON to .json, binary
-// collation strings and GEOMETRY (SRID + WKB) to .data, other strings (ENUM, SET) to text.
+// DECIMAL as exact text, DATETIME/TIMESTAMP to .date (UTC wall clock, like a PostgreSQL
+// `timestamp`) except zero dates, DATE as `YYYY-MM-DD` text (no time zone), TIME as text, BIT
+// as an integer, JSON to .json, binary collation strings and GEOMETRY (SRID + WKB) to .data,
+// other strings (ENUM, SET) to text.
 // Never call `MySQLData.description`: it force-unwraps.
 
 import Foundation
@@ -170,9 +171,10 @@ nonisolated enum MySQLValueConverter {
     }
   }
 
-  /// `.date` for a real date; MySQL's own text for a zero date or a zero month / day.
+  /// `.date` for a real date-time; text for a DATE (no time, no time zone) and MySQL's own text
+  /// for a zero date or a zero month / day.
   private static func dateCell(_ parts: DateParts, isDate: Bool, decimals: UInt8) -> CellValue {
-    guard parts.year == 0 || parts.month == 0 || parts.day == 0 else {
+    guard isDate || parts.year == 0 || parts.month == 0 || parts.day == 0 else {
       let seconds =
         daysSinceEpoch(year: parts.year, month: parts.month, day: parts.day) * 86_400
         + parts.hour * 3_600 + parts.minute * 60 + parts.second

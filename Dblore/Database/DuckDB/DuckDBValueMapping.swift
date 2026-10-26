@@ -1,8 +1,9 @@
 // DuckDBValueMapping.swift
 // DuckDB result vectors become CellValue. Scalars map the way PostgreSQL values do (integers to
-// .int, DECIMAL to .double, dates and timestamps to .date, UUID to its string). Nested values
-// (LIST, ARRAY, STRUCT, MAP, UNION) and TIME / INTERVAL become text in DuckDB's own `::VARCHAR`
-// style: `[1, 2]`, `{'a': 1, 'b': x}`, `{k=1}`, `1 year 2 months 3 days 04:05:06.789`.
+// .int, DECIMAL to .double, timestamps to .date, DATE to its `YYYY-MM-DD` text, UUID to its
+// string). Nested values (LIST, ARRAY, STRUCT, MAP, UNION) and TIME / INTERVAL become text in
+// DuckDB's own `::VARCHAR` style: `[1, 2]`, `{'a': 1, 'b': x}`, `{k=1}`,
+// `1 year 2 months 3 days 04:05:06.789`.
 
 import Foundation
 
@@ -208,12 +209,8 @@ nonisolated struct DuckDBValueMapping {
       return .double(data.load(fromByteOffset: row * 8, as: Double.self))
     case DuckDBTypeID.varchar: return .string(Self.string(data, row))
     case DuckDBTypeID.blob: return .data(Self.bytes(data, row))
-    case DuckDBTypeID.date:
-      let days = data.load(fromByteOffset: row * 4, as: Int32.self)
-      if days == Int32.max || days == -Int32.max {
-        return .string(days > 0 ? "infinity" : "-infinity")
-      }
-      return .date(Date(timeIntervalSince1970: Double(days) * 86_400))
+    // No time and no time zone: the date text, never midnight UTC
+    case DuckDBTypeID.date: return .string(scalarText(id, data, row))
     case DuckDBTypeID.timestamp, DuckDBTypeID.timestampTZ, DuckDBTypeID.timestampS,
       DuckDBTypeID.timestampMS, DuckDBTypeID.timestampNS:
       guard let micros = Self.timestampMicros(id, data, row) else {
@@ -304,7 +301,7 @@ nonisolated struct DuckDBValueMapping {
     case DuckDBTypeID.date:
       let days = data.load(fromByteOffset: row * 4, as: Int32.self)
       if days == Int32.max || days == -Int32.max { return days > 0 ? "infinity" : "-infinity" }
-      return Self.dayFormatter.string(from: Date(timeIntervalSince1970: Double(days) * 86_400))
+      return CivilDate.text(daysSince1970: Int(days), bcSuffix: " (BC)")
     case DuckDBTypeID.timestamp, DuckDBTypeID.timestampTZ, DuckDBTypeID.timestampS,
       DuckDBTypeID.timestampMS, DuckDBTypeID.timestampNS:
       guard let micros = Self.timestampMicros(id, data, row) else {
@@ -532,7 +529,6 @@ nonisolated struct DuckDBValueMapping {
     data.load(fromByteOffset: row * 8, as: Int64.self) > 0 ? "infinity" : "-infinity"
   }
 
-  private static let dayFormatter = utcFormatter("yyyy-MM-dd")
   private static let secondFormatter = utcFormatter("yyyy-MM-dd HH:mm:ss")
 
   private static func utcFormatter(_ format: String) -> DateFormatter {

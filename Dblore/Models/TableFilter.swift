@@ -132,9 +132,9 @@ struct TableFilter: Codable, Hashable {
     case .isNull: return "\(column) IS NULL"
     case .isNotNull: return "\(column) IS NOT NULL"
     case .like, .notLike, .ilike, .notIlike:
-      let pattern =
-        condition.likeEscape.map { "\(value) ESCAPE \(dialect.literal(.string($0)))" } ?? value
-      return likeSQL(column: column, value: pattern, op: condition.op, dialect: dialect)
+      let escape = condition.likeEscape.map { dialect.literal(.string($0)) }
+      return likeSQL(
+        column: column, value: value, escape: escape, op: condition.op, dialect: dialect)
     case .in:
       let items = condition.value.split(separator: ",")
         .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -146,17 +146,18 @@ struct TableFilter: Codable, Hashable {
   }
 
   /// PostgreSQL (`::text`) and DuckDB (`::VARCHAR`) cast to text and keep `LIKE` vs `ILIKE`.
-  /// SQLite is always `LIKE`. `caseInsensitiveLike` matches only the non-negated form of that text.
+  /// SQLite and MySQL have no `ILIKE`: `ilike` is `caseInsensitiveLike` (both sides lowered),
+  /// `notIlike` is `NOT LIKE`.
   private static func likeSQL(
-    column: String, value: String, op: FilterOperator, dialect: SQLDialect
+    column: String, value: String, escape: String?, op: FilterOperator, dialect: SQLDialect
   ) -> String {
-    let negated = op == .notLike || op == .notIlike
-    let insensitive = op == .ilike || op == .notIlike
-    if !negated && (insensitive || dialect.likeIsCaseInsensitive) {
-      return dialect.caseInsensitiveLike(column: column, pattern: value)
+    if op == .ilike {
+      return dialect.caseInsensitiveLike(column: column, pattern: value, escape: escape)
     }
+    let negated = op == .notLike || op == .notIlike
     let subject = dialect.likeSubject(column)
-    let keyword = insensitive && !dialect.likeIsCaseInsensitive ? "ILIKE" : "LIKE"
-    return "\(subject) \(negated ? "NOT " : "")\(keyword) \(value)"
+    let keyword = op == .notIlike && !dialect.likeIsCaseInsensitive ? "ILIKE" : "LIKE"
+    let pattern = escape.map { "\(value) ESCAPE \($0)" } ?? value
+    return "\(subject) \(negated ? "NOT " : "")\(keyword) \(pattern)"
   }
 }

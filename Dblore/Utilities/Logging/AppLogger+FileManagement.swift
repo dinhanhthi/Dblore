@@ -10,8 +10,17 @@ import Foundation
 // MARK: - File Management
 
 extension AppLogger {
-  /// Write log entry to file
-  func writeToFile(entry: LogEntry, fileURL: URL) async {
+  /// Serial queue that owns every log file write, off the actor
+  nonisolated static let fileQueue = DispatchQueue(
+    label: "ace.thi.dblore.app.logger.file", qos: .utility)
+
+  /// Waits until every queued log line is on disk (before the files are read, exported or cleared)
+  nonisolated static func flushFileWrites() {
+    fileQueue.sync {}
+  }
+
+  /// Write log entry to file. Runs on `fileQueue` only.
+  nonisolated static func writeToFile(entry: LogEntry, fileURL: URL) {
     let logLine = entry.formattedLine + "\n"
 
     guard let data = logLine.data(using: .utf8) else { return }
@@ -114,6 +123,7 @@ extension AppLogger {
   /// Get all logs as formatted text (for synchronous export)
   /// Combines all log files within retention period (7 days)
   nonisolated func getAllLogsText() -> String {
+    Self.flushFileWrites()
     let fileManager = FileManager.default
     guard
       let appSupportURL = fileManager.urls(
@@ -190,6 +200,7 @@ extension AppLogger {
 
   /// Deletes closed log files and truncates the current one. Other files in `directory` stay.
   nonisolated static func clearLogFiles(in directory: URL, now: Date = Date()) throws {
+    flushFileWrites()
     let current = currentLogFileName(on: now)
     for file in logFiles(in: directory) {
       if file.lastPathComponent == current {

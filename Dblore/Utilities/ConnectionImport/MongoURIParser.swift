@@ -170,6 +170,32 @@ nonisolated enum MongoURIParser {
 
   static let defaultPort = 27017
 
+  /// Why `checkedMongoURI` refused a connection string.
+  enum URIMismatch: Error, Equatable, Sendable {
+    /// Not MongoDB, not parsable, or it names another host or port
+    case host
+    /// It lists other hosts besides this one
+    case otherHosts
+    /// Its tls/ssl option disagrees with the TLS mode
+    case tls
+  }
+
+  /// The stored form of a connection string from a file (an imported connection, an opened
+  /// workspace) when it reaches only `host` and `port` (MongoSession seeds every host it names)
+  /// and its tls/ssl option agrees with `sslMode`.
+  static func checkedMongoURI(
+    _ text: String, host: String, port: Int, engine: DatabaseType, sslMode: SSLMode
+  ) -> Result<String, URIMismatch> {
+    guard engine == .mongodb, let uri = try? parse(text) else { return .failure(.host) }
+    let sameHosts =
+      uri.isSRV
+      ? uri.hosts.count == 1 && uri.hosts[0].name == host
+      : uri.hosts.allSatisfy { $0.name == host && ($0.port ?? defaultPort) == port }
+    guard sameHosts else { return .failure(uri.hosts.count > 1 ? .otherHosts : .host) }
+    if let flag = uri.tls, flag != (sslMode != .disable) { return .failure(.tls) }
+    return .success(uri.storedURI)
+  }
+
   /// Options that would read a file, refused in the sandbox.
   private static let fileOptions: Set<String> = [
     "tlscafile", "tlscertificatekeyfile", "tlscertificatekeyfilepassword",

@@ -55,6 +55,10 @@ struct ConnectionFormContent: View {
   /// Changes when the owner replaces `connectionConfig` with a new draft (a Finder file).
   var draftGeneration: Int = 0
 
+  /// Opened on a draft (an opened file, a failed connect): the Recent menu keeps it instead of
+  /// loading the most recent row.
+  var opensOnDraft: Bool = false
+
   /// Safety shows all four fields as two pairs (Details); otherwise only the two timeouts pair up.
   var pairsAllSafetyFields: Bool = false
 
@@ -151,6 +155,7 @@ struct ConnectionFormContent: View {
     unlockConnectError: Binding<String?>? = nil,
     onOpenPluginSettings: (@MainActor () -> Void)? = nil,
     draftGeneration: Int = 0,
+    opensOnDraft: Bool = false,
     pairsAllSafetyFields: Bool = false
   ) {
     self._connectionConfig = connectionConfig
@@ -166,6 +171,7 @@ struct ConnectionFormContent: View {
     self.unlockConnectError = unlockConnectError
     self.onOpenPluginSettings = onOpenPluginSettings
     self.draftGeneration = draftGeneration
+    self.opensOnDraft = opensOnDraft
     self.pairsAllSafetyFields = pairsAllSafetyFields
   }
 
@@ -536,6 +542,17 @@ struct ConnectionFormContent: View {
       entry.config.host == config.host && entry.config.port == config.port
       && entry.config.database == config.database && entry.config.username == config.username
     return sameTarget ? selectedId : nil
+  }
+
+  /// The Recent row the form loads over its values, and the row it selects. A form opened fresh
+  /// loads the most recent row. A form opened on a draft keeps it and selects only a row with
+  /// the draft's target.
+  static func openingHistory(
+    history: [ConnectionHistoryEntry], draft: ConnectionConfig, opensOnDraft: Bool
+  ) -> (load: ConnectionHistoryEntry?, selectedHistoryId: UUID?) {
+    guard opensOnDraft else { return (history.first, history.first?.id) }
+    let key = connectionTargetKey(draft)
+    return (nil, history.first { connectionTargetKey($0.config) == key }?.id)
   }
 
   /// Choosing a SQLite or DuckDB file. A different path drops the loaded recent row.

@@ -163,9 +163,13 @@ extension ConnectionFormContent {
 
   func loadConnectionHistory() {
     setConnectionHistory(SessionManager.loadHistory())
-    if let mostRecent = getConnectionHistory().first {
-      setSelectedHistoryId(mostRecent.id)
-      loadConnection(mostRecent)
+    let opening = Self.openingHistory(
+      history: getConnectionHistory(), draft: connectionConfig, opensOnDraft: opensOnDraft)
+    // Only a draft form writes the selection here; a fresh form keeps it for `deleteConnection`
+    if let entry = opening.load {
+      loadConnection(entry)
+    } else if opensOnDraft {
+      setSelectedHistoryId(opening.selectedHistoryId)
     }
   }
 

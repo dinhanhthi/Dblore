@@ -54,9 +54,11 @@ import Testing
   /// Any OID: extension types are named per database.
   private static let oid: UInt32 = 99_999
 
-  private static func cell(_ bytes: [UInt8]) -> PostgresCell {
+  private static func cell(
+    _ bytes: [UInt8], dataType: PostgresDataType = PostgresDataType(oid)
+  ) -> PostgresCell {
     PostgresCell(
-      bytes: ByteBuffer(bytes: bytes), dataType: PostgresDataType(oid), format: .binary,
+      bytes: ByteBuffer(bytes: bytes), dataType: dataType, format: .binary,
       columnName: "embedding", columnIndex: 0)
   }
 
@@ -118,5 +120,49 @@ import Testing
     let vector =
       Self.bigEndian([UInt16(2), 0]) + Self.bigEndian([Float(1).bitPattern, Float(2).bitPattern])
     #expect(DatabaseConnectionManager.parseCellValue(from: Self.cell(vector)) == .string("[1, 2]"))
+  }
+
+  /// vector_send's dimension is a UInt16: a 12,000-dimension vector was cut off at 10,000.
+  @MainActor @Test func vectorAboveTenThousandDimensionsDecodes() throws {
+    let dimension = 12_000
+    let bytes =
+      Self.bigEndian([UInt16(dimension), 0])
+      + Self.bigEndian(Array(repeating: Float(1).bitPattern, count: dimension))
+    let value = DatabaseConnectionManager.parseCellValue(from: Self.cell(bytes))
+    let text = "[" + Array(repeating: "1", count: dimension).joined(separator: ", ") + "]"
+    #expect(value == .string(text))
+    #expect(VectorValue(text: value.fullString)?.dimension == dimension)
+  }
+
+  // MARK: - point
+
+  /// point_send: x then y as big-endian float8, shown as point_out's text (float8out digits:
+  /// shortest round-trip, fixed for decimal exponents -4...14, else `1e+15`).
+  private static let points: [(Double, Double, String)] = [
+    (1.5, -2, "(1.5,-2)"),
+    (1e15, 1e14, "(1e+15,100000000000000)"),
+    (
+      9_007_199_254_740_992, 18_014_398_509_481_984,
+      "(9.007199254740992e+15,1.8014398509481984e+16)"
+    ),
+    (0.0001, 0.00001, "(0.0001,1e-05)"),
+    (.nan, .infinity, "(NaN,Infinity)"),
+    (-.infinity, -0.0, "(-Infinity,-0)"),
+    (123.456e-7, 5e-324, "(1.23456e-05,5e-324)"),
+    (
+      123_456_789_012_345_678, 1.7976931348623157e308,
+      "(1.2345678901234568e+17,1.7976931348623157e+308)"
+    ),
+  ]
+
+  @MainActor @Test(arguments: points)
+  func pointBinaryDecodesToText(_ x: Double, _ y: Double, _ text: String) {
+    let bytes = Self.bigEndian([x.bitPattern, y.bitPattern])
+    let cell = Self.cell(bytes, dataType: .point)
+    #expect(DatabaseConnectionManager.parseCellValue(from: cell) == .string(text))
+    let truncated = Array(bytes.dropLast())
+    #expect(
+      DatabaseConnectionManager.parseCellValue(from: Self.cell(truncated, dataType: .point))
+        == .data(Data(truncated)))
   }
 }

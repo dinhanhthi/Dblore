@@ -730,6 +730,9 @@ enum DataExporter {
       .replacingOccurrences(of: "\r", with: "<br>")
   }
 
+  /// Shared by every writer: a formatter per date cell made large exports slow.
+  private static let isoDateFormatter = ISO8601DateFormatter()
+
   private static func escapeXML(_ value: String) -> String {
     var escaped = value
     escaped = escaped.replacingOccurrences(of: "&", with: "&amp;")
@@ -756,7 +759,7 @@ enum DataExporter {
       return ("String", escapeXML(json))
     case .date(let date):
       // Use ISO8601 format for dates in Excel
-      return ("String", escapeXML(ISO8601DateFormatter().string(from: date)))
+      return ("String", escapeXML(isoDateFormatter.string(from: date)))
     case .data(let data):
       return ("String", escapeXML(data.base64EncodedString()))
     }
@@ -779,7 +782,7 @@ enum DataExporter {
       return ("inlineStr", "<is><t>\(escapeXML(json))</t></is>")
     case .date(let date):
       return (
-        "inlineStr", "<is><t>\(escapeXML(ISO8601DateFormatter().string(from: date)))</t></is>"
+        "inlineStr", "<is><t>\(escapeXML(isoDateFormatter.string(from: date)))</t></is>"
       )
     case .data(let data):
       return ("inlineStr", "<is><t>\(escapeXML(data.base64EncodedString()))</t></is>")
@@ -826,7 +829,7 @@ enum DataExporter {
       }
       return json
     case .date(let date):
-      return ISO8601DateFormatter().string(from: date)
+      return isoDateFormatter.string(from: date)
     case .data(let data):
       return data.base64EncodedString()
     }

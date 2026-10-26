@@ -52,8 +52,8 @@ struct DocumentTreeView: View {
   var expansionRequest: DocumentTreeExpansionRequest? = nil
 
   @State private var model: DocumentTreeModel?
-  /// Timestamp of the result `model` was built from
-  @State private var modelStamp: Date?
+  /// Stamp of the result `model` was built from
+  @State private var modelStamp: ResultStamp?
   /// The line edited inline; one for the whole view
   @State private var editing: DocumentTreeNodeID?
   /// Text of the inline edit, and the text it started from
@@ -61,13 +61,24 @@ struct DocumentTreeView: View {
   @State private var original = ""
   @FocusState private var focusedLine: DocumentTreeNodeID?
 
+  /// The timestamp stands for the rows of one run, `dataRevision` for rows replaced within that
+  /// run (the inline edit refresh).
+  private struct ResultStamp: Equatable {
+    var timestamp: Date
+    var dataRevision: Int
+  }
+
+  private var resultStamp: ResultStamp {
+    ResultStamp(timestamp: result.timestamp, dataRevision: result.dataRevision)
+  }
+
   private static let cardSpacing = Spacing.sm
   private static let listPadding = Spacing.sm
 
   /// The shown cards were built from an earlier result (a rebuild is running): they stay drawn,
   /// with the scroll position, but offer no edit, details or staging action, since their rows
   /// may no longer match the result's.
-  private var isStale: Bool { modelStamp != result.timestamp }
+  private var isStale: Bool { modelStamp != resultStamp }
 
   var body: some View {
     Group {
@@ -80,7 +91,7 @@ struct DocumentTreeView: View {
           .frame(height: fillsAvailableHeight ? nil : Self.height(cards: []))
       }
     }
-    .task(id: result.timestamp) { await build() }
+    .task(id: resultStamp) { await build() }
     .onChange(of: stagedInserts) { _, inserts in model?.setStagedInserts(inserts) }
     .onChange(of: expansionRequest) { _, request in
       if let request { apply(request) }
@@ -97,7 +108,7 @@ struct DocumentTreeView: View {
 
   private func build() async {
     editing = nil
-    let stamp = result.timestamp
+    let stamp = resultStamp
     let columns = result.columns
     let rows = result.rows
     // Expansion and paging carry over by position (e.g. the reload after an edit)

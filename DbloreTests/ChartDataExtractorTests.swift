@@ -91,6 +91,25 @@ struct ChartDataExtractorTests {
     )
   }
 
+  @Test("A DATE column's date-only text charts as a temporal x")
+  func dateOnlyTextChartsAsTemporal() {
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "month", type: "DATE"),
+        ColumnInfo(name: "value", type: "float8"),
+      ],
+      rows: [
+        [.string("2025-02-01"), .double(20)],
+        [.string("2025-01-01"), .double(10)],
+      ]
+    )
+    let spec = ChartSpec(kind: .line, xColumn: "month", yColumns: ["value"], seriesColumn: nil)
+    let series = ChartDataExtractor.points(result: result, spec: spec)
+
+    #expect(series.droppedCount == 0)
+    #expect(series.points.map(\.y) == [10, 20])
+  }
+
   @Test("Category x is a labeled index in first-seen order")
   func categoryUsesLabeledIndex() {
     let result = queryResult(

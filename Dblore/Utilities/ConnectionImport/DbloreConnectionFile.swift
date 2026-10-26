@@ -355,9 +355,11 @@ nonisolated extension DbloreConnectionFile.Connection {
     if !aiRules.isEmpty { warnings.append(Warning.aiRules) }
     if let warning = scriptsWarning() { warnings.append(warning) }
     if let mongoURI {
-      switch checkedMongoURI(mongoURI, host: savedHost, engine: engine, sslMode: tls) {
+      switch MongoURIParser.checkedMongoURI(
+        mongoURI, host: savedHost, port: port, engine: engine, sslMode: tls)
+      {
       case .success(let uri): config.mongoURI = uri
-      case .failure(let skipped): warnings.append(skipped.message)
+      case .failure(let mismatch): warnings.append(Self.message(for: mismatch))
       }
     }
     return .success(ImportedConnection(config: config, source: .dblore, warnings: warnings))
@@ -377,34 +379,13 @@ nonisolated extension DbloreConnectionFile.Connection {
     return "Scripts named in the file are not applied: choose them in the connection form\(list)."
   }
 
-  /// The stored form of `text` when it reaches only this row's host and port (MongoSession seeds
-  /// every host it names) and its tls/ssl option agrees with `sslMode`.
-  private func checkedMongoURI(
-    _ text: String, host: String, engine: DatabaseType, sslMode: SSLMode
-  )
-    -> Result<String, Skipped>
-  {
-    let hostMismatch = Skipped(
-      message: "Connection string not imported: it does not match this connection's host.")
-    guard engine == .mongodb, let uri = try? MongoURIParser.parse(text) else {
-      return .failure(hostMismatch)
+  /// The warning for a connection string `MongoURIParser.checkedMongoURI` refused.
+  private static func message(for mismatch: MongoURIParser.URIMismatch) -> String {
+    switch mismatch {
+    case .host: "Connection string not imported: it does not match this connection's host."
+    case .otherHosts: "Connection string not imported: it lists other hosts besides this one."
+    case .tls: "Connection string not imported: its TLS option does not match the TLS mode."
     }
-    let sameHosts =
-      uri.isSRV
-      ? uri.hosts.count == 1 && uri.hosts[0].name == host
-      : uri.hosts.allSatisfy { $0.name == host && ($0.port ?? MongoURIParser.defaultPort) == port }
-    guard sameHosts else {
-      guard uri.hosts.count > 1 else { return .failure(hostMismatch) }
-      return .failure(
-        Skipped(
-          message: "Connection string not imported: it lists other hosts besides this one."))
-    }
-    if let flag = uri.tls, flag != (sslMode != .disable) {
-      return .failure(
-        Skipped(
-          message: "Connection string not imported: its TLS option does not match the TLS mode."))
-    }
-    return .success(uri.storedURI)
   }
 
   private static let validPorts = 1...65535

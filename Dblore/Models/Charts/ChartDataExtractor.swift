@@ -76,6 +76,10 @@ nonisolated enum ChartDataExtractor {
     let nameYColumns = spec.yColumns.count > 1
     // One per extraction, not shared: extraction runs off the main thread
     let dateFormatter = ISO8601DateFormatter()
+    // A DATE column's `2025-01-01`, at local midnight so the axis shows that day
+    let dayFormatter = ISO8601DateFormatter()
+    dayFormatter.formatOptions = [.withFullDate]
+    dayFormatter.timeZone = .current
 
     var categories: [String: Int] = [:]
     var droppedCount = 0
@@ -97,7 +101,8 @@ nonisolated enum ChartDataExtractor {
             xColumn: spec.xColumn,
             temporal: temporal,
             categories: &categories,
-            dateFormatter: dateFormatter
+            dateFormatter: dateFormatter,
+            dayFormatter: dayFormatter
           )
           resolvedX = true
         }
@@ -238,7 +243,8 @@ nonisolated enum ChartDataExtractor {
     xColumn: String?,
     temporal: Bool,
     categories: inout [String: Int],
-    dateFormatter: ISO8601DateFormatter
+    dateFormatter: ISO8601DateFormatter,
+    dayFormatter: ISO8601DateFormatter
   ) -> ChartX? {
     guard xColumn != nil else { return .number(Double(rowIndex)) }
     guard let cell else { return nil }
@@ -255,7 +261,7 @@ nonisolated enum ChartDataExtractor {
       if temporal {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let number = Double(trimmed), number.isFinite { return .number(number) }
-        if let date = dateFormatter.date(from: trimmed) {
+        if let date = dateFormatter.date(from: trimmed) ?? dayFormatter.date(from: trimmed) {
           return .number(date.timeIntervalSince1970)
         }
         return nil

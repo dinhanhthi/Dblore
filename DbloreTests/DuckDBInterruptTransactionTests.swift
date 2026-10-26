@@ -83,16 +83,82 @@ struct DuckDBInterruptTransactionTests {
     await connection.disconnect()
   }
 
+  /// The statement-timeout watchdog interrupts like a cancel: DuckDB aborts the transaction and
+  /// a later COMMIT would answer success
+  @Test("A statement timeout inside BEGIN rolls back the transaction; a later COMMIT fails")
+  func timeoutInsideBeginRollsBack() async throws {
+    let connection = try await connectInTransaction(timeoutSeconds: 1)
+    let error = await #expect(throws: DatabaseError.self) {
+      try await connection.execute(userSQL: Self.longRead, policy: open)
+    }
+    #expect(error?.localizedDescription.hasSuffix("Your open transaction was rolled back.") == true)
+    try await expectNoTransaction(on: connection, rows: 0)
+  }
+
+  /// Execution errors abort a DuckDB transaction; parse, catalog and binder errors leave it
+  /// usable (checked against DuckDB 1.5), so only the first is rolled back
+  @Test(
+    "A failed statement inside BEGIN rolls back an aborted transaction and keeps a usable one",
+    arguments: [
+      ("INSERT INTO t VALUES ('not a number')", true),
+      ("SELECT missing_column FROM t", false),
+    ])
+  func failedStatementInsideBegin(sql: String, aborts: Bool) async throws {
+    let connection = try await connectInTransaction()
+    let policy = open
+    await #expect(throws: DatabaseError.self) {
+      try await connection.execute(userSQL: sql, policy: policy)
+    }
+    if aborts {
+      try await expectNoTransaction(on: connection, rows: 0)
+    } else {
+      #expect(await connection.runningStatementStatus().userTxOpen)
+      _ = try await connection.execute(userSQL: "COMMIT", policy: open)
+      let count = try await connection.execute(userSQL: "SELECT count(*) FROM t", policy: open)
+      #expect(count.rows == [[.int(1)]])
+      await connection.disconnect()
+    }
+  }
+
+  /// Protected mode: the aborted app transaction is rolled back too. One the failed statement
+  /// opened itself held nothing: rolled back quietly, the error unchanged
+  @Test(
+    "Protected mode: a failed statement rolls back the aborted app transaction",
+    arguments: [0, 1])
+  func protectedFailedStatementRollsBack(pending: Int) async throws {
+    let connection = try await connect(protectedMode: true)
+    if pending == 1 {
+      _ = try await connection.execute(userSQL: "INSERT INTO t VALUES (1)", policy: protected)
+    }
+    #expect(await connection.transactionSnapshot().pending.count == pending)
+    let policy = protected
+    let error = await #expect(throws: DatabaseError.self) {
+      try await connection.execute(userSQL: "INSERT INTO t VALUES ('not a number')", policy: policy)
+    }
+    let message = error?.localizedDescription ?? ""
+    if pending == 1 {
+      #expect(message.hasSuffix("1 pending change was rolled back."))
+    } else {
+      #expect(!message.contains("rolled back"))
+    }
+    #expect(await connection.transactionSnapshot().isIdle)
+    let count = try await connection.execute(userSQL: "SELECT count(*) FROM t", policy: open)
+    #expect(count.rows == [[.int(0)]])
+    await connection.disconnect()
+  }
+
   // MARK: - Helpers
 
   /// An in-memory database with table `t` (committed)
-  private func connect(protectedMode: Bool) async throws -> DatabaseConnectionManager {
+  private func connect(
+    protectedMode: Bool, timeoutSeconds: Int = 30
+  ) async throws -> DatabaseConnectionManager {
     let connection = DatabaseConnectionManager(sessionFactory: Factory())
     try await connection.connect(
       config: ConnectionConfig(
         databaseType: .duckdb, database: DuckDBSession.inMemoryPath, sslMode: .disable,
         protectionLevel: .none, safeMode: .silent, protectedMode: protectedMode,
-        statementTimeoutSeconds: 30))
+        statementTimeoutSeconds: timeoutSeconds))
     _ = try await connection.execute(userSQL: "CREATE TABLE t (x BIGINT)", policy: open)
     // Protected mode stages the CREATE too: commit it, so only the test's change is pending
     if protectedMode {
@@ -103,8 +169,12 @@ struct DuckDBInterruptTransactionTests {
   }
 
   /// `connect`, then BEGIN and one row inserted in the transaction
-  private func connectInTransaction() async throws -> DatabaseConnectionManager {
-    let connection = try await connect(protectedMode: false)
+  private func connectInTransaction(
+    timeoutSeconds: Int = 30
+  ) async throws
+    -> DatabaseConnectionManager
+  {
+    let connection = try await connect(protectedMode: false, timeoutSeconds: timeoutSeconds)
     _ = try await connection.execute(userSQL: "BEGIN", policy: open)
     _ = try await connection.execute(userSQL: "INSERT INTO t VALUES (1)", policy: open)
     #expect(await connection.runningStatementStatus().userTxOpen)
@@ -152,6 +222,21 @@ struct DuckDBInterruptTransactionTests {
     }
     let count = try await connection.execute(userSQL: "SELECT count(*) FROM t", policy: open)
     #expect(count.rows == [[.int(0)]])
+    await connection.disconnect()
+  }
+
+  /// No transaction is left open: COMMIT fails instead of answering success, and the table
+  /// holds `rows` rows
+  private func expectNoTransaction(
+    on connection: DatabaseConnectionManager, rows: Int
+  ) async throws {
+    #expect(await connection.runningStatementStatus().userTxOpen == false)
+    let policy = open
+    await #expect(throws: (any Error).self) {
+      try await connection.execute(userSQL: "COMMIT", policy: policy)
+    }
+    let count = try await connection.execute(userSQL: "SELECT count(*) FROM t", policy: open)
+    #expect(count.rows == [[.int(rows)]])
     await connection.disconnect()
   }
 

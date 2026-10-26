@@ -238,21 +238,35 @@ extension NotebookViewModel {
   /// Success reloads the page and clears the set. Failure keeps the set and shows the error.
   /// Staged deletes are counted first (`stagedDeleteImpact`): a blocker with rows asks Commit
   /// Anyway or Cancel first, unless `ignoringBlockers` (the preview sheet's Commit Anyway); a
-  /// count not computed does not. Safe Mode confirms after either way.
+  /// count not computed does not. Safe Mode confirms after either way. A commit already in
+  /// flight refuses a second one, which would build and send the same batch again.
   func commitStaged(ignoringBlockers: Bool = false) async {
+    guard stagedBlockerContinuation == nil else {
+      showToast("Answer the open Commit Anyway prompt first.", type: .warning)
+      return
+    }
+    guard !isCommittingStaged else {
+      showToast("The staged changes are already being committed.", type: .warning)
+      return
+    }
+    isCommittingStaged = true
+    defer { isCommittingStaged = false }
     if stagesDocuments {
       await commitStagedDocuments()
       return
     }
     guard discardsInvalidatedStagedSet() == false else { return }
     await fillMissingIntegerKeys()
-    // The key lookup awaited: the page may have reloaded (no target: keep the set) or the table
-    // changed (discard with the warning). Only a live, valid set may clear silently below.
+    // The key lookup awaited: the set may be gone (Discard, its tab closed), the page may have
+    // reloaded (no target: keep the set) or the table changed (discard with the warning). Only
+    // a live, valid set may clear silently below.
+    guard dataViewer?.changeSet != nil else { return }
     guard discardsInvalidatedStagedSet() == false else { return }
     let checkedDeletes = dataViewer?.changeSet?.deletes
     isCheckingStagedDeletes = true
     let impact = await stagedDeleteImpact()
     isCheckingStagedDeletes = false
+    guard dataViewer?.changeSet != nil else { return }
     guard discardsInvalidatedStagedSet() == false else { return }
     if impact != nil, dataViewer?.changeSet?.deletes != checkedDeletes {
       showToast(
@@ -298,14 +312,10 @@ extension NotebookViewModel {
     await runConfirmedStagedBatch(batch)
   }
 
-  /// Shows the blockers with Commit Anyway / Cancel; true for Commit Anyway. A prompt that is
-  /// already open refuses the new request with a toast.
+  /// Shows the blockers with Commit Anyway / Cancel; true for Commit Anyway. `commitStaged`
+  /// refuses a new commit while this prompt is open.
   private func confirmCommitPastBlockers(_ impact: CascadeImpactSummary) async -> Bool {
-    guard stagedBlockerContinuation == nil else {
-      showToast("Answer the open Commit Anyway prompt first.", type: .warning)
-      return false
-    }
-    return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+    await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
       stagedBlockerContinuation = continuation
       stagedBlockerPrompt = impact
     }

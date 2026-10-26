@@ -574,6 +574,7 @@ extension WorkspaceManager {
 
   /// Show connection form modal
   func showConnectionForm() {
+    connectionFormOpensOnDraft = false
     isConnectionFormModalVisible = true
   }
 

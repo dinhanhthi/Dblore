@@ -65,6 +65,28 @@ struct ViewModelSidebarTests {
       viewModel.rightSidebarContent == .jsonViewer(json: "{\"a\":3}", path: "Row 2, Column 'doc'"))
   }
 
+  @Test("A JSON cell over the highlight limit opens raw in Cell Value, not the JSON viewer")
+  func largeGridJSONOpensCellValue() {
+    let viewModel = NotebookViewModel(notebook: createTestNotebook())
+    let padding = CellInfoContent.maxHighlightedBytes - 4
+    let atLimit = "[\"" + String(repeating: "a", count: padding) + "\"]"
+    let overLimit = "[\"" + String(repeating: "a", count: padding + 1) + "\"]"
+    let result = CellResult(
+      columns: [ColumnInfo(name: "doc", type: "jsonb")],
+      rows: [[.json(atLimit)], [.json(overLimit)]], rowCount: 2)
+    viewModel.showGridCellInSidebar(
+      row: result.rows[0], originalRow: 0, column: 0, result: result, cellId: nil)
+    #expect(
+      viewModel.rightSidebarContent == .jsonViewer(json: atLimit, path: "Row 1, Column 'doc'"))
+    viewModel.showGridCellInSidebar(
+      row: result.rows[1], originalRow: 1, column: 0, result: result, cellId: nil)
+    guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
+      Issue.record("expected Cell Value, got \(String(describing: viewModel.rightSidebarContent))")
+      return
+    }
+    #expect(value == .json(overLimit))
+  }
+
   @Test("Row details shown from a sorted grid open the original row with its key")
   func gridRowDetailsUseOriginalRow() {
     let viewModel = NotebookViewModel(notebook: createTestNotebook())

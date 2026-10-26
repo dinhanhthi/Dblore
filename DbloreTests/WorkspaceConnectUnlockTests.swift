@@ -17,7 +17,7 @@ struct WorkspaceConnectUnlockTests {
     username: String = "admin", protectionLevel: ConnectionProtectionLevel = .none
   ) -> ConnectionConfig {
     var config = ConnectionConfig(
-      host: host, port: 5432, database: database, username: username, password: "pw",
+      host: host, port: 5432, database: database, username: username,
       protectionLevel: protectionLevel)
     config.applyCommitStyle(style)
     return config
@@ -333,7 +333,9 @@ struct WorkspaceConnectUnlockIntegrationTests {
           config: weak, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
       }
       #expect(await !manager.connectionManager.isConnected)
-      #expect(manager.workspace.connectionConfig == strict)
+      var opened = strict
+      opened.password = ""  // the init drops the workspace config's own password
+      #expect(manager.workspace.connectionConfig == opened)
 
       try await manager.completePendingWeakeningConnect()
       #expect(manager.pendingWeakeningConnect == nil)

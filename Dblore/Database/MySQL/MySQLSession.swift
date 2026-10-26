@@ -612,7 +612,7 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
   /// loopback address included). The bootstrap sets what mysql-nio's `connect(to:)` sets, and
   /// adds the full-authentication guard in front of the handlers the login appends. Through
   /// `forwarder`, a connection closed because the bastion refused its tunnel channel fails with
-  /// that refusal instead of mysql-nio's `.closed`.
+  /// that refusal instead of the login's own error.
   static func connect(
     to address: SocketAddress, config: ConnectionConfig, tls: TLSConfiguration?,
     on loop: any EventLoop, forwarder: SSHLoopbackForwarder?
@@ -640,9 +640,8 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
         let clientPort = channel.localAddress?.port
         return login(over: channel, config: config, tls: tls, refusal: refusal)
           .flatMapErrorThrowing { error in
-            // A guard refusal is already worded by `login` and is no longer `.closed`.
-            guard case MySQLError.closed = error, let forwarder,
-              let openError = forwarder.takeOpenError(clientPort: clientPort)
+            // The bastion's refusal wins over whatever error the closed channel gave the login.
+            guard let forwarder, let openError = forwarder.takeOpenError(clientPort: clientPort)
             else { throw error }
             throw openError
           }

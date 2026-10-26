@@ -23,6 +23,15 @@ nonisolated private final class ImmediateInlineClient: AIChatClient, @unchecked 
   func listModels() async throws -> [String] { [] }
 }
 
+/// The editor's own undo stack, as the editor's coordinator vends it. The coordinator itself
+/// stays out: it blurs its focused text view on every `.unfocusEditor`, which any test running
+/// a cell posts while these tests wait for ghost text.
+@MainActor private final class GhostTextUndoDelegate: NSObject, NSTextViewDelegate {
+  let undoManager = UndoManager()
+
+  func undoManager(for view: NSTextView) -> UndoManager? { undoManager }
+}
+
 @Suite("SQL Text View Ghost Text")
 @MainActor
 struct SQLTextViewGhostTextTests {
@@ -32,6 +41,8 @@ struct SQLTextViewGhostTextTests {
   private let window = NSWindow(
     contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
     backing: .buffered, defer: false)
+  /// Held here because the text view does not retain its delegate
+  private let undoDelegate = GhostTextUndoDelegate()
 
   private func makeController(
     reply: String = suggestion, enabled: Bool = true
@@ -48,23 +59,20 @@ struct SQLTextViewGhostTextTests {
     return controller
   }
 
-  /// Focused text view in a window with the editor's own undo stack, as `makeNSView` wires it
+  /// Focused text view in a window with the editor's own undo stack
   private func makeEditor(
     _ controller: AIInlineCompletionController?, width: CGFloat = 600
-  ) -> (SQLTextView, HighlightedTextEditorRepresentable.Coordinator) {
-    let coordinator = HighlightedTextEditorRepresentable.Coordinator(
-      text: .constant(""), height: .constant(40), isEmpty: .constant(true), onTextChanged: nil)
+  ) -> SQLTextView {
     let textView = SQLTextView(frame: NSRect(x: 0, y: 0, width: width, height: 200))
-    textView.delegate = coordinator
+    textView.delegate = undoDelegate
     textView.isRichText = false
     textView.allowsUndo = true
     textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-    coordinator.textView = textView
     window.contentView?.addSubview(textView)
     window.makeFirstResponder(textView)
     textView.undoManager?.groupsByEvent = false
     textView.inlineCompletion = controller
-    return (textView, coordinator)
+    return textView
   }
 
   /// Focused text view in a 200-point wide scroll view of `height`, with word wrap off as
@@ -74,8 +82,13 @@ struct SQLTextViewGhostTextTests {
     _ controller: AIInlineCompletionController, height: CGFloat = 200
   ) -> (SQLTextView, NSScrollView) {
     let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: height))
+    // Insets from the titled window would re-tile it, with a scroll, at a later layout pass
+    scrollView.automaticallyAdjustsContentInsets = false
     window.contentView?.addSubview(scrollView)
-    let (textView, coordinator) = makeEditor(controller, width: 200)
+    let textView = makeEditor(controller, width: 200)
+    // Only for its wrap setting: never the delegate, and without a text view to blur
+    let coordinator = HighlightedTextEditorRepresentable.Coordinator(
+      text: .constant(""), height: .constant(40), isEmpty: .constant(true), onTextChanged: nil)
     textView.textContainerInset = NSSize(width: 4, height: 2)
     textView.textContainer?.lineFragmentPadding = 0
     textView.maxSize = NSSize(
@@ -97,6 +110,10 @@ struct SQLTextViewGhostTextTests {
     textView.string = text
     textView.setSelectedRange(NSRange(location: caret, length: 0))
     textView.sizeToFit()
+    // The first display pass and a pending layout re-tile the scroll view and post a scroll,
+    // which would dismiss the suggestion that lands before them
+    window.displayIfNeeded()
+    window.layoutIfNeeded()
     await ask(textView, controller: controller)
   }
 
@@ -194,7 +211,7 @@ struct SQLTextViewGhostTextTests {
   @Test("typing in the focused editor asks once the typing pause ends")
   func typingRequests() async {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     await type(Self.typed, in: textView, controller: controller)
     #expect(textView.visibleGhostText == Self.suggestion)
   }
@@ -202,7 +219,7 @@ struct SQLTextViewGhostTextTests {
   @Test("an edit of an unfocused editor never asks")
   func unfocusedEditDoesNotRequest() {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     window.makeFirstResponder(nil)
     group(textView) { textView.insertText(Self.typed, replacementRange: textView.selectedRange()) }
     #expect(controller.task == nil)
@@ -212,7 +229,7 @@ struct SQLTextViewGhostTextTests {
   @Test("the overlay never changes the text or the undo stack")
   func overlayDoesNotMutate() async {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     textView.string = Self.typed
     textView.setSelectedRange(NSRange(location: (Self.typed as NSString).length, length: 0))
     controller.textDidChange(text: textView.string, caret: textView.selectedRange().location)
@@ -229,7 +246,7 @@ struct SQLTextViewGhostTextTests {
   @Test("a multi-line suggestion draws over the blank lines below without touching the text")
   func multiLineOverlay() async {
     let controller = makeController(reply: "orders\nWHERE id = 1")
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     textView.string = "\n\n"
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     await type(Self.typed, in: textView, controller: controller)
@@ -241,7 +258,7 @@ struct SQLTextViewGhostTextTests {
   @Test("text on a line below cuts the suggestion to its first line; Tab inserts only that")
   func textBelowKeepsOneLine() async throws {
     let controller = makeController(reply: "orders\nWHERE id = 1")
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     textView.string = "\nSELECT 2"
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     await type(Self.typed, in: textView, controller: controller)
@@ -256,7 +273,7 @@ struct SQLTextViewGhostTextTests {
   func narrowEditorCutsToWhatFits() async throws {
     let reply = "orders WHERE status = 'paid' ORDER BY created_at DESC\nLIMIT 10"
     let controller = makeController(reply: reply)
-    let (textView, _) = makeEditor(controller, width: 200)
+    let textView = makeEditor(controller, width: 200)
     // Blank lines below let the second line through; the cut first line drops it
     textView.string = "\n\n"
     textView.setSelectedRange(NSRange(location: 0, length: 0))
@@ -387,7 +404,7 @@ struct SQLTextViewGhostTextTests {
   func finalLineBreakOfAnyKind() async {
     for lineBreak in ["\r", "\u{2028}"] {
       let controller = makeController(reply: "WHERE id = 1")
-      let (textView, _) = makeEditor(controller, width: 200)
+      let textView = makeEditor(controller, width: 200)
       let text = "SELECT * FROM orders" + lineBreak
       await show(text, caret: text.utf16.count, in: textView, controller: controller)
       #expect(textView.visibleGhostText == "WHERE id = 1", "\(lineBreak.unicodeScalars.first!)")
@@ -397,7 +414,7 @@ struct SQLTextViewGhostTextTests {
   @Test("typing with text after the caret on its line asks nothing")
   func midLineDoesNotRequest() async {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     textView.string = "* FROM orders"
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     await type("SELECT ", in: textView, controller: controller)
@@ -408,7 +425,7 @@ struct SQLTextViewGhostTextTests {
   @Test("with ghost text off, an edit sends nothing")
   func disabledEditDoesNotRequest() {
     let controller = makeController(enabled: false)
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     group(textView) { textView.insertText(Self.typed, replacementRange: textView.selectedRange()) }
     #expect(controller.task == nil)
     #expect(controller.version == 0)
@@ -417,7 +434,7 @@ struct SQLTextViewGhostTextTests {
   @Test("moving the caret hides the suggestion")
   func caretMoveHides() async {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     await type(Self.typed, in: textView, controller: controller)
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     #expect(textView.visibleGhostText == nil)
@@ -429,7 +446,7 @@ struct SQLTextViewGhostTextTests {
   @Test("Tab accepts the suggestion as one undo step")
   func tabAccepts() async throws {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     await type(Self.typed, in: textView, controller: controller)
 
     let tab = try key(48, "\t")
@@ -447,7 +464,7 @@ struct SQLTextViewGhostTextTests {
   @Test("Tab with the autocomplete popup open does not accept the suggestion")
   func tabWithPopupDoesNotAccept() async throws {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     await type(Self.typed, in: textView, controller: controller)
     textView.setAutocompleteSuggestions([
       AutocompleteSuggestion(text: "users", type: .table, description: nil)
@@ -463,14 +480,14 @@ struct SQLTextViewGhostTextTests {
 
   @Test("Tab without a suggestion keeps its usual behavior")
   func tabWithoutSuggestion() throws {
-    let (textView, _) = makeEditor(makeController())
+    let textView = makeEditor(makeController())
     #expect(textView.handleGhostTextKey(with: try key(48, "\t")) == false)
   }
 
   @Test("Esc dismisses the suggestion and keeps the text")
   func escapeDismisses() async throws {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     await type(Self.typed, in: textView, controller: controller)
 
     let escape = try key(53, "\u{1b}")
@@ -485,7 +502,7 @@ struct SQLTextViewGhostTextTests {
   @Test("focus loss drops the suggestion")
   func focusLossDrops() async {
     let controller = makeController()
-    let (textView, _) = makeEditor(controller)
+    let textView = makeEditor(controller)
     await type(Self.typed, in: textView, controller: controller)
     window.makeFirstResponder(nil)
     #expect(textView.visibleGhostText == nil)

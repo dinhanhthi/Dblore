@@ -201,6 +201,24 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
     interruptNow()
   }
 
+  /// After a statement failed inside a transaction: whether DuckDB aborted it (only ROLLBACK
+  /// works, and a COMMIT answers success while it rolls back). Interrupts and most execution
+  /// errors abort it; parse, catalog and binder errors do not (DuckDB 1.5). Asked with a trivial
+  /// statement, which cannot fail inside a healthy transaction: any failure of it counts as
+  /// aborted (so a later COMMIT never answers success). Nil only when the probe could not run.
+  func transactionAborted() async -> Bool? {
+    try? await run { () -> Bool in
+      let open = try self.requireOpen()
+      self.interruptReads(open)
+      do {
+        try self.exec("SELECT 1", open)
+        return false
+      } catch {
+        return true
+      }
+    }
+  }
+
   func formatError(_ error: Error) -> String {
     if let error = error as? DuckDBSessionError { return error.message }
     return error.localizedDescription

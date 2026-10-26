@@ -96,16 +96,17 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   /// Set the file URL for monitoring. Call this after document is opened.
   func setFileURL(_ url: URL?) {
-    // Remove from old presenter if URL changes
+    // Remove from old presenter if URL changes. Both calls are queued (`SQLiteFileAccess`), so
+    // a stalled file arbiter never blocks the main thread.
     if _presentedItemURL != nil {
-      NSFileCoordinator.removeFilePresenter(self)
+      SQLiteFileAccess.removeFilePresenter(self)
     }
 
     _presentedItemURL = url
 
     // Register as file presenter if we have a valid URL
     if url != nil {
-      NSFileCoordinator.addFilePresenter(self)
+      SQLiteFileAccess.addFilePresenter(self)
       updateLastKnownModificationDate()
     }
   }
@@ -205,9 +206,8 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   deinit {
     changeDebounceTask?.cancel()
-    if _presentedItemURL != nil {
-      NSFileCoordinator.removeFilePresenter(self)
-    }
+    // No removal here: the arbiter retains a registered presenter, so deinit runs only once
+    // it is off the arbiter (never registered, or removed by a later `setFileURL`)
   }
 
   // MARK: - Snapshot and FileWrapper

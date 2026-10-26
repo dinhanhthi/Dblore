@@ -76,6 +76,56 @@ struct CrossTableSearchQueryBuilderTests {
     #expect(duckdb.sql.contains(#"CAST("co""l`x" AS VARCHAR) = :v"#))
   }
 
+  @Test(
+    "Contains ignores case on every dialect; Equals stays an exact comparison",
+    arguments: [
+      (
+        SQLDialect.postgresql, #"CAST("email" AS text) ILIKE :v ESCAPE '!'"#,
+        #"CAST("email" AS text) = :v"#
+      ),
+      (
+        .duckdb, #"CAST("email" AS VARCHAR) ILIKE :v ESCAPE '!'"#, #"CAST("email" AS VARCHAR) = :v"#
+      ),
+      (
+        .sqlite, #"LOWER(CAST("email" AS TEXT)) LIKE LOWER(:v) ESCAPE '!'"#,
+        #"CAST("email" AS TEXT) = :v"#
+      ),
+      (
+        .mysql, "LOWER(CAST(`email` AS CHAR)) LIKE LOWER(:v) ESCAPE '!'",
+        "CAST(`email` AS CHAR) = :v"
+      ),
+    ])
+  func containsIgnoresCase(dialect: SQLDialect, contains: String, equals: String) throws {
+    let statement = try #require(
+      try Builder.statement(
+        schema: "s", table: "t", columns: columns, value: "Espresso", mode: .contains,
+        dialect: dialect))
+    #expect(statement.sql.contains(contains))
+    #expect(statement.sql.contains("WHEN \(contains) THEN 2"))
+    #expect(statement.parameters == [Builder.valueParameter: .text("%Espresso%")])
+    #expect(
+      SQLParameterRewriter.parameterNames(in: statement.sql, dialect: dialect)
+        == [Builder.valueParameter])
+    _ = try ReadOnlyQueryGuard.check(statement.sql, dialect: dialect, refuseFileAccess: true)
+
+    let exact = try #require(
+      try Builder.statement(
+        schema: "s", table: "t", columns: columns, value: "Espresso", mode: .equals,
+        dialect: dialect))
+    #expect(exact.sql.contains(equals))
+    #expect(!exact.sql.contains("LOWER("))
+    #expect(!exact.sql.contains("LIKE"))
+  }
+
+  @Test("MongoDB has no SQL search statement")
+  func mongoDBThrows() {
+    #expect(throws: SQLDialectError.notSQL) {
+      try Builder.statement(
+        schema: "s", table: "t", columns: columns, value: "x", mode: .contains,
+        dialect: .mongodb)
+    }
+  }
+
   @Test("The LIKE pattern escapes %, _ and the escape character, with an ESCAPE clause")
   func likePatternIsEscaped() throws {
     let statement = try #require(
@@ -84,7 +134,7 @@ struct CrossTableSearchQueryBuilderTests {
         dialect: .postgresql))
 
     #expect(statement.parameters == [Builder.valueParameter: .text("%50!%!_off!!%")])
-    #expect(statement.sql.contains("CAST(\"email\" AS text) LIKE :v ESCAPE '!'"))
+    #expect(statement.sql.contains("CAST(\"email\" AS text) ILIKE :v ESCAPE '!'"))
     #expect(statement.sql.contains(" OR "))
 
     let equals = try #require(
@@ -131,12 +181,13 @@ struct CrossTableSearchQueryBuilderTests {
     "Opening a match filters with the search's LIKE semantics",
     arguments: [
       (
-        Builder.Mode.contains, SQLDialect.postgresql, #""c"::text LIKE E'%C:\\t!%!_!!%' ESCAPE '!'"#
+        Builder.Mode.contains, SQLDialect.postgresql,
+        #""c"::text ILIKE E'%C:\\t!%!_!!%' ESCAPE '!'"#
       ),
       (.equals, .postgresql, #""c"::text LIKE E'C:\\t!%!_!!' ESCAPE '!'"#),
-      (.contains, .mysql, #"CAST(`c` AS CHAR) LIKE '%C:\\t!%!_!!%' ESCAPE '!'"#),
+      (.contains, .mysql, #"LOWER(CAST(`c` AS CHAR)) LIKE LOWER('%C:\\t!%!_!!%') ESCAPE '!'"#),
       (.equals, .mysql, #"CAST(`c` AS CHAR) LIKE 'C:\\t!%!_!!' ESCAPE '!'"#),
-      (.contains, .sqlite, #""c" LIKE '%C:\t!%!_!!%' ESCAPE '!'"#),
+      (.contains, .sqlite, #"LOWER("c") LIKE LOWER('%C:\t!%!_!!%') ESCAPE '!'"#),
       (.equals, .sqlite, #""c" LIKE 'C:\t!%!_!!' ESCAPE '!'"#),
     ])
   @MainActor

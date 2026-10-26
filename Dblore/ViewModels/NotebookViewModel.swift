@@ -158,6 +158,8 @@ class NotebookViewModel {
   @ObservationIgnored var pendingStagedBatch: PendingStagedBatch?
   /// Commit is counting what the staged deletes also change (`stagedDeleteImpact`)
   var isCheckingStagedDeletes = false
+  /// A staged commit is in flight (key lookup, count, prompt or send): a second one is refused
+  var isCommittingStaged = false
   /// Inline grid edit waiting on Confirm or Password. Acceptance sends it through
   /// `sendInlineEdit`, not as user SQL.
   @ObservationIgnored var pendingInlineEdit: PendingInlineEdit?
@@ -198,6 +200,11 @@ class NotebookViewModel {
   var cellComparisons: [UUID: SubjectComparison] = [:]
   /// Editor tab pin. Never saved.
   var editorPinnedResult: PinnedResult?
+  /// Chart of the editor result, owned here so a layout switch (a new result view) keeps it.
+  /// Belongs to the result of timestamp `editorChartSpecStamp`; a new result starts from the
+  /// suggestion. Never saved.
+  var editorChartSpec: ChartSpec?
+  var editorChartSpecStamp: Date?
   var isEditorComparing = false
   var editorComparison: SubjectComparison?
   /// Bumped per refresh so an older comparison does not overwrite a newer one
@@ -507,7 +514,11 @@ class NotebookViewModel {
       pendingStagedBatch = nil
       pendingInlineEdit = nil
       queryConfirmationState.clear()
+      // A staged commit (not an import or a MongoDB inline edit): no second one while it is sent
+      let commits = batch.historySource == .dataViewerEdit && batch.mongoInlineEdit == nil
+      if commits { isCommittingStaged = true }
       await runConfirmedStagedBatch(batch)
+      if commits { isCommittingStaged = false }
       return
     }
     if let edit = pendingInlineEdit {

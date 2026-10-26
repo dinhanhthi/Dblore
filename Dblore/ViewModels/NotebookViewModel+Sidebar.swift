@@ -206,7 +206,8 @@ extension NotebookViewModel {
     guard result.columns.indices.contains(index) else { return }
     let column = result.columns[index]
     let value = index < row.count ? row[index] : .null
-    if case .json(let json) = value {
+    // The JSON viewer formats and highlights on the main actor: a large JSON shows raw in Cell Value
+    if case .json(let json) = value, json.utf8.count <= CellInfoContent.maxHighlightedBytes {
       showJSONInSidebar(json: json, path: "Row \(originalRow + 1), Column '\(column.name)'")
     } else {
       showCellDetail(

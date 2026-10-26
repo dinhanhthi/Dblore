@@ -5,9 +5,11 @@
 //  The workspace connection config is the single source of protection level, commit style,
 //  per-connection Safe Mode and protected mode for every tab and for the connection actor.
 //  An opened file's AI policy never weakens the saved connection's, and AI features ask the
-//  strictest of the live policy and of every saved row of the connection's identity. A save
-//  keeps the saved row's AI policy and rules unless the AI fields themselves were edited, and
-//  its color and group unless the save comes from the connection form. Its hidden schemas are
+//  strictest of the live policy and of every saved row of the connection's identity. Its TLS
+//  mode, SSH tunnel, client certificate and connection string are the saved row's, so it never
+//  redirects a saved password, and it never weakens the saved row's protection. A save keeps
+//  the saved row's AI policy and rules unless the AI fields themselves were edited, and its
+//  color and group unless the save comes from the connection form. Its hidden schemas are
 //  always kept: only the sidebar sets them, and saves the row when there is one.
 //  Connecting to the same database with weaker settings goes through the same Safe Mode unlock
 //  as a runtime change.
@@ -141,6 +143,76 @@ extension WorkspaceManager {
     return config.withScripts(of: saved)
   }
 
+  /// An opened file's `config` with the TLS mode, SSH tunnel, client certificate (which also
+  /// decides whether the saved custom CA is used) and connection string of its saved row
+  /// (`hasSavedTransport`), even where the file's are stronger: the saved row is the user's
+  /// choice, and a file never picks how a saved password travels. Remember off in the file
+  /// changes nothing. Without that row they stay the file's (auto-connect then reads no
+  /// password), but a connection string that reaches another host, port or TLS mode than the
+  /// config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
+  static func keepingSavedTransport(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    var config = config
+    if let saved = savedTransportRow(for: config, defaults: defaults) {
+      config.sslMode = saved.sslMode
+      config.sshTunnel = saved.sshTunnel
+      config.clientCertificate = saved.clientCertificate
+      config.mongoURI = saved.mongoURI
+    } else if let uri = config.mongoURI {
+      config.mongoURI = try? MongoURIParser.checkedMongoURI(
+        uri, host: config.host, port: config.port, engine: config.databaseType,
+        sslMode: config.sslMode
+      ).get()
+    }
+    return config
+  }
+
+  /// True when `config` has a saved row: same Keychain key, engine, host, port, home database
+  /// and username, whatever the config's Remember. Only then does auto-connect read a saved
+  /// password or run a password command (over that row's transport).
+  static func hasSavedTransport(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> Bool {
+    savedTransportRow(for: config, defaults: defaults) != nil
+  }
+
+  private static func savedTransportRow(
+    for config: ConnectionConfig, defaults: UserDefaults
+  ) -> ConnectionConfig? {
+    exactSavedEntry(
+      for: config,
+      in: SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore()))?.config
+  }
+
+  /// An opened file's `config` with each protection part of its saved row (same key, engine,
+  /// host, port, home database and username, whatever Remember) where the file's is weaker: a
+  /// weaker file cannot have passed the Safe Mode unlock a weakening needs. The parts are decided
+  /// on their own: the protection level, the commit style with the protected mode and Safe Mode
+  /// it projects to (compared on the resolved style, as
+  /// `NotebookViewModel.requiresUnlockForChange` does), and the read-only file flag. A part as
+  /// strict or stricter keeps the file's: the protection pickers write only the workspace, and
+  /// the next connect saves them to the row.
+  static func keepingSavedProtection(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
+  ) -> ConnectionConfig {
+    guard let saved = savedTransportRow(for: config, defaults: defaults) else { return config }
+    var config = config
+    if config.protectionLevel.strictness < saved.protectionLevel.strictness {
+      config.protectionLevel = saved.protectionLevel
+    }
+    if config.resolvedCommitStyle(fallback: defaultCommitStyle).strength
+      < saved.resolvedCommitStyle(fallback: defaultCommitStyle).strength
+    {
+      config.protectedMode = saved.protectedMode
+      config.safeMode = saved.safeMode
+      config.commitStyle = saved.commitStyle
+    }
+    if saved.readOnlyFile, !config.readOnlyFile { config.readOnlyFile = true }
+    return config
+  }
+
   /// `config` with the hidden schemas of the saved row a save of `config` overwrites, for form
   /// saves: no form edits them, so a new draft of a saved connection never clears them. Without
   /// that row (or with Remember off) the draft keeps its own only while it still targets
@@ -165,11 +237,12 @@ extension WorkspaceManager {
     return config
   }
 
+  /// The row a save of `config` overwrites, when it is the same connection
+  /// (`ConnectionHistoryEntry.isSavedRow(of:)`).
   private static func exactSavedEntry(
     for config: ConnectionConfig, in history: [ConnectionHistoryEntry]
   ) -> ConnectionHistoryEntry? {
-    let key = ConnectionKeychainKey.password(for: config)
-    return history.first { $0.keychainKey == key }
+    history.first { $0.isSavedRow(of: config) }
   }
 
   /// The AI policy and rules an opened workspace or notebook file may keep. With a saved match,

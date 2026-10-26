@@ -106,12 +106,14 @@ import Testing
   }
 
   @Test func dateValue() {
-    let expected = CellValue.date(Date(timeIntervalSince1970: 1_704_153_600))
+    // No time and no time zone: the date text, never midnight UTC.
+    let expected = CellValue.string("2024-01-02")
     #expect(Self.cell(Self.text("2024-01-02", .date)) == expected)
     #expect(Self.cell(Self.binary([0xE8, 0x07, 1, 2], .date)) == expected)
+    #expect(Self.cell(Self.text("1000-01-01", .date)) == .string("1000-01-01"))
     // Before the Gregorian reform: proleptic calendar, like the server.
     #expect(
-      Self.cell(Self.text("1000-01-01", .date))
+      Self.cell(Self.text("1000-01-01 00:00:00", .datetime))
         == .date(Date(timeIntervalSince1970: -30_610_224_000)))
   }
 
@@ -307,7 +309,7 @@ import Testing
       "db": .double(-2.25), "d": .string("12345.678900"),
       "dt": .date(Date(timeIntervalSince1970: epochSeconds + 0.123456)),
       "ts": .date(Date(timeIntervalSince1970: epochSeconds)),
-      "da": .date(Date(timeIntervalSince1970: 1_704_153_600)), "tm": .string("25:30:15"),
+      "da": .string("2024-01-02"), "tm": .string("25:30:15"),
       "tn": .string("-01:02:03.500"), "zd": .string("0000-00-00"),
       "zdt": .string("0000-00-00 00:00:00"), "b": .int(682),
       "j": server == .mysql ? .json("{\"a\": 1}") : .string("{\"a\": 1}"),

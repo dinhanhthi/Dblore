@@ -122,7 +122,7 @@ enum DatabaseError: LocalizedError {
   case sshHostKeyPinFailed(host: String, port: Int)
   /// The SSH server rejected the user name, password or key
   case sshAuthenticationFailed
-  /// No common host key algorithm, in practice an RSA-only server
+  /// No common kex, host key, cipher or MAC algorithm: in practice an RSA- or SHA-1-only server
   case sshUnsupportedHostKeyAlgorithm(host: String, port: Int)
   /// The SSH handshake (key exchange, host-key check, login) did not finish in time
   case sshHandshakeTimedOut
@@ -213,8 +213,11 @@ enum DatabaseError: LocalizedError {
     case .sshAuthenticationFailed:
       return "SSH authentication failed. Check the SSH user name and password or key."
     case .sshUnsupportedHostKeyAlgorithm(let host, let port):
-      return "The SSH server \(host):\(port) uses an RSA host key, which is not supported; "
-        + "enable an ed25519 or ECDSA host key on the server."
+      return "The SSH server \(host):\(port) and Dblore share no key-exchange, host-key, cipher "
+        + "or MAC algorithm. Dblore supports ed25519 and ECDSA host keys, curve25519 and ECDH key "
+        + "exchange, and AES-GCM encryption. The usual cause is a server that offers only RSA host "
+        + "keys or only SHA-1 algorithms: enable an ed25519 or ECDSA host key and curve25519 key "
+        + "exchange on the server."
     case .sshHandshakeTimedOut:
       return "The SSH server did not complete the handshake in time. Check the SSH host and "
         + "port, or raise the connection timeout."

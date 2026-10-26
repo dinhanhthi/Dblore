@@ -49,6 +49,9 @@ class WorkspaceManager: Identifiable {
 
   /// Single database connection for entire workspace
   let connectionManager: DatabaseConnectionManager
+  /// Where the recent list and its passwords are read and saved (tests pass isolated stores)
+  let defaults: UserDefaults
+  let passwords: any ConnectionPasswordStore
   /// AI chat state shared by the workspace: schema structure, plus the rows of the read-only
   /// queries it runs (shown to the user only, never sent to the AI provider)
   let aiAssistant = AIAssistantViewModel()
@@ -208,6 +211,8 @@ class WorkspaceManager: Identifiable {
   /// failed connect). An open form then takes the new draft as is: its fields belong to the
   /// draft's engine and no Recent row stays selected.
   var connectionFormDraftGeneration = 0
+  /// The form was opened on such a draft (true) or by Connect (false, loads the most recent row).
+  var connectionFormOpensOnDraft = false
   var isWorkspaceInfoModalVisible: Bool = false
   /// Tab shown when the details modal opens. The info button starts on Workspace.
   var workspaceInfoTab: WorkspaceInfoTab = .workspace
@@ -351,16 +356,37 @@ class WorkspaceManager: Identifiable {
 
   init(
     workspace: Workspace, restoreTabs: Bool = true,
-    connectionManager: DatabaseConnectionManager = .withTrustPrompt()
+    connectionManager: DatabaseConnectionManager = .withTrustPrompt(),
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    sanitizesFileConfig: Bool = true
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
-    // An opened file's AI policy never weakens the saved one, the form opens on the saved
-    // color and group (a form connect writes what the form shows), and its scripts are the
-    // saved row's only
+    self.defaults = defaults
+    self.passwords = passwords
+    // A config read from a file (`sanitizesFileConfig`; off for the app's in-memory config, see
+    // `createNew(connection:)`): its AI policy never weakens the saved one, the form opens on the
+    // saved color and group (a form connect writes what the form shows), its scripts and
+    // transport (TLS mode, SSH tunnel, client certificate, connection string) are the saved
+    // row's only, and it never weakens the saved row's protection. Its own password is never
+    // used (a connect reads the Keychain or the form), so it is dropped
     var workspace = workspace
-    workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
-      .map { Self.keepingSavedScripts(Self.keepingSavedAppearance($0)) }
+    if sanitizesFileConfig {
+      workspace.connectionConfig = Self.sanitizedFileAIPolicy(
+        workspace.connectionConfig, defaults: defaults
+      )
+      .map {
+        var config = Self.keepingSavedProtection(
+          Self.keepingSavedTransport(
+            Self.keepingSavedScripts(
+              Self.keepingSavedAppearance($0, defaults: defaults), defaults: defaults),
+            defaults: defaults),
+          defaults: defaults)
+        config.password = ""
+        return config
+      }
+    }
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -440,10 +466,11 @@ class WorkspaceManager: Identifiable {
     }
   }
 
-  /// Create a new untitled workspace
+  /// Create a new untitled workspace. `connection` is the app's own (the Welcome form, a recent
+  /// card, a moved tab), not a file's: it reaches `connect` as is.
   static func createNew(connection: ConnectionConfig? = nil) -> WorkspaceManager {
     let workspace = Workspace.newUntitled(connection: connection)
-    return WorkspaceManager(workspace: workspace)
+    return WorkspaceManager(workspace: workspace, sanitizesFileConfig: false)
   }
 
   /// Load workspace from URL, reading it (and its tab files) through the stored bookmarks of
@@ -585,12 +612,13 @@ class WorkspaceManager: Identifiable {
         config.fileBookmark = bookmark
       }
       if savesConnection, config.mongoHomeDatabase == nil {
-        if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
+        if !aiFieldsEdited { config = Self.keepingSavedAIFields(config, defaults: defaults) }
         config =
           fromForm
-          ? Self.keepingSavedHiddenSchemas(config, current: workspace.connectionConfig)
-          : Self.keepingSavedAppearance(config)
-        guard SessionManager.saveConnection(config) else {
+          ? Self.keepingSavedHiddenSchemas(
+            config, current: workspace.connectionConfig, defaults: defaults)
+          : Self.keepingSavedAppearance(config, defaults: defaults)
+        guard SessionManager.saveConnection(config, defaults: defaults, passwords: passwords) else {
           throw CertificateFormError.keychainSave
         }
       }
@@ -658,14 +686,30 @@ class WorkspaceManager: Identifiable {
   }
 
   func autoConnectIfNeeded() async {
-    guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
+    guard !Task.isCancelled, let fileConfig = workspace.connectionConfig else { return }
+    // Without a saved row of this config (`hasSavedTransport`) the file chose the transport:
+    // read no password, run no password command, open the form prefilled for the user to type
+    // the password
+    if fileConfig.databaseType.capabilities.usesPassword,
+      !Self.hasSavedTransport(fileConfig, defaults: defaults)
+    {
+      if !Task.isCancelled { presentPrefilledConnectForm(fileConfig) }
+      return
+    }
+    // The saved row's transport, scripts and protection as they are now (init kept the ones it
+    // had then)
+    let config = Self.keepingSavedProtection(
+      Self.keepingSavedScripts(
+        Self.keepingSavedTransport(fileConfig, defaults: defaults), defaults: defaults),
+      defaults: defaults)
 
     var configWithPassword = config
     // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
-    // unless a password command prints it on connect
+    // unless a password command prints it on connect. Only the key of this config is read
+    // (`Workspace.keychainKey`), never one a file names for another connection.
     if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil {
       guard let keychainKey = workspace.keychainKey,
-        let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
+        let password = passwords.loadPassword(forKey: keychainKey)
       else {
         // No stored password: never leave the UI on "connecting"
         if !Task.isCancelled { connectionState = .disconnected }
@@ -698,12 +742,25 @@ class WorkspaceManager: Identifiable {
     }
   }
 
+  /// The connect form on `config`, without a password, for an opened file with no saved row.
+  private func presentPrefilledConnectForm(_ config: ConnectionConfig) {
+    var config = config
+    config.password = ""
+    connectionState = .disconnected
+    editingConnectionConfig = config
+    connectionFormDraftGeneration += 1
+    connectionFormOpensOnDraft = true
+    lastUnlockConnectError = nil
+    isConnectionFormModalVisible = true
+  }
+
   /// A connect outside the form (auto-connect, a Welcome recent card) failed with an error the
   /// form offers an action for (missing plugin): open the form showing the error and its button.
   func presentConnectErrorIfActionable(_ error: any Error, config: ConnectionConfig) {
     guard ConnectionErrorAction.action(for: error) != nil else { return }
     editingConnectionConfig = config
     connectionFormDraftGeneration += 1
+    connectionFormOpensOnDraft = true
     lastUnlockConnectError = error.localizedDescription
     isConnectionFormModalVisible = true
   }
@@ -717,13 +774,14 @@ class WorkspaceManager: Identifiable {
       ConnectionFormContent.applyingDuckDBChoice(
         .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
         to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
-      ).config)
+      ).config, defaults: defaults)
     guard PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
     }
     editingConnectionConfig = config
     connectionFormDraftGeneration += 1
+    connectionFormOpensOnDraft = true
     lastUnlockConnectError = nil
     isConnectionFormModalVisible = true
   }

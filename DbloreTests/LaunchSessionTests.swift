@@ -273,6 +273,7 @@ struct LaunchSessionTests {
       host: "db.example", database: "app", username: "ada", password: secret)
     let untitled = WorkspaceManager(
       workspace: Workspace(name: "Scratch", connectionConfig: connection), restoreTabs: false)
+    untitled.workspace.connectionConfig?.password = secret  // as a connect leaves it
 
     let session = LaunchSessionCapture.session(
       windows: [

@@ -159,9 +159,10 @@ actor AppLogger {
     // Write to OSLog
     osLog.log(level: level.osLogType, "[\(category)] \(message)")
 
-    // Write to file (async, non-blocking)
-    Task.detached {
-      await self.writeToFile(entry: entry, fileURL: self.getLogFileURL())
+    // Write to file on the serial log queue: lines stay in order and the actor never waits on disk
+    let fileURL = getLogFileURL()
+    Self.fileQueue.async {
+      Self.writeToFile(entry: entry, fileURL: fileURL)
     }
   }
 

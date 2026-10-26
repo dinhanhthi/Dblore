@@ -426,6 +426,54 @@ struct DataModelConnectionConfigTests {
       ) == loaded.id)
   }
 
+  private func openingHistory() -> [ConnectionHistoryEntry] {
+    [
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .postgresql, host: "192.168.64.1", port: 15435, database: "qa",
+          username: "thi", name: "Recent")),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .postgresql, host: "192.168.64.1", port: 15499, database: "qa",
+          username: "thi", name: "Older")),
+    ]
+  }
+
+  @Test("A form opened fresh loads the most recent row")
+  func freshFormLoadsMostRecentRow() {
+    let history = openingHistory()
+    let opening = ConnectionFormContent.openingHistory(
+      history: history, draft: ConnectionFormContent.newFormDraft(), opensOnDraft: false)
+
+    #expect(opening.load?.id == history[0].id)
+    #expect(opening.selectedHistoryId == history[0].id)
+  }
+
+  @Test("A form opened on a draft without a matching row keeps the draft, no row selected")
+  func draftFormWithoutMatchKeepsDraft() {
+    let draft = ConnectionConfig(
+      databaseType: .postgresql, host: "192.168.64.1", port: 15500, database: "qa",
+      username: "thi")
+    let opening = ConnectionFormContent.openingHistory(
+      history: openingHistory(), draft: draft, opensOnDraft: true)
+
+    #expect(opening.load == nil)
+    #expect(opening.selectedHistoryId == nil)
+  }
+
+  @Test("A form opened on a draft selects the row of the same target without loading it")
+  func draftFormSelectsMatchingRow() {
+    let history = openingHistory()
+    var draft = history[1].config
+    draft.password = ""
+    draft.name = "From file"
+    let opening = ConnectionFormContent.openingHistory(
+      history: history, draft: draft, opensOnDraft: true)
+
+    #expect(opening.load == nil)
+    #expect(opening.selectedHistoryId == history[1].id)
+  }
+
   // MARK: - Commit style storage
 
   @Test("JSON without commitStyle stays legacy and re-encodes without the key")

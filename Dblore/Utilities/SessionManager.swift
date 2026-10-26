@@ -158,10 +158,16 @@ class SessionManager {
 
     var history = loadHistory(defaults: defaults, passwords: passwords)
     let previous = history
-    let newEntry = ConnectionHistoryEntry(config: config)
-
+    let key = ConnectionKeychainKey.password(for: config)
     // Check if connection already exists (same host+port+db+user)
-    if let index = history.firstIndex(where: { $0.keychainKey == newEntry.keychainKey }) {
+    let index = history.firstIndex(where: { $0.keychainKey == key })
+    // A replaced row of the same connection keeps its id: the MCP allowlist and write scopes
+    // are keyed by it. Another engine or other fields on the same unscoped key are another
+    // connection.
+    let keptID = index.flatMap { history[$0].isSavedRow(of: config) ? history[$0].id : nil }
+    let newEntry = ConnectionHistoryEntry(id: keptID ?? UUID(), config: config)
+
+    if let index {
       // Update existing entry (refresh timestamp)
       history[index] = newEntry
     } else {
@@ -435,13 +441,6 @@ class SessionManager {
   }
 
   // MARK: - Keychain Helpers
-
-  /// Get password from keychain for a specific key
-  /// - Parameter key: The keychain key (`ConnectionKeychainKey.password(for:)`)
-  /// - Returns: The password if found, nil otherwise
-  static func getPasswordFromKeychain(for key: String) -> String? {
-    return KeychainConnectionPasswordStore().loadPassword(forKey: key)
-  }
 
   private static func keychainKey(for config: ConnectionConfig) -> String {
     ConnectionKeychainKey.password(for: config)

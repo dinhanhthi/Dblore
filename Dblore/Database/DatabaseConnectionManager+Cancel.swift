@@ -6,7 +6,8 @@
 // first (`QueryCancelWarning`) and passes what the user saw, so a changed state is refused.
 // SQLite and DuckDB interrupt instead: what that did to an open transaction is asked from the
 // SQLite session once the statement stopped (`cancelErrorAfterInterrupt`). DuckDB's interrupt
-// always aborts it: a ROLLBACK is owed from the cancel on (`settleInterruptAbort`).
+// always aborts it: a ROLLBACK is owed from the cancel on (`settleInterruptAbort`). A DuckDB
+// statement timeout or execution error aborts it too (`settleAbortAfterFailure`).
 
 import Foundation
 
@@ -254,6 +255,42 @@ extension DatabaseConnectionManager {
       }
     }
     return cleared
+  }
+
+  /// DuckDB, after a user statement failed inside a transaction (a statement timeout too): when
+  /// the session reports the transaction aborted (`DuckDBSession.transactionAborted`), it is
+  /// rolled back now like after a cancel (`settleInterruptAbort`), so a later COMMIT never
+  /// answers success. Unchanged when the transaction changed meanwhile (its own statement
+  /// reported it) or a cancel owes the ROLLBACK.
+  /// - Returns: `error`, saying what was rolled back when it held changes
+  func settleAbortAfterFailure(_ error: Error) async -> Error {
+    guard config?.databaseType.interruptAbortsTransaction == true, userTxOpen || !txState.isIdle
+    else { return error }
+    let epoch = connectionEpoch
+    let txGeneration = commitGuard.generation
+    let userTx = userTxOpen
+    let pendingCount = txState.pending.count
+    let aborted = try? await withSession { session in
+      await (session as? DuckDBSession)?.transactionAborted()
+    }
+    guard aborted == true, connectionEpoch == epoch, commitGuard.generation == txGeneration,
+      userTxOpen == userTx, interruptRollbackOwed == nil
+    else { return error }
+    interruptRollbackOwed = epoch
+    await settleInterruptAbort()
+    // An app transaction the failed statement opened held nothing: rolled back quietly, as
+    // `transactionFailure` does
+    if !userTx && pendingCount == 0 { return error }
+    let note =
+      userTx
+      ? "Your open transaction was rolled back."
+      : pendingCount == 1
+        ? "1 pending change was rolled back."
+        : "The pending transaction was rolled back (\(pendingCount) pending changes)."
+    if case .queryFailed(let message, let time) = error as? DatabaseError {
+      return DatabaseError.queryFailed("\(message) \(note)", time)
+    }
+    return DatabaseError.transactionAborted("\(error.localizedDescription) \(note)")
   }
 
   /// A user COMMIT (or a MySQL BEGIN committing) that answered success, once a cancel

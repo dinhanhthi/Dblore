@@ -48,12 +48,12 @@ nonisolated enum SQLiteFileAccess {
     }
     /// Arbiter calls go through `presenterQueue`, in order, so none blocks the caller
     var addPresenter: (SidecarFilePresenter) -> Void = { presenter in
-      presenterQueue.async { NSFileCoordinator.addFilePresenter(presenter) }
+      SQLiteFileAccess.addFilePresenter(presenter)
     }
     /// Once after the presenters of one open are added
     var waitForPresenters: () -> Void = { waitForPresenterRegistration() }
     var removePresenter: @Sendable (SidecarFilePresenter) -> Void = { presenter in
-      presenterQueue.async { NSFileCoordinator.removeFilePresenter(presenter) }
+      SQLiteFileAccess.removeFilePresenter(presenter)
     }
     var probe: (URL) throws -> Void = { url in
       try probeWritable(url)
@@ -98,6 +98,17 @@ nonisolated enum SQLiteFileAccess {
   @discardableResult
   static func waitForPresenterRegistration() -> Bool {
     onPresenterQueue { _ = NSFileCoordinator.filePresenters }
+  }
+
+  /// Queues the registration of `presenter` on `presenterQueue` and returns at once
+  static func addFilePresenter(_ presenter: any NSFilePresenter & Sendable) {
+    presenterQueue.async { NSFileCoordinator.addFilePresenter(presenter) }
+  }
+
+  /// Queues the removal of `presenter` on `presenterQueue` and returns at once. It runs after
+  /// every add queued before it, so an add that outlived its wait is still undone, never early.
+  static func removeFilePresenter(_ presenter: any NSFilePresenter & Sendable) {
+    presenterQueue.async { NSFileCoordinator.removeFilePresenter(presenter) }
   }
 
   /// Runs `work` on `presenterQueue` and waits for it at most `presenterRegistrationTimeout`,

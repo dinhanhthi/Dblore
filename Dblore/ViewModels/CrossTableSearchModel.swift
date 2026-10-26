@@ -240,11 +240,13 @@ final class CrossTableSearchModel: Identifiable {
 
   /// LIKE on `column`'s text, as the search compared it (`=` on the raw column would not match
   /// every type the same way): the value escaped as the search binds it, with the same `ESCAPE`
-  /// character, so `\`, `%` and `_` match themselves on every engine. Equals has no wildcard.
+  /// character, so `\`, `%` and `_` match themselves on every engine. Contains ignores case
+  /// (ILIKE); Equals has no wildcard.
   static func filter(column: String, value: String, mode: Mode) -> TableFilter {
     let escaped = CrossTableSearchQueryBuilder.escapedLikeText(value)
     let condition = FilterCondition(
-      column: column, op: .like, value: mode == .contains ? "%\(escaped)%" : escaped,
+      column: column, op: mode == .contains ? .ilike : .like,
+      value: mode == .contains ? "%\(escaped)%" : escaped,
       likeEscape: String(CrossTableSearchQueryBuilder.escapeCharacter))
     return TableFilter(conditions: [condition])
   }

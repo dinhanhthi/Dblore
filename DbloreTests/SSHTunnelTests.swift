@@ -30,7 +30,10 @@ struct SSHTunnelTests {
   @Test func keyExchangeFailureMapsToUnsupportedHostKey() {
     let error = SSHTunnelError(sshErrorType: .keyExchangeNegotiationFailure)
     #expect(error == .unsupportedHostKeyAlgorithm)
-    #expect(error?.errorDescription?.contains("RSA") == true)
+    #expect(
+      error?.errorDescription?.contains("share no key-exchange, host-key, cipher or MAC algorithm")
+        == true)
+    #expect(error?.errorDescription?.contains("only RSA host keys or only SHA-1") == true)
   }
 
   @Test func channelRejectionMapsToChannelOpenRejected() {

@@ -971,9 +971,23 @@ struct WorkspaceTabContentView: View {
           return nil
         }
 
-        // Priority 1: If text editor is focused, unfocus it
+        // Priority 1: If text editor is focused, unfocus it. A result grid cell edit cancels
+        // first, before any observer or the blur can end the edit (ending it commits).
+        // Otherwise synchronous observers (cells, inline edits) run first; the blur then
+        // covers the editors and SwiftUI fields.
         if textViewIsFocused {
+          if let fieldEditor = eventWindow.firstResponder as? NSTextView,
+            fieldEditor.isFieldEditor,
+            let control = fieldEditor.delegate as? NSTextField,
+            let grid = control.delegate as? ResultGridCoordinator,
+            grid.control(
+              control, textView: fieldEditor,
+              doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+          {
+            return nil
+          }
           NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+          eventWindow.makeFirstResponder(nil)
           return nil
         }
 

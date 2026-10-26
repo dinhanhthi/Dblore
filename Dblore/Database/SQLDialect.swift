@@ -195,14 +195,18 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
-  /// `column` and `pattern` are SQL fragments, inserted unchanged.
-  func caseInsensitiveLike(column: String, pattern: String) -> String {
-    switch engine {
-    case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
-    case .sqlite: "\(column) LIKE \(pattern)"
-    case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
-    case .mysql: "CAST(\(column) AS CHAR) LIKE \(pattern)"
-    }
+  /// `column`, `pattern` and `escape` are SQL fragments, inserted unchanged; `escape` follows
+  /// the comparison as `ESCAPE escape`. SQLite and MySQL lower both sides (a MySQL `_bin`
+  /// collation makes `LIKE` case-sensitive), the form Find a Value in Every Table searches with.
+  func caseInsensitiveLike(column: String, pattern: String, escape: String? = nil) -> String {
+    let comparison =
+      switch engine {
+      case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
+      case .sqlite: "LOWER(\(column)) LIKE LOWER(\(pattern))"
+      case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
+      case .mysql: "LOWER(CAST(\(column) AS CHAR)) LIKE LOWER(\(pattern))"
+      }
+    return escape.map { "\(comparison) ESCAPE \($0)" } ?? comparison
   }
 
   /// `'text'`, with `'` doubled. PostgreSQL text that contains `\` is `E'...'`:

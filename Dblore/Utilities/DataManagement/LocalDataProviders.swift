@@ -650,12 +650,14 @@ nonisolated struct LogsLocalDataProvider: LocalDataProvider {
   }
 
   func export(to folder: URL) async throws {
+    AppLogger.flushFileWrites()
     try LocalDataFiles.exportChildren(of: root, to: folder) {
       $0.pathExtension.lowercased() == "log"
     }
   }
 
   func importData(from folder: URL) async throws {
+    AppLogger.flushFileWrites()
     try LocalDataFiles.replaceChildren(of: root, with: folder) {
       $0.pathExtension.lowercased() == "log"
     }

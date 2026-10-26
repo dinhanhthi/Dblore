@@ -47,13 +47,13 @@ struct TableFilterTests {
   }
 
   @Test(
-    "Every operator on SQLite (ilike maps to LIKE, no cast)",
+    "Every operator on SQLite (ilike lowers both sides, no cast)",
     arguments: [
       (FilterOperator.equals, #""c" = 'v'"#),
       (.notEquals, #""c" <> 'v'"#),
       (.like, #""c" LIKE 'v'"#),
       (.notLike, #""c" NOT LIKE 'v'"#),
-      (.ilike, #""c" LIKE 'v'"#),
+      (.ilike, #"LOWER("c") LIKE LOWER('v')"#),
       (.notIlike, #""c" NOT LIKE 'v'"#),
       (.lessThan, #""c" < 'v'"#),
       (.lessThanOrEqual, #""c" <= 'v'"#),
@@ -65,6 +65,14 @@ struct TableFilterTests {
     ])
   func sqliteOperators(op: FilterOperator, expected: String) {
     #expect(clause([condition("c", op, "v")], .sqlite) == expected)
+  }
+
+  /// The same form as Find a Value in Every Table, so opening a match finds the row whatever
+  /// the column's collation (a `_bin` collation makes MySQL's `LIKE` case-sensitive).
+  @Test("ilike on MySQL lowers both sides of LIKE")
+  func mysqlCaseInsensitiveLike() {
+    #expect(
+      clause([condition("c", .ilike, "v")], .mysql) == "LOWER(CAST(`c` AS CHAR)) LIKE LOWER('v')")
   }
 
   @Test("Quotes in the value and the column are escaped")

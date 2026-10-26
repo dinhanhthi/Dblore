@@ -20,7 +20,8 @@ struct Workspace: Codable, Identifiable, Sendable {
   /// Connection configuration (password NOT stored, use keychainKey)
   var connectionConfig: ConnectionConfig?
 
-  /// Keychain key for retrieving password
+  /// Keychain key written on connect, kept for older workspace files. Never read: `keychainKey`
+  /// derives the key from `connectionConfig`
   var connectionKeychainKey: String?
 
   // MARK: - Tabs
@@ -144,9 +145,10 @@ struct Workspace: Codable, Identifiable, Sendable {
 
   // MARK: - Helpers
 
-  /// Returns the keychain key for the connection
+  /// Keychain key of the connection, derived from `connectionConfig`: a file never picks which
+  /// saved password is read, so the stored `connectionKeychainKey` is ignored.
   var keychainKey: String? {
-    connectionKeychainKey ?? connectionConfig.map(ConnectionKeychainKey.password(for:))
+    connectionConfig.map(ConnectionKeychainKey.password(for:))
   }
 
   /// Display string for the workspace

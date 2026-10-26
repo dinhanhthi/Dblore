@@ -158,9 +158,14 @@ enum MongoConnectionDraft {
 
   /// `base` with the first host, port, database and TLS of `config`. A `+srv` host has no port;
   /// an unchanged default port stays implicit, as does TLS where the scheme already implies it.
+  /// A host with a URI delimiter or whitespace is refused, so the parser cannot split it into
+  /// other hosts, a database or options.
   private static func applyingFields(
     of config: ConnectionConfig, to base: ParsedMongoURI
-  ) -> ParsedMongoURI {
+  ) throws -> ParsedMongoURI {
+    guard !config.host.contains(where: { "?/#@,".contains($0) || $0.isWhitespace }) else {
+      throw MongoURIParser.ParseError.invalidHost
+    }
     var uri = base
     uri.ignoredOptions = []
     uri.hosts[0].name = config.host

@@ -132,7 +132,8 @@ actor DatabaseConnectionManager {
   /// The last user cancel (see `cancelRunningStatement`): statements of its epoch fail with
   /// `DatabaseError.queryCancelled`
   var lastCancel: QueryCancelRecord?
-  /// DuckDB: `connectionEpoch` of a session whose open transaction an interrupt cancel aborted
+  /// DuckDB: `connectionEpoch` of a session whose open transaction an interrupt cancel (or a
+  /// failed statement, `settleAbortAfterFailure`) aborted
   /// (`DatabaseType.interruptAbortsTransaction`), until `settleInterruptAbort` rolls it back
   var interruptRollbackOwed: UInt64?
   /// One `SessionLostEvent` each time the server (or the network) closes the connected session

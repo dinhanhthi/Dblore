@@ -12,8 +12,9 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
   var config: ConnectionConfig  // Always stored without password
   let lastUsedAt: Date
 
-  init(config: ConnectionConfig) {
-    self.id = UUID()
+  /// `id` is the saved row's own id when a save replaces that row (settings keyed by it stay).
+  init(id: UUID = UUID(), config: ConnectionConfig) {
+    self.id = id
     var cleanConfig = config
     cleanConfig.password = ""  // Never store password in history entry
     self.config = cleanConfig
@@ -51,6 +52,18 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
   /// Keychain key for password storage (see `ConnectionKeychainKey`)
   var keychainKey: String {
     ConnectionKeychainKey.password(for: config)
+  }
+
+  /// True when this is the row a save of `config` overwrites as the same connection: same key,
+  /// engine, host, port, home database and username. PostgreSQL, SQLite and DuckDB share the
+  /// unscoped key space, and the unscoped key joins the fields with colons, so another engine or
+  /// other fields can make the same key.
+  func isSavedRow(of config: ConnectionConfig) -> Bool {
+    keychainKey == ConnectionKeychainKey.password(for: config)
+      && self.config.databaseType == config.databaseType && self.config.host == config.host
+      && self.config.port == config.port
+      && self.config.identityDatabase == config.identityDatabase
+      && self.config.username == config.username
   }
 }
 

@@ -132,7 +132,7 @@ struct DataViewerStateTests {
   func filterDialect() {
     var viewer = filtered(.sqlite)
     viewer.filter.conditions[0].op = .ilike
-    #expect(viewer.countSQL.hasSuffix(#"WHERE "name" LIKE 'o''brien'"#))
+    #expect(viewer.countSQL.hasSuffix(#"WHERE LOWER("name") LIKE LOWER('o''brien')"#))
     viewer.databaseType = .postgresql
     #expect(viewer.countSQL.hasSuffix(#"WHERE "name"::text ILIKE 'o''brien'"#))
   }

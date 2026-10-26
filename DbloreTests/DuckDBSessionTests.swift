@@ -288,7 +288,7 @@ struct DuckDBSessionTests {
         .string("-170141183460469231731687303715884105728"),
         .double(123.45), .double(-0.05), .double(1.5), .bool(true),
         .string("héllo"), .string("a string longer than twelve bytes"), .data(Data([0xAA, 0x00])),
-        .date(Date(timeIntervalSince1970: 1_709_164_800)),
+        .string("2024-02-29"),
         .date(Date(timeIntervalSince1970: 1_709_210_096.789)), .string("infinity"),
         .string("1 year 2 months 3 days 04:05:06.789"), .string("12:34:56"),
         .string("550E8400-E29B-41D4-A716-446655440000"), .string("happy"),
@@ -314,6 +314,31 @@ struct DuckDBSessionTests {
       #expect(types[24] == "STRUCT(a INTEGER, b VARCHAR)")
       #expect(types[25] == "MAP(VARCHAR, INTEGER)")
       #expect(types[27] == "JSON")
+    }
+  }
+
+  /// A DATE cell is the value itself (grid, copy, export, write-back key), so its text must be
+  /// DuckDB's own: proleptic Gregorian before 1582, its BC form and the infinity sentinels.
+  @Test("DATE text matches DuckDB's ::VARCHAR, scalar and nested")
+  func dateTextMatchesDuckDB() async throws {
+    try await withSession { session in
+      let result = try await collect(
+        session,
+        """
+        SELECT d, d::VARCHAR, [d], [d]::VARCHAR FROM (VALUES (DATE '1000-01-01'),
+          (DATE '1582-10-04'), (DATE '0001-01-01'), ('0044-03-15 (BC)'::DATE),
+          ('infinity'::DATE), ('-infinity'::DATE)) t(d)
+        """)
+      #expect(result.rows.count == 6)
+      // String(describing:) keeps the case and payload exact.
+      let rows = result.rows.map { $0.map { String(describing: $0) } }
+      #expect(rows.first?.first == String(describing: CellValue.string("1000-01-01")))
+      for row in rows {
+        #expect(row[0] == row[1])
+        // Nested text never quotes an element; DuckDB quotes one with parentheses:
+        // `['0044-03-15 (BC)']`
+        if !row[1].contains("(BC)") { #expect(row[2] == row[3]) }
+      }
     }
   }
 

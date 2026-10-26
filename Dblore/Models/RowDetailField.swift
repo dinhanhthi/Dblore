@@ -48,8 +48,8 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
     return !isNull && text != originalText
   }
 
-  /// Text of the original as typed in the field: a DATE column's value as `yyyy-MM-dd` (the
-  /// drivers decode it as midnight UTC), anything else as its full string
+  /// Text of the original as typed in the field: a DATE column's `.date` value as `yyyy-MM-dd`
+  /// (midnight UTC), anything else as its full string (a decoded DATE is already that text)
   private var originalText: String {
     if field.kind == .date, case .date(let date) = original {
       return Self.plainDateFormatter.string(from: date)

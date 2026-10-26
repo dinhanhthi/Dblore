@@ -1,12 +1,13 @@
 // CrossTableSearchQueryBuilder.swift
 // The SELECT that looks for one value in one table (Find a Value in Every Table). Every column
 // whose type has a text form is cast to text (PostgreSQL `text`, MySQL `CHAR`, SQLite `TEXT`,
-// DuckDB `VARCHAR`) and compared with the value: `LIKE` with `%`, `_` and the escape character
-// escaped and an `ESCAPE` clause (contains), or `=` (equals). Binary and spatial columns are
-// skipped. The value is always the `:v` bind (the gate rewrites it per dialect), never SQL text,
-// and every identifier is quoted. Columns are joined with OR, at most `rowLimit` rows. The
-// result's last column is the 1-based index of the first searched column that matched. A
-// statement is returned only once it passed `ReadOnlyQueryGuard`.
+// DuckDB `VARCHAR`) and compared with the value: a case-insensitive `LIKE` (`ILIKE` on
+// PostgreSQL and DuckDB, `LOWER()` on both sides on SQLite and MySQL) with `%`, `_` and the
+// escape character escaped and an `ESCAPE` clause (contains), or `=` (equals). Binary and
+// spatial columns are skipped. The value is always the `:v` bind (the gate rewrites it per
+// dialect), never SQL text, and every identifier is quoted. Columns are joined with OR, at most
+// `rowLimit` rows. The result's last column is the 1-based index of the first searched column
+// that matched. A statement is returned only once it passed `ReadOnlyQueryGuard`.
 
 import Foundation
 
@@ -73,7 +74,7 @@ nonisolated enum CrossTableSearchQueryBuilder {
     let predicates = try searched.map { column in
       let subject = textCast(try dialect.quoteIdentifier(column.name), dialect: dialect)
       switch mode {
-      case .contains: return "\(subject) LIKE \(placeholder) ESCAPE '\(escapeCharacter)'"
+      case .contains: return try containsPredicate(subject, placeholder, dialect: dialect)
       case .equals: return "\(subject) = \(placeholder)"
       }
     }
@@ -121,6 +122,20 @@ nonisolated enum CrossTableSearchQueryBuilder {
       escaped.append(character)
     }
     return escaped
+  }
+
+  /// Case-insensitive `LIKE`: `ILIKE` where the engine has it (PostgreSQL, DuckDB), else
+  /// `LOWER()` on both sides (SQLite, and MySQL/MariaDB, where a `_bin` collation makes `LIKE`
+  /// case-sensitive; the `CAST(.. AS CHAR)` subject is a nonbinary string, so `LOWER()` applies).
+  private static func containsPredicate(
+    _ subject: String, _ placeholder: String, dialect: SQLDialect
+  ) throws -> String {
+    let escape = "ESCAPE '\(escapeCharacter)'"
+    switch dialect {
+    case .postgresql, .duckdb: return "\(subject) ILIKE \(placeholder) \(escape)"
+    case .sqlite, .mysql: return "LOWER(\(subject)) LIKE LOWER(\(placeholder)) \(escape)"
+    default: throw SQLDialectError.notSQL
+    }
   }
 
   private static func textCast(_ quotedColumn: String, dialect: SQLDialect) -> String {

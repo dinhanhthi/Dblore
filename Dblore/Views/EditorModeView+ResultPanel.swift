@@ -351,8 +351,10 @@ struct EditorResultGridView: View {
   var canHighlight = false
   @State private var sortColumn: String?
   @State private var sortAscending = true
-  /// Session chart for this editor result. A new result view starts from the suggestion.
-  @State private var chartSpec: ChartSpec?
+  /// Nil keeps an internal chart spec, reset with the view (data viewer: a new page). The editor
+  /// passes the view model's spec so a layout switch keeps it.
+  var chartSpec: Binding<ChartSpec?>? = nil
+  @State private var internalChartSpec: ChartSpec?
   /// Nil keeps an internal mode. The editor header and the data viewer paging bar pass
   /// the shared mode and set `showsDisplayPicker` to false so this grid does not draw
   /// a second slider.
@@ -374,8 +376,9 @@ struct EditorResultGridView: View {
       result: result, fillsAvailableHeight: true, mode: explainMode, showsPicker: showsExplainPicker
     ) {
       ChartableResult(
-        result: result, chartSpec: $chartSpec, fillsAvailableHeight: true, mode: displayMode,
-        showsPicker: showsDisplayPicker, statementIndex: viewModel.selectedStatementIndex
+        result: result, chartSpec: chartSpec ?? $internalChartSpec, fillsAvailableHeight: true,
+        mode: displayMode, showsPicker: showsDisplayPicker,
+        statementIndex: viewModel.selectedStatementIndex
       ) {
         if showsDocuments {
           documentCards

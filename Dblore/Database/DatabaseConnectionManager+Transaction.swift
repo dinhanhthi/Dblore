@@ -163,6 +163,8 @@ extension DatabaseConnectionManager {
         {
           throw cancelled
         }
+        // DuckDB: a timeout or an execution error aborted the transaction
+        let error = await settleAbortAfterFailure(error)
         // A MySQL deadlock already ended the user's transaction and discarded its Data Rewind
         // entries, on the raw error (`queryFailure`)
         if !protectedMode {

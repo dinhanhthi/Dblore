@@ -107,11 +107,11 @@ struct MySQLTableImportTests {
       #expect(
         result.rows == [
           [
-            .int(1), .double(1.5), .int(1), Self.instant("2024-01-02T00:00:00.000Z"),
+            .int(1), .double(1.5), .int(1), .string("2024-01-02"),
             Self.instant("2024-01-02T03:04:05.000Z"), .string("Ada"),
           ],
           [
-            .int(2), .double(2.25), .int(0), Self.instant("2024-02-29T00:00:00.000Z"),
+            .int(2), .double(2.25), .int(0), .string("2024-02-29"),
             Self.instant("2024-01-02T03:04:05.500Z"), .string("Bob"),
           ],
         ])

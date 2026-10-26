@@ -55,6 +55,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   /// before `sqlite3_step` starts (which `sqlite3_interrupt` alone ignores) still aborts the
   /// statement. Cleared with the deadline when no statement is running.
   private var interruptRequested = false
+  /// A command or a read is between its start and its end (`clearDeadline`): `interrupt` sets
+  /// `interruptRequested` only then, so a Cancel landing as a statement ends never stops the next
+  private var statementRunning = false
   private var reads: [UUID: ReadState] = [:]
 
   /// Virtual-machine instructions between progress-handler checks. Small enough that a one-second
@@ -180,7 +183,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   /// Stops the statement currently inside `sqlite3_step`. Does not hop to the serial queue:
   /// that queue is blocked in the step this call is meant to abort.
   func interrupt() async {
-    requestInterrupt()
+    withState {
+      if statementRunning { interruptRequested = true }
+    }
     if let handle = withState({ db }) {
       sqlite3_interrupt(handle)
     }
@@ -313,6 +318,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       let described = columnInfos(statement)
       let id = UUID()
       reads[id] = ReadState(statement: statement, declaredTypes: described.declared)
+      withState { statementRunning = true }
       return PreparedRead(id: id, columns: described.columns)
     } catch {
       sqlite3_finalize(statement)
@@ -331,6 +337,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       }
       self.reads[id] = read
       self.publish(read.deadline)
+      self.withState { self.statementRunning = true }
       let code = sqlite3_step(statement)
       switch code {
       case SQLITE_ROW:
@@ -541,6 +548,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     stateLock.lock()
     publishedDeadline = deadline
     timedOut = false
+    statementRunning = true
+    // A stale request is not this statement's; one from `close` still stops it
+    interruptRequested = didEmitClose
     stateLock.unlock()
   }
 
@@ -560,6 +570,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     stateLock.lock()
     publishedDeadline = nil
     interruptRequested = false
+    statementRunning = false
     stateLock.unlock()
   }
 

@@ -4,8 +4,9 @@
 //
 //  Data source and delegate of the result grid NSTableView. Rows, NULL text and TSV come
 //  from ResultGridModel; cells are reused through makeView(withIdentifier:owner:).
-//  Inline edit (double-click or Return) is allowed only when `isEditable`, and a commit
-//  delivers the displayed row's values, never a row index. A data viewer with `stagesEdits`
+//  Inline edit (double-click or Return) is allowed only when `isEditable` (binary and long text
+//  open the Cell Value editor instead), and a commit delivers the displayed row's values, never
+//  a row index. A data viewer with `stagesEdits`
 //  stages that commit, and Delete/Backspace, instead of sending an UPDATE. `update`'s
 //  change set is applied onto the loaded rows so those staged rows tint.
 //
@@ -852,12 +853,33 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - Inline edit
 
-  /// Starts editing the cell at a table row and model column with its full value.
+  /// Text above this many UTF-8 bytes never goes into the inline field (its layout and select
+  /// run on the main thread)
+  static let maxInlineEditBytes = 64 * 1024
+
+  /// Binary (whose text is base64) and long text open the Cell Value editor instead of the
+  /// inline field. Sized without building the text.
+  static func editsInSidebar(_ value: CellValue) -> Bool {
+    switch value {
+    case .data: true
+    case .string(let text), .json(let text): text.utf8.count > maxInlineEditBytes
+    case .int, .double, .bool, .null, .date: false
+    }
+  }
+
+  /// Starts editing the cell at a table row and model column with its full value, or shows a
+  /// value `editsInSidebar` in the right sidebar through `onShowCellDetails`.
   /// Returns false when the grid is not editable.
   @discardableResult
   func beginEditing(_ tableView: NSTableView, row: Int, column: Int) -> Bool {
     guard isEditable, !readOnlyColumns.contains(column), let model, row >= 0,
-      row < model.rowCount,
+      row < model.rowCount
+    else { return false }
+    if Self.editsInSidebar(model.value(row: row, column: column)) {
+      showCellDetails(row: row, column: column)
+      return true
+    }
+    guard
       let tableColumn = tableView.tableColumns.firstIndex(where: {
         $0.identifier.rawValue == String(column)
       }),
