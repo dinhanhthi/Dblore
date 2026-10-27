@@ -35,6 +35,13 @@ struct PendingStagedBatch: Sendable {
   /// Data Rewind reads for a staged commit (`historySource` `.dataViewerEdit` only; an import
   /// never sends one)
   var rewindPlan: RewindPlan? = nil
+  /// Generate Rows: the INSERTs, made chunk by chunk while they are sent through
+  /// `executeGatedBatch(streamed:)`; `statements` is then empty and `preview` the run's summary
+  var streamed: StreamedBatch? = nil
+  /// Chunks of `streamed` done so far: 0 as the tab starts sending it, then after each one
+  var streamedProgress: (@Sendable (Int) -> Void)? = nil
+  /// The end of a `streamed` run Safe Mode held: its failure, or nil once it is sent or declined
+  var streamedCompletion: (@MainActor @Sendable (String?) -> Void)? = nil
 
   struct MongoInlineEdit: Sendable {
     /// The notebook cell to re-run, nil for the editor or the data viewer
@@ -68,6 +75,15 @@ extension NotebookViewModel {
   /// Why a table import is refused for this engine (`supportsDataImport`), or nil.
   var importUnsupportedReason: String? {
     unavailableFeatureMessage("Importing data", \.supportsDataImport)
+  }
+
+  /// Why Generate Rows is refused: the engine (`supportsRowStaging`), then a read-only
+  /// connection. Nil when rows can be generated.
+  var generateRowsUnavailableReason: String? {
+    if let reason = unavailableFeatureMessage("Generating rows", \.supportsRowStaging) {
+      return reason
+    }
+    return protectionPolicy.protectionLevel == .readOnly ? Self.connectionIsReadOnly : nil
   }
 
   /// Why staging actions do nothing, or nil when this data viewer can stage.
@@ -362,9 +378,18 @@ extension NotebookViewModel {
     let started = Date()
     var failure: String?
     do {
-      let counts = try await connectionManager.executeGatedBatch(
-        batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
-        caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil)
+      let rowCount: Int
+      if let streamed = batch.streamed {
+        batch.streamedProgress?(0)
+        rowCount = try await connectionManager.executeGatedBatch(
+          streamed: streamed, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
+          caller: id, progress: batch.streamedProgress)
+      } else {
+        rowCount = try await connectionManager.executeGatedBatch(
+          batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
+          caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil
+        ).reduce(0, +)
+      }
       if batch.historySource == .dataViewerEdit { dataViewer?.changeSet = nil }
       // The page reloads with the same key, so a redo would target rows this batch changed
       if dataViewer != nil { undoManager.removeAllActions() }
@@ -372,7 +397,7 @@ extension NotebookViewModel {
         [
           QueryHistoryOutcome(
             sql: batch.preview, duration: Date().timeIntervalSince(started),
-            rowCount: counts.reduce(0, +), status: .success, errorMessage: nil)
+            rowCount: rowCount, status: .success, errorMessage: nil)
         ], source: batch.historySource)
       if dataViewer != nil {
         // Inserts and deletes changed the row count: count again with the page
@@ -414,6 +439,23 @@ extension NotebookViewModel {
     return await runConfirmedStagedBatch(batch)
   }
 
+  /// Safe Mode confirmation for a Generate Rows run (`batch.streamed`), then the run in this
+  /// tab's transaction. Its summary `preview` is the one statement Safe Mode shows and the gate
+  /// pre-check reads: the streamed path itself never asks.
+  func beginGeneratedRowsBatch(_ batch: PendingStagedBatch) async -> String? {
+    if let reason = generateRowsUnavailableReason { return reason }
+    guard !hasPendingStagedChanges else {
+      return "Commit or discard staged changes before generating rows"
+    }
+    if let message = protectionBlockMessage(for: batch.preview) { return message }
+    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+      pendingExplainSQL = nil
+      pendingStagedBatch = batch
+      return nil
+    }
+    return await runConfirmedStagedBatch(batch)
+  }
+
   /// `detail` after the failed statement's file and rows: "c.csv rows 3–7: ", "c.csv: " for
   /// its CREATE TABLE, "Rows 3–7: " for a one-file import
   private static func batchFailureMessage(
@@ -439,6 +481,9 @@ extension NotebookViewModel {
   private static func batchToastMessage(
     _ error: Error, batch: PendingStagedBatch, fullMessage: String
   ) -> String {
+    if batch.historySource == .generatedRows, case DatabaseError.batchCancelled = error {
+      return "Generate Rows cancelled"
+    }
     guard batch.historySource == .dataImport else { return fullMessage }
     if case DatabaseError.batchCancelled = error { return "Import cancelled" }
     let pointer =

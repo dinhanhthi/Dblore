@@ -27,6 +27,8 @@ struct TableRowView: View {
   let onImport: (() -> Void)?
   /// Nil hides "Import Files..." (several files, the one file going into this table)
   var onImportFiles: (() -> Void)? = nil
+  /// Nil hides "Generate Rows..." (the engine has no row staging)
+  var onGenerateRows: (() -> Void)? = nil
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
@@ -126,6 +128,9 @@ struct TableRowView: View {
         }
         if let onImportFiles {
           Button("Import Files...", action: onImportFiles)
+        }
+        if let onGenerateRows {
+          Button("Generate Rows...", action: onGenerateRows)
         }
         if let structureMenuTitle {
           Button(structureMenuTitle, action: onEditStructure)

@@ -29,6 +29,10 @@ struct WorkspaceContainerView: View {
   @State private var multiFileImport: MultiFileImportRequest?
   @State private var isMultiFileImportPresented = false
   @State private var isMultiFileImportBusy = false
+  /// Generate Rows: its model and the tab it runs in
+  @State private var generateRows: GenerateRowsPanelRequest?
+  @State private var isGenerateRowsPresented = false
+  @State private var isGenerateRowsBusy = false
   @State private var isConnectionImportPresented = false
   /// Export SQL Dump / Copy Database File / Restore SQL Dump panel, and the tab it runs for
   @State private var backupSheet: BackupSheet?
@@ -120,6 +124,7 @@ struct WorkspaceContainerView: View {
               maxWidth: geometry.size.width * 0.35,
               onImportTable: { requestImport(for: $0) },
               onImportFiles: { requestMultiFileImport(schema: $0, table: $1) },
+              onGenerateRows: { requestGenerateRows(for: $0) },
               mongoAdmin: $sidebarMongoAdmin
             )
 
@@ -420,6 +425,23 @@ struct WorkspaceContainerView: View {
         .id(ObjectIdentifier(request.model))
       }
     }
+    .sidePanelOverlay(
+      isPresented: Binding(
+        get: { isGenerateRowsPresented },
+        set: { if $0 || !isGenerateRowsBusy { isGenerateRowsPresented = $0 } }
+      ),
+      width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
+    ) {
+      if let request = generateRows, let viewModel = workspaceManager.viewModel(for: request.tabID)
+      {
+        GenerateRowsSheet(
+          viewModel: viewModel, model: request.model,
+          isPresented: $isGenerateRowsPresented, isBusy: $isGenerateRowsBusy
+        )
+        // A new request starts a fresh sheet (no settings or task of the last one)
+        .id(ObjectIdentifier(request.model))
+      }
+    }
     .modifier(
       BackupPanel(workspaceManager: workspaceManager, sheet: $backupSheet, tabID: backupTabID)
     )
@@ -644,6 +666,15 @@ struct WorkspaceContainerView: View {
       tabID: tabID, table: table)
     isMultiFileImportPresented = true
   }
+
+  /// Generate Rows into `table`, in the active tab or a new SQL file
+  private func requestGenerateRows(for table: DatabaseTable) {
+    guard workspaceManager.canGenerateRows else { return }
+    let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
+    generateRows = GenerateRowsPanelRequest(
+      model: GenerateRowsModel(schema: table.schema, table: table.name), tabID: tabID)
+    isGenerateRowsPresented = true
+  }
 }
 
 /// The Import Files panel's model, the tab it runs in and the table whose menu opened it
@@ -651,6 +682,12 @@ private struct MultiFileImportRequest {
   let model: MultiFileImportModel
   let tabID: UUID
   let table: DatabaseTable?
+}
+
+/// The Generate Rows panel's model and the tab it runs in
+private struct GenerateRowsPanelRequest {
+  let model: GenerateRowsModel
+  let tabID: UUID
 }
 
 // MARK: - Sidebar Width Changes
@@ -773,6 +810,7 @@ struct WorkspaceLeftSidebar: View {
   let maxWidth: CGFloat
   let onImportTable: (DatabaseTable) -> Void
   let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
+  let onGenerateRows: (DatabaseTable) -> Void
   @Binding var mongoAdmin: SidebarMongoAdmin?
 
   /// Effective sidebar width from workspace settings or app settings
@@ -794,7 +832,7 @@ struct WorkspaceLeftSidebar: View {
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
           workspaceManager: workspaceManager, onImportTable: onImportTable,
-          onImportFiles: onImportFiles,
+          onImportFiles: onImportFiles, onGenerateRows: onGenerateRows,
           mongoAdmin: $mongoAdmin)
 
         if workspaceManager.isSchemaPaused {

@@ -18,6 +18,8 @@ struct WorkspaceLeftSidebarContent: View {
   let onImportTable: (DatabaseTable) -> Void
   /// Import Files: the schema the files go into, and the table whose menu opened it
   let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
+  /// Generate Rows into the table whose menu opened it
+  let onGenerateRows: (DatabaseTable) -> Void
   /// The collection or view change started here; the workspace container presents its form
   @Binding var mongoAdmin: SidebarMongoAdmin?
   @State private var selectedTab: SidebarTab = .public
@@ -836,6 +838,8 @@ struct WorkspaceLeftSidebarContent: View {
         ? { onImportTable(table.source) } : nil,
       onImportFiles: connectionDatabaseType.capabilities.supportsDataImport
         ? { onImportFiles(table.source.schema, table.source) } : nil,
+      onGenerateRows: connectionDatabaseType.capabilities.supportsRowStaging
+        ? { onGenerateRows(table.source) } : nil,
       structureMenuTitle: SidebarSectionModel.structureMenuTitle(for: connectionDatabaseType),
       onEditStructure: {
         workspaceManager.openStructureEditor(

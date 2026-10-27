@@ -78,6 +78,13 @@ class WorkspaceManager: Identifiable {
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
   }
 
+  /// Generate Rows (table context menu): connected, and the engine stages rows
+  /// (`supportsRowStaging`: PostgreSQL, SQLite, MySQL/MariaDB).
+  var canGenerateRows: Bool {
+    connectionState.isConnected
+      && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsRowStaging
+  }
+
   /// Import Documents (File menu, collection row) on MongoDB: connected, not read-only, and a
   /// schema read since the last connect (the collections listed and the epoch the import is
   /// gated on). `supportsDataImport` stays false: the table import never opens for MongoDB.

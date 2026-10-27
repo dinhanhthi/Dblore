@@ -517,8 +517,9 @@ class NotebookViewModel {
       // A staged commit (not an import or a MongoDB inline edit): no second one while it is sent
       let commits = batch.historySource == .dataViewerEdit && batch.mongoInlineEdit == nil
       if commits { isCommittingStaged = true }
-      await runConfirmedStagedBatch(batch)
+      let failure = await runConfirmedStagedBatch(batch)
       if commits { isCommittingStaged = false }
+      batch.streamedCompletion?(failure)
       return
     }
     if let edit = pendingInlineEdit {
@@ -548,6 +549,8 @@ class NotebookViewModel {
   /// Cancel the pending query execution
   func cancelPendingQuery() {
     pendingExplainSQL = nil
+    // A Generate Rows run waiting on this decision ends unsent
+    pendingStagedBatch?.streamedCompletion?(nil)
     pendingStagedBatch = nil
     pendingInlineEdit = nil
     if queryConfirmationState.runAllAwaitingUnlock {

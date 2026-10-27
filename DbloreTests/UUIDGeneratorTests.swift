@@ -1,5 +1,6 @@
 // UUIDGeneratorTests.swift
 // UUIDv7 layout (RFC 9562 section 5.7): timestamp field, version and variant bits, ordering.
+// UUIDv4 from a given generator (section 5.4): version and variant bits.
 
 import Foundation
 import Testing
@@ -27,6 +28,13 @@ struct UUIDGeneratorTests {
     #expect(characters[19] == "b")
     #expect(characters[8] == "-" && characters[13] == "-" && characters[18] == "-")
     #expect(characters[23] == "-")
+  }
+
+  @Test("A UUIDv4 from a given generator carries version 4 and variant 10")
+  func v4Layout() {
+    var random = FixedGenerator(value: .max)
+
+    #expect(UUIDGenerator.v4(using: &random) == "ffffffff-ffff-4fff-bfff-ffffffffffff")
   }
 
   @Test("A later millisecond sorts after an earlier one as text")

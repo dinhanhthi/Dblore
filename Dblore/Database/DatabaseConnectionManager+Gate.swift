@@ -20,6 +20,15 @@ nonisolated enum GateDecision: Sendable, Equatable {
   case blocked(statementIndex: Int, kind: StatementKind, reason: String)
 }
 
+/// The INSERTs of a Generate Rows run, made one chunk at a time inside the run's transaction
+/// (`executeGatedBatch(streamed:)`), so the whole run is never in memory.
+nonisolated struct StreamedBatch: Sendable {
+  /// The quoted table the rows go into: the run's one pending summary names it
+  let relation: String
+  /// The next chunk's INSERT statements (each with its `expectedRows`); nil once the run is done
+  let nextChunk: @Sendable () async throws -> [BoundStatement]?
+}
+
 extension DatabaseConnectionManager {
   // MARK: - Gated entry points (user SQL)
 
@@ -224,6 +233,42 @@ extension DatabaseConnectionManager {
     return try await runStagedBatch(
       statements, caller: caller, protectedMode: effective.protectedMode,
       cancellationGeneration: cancellationGeneration, rewind: rewind, rewinding: rewinding)
+  }
+
+  /// Send a streamed batch (Generate Rows) in one transaction, under the same rules as the
+  /// staged batch above. A run always writes, so a read-only connection is refused before any
+  /// chunk is made; every other check runs before anything is sent, and each chunk is classified
+  /// and checked against the policy as it is made (it must be DML), before it is sent.
+  /// `progress` gets the number of chunks done after each one. A cancel, a chunk the source
+  /// fails to make or the server refuses, or a relock rolls back the whole run.
+  /// - Returns: the rows inserted.
+  func executeGatedBatch(
+    streamed source: StreamedBatch, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
+    caller: UUID? = nil, progress: (@Sendable (Int) -> Void)? = nil
+  ) async throws -> Int {
+    try refuseIfRelocked(config)
+    guard epoch == connectionEpoch else {
+      throw DatabaseError.notEditable("the connection changed; run the query again to edit")
+    }
+    try refuseIfRowEditsUnsupported()
+    let effective = effectivePolicy(for: policy)
+    if effective.protectionLevel == .readOnly {
+      throw DatabaseError.blockedByProtection(
+        statementIndex: 0, kind: .dml,
+        reason: "Generating rows is not allowed on a read-only connection")
+    }
+    try refuseIfEnding()
+    try refuseIfOwnedByAnotherCaller(caller)
+    try refuseIfAborted()
+    guard session != nil else { throw DatabaseError.notConnected }
+    try refuseIfConnectionClosed()
+    // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
+    commitGuard.inFlight += 1
+    defer { commitGuard.inFlight -= 1 }
+    let cancellationGeneration = batchCancellationGeneration
+    return try await runStreamedBatch(
+      source, caller: caller, policy: effective, cancellationGeneration: cancellationGeneration,
+      progress: progress)
   }
 
   /// Throws `DatabaseError.notEditable` when the connected engine has no grid edits

@@ -2,7 +2,8 @@
 // Inline grid edits must update exactly one row. Protected mode runs the edit in the app
 // transaction behind an app-owned savepoint; without Protected mode the edit gets its own
 // app-owned BEGIN ... COMMIT, or runs inside the transaction the user opened.
-// A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement.
+// A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement;
+// a streamed batch (Generate Rows) too, with one summary per run.
 // MySQL counts changed rows (CLIENT_FOUND_ROWS is off): an UPDATE with a row check that
 // affects 0 rows counts as 1 when a locking read still finds the row (a same-value write).
 // A `RewindPlan` adds the Data Rewind reads around each statement (`+Rewind.swift`); without
@@ -183,6 +184,135 @@ extension DatabaseConnectionManager {
     return result.rows
   }
 
+  /// One `GenerateRowsPlanner` read (a key's current MAX, or referenced keys), refused and
+  /// guarded as `readImportMatches` is: on this session before the run's streamed batch opens a
+  /// transaction. A read past its purpose's row count fails rather than drop keys.
+  func readGenerateRows(_ read: GenerateRowsPlanner.Read) async throws -> [[CellValue]] {
+    try refuseGenerateRowsRead()
+    _ = try ReadOnlyQueryGuard.check(read.statement.sql, dialect: Self.dialect(of: config))
+    let maxRows =
+      switch read.purpose {
+      case .currentMax: 1
+      case .referencedKeys: GenerateRowsPlanner.maxSampledKeys
+      }
+    // `truncated`: a row past `maxRows`, or the byte budget cut one
+    let result = try await executeSingleStatement(
+      read.statement.sql, maxRows: maxRows, binds: read.statement.binds)
+    guard !result.truncated else {
+      throw DatabaseError.queryFailed("The read for generated rows returned too many rows.", 0)
+    }
+    return result.rows
+  }
+
+  /// The labels of each PostgreSQL enum column of `structure`, by column name in label order
+  /// (`GenerateRowsPlanner.plan(enumLabels:)`); empty on other engines. The table OID is bound,
+  /// never a name, and the read is refused as `readGenerateRows` is.
+  func readGenerateRowsEnumLabels(_ structure: TableStructure) async throws -> [String: [String]] {
+    guard let oid = structure.tableID.postgresOID else { return [:] }
+    try refuseGenerateRowsRead()
+    let result = try await executeSingleStatement(
+      """
+      SELECT a.attname::text, e.enumlabel::text
+      FROM pg_attribute a JOIN pg_enum e ON e.enumtypid = a.atttypid
+      WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY a.attnum, e.enumsortorder
+      """, maxRows: GenerateRowsPlanner.maxSampledKeys, binds: [.text(String(oid))])
+    guard !result.truncated else {
+      throw DatabaseError.queryFailed("The read for generated rows returned too many rows.", 0)
+    }
+    var labels: [String: [String]] = [:]
+    for row in result.rows {
+      guard row.count == 2, case .string(let column) = row[0], case .string(let label) = row[1]
+      else { continue }
+      labels[column, default: []].append(label)
+    }
+    return labels
+  }
+
+  /// A Generate Rows read runs on this session before the run's transaction: refused while
+  /// relocked or while any transaction is open (a pending Protected-mode one too)
+  private func refuseGenerateRowsRead() throws {
+    try refuseIfRelocked(config)
+    guard isOutsideAnyTransaction else {
+      throw DatabaseError.queryFailed(
+        "Commit or roll back the open transaction before generating rows.", 0)
+    }
+  }
+
+  /// Streamed batch (`executeGatedBatch(streamed:)`): the staged batch's transaction rules
+  /// (savepoint `dblore_batch` in Protected mode or inside the user's transaction, else its own
+  /// BEGIN ... COMMIT), its `cancellationGeneration` check and `progress` (chunks done). No Data
+  /// Rewind capture and no schema note (INSERT only); Protected mode records one pending summary
+  /// for the run ("INSERT INTO <relation>: N generated rows"), so memory stays bounded whatever
+  /// the row count. Each chunk is checked against `policy`, the effective one.
+  func runStreamedBatch(
+    _ source: StreamedBatch, caller: UUID?, policy: ProtectionPolicy,
+    cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)?
+  ) async throws -> Int {
+    let admission = UserStatementAdmission(
+      epoch: connectionEpoch, generation: cancellationGeneration)
+    return try await Self.$userStatementAdmission.withValue(admission) {
+      let epoch = connectionEpoch
+      if policy.protectedMode {
+        try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
+        let opens = txState.isIdle
+        if opens { try await beginAppTransaction(caller: caller) }
+        do {
+          _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+        } catch {
+          throw await transactionFailure(error, openedHere: opens)
+        }
+        let rows: Int
+        do {
+          rows = try await applyStreamedBatch(
+            source, policy: policy, cancellationGeneration: cancellationGeneration,
+            progress: progress)
+        } catch {
+          try await throwIfInterruptRolledBack(since: epoch, generation: cancellationGeneration)
+          throw await undoBatch(error, openedHere: opens)
+        }
+        do {
+          _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+        } catch {
+          throw await transactionFailure(error, openedHere: opens)
+        }
+        let dialect = Self.dialect(of: config)
+        if let summary = SQLStatementClassifier.classifyStatement(
+          "INSERT INTO \(source.relation): \(rows) generated rows", dialect: dialect)
+        {
+          recordPending(StatementSummary(statement: summary, affectedRows: rows, dialect: dialect))
+        }
+        return rows
+      }
+      if userTxOpen {
+        _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+        let rows: Int
+        do {
+          rows = try await applyStreamedBatch(
+            source, policy: policy, cancellationGeneration: cancellationGeneration,
+            progress: progress)
+        } catch {
+          try await throwIfInterruptRolledBack(since: epoch, generation: cancellationGeneration)
+          throw await undoBatch(error, openedHere: false)
+        }
+        _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+        return rows
+      }
+      _ = try await sendTransactionControl(appOwnedBeginSQL)
+      let rows: Int
+      do {
+        rows = try await applyStreamedBatch(
+          source, policy: policy, cancellationGeneration: cancellationGeneration,
+          progress: progress)
+      } catch {
+        _ = try? await sendTransactionControl("ROLLBACK")
+        throw error
+      }
+      try await commitOwnBatch()
+      return rows
+    }
+  }
+
   // MARK: - Private
 
   private func runProtectedBatch(
@@ -257,6 +387,16 @@ extension DatabaseConnectionManager {
       _ = try? await sendTransactionControl("ROLLBACK")
       throw error
     }
+    try await commitOwnBatch()
+    recordRewind(capture, committed: true)
+    recordRewound(rewinding, committed: true)
+    noteSchemaSQL(statements)
+    return counts
+  }
+
+  /// COMMIT of a batch's own BEGIN; a COMMIT that fails or is answered with a rollback is
+  /// followed by ROLLBACK.
+  private func commitOwnBatch() async throws {
     // SQLite keeps the transaction open after a deferred foreign key failure at COMMIT: without
     // the ROLLBACK its write lock would stay held while nothing tracks the transaction
     let metadata: CommandResult
@@ -271,10 +411,6 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "The server rolled back the batch instead of saving it.")
     }
-    recordRewind(capture, committed: true)
-    recordRewound(rewinding, committed: true)
-    noteSchemaSQL(statements)
-    return counts
   }
 
   /// Send each statement and check its expected affected rows when set. The caller owns the
@@ -319,6 +455,64 @@ extension DatabaseConnectionManager {
       progress?(counts.count)
     }
     return counts
+  }
+
+  /// Make, check and send each chunk of `source` in turn; the caller owns the transaction. A
+  /// relock or a cancel stops the run before the next chunk is made, and a chunk that is not
+  /// DML or that `policy` forbids before it is sent. Each statement's expected rows are checked
+  /// as `applyBatch` does, and a failure names it by its index in the run. Returns the rows sent.
+  private func applyStreamedBatch(
+    _ source: StreamedBatch, policy: ProtectionPolicy, cancellationGeneration: UInt64,
+    progress: (@Sendable (Int) -> Void)?
+  ) async throws -> Int {
+    let dialect = Self.dialect(of: config)
+    var index = 0
+    var rows = 0
+    var chunks = 0
+    while true {
+      try refuseCancelledBatch(since: cancellationGeneration)
+      try refuseIfRelocked(config)
+      let chunk = try await source.nextChunk()
+      try refuseCancelledBatch(since: cancellationGeneration)
+      guard let chunk else { return rows }
+      for (offset, statement) in chunk.enumerated() {
+        let classified = SQLStatementClassifier.classify(statement.sql, dialect: dialect)
+        guard classified.count == 1, classified[0].kind == .dml else {
+          throw DatabaseError.blockedByProtection(
+            statementIndex: index + offset, kind: classified.first?.kind ?? .unknown,
+            reason: "Generated rows are sent only as INSERT statements")
+        }
+        if case .blocked(_, let kind, let reason) = Self.evaluate(
+          classified, policy: policy, dialect: dialect)
+        {
+          throw DatabaseError.blockedByProtection(
+            statementIndex: index + offset, kind: kind, reason: reason)
+        }
+      }
+      for statement in chunk {
+        let count: Int
+        do {
+          count = try await sendBound(statement)
+        } catch {
+          try refuseCancelledBatch(since: cancellationGeneration)
+          throw Self.batchStatementFailed(
+            index, sql: statement.sql, underlying: error, rolledBack: true)
+        }
+        await batchCheckpointHook?(index)
+        try refuseCancelledBatch(since: cancellationGeneration)
+        if let expected = statement.expectedRows, count != expected {
+          let reason =
+            Self.unexpectedRowCountReason
+            + "\(expected) row\(expected == 1 ? "" : "s"), affected \(count)"
+          throw Self.batchStatementFailed(
+            index, sql: statement.sql, reason: reason, rolledBack: true)
+        }
+        rows += count
+        index += 1
+      }
+      chunks += 1
+      progress?(chunks)
+    }
   }
 
   /// Inside the user's transaction, a capture read that lost it (MySQL rolls it back whole on
