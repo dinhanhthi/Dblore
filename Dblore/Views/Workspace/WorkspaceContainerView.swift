@@ -249,6 +249,7 @@ struct WorkspaceContainerView: View {
 
                   WorkspaceInfoButton(workspaceManager: workspaceManager)
                 }
+                .headerControlsGlass()
                 .padding(.trailing, Spacing.xsm)
               }
 
@@ -302,7 +303,6 @@ struct WorkspaceContainerView: View {
     .ignoresSafeArea(.all, edges: isFullScreen ? [] : .top)
     .environment(\.nativeTabBarHeight, nativeTabBarHeight)
     .environment(\.trafficLightsWidth, trafficLightsWidth)
-    .environment(\.isWindowFullScreen, isFullScreen)
     .background(
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
@@ -1348,6 +1348,7 @@ struct WorkspaceTitleBarTabsView: View {
         .blockDoubleClickZoom()
         .help("New or open tab")
       }
+      .headerControlsGlass()
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)

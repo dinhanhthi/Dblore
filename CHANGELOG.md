@@ -2,6 +2,13 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Improved
+
+- **Window tabs in two rows.** When Dblore windows are merged as macOS window tabs, the Dblore header (sidebar buttons, tabs and the buttons on the right) stays in the title bar beside the window buttons, and the window tab bar sits below it, starting after the left sidebar (full width when the sidebar is hidden). Each window tab keeps its own Dblore tabs. In full screen, the window tab bar stays at the top with the header below it. [#6b03c347](https://github.com/dinhanhthi/Dblore/commit/6b03c347) [#0078afab](https://github.com/dinhanhthi/Dblore/commit/0078afab)
+- **Glass header controls.** On macOS 26 and later, the header button groups and the selected tab use Liquid Glass.
+
 ## v0.8.4 (2026-10-25)
 
 ### Improved

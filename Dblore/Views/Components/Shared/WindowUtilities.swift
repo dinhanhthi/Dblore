@@ -69,8 +69,6 @@ extension EnvironmentValues {
   @Entry var nativeTabBarHeight: CGFloat = 0
   /// Width the traffic lights take at the leading edge of the titlebar row, trailing gap included
   @Entry var trafficLightsWidth: CGFloat = ComponentSize.trafficLightWidth
-  /// Whether the window is in (or entering) full screen, where it has no titlebar row
-  @Entry var isWindowFullScreen = false
 }
 
 /// Window and tab labels for a workspace, VSCode style: "Name (Workspace)" on the native tab and
