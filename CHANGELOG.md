@@ -8,11 +8,13 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 - **Pinned row number column.** The `#` column stays at the left edge of the results grid while you scroll sideways, so you always see which row you are on. [#402916d8](https://github.com/dinhanhthi/Dblore/commit/402916d8)
 
+- **Workspace icon color.** Edit a recent workspace on the Welcome window and pick an Icon color for its folder icon, or keep the default. [#65e118ca](https://github.com/dinhanhthi/Dblore/commit/65e118ca)
+
 ### Improved
 
 - **No more workspace welcome screen.** A workspace with no tab open, including one that just connected, keeps its full window size: the left sidebar opens on the Public tab so a table can be opened right away, and the content area shows the Dblore icon, a hint and the New Notebook, New SQL File, New Markdown Note and Open File buttons. Save Workspace is in the File menu. [#4ab360a4](https://github.com/dinhanhthi/Dblore/commit/4ab360a4)
 - **Window tabs in two rows.** When Dblore windows are merged as macOS window tabs, the Dblore header (sidebar buttons, tabs and the buttons on the right) stays in the title bar beside the window buttons, and the window tab bar sits below it, starting after the left sidebar (full width when the sidebar is hidden). Each window tab keeps its own Dblore tabs. The tab bar is centered in its row, with a line below it that continues the line under the sidebar tabs, and the Welcome window lays it out the same way. In full screen, the window tab bar stays at the top with the header below it. [#6b03c347](https://github.com/dinhanhthi/Dblore/commit/6b03c347) [#0078afab](https://github.com/dinhanhthi/Dblore/commit/0078afab) [#3ed75e1e](https://github.com/dinhanhthi/Dblore/commit/3ed75e1e) [#0bf67342](https://github.com/dinhanhthi/Dblore/commit/0bf67342)
-- **Welcome window with tabs.** With window tabs, the Welcome window shows a "Welcome" title above the tab bar, and the recents panel has the same 12 pt margin on all four sides, lined up with the tab bar. [#9dd17b66](https://github.com/dinhanhthi/Dblore/commit/9dd17b66) [#5741a36b](https://github.com/dinhanhthi/Dblore/commit/5741a36b)
+- **Welcome window with tabs.** With window tabs, the Welcome window shows a "Welcome" title above the tab bar, and the recents panel has the same 12 pt margin on all four sides, lined up with the tab bar. The export button sits between the filter and the tabs, and recent rows have a larger icon and text. [#9dd17b66](https://github.com/dinhanhthi/Dblore/commit/9dd17b66) [#5741a36b](https://github.com/dinhanhthi/Dblore/commit/5741a36b) [#7492e36e](https://github.com/dinhanhthi/Dblore/commit/7492e36e) [#c44944d6](https://github.com/dinhanhthi/Dblore/commit/c44944d6) [#b7ecd290](https://github.com/dinhanhthi/Dblore/commit/b7ecd290)
 
 ### Fixed
 
