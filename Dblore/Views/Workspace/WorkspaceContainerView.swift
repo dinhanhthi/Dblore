@@ -25,6 +25,10 @@ struct WorkspaceContainerView: View {
   @State private var isImportBusy = false
   @State private var importTabID: UUID?
   @State private var importDestination: TableImportDestination?
+  /// Import Files: its model, the tab it runs in and the table whose menu opened it
+  @State private var multiFileImport: MultiFileImportRequest?
+  @State private var isMultiFileImportPresented = false
+  @State private var isMultiFileImportBusy = false
   @State private var isConnectionImportPresented = false
   /// Export SQL Dump / Copy Database File / Restore SQL Dump panel, and the tab it runs for
   @State private var backupSheet: BackupSheet?
@@ -115,6 +119,7 @@ struct WorkspaceContainerView: View {
               tabBarHeight: ComponentSize.tabBarHeight,
               maxWidth: geometry.size.width * 0.35,
               onImportTable: { requestImport(for: $0) },
+              onImportFiles: { requestMultiFileImport(schema: $0, table: $1) },
               mongoAdmin: $sidebarMongoAdmin
             )
 
@@ -397,6 +402,24 @@ struct WorkspaceContainerView: View {
           initialDestination: importDestination, tables: workspaceManager.databaseTables)
       }
     }
+    .sidePanelOverlay(
+      isPresented: Binding(
+        get: { isMultiFileImportPresented },
+        set: { if $0 || !isMultiFileImportBusy { isMultiFileImportPresented = $0 } }
+      ),
+      width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
+    ) {
+      if let request = multiFileImport,
+        let viewModel = workspaceManager.viewModel(for: request.tabID)
+      {
+        MultiFileImportSheet(
+          viewModel: viewModel, model: request.model, table: request.table,
+          isPresented: $isMultiFileImportPresented, isBusy: $isMultiFileImportBusy
+        )
+        // A new request starts a fresh sheet (no edited file or task of the last one)
+        .id(ObjectIdentifier(request.model))
+      }
+    }
     .modifier(
       BackupPanel(workspaceManager: workspaceManager, sheet: $backupSheet, tabID: backupTabID)
     )
@@ -611,6 +634,23 @@ struct WorkspaceContainerView: View {
     importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }
     isImportPresented = true
   }
+
+  /// Import Files into `schema` (a table's menu passes its table: one file goes into it)
+  private func requestMultiFileImport(schema: String?, table: DatabaseTable?) {
+    guard workspaceManager.canImportData else { return }
+    let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
+    multiFileImport = MultiFileImportRequest(
+      model: MultiFileImportModel(schema: schema, tables: workspaceManager.databaseTables),
+      tabID: tabID, table: table)
+    isMultiFileImportPresented = true
+  }
+}
+
+/// The Import Files panel's model, the tab it runs in and the table whose menu opened it
+private struct MultiFileImportRequest {
+  let model: MultiFileImportModel
+  let tabID: UUID
+  let table: DatabaseTable?
 }
 
 // MARK: - Sidebar Width Changes
@@ -732,6 +772,7 @@ struct WorkspaceLeftSidebar: View {
   let tabBarHeight: CGFloat
   let maxWidth: CGFloat
   let onImportTable: (DatabaseTable) -> Void
+  let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
   @Binding var mongoAdmin: SidebarMongoAdmin?
 
   /// Effective sidebar width from workspace settings or app settings
@@ -753,6 +794,7 @@ struct WorkspaceLeftSidebar: View {
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
           workspaceManager: workspaceManager, onImportTable: onImportTable,
+          onImportFiles: onImportFiles,
           mongoAdmin: $mongoAdmin)
 
         if workspaceManager.isSchemaPaused {

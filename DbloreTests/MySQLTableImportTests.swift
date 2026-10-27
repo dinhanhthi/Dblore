@@ -4,8 +4,9 @@
 // LONGTEXT), an existing table, a ~1 MB text value (packet size), a bad row that rolls the
 // existing-table import back, Protected mode (rows pending; CREATE TABLE refused because it
 // commits implicitly), timestamps converted only for DATE / DATETIME / TIMESTAMP destinations,
-// and INSERT chunks kept under the session's max_allowed_packet. Opt-in (`.requiresMySQL`).
-// Tables use `imp_`.
+// INSERT chunks kept under the session's max_allowed_packet, and the keyed modes (Update,
+// Insert or Update) on an integer, a utf8mb4_unicode_ci, a latin1 and a BIGINT key. Opt-in
+// (`.requiresMySQL`). Tables use `imp_`.
 
 import Foundation
 import Testing
@@ -377,5 +378,158 @@ struct MySQLTableImportTests {
     }
     _ = try? await root.executeInternal("SET GLOBAL max_allowed_packet = \(restore)")
     try opened.get()
+  }
+
+  // MARK: - Keyed modes
+
+  /// A keyed import of `csv` into the existing `table` in `mode`, its tables and keys loaded
+  /// (the primary key is chosen)
+  private static func keyedModel(
+    _ csv: String, table: String, mode: ImportMode, manager: DatabaseConnectionManager
+  ) async throws -> TableImportModel {
+    let model = try await Self.model(csv, extension: "csv")
+    model.destination = .existing(schema: nil, table: table)
+    model.tables = try await Self.tables(manager)
+    await model.loadMatchKeys { try await manager.fetchTableStructure(schema: $0, table: $1) }
+    model.selectMode(mode)
+    return model
+  }
+
+  @Test(
+    "Update and Insert or Update match an integer key", .requiresMySQL,
+    .timeLimit(.minutes(1)), arguments: [Server.mysql, .mariadb])
+  func keyedModes(server: Server) async throws {
+    try await withConnection(server) { manager, viewModel, table in
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(table) (id INT PRIMARY KEY, name VARCHAR(20))")
+      _ = try await manager.executeInternal("INSERT INTO \(table) VALUES (1, 'a'), (2, 'b')")
+      let rows = {
+        try await manager.executeInternal("SELECT id, name FROM \(table) ORDER BY id").rows
+      }
+
+      // Update: the counts come before anything is written; 1 is updated, 3 is skipped
+      let update = try await Self.keyedModel(
+        "id,name\n1,A\n3,C\n", table: table, mode: .update, manager: manager)
+      defer { try? FileManager.default.removeItem(at: update.fileURL!) }
+      #expect(update.matchKey?.isPrimaryKey == true)
+      #expect(await update.prepareImport(for: viewModel), "\(update.errorMessage ?? "")")
+      let summary = try #require(update.matchSummary)
+      #expect([summary.newRows, summary.existingRows, summary.refusedCount] == [1, 1, 0] as [Int])
+      #expect([summary.inserts, summary.updates, summary.skips] == [0, 1, 1] as [Int])
+      #expect(try await rows() == [[.int(1), .string("a")], [.int(2), .string("b")]])
+      #expect(await update.confirmImport(to: viewModel), "\(update.errorMessage ?? "")")
+      #expect(try await rows() == [[.int(1), .string("A")], [.int(2), .string("b")]])
+
+      // Insert or Update: 2 is updated, 4 inserted
+      let upsert = try await Self.keyedModel(
+        "id,name\n2,B\n4,D\n", table: table, mode: .insertOrUpdate, manager: manager)
+      defer { try? FileManager.default.removeItem(at: upsert.fileURL!) }
+      #expect(await upsert.submit(to: viewModel), "\(upsert.errorMessage ?? "")")
+      #expect(upsert.matchSummary?.inserts == 1)
+      #expect(upsert.matchSummary?.updates == 1)
+      #expect(
+        try await rows() == [
+          [.int(1), .string("A")], [.int(2), .string("B")], [.int(4), .string("D")],
+        ])
+    }
+  }
+
+  @Test(
+    "Updating a row to the values it holds succeeds through the row check", .requiresMySQL,
+    .timeLimit(.minutes(1)), arguments: [Server.mysql, .mariadb])
+  func unchangedRowUpdate(server: Server) async throws {
+    // MySQL reports 0 affected rows for an UPDATE that changes nothing
+    try await withConnection(server) { manager, viewModel, table in
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(table) (id INT PRIMARY KEY, name VARCHAR(20))")
+      _ = try await manager.executeInternal("INSERT INTO \(table) VALUES (1, 'a')")
+      let model = try await Self.keyedModel(
+        "id,name\n1,a\n", table: table, mode: .update, manager: manager)
+      defer { try? FileManager.default.removeItem(at: model.fileURL!) }
+      #expect(await model.submit(to: viewModel), "\(model.errorMessage ?? "")")
+      #expect(model.errorMessage == nil)
+      #expect(model.matchSummary?.updates == 1)
+      let result = try await manager.executeInternal("SELECT id, name FROM \(table)")
+      #expect(result.rows == [[.int(1), .string("a")]])
+    }
+  }
+
+  @Test(
+    "A utf8mb4_unicode_ci key matches under its collation", .requiresMySQL,
+    .timeLimit(.minutes(1)), arguments: [Server.mysql, .mariadb])
+  func unicodeCollationKey(server: Server) async throws {
+    // The match read's derived table has the connection collation: a key compared without the
+    // column's COLLATE fails with error 1267, and 'A' matches 'a' only under the column's
+    try await withConnection(server) { manager, viewModel, table in
+      _ = try await manager.executeInternal(
+        """
+        CREATE TABLE \(table) (
+          code VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PRIMARY KEY,
+          name VARCHAR(20))
+        """)
+      _ = try await manager.executeInternal("INSERT INTO \(table) VALUES ('a', 'x')")
+      let model = try await Self.keyedModel(
+        "code,name\nA,y\nb,z\n", table: table, mode: .insertOrUpdate, manager: manager)
+      defer { try? FileManager.default.removeItem(at: model.fileURL!) }
+      #expect(await model.submit(to: viewModel), "\(model.errorMessage ?? "")")
+      #expect(model.matchSummary?.existingRows == 1)
+      #expect(model.matchSummary?.newRows == 1)
+      let result = try await manager.executeInternal(
+        "SELECT code, name FROM \(table) ORDER BY code")
+      #expect(result.rows == [[.string("a"), .string("y")], [.string("b"), .string("z")]])
+    }
+  }
+
+  @Test(
+    "A latin1 key matches through CONVERT; a value latin1 can't hold is refused for its row",
+    .requiresMySQL, .timeLimit(.minutes(1)), arguments: [Server.mysql, .mariadb])
+  func latin1Key(server: Server) async throws {
+    try await withConnection(server) { manager, viewModel, table in
+      _ = try await manager.executeInternal(
+        """
+        CREATE TABLE \(table) (
+          code VARCHAR(20) CHARACTER SET latin1 PRIMARY KEY, name VARCHAR(20))
+        """)
+      _ = try await manager.executeInternal("INSERT INTO \(table) VALUES ('café', 'x')")
+      let model = try await Self.keyedModel(
+        "code,name\ncafé,y\nnew,z\n日本,w\n", table: table, mode: .insertOrUpdate,
+        manager: manager)
+      defer { try? FileManager.default.removeItem(at: model.fileURL!) }
+      #expect(await model.submit(to: viewModel), "\(model.errorMessage ?? "")")
+      let summary = try #require(model.matchSummary)
+      #expect([summary.newRows, summary.existingRows, summary.refusedCount] == [1, 1, 1] as [Int])
+      #expect(
+        summary.refused == [
+          .init(row: 3, reason: "The code value can't be stored in character set latin1.")
+        ])
+      let result = try await manager.executeInternal(
+        "SELECT code, name FROM \(table) ORDER BY code")
+      #expect(result.rows == [[.string("café"), .string("y")], [.string("new"), .string("z")]])
+    }
+  }
+
+  @Test(
+    "A BIGINT key above 2^53 is compared exactly, not as a double", .requiresMySQL,
+    .timeLimit(.minutes(1)), arguments: [Server.mysql, .mariadb])
+  func bigintKeyPrecision(server: Server) async throws {
+    // As doubles, 9007199254740993 and 9007199254740992 are equal
+    try await withConnection(server) { manager, viewModel, table in
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(table) (id BIGINT PRIMARY KEY, name VARCHAR(20))")
+      _ = try await manager.executeInternal(
+        "INSERT INTO \(table) VALUES (9007199254740992, 'a')")
+      let model = try await Self.keyedModel(
+        "id,name\n9007199254740993,b\n", table: table, mode: .insertOrUpdate, manager: manager)
+      defer { try? FileManager.default.removeItem(at: model.fileURL!) }
+      #expect(await model.submit(to: viewModel), "\(model.errorMessage ?? "")")
+      #expect(model.matchSummary?.newRows == 1)
+      #expect(model.matchSummary?.existingRows == 0)
+      let result = try await manager.executeInternal(
+        "SELECT id, name FROM \(table) ORDER BY id")
+      #expect(
+        result.rows == [
+          [.int(9_007_199_254_740_992), .string("a")], [.int(9_007_199_254_740_993), .string("b")],
+        ])
+    }
   }
 }

@@ -99,6 +99,11 @@ struct DataImportSheet: View {
         }
         .font(.small)
         .foregroundColor(.warning)
+        if replacesLocks {
+          Text(DataSettingsWarnings.importLocks)
+            .font(.small)
+            .foregroundColor(.warning)
+        }
 
         HStack {
           Spacer()
@@ -114,6 +119,11 @@ struct DataImportSheet: View {
     }
     .frame(width: 480, height: 460)
     .background(Color.appBackground)
+  }
+
+  /// Connection rows and Recents carry the locks; app settings the relock timeout
+  private var replacesLocks: Bool {
+    !selected.isDisjoint(with: [.connectionHistory, .recentItems, .appSettings])
   }
 
   private var summary: some View {

@@ -16,6 +16,8 @@ import SwiftUI
 struct WorkspaceLeftSidebarContent: View {
   @Bindable var workspaceManager: WorkspaceManager
   let onImportTable: (DatabaseTable) -> Void
+  /// Import Files: the schema the files go into, and the table whose menu opened it
+  let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
   /// The collection or view change started here; the workspace container presents its form
   @Binding var mongoAdmin: SidebarMongoAdmin?
   @State private var selectedTab: SidebarTab = .public
@@ -581,6 +583,8 @@ struct WorkspaceLeftSidebarContent: View {
                         schema: schema)
                     }
                   }
+                  // The schema's menu: the database's, with Import Files into this schema
+                  .contextMenu { databaseMenuItems(schema: schema) }
                   .id(publicKeywords.isEmpty ? schema : "\(schema)-filtered")
                 }
               }
@@ -597,17 +601,26 @@ struct WorkspaceLeftSidebarContent: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
         // The database's menu: section headers and empty space (rows keep their own menus)
-        .contextMenu {
-          if queryLanguage == .sql {
-            Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
-              .disabled(!workspaceManager.canExportDataDictionary)
-          }
-          if workspaceManager.supportsSchemaCompare {
-            Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
-              .disabled(!workspaceManager.canCompareSchemas)
-          }
-        }
+        .contextMenu { databaseMenuItems(schema: nil) }
       }
+    }
+  }
+
+  /// The database's menu items; `schema` is the schema group they open on (nil: the database,
+  /// whose files go into the schema New Table targets)
+  @ViewBuilder
+  private func databaseMenuItems(schema: String?) -> some View {
+    if queryLanguage == .sql {
+      if connectionDatabaseType.capabilities.supportsDataImport {
+        Button("Import Files...") { onImportFiles(schema ?? createTableSchemas.first, nil) }
+          .disabled(!workspaceManager.canImportData)
+      }
+      Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
+        .disabled(!workspaceManager.canExportDataDictionary)
+    }
+    if workspaceManager.supportsSchemaCompare {
+      Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
+        .disabled(!workspaceManager.canCompareSchemas)
     }
   }
 
@@ -821,6 +834,8 @@ struct WorkspaceLeftSidebarContent: View {
       },
       onImport: connectionDatabaseType.capabilities.supportsDataImport
         ? { onImportTable(table.source) } : nil,
+      onImportFiles: connectionDatabaseType.capabilities.supportsDataImport
+        ? { onImportFiles(table.source.schema, table.source) } : nil,
       structureMenuTitle: SidebarSectionModel.structureMenuTitle(for: connectionDatabaseType),
       onEditStructure: {
         workspaceManager.openStructureEditor(

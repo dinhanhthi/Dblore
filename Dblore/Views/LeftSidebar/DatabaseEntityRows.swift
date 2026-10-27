@@ -25,6 +25,8 @@ struct TableRowView: View {
   let onColumnClick: (String) -> Void
   /// Nil hides "Import Data..." (the engine has no table import)
   let onImport: (() -> Void)?
+  /// Nil hides "Import Files..." (several files, the one file going into this table)
+  var onImportFiles: (() -> Void)? = nil
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
@@ -121,6 +123,9 @@ struct TableRowView: View {
         }
         if let onImport {
           Button("Import Data...", action: onImport)
+        }
+        if let onImportFiles {
+          Button("Import Files...", action: onImportFiles)
         }
         if let structureMenuTitle {
           Button(structureMenuTitle, action: onEditStructure)

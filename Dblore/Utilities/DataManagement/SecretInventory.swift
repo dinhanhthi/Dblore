@@ -15,6 +15,10 @@ nonisolated enum SecretKind: String, Sendable {
   case sshHostKey
   case outsideMCPToken
   case mcpServerToken
+  /// The Lock password record (`LockPasswordStore`)
+  case lockPassword
+  /// A locked workspace's content key (`LockKeyStore`)
+  case lockContentKey
 }
 
 /// One Keychain account. `label` is the account name. The value itself is not here.
@@ -50,6 +54,10 @@ nonisolated struct SecretItem: Identifiable, Equatable, Sendable {
       return .outsideMCPToken
     case KeychainMCPTokenStore.serviceName:
       return .mcpServerToken
+    case LockPasswordStore.serviceName:
+      return .lockPassword
+    case LockKeyStore.serviceName:
+      return .lockContentKey
     case KeychainAIKeyStore.serviceName:
       return account == ChatGPTTokenStorage.account ? .chatGPTToken : .aiKey
     default:
@@ -106,6 +114,8 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
     KeychainSSHKnownHostStore.serviceName,
     KeychainOutsideMCPTokenStore.serviceName,
     KeychainMCPTokenStore.serviceName,
+    LockPasswordStore.serviceName,
+    LockKeyStore.serviceName,
   ]
 
   func items() async -> [SecretItem] {
@@ -130,7 +140,21 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
       }
       return
     }
+    // The key goes with its recorded mode, so an unlock is not offered Touch ID for a key that
+    // is gone
+    if item.kind == .lockContentKey, let id = Self.workspaceId(item.account) {
+      let status = LockKeyStore().remove(for: id)
+      guard status == errSecSuccess else { throw SecretInventoryError.keychainStatus(status) }
+      return
+    }
     try deleteGeneric(service: item.service, account: item.account)
+  }
+
+  /// The workspace of a `LockKeyStore` account (`workspace:<UUID>`)
+  private static func workspaceId(_ account: String) -> UUID? {
+    let prefix = "workspace:"
+    guard account.hasPrefix(prefix) else { return nil }
+    return UUID(uuidString: String(account.dropFirst(prefix.count)))
   }
 
   func deleteAll(kind: SecretKind) async throws {

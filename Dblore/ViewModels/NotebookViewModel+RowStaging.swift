@@ -17,6 +17,9 @@ struct PendingStagedBatch: Sendable {
   var connectionEpoch: UInt64
   var historySource: QueryHistoryRecordSource = .dataViewerEdit
   var rowRanges: [ClosedRange<Int>?] = []
+  /// Multi-file import: the file of each statement, so a failure names it with its rows.
+  /// Empty for a one-file import.
+  var statementFiles: [String] = []
   /// Import only: the import sheet is still open to show the failure detail. False once the
   /// sheet closed for the Safe Mode confirmation.
   var reportsToImportSheet = true
@@ -377,12 +380,11 @@ extension NotebookViewModel {
         await loadDataViewerPage()
       }
     } catch {
-      let message = Self.batchFailureMessage(error, ranges: batch.rowRanges)
+      let message = Self.batchFailureMessage(error, batch: batch)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
         source: batch.historySource, errorMessage: message,
-        importSummary: Self.batchFailureMessage(
-          error, ranges: batch.rowRanges, detail: "Import failed"))
+        importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
       showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
       failure = message
     }
@@ -412,14 +414,24 @@ extension NotebookViewModel {
     return await runConfirmedStagedBatch(batch)
   }
 
+  /// `detail` after the failed statement's file and rows: "c.csv rows 3–7: ", "c.csv: " for
+  /// its CREATE TABLE, "Rows 3–7: " for a one-file import
   private static func batchFailureMessage(
-    _ error: Error, ranges: [ClosedRange<Int>?], detail: String? = nil
+    _ error: Error, batch: PendingStagedBatch, detail: String? = nil
   ) -> String {
     let detail = detail ?? error.localizedDescription
-    guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error,
-      ranges.indices.contains(index), let range = ranges[index]
-    else { return detail }
-    return "Rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+    guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error else {
+      return detail
+    }
+    let range = batch.rowRanges.indices.contains(index) ? batch.rowRanges[index] : nil
+    let file = batch.statementFiles.indices.contains(index) ? batch.statementFiles[index] : nil
+    switch (file, range) {
+    case (let file?, let range?):
+      return "\(file) rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+    case (let file?, nil): return "\(file): \(detail)"
+    case (nil, let range?): return "Rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+    case (nil, nil): return detail
+    }
   }
 
   /// Import errors can quote file values. The toast stays generic; the sheet shows the detail,
@@ -431,7 +443,7 @@ extension NotebookViewModel {
     if case DatabaseError.batchCancelled = error { return "Import cancelled" }
     let pointer =
       batch.reportsToImportSheet ? "See the import sheet for details." : "See History for details."
-    return batchFailureMessage(error, ranges: batch.rowRanges, detail: "Import failed. \(pointer)")
+    return batchFailureMessage(error, batch: batch, detail: "Import failed. \(pointer)")
   }
 
   // MARK: - Private

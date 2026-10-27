@@ -176,6 +176,22 @@ struct SecretInventoryTests {
     #expect(await inventory.items() == planted())
   }
 
+  @Test("The Lock password and workspace keys are their own kinds and deleted with them")
+  func lockItemsAreTheirOwnKinds() async throws {
+    let password = SecretItem.listed(
+      service: LockPasswordStore.serviceName, account: LockPasswordStore.accountName)
+    let key = SecretItem.listed(
+      service: LockKeyStore.serviceName, account: LockKeyStore.account(for: UUID()))
+    #expect(password.kind == .lockPassword)
+    #expect(key.kind == .lockContentKey)
+    #expect(key.label == key.account)
+    let inventory = InMemorySecretInventory(items: planted() + [password, key])
+    try await inventory.deleteAll(kind: .lockContentKey)
+    #expect(await inventory.items() == planted() + [password])
+    try await inventory.delete(password)
+    #expect(await inventory.items() == planted())
+  }
+
   @Test("The default inventory is in-memory under the test host")
   func defaultInventoryIsInMemory() {
     #expect(SecretInventoryFactory.makeDefault() is InMemorySecretInventory)
@@ -195,5 +211,9 @@ struct SecretInventoryTests {
     #expect(text.contains("KeychainSSHKnownHostStore.serviceName"))
     #expect(text.contains("KeychainOutsideMCPTokenStore.serviceName,"))
     #expect(text.contains("KeychainMCPTokenStore.serviceName,"))
+    #expect(text.contains("LockPasswordStore.serviceName,"))
+    #expect(text.contains("LockKeyStore.serviceName,"))
+    // A workspace key goes with its recorded mode, so an unlock is not offered Touch ID for it
+    #expect(text.contains(".remove(for:"))
   }
 }

@@ -163,6 +163,26 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// One `ImportMatchPlanner` read of a keyed import, on this session before the import's
+  /// batch opens a transaction: `(position, count)` rows. Refused while any transaction is
+  /// open (a failing read would abort it, and its uncommitted rows would decide the match),
+  /// and unless `ReadOnlyQueryGuard` passes the SQL. A read that hits the row cap fails rather
+  /// than drop positions.
+  func readImportMatches(_ read: BoundStatement) async throws -> [[CellValue]] {
+    try refuseIfRelocked(config)
+    guard isOutsideAnyTransaction else {
+      throw DatabaseError.queryFailed(
+        "Commit or roll back the open transaction before matching rows to the table.", 0)
+    }
+    _ = try ReadOnlyQueryGuard.check(read.sql, dialect: Self.dialect(of: config))
+    let result = try await executeSingleStatement(
+      read.sql, maxRows: ImportMatchPlanner.maxRowsPerRead + 1, binds: read.binds)
+    guard !result.truncated, result.rows.count <= ImportMatchPlanner.maxRowsPerRead else {
+      throw DatabaseError.queryFailed("The match read returned more rows than it lists.", 0)
+    }
+    return result.rows
+  }
+
   // MARK: - Private
 
   private func runProtectedBatch(

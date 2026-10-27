@@ -149,6 +149,88 @@ struct ImportSQLBuilderTests {
     #expect(uncapped.map(\.expectedRows) == [5])
   }
 
+  @Test("UPDATE sets the mapped non-key columns and matches the key as the match read does")
+  func updateStatements() throws {
+    let postgres = try ImportSQLBuilder.updateStatement(
+      schema: "s", table: "t",
+      columns: [.init(name: "id", kind: .integer), .init(name: "name", kind: .text)],
+      row: [" 7", "Ada"],
+      keys: [try key(column("id", "integer(4)"), .postgresql)], dialect: .postgresql)
+    #expect(postgres.sql == #"UPDATE "s"."t" SET "name" = $1 WHERE "id" = CAST($2 AS integer)"#)
+    #expect(postgres.values == ["Ada", " 7"])
+    #expect(postgres.expectedRows == 1)
+    #expect(postgres.rowCheck == nil)
+
+    let sqlite = try ImportSQLBuilder.updateStatement(
+      schema: nil, table: "t",
+      columns: [.init(name: "flag", kind: .boolean), .init(name: "id", kind: .integer)],
+      row: ["TRUE", "5"], keys: [try key(column("id", "INTEGER"), .sqlite)], dialect: .sqlite)
+    #expect(sqlite.sql == #"UPDATE "t" SET "flag" = CAST(?1 AS INTEGER) WHERE "id" = ?2"#)
+    #expect(sqlite.values == ["1", "5"])
+
+    // MySQL: the read's COLLATE / CONVERT / CAST, and the row check, so a same-value write
+    // (0 changed rows) still counts as the one expected row
+    let keys = try [
+      key(
+        column("name", "varchar", characterSet: "utf8mb4", collation: "utf8mb4_unicode_ci"),
+        .mysql),
+      key(
+        column("code", "varchar", characterSet: "latin1", collation: "latin1_swedish_ci"), .mysql),
+      key(column("id", "bigint"), .mysql),
+    ]
+    let mysql = try ImportSQLBuilder.updateStatement(
+      schema: "shop", table: "items",
+      columns: [
+        .init(name: "name", kind: .text), .init(name: "note", kind: .text),
+        .init(name: "code", kind: .text), .init(name: "id", kind: .integer),
+        .init(name: "seen", kind: .timestamp),
+      ],
+      row: ["Café", "hi", "é", " 42 ", "2024-01-02T03:04:05Z"], keys: keys, dialect: .mysql)
+    let condition =
+      "`name` = ? COLLATE utf8mb4_unicode_ci "
+      + "AND `code` = CONVERT(? USING latin1) COLLATE latin1_swedish_ci "
+      + "AND `id` = CAST(? AS SIGNED)"
+    #expect(mysql.sql == "UPDATE `shop`.`items` SET `note` = ?, `seen` = ? WHERE \(condition)")
+    #expect(mysql.values == ["hi", "2024-01-02 03:04:05.000000", "Café", "é", "42"])
+    #expect(mysql.expectedRows == 1)
+    #expect(
+      mysql.rowCheck
+        == RowExistenceCheck(
+          sql: "SELECT 1 FROM `shop`.`items` WHERE \(condition) FOR UPDATE",
+          values: ["Café", "é", "42"]))
+
+    // A NULL key part names no row
+    #expect(throws: ImportSQLBuilder.Error.invalidKey) {
+      try ImportSQLBuilder.updateStatement(
+        schema: nil, table: "t",
+        columns: [.init(name: "id", kind: .integer), .init(name: "v", kind: .text)],
+        row: [" ", "x"], keys: [try key(column("id", "INTEGER"), .sqlite)], dialect: .sqlite)
+    }
+  }
+
+  @Test("A keyed import summary names each statement kind and the per-mode counts, no values")
+  func matchSummary() throws {
+    let update = try ImportSQLBuilder.updateStatement(
+      schema: nil, table: "t",
+      columns: [.init(name: "id", kind: .integer), .init(name: "name", kind: .text)],
+      row: ["1", "secret"], keys: [try key(column("id", "INTEGER"), .sqlite)], dialect: .sqlite)
+    let summary = try ImportSQLBuilder.matchSummaryText(
+      schema: nil, table: "t", columns: ["id", "name"], update: update,
+      counts: .init(inserts: 3, updates: 2, skips: 1, refused: 4), dialect: .sqlite)
+    #expect(
+      summary == """
+        -- From file: 3 to insert, 2 to update, 1 skipped, 4 refused
+        INSERT INTO "t" ("id", "name");
+        UPDATE "t" SET "name" = ?1 WHERE "id" = ?2
+        """)
+    #expect(!summary.contains("secret"))
+    // Safe Mode confirms this text: no all-rows warning and no `:name` parameter to ask for
+    let classified = SQLStatementClassifier.classify(summary, dialect: .sqlite)
+    #expect(classified.map(\.kind) == [.dml, .dml])
+    #expect(!SQLStatementClassifier.summary(classified).affectsAllRows)
+    #expect(SQLParameterRewriter.parameterNames(in: summary, dialect: .sqlite).isEmpty)
+  }
+
   @Test("The MySQL chunk cap is half the packet limit, never above 8 MiB")
   func mysqlChunkByteCap() {
     let mebibyte = 1_024 * 1_024
@@ -156,5 +238,19 @@ struct ImportSQLBuilderTests {
     // mysql-nio writes one packet (no 16 MiB split), so a 64 MB server limit still caps at 8 MiB.
     #expect(ImportSQLBuilder.mysqlChunkByteCap(maxAllowedPacket: 64 * mebibyte) == 8 * mebibyte)
     #expect(ImportSQLBuilder.mysqlChunkByteCap(maxAllowedPacket: nil) == 8 * mebibyte)
+  }
+
+  private func key(
+    _ column: TableStructure.Column, _ dialect: SQLDialect
+  ) throws -> ImportMatchPlanner.KeyColumn {
+    try ImportMatchPlanner.KeyColumn(column, dialect: dialect)
+  }
+
+  private func column(
+    _ name: String, _ dataType: String, characterSet: String? = nil, collation: String? = nil
+  ) -> TableStructure.Column {
+    TableStructure.Column(
+      ordinal: 1, name: name, dataType: dataType, isNullable: true, columnType: dataType,
+      characterSet: characterSet, collation: collation)
   }
 }
