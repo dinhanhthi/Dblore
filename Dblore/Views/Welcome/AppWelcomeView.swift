@@ -87,6 +87,15 @@ struct AppWelcomeView: View {
         .background(alignment: .top) {
           WindowDragArea().frame(height: recentsTopInset)
         }
+        // Fills the titlebar row above the native tab bar
+        .overlay(alignment: .top) {
+          if recentsTopInset > 0 {
+            Text("Welcome")
+              .font(.subheading)
+              .frame(height: ComponentSize.tabBarHeight)
+              .allowsHitTesting(false)
+          }
+        }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.appBackground)
