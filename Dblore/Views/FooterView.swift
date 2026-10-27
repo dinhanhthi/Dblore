@@ -38,6 +38,8 @@ struct FooterView: View {
   var connectionConfig: ConnectionConfig?
   /// How the session is protected, when the engine reports it (MySQL); nil = unknown.
   var transport: MySQLTransport?
+  /// The workspace whose lock button sits at the far right (saved workspaces only)
+  var workspaceManager: WorkspaceManager?
   @Environment(\.pixelLength) private var pixelLength
 
   var body: some View {
@@ -91,6 +93,10 @@ struct FooterView: View {
 
       if let viewModel {
         documentStats(viewModel: viewModel)
+      }
+
+      if let workspaceManager, workspaceManager.workspace.fileURL != nil {
+        WorkspaceLockButton(workspaceManager: workspaceManager)
       }
     }
     .padding(.trailing, Spacing.lg)
@@ -314,6 +320,29 @@ struct FooterView: View {
     } else {
       return "Current file size"
     }
+  }
+}
+
+/// Lock button of a saved workspace, at the footer's far right: an unlocked workspace opens Lock
+/// Workspace, a locked one closes at once (its next open asks again)
+struct WorkspaceLockButton: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    let isLocked = workspaceManager.lockKeyId != nil
+    Button {
+      if isLocked {
+        Task { _ = await WorkspaceWindowManager.shared.closeWorkspace(id: workspaceManager.id) }
+      } else {
+        workspaceManager.openLockSheet(.lock)
+      }
+    } label: {
+      Image(systemName: isLocked ? "lock.fill" : "lock.open")
+        .font(.small)
+    }
+    .buttonStyle(GhostButtonStyle(isActive: isLocked, iconOnly: true))
+    .controlSize(.small)
+    .help(isLocked ? "Lock and Close Workspace" : "Lock Workspace...")
   }
 }
 
