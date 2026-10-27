@@ -2,6 +2,31 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.8.6 (2026-10-27)
+
+### Added
+
+- **Locks.** Lock a saved connection or SQLite/DuckDB file so it connects only after Touch ID, the Mac password or a Lock password, and reveal a saved connection password only the same way. Lock a whole workspace with File > Lock Workspace to encrypt its `.sqlws` and tab files (Remove Lock undoes it). A locked workspace opens from Welcome, Finder or Open Recent with its window first, then asks to unlock. Locked items relock on sleep, screen lock, idle timeout or quit, and locked connections stay out of the MCP server. Set the Lock password and relock timeout, and list locked items, in Settings > Security. A lock button beside Details locks a saved workspace, or locks and closes an unlocked one in one click. [#92478fc1](https://github.com/dinhanhthi/Dblore/commit/92478fc1) [#d373af8f](https://github.com/dinhanhthi/Dblore/commit/d373af8f) [#7562b06d](https://github.com/dinhanhthi/Dblore/commit/7562b06d)
+- **Import modes and multi-file import.** Import into an existing table as Insert, Update, Insert or Update, or Insert skipping existing rows, matched by a primary or unique key. Import Files loads several files or a whole folder into matching or new tables in one transaction. [#1b1b0304](https://github.com/dinhanhthi/Dblore/commit/1b1b0304)
+- **Generate Rows.** Fill a PostgreSQL, MySQL/MariaDB or SQLite table with up to 1,000,000 rows of seeded sample data from the table menu. [#7316fe60](https://github.com/dinhanhthi/Dblore/commit/7316fe60)
+- **Build Join Query.** Pick tables and Dblore writes the join along their foreign keys, from a sheet, the table menus or a multi-selection in the ER diagram. [#05741906](https://github.com/dinhanhthi/Dblore/commit/05741906)
+- **SQLite attached databases and temporary tables.** Attach other SQLite files on every connect from the connection form. A Temporary sidebar section lists the session's temporary tables on PostgreSQL, MySQL/MariaDB and SQLite. [#cfa1a4e3](https://github.com/dinhanhthi/Dblore/commit/cfa1a4e3)
+- **Editor zoom, completion and formatter settings.** View > Zoom In, Zoom Out and Actual Size scale the focused SQL editor, result grid or schema diagram. Autocomplete suggests CTE names and their columns, and SELECT-list aliases after `ORDER BY` and `GROUP BY`. Settings sets the formatter's indent, keyword and function case, comma position and line width, with a live preview. [#6c855914](https://github.com/dinhanhthi/Dblore/commit/6c855914)
+- **Frozen columns and binary cells.** Freeze Up to This Column keeps leading result columns in place while you scroll sideways, remembered per table. Display As shows binary columns as hex, UUID, MessagePack or Protobuf, with a decoded tree in Cell Value. Large binary cells of a table tab load as a 64 KB prefix and the full value is fetched when you open or copy it. [#824695b1](https://github.com/dinhanhthi/Dblore/commit/824695b1)
+- **Green update button.** A green button shows in the workspace header and on the Welcome window when a new version is out; a click opens the update. [#11fd3f28](https://github.com/dinhanhthi/Dblore/commit/11fd3f28)
+
+### Improved
+
+- **Footer connection color.** The connection color shows as a border beside the version in the footer. [#c53429c5](https://github.com/dinhanhthi/Dblore/commit/c53429c5)
+- **MCP limits.** The MCP server holds at most 16 open connections and 8 requests in flight, and answers HTTP 503 when busy. [#c2f832d3](https://github.com/dinhanhthi/Dblore/commit/c2f832d3)
+
+### Fixed
+
+- **Closing a locked workspace.** Closing it revokes its unlock, so reopening asks again, and the window close button closes every workspace, not only locked ones. [#49980fb9](https://github.com/dinhanhthi/Dblore/commit/49980fb9) [#72181032](https://github.com/dinhanhthi/Dblore/commit/72181032)
+- **MCP write safety.** Agent changes through a connection whose commit style is Review (including the default) or Password are refused, with a message saying to pick Confirm or Immediate. The MCP token is kept with the other secrets, and connection slots are validated. [#c2f832d3](https://github.com/dinhanhthi/Dblore/commit/c2f832d3)
+- **Link cursor.** Link rows show the pointing-hand cursor on macOS 27. [#80f25962](https://github.com/dinhanhthi/Dblore/commit/80f25962)
+- **Stability and security fixes.** Hardened handling of workspace files, plus fixes to transaction state, the results grid and database drivers. [#b3152145](https://github.com/dinhanhthi/Dblore/commit/b3152145)
+
 ## v0.8.5 (2026-10-27)
 
 ### Added
