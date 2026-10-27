@@ -76,6 +76,37 @@ character). `NSUserUnixTask` cannot stop a script, so a timed-out script is aban
 running. Do not log script output or the password command's result. Dblore has no socket
 entitlement (only network client and server): PostgreSQL Unix sockets are not supported.
 
+## Lock
+
+A locked workspace's files are written as envelope v1 (`Dblore/Utilities/Lock/LockEnvelope.swift`
+has the byte layout): magic `89 44 42 4C 4B 0D 0A 1A`, version `1` (UInt16 big-endian), payload
+kind (1 `.sqlws`, 2 `.dblore`, 3 `.sql`/`.js`, 4 `.md`, 5 launch-snapshot overlays), flags `0`,
+the workspace id, then a password wrap block shared by every file of the workspace
+(PBKDF2-HMAC-SHA256 over the NFC Lock password, 600,000 iterations written and
+100,000...10,000,000 accepted, salt, and the AES-256-GCM-wrapped content key), then the
+AES-256-GCM payload. The wrap AAD is bytes `0..<10`
+plus `12..<49`; the payload AAD is the whole 121-byte header. Users keep these files, so v1 is a
+contract:
+
+- Never change what a v1 byte means. `LockEnvelopeTests.goldenV1` pins a golden file; never edit
+  it to make a change pass. A new layout is version 2 with its own golden file, and every build
+  keeps the v1 reader and Remove Lock.
+- A newer version is refused as made by a newer Dblore and never overwritten; unknown kinds or
+  flag bits are refused. Header checks run before any PBKDF2 or decryption.
+- `LockedFileIO` is the only place that seals. A file read from an envelope is written back sealed
+  with the same key until Remove Lock, and a failed seal is an error, never plain text.
+- The Lock password and content keys live in the Keychain services `ace.thi.dblore.lock` and
+  `ace.thi.dblore.lock.keys` (both in `SecretInventory`). Never log keys or passwords.
+
+Lock tests never prompt and never use the real Keychain. Under the test host
+(`SessionManager.isRunningAsTestHost`) `LockCenter` defaults to `InMemoryPasswordStore`,
+`RefusingUnlockPrompter` and `UnavailableBiometricAuthenticator`, and `SessionManager` never
+publishes locks into `LockRegistry.shared`. A test builds its own `LockRegistry()` and
+`LockCenter` with an `UnlockPrompter` that answers yes or no, `GrantingOwnerTestAuthenticator`
+(Debug only) for owner-authenticated reads, and `LockKeyStore(vault:modes:passcodeSet:)` over an
+in-memory `KeychainBackend` (`OneServiceKeychain` in `LockedWorkspaceIOTests`) and a suite-scoped
+`UserDefaults`.
+
 ## Markdown editor bundle
 
 The WYSIWYG preview of Markdown notes runs [Milkdown](https://milkdown.dev) in a

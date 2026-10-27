@@ -271,15 +271,18 @@
         <section id="features">
           <h2>Main features</h2>
           <ul class="list">
-            <li><strong>Notebooks and SQL editor</strong>: .dblore notebooks with inline results, plain .sql tabs and quick Markdown notes, in one tidy workspace.</li>
-            <li><strong>Schema browser</strong>: tables, columns and types, a quick filter and a canvas with foreign-key lines.</li>
+            <li><strong>Notebooks and SQL editor</strong>: .dblore notebooks with inline results, plain .sql tabs and quick Markdown notes, in one tidy workspace. Autocomplete knows CTEs and ORDER BY aliases, Format SQL follows your rules, and View &gt; Zoom resizes the editor, grid or diagram.</li>
+            <li><strong>Schema browser</strong>: tables, columns and types, a quick filter, a canvas with foreign-key lines, a Temporary section for the session's temp tables, and attached SQLite databases.</li>
+            <li><strong>Join query builder</strong>: pick tables and get the join along their foreign keys, with columns, filters and a live SQL preview.</li>
             <li><strong>Structure editor</strong>: add, change and drop columns, indexes and keys, with a preview of the exact SQL that runs.</li>
             <li><strong>Compare Schemas &amp; Sync</strong>: compare two PostgreSQL, MySQL/MariaDB or SQLite schemas, review the exact script, and run it through Safe Mode, with drops unticked by default.</li>
-            <li><strong>Results grid</strong>: sort, search, filter, edit values inline, add rows from a form, follow foreign keys, inspect cells as JSON, color values by type and pin a result to compare re-runs.</li>
+            <li><strong>Results grid</strong>: sort, search, filter, edit values inline, add rows from a form, follow foreign keys, inspect cells as JSON, color values by type, pin a result to compare re-runs and freeze leading columns in table tabs. Binary values show as hex, UUID, MessagePack or Protobuf, and cells over 64 KB load only when you open them.</li>
             <li><strong>Charts</strong>: switch any result between grid and chart.</li>
-            <li><strong>Import and export</strong>: import CSV, TSV and JSON; export to Excel, CSV, JSON, Markdown, PDF, TSV and SQL INSERT.</li>
+            <li><strong>Import and export</strong>: import CSV, TSV and JSON as new rows or updates matched by key, several files or a folder in one transaction; export to Excel, CSV, JSON, Markdown, PDF, TSV and SQL INSERT.</li>
+            <li><strong>Generate Rows</strong>: fill a table with up to 1,000,000 rows of sample data that follow its types, foreign keys and unique keys.</li>
             <li><strong>SQL dump and restore</strong>: dump a PostgreSQL, MySQL/MariaDB or SQLite database to a .sql file and restore it.</li>
             <li><strong>Safe Mode</strong>: confirmation before destructive statements, Commit / Rollback for pending transactions, Touch ID to unlock.</li>
+            <li><strong>Lock</strong>: lock a connection, a database file or a whole workspace behind Touch ID, the Mac password or a Lock password. Locked workspaces are encrypted on disk, and locked items relock on sleep, screen lock or idle.</li>
             <li><strong>Related rows before a delete</strong>: see the rows a delete would cascade to, set to NULL or be blocked by, before you commit it.</li>
             <li><strong>Query Insights</strong>: your queries grouped by shape, with runs, average, p95 and slowest time, and error rate.</li>
             <li><strong>AI assistant</strong>: write, explain and fix SQL with your own key or a local model (on-device models need the On-device AI plugin). Nothing runs unless you allow read-only queries, and row values are never sent. It can call tools of outside MCP servers you add, each call only after you press Run once.</li>

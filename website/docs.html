@@ -100,6 +100,7 @@
               <li><a href="#export">Export</a></li>
               <li><a href="#import">Import data</a></li>
               <li><a href="#safe-mode">Safe Mode</a></li>
+              <li><a href="#lock">Lock</a></li>
               <li><a href="#ai">AI assistant</a></li>
               <li><a href="#mcp">MCP server</a></li>
               <li><a href="#mcp-write">MCP write tools</a></li>
@@ -139,6 +140,7 @@
             <li><strong>Scripts:</strong> a connection can run your own scripts and get its password from a command. See <a href="#connection-scripts">Connection scripts</a>.</li>
             <li>The welcome screen lists saved and recent connections (up to 50). Hover a card to remove it.</li>
             <li>The footer shows the connection name, the Safe Mode cues and a <strong>No SSL</strong> badge when the connection is not encrypted. A MySQL connection encrypted without a checked certificate shows <strong>Unverified SSL</strong>.</li>
+            <li><strong>Attached databases</strong> (SQLite): the connection form attaches up to 10 other SQLite files, each under its own name, on every connect. Read-only connections attach them read-only, a missing file is skipped with a warning, and a locked file asks to unlock first. Their schemas show in the sidebar and autocomplete. Connection exports never include them.</li>
 </ul>
           </section>
 
@@ -187,8 +189,10 @@
             <li>For quick notes, <kbd>Cmd+Shift+M</kbd> opens a Markdown note in the workspace. It is written to a <code>.md</code> file only when you press <kbd>Cmd+S</kbd>; the eye button in the header switches between the source and an editable preview.</li>
             <li>Run the query with <kbd>Cmd+R</kbd> or <kbd>Cmd+Enter</kbd>.</li>
             <li>Named parameters (<code>:name</code>) are bound from the right sidebar.</li>
-            <li>Table- and column-aware autocomplete: <kbd>Up</kbd> / <kbd>Down</kbd> to choose, <kbd>Enter</kbd> or <kbd>Tab</kbd> to accept.</li>
+            <li>Table- and column-aware autocomplete: <kbd>Up</kbd> / <kbd>Down</kbd> to choose, <kbd>Enter</kbd> or <kbd>Tab</kbd> to accept. It offers CTE names and their columns, and after <code>ORDER BY</code> or <code>GROUP BY</code> the select list's aliases first.</li>
             <li>Toggle comment with <kbd>Cmd+/</kbd>. Format SQL, word wrap and syntax highlight toggles sit in the editor toolbar.</li>
+            <li><strong>Settings &gt; Editor &gt; Formatter</strong> sets how Format SQL writes: indent (spaces or tab), keyword and function case, trailing or leading commas and line width, with a live preview. The defaults keep the usual output, and a format that would change the query's tokens leaves the text as it was.</li>
+            <li><strong>View &gt; Zoom In</strong> (<kbd>Cmd+=</kbd> or <kbd>Cmd++</kbd>), <strong>Zoom Out</strong> (<kbd>Cmd+-</kbd>) and <strong>Actual Size</strong> (<kbd>Cmd+0</kbd>) resize the focused SQL editor, result grid or schema diagram. Editor and grid zoom change the global font sizes; the commands are off in notebook tabs.</li>
             <li>Explain with <kbd>Cmd+E</kbd>, Explain Analyze with <kbd>Cmd+Shift+E</kbd> (runs the statement, so it asks first).</li>
             <li>Snippets: type a trigger word and accept it from autocomplete. See <a href="#snippets">SQL snippets</a>.</li>
 </ul>
@@ -215,6 +219,8 @@
             <li>Favorites: save SQL snippets in folders, double-click to insert.</li>
             <li>History: every query is recorded locally. Filter by status, or show only writes. Search also matches the source or kind badge, such as "AI Assistant".</li>
             <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle. It can copy or save the tables shown as Mermaid or Graphviz DOT.</li>
+            <li><strong>Build Join Query…</strong> (File menu, a table's <strong>Build Join Query From Here…</strong>, or tables Shift- or Command-clicked in the schema visualizer): pick tables and Dblore joins them along the shortest foreign-key path, adding junction tables. Choose Inner or Left per table, the columns and filters, watch the SQL, then <strong>Open in Query Tab</strong>. SQL engines only.</li>
+            <li><strong>Temporary</strong> section: the temporary tables of this session, on PostgreSQL and SQLite from the server, on MySQL/MariaDB the ones created in this session (forgotten on reconnect). Temp schemas no longer show as schema groups.</li>
             <li>PostgreSQL: <strong>Sequences</strong> and <strong>Types</strong> sections (enums, domains and composite types), loaded when opened, with Show DDL and Copy Name.</li>
             <li>Folders: group tables and views into folders per connection with <strong>Move to Folder</strong> or a drag; rename or delete a folder from its menu. The eye menu hides schemas you do not use from the sidebar; SQL, autocomplete and search still see them.</li>
             <li><strong>Find a value in every table</strong>: the button next to the schema filter (or the command palette) searches the text of every column in up to 500 tables, one at a time on a separate read-only connection, with Contains or Equals, 50 rows and 10 seconds per table, and Cancel. Click a match to open the table filtered to it. PostgreSQL, MySQL/MariaDB and SQLite.</li>
@@ -242,6 +248,9 @@
             <li><strong>Invisible characters</strong> (control, zero-width, special spaces and direction controls) show as visible marks, with their code points in the tooltip. Copy, export and search use the real text. <strong>Show Invisible Characters</strong> in Settings &gt; Results turns it off.</li>
             <li><strong>Cell Value</strong> draws PostGIS geometry and geography and MySQL <code>GEOMETRY</code> values, with the shape type, point count, SRID and Copy WKT. pgvector <code>vector</code>, <code>halfvec</code> and <code>sparsevec</code> values show their dimension, norm, minimum, maximum and first values. A value over 256 KiB opens as plain text at once.</li>
             <li>Updates and deletes need a primary key: a change to a table without one is refused and names the table.</li>
+            <li><strong>Freeze Up to This Column</strong> (column header menu of a table tab) keeps the leading columns in place while you scroll sideways; <strong>Unfreeze</strong> releases them. Kept per table, by column name.</li>
+            <li><strong>Display As</strong> (header or cell menu of a binary column): size, hex, UUID, UUID with swapped time (MySQL <code>UUID_TO_BIN(u, 1)</code>), MessagePack or Protobuf without a schema. Kept per table in table tabs, for the session in query results; Cell Value shows the decoded tree. Copy Value stays raw, <strong>Copy as Displayed</strong> copies the shown text, and editing opens the raw value.</li>
+            <li><strong>Large binary cells:</strong> a table tab of a PostgreSQL, MySQL/MariaDB or SQLite table with a primary key reads binary values up to 64 KB. A longer one shows <code>&lt;N bytes, not loaded&gt;</code> and is loaded by its key when you open it in Cell Value or copy it. A value that was not loaded is never written: Duplicate Row and Copy as INSERT load it first or refuse.</li>
 </ul>
           </section>
 
@@ -320,6 +329,9 @@
 <ul class="list">
             <li><strong>Import Data…</strong> from the File menu or a table's context menu: CSV, TSV, JSON and newline-delimited JSON.</li>
             <li>Preview rows and <code>NULL</code> values, map columns, override inferred types, review the SQL, then import into an existing or a new table. A running import can be cancelled.</li>
+            <li><strong>Mode</strong> for an existing table: Insert, Update, Insert or Update, or Insert, skip existing. Rows match by the primary key or a unique index over plain columns, counted on the server (its collation decides); a key found more than once, or repeated in the file, refuses that row. A summary of new, existing and refused rows comes before the one Safe Mode confirmation.</li>
+            <li><strong>Import Files…</strong> (database, schema or table menu) imports several files, or the supported files of a folder (not its subfolders), in one transaction with one Safe Mode decision. Each file goes to the table with its name (case-insensitive) or a new table; untick a file, change its table or mode, or Edit its mapping. On MySQL/MariaDB creating tables commits implicitly, and the sheet says so.</li>
+            <li><strong>Generate Rows…</strong> (table menu; PostgreSQL, MySQL/MariaDB, SQLite) adds 1 to 1,000,000 rows of sample data from a seed: values by column type and name, a NULL ratio, foreign keys from up to 10,000 existing keys, and keys that never repeat within a run. Identity, generated and default columns are left to the server. A 10-row preview, then one transaction with progress; Cancel rolls it back. In Protected mode the rows wait for Commit.</li>
 </ul>
           </section>
 
@@ -334,6 +346,20 @@
             <li><strong>Related rows before a delete:</strong> when staged changes delete rows, Preview SQL and the Safe Mode dialog list what else the delete touches: rows deleted by cascade, rows set to NULL or to their default, and rows that still refer to the deleted ones. A foreign key that would block the delete disables Commit and names the constraint; <strong>Commit Anyway</strong> lets the database decide. The counts run on a separate read-only connection within 5 seconds, and are skipped while a transaction is open.</li>
             <li>Large reads inside transactions are capped with a server-side cursor (PostgreSQL).</li>
             <li>MySQL commits implicitly before DDL, <code>TRUNCATE</code>, <code>LOCK TABLES</code>, grants and similar statements, so Protected mode refuses them. Turn Protected mode off for the connection to run them.</li>
+</ul>
+          </section>
+
+          <section id="lock" class="doc">
+            <h2>Lock</h2>
+<ul class="list">
+            <li><strong>Lock this connection</strong> (Safety card of the connection form) locks a saved login (every database of that host, port and user) or a SQLite or DuckDB file. Connecting, testing, editing, removing or exporting it asks first: Touch ID or the Mac password, or the Lock password when one is set. Files are guarded, not encrypted. A saved password shows only after Touch ID or the Mac password.</li>
+            <li><strong>File &gt; Lock Workspace…</strong> encrypts the <code>.sqlws</code> and every tab file it saves (notebooks, <code>.sql</code> and <code>.js</code> scripts, Markdown notes), plus the unsaved text kept for the next launch, with AES-256-GCM. It needs a Lock password of 8 or more characters: without it or this Mac's Keychain, the files cannot be opened. <strong>Remove Lock…</strong> writes them back as plain files.</li>
+            <li>A locked workspace (Welcome, Finder, Open Recent or launch restore) opens its window first, then asks; content shows after unlock. Recents keep its name with a lock mark. When the Keychain cannot keep the key behind Touch ID, the workspace opens with the Lock password only, and Dblore says so.</li>
+            <li>Dblore relocks on sleep, screen lock, idle time (15 minutes by default) and quit: windows of locked items show a cover with <strong>Unlock</strong>, most of their menu commands are off and running AI requests stop. Connections stay open.</li>
+            <li><strong>Settings &gt; Security &gt; Lock</strong> sets, changes or removes the Lock password, chooses the relock time and lists locked items. Changing the password re-encrypts the locked workspaces in Recents at once and lists any it could not reach; each keeps its key, so older copies and backups still open with the old password.</li>
+            <li><strong>Settings &gt; Data</strong> asks to unlock before it clears history, imports a backup or deletes Lock secrets while something is locked. Deleting all secrets removes the Lock password and the workspace keys: locked workspaces then open only with the Lock password.</li>
+            <li>The <a href="#mcp">MCP server</a> never serves a locked connection.</li>
+            <li>Older Dblore versions refuse locked workspace files and never overwrite them, but drop connection locks when they save the connection list: lock those connections again afterwards.</li>
 </ul>
           </section>
 
@@ -361,7 +387,8 @@
             <li>Lets AI agents such as Claude Code and Cursor read your databases through the Model Context Protocol. Off by default: turn on <strong>Run the MCP server</strong> in <strong>Settings &gt; MCP</strong>. Dblore must be running.</li>
             <li>The server listens on this Mac only, at <code>http://127.0.0.1:&lt;port&gt;/mcp</code> (default port 41730). Use only the port Settings shows as running.</li>
             <li>Every request needs the Bearer token from <strong>Settings &gt; MCP</strong>. <strong>Copy Claude Code command</strong> copies a <code>claude mcp add</code> command to paste in a terminal; <strong>Copy Cursor JSON</strong> copies the entry for Cursor's <code>mcp.json</code>. <strong>Regenerate</strong> creates a new token; clients with the old one stop working until you copy the setup again.</li>
-            <li>Agents see only the connections you turn on in the list. DuckDB connections cannot be shared.</li>
+            <li>Agents see only the connections you turn on in the list, never a <a href="#lock">locked</a> one, even after you unlock it in Dblore. DuckDB connections cannot be shared.</li>
+            <li>At most 16 open connections and 8 requests at a time; above that the server answers HTTP 503 with <code>Retry-After: 2</code>.</li>
             <li>Tools: <code>list_connections</code>, <code>list_tables</code>, <code>describe_table</code> and <code>run_query</code>, plus <code>execute_write</code> when write tools are allowed (see <a href="#mcp-write">MCP write tools</a>).</li>
             <li><code>run_query</code> is read-only: one statement per query, checked first and then run in a read-only transaction (SQLite files open read-only). Writes, DDL, <code>SET</code>, <code>CALL</code> and several statements are refused. A query returns 200 rows by default (at most 1000), cells are cut at 2000 characters and a query stops after 30 seconds.</li>
             <li>Use a least-privilege database user: an agent can read everything the connection's role can read, including other databases on the same server.</li>
