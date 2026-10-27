@@ -344,6 +344,10 @@ struct EditorResultGridView: View {
   @Bindable var viewModel: NotebookViewModel
   /// Names of result columns hidden in the grid (data viewer); empty shows every column
   var hiddenColumns: Set<String> = []
+  /// Leading columns frozen through this column name (data viewer); nil freezes none
+  var frozenThroughColumn: String? = nil
+  /// Header menu freeze and unfreeze (data viewer); nil leaves the items out
+  var onFreezeChange: ((String?) -> Void)? = nil
   /// Highlight rules of the data viewer, painted in the grid without changing its rows
   var highlights: [TableHighlight] = []
   var dialect: DatabaseType = .postgresql
@@ -393,6 +397,7 @@ struct EditorResultGridView: View {
         }
       }
     }
+    .overlay(alignment: .bottom) { LazyCellLoadingBar(loader: viewModel.lazyCells) }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onChange(of: valueFilter) {
       currentMatch = gridSearchMatchOnScreen(
@@ -577,9 +582,10 @@ struct EditorResultGridView: View {
       },
       valueFilter: valueFilter,
       onValueFilterChange: { valueFilter = $0 },
-      onShowCellDetails: { row, originalRow, column in
+      onShowCellDetails: { row, originalRow, column, format in
         viewModel.showGridCellInSidebar(
-          row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
+          row: row, originalRow: originalRow, column: column, result: result, cellId: nil,
+          binaryFormat: format)
       },
       onShowRowDetails: { row, originalRow in
         viewModel.showRowDetail(
@@ -600,6 +606,15 @@ struct EditorResultGridView: View {
       forwardsScrollToParent: false,
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
       hiddenColumns: hiddenColumns,
+      frozenThroughColumn: frozenThroughColumn,
+      onFreezeChange: onFreezeChange,
+      binaryFormats: viewModel.binaryFormats,
+      onBinaryFormatChange: { viewModel.setBinaryFormat($1, column: $0) },
+      unloadedCells: viewModel.unloadedCells(in: result),
+      onLoadCells: { cells in
+        await viewModel.loadUnloadedCells(
+          cells.map { (row: $0.row, column: $0.column) }, of: result, action: "Copy")
+      },
       highlights: highlights,
       highlightDialect: dialect,
       relationSchema: relation?.schema,
@@ -634,5 +649,44 @@ final class StagedDocumentOverlay {
     source = (set, target)
     display = next
     return next
+  }
+}
+
+/// Progress of a copy or export loading the full values of cut cells, with Cancel (nothing is
+/// copied then). Shown ~150 ms after the load starts, so a quick load does not flash it.
+private struct LazyCellLoadingBar: View {
+  let loader: LazyCellLoader
+  @State private var isShown = false
+
+  var body: some View {
+    if let progress = loader.progress {
+      HStack(spacing: Spacing.sm) {
+        ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+          .progressViewStyle(.linear)
+          .tint(.accent)
+          .frame(width: 120)
+        Text("Loading full values: \(progress.done) of \(progress.total)")
+          .font(.system(size: 11))
+          .monospacedDigit()
+          .foregroundColor(.foregroundMuted)
+        Button("Cancel") { loader.cancelLoading() }
+          .buttonStyle(SecondaryButtonStyle())
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+      .background(Capsule().fill(Color.controlBackground))
+      .overlay(HairlineBorder(shape: Capsule()))
+      .padding(.bottom, Spacing.md)
+      .opacity(isShown ? 1 : 0)
+      .allowsHitTesting(isShown)
+      .animation(.easeIn(duration: 0.15), value: isShown)
+      // Opt out of the app-wide animation kill switch, only for the fade
+      .transaction(value: isShown) { $0.disablesAnimations = false }
+      .task {
+        try? await Task.sleep(for: .milliseconds(150))
+        isShown = true
+      }
+      .onDisappear { isShown = false }
+    }
   }
 }

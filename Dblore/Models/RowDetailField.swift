@@ -14,6 +14,9 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
   /// Value of the row when the panel was opened
   let original: CellValue
   let isReadOnly: Bool
+  /// Full byte length of a value a lazy data-viewer page cut: shown as "<N bytes, not loaded>"
+  /// and read-only, so its prefix is never edited or applied. Nil for a whole value.
+  let unloadedLength: Int?
 
   var id: String { field.name }
   var name: String { field.name }
@@ -28,10 +31,11 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
     set { field.isNull = newValue }
   }
 
-  init(field: NewRowField, original: CellValue, isReadOnly: Bool) {
+  init(field: NewRowField, original: CellValue, isReadOnly: Bool, unloadedLength: Int? = nil) {
     self.field = field
     self.original = original
-    self.isReadOnly = isReadOnly
+    self.isReadOnly = isReadOnly || unloadedLength != nil
+    self.unloadedLength = unloadedLength
     revert()
   }
 
@@ -51,6 +55,7 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
   /// Text of the original as typed in the field: a DATE column's `.date` value as `yyyy-MM-dd`
   /// (midnight UTC), anything else as its full string (a decoded DATE is already that text)
   private var originalText: String {
+    if let unloadedLength { return ResultGridModel.notLoadedText(length: unloadedLength) }
     if field.kind == .date, case .date(let date) = original {
       return Self.plainDateFormatter.string(from: date)
     }

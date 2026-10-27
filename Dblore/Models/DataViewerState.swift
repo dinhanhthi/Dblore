@@ -22,6 +22,12 @@ struct DataViewerState: Equatable {
   var totalRows: Int? = nil
   /// Result column names hidden in the grid
   var hiddenColumns: Set<String> = []
+  /// Leading result columns are frozen through this column name, nil for none. Stored per
+  /// table in `GridColumnPrefsStore`; resolve with `GridColumnPrefsStore.resolvedFrozenThrough`.
+  var frozenThroughColumn: String? = nil
+  /// "Display As" of binary columns by column name, stored per table in `GridColumnPrefsStore`;
+  /// a column left out shows its size
+  var binaryFormats: [String: BinaryDisplayFormat] = [:]
   /// Dialect of the connection, for literal escaping in the WHERE clause
   var databaseType: DatabaseType = .postgresql
   /// The applied filter (SQL engines only)
@@ -45,6 +51,10 @@ struct DataViewerState: Equatable {
   /// MongoDB: the editor's field edit armed a Safe Mode dialog, shown once the sheet has
   /// dismissed (`NotebookViewModel.documentEditorDismissed`)
   var confirmationAwaitsEditorDismissal = false
+  /// Every column of the table in order when the page reads large binary values lazily
+  /// (`lazyColumns(_:databaseType:orderColumns:binaryValueColumns:)`), nil for `SELECT *`.
+  /// Set from what is cached before each page read, never from a catalog query.
+  var lazyColumns: [LazyColumn]? = nil
 
   /// What a page load depends on; loads are coalesced while it is unchanged
   struct LoadKey: Hashable {
@@ -79,7 +89,8 @@ struct DataViewerState: Equatable {
 
   /// Quoted `"schema"."name"` when `schema` is non-empty, including the default schema.
   /// An empty schema is `"name"` alone. `SQLDialect.qualified` would drop the default schema.
-  private var relation: String {
+  /// Every page reads it, and so does the full read of a lazy binary cell (`LazyCellLoader`).
+  var relation: String {
     let table = quotedIdentifier(name)
     return schema.isEmpty ? table : quotedIdentifier(schema) + "." + table
   }
@@ -98,10 +109,11 @@ struct DataViewerState: Equatable {
     filter.whereClause(dialect: databaseType.dialect).map { " WHERE " + $0 } ?? ""
   }
 
-  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1)
+  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1).
+  /// A lazy page lists `lazyColumns` instead of `*`, then its `lengthColumns`.
   var pageSQL: String {
     assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
-    var sql = "SELECT * FROM \(relation)\(whereSQL)"
+    var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)"
     if !orderColumns.isEmpty {
       sql += " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
     }
@@ -146,6 +158,119 @@ struct DataViewerState: Equatable {
     case .int(let value): return value
     case .string(let value): return Int(value)
     default: return nil
+    }
+  }
+}
+
+// MARK: - Lazy binary columns
+
+extension DataViewerState {
+  /// Bytes a lazy page reads of each prefixed binary value
+  static let lazyPrefixBytes = 65536
+
+  /// A column of a lazy page
+  struct LazyColumn: Equatable {
+    let name: String
+    /// Cached type, given back to a prefixed column whose result has no type (SQLite)
+    let type: String
+    let isPrimaryKey: Bool
+    /// Read as its first `lazyPrefixBytes` bytes, with its byte length in a length column
+    let isPrefixed: Bool
+  }
+
+  /// Binary values a lazy page cut to `lazyPrefixBytes`, carried by its result
+  /// (`CellResult.truncation`) with what reads their full values
+  nonisolated struct Truncation: Equatable, Sendable {
+    /// Primary key columns whose values, in this order, make a row key
+    var keyColumns: [String] = []
+    /// Full byte length by row key and column name, only for values longer than the prefix
+    var lengths: [RowChangeSet.RowKey: [String: Int]] = [:]
+    /// Connection the page was read on (`DatabaseConnectionManager.connectionEpoch`): full
+    /// values are read only on it. Nil: none was captured, no full value is read.
+    var connectionEpoch: UInt64? = nil
+    /// The quoted relation the page read (`DataViewerState.relation`); empty reads nothing
+    var relation = ""
+    var dialect = SQLDialect.postgresql
+  }
+
+  /// Aliases of the byte-length columns a lazy page appends, one per prefixed column in order.
+  /// Moved out of the result as soon as the page is read; never part of `hiddenColumns`.
+  var lengthColumns: [String] {
+    Self.lengthColumns(lazyColumns ?? [])
+  }
+
+  private static func lengthColumns(_ columns: [LazyColumn]) -> [String] {
+    columns.filter(\.isPrefixed).indices.map { "dblore_byte_length_\($0 + 1)" }
+  }
+
+  /// The lazy columns of a table with `columns` (in order), or nil for `SELECT *`: an engine
+  /// other than PostgreSQL, MySQL and SQLite, no primary key, or no binary column. Binary:
+  /// PostgreSQL `bytea`, a MySQL or SQLite type naming BLOB or BINARY, and a SQLite column in
+  /// `binaryValueColumns` (its loaded values were blobs: SQLite columns have no fixed type).
+  /// Primary key and ORDER BY columns are never prefixed: the alias would shadow them.
+  static func lazyColumns(
+    _ columns: [(name: String, type: String, isPrimaryKey: Bool)], databaseType: DatabaseType,
+    orderColumns: [String], binaryValueColumns: Set<String> = []
+  ) -> [LazyColumn]? {
+    guard [.postgresql, .mysql, .sqlite].contains(databaseType),
+      columns.contains(where: \.isPrimaryKey)
+    else { return nil }
+    let lazy = columns.map { column in
+      let type = column.type.lowercased()
+      let isBinary =
+        databaseType == .postgresql
+        ? type == "bytea"
+        : type.contains("blob") || type.contains("binary")
+          || (databaseType == .sqlite && binaryValueColumns.contains(column.name))
+      return LazyColumn(
+        name: column.name, type: column.type, isPrimaryKey: column.isPrimaryKey,
+        isPrefixed: isBinary && !column.isPrimaryKey && !orderColumns.contains(column.name))
+    }
+    // A table column named like a length alias would make the names ambiguous (MySQL and
+    // SQLite names ignore case)
+    let names = Set(columns.map { $0.name.lowercased() })
+    guard lazy.contains(where: \.isPrefixed),
+      !lengthColumns(lazy).contains(where: { names.contains($0.lowercased()) })
+    else { return nil }
+    return lazy
+  }
+
+  /// `*`, or the lazy columns in order (prefixed ones aliased to their name) then the length
+  /// columns
+  private var selectList: String {
+    guard let lazyColumns else { return "*" }
+    let prefixed = lazyColumns.filter(\.isPrefixed).map { quotedIdentifier($0.name) }
+    let columns = lazyColumns.map { column in
+      let name = quotedIdentifier(column.name)
+      return column.isPrefixed ? "\(prefixExpression(name)) AS \(name)" : name
+    }
+    let lengths = zip(prefixed, lengthColumns).map { name, alias in
+      "\(lengthExpression(name)) AS \(quotedIdentifier(alias))"
+    }
+    return (columns + lengths).joined(separator: ", ")
+  }
+
+  /// The first `lazyPrefixBytes` bytes of `column`, still a binary value: PostgreSQL
+  /// `substring(bytea ...)` is bytea, MySQL `LEFT` of a binary string is a binary string, and
+  /// SQLite `substr` of a blob counts bytes and is a blob. SQLite stores any type in any
+  /// column, so only its blobs are cut; other values are read whole.
+  private func prefixExpression(_ column: String) -> String {
+    let bytes = Self.lazyPrefixBytes
+    switch databaseType {
+    case .mysql: return "LEFT(\(column), \(bytes))"
+    case .sqlite:
+      return "CASE WHEN typeof(\(column)) = 'blob' THEN substr(\(column), 1, \(bytes))"
+        + " ELSE \(column) END"
+    default: return "substring(\(column) from 1 for \(bytes))"
+    }
+  }
+
+  /// Byte length of `column`, NULL for NULL (and for a SQLite value that is not a blob)
+  private func lengthExpression(_ column: String) -> String {
+    switch databaseType {
+    case .mysql: return "LENGTH(\(column))"
+    case .sqlite: return "CASE WHEN typeof(\(column)) = 'blob' THEN length(\(column)) END"
+    default: return "octet_length(\(column))"
     }
   }
 }

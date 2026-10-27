@@ -167,6 +167,10 @@ class NotebookViewModel {
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
   var cellDetailRow: Int?
+  /// Display As format of the sidebar cell's column in its grid (session-only)
+  var cellDetailBinaryFormat: BinaryDisplayFormat = .size
+  /// Full values of the large binary cells the shown data-viewer page cut (session-only)
+  let lazyCells = LazyCellLoader()
   /// Row shown in Row Details, with its drafts (session-only)
   var rowDetail: RowDetailState?
 
@@ -261,6 +265,12 @@ class NotebookViewModel {
   var addRowFields: [NewRowField] = []
   /// Persistent store of the saved filters; tests inject an isolated one
   @ObservationIgnored var savedFilterStore = SavedFilterStore()
+  /// Persistent store of the grid column preferences (frozen columns); tests inject an
+  /// isolated one
+  @ObservationIgnored var gridColumnPrefsStore = GridColumnPrefsStore()
+  /// "Display As" of binary columns in this tab's ad hoc result grids (editor and notebook
+  /// cells) by column name, kept for the session; a data viewer stores its own per table
+  var resultBinaryFormats: [String: BinaryDisplayFormat] = [:]
   /// Query history. The app uses the SQLite store; the test host uses memory so unit tests
   /// never open `~/Library/Application Support/Dblore/History.sqlite`. Tests inject their own.
   @ObservationIgnored var historyRecorder: any QueryHistoryRecording =

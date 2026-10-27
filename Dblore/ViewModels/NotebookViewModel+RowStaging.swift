@@ -124,11 +124,31 @@ extension NotebookViewModel {
 
   /// Stages a copy of each row. Primary-key columns are left unset so the copy does not reuse
   /// the source key, then filled with the next integer when this table's key is not automatic.
+  /// A value a lazy page cut is loaded first (progress and Cancel): a failed or cancelled load
+  /// stages nothing (nil, after its message), so a cut prefix is never inserted.
   @discardableResult
   func stageDuplicate(rows: [Int]) async -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     if stagesDocuments { return openDocumentDuplicateEditor(rows: rows) }
-    guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
+    guard let target = stagedEditTarget, let result = editorResult else {
+      return Self.tableHasNoPrimaryKey
+    }
+    let pageRows = rows.filter { result.rows.indices.contains($0) }
+    if !pageRows.isEmpty, !unloadedCells(in: result).isEmpty {
+      let generation = lazyCells.generation
+      let cells = pageRows.flatMap { row in result.columns.indices.map { (row: row, column: $0) } }
+      guard await loadUnloadedCells(cells, of: result, action: "Duplicate Row") != nil else {
+        return nil
+      }
+      // The loaded values were written into this page only when it is still shown
+      guard lazyCells.generation == generation, editorResult?.timestamp == result.timestamp,
+        stagedEditTarget == target, let shown = editorResult
+      else { return Self.pageChangedWhileLoading }
+      let unloaded = unloadedCells(in: shown)
+      guard pageRows.allSatisfy({ unloaded[$0] == nil }) else {
+        return Self.pageChangedWhileLoading
+      }
+    }
     var copies = rows.compactMap { duplicatedValues(row: $0, target: target) }
     if copies.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
     if let column = integerPrimaryKeyColumn(),
@@ -494,6 +514,8 @@ extension NotebookViewModel {
   // MARK: - Private
 
   static let rowNotOnPage = "That row is not on this page."
+  /// Shown when the page was read again while a duplicated row's full values loaded
+  static let pageChangedWhileLoading = "The page changed while full values loaded. Try again."
 
   /// What to do with an integer primary key on a new row.
   private enum IntegerKeyPlan {

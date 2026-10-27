@@ -188,6 +188,97 @@ extension NotebookViewModel {
     }
   }
 
+  /// A data-viewer page read with `state.pageSQL` made a plain single-table result again,
+  /// before anything reads it: the length columns are moved into the truncation (full lengths
+  /// over `lazyPrefixBytes` by row key and column), and each prefixed column, an expression
+  /// on every engine, gets the origin a plain read gives (table identity and ordinal from
+  /// `EditTable.attributeNames`, MySQL source names) and its cached type when it has none.
+  /// A `SELECT *` page is returned as read. A lazy page that does not have the lazy columns, a
+  /// row of another width, or a length that is not a number throws
+  /// (`LazyPageError.unexpectedShape`): its prefixes must never show as whole values.
+  /// `epoch` is the connection the page was read on; full values are read only there.
+  func strippedDataViewerPage(
+    _ result: QueryResult, state: DataViewerState, epoch: UInt64,
+    connectionManager: DatabaseConnectionManager
+  ) async throws -> (result: QueryResult, truncation: DataViewerState.Truncation?) {
+    guard let lazy = state.lazyColumns else { return (result, nil) }
+    guard result.columns.map(\.name) == lazy.map(\.name) + state.lengthColumns,
+      result.rows.allSatisfy({ $0.count == result.columns.count })
+    else { throw LazyPageError.unexpectedShape }
+    var columns = Array(result.columns.prefix(lazy.count))
+    var table: EditTable?
+    if let tableID = Self.originTableID(columns),
+      let relation = CellUpdateStatement.singleRelation(in: state.pageSQL, dialect: sqlDialect),
+      let resolved = await editTable(relation, tableID: tableID, connectionManager),
+      resolved.resolvedTableRef == tableID
+    {
+      table = resolved
+      let ordinals = Dictionary(
+        resolved.attributeNames.map { ($0.value, Int($0.key)) }, uniquingKeysWith: { $1 })
+      let source = columns.lazy.compactMap(\.sourceName).first
+      for (index, column) in lazy.enumerated() where column.isPrefixed {
+        let read = columns[index]
+        columns[index] = ColumnInfo(
+          name: read.name, type: read.type.isEmpty ? column.type : read.type,
+          origin: ordinals[read.name].map { ColumnOrigin(tableID: tableID, columnOrdinal: $0) },
+          sourceName: source.map {
+            ColumnSourceName(schema: $0.schema, table: $0.table, column: read.name)
+          })
+      }
+    }
+    // The edit target's key order; the cached key when the table did not resolve
+    var truncation = DataViewerState.Truncation(
+      connectionEpoch: epoch, relation: state.relation, dialect: state.databaseType.dialect)
+    let names = lazy.map(\.name)
+    truncation.keyColumns =
+      table.map(\.primaryKeyColumns).flatMap { $0.allSatisfy(names.contains) ? $0 : nil }
+      ?? lazy.filter(\.isPrimaryKey).map(\.name)
+    let keyIndexes = truncation.keyColumns.compactMap { names.firstIndex(of: $0) }
+    let prefixed = lazy.indices.filter { lazy[$0].isPrefixed }
+    for row in result.rows {
+      var lengths: [String: Int] = [:]
+      for (offset, index) in prefixed.enumerated() {
+        let length: Int?
+        switch row[lazy.count + offset] {
+        case .null: length = nil
+        case .int(let value): length = value
+        case .double(let value): length = Int(exactly: value)
+        case .string(let value): length = Int(value) ?? Double(value).flatMap { Int(exactly: $0) }
+        default: throw LazyPageError.unexpectedShape
+        }
+        if let length, length > DataViewerState.lazyPrefixBytes {
+          lengths[lazy[index].name] = length
+        } else if length == nil, case .data(let data) = row[index],
+          data.count >= DataViewerState.lazyPrefixBytes
+        {
+          // A prefix-sized value without a usable length may be cut: never shown as whole
+          throw LazyPageError.unexpectedShape
+        }
+      }
+      guard !lengths.isEmpty else { continue }
+      let key = RowChangeSet.RowKey(values: keyIndexes.map { row[$0] })
+      truncation.lengths[key, default: [:]].merge(lengths) { $1 }
+    }
+    var stripped = QueryResult(
+      columns: columns, rows: result.rows.map { Array($0.prefix(lazy.count)) },
+      rowCount: result.rowCount, executionTime: result.executionTime,
+      wasLimited: result.wasLimited, affectedRows: result.affectedRows)
+    stripped.truncated = result.truncated
+    stripped.sessionReset = result.sessionReset
+    stripped.skippedStatements = result.skippedStatements
+    return (stripped, truncation)
+  }
+
+  /// Why a lazy data-viewer page was not shown
+  nonisolated enum LazyPageError: Error, Equatable, LocalizedError {
+    /// The page did not come back in the shape its SQL asked for
+    case unexpectedShape
+
+    var errorDescription: String? {
+      "The page did not come back with the columns it asked for. Reload the table."
+    }
+  }
+
   /// The connection changed (connect/disconnect): no displayed result stays editable or offers
   /// a referenced-row lookup, and the open sidebar cell or a pending edit can no longer be sent.
   /// Results stay displayed.
@@ -259,7 +350,10 @@ extension NotebookViewModel {
 
   // MARK: - Edit
 
-  /// Handle cell value edit from sidebar
+  /// Handle cell value edit from sidebar. `newValue` is typed over the raw value: the edit of a
+  /// binary cell (which the grid always edits in the sidebar) starts from its raw base64 text
+  /// whatever its Display As format, so decoded MessagePack, Protobuf, hex or UUID text is never
+  /// written back.
   /// - Parameter connectionManager: Optional connection manager from workspace for database updates
   func handleCellValueEdit(
     columnName: String,
@@ -504,8 +598,10 @@ extension NotebookViewModel {
     target: EditTarget, connectionManager: DatabaseConnectionManager, done: String
   ) async {
     guard let result = editorResult, let state = dataViewer else { return }
-    let stored: QueryResult
+    var stored: QueryResult
+    var truncation: DataViewerState.Truncation?
     do {
+      let epoch = await connectionManager.connectionEpoch
       let page: String
       if isMongoDataViewer {
         // Past the user limit there is no page to read
@@ -517,6 +613,10 @@ extension NotebookViewModel {
       stored = try await connectionManager.execute(
         userSQL: page, policy: protectionPolicy,
         maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)
+      if !isMongoDataViewer {
+        (stored, truncation) = try await strippedDataViewerPage(
+          stored, state: state, epoch: epoch, connectionManager: connectionManager)
+      }
     } catch {
       showToast("\(done), but failed to refresh: \(error.localizedDescription)", type: .error)
       return
@@ -537,6 +637,8 @@ extension NotebookViewModel {
     updated.aiSessionKey = result.aiSessionKey
     // Same run, new rows: the timestamp stays (display mode, filters), the revision moves
     updated.dataRevision = result.dataRevision + 1
+    updated.truncation = truncation
+    if !isMongoDataViewer { resetLazyCells() }
     editorResult = updated
     syncRowDetail(cellId: nil, result: updated)
   }

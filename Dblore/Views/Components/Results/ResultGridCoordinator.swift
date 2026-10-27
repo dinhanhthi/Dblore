@@ -9,6 +9,8 @@
 //  a row index. A data viewer with `stagesEdits`
 //  stages that commit, and Delete/Backspace, instead of sending an UPDATE. `update`'s
 //  change set is applied onto the loaded rows so those staged rows tint.
+//  A cell a lazy data-viewer page cut shows "<N bytes, not loaded>"; every copy that reads one
+//  loads its full value first through `onLoadCells` and copies nothing when that fails.
 //
 
 import AppKit
@@ -90,6 +92,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let highlightDialect: DatabaseType
     let valueFilter: ColumnValueFilter
     let showsInvisibleCharacters: Bool
+    let unloadedCells: [Int: [Int: Int]]
   }
 
   private(set) var model: ResultGridModel?
@@ -159,9 +162,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   var lookupDialect: SQLDialect = .postgresql
   var onLookupReferencedRow: ReferencedRowLookup?
   var onJumpToReferencedRow: ReferencedRowJump?
-  /// Called with the displayed row values, its index into `CellResult.rows` and the result
-  /// column index of the cell whose details button was clicked
-  var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)?
+  /// Called with the displayed row values, its index into `CellResult.rows`, the result
+  /// column index of the cell whose details button was clicked and that column's "Display As"
+  var onShowCellDetails:
+    (
+      (_ row: [CellValue], _ originalRow: Int, _ column: Int, _ format: BinaryDisplayFormat) -> Void
+    )?
   /// Called with the displayed row values and its index into `CellResult.rows` (a staged insert:
   /// `rows.count + n`) by "Show Row Details"; nil hides that item and the "#" gutter menu
   var onShowRowDetails: ((_ row: [CellValue], _ originalRow: Int) -> Void)?
@@ -184,6 +190,26 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private weak var gridTableView: NSTableView?
   /// True while `update` shows the input sort in the header, so it isn't reported back
   private var isShowingInputSort = false
+  /// Leading result columns are frozen through this column name, resolved against the current
+  /// order and hidden columns; nil shows the grid alone. Set by the grid before each update.
+  var frozenThroughColumn: String?
+  /// Pane over the grid's left edge while columns are frozen. Its table shares this data source.
+  private(set) var frozenPane: ResultGridFrozenPane?
+  /// Band the pane shows, nil when nothing is frozen
+  private(set) var frozenBand: ResultGridFrozenBand?
+  /// Called with the column name of "Freeze Up to This Column", or nil by "Unfreeze". Nil leaves
+  /// both out of the header menu (grids without a frozen pane).
+  var onFreezeChange: ((String?) -> Void)?
+  /// "Display As" of binary columns by column name, applied by `update` without rebuilding the
+  /// row model
+  private var binaryFormats: [String: BinaryDisplayFormat] = [:]
+  /// Called with the column name and the format chosen in a "Display As" menu. Nil leaves the
+  /// menu out.
+  var onBinaryFormatChange: ((_ column: String, _ format: BinaryDisplayFormat) -> Void)?
+  /// Loads the full values of cut cells (`ResultGridModel.unloadedCells`) a copy reads, by index
+  /// into `CellResult.rows` and result column; nil when they could not be loaded (the loader
+  /// told the user), and nothing is copied. Nil loader: a copy of a cut cell is refused.
+  var onLoadCells: ((_ cells: [ResultGridModel.CellRef]) async -> [Int: [Int: CellValue]]?)?
 
   /// Sort after a header click on `clicked`: the same column goes ascending, descending, then
   /// no sort (nil column); another column starts ascending
@@ -265,7 +291,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     highlights: [TableHighlight] = [], highlightDialect: DatabaseType = .postgresql,
     valueFilter: ColumnValueFilter = ColumnValueFilter(),
     searchMatches: [SearchMatch] = [],
-    changeSet: RowChangeSet? = nil, showsInvisibleCharacters: Bool = true
+    changeSet: RowChangeSet? = nil, showsInvisibleCharacters: Bool = true,
+    binaryFormats: [String: BinaryDisplayFormat] = [:], unloadedCells: [Int: [Int: Int]] = [:]
   )
     -> Bool
   {
@@ -277,10 +304,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       currentMatchId: currentMatch?.id,
       hideColumnTypes: hideColumnTypes, hasEditTarget: result.editTarget != nil,
       hiddenColumns: hiddenColumns, highlights: highlights, highlightDialect: highlightDialect,
-      valueFilter: valueFilter, showsInvisibleCharacters: showsInvisibleCharacters)
+      valueFilter: valueFilter, showsInvisibleCharacters: showsInvisibleCharacters,
+      unloadedCells: unloadedCells)
     let nextChangeSet = Self.normalizedChangeSet(changeSet)
     if newKey == key {
-      guard nextChangeSet != stagedChangeSet else { return false }
+      defer { syncFrozenPane(tableView, reload: false) }
+      let reformatted = applyBinaryFormats(binaryFormats)
+      guard nextChangeSet != stagedChangeSet else { return reformatted }
       applyStagedChangeSet(nextChangeSet, to: tableView)
       scheduleSelectionSummary(tableView)
       return true
@@ -312,11 +342,18 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     key = newKey
     sourceResult = result
     self.valueFilter = valueFilter
+    self.binaryFormats = binaryFormats
     PerfSignpost.interval("grid.reload") {
       var model = ResultGridModel(
         result: result, sortColumn: sortColumn, ascending: ascending, valueFilter: valueFilter,
-        marksInvisibleCharacters: showsInvisibleCharacters)
+        marksInvisibleCharacters: showsInvisibleCharacters, binaryFormats: binaryFormats,
+        unloadedCells: unloadedCells)
       _ = model.apply(changeSet: nextChangeSet)
+      // The old model's pending decodes would land on rows of another result
+      self.model?.cancelBinaryDecodes()
+      model.onBinaryTextReady = { [weak self] row, column in
+        self?.reloadCell(row: row, column: column)
+      }
       self.model = model
       self.stagedChangeSet = nextChangeSet
       highlightPaint =
@@ -346,6 +383,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       updateHeader(
         tableView, result: result, hideColumnTypes: hideColumnTypes, searchQuery: searchQuery,
         caseSensitive: caseSensitive, wholeWord: wholeWord, currentMatch: gridMatch)
+      // Before the widths fit: a new column's width leaves room for the pin
+      markFrozenThrough(resolvedFrozenBand(tableView)?.identifiers.last, in: tableView)
       // New columns fit the column name and the cell text, like a divider double-click.
       // A re-run keeps a width the user dragged.
       if newKey.columnNames != oldKey?.columnNames {
@@ -354,6 +393,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         }
       }
       tableView.reloadData()
+      // Before the selection is restored: the pane takes its columns and rows first
+      syncFrozenPane(tableView, reload: true)
       if filterChanged {
         let indexes = IndexSet(
           selectedOriginalRows.compactMap { model.displayedRow(forOriginalRow: $0) })
@@ -372,7 +413,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     guard let model, let originalRow = model.originalRow(forDisplayedRow: row),
       column < model.columns.count
     else { return }
-    onShowCellDetails?(model.row(at: row), originalRow, column)
+    onShowCellDetails?(
+      model.row(at: row), originalRow, column, model.binaryFormat(column: column))
   }
 
   /// Reports a displayed row to `onShowRowDetails`, a staged insert as its page index
@@ -396,6 +438,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     var insertRows: [Int] = []
     /// Values for "Copy as IN list" (empty when the selection spans more than one column)
     var inListValues: [CellValue] = []
+    /// Result columns of "Copy as IN list", read again from `copyRows` once cut cells loaded
+    var inListColumns: [Int] = []
     /// Page rows (loaded indexes, then staged inserts) for Add/Duplicate/Delete/Revert
     var pageIndexes: [Int] = []
   }
@@ -416,6 +460,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let menu = NSMenu()
     menu.autoenablesItems = false
     addItem(to: menu, "Copy Value", #selector(copyValue(_:)), MenuTarget(row: row, column: column))
+    let isBinary = model.isBinaryColumn(column)
+    if isBinary {
+      addItem(
+        to: menu, "Copy as Displayed", #selector(copyAsDisplayed(_:)),
+        MenuTarget(row: row, column: column))
+    }
     addItem(
       to: menu, "Copy as Markdown", #selector(copyAsMarkdown(_:)),
       MenuTarget(row: row, column: column, copyRows: displayedRows))
@@ -426,11 +476,14 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         MenuTarget(row: row, column: column, insertRows: insertRows))
       let inList = addItem(
         to: menu, "Copy as IN list", #selector(copyAsINList(_:)),
-        MenuTarget(row: row, column: column, inListValues: inListValues))
+        MenuTarget(
+          row: row, column: column, copyRows: displayedRows, inListValues: inListValues,
+          inListColumns: inListColumns))
       inList.isEnabled = selectedColumns.count <= 1
     }
     addItem(
       to: menu, "See More", #selector(seeMore(_:)), MenuTarget(row: row, column: column))
+    if isBinary { addDisplayAsMenu(to: menu, column: column) }
     if onShowRowDetails != nil {
       addItem(
         to: menu, "Show Row Details", #selector(showRowDetailsItem(_:)),
@@ -491,6 +544,139 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     return menu
   }
 
+  /// Context menu of a column header (grid or frozen pane) for table column `tableColumn` of
+  /// `tableView`: the freeze items. Nil when it has no item.
+  func headerContextMenu(tableColumn: Int, in tableView: NSTableView) -> NSMenu? {
+    guard tableView.tableColumns.indices.contains(tableColumn) else { return nil }
+    let menu = NSMenu()
+    menu.autoenablesItems = false
+    let identifier = tableView.tableColumns[tableColumn].identifier
+    addFreezeItems(to: menu, identifier: identifier)
+    if let column = Int(identifier.rawValue), model?.isBinaryColumn(column) == true,
+      onBinaryFormatChange != nil
+    {
+      if !menu.items.isEmpty { menu.addItem(.separator()) }
+      addDisplayAsMenu(to: menu, column: column)
+    }
+    return menu.items.isEmpty ? nil : menu
+  }
+
+  /// "Display As" submenu of binary result column `column`: every format, a checkmark on the
+  /// current one. Nil `onBinaryFormatChange` leaves it out.
+  private func addDisplayAsMenu(to menu: NSMenu, column: Int) {
+    guard onBinaryFormatChange != nil, let model, model.columns.indices.contains(column) else {
+      return
+    }
+    let current = model.binaryFormat(column: column)
+    let submenu = NSMenu()
+    for format in BinaryDisplayFormat.allCases {
+      let item = NSMenuItem(
+        title: format.title, action: #selector(setBinaryFormat(_:)), keyEquivalent: "")
+      item.target = self
+      item.representedObject = DisplayAsChoice(column: model.columns[column].name, format: format)
+      item.state = format == current ? .on : .off
+      submenu.addItem(item)
+    }
+    let parent = NSMenuItem(title: "Display As", action: nil, keyEquivalent: "")
+    parent.submenu = submenu
+    menu.addItem(parent)
+  }
+
+  /// Column name and format of a "Display As" item
+  private struct DisplayAsChoice {
+    let column: String
+    let format: BinaryDisplayFormat
+  }
+
+  @objc private func setBinaryFormat(_ sender: NSMenuItem) {
+    guard let choice = sender.representedObject as? DisplayAsChoice else { return }
+    onBinaryFormatChange?(choice.column, choice.format)
+  }
+
+  /// Sets the "Display As" formats on the current model and reloads the visible cells of the
+  /// columns whose format changed (grid and frozen pane). True when a column changed.
+  private func applyBinaryFormats(_ formats: [String: BinaryDisplayFormat]) -> Bool {
+    guard formats != binaryFormats else { return false }
+    binaryFormats = formats
+    guard var model else { return false }
+    let changed = model.setBinaryFormats(formats)
+    self.model = model
+    for table in [gridTableView, frozenPane?.table].compactMap({ $0 }) {
+      let columns = IndexSet(
+        table.tableColumns.indices.filter {
+          Int(table.tableColumns[$0].identifier.rawValue).map(changed.contains) == true
+        })
+      let rows = table.rows(in: table.visibleRect)
+      guard !columns.isEmpty, rows.length > 0 else { continue }
+      table.reloadData(
+        forRowIndexes: IndexSet(integersIn: rows.location..<NSMaxRange(rows)),
+        columnIndexes: columns)
+    }
+    return !changed.isEmpty
+  }
+
+  /// Reloads the cell of displayed row `row` and result column `column` whose decoded text
+  /// landed, in the grid and the frozen pane
+  private func reloadCell(row: Int, column: Int) {
+    for table in [gridTableView, frozenPane?.table].compactMap({ $0 }) {
+      guard row < table.numberOfRows,
+        let index = table.tableColumns.firstIndex(where: {
+          Int($0.identifier.rawValue) == column
+        })
+      else { continue }
+      table.reloadData(forRowIndexes: [row], columnIndexes: [index])
+    }
+  }
+
+  /// "Freeze Up to This Column" on a result column, disabled when the band would take more
+  /// than `ResultGridFrozenBand.maxViewportShare` of the grid's visible width, and "Unfreeze"
+  /// while columns are frozen
+  private func addFreezeItems(to menu: NSMenu, identifier: NSUserInterfaceItemIdentifier) {
+    guard onFreezeChange != nil else { return }
+    if let column = Int(identifier.rawValue), let model, model.columns.indices.contains(column) {
+      let item = NSMenuItem(
+        title: "Freeze Up to This Column", action: #selector(freezeColumns(_:)),
+        keyEquivalent: "")
+      item.target = self
+      item.representedObject = model.columns[column].name
+      if !freezeFits(through: identifier) {
+        item.isEnabled = false
+        item.toolTip = "The frozen columns would take more than two thirds of the grid's width"
+      }
+      menu.addItem(item)
+    }
+    if frozenBand != nil {
+      let item = NSMenuItem(
+        title: "Unfreeze", action: #selector(unfreezeColumns(_:)), keyEquivalent: "")
+      item.target = self
+      menu.addItem(item)
+    }
+  }
+
+  /// Whether freezing through the grid column `identifier` keeps the band within the cap: the
+  /// widths of the grid's visible columns from "#" through it, against the grid's visible width
+  private func freezeFits(through identifier: NSUserInterfaceItemIdentifier) -> Bool {
+    guard let grid = gridTableView,
+      let end = grid.tableColumns.firstIndex(where: {
+        $0.identifier == identifier
+      })
+    else { return false }
+    let widths = grid.tableColumns[...end].filter { !$0.isHidden }.map {
+      $0.width + grid.intercellSpacing.width
+    }
+    return ResultGridFrozenBand.fitsViewport(
+      widths: widths, viewportWidth: grid.enclosingScrollView?.contentView.bounds.width ?? 0)
+  }
+
+  @objc private func freezeColumns(_ sender: NSMenuItem) {
+    guard let name = sender.representedObject as? String else { return }
+    onFreezeChange?(name)
+  }
+
+  @objc private func unfreezeColumns(_: NSMenuItem) {
+    onFreezeChange?(nil)
+  }
+
   /// Duplicate, Delete and Revert of the page rows, shared by the cell and gutter menus
   private func addStagedRowItems(to menu: NSMenu, row: Int, column: Int, pages: [Int]) {
     addItem(
@@ -541,9 +727,58 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     guard let target = sender.representedObject as? MenuTarget, let model,
       target.row < model.rowCount
     else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(
-      model.value(row: target.row, column: target.column).fullString, forType: .string)
+    let cells = model.unloadedCells(rows: IndexSet(integer: target.row), columns: [target.column])
+    withLoadedCells(cells) { model, _ in
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(
+        model.value(row: target.row, column: target.column).fullString, forType: .string)
+    }
+  }
+
+  /// Runs `copy` on the model once the cut `cells` it reads hold their full values: at once
+  /// when there is none (the model as shown), else after `onLoadCells` loaded them, on a copy of
+  /// the model taken now (same displayed rows) filled with them, plus the loaded values by index
+  /// into `CellResult.rows` and result column. A failed or cancelled load, or no loader, copies
+  /// nothing: a cut value never reaches the pasteboard.
+  private func withLoadedCells(
+    _ cells: [ResultGridModel.CellRef],
+    copy: @escaping (_ model: ResultGridModel, _ values: [Int: [Int: CellValue]]) -> Void
+  ) {
+    guard let model else { return }
+    guard !cells.isEmpty else {
+      copy(model, [:])
+      return
+    }
+    guard let onLoadCells else {
+      NSSound.beep()
+      return
+    }
+    Task { @MainActor in
+      guard let values = await onLoadCells(cells),
+        cells.allSatisfy({ values[$0.row]?[$0.column] != nil })
+      else { return }
+      var filled = model
+      filled.fillLoaded(values)
+      copy(filled, values)
+    }
+  }
+
+  /// The cell's text as the grid shows it (its "Display As" format), not the raw value. The
+  /// pasteboard is cleared at once and gets the text when a pending decode lands, unless
+  /// something else was copied meanwhile.
+  @objc private func copyAsDisplayed(_ sender: NSMenuItem) {
+    guard let target = sender.representedObject as? MenuTarget, let model,
+      target.row < model.rowCount
+    else { return }
+    let cells = model.unloadedCells(rows: IndexSet(integer: target.row), columns: [target.column])
+    withLoadedCells(cells) { model, _ in
+      let changeCount = NSPasteboard.general.clearContents()
+      Task {
+        let text = await model.displayTextForCopy(row: target.row, column: target.column)
+        guard NSPasteboard.general.changeCount == changeCount else { return }
+        NSPasteboard.general.setString(text, forType: .string)
+      }
+    }
   }
 
   @objc private func seeMore(_ sender: NSMenuItem) {
@@ -605,10 +840,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private func showReferencedRow(row: Int, column: Int) {
     guard let request = referencedRowRequest(row: row, column: column),
       let lookup = onLookupReferencedRow, let jump = onJumpToReferencedRow,
-      let tableView = gridTableView,
-      let tableColumn = tableView.tableColumns.firstIndex(where: {
-        Int($0.identifier.rawValue) == column
-      })
+      case (let tableView, let tableColumn)? = tableShowing(column: column)
     else { return }
     let rect = tableView.frameOfCell(atColumn: tableColumn, row: row)
     let popover = NSPopover()
@@ -666,21 +898,44 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     else { return }
     let rows = target.copyRows.filteredIndexSet { $0 < model.rowCount }
     guard !rows.isEmpty else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(
-      selectionText(rows, in: gridTableView, format: .markdown), forType: .string)
+    let cells = model.unloadedCells(rows: rows, columns: Self.resultColumns(of: gridTableView))
+    withLoadedCells(cells) { [weak self] model, _ in
+      guard let self else { return }
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(
+        selectionText(rows, in: gridTableView, format: .markdown, model: model),
+        forType: .string)
+    }
   }
 
+  /// The INSERT script of the loaded rows (staged edits left out), cut cells loaded first
   @objc private func copyAsInsert(_ sender: NSMenuItem) {
-    guard let target = sender.representedObject as? MenuTarget, let sourceResult else { return }
-    DataExporter.copyInsert(
-      result: sourceResult, rows: target.insertRows, table: sourceResult.tableName,
-      dialect: exportDialect)
+    guard let target = sender.representedObject as? MenuTarget, let sourceResult, let model
+    else { return }
+    let cells = model.unloadedCells(
+      originalRows: target.insertRows, columns: Array(sourceResult.columns.indices))
+    let dialect = exportDialect
+    withLoadedCells(cells) { _, values in
+      DataExporter.copyInsert(
+        result: sourceResult.replacingCells(values), rows: target.insertRows,
+        table: sourceResult.tableName, dialect: dialect)
+    }
   }
 
   @objc private func copyAsINList(_ sender: NSMenuItem) {
-    guard let target = sender.representedObject as? MenuTarget else { return }
-    DataExporter.copyINList(values: target.inListValues, dialect: exportDialect)
+    guard let target = sender.representedObject as? MenuTarget, let model else { return }
+    let rows = target.copyRows.filteredIndexSet { $0 < model.rowCount }
+    let cells = model.unloadedCells(rows: rows, columns: target.inListColumns)
+    let dialect = exportDialect
+    guard !cells.isEmpty else {
+      DataExporter.copyINList(values: target.inListValues, dialect: dialect)
+      return
+    }
+    withLoadedCells(cells) { model, _ in
+      DataExporter.copyINList(
+        values: model.selectedColumnValues(rows: rows, columns: target.inListColumns),
+        dialect: dialect)
+    }
   }
 
   @objc private func addRow(_: NSMenuItem) {
@@ -724,10 +979,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   /// "Set Value..." popover under the clicked cell; its choice is staged in every page row.
   private func showSetCellsValue(row: Int, column: Int, pages: [Int]) {
-    guard let model, model.columns.indices.contains(column), let tableView = gridTableView,
-      let tableColumn = tableView.tableColumns.firstIndex(where: {
-        Int($0.identifier.rawValue) == column
-      })
+    guard let model, model.columns.indices.contains(column),
+      case (let tableView, let tableColumn)? = tableShowing(column: column)
     else { return }
     let rect = tableView.frameOfCell(atColumn: tableColumn, row: row)
     let popover = NSPopover()
@@ -747,6 +1000,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     setCellsPopover = popover
     // The table is flipped: maxY is the bottom edge, so the popover opens under the cell.
     popover.show(relativeTo: rect, of: tableView, preferredEdge: .maxY)
+  }
+
+  /// Table and table-column index that show result column `column`: the frozen pane when the
+  /// column is frozen (the grid's cell is under it), else the grid
+  private func tableShowing(column: Int) -> (NSTableView, Int)? {
+    let tables: [NSTableView] =
+      (frozenPane.map { [$0.table] } ?? []) + (gridTableView.map { [$0] } ?? [])
+    for table in tables {
+      if let index = table.tableColumns.firstIndex(where: { Int($0.identifier.rawValue) == column })
+      {
+        return (table, index)
+      }
+    }
+    return nil
   }
 
   /// Dialect of the grid's highlight database type (PostgreSQL when the grid has not updated)
@@ -777,31 +1044,51 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     selectionText(tableView.selectedRowIndexes, in: tableView, format: .tsv)
   }
 
-  /// Displayed `rows` in `format`, all columns in on-screen order (after a column move)
+  /// Displayed `rows` of `model` (the grid's by default) in `format`, all columns in on-screen
+  /// order (after a column move)
   private func selectionText(
-    _ rows: IndexSet, in tableView: NSTableView, format: CopyRowsFormat
+    _ rows: IndexSet, in tableView: NSTableView, format: CopyRowsFormat,
+    model: ResultGridModel? = nil
   ) -> String {
-    guard let model else { return "" }
+    guard let model = model ?? self.model else { return "" }
     return model.copyText(
-      rows: rows, columns: tableView.tableColumns.compactMap { Int($0.identifier.rawValue) },
-      format: format, neutralizesFormulas: AppSettings.shared.neutralizesCopiedFormulas)
+      rows: rows, columns: Self.resultColumns(of: tableView), format: format,
+      neutralizesFormulas: AppSettings.shared.neutralizesCopiedFormulas)
   }
 
-  /// Cmd+C: the selected rows in Settings → Result Table → Copy rows as
+  /// Result columns of `tableView`'s columns in on-screen order (the "#" gutter left out)
+  private static func resultColumns(of tableView: NSTableView) -> [Int] {
+    tableView.tableColumns.compactMap { Int($0.identifier.rawValue) }
+  }
+
+  /// Cmd+C: the selected rows in Settings → Result Table → Copy rows as, cut cells loaded first
   func copySelection(_ tableView: NSTableView) {
-    guard !tableView.selectedRowIndexes.isEmpty else { return }
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(
-      selectionText(
-        tableView.selectedRowIndexes, in: tableView, format: AppSettings.shared.copyRowsFormat),
-      forType: .string)
+    let rows = tableView.selectedRowIndexes
+    guard !rows.isEmpty, let model else { return }
+    let cells = model.unloadedCells(rows: rows, columns: Self.resultColumns(of: tableView))
+    withLoadedCells(cells) { [weak self] model, _ in
+      guard let self else { return }
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(
+        selectionText(rows, in: tableView, format: AppSettings.shared.copyRowsFormat, model: model),
+        forType: .string)
+    }
   }
 
   // MARK: - Selection summary
 
   func tableViewSelectionDidChange(_ notification: Notification) {
     guard let tableView = notification.object as? NSTableView else { return }
+    frozenPane?.mirrorSelection(from: tableView)
+    // A pane selection reaches the grid, which reports it
+    guard tableView !== frozenPane?.table else { return }
     scheduleSelectionSummary(tableView)
+  }
+
+  /// A drag selection in one table shows in the other as it moves
+  func tableViewSelectionIsChanging(_ notification: Notification) {
+    guard let tableView = notification.object as? NSTableView else { return }
+    frozenPane?.mirrorSelection(from: tableView)
   }
 
   /// Records the result column under a click in table column `tableColumn`
@@ -879,6 +1166,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       showCellDetails(row: row, column: column)
       return true
     }
+    // A frozen column is edited in the pane, over the grid's covered cell
+    let identifier = String(column)
+    let tableView: NSTableView =
+      frozenPane.flatMap { pane in
+        pane.table.tableColumns.contains { $0.identifier.rawValue == identifier } ? pane.table : nil
+      } ?? tableView
     guard
       let tableColumn = tableView.tableColumns.firstIndex(where: {
         $0.identifier.rawValue == String(column)
@@ -942,6 +1235,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
         rowValues: editing.row, column: editing.column, newValue: textField.stringValue,
         pageIndex: editing.pageIndex)
     }
+    if let grid = (tableView as? ResultGridTableView)?.paneGrid {
+      // The pane refuses the focus: an edit that left it nowhere returns it to the grid
+      DispatchQueue.main.async { [weak grid] in
+        guard let grid, let window = grid.window, window.firstResponder === window else { return }
+        window.makeFirstResponder(grid)
+      }
+    }
     guard row >= 0, tableColumn >= 0 else { return }
     // Show the stored value again; a successful edit re-runs the cell and reloads the grid
     tableView.reloadData(forRowIndexes: [row], columnIndexes: [tableColumn])
@@ -976,7 +1276,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   func tableView(
     _ tableView: NSTableView, sortDescriptorsDidChange _: [NSSortDescriptor]
   ) {
-    guard !isShowingInputSort else { return }
+    // The pane showing the grid's sort is not a header click
+    guard !isShowingInputSort, frozenPane?.isMirroring != true else { return }
     // The table flips the direction itself; only the clicked column is taken from it
     guard let clicked = tableView.sortDescriptors.first?.key else {
       onSortChange?(nil, true)
@@ -994,11 +1295,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   // MARK: - NSTableViewDelegate
 
-  /// The "#" column stays first
+  /// The "#" column stays first, and no column crosses the frozen band's edge
   func tableView(
     _ tableView: NSTableView, shouldReorderColumn columnIndex: Int, toColumn newColumnIndex: Int
   ) -> Bool {
-    columnIndex != 0 && newColumnIndex != 0
+    ResultGridFrozenBand.allowsMove(from: columnIndex, to: newColumnIndex, band: frozenBand)
+  }
+
+  /// A frozen column resized in the pane header resizes the grid's, and back
+  func tableViewColumnDidResize(_ notification: Notification) {
+    frozenPane?.columnDidResize(notification)
   }
 
   /// Double-click on a header divider: the width that fits the column's header and cell text
@@ -1032,6 +1338,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Rows measured by a divider double-click, so a large result fits instantly
   static let fitRowLimit = 1000
 
+  /// A row scrolled out of the grid drops its pending MessagePack / Protobuf decodes. A row view
+  /// removed by a reload while its row is still on screen keeps them (the new cell's request
+  /// reuses the pending one).
+  func tableView(_ tableView: NSTableView, didRemove _: NSTableRowView, forRow row: Int) {
+    guard row >= 0, tableView === gridTableView,
+      !NSLocationInRange(row, tableView.rows(in: tableView.visibleRect))
+    else { return }
+    model?.cancelBinaryDecodes(row: row)
+  }
+
   /// Reused row view, alternate on odd displayed rows
   func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
     let rowView =
@@ -1058,7 +1374,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       cell.textField?.stringValue = String(row + 1)
       return cell
     }
-    guard let model, let tableColumn, let column = Int(tableColumn.identifier.rawValue) else {
+    // Row in range: the pane reloads right after the grid, never with a stale row count
+    guard let model, let tableColumn, let column = Int(tableColumn.identifier.rawValue),
+      row < model.rowCount
+    else {
       return nil
     }
     let cell =
@@ -1069,9 +1388,12 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     cell.isNull = isNull
     cell.typeColor = colorValuesByType ? Self.typeColor(for: value) : nil
     let isSelected = tableView.isRowSelected(row)
-    let isEmphasized = isSelected && (tableView.window?.isKeyWindow ?? true)
+    let isEmphasized =
+      isSelected
+      && ((tableView as? ResultGridTableView)?.frozenPaneEmphasis
+        ?? (tableView.window?.isKeyWindow ?? true))
     cell.backgroundStyle = isEmphasized ? .emphasized : .normal
-    let text = model.displayText(row: row, column: column)
+    let text = model.displayText(row: row, column: column, requestsDecode: true)
     let invisibles = model.invisibleCharacterTooltip(row: row, column: column)
     cell.hasInvisibleMarks = invisibles != nil
     if cell.toolTip != invisibles { cell.toolTip = invisibles }
@@ -1158,19 +1480,92 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let dirty = model.apply(changeSet: changeSet)
     self.model = model
     stagedChangeSet = changeSet
+    // The frozen pane shows the same rows: staged tints in both
+    let tables = [tableView] + (frozenPane.map { [$0.table] } ?? [])
     if model.rowCount != previousCount {
-      tableView.reloadData()
+      tables.forEach { $0.reloadData() }
       return
     }
     guard !dirty.isEmpty else { return }
-    for row in dirty {
-      if let rowView = tableView.rowView(atRow: row, makeIfNecessary: false) as? ResultGridRowView {
-        applyStagingAppearance(rowView, row: row)
+    for table in tables {
+      for row in dirty {
+        if let rowView = table.rowView(atRow: row, makeIfNecessary: false) as? ResultGridRowView {
+          applyStagingAppearance(rowView, row: row)
+        }
+      }
+      let columns = IndexSet(integersIn: 0..<table.numberOfColumns)
+      guard !columns.isEmpty else { continue }
+      table.reloadData(forRowIndexes: dirty, columnIndexes: columns)
+    }
+  }
+
+  // MARK: - Frozen pane
+
+  /// Installs, updates or removes the frozen pane from `frozenThroughColumn` and the grid's
+  /// current columns. The pane reloads only when `reload` (the grid reloaded), when it is new
+  /// or when its columns changed, never on every update.
+  func syncFrozenPane(_ tableView: NSTableView, reload: Bool) {
+    let band = resolvedFrozenBand(tableView)
+    // Before the pane syncs: it copies the grid's header content, the pin included
+    markFrozenThrough(band?.identifiers.last, in: tableView)
+    guard let band, let grid = tableView as? ResultGridTableView,
+      let scrollView = grid.enclosingScrollView as? ResultGridScrollView,
+      scrollView.documentView === grid
+    else {
+      removeFrozenPane()
+      return
+    }
+    frozenBand = band
+    if let frozenPane {
+      frozenPane.sync(band: band, reload: reload)
+      return
+    }
+    let pane = ResultGridFrozenPane(grid: grid, coordinator: self)
+    pane.install(in: scrollView)
+    frozenPane = pane
+    pane.sync(band: band, reload: true)
+  }
+
+  /// Band of `frozenThroughColumn` in the grid's current columns, nil when nothing is frozen
+  private func resolvedFrozenBand(_ tableView: NSTableView) -> ResultGridFrozenBand? {
+    let names = model?.columns.map(\.name) ?? []
+    let columns = tableView.tableColumns.map { column in
+      ResultGridFrozenBand.Column(
+        identifier: column.identifier,
+        name: Int(column.identifier.rawValue).flatMap {
+          names.indices.contains($0) ? names[$0] : nil
+        },
+        isHidden: column.isHidden)
+    }
+    return ResultGridFrozenBand(columns: columns, frozenThrough: frozenThroughColumn)
+  }
+
+  /// Pin in the header of the band's last column only (none when `identifier` is nil). A column
+  /// that gets the pin grows by the pin's width when its header no longer fits (never shrinks).
+  private func markFrozenThrough(
+    _ identifier: NSUserInterfaceItemIdentifier?, in tableView: NSTableView
+  ) {
+    var changed = false
+    for column in tableView.tableColumns {
+      guard let cell = column.headerCell as? ResultGridHeaderCell else { continue }
+      let isFrozenThrough = identifier != nil && column.identifier == identifier
+      if cell.content.isFrozenThrough != isFrozenThrough {
+        let before = cell.fittingWidth()
+        cell.content.isFrozenThrough = isFrozenThrough
+        changed = true
+        let after = cell.fittingWidth()
+        if isFrozenThrough, column.width < after {
+          column.width = min(after, column.width + after - before)
+        }
       }
     }
-    let columns = IndexSet(integersIn: 0..<tableView.numberOfColumns)
-    guard !columns.isEmpty else { return }
-    tableView.reloadData(forRowIndexes: dirty, columnIndexes: columns)
+    if changed { tableView.headerView?.needsDisplay = true }
+  }
+
+  private func removeFrozenPane() {
+    frozenBand = nil
+    frozenPane?.uninstall()
+    frozenPane = nil
   }
 
   private func applyStagingAppearance(_ rowView: ResultGridRowView, row: Int) {
@@ -1199,10 +1594,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       guard let cell = tableColumn.headerCell as? ResultGridHeaderCell,
         let index = Int(tableColumn.identifier.rawValue), index < result.columns.count
       else { continue }
-      cell.content = Self.headerContent(
+      var content = Self.headerContent(
         for: result.columns[index], result: result, hideColumnTypes: hideColumnTypes,
         searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
         currentMatch: currentMatch, isFiltered: valueFilter.isActive(index))
+      // The pin stays: `markFrozenThrough` widens a column only when the pin moves to it
+      content.isFrozenThrough = cell.content.isFrozenThrough
+      cell.content = content
     }
     guard let headerView = tableView.headerView else { return }
     let height = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)

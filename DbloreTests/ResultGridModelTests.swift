@@ -262,4 +262,209 @@ struct ResultGridModelTests {
       #expect(model.displayText(row: 1, column: 1) == "NULL")
     }
   }
+
+  // MARK: - Binary Display As
+
+  private static func bytes(_ hex: String) -> Data {
+    let digits = Array(hex.filter { !$0.isWhitespace })
+    return Data(
+      stride(from: 0, to: digits.count, by: 2).map {
+        UInt8(String(digits[$0...$0 + 1]), radix: 16)!
+      })
+  }
+
+  /// One `bytea` column "b" and a text column "t" holding `values`
+  private func binaryResult(_ values: [Data]) -> CellResult {
+    CellResult(
+      columns: [ColumnInfo(name: "b", type: "bytea"), ColumnInfo(name: "t", type: "text")],
+      rows: values.map { [.data($0), .string("x")] }, rowCount: values.count)
+  }
+
+  private static let uuidBytes = bytes("6ccd780c baba 1026 9564 5b8c656024db")
+
+  @Test("Display As shows hex or a UUID; Copy Value stays raw base64")
+  func binaryFormatApplied() async {
+    let result = binaryResult([Self.uuidBytes, Data([1, 2])])
+    let hex = ResultGridModel(
+      result: result, sortColumn: nil, ascending: true, binaryFormats: ["b": .hex, "t": .hex])
+    #expect(hex.displayText(row: 0, column: 0) == "0x6CCD780CBABA102695645B8C656024DB")
+    #expect(hex.displayText(row: 1, column: 0) == "0x0102")
+    // A format on a text column changes nothing
+    #expect(hex.displayText(row: 0, column: 1) == "x")
+    #expect(hex.value(row: 0, column: 0).fullString == Self.uuidBytes.base64EncodedString())
+    #expect(await hex.displayTextForCopy(row: 0, column: 0) == "0x6CCD780CBABA102695645B8C656024DB")
+
+    let uuid = ResultGridModel(
+      result: result, sortColumn: nil, ascending: true, binaryFormats: ["b": .uuid])
+    #expect(uuid.displayText(row: 0, column: 0) == "6CCD780C-BABA-1026-9564-5B8C656024DB")
+    // Not 16 bytes: the raw fallback
+    #expect(uuid.displayText(row: 1, column: 0) == "<2 bytes>")
+    #expect(uuid.value(row: 1, column: 0).fullString == Data([1, 2]).base64EncodedString())
+
+    let size = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    #expect(size.binaryFormat(column: 0) == .size)
+    #expect(size.displayText(row: 0, column: 0) == "<16 bytes>")
+    #expect(size.isBinaryColumn(0))
+    #expect(!size.isBinaryColumn(1))
+  }
+
+  @Test("Hex text is capped at the grid's display length")
+  func binaryHexCapped() {
+    let model = ResultGridModel(
+      result: binaryResult([Data(count: 100_000)]), sortColumn: nil, ascending: true,
+      binaryFormats: ["b": .hex])
+    let text = model.displayText(row: 0, column: 0)
+    #expect(text.count == ResultGridModel.maxDisplayLength + 1)
+    #expect(text.hasSuffix("…"))
+  }
+
+  @Test("A format change drops the column's cached text")
+  func binaryFormatInvalidatesCache() {
+    var model = ResultGridModel(
+      result: binaryResult([Self.uuidBytes]), sortColumn: nil, ascending: true)
+    #expect(model.displayText(row: 0, column: 0) == "<16 bytes>")  // cached
+    #expect(model.displayText(row: 0, column: 1) == "x")
+
+    #expect(model.setBinaryFormats(["b": .uuid]) == IndexSet([0]))
+    #expect(model.displayText(row: 0, column: 0) == "6CCD780C-BABA-1026-9564-5B8C656024DB")
+    #expect(model.setBinaryFormats(["b": .uuid]) == [])
+    // Size is the default: setting it is the same as no format
+    #expect(model.setBinaryFormats(["b": .size]) == IndexSet([0]))
+    #expect(model.displayText(row: 0, column: 0) == "<16 bytes>")
+  }
+
+  @Test(
+    "A MessagePack cell shows its size until its off-main decode lands", .timeLimit(.minutes(1)))
+  func messagePackDecodesOffMain() async {
+    // msgpack.org {"compact":true,"schema":0}, then a truncated fixext4
+    let valid = Self.bytes("82 a7 636f6d70616374 c3 a6 736368656d61 00")
+    let malformed = Self.bytes("d6 ff 00")
+    let model = ResultGridModel(
+      result: binaryResult([valid, malformed]), sortColumn: nil, ascending: true,
+      binaryFormats: ["b": .messagePack])
+    let (landed, continuation) = AsyncStream<[Int]>.makeStream()
+    model.onBinaryTextReady = { continuation.yield([$0, $1]) }
+
+    // Measuring (no request) and an on-screen request both show the size at once
+    #expect(model.displayText(row: 0, column: 0) == "<\(valid.count) bytes>")
+    #expect(model.displayText(row: 0, column: 0, requestsDecode: true) == "<\(valid.count) bytes>")
+    #expect(model.displayText(row: 1, column: 0, requestsDecode: true) == "<3 bytes>")
+
+    var cells: Set<[Int]> = []
+    for await cell in landed {
+      cells.insert(cell)
+      if cells.count == 2 { break }
+    }
+    #expect(cells == [[0, 0], [1, 0]])
+    #expect(model.displayText(row: 0, column: 0) == #"{"compact": true, "schema": 0}"#)
+    // Bytes that do not decode fall back to the size
+    #expect(model.displayText(row: 1, column: 0) == "<3 bytes>")
+    // Copy Value stays raw
+    #expect(model.value(row: 0, column: 0).fullString == valid.base64EncodedString())
+  }
+
+  @Test("Copy as Displayed decodes a MessagePack cell whose text has not landed")
+  func copyAsDisplayedDecodesPending() async {
+    let valid = Self.bytes("92 01 a1 61")
+    let model = ResultGridModel(
+      result: binaryResult([valid]), sortColumn: nil, ascending: true,
+      binaryFormats: ["b": .messagePack])
+    #expect(model.displayText(row: 0, column: 0) == "<4 bytes>")
+    #expect(await model.displayTextForCopy(row: 0, column: 0) == #"[1, "a"]"#)
+  }
+
+  @Test(
+    "A decode pending when the column's format changes never stores its stale text",
+    .timeLimit(.minutes(1)))
+  func staleBinaryDecodeDropped() async {
+    // [1, "a"] as MessagePack; not a Protobuf message, so Protobuf falls back to the size
+    let value = Self.bytes("92 01 a1 61")
+    var model = ResultGridModel(
+      result: binaryResult([value]), sortColumn: nil, ascending: true,
+      binaryFormats: ["b": .messagePack])
+    let (landed, continuation) = AsyncStream<[Int]>.makeStream()
+    model.onBinaryTextReady = { continuation.yield([$0, $1]) }
+
+    #expect(model.displayText(row: 0, column: 0, requestsDecode: true) == "<4 bytes>")
+    // The MessagePack decode is still pending: the main actor has not yielded yet
+    #expect(model.setBinaryFormats(["b": .protobuf]) == IndexSet([0]))
+    #expect(model.displayText(row: 0, column: 0, requestsDecode: true) == "<4 bytes>")
+
+    // Whichever decode finishes first, only the Protobuf one is stored and reported
+    for await cell in landed {
+      #expect(cell == [0, 0])
+      break
+    }
+    #expect(model.displayText(row: 0, column: 0) == "<4 bytes>")
+    #expect(model.displayText(row: 0, column: 0) != #"[1, "a"]"#)
+  }
+
+  /// An isolated defaults suite, removed when `body` returns
+  private func withDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
+    let name = "ace.thi.Dblore.tests.gridColumnPrefs.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    try body(defaults)
+  }
+
+  private func storedPrefs(_ defaults: UserDefaults) throws -> [String: GridColumnPrefs] {
+    guard let data = defaults.data(forKey: GridColumnPrefsStore.storageKey) else { return [:] }
+    return try JSONDecoder().decode([String: GridColumnPrefs].self, from: data)
+  }
+
+  @Test("A column's Display As is stored per table; an entry with no preference is removed")
+  func binaryFormatStored() throws {
+    try withDefaults { defaults in
+      let key = GridColumnPrefsStore.key(
+        for: ConnectionConfig(databaseType: .mysql, host: "h", port: 3306, database: "app"),
+        schema: "app", name: "events")
+      let store = GridColumnPrefsStore(defaults: defaults)
+      store.setBinaryFormat(.uuidSwappedTime, column: "id", for: key)
+      store.setBinaryFormat(.messagePack, column: "payload", for: key)
+      // A new store (a relaunch) reads it back; a format alone keeps the entry
+      let reloaded = GridColumnPrefsStore(defaults: defaults)
+      #expect(
+        reloaded.binaryFormats(for: key) == ["id": .uuidSwappedTime, "payload": .messagePack])
+      #expect(reloaded.frozenThrough(for: key) == nil)
+      let stored = try storedPrefs(defaults)
+      #expect(stored[key] != nil)
+
+      // Unfreezing a table that only has formats keeps them
+      store.setFrozenThrough("id", for: key)
+      store.setFrozenThrough(nil, for: key)
+      #expect(store.binaryFormats(for: key).count == 2)
+
+      // Size is the default: it removes the column, then the empty entry
+      store.setBinaryFormat(.size, column: "id", for: key)
+      store.setBinaryFormat(.size, column: "payload", for: key)
+      #expect(store.binaryFormats(for: key).isEmpty)
+      let cleared = try storedPrefs(defaults)
+      #expect(cleared[key] == nil)
+    }
+  }
+
+  @Test("A malformed stored entry is dropped alone; the next write keeps the other tables")
+  func malformedPrefsEntryDroppedAlone() throws {
+    try withDefaults { defaults in
+      let json = #"{"k1":{"frozenThrough":"id"},"k2":{"binaryFormats":["hex"]}}"#
+      defaults.set(Data(json.utf8), forKey: GridColumnPrefsStore.storageKey)
+      let store = GridColumnPrefsStore(defaults: defaults)
+      #expect(store.frozenThrough(for: "k1") == "id")
+      #expect(store.binaryFormats(for: "k2").isEmpty)
+
+      store.setBinaryFormat(.hex, column: "c", for: "k3")
+      let stored = try storedPrefs(defaults)
+      #expect(stored["k1"] == GridColumnPrefs(frozenThrough: "id"))
+      #expect(stored["k2"] == nil)
+      #expect(stored["k3"] == GridColumnPrefs(binaryFormats: ["c": .hex]))
+    }
+  }
+
+  @Test("Stored preferences without formats, or with an unknown one, still load")
+  func binaryFormatDecodesOldEntries() throws {
+    let json = #"{"k1":{"frozenThrough":"id"},"k2":{"binaryFormats":{"a":"hex","b":"future"}}}"#
+    let all = try JSONDecoder().decode([String: GridColumnPrefs].self, from: Data(json.utf8))
+    #expect(all["k1"] == GridColumnPrefs(frozenThrough: "id"))
+    #expect(all["k2"] == GridColumnPrefs(binaryFormats: ["a": .hex]))
+  }
 }

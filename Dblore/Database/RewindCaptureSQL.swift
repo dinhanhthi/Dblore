@@ -80,19 +80,36 @@ nonisolated enum RewindCaptureSQL {
       sql += "ONLY "
     }
     sql += target.qualifiedName
-    var conditions: [String] = []
-    var values: [String?] = []
-    for (index, (key, value)) in zip(keys, keyValues).enumerated() {
-      let placeholder = CellUpdateStatement.bindPlaceholder(
-        dialect.placeholder(index + 1), value, dialect: dialect)
-      conditions.append("\(try dialect.quoteIdentifier(key)) = \(placeholder)")
-      values.append(CellUpdateStatement.inputText(value, dialect: dialect))
-    }
-    sql += " WHERE " + conditions.joined(separator: " AND ")
+    let condition = try keyCondition(
+      keys: keys, keyValues: keyValues, dialect: dialect, placeholder: dialect.placeholder)
+    sql += " WHERE " + condition.sql
     if locksRow {
       sql += " FOR UPDATE"
     }
-    return BoundStatement(sql: sql, values: values, expectedRows: nil)
+    return BoundStatement(sql: sql, values: condition.values, expectedRows: nil)
+  }
+
+  /// `k1 = <p1> AND k2 = <p2> ...` for the key columns `keys` equal to `keyValues` (in key
+  /// order), each value bound the way an edit's own WHERE binds it (`inputText`, MySQL bytes
+  /// through `UNHEX`), and the bind text of each placeholder in order (nil is NULL).
+  /// `placeholder` gives the placeholder of the n-th bind (1-based). Shared with the full
+  /// value read of a lazy binary cell (`LazyCellLoader`).
+  static func keyCondition(
+    keys: [String], keyValues: [CellValue], dialect: SQLDialect,
+    placeholder: (Int) -> String
+  ) throws -> (sql: String, values: [String?]) {
+    guard !keys.isEmpty, keys.count == keyValues.count else {
+      throw RewindCaptureError.noPrimaryKey
+    }
+    var conditions: [String] = []
+    var values: [String?] = []
+    for (index, (key, value)) in zip(keys, keyValues).enumerated() {
+      let bound = CellUpdateStatement.bindPlaceholder(
+        placeholder(index + 1), value, dialect: dialect)
+      conditions.append("\(try dialect.quoteIdentifier(key)) = \(bound)")
+      values.append(CellUpdateStatement.inputText(value, dialect: dialect))
+    }
+    return (conditions.joined(separator: " AND "), values)
   }
 
   /// One row returned by `selectStatement` as stored text per column (nil is NULL).

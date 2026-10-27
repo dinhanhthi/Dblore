@@ -47,10 +47,13 @@ struct ResultGridView: NSViewRepresentable {
   var valueFilter = ColumnValueFilter()
   /// Receives the filter after a value is shown or hidden in the header popover
   var onValueFilterChange: ((ColumnValueFilter) -> Void)? = nil
-  /// Receives the displayed row values, its index into `CellResult.rows` and the result column
-  /// index of the cell whose details button was clicked
-  var onShowCellDetails: ((_ row: [CellValue], _ originalRow: Int, _ column: Int) -> Void)? =
-    nil
+  /// Receives the displayed row values, its index into `CellResult.rows`, the result column
+  /// index of the cell whose details button was clicked and that column's "Display As"
+  var onShowCellDetails:
+    (
+      (_ row: [CellValue], _ originalRow: Int, _ column: Int, _ format: BinaryDisplayFormat) -> Void
+    )? =
+      nil
   /// Receives the displayed row values and its index into `CellResult.rows` (a staged insert:
   /// `rows.count + n`) from the "#" details button or the row menus; nil leaves both out
   var onShowRowDetails: ((_ row: [CellValue], _ originalRow: Int) -> Void)? = nil
@@ -80,6 +83,23 @@ struct ResultGridView: NSViewRepresentable {
   /// Names of result columns hidden in the grid; the result, column indices and edits are
   /// unchanged
   var hiddenColumns: Set<String> = []
+  /// Leading result columns stay in place through this column name (resolved against the
+  /// current order and hidden columns), in a pane over the grid's left edge; nil freezes none
+  var frozenThroughColumn: String? = nil
+  /// Receives the column name of the header menu's "Freeze Up to This Column", or nil from
+  /// "Unfreeze"; nil leaves both items out (only table-data grids freeze)
+  var onFreezeChange: ((String?) -> Void)? = nil
+  /// "Display As" of binary columns by column name (hex, UUID, decoded MessagePack or
+  /// Protobuf); a column left out shows its size
+  var binaryFormats: [String: BinaryDisplayFormat] = [:]
+  /// Receives the column name and format chosen in a header or cell "Display As" menu; nil
+  /// leaves the menu out
+  var onBinaryFormatChange: ((_ column: String, _ format: BinaryDisplayFormat) -> Void)? = nil
+  /// Full byte length of each cell a lazy data-viewer page cut, by index into `CellResult.rows`
+  /// and result column: shown "not loaded", never decoded from its prefix
+  var unloadedCells: [Int: [Int: Int]] = [:]
+  /// Loads the full values of cut cells before a copy reads them; nil refuses those copies
+  var onLoadCells: ((_ cells: [ResultGridModel.CellRef]) async -> [Int: [Int: CellValue]]?)? = nil
   /// Highlight rules painted on the matching cells or rows, first match wins; the rows stay
   /// unchanged
   var highlights: [TableHighlight] = []
@@ -199,6 +219,7 @@ struct ResultGridView: NSViewRepresentable {
 
   static func dismantleNSView(_ scrollView: NSScrollView, coordinator: ResultGridCoordinator) {
     coordinator.selectionSummaryGridDidDisappear()
+    coordinator.model?.cancelBinaryDecodes()
   }
 
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
@@ -232,6 +253,10 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onLookupReferencedRow = onLookupReferencedRow
     coordinator.onJumpToReferencedRow = onJumpToReferencedRow
     coordinator.onSelectionSummaryChange = onSelectionSummaryChange
+    coordinator.frozenThroughColumn = frozenThroughColumn
+    coordinator.onFreezeChange = onFreezeChange
+    coordinator.onBinaryFormatChange = onBinaryFormatChange
+    coordinator.onLoadCells = onLoadCells
     (tableView as? ResultGridTableView)?.onFocus = onFocus
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
@@ -239,7 +264,8 @@ struct ResultGridView: NSViewRepresentable {
       currentMatch: currentMatch, hideColumnTypes: hideColumnTypes, hiddenColumns: hiddenColumns,
       highlights: highlights, highlightDialect: highlightDialect, valueFilter: valueFilter,
       searchMatches: searchMatches, changeSet: changeSet,
-      showsInvisibleCharacters: showsInvisibleCharacters)
+      showsInvisibleCharacters: showsInvisibleCharacters, binaryFormats: binaryFormats,
+      unloadedCells: unloadedCells)
     // A font or color change alone skips `update` (the row model is unchanged). `update` may
     // also refresh only staged rows, so reload every visible cell onto the new face and colors.
     if fontChanged || colorsChanged {
@@ -247,6 +273,7 @@ struct ResultGridView: NSViewRepresentable {
         ResultGridCoordinator.rowNumberWidth(
           rowCount: result.rows.count, showsRowDetails: onShowRowDetails != nil)
       tableView.reloadData()
+      coordinator.syncFrozenPane(tableView, reload: true)
     }
   }
 }
@@ -361,6 +388,9 @@ final class ResultGridScrollView: NSScrollView {
   private var forwardsGesture: Bool?
   var onHorizontalScrollerChange: ((Bool) -> Void)?
   private var reportedHorizontalScroller: Bool?
+  /// Frozen-column pane laid over the left edge (`ResultGridFrozenPane`), nil when nothing is
+  /// frozen
+  weak var frozenPane: ResultGridFrozenPane?
 
   /// Keeps a grid shown from its first row there when the top content inset (the header)
   /// grows, instead of the two-line header covering that row. Then reports whether a legacy
@@ -374,6 +404,8 @@ final class ResultGridScrollView: NSScrollView {
       clip.scroll(to: NSPoint(x: clip.bounds.minX, y: -clip.contentInsets.top))
       reflectScrolledClipView(clip)
     }
+    // Frames only, in this layout pass: the pane follows the clip view through a live resize
+    frozenPane?.layout(over: self)
     let shown = scrollerStyle == .legacy && horizontalScroller?.isHidden == false
     guard shown != reportedHorizontalScroller, let onHorizontalScrollerChange else { return }
     reportedHorizontalScroller = shown
@@ -440,10 +472,19 @@ final class ResultGridScrollView: NSScrollView {
 /// Header view with an opaque background (distinct from the body, same as the "#" gutter) and a bottom border. Super (not called) draws a
 /// translucent background over the fill, so the header cells are drawn here.
 /// A click on a column's filter icon opens the value popover and does not sort.
-/// The filter icon and the sort arrow show a tooltip.
+/// The filter icon and the sort arrow show a tooltip. A right-click shows the coordinator's
+/// header menu (`ResultGridCoordinator.headerContextMenu`).
 final class ResultGridHeaderView: NSTableHeaderView {
   private lazy var toolTipOwner = ToolTipOwner(headerView: self)
   private var toolTipTags: [NSView.ToolTipTag] = []
+
+  override func menu(for event: NSEvent) -> NSMenu? {
+    let point = convert(event.locationInWindow, from: nil)
+    // The pinned "#" header covers the column scrolled under it
+    let index = gutterHeaderRect?.contains(point) == true ? 0 : column(at: point)
+    guard index >= 0, let tableView = tableView as? ResultGridTableView else { return nil }
+    return tableView.coordinator?.headerContextMenu(tableColumn: index, in: tableView)
+  }
 
   override func mouseDown(with event: NSEvent) {
     let point = convert(event.locationInWindow, from: nil)
@@ -592,6 +633,33 @@ final class ResultGridTableView: NSTableView {
   /// `ResultGridView.onFocus`
   var onFocus: (() -> Void)?
   private var lastClickedColumn = 0
+  /// The other table of a grid with frozen columns (the pane for the grid, the grid for the
+  /// pane): the hovered row is the same in both
+  weak var hoverPeer: ResultGridTableView?
+  /// Frozen pane only: the grid it is laid over. A click hands the keyboard focus to it.
+  weak var paneGrid: ResultGridTableView?
+
+  /// Frozen pane only: the grid's selection emphasis (key window, focus in the grid or the
+  /// pane, an inline edit included), drawn by the pane's row views. Nil for the grid.
+  var frozenPaneEmphasis: Bool? {
+    guard let paneGrid else { return nil }
+    guard let window, window.isKeyWindow, let responder = window.firstResponder as? NSView else {
+      return false
+    }
+    return responder.isDescendant(of: paneGrid) || responder.isDescendant(of: self)
+  }
+
+  /// Visible rect minus the part the frozen pane covers (the pane shows its own details button)
+  private var unobscuredRect: NSRect {
+    guard paneGrid == nil, let pane = hoverPeer?.enclosingScrollView, pane.superview != nil else {
+      return visibleRect
+    }
+    var rect = visibleRect
+    let covered = min(pane.frame.width, rect.width)
+    rect.origin.x += covered
+    rect.size.width -= covered
+    return rect
+  }
 
   /// Side of the details button
   static let detailsButtonSize: CGFloat = 16
@@ -676,8 +744,18 @@ final class ResultGridTableView: NSTableView {
     if column >= 0 {
       lastClickedColumn = column
       coordinator?.noteClickedColumn(tableColumn: column, in: self)
+      // Return in the grid edits the column clicked in the pane
+      if let paneGrid {
+        let gridColumn = paneGrid.column(withIdentifier: tableColumns[column].identifier)
+        if gridColumn >= 0 { paneGrid.lastClickedColumn = gridColumn }
+      }
+    }
+    // The pane refuses the focus: Cmd+C, Delete, arrows and Return act on the grid
+    if let paneGrid, window?.firstResponder !== paneGrid {
+      window?.makeFirstResponder(paneGrid)
     }
     super.mouseDown(with: event)
+    if let paneGrid, window?.firstResponder === self { window?.makeFirstResponder(paneGrid) }
   }
 
   /// Right-click menu of the cell under the pointer, or the gutter menu on the "#" column (none
@@ -753,12 +831,13 @@ final class ResultGridTableView: NSTableView {
     let row = row(at: point)
     setHoveredRow(visibleRect.contains(point) ? row : -1)
     let tableColumn = tableColumnIndex(at: point)
-    guard row >= 0, tableColumn >= 0, visibleRect.contains(point),
+    let unobscured = unobscuredRect
+    guard row >= 0, tableColumn >= 0, unobscured.contains(point),
       coordinator?.isEditing != true,
       tableColumns[tableColumn].identifier != ResultGridCoordinator.rowNumberIdentifier
         || coordinator?.onShowRowDetails != nil,
       let frame = Self.detailsButtonFrame(
-        cellRect: frameOfCell(atColumn: tableColumn, row: row), visibleRect: visibleRect)
+        cellRect: frameOfCell(atColumn: tableColumn, row: row), visibleRect: unobscured)
     else {
       hideDetailsButton()
       return
@@ -774,7 +853,8 @@ final class ResultGridTableView: NSTableView {
     button.isHidden = false
   }
 
-  private func setHoveredRow(_ row: Int) {
+  private func setHoveredRow(_ row: Int, mirrors: Bool = true) {
+    if mirrors { hoverPeer?.setHoveredRow(row, mirrors: false) }
     guard row != hoveredRow else { return }
     let previous = hoveredRow
     hoveredRow = row

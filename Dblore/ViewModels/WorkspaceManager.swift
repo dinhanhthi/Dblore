@@ -1151,6 +1151,7 @@ class WorkspaceManager: Identifiable {
         viewModel.dataViewerDisplayMode = .grid
         viewModel.applyMongoViewPreference()
         viewModel.applySavedHighlights()
+        viewModel.applyGridColumnPrefs()
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -1163,6 +1164,7 @@ class WorkspaceManager: Identifiable {
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
     viewModel.applySavedHighlights()
+    viewModel.applyGridColumnPrefs()
     if let filter {
       viewModel.filterDraft = filter
     }
@@ -1249,6 +1251,7 @@ class WorkspaceManager: Identifiable {
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
     viewModel.applySavedHighlights()
+    viewModel.applyGridColumnPrefs()
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }

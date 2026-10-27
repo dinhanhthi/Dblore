@@ -317,7 +317,8 @@ struct RightSidebarView: View {
             cellId: cellId,
             connectionManager: viewModel.connectionManager
           )
-        }
+        },
+        binaryFormat: viewModel.cellDetailBinaryFormat
       )
       .environment(viewModel)
     case .executedQuery(let query, let cellId):

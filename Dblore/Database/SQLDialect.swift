@@ -244,14 +244,39 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   private func dataLiteral(_ data: Data) -> String {
     switch engine {
     case .postgresql, .mongodb:
-      let hex = data.map { String(format: "%02x", $0) }.joined()
-      return "'\\x\(hex)'"
+      return "'\\x\(data.hexDigits())'"
     case .sqlite, .mysql:
-      let hex = data.map { String(format: "%02X", $0) }.joined()
-      return "X'\(hex)'"
+      return "X'\(data.hexDigits(uppercase: true))'"
     case .duckdb:
-      let escaped = data.map { String(format: "\\x%02X", $0) }.joined()
-      return "'\(escaped)'::BLOB"
+      return "'\(data.hexDigits(uppercase: true, bytePrefix: "\\x"))'::BLOB"
+    }
+  }
+}
+
+extension Data {
+  /// Two hex digits per byte, each pair after `bytePrefix`. Written straight into the string's
+  /// buffer: a multi-megabyte value takes milliseconds, not the seconds of a per-byte
+  /// `String(format:)`.
+  nonisolated func hexDigits(uppercase: Bool = false, bytePrefix: String = "") -> String {
+    let digits: StaticString = uppercase ? "0123456789ABCDEF" : "0123456789abcdef"
+    let prefix = Array(bytePrefix.utf8)
+    let length = count * (2 + prefix.count)
+    return String(unsafeUninitializedCapacity: length) { buffer in
+      digits.withUTF8Buffer { table in
+        withUnsafeBytes { bytes in
+          var index = 0
+          for byte in bytes {
+            for character in prefix {
+              buffer[index] = character
+              index += 1
+            }
+            buffer[index] = table[Int(byte >> 4)]
+            buffer[index + 1] = table[Int(byte & 0x0f)]
+            index += 2
+          }
+        }
+      }
+      return length
     }
   }
 }

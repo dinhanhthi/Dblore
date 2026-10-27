@@ -14,6 +14,9 @@ struct CellInfoContent: View {
   let onSave: ((String) -> Void)?
   let isReadOnly: Bool
   let onSetNull: () -> Void
+  /// Display As format of the cell's column: a binary value in a decoded format shows as a tree
+  /// (or its hex / UUID text) instead of base64; Edit and Copy stay on the raw value
+  var binaryFormat: BinaryDisplayFormat = .size
 
   @State private var isCopied = false
   @State private var isEditing = false
@@ -34,6 +37,8 @@ struct CellInfoContent: View {
   /// Viewer and text of a value, built off the main actor; the value area shows a loading card
   /// until they match `value`
   @State private var loaded: Loaded?
+  /// Why the full value of a cut cell (`NotebookViewModel.unloadedSidebarCell`) did not load
+  @State private var lazyLoadError: String?
   @FocusState private var isTextEditorFocused: Bool
 
   /// Values above this many UTF-8 bytes are never beautified or highlighted on the main actor:
@@ -56,7 +61,10 @@ struct CellInfoContent: View {
   @Environment(NotebookViewModel.self) private var viewModel
 
   var body: some View {
-    let ready = loaded?.source == source ? loaded : nil
+    // A cell a lazy data-viewer page cut: its full value loads first, the prefix is never shown,
+    // decoded, edited or copied
+    let unloaded = viewModel.unloadedSidebarCell
+    let ready = unloaded == nil && loaded?.source == source ? loaded : nil
     let preview = ready?.preview
     VStack(alignment: .leading, spacing: 0) {
       // Fixed header section
@@ -167,7 +175,7 @@ struct CellInfoContent: View {
               )
             }
 
-            if !isReadOnly {
+            if !isReadOnly && unloaded == nil {
               FloatingPanelButton(
                 icon: "pencil",
                 helpText: "Edit Value",
@@ -182,6 +190,7 @@ struct CellInfoContent: View {
               useSymbolEffect: true,
               action: copyToClipboard
             )
+            .disabled(unloaded != nil)
           }
         }
       }
@@ -238,8 +247,13 @@ struct CellInfoContent: View {
           }
         }
       } else {
-        // Read-only view for non-boolean types
-        if let preview {
+        // Read-only view for non-boolean types. An explicit Display As format comes before a
+        // geometry found by its header.
+        if let unloaded {
+          UnloadedValueCard(length: unloaded.length, error: lazyLoadError)
+        } else if let tree = ready?.tree {
+          BinaryValueTreeView(root: tree)
+        } else if let preview {
           switch preview {
           case .geometry(let sketch):
             GeometryPreview(sketch: sketch)
@@ -345,7 +359,14 @@ struct CellInfoContent: View {
     }
     // A Copy still building finishes: the user asked for that value
     .onDisappear(perform: cancelFormat)
-    .task(id: source) {
+    .task(id: LazyRequest(cell: unloaded?.cell, generation: viewModel.lazyCells.generation)) {
+      lazyLoadError = nil
+      guard let unloaded = viewModel.unloadedSidebarCell else { return }
+      lazyLoadError = await viewModel.loadSidebarCell(unloaded.cell, length: unloaded.length)
+    }
+    .task(id: ValueRequest(source: source, isUnloaded: unloaded != nil)) {
+      // A cut value is never decoded: the full one comes as a new `value`
+      guard viewModel.unloadedSidebarCell == nil else { return }
       let built = await Self.load(source)
       guard !Task.isCancelled else { return }
       loaded = built
@@ -369,18 +390,32 @@ struct CellInfoContent: View {
   }
 
   private var source: CellValuePreview.Source {
-    CellValuePreview.Source(value: value, columnType: columnType)
+    CellValuePreview.Source(value: value, columnType: columnType, binaryFormat: binaryFormat)
+  }
+
+  /// The full-value load of a cut cell, again for a new page (the loader forgot older loads)
+  private struct LazyRequest: Equatable {
+    let cell: LazyCell?
+    let generation: Int
+  }
+
+  /// The off-main build of the shown value, again once a cut value is whole
+  private struct ValueRequest: Equatable {
+    let source: CellValuePreview.Source
+    let isUnloaded: Bool
   }
 
   /// Viewer and display text of a value (base64 for binary), built together off the main actor.
   /// `text` is at most `maxShownBytes`; `totalBytes` is the size of the whole text. `formatted`
-  /// is the pretty form of a JSON object or array, when it can be highlighted.
+  /// is the pretty form of a JSON object or array, when it can be highlighted. `tree` is a
+  /// binary value decoded by its Display As format (`decodedNode`); it needs no text.
   nonisolated struct Loaded: Sendable {
     let source: CellValuePreview.Source
     let preview: CellValuePreview?
     let text: String
     let totalBytes: Int
     var formatted: String?
+    var tree: BinaryValueNode?
   }
 
   /// `@concurrent` leaves the main actor: a geometry can hold a million points, and the base64 of
@@ -390,6 +425,9 @@ struct CellInfoContent: View {
   ) async
     -> Loaded
   {
+    if let tree = decodedNode(source.value, format: source.binaryFormat) {
+      return Loaded(source: source, preview: nil, text: "", totalBytes: 0, tree: tree)
+    }
     let preview = await CellValuePreview.make(value: source.value, columnType: source.columnType)
     if case .geometry = preview {
       return Loaded(source: source, preview: preview, text: "", totalBytes: 0)
@@ -410,6 +448,26 @@ struct CellInfoContent: View {
       break
     }
     return loaded
+  }
+
+  /// What the Cell Value viewer shows for a binary value in a Display As format: the decoded
+  /// MessagePack or Protobuf tree, or one node holding the hex or UUID text (hex cut to
+  /// `maxShownBytes` characters). Nil for the size format, a value that is not binary, or bytes
+  /// that do not fit the format: the viewer then shows the raw value.
+  nonisolated static func decodedNode(
+    _ value: CellValue, format: BinaryDisplayFormat
+  ) -> BinaryValueNode? {
+    guard case .data(let data) = value else { return nil }
+    switch format {
+    case .size:
+      return nil
+    case .messagePack, .protobuf:
+      return format.tree(for: data)
+    case .hex, .uuid, .uuidSwappedTime:
+      return format.text(for: data, limit: maxShownBytes).map {
+        BinaryValueNode(kind: .binary, text: $0)
+      }
+    }
   }
 
   /// `text` cut to at most `maxBytes` UTF-8 bytes, on a character boundary
@@ -691,6 +749,44 @@ struct CellInfoContent: View {
   }
 }
 
+/// Same shape as `CellValueLoadingCard`: the full size of a cut binary value while it loads
+/// (spinner after ~150 ms), or why it could not be loaded
+private struct UnloadedValueCard: View {
+  let length: Int
+  let error: String?
+  @State private var showsSpinner = false
+
+  var body: some View {
+    VStack(spacing: Spacing.sm) {
+      Text("<\(length) bytes>")
+        .font(.mono)
+        .foregroundColor(.foregroundMuted)
+      if let error {
+        Text("The full value could not be loaded: \(error)")
+          .font(.caption)
+          .foregroundColor(.destructive)
+          .multilineTextAlignment(.center)
+      } else {
+        ProgressView()
+          .controlSize(.small)
+          .tint(.accent)
+          .opacity(showsSpinner ? 1 : 0)
+          .animation(.easeIn(duration: 0.15), value: showsSpinner)
+          // Opt out of the app-wide animation kill switch, only for the fade
+          .transaction(value: showsSpinner) { $0.disablesAnimations = false }
+      }
+    }
+    .padding(Spacing.md)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.tableHeaderBackground)
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+    .task {
+      try? await Task.sleep(for: .milliseconds(150))
+      showsSpinner = true
+    }
+  }
+}
+
 /// Card in the value's place while it loads. Its spinner fades in after 150 ms, so a fast load
 /// never flashes it.
 private struct CellValueLoadingCard: View {
@@ -724,10 +820,12 @@ enum CellValuePreview: Sendable {
   case geometry(GeometrySketch)
   case vector(VectorValue)
 
-  /// What `make` reads: a new value or column type parses again.
+  /// What `make` reads: a new value or column type parses again. `binaryFormat` is the column's
+  /// Display As format, which `CellInfoContent` decodes first.
   struct Source: Equatable {
     let value: CellValue
     let columnType: String
+    var binaryFormat: BinaryDisplayFormat = .size
   }
 
   /// nil when the value is neither. `@concurrent` leaves the main actor: a geometry can hold a

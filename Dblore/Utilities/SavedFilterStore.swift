@@ -280,13 +280,15 @@ final class SavedFilterStore {
     defaults.set(data, forKey: storageKey)
   }
 
-  /// The five stored keys as raw JSON, nil where nothing is saved
+  /// The five stored keys and the grid column preferences (`GridColumnPrefsStore`) as raw
+  /// JSON, nil where nothing is saved
   nonisolated struct Snapshot: Equatable {
     var filters: Data?
     var highlights: Data?
     var mongoQueries: Data?
     var mongoPipelines: Data?
     var mongoViewPreferences: Data?
+    var gridColumnPrefs: Data?
   }
 
   nonisolated static func storedData(defaults: UserDefaults, domainName: String) -> Snapshot {
@@ -296,7 +298,8 @@ final class SavedFilterStore {
       highlights: domain[highlightStorageKey] as? Data,
       mongoQueries: domain[mongoQueryStorageKey] as? Data,
       mongoPipelines: domain[mongoPipelineStorageKey] as? Data,
-      mongoViewPreferences: domain[mongoViewStorageKey] as? Data)
+      mongoViewPreferences: domain[mongoViewStorageKey] as? Data,
+      gridColumnPrefs: domain[GridColumnPrefsStore.storageKey] as? Data)
   }
 
   nonisolated static func exportSnapshot(defaults: UserDefaults, domainName: String) -> Snapshot {
@@ -314,6 +317,7 @@ final class SavedFilterStore {
       (mongoQueryStorageKey, snapshot.mongoQueries),
       (mongoPipelineStorageKey, snapshot.mongoPipelines),
       (mongoViewStorageKey, snapshot.mongoViewPreferences),
+      (GridColumnPrefsStore.storageKey, snapshot.gridColumnPrefs),
     ]
     for (key, data) in values {
       if let data {

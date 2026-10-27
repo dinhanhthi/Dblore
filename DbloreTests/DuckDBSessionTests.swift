@@ -361,6 +361,40 @@ struct DuckDBSessionTests {
     }
   }
 
+  @Test("A staged byte value binds as hex through UNHEX and stores the same blob")
+  func bytesBindAsBlob() async throws {
+    try await withSession { session in
+      _ = try await session.command("CREATE TABLE files (id INTEGER, body BLOB)", binds: [])
+      let bytes = CellValue.data(Data([0x00, 0x15, 0x71, 0xFF]))
+      let sql =
+        "INSERT INTO files VALUES ($1, "
+        + CellUpdateStatement.bindPlaceholder("$2", bytes, dialect: .duckdb) + ")"
+      _ = try await session.command(
+        sql,
+        binds: [
+          .text("1"),
+          SQLBindValue(optionalText: CellUpdateStatement.inputText(bytes, dialect: .duckdb)),
+        ])
+      let selected = try await collect(
+        session, "SELECT typeof(body), body FROM files WHERE id = 1", binds: [])
+      #expect(selected.rows == [[.string("BLOB"), bytes]])
+
+      // The capped preview of a large value never runs
+      let target = EditTarget(
+        qualifiedName: #""files""#, tableID: .postgresql(oid: 1), primaryKeyColumns: ["id"])
+      var set = RowChangeSet(target: target)
+      set.stageInsert(values: ["id": .int(2), "body": .data(Data(count: 1_000))])
+      let preview = try RowChangeSQLBuilder.previewText(
+        for: set, target: target,
+        columns: [ColumnInfo(name: "id", type: "INTEGER"), ColumnInfo(name: "body", type: "BLOB")],
+        dialect: .duckdb)
+      #expect(preview.contains("::BLOB ... /* 1000 bytes */"))
+      await #expect(throws: (any Error).self) {
+        try await session.command(String(preview.dropLast()), binds: [])
+      }
+    }
+  }
+
   // MARK: - Cap, cancel, timeout, errors
 
   @Test("Stopping a read early keeps the session and its temp table")

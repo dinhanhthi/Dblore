@@ -7,6 +7,10 @@
 //  table (displayed) row and can never be confused with an index into `CellResult.rows`;
 //  only `displayedRow(forOriginalRow:)` takes, and `originalRow(forDisplayedRow:)` returns,
 //  an index into `CellResult.rows`. `apply(changeSet:)` lays a staged overlay on those rows.
+//  A binary column's "Display As" format decides its text: hex and UUID inline, MessagePack and
+//  Protobuf decoded off the main actor (the cell shows its size until the text lands).
+//  A cell a lazy data-viewer page cut (`unloadedCells`) shows "<N bytes, not loaded>" and is
+//  never decoded from its prefix; copies fill it with its full value first (`fillLoaded`).
 //
 
 import Foundation
@@ -32,7 +36,7 @@ struct ResultGridRowIdentity: Equatable {
 struct ResultGridModel {
   let columns: [ColumnInfo]
   /// Loaded rows in display order, before staged inserts. Edits replace values on read.
-  private let loadedRows: [[CellValue]]
+  private var loadedRows: [[CellValue]]
   /// Index into `CellResult.rows` of each loaded displayed row
   private let originalRows: [Int]
   /// Displayed row of each index into `CellResult.rows`
@@ -43,7 +47,11 @@ struct ResultGridModel {
   /// Lazily filled display text of loaded cells. Staged edits and inserts skip it, so a copy
   /// that does not share the overlay still reads the loaded text. A new model (empty cache) is
   /// built whenever the result or sort changes.
-  private let textCache: DisplayTextCache
+  private var textCache: DisplayTextCache
+  /// "Display As" of binary result columns by index; a column left out shows its size
+  private var binaryFormats: [Int: BinaryDisplayFormat] = [:]
+  /// Off-main decodes of MessagePack and Protobuf cells, landing in `textCache`
+  private let binaryDecodes = BinaryDecodeQueue()
   /// Rows whose overlay changed on the last `apply`. Empty when that apply changed nothing.
   private(set) var changedRows = IndexSet()
   private var appliedChangeSet: RowChangeSet?
@@ -51,12 +59,22 @@ struct ResultGridModel {
   private var generations: [Int] = []
   private var cachedKeyColumns: [String]?
   private var cachedKeyRows: [RowChangeSet.RowKey: [Int]] = [:]
+  /// Full byte length of each cut cell by index into `CellResult.rows`, then result column
+  private var unloaded: [Int: [Int: Int]]
+
+  /// A cell of the loaded result: index into `CellResult.rows` and result column
+  struct CellRef: Hashable {
+    let row: Int
+    let column: Int
+  }
 
   init(
     result: CellResult, sortColumn: String?, ascending: Bool,
-    valueFilter: ColumnValueFilter = ColumnValueFilter(), marksInvisibleCharacters: Bool = true
+    valueFilter: ColumnValueFilter = ColumnValueFilter(), marksInvisibleCharacters: Bool = true,
+    binaryFormats: [String: BinaryDisplayFormat] = [:], unloadedCells: [Int: [Int: Int]] = [:]
   ) {
     columns = result.columns
+    unloaded = unloadedCells
     self.marksInvisibleCharacters = marksInvisibleCharacters
     var indexByName: [String: Int] = [:]
     for (index, column) in result.columns.enumerated() where indexByName[column.name] == nil {
@@ -78,6 +96,7 @@ struct ResultGridModel {
     }
     self.displayedRowByOriginalRow = displayedRowByOriginalRow
     textCache = DisplayTextCache(rowCount: originalRows.count)
+    self.binaryFormats = Self.formatsByIndex(binaryFormats, columns: result.columns)
   }
 
   var rowCount: Int { loadedRows.count + staging.inserts.count }
@@ -186,12 +205,169 @@ struct ResultGridModel {
   /// Longest text shown in a cell; longer text ends with "…"
   static let maxDisplayLength = 1000
 
+  // MARK: - Binary Display As
+
+  /// "Display As" of result column `column`; `.size` when none is set
+  func binaryFormat(column: Int) -> BinaryDisplayFormat {
+    binaryFormats[column] ?? .size
+  }
+
+  /// Whether result column `column` holds binary values: its type is a binary type, or a loaded
+  /// value is binary (SQLite columns have no fixed type)
+  func isBinaryColumn(_ column: Int) -> Bool {
+    guard columns.indices.contains(column) else { return false }
+    let type = columns[column].type.lowercased()
+    if type == "bytea" || type.contains("blob") || type.contains("binary") { return true }
+    return loadedRows.contains { row in
+      guard column < row.count, case .data = row[column] else { return false }
+      return true
+    }
+  }
+
+  /// Sets the "Display As" formats by column name. Returns the result columns whose format
+  /// changed: their cached text is dropped and their pending decodes cancelled.
+  @discardableResult
+  mutating func setBinaryFormats(_ formats: [String: BinaryDisplayFormat]) -> IndexSet {
+    let next = Self.formatsByIndex(formats, columns: columns)
+    var changed = IndexSet()
+    for column in Set(next.keys).union(binaryFormats.keys)
+    where next[column] != binaryFormats[column] {
+      changed.insert(column)
+      textCache.clear(column: column)
+      binaryDecodes.cancel(column: column)
+    }
+    binaryFormats = next
+    return changed
+  }
+
+  /// Called on the main actor when an off-main decode stored the text of a displayed row and
+  /// result column: the grid reloads that cell. Shared by every copy of this model.
+  var onBinaryTextReady: ((_ row: Int, _ column: Int) -> Void)? {
+    get { binaryDecodes.onReady }
+    nonmutating set { binaryDecodes.onReady = newValue }
+  }
+
+  /// Drops the pending decodes of displayed row `row` (scrolled out of the grid)
+  func cancelBinaryDecodes(row: Int) {
+    binaryDecodes.cancel(row: row)
+  }
+
+  /// Drops every pending decode (the grid moved to a new model or went away)
+  func cancelBinaryDecodes() {
+    binaryDecodes.cancelAll()
+  }
+
+  /// The text a cell shows, for "Copy as Displayed". A MessagePack or Protobuf cell whose text
+  /// has not landed yet is decoded off the main actor, so the copy is never the size placeholder.
+  func displayTextForCopy(row: Int, column: Int) async -> String {
+    if let length = unloadedLength(row: row, column: column) {
+      return Self.notLoadedText(length: length)
+    }
+    if row < loadedRows.count, !isCellEdited(row: row, column: column),
+      let cached = textCache.display(row: row, column: column)
+    {
+      return cached.text
+    }
+    if let decode = offMainDecode(row: row, column: column) {
+      let text = await BinaryDecodeQueue.decode(
+        decode.data, format: decode.format, limit: Self.maxDisplayLength)
+      let flat = Self.flattened(text ?? CellValue.data(decode.data).displayString)
+      return Self.cellDisplay(flat, marks: marksInvisibleCharacters).text
+    }
+    return computeDisplay(row: row, column: column).text
+  }
+
+  // MARK: - Unloaded cells
+
+  /// "<N bytes, not loaded>": a cut cell's text, whatever its column's "Display As"
+  static func notLoadedText(length: Int) -> String {
+    "<\(length) bytes, not loaded>"
+  }
+
+  /// Full byte length of the cut value at displayed row `row` and result column `column`; nil
+  /// for a whole value, a staged insert or a staged edit (it replaced the whole value)
+  func unloadedLength(row: Int, column: Int) -> Int? {
+    guard row < loadedRows.count, !unloaded.isEmpty, !isCellEdited(row: row, column: column)
+    else { return nil }
+    return unloaded[originalRows[row]]?[column]
+  }
+
+  /// Cut cells of the displayed `rows` in `columns`, as shown (a staged edit replaced its cell)
+  func unloadedCells(rows: IndexSet, columns: [Int]) -> [CellRef] {
+    guard !unloaded.isEmpty else { return [] }
+    return rows.flatMap { row in
+      columns.compactMap { column in
+        unloadedLength(row: row, column: column) == nil
+          ? nil : CellRef(row: originalRows[row], column: column)
+      }
+    }
+  }
+
+  /// Cut cells of `originalRows` (indexes into `CellResult.rows`) in `columns`, staged edits
+  /// ignored (for copies of the loaded result itself)
+  func unloadedCells(originalRows: [Int], columns: [Int]) -> [CellRef] {
+    guard !unloaded.isEmpty else { return [] }
+    return originalRows.flatMap { row in
+      columns.compactMap { unloaded[row]?[$0] == nil ? nil : CellRef(row: row, column: $0) }
+    }
+  }
+
+  /// Puts full values (by index into `CellResult.rows`, then result column) into the cut cells,
+  /// staged rows included where the column is not edited. Display text starts over, in a cache
+  /// of this copy only.
+  mutating func fillLoaded(_ values: [Int: [Int: CellValue]]) {
+    guard !values.isEmpty else { return }
+    for (originalRow, cells) in values {
+      guard let row = displayedRow(forOriginalRow: originalRow) else { continue }
+      for (column, value) in cells where column < loadedRows[row].count {
+        loadedRows[row][column] = value
+        if staging.values.indices.contains(row), var staged = staging.values[row],
+          !isCellEdited(row: row, column: column), column < staged.count
+        {
+          staged[column] = value
+          staging.values[row] = staged
+        }
+        unloaded[originalRow]?[column] = nil
+      }
+      if unloaded[originalRow]?.isEmpty == true { unloaded[originalRow] = nil }
+    }
+    textCache = DisplayTextCache(rowCount: loadedRows.count)
+  }
+
+  private static func formatsByIndex(
+    _ formats: [String: BinaryDisplayFormat], columns: [ColumnInfo]
+  ) -> [Int: BinaryDisplayFormat] {
+    var byIndex: [Int: BinaryDisplayFormat] = [:]
+    for (index, column) in columns.enumerated() {
+      if let format = formats[column.name], format != .size { byIndex[index] = format }
+    }
+    return byIndex
+  }
+
+  /// MessagePack and Protobuf decode the whole value, so the grid never runs them on the main
+  /// actor; size, hex and UUID read at most the bytes shown
+  private static func decodesOffMain(_ format: BinaryDisplayFormat) -> Bool {
+    format == .messagePack || format == .protobuf
+  }
+
+  /// Bytes and format of a cell whose text needs an off-main decode, else nil
+  private func offMainDecode(
+    row: Int, column: Int
+  ) -> (data: Data, format: BinaryDisplayFormat)? {
+    guard let format = binaryFormats[column], Self.decodesOffMain(format),
+      case .data(let data) = value(row: row, column: column)
+    else { return nil }
+    return (data, format)
+  }
+
   /// Text shown in a cell, the same as the result table (NULL shows as "NULL"), on one line
   /// (line breaks become spaces) and at most `maxDisplayLength` characters: the single-line
   /// text field still lays out every line of a long multi-line value, which made scrolling lag.
   /// With `marksInvisibleCharacters`, other invisible characters show as marks.
-  func displayText(row: Int, column: Int) -> String {
-    display(row: row, column: column).text
+  /// A MessagePack or Protobuf cell shows its size until its text lands; only with
+  /// `requestsDecode` (a cell on screen) does the call start that decode.
+  func displayText(row: Int, column: Int, requestsDecode: Bool = false) -> String {
+    display(row: row, column: column, requestsDecode: requestsDecode).text
   }
 
   /// Code point and name of each invisible character marked in the cell's display text, one
@@ -200,20 +376,52 @@ struct ResultGridModel {
     display(row: row, column: column).tooltip
   }
 
-  private func display(row: Int, column: Int) -> CellDisplay {
+  private func display(row: Int, column: Int, requestsDecode: Bool = false) -> CellDisplay {
+    // Never decoded from its prefix
+    if let length = unloadedLength(row: row, column: column) {
+      return CellDisplay(text: Self.notLoadedText(length: length), tooltip: nil)
+    }
     // Staged text must not land in the shared cache: a copy of this model keeps the loaded rows.
+    // A staged MessagePack or Protobuf value shows its size (it has no cache to decode into).
     if row >= loadedRows.count || isCellEdited(row: row, column: column) {
       return computeDisplay(row: row, column: column)
     }
     if let cached = textCache.display(row: row, column: column) { return cached }
+    if let decode = offMainDecode(row: row, column: column) {
+      // The size placeholder is not cached: the decoded text replaces it when it lands
+      if requestsDecode {
+        requestDecode(row: row, column: column, data: decode.data, format: decode.format)
+      }
+      return computeDisplay(row: row, column: column)
+    }
     let display = computeDisplay(row: row, column: column)
     textCache.store(display, row: row, column: column, columnCount: columns.count)
     return display
   }
 
+  /// Decodes the cell off the main actor and stores its text (the size when the bytes do not
+  /// decode) unless the cell's format changed or the decode was cancelled meanwhile
+  private func requestDecode(row: Int, column: Int, data: Data, format: BinaryDisplayFormat) {
+    let marks = marksInvisibleCharacters
+    let columnCount = columns.count
+    let fallback = CellValue.data(data).displayString
+    let cache = textCache
+    binaryDecodes.request(
+      row: row, column: column, data: data, format: format, limit: Self.maxDisplayLength
+    ) { [weak cache] text in
+      cache?.store(
+        Self.cellDisplay(Self.flattened(text ?? fallback), marks: marks), row: row,
+        column: column, columnCount: columnCount)
+    }
+  }
+
+  /// A MessagePack or Protobuf value shows its size: it is never decoded here
   private func computeDisplay(row: Int, column: Int) -> CellDisplay {
-    let flat = flatText(row: row, column: column)
-    guard marksInvisibleCharacters else { return CellDisplay(text: flat, tooltip: nil) }
+    Self.cellDisplay(flatText(row: row, column: column), marks: marksInvisibleCharacters)
+  }
+
+  private static func cellDisplay(_ flat: String, marks: Bool) -> CellDisplay {
+    guard marks else { return CellDisplay(text: flat, tooltip: nil) }
     let text = InvisibleCharacters.marked(flat)
     // `marked` returns its argument when nothing is marked
     return CellDisplay(
@@ -221,7 +429,18 @@ struct ResultGridModel {
   }
 
   private func flatText(row: Int, column: Int) -> String {
-    let text = value(row: row, column: column).displayString
+    let value = value(row: row, column: column)
+    if case .data(let data) = value, let format = binaryFormats[column],
+      !Self.decodesOffMain(format),
+      let text = format.text(for: data, limit: Self.maxDisplayLength)
+    {
+      return Self.flattened(text)
+    }
+    return Self.flattened(value.displayString)
+  }
+
+  /// `text` on one line, at most `maxDisplayLength` characters plus "…"
+  private static func flattened(_ text: String) -> String {
     let prefix = text.prefix(Self.maxDisplayLength)
     let flat = prefix.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
       .joined(separator: " ")
@@ -556,6 +775,13 @@ private final class DisplayTextCache {
     rows = Array(repeating: nil, count: rowCount)
   }
 
+  /// Drops the cached text of result column `column` in every row
+  func clear(column: Int) {
+    for row in rows.indices where rows[row].map({ column < $0.count }) == true {
+      rows[row]?[column] = nil
+    }
+  }
+
   func display(row: Int, column: Int) -> CellDisplay? {
     guard let cells = rows[row], column < cells.count else { return nil }
     return cells[column]
@@ -566,5 +792,74 @@ private final class DisplayTextCache {
     guard column < columnCount else { return }
     if rows[row] == nil { rows[row] = Array(repeating: nil, count: columnCount) }
     rows[row]?[column] = display
+  }
+}
+
+/// Pending off-main decodes of one `ResultGridModel`, at most one per cell. A result lands only
+/// while its request is still the cell's pending one: cancelling a row (scrolled away), a
+/// column (format changed) or all (new model) removes the request, so a late result is dropped.
+/// Main actor only; the decode itself runs on the concurrent pool.
+private final class BinaryDecodeQueue {
+  private struct Cell: Hashable {
+    let row: Int
+    let column: Int
+  }
+
+  private struct Pending {
+    let id: Int
+    let format: BinaryDisplayFormat
+    let task: Task<Void, Never>
+  }
+
+  private var pending: [Cell: Pending] = [:]
+  private var nextID = 0
+  /// Called with the displayed row and result column once a decoded text is stored
+  var onReady: ((_ row: Int, _ column: Int) -> Void)?
+
+  /// Starts decoding a cell unless the same format is already pending for it; `store` receives
+  /// the text (nil when the bytes do not decode) on the main actor
+  func request(
+    row: Int, column: Int, data: Data, format: BinaryDisplayFormat, limit: Int,
+    store: @escaping (String?) -> Void
+  ) {
+    let cell = Cell(row: row, column: column)
+    if pending[cell]?.format == format { return }
+    pending[cell]?.task.cancel()
+    nextID += 1
+    let id = nextID
+    let task = Task { [weak self] in
+      let text = await Self.decode(data, format: format, limit: limit)
+      guard let self, self.pending[cell]?.id == id else { return }
+      self.pending[cell] = nil
+      store(text)
+      self.onReady?(row, column)
+    }
+    pending[cell] = Pending(id: id, format: format, task: task)
+  }
+
+  func cancel(row: Int) {
+    cancel { $0.row == row }
+  }
+
+  func cancel(column: Int) {
+    cancel { $0.column == column }
+  }
+
+  func cancelAll() {
+    cancel { _ in true }
+  }
+
+  private func cancel(where matches: (Cell) -> Bool) {
+    for cell in pending.keys where matches(cell) {
+      pending.removeValue(forKey: cell)?.task.cancel()
+    }
+  }
+
+  /// A request cancelled before it starts skips the decode
+  @concurrent nonisolated static func decode(
+    _ data: Data, format: BinaryDisplayFormat, limit: Int
+  ) async -> String? {
+    guard !Task.isCancelled else { return nil }
+    return format.text(for: data, limit: limit)
   }
 }

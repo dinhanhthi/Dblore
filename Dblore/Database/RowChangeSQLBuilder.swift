@@ -280,9 +280,23 @@ private nonisolated struct StatementDraft {
       case .text(let text):
         sql += text
       case .value(let value):
-        sql += dialect.literal(value)
+        sql += Self.previewLiteral(value, dialect: dialect)
       }
     }
     return sql + ";"
+  }
+
+  /// Bytes a preview shows of a binary value; the bind always sends all of them
+  static let previewBytes = 256
+
+  /// `dialect.literal(value)`, but a binary value over `previewBytes` shows only its first
+  /// bytes, then `...` outside the literal (a syntax error on every engine, so the text never
+  /// runs as a cut value) and its byte count: confirming, the Safe Mode check and history never
+  /// build a multi-megabyte text
+  static func previewLiteral(_ value: CellValue, dialect: SQLDialect) -> String {
+    guard case .data(let data) = value, data.count > previewBytes else {
+      return dialect.literal(value)
+    }
+    return dialect.literal(.data(data.prefix(previewBytes))) + " ... /* \(data.count) bytes */"
   }
 }

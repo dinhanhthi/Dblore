@@ -274,6 +274,74 @@ struct RowChangeSQLBuilderTests {
     #expect(edited.map(\.sql) == [#"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#])
     #expect(edited.first?.values == ["b", "1"])
   }
+
+  @Test(
+    "Bytes bind as bare hex through UNHEX on SQLite, DuckDB and MySQL, as \\x hex on PostgreSQL")
+  func bytesBindPerDialect() throws {
+    let editTarget = target()
+    let bytes = CellValue.data(Data([0x00, 0x0A, 0xFF]))
+    var set = RowChangeSet(target: editTarget)
+    set.stageInsert(values: ["id": .int(1), "name": bytes])
+    let cases: [(SQLDialect, String, String)] = [
+      (.sqlite, #"INSERT INTO "t" ("id", "name") VALUES (?1, UNHEX(?2))"#, "000aff"),
+      (.duckdb, #"INSERT INTO "t" ("id", "name") VALUES ($1, UNHEX($2))"#, "000aff"),
+      (.mysql, #"INSERT INTO "t" (`id`, `name`) VALUES (?, UNHEX(?))"#, "000aff"),
+      (.postgresql, #"INSERT INTO "t" ("id", "name") VALUES ($1, $2)"#, "\\x000aff"),
+    ]
+    for (dialect, sql, hex) in cases {
+      let statements = try RowChangeSQLBuilder.statements(
+        for: set, target: editTarget, columns: columns(), dialect: dialect)
+      #expect(statements.map(\.sql) == [sql])
+      #expect(statements.first?.values == ["1", hex])
+    }
+    // The preview shows the bytes the bind stores
+    #expect(
+      try RowChangeSQLBuilder.previewText(
+        for: set, target: editTarget, columns: columns(), dialect: .sqlite)
+        == #"INSERT INTO "t" ("id", "name") VALUES (1, X'000AFF');"#)
+    // A large value: the preview stays short, the bind sends every byte
+    let large = Data(repeating: 0xAB, count: 5_242_880)
+    var big = RowChangeSet(target: editTarget)
+    big.stageInsert(values: ["id": .int(2), "name": .data(large)])
+    for dialect in [SQLDialect.sqlite, .postgresql, .duckdb, .mysql] {
+      let preview = try RowChangeSQLBuilder.previewText(
+        for: big, target: editTarget, columns: columns(), dialect: dialect)
+      #expect(preview.count < 2_000)
+      #expect(preview.contains(" ... /* 5242880 bytes */"))
+      let bound = try RowChangeSQLBuilder.statements(
+        for: big, target: editTarget, columns: columns(), dialect: dialect)
+      let bind = try #require(bound.first?.values.last ?? nil)
+      #expect(bind.utf8.count == (dialect == .postgresql ? 2 : 0) + 10_485_760)
+    }
+    #expect(
+      try RowChangeSQLBuilder.previewText(
+        for: big, target: editTarget, columns: columns(), dialect: .sqlite
+      ).hasSuffix(#"ABABAB' ... /* 5242880 bytes */);"#))
+    // The capped preview classifies as the same statement as a whole small value's
+    var small = RowChangeSet(target: editTarget)
+    small.stageInsert(values: ["id": .int(2), "name": .data(Data(count: 10))])
+    for dialect in [SQLDialect.sqlite, .postgresql, .mysql, .duckdb] {
+      let capped = try RowChangeSQLBuilder.previewText(
+        for: big, target: editTarget, columns: columns(), dialect: dialect)
+      let whole = try RowChangeSQLBuilder.previewText(
+        for: small, target: editTarget, columns: columns(), dialect: dialect)
+      #expect(
+        SQLStatementClassifier.classify(capped, dialect: dialect).map(\.kind)
+          == SQLStatementClassifier.classify(whole, dialect: dialect).map(\.kind))
+    }
+    #expect(
+      SQLStatementClassifier.classify(
+        try RowChangeSQLBuilder.previewText(
+          for: big, target: editTarget, columns: columns(), dialect: .sqlite),
+        dialect: .sqlite
+      ).map(\.kind) == [.dml])
+    // A byte key matches through UNHEX too
+    #expect(
+      try CellUpdateStatement.make(
+        qualifiedName: #""main"."t""#, assignments: [(column: "name", value: "a")],
+        primaryKeyColumns: ["id"], rowData: ["id": bytes], updateOnly: false, dialect: .sqlite
+      ).sql == #"UPDATE "main"."t" SET "name" = ?1 WHERE "id" = UNHEX(?2)"#)
+  }
 }
 
 private func target(

@@ -89,9 +89,14 @@ final class ResultGridRowView: NSTableRowView {
     }
   }
 
+  /// A frozen pane row draws the grid's emphasis: the pane never keeps the keyboard focus, so
+  /// the value AppKit sets (false) is replaced by `ResultGridTableView.frozenPaneEmphasis`
   override var isEmphasized: Bool {
-    didSet {
-      if isEmphasized != oldValue {
+    get { paneEmphasis ?? super.isEmphasized }
+    set {
+      let old = isEmphasized
+      super.isEmphasized = paneEmphasis ?? newValue
+      if isEmphasized != old {
         redrawGutterCells()
         syncCellBackgroundStyles()
       }
@@ -106,6 +111,20 @@ final class ResultGridRowView: NSTableRowView {
       let gutter = subviews.first(where: { $0 is ResultGridRowNumberCell })
     else { return }
     addSubview(gutter, positioned: .above, relativeTo: nil)
+  }
+
+  private var paneEmphasis: Bool? {
+    (superview as? ResultGridTableView)?.frozenPaneEmphasis
+  }
+
+  /// Frozen pane row: redraws with the emphasis after the grid's focus or the window's key
+  /// state changed
+  func refreshEmphasis() {
+    guard let paneEmphasis else { return }
+    if super.isEmphasized != paneEmphasis { super.isEmphasized = paneEmphasis }
+    needsDisplay = true
+    redrawGutterCells()
+    syncCellBackgroundStyles()
   }
 
   private func redrawGutterCells() {

@@ -8,7 +8,10 @@ import Foundation
 // Import UniformTypeIdentifiers for UTType
 import UniformTypeIdentifiers
 
-/// Utility for exporting query results to various formats
+/// Utility for exporting query results to various formats. Pure over the `CellResult` it is
+/// given (no session): a caller handing it a lazy data-viewer page loads the page's cut binary
+/// cells first (`NotebookViewModel.fullyLoadedResult`, `QueryCopyBar.loadedResult`, the grid's
+/// `onLoadCells`), so a cut value is never written.
 enum DataExporter {
 
   /// Export result to CSV format. Nonisolated: a pure function, callable from any isolation

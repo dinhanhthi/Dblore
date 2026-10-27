@@ -157,17 +157,18 @@ struct LocalDataProvidersTests {
       stages: [SavedMongoPipeline.Stage(operator: "$match", body: "{}", isEnabled: true)],
       options: .init(), named: "p", for: key)
     store.saveMongoViewPreference(MongoViewPreference(mode: .json, pageSize: 250), for: key)
+    GridColumnPrefsStore(defaults: suite.defaults).setFrozenThrough("id", for: key)
     let keys = [
       "ace.thi.dblore.savedFilters", "ace.thi.dblore.savedHighlights",
       "ace.thi.dblore.savedMongoQueries", "ace.thi.dblore.savedMongoPipelines",
-      "ace.thi.dblore.mongoViewPreferences",
+      "ace.thi.dblore.mongoViewPreferences", "ace.thi.dblore.gridColumnPrefs",
     ]
     let saved = keys.map { data(forKey: $0, suite: suite) }
     #expect(saved.allSatisfy { $0 != nil })
     let provider = SavedFiltersLocalDataProvider(defaults: suite.defaults, domainName: suite.name)
 
     let summary = await provider.summary()
-    #expect(summary.itemCount == 5)
+    #expect(summary.itemCount == 6)
     #expect(summary.bytes == Int64(saved.reduce(0) { $0 + ($1?.count ?? 0) }))
     #expect(summary.location == nil)
 

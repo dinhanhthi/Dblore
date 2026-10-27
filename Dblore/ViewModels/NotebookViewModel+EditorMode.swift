@@ -74,10 +74,12 @@ extension NotebookViewModel {
 
   /// Execute query in editor mode; `maxRows` overrides the effective row cap (data viewer page).
   /// `source` is `.editor` for a user run and `.internal` for a data-viewer page, which is not
-  /// recorded.
+  /// recorded. `pageState` is the SQL data viewer state `query` is the `pageSQL` of, taken
+  /// before the page read: its length columns leave the result before anything reads it.
   func executeEditorQuery(
     _ query: String, maxRows: Int? = nil, source: QueryHistoryRecordSource = .editor,
-    parameters boundParameters: [String: SQLBindValue]? = nil
+    parameters boundParameters: [String: SQLBindValue]? = nil,
+    pageState: DataViewerState? = nil
   ) async {
     guard let connectionManager = connectionManager else {
       showToast("No database connection available", type: .error)
@@ -99,8 +101,15 @@ extension NotebookViewModel {
     var completion: QueryCompletionOutcome?
 
     do {
+      // A lazy page always comes with its state, and as the state's own SQL; anything else
+      // would show its prefixes as whole values
+      if let pageState, pageState.pageSQL != query { throw LazyPageError.unexpectedShape }
+      if pageState == nil, source == .internal, query.contains("dblore_byte_length_") {
+        throw LazyPageError.unexpectedShape
+      }
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(query, dialect: sqlDialect) {
+        if pageState?.lazyColumns != nil { throw LazyPageError.unexpectedShape }
         // Connection identity before the query: edit targets must resolve on the same one
         let epoch = await connectionManager.connectionEpoch
         // Execute all statements and get detailed results
@@ -165,22 +174,31 @@ extension NotebookViewModel {
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         let epoch = await connectionManager.connectionEpoch
-        let result = try await connectionManager.execute(
+        var result = try await connectionManager.execute(
           userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
           caller: id)
+        var truncation: DataViewerState.Truncation?
+        if let pageState {
+          (result, truncation) = try await strippedDataViewerPage(
+            result, state: pageState, epoch: epoch, connectionManager: connectionManager)
+        }
 
         let executionTime = Date().timeIntervalSince(startTime)
+
+        // Session-only inline edit target (nil = not editable)
+        let (target, lookup) = await resultTargets(
+          for: query, result: result, connectionManager: connectionManager, epoch: epoch)
+
+        // The viewer moved to another table or page meanwhile: this page is not shown or
+        // recorded (`loadDataViewerPage` reads the new one)
+        if let pageState, dataViewer?.loadKey != pageState.loadKey { return }
 
         // Clear multi-statement state
         editorStatementResults = []
         selectedStatementIndex = 0
         totalExecutionTime = executionTime
 
-        // Session-only inline edit target (nil = not editable)
-        let (target, lookup) = await resultTargets(
-          for: query, result: result, connectionManager: connectionManager, epoch: epoch)
-
-        let cellResult = CellResult(
+        var cellResult = CellResult(
           columns: result.columns,
           rows: result.rows,
           executionTime: executionTime,
@@ -196,7 +214,8 @@ extension NotebookViewModel {
           lookupRelation: lookup,
           aiSessionKey: aiSessionKey
         ).withCapInfo(from: result)
-
+        cellResult.truncation = truncation
+        if pageState != nil { resetLazyCells() }
         editorResult = cellResult
 
         // Update View Query sidebar if it's open for editor mode
@@ -208,6 +227,8 @@ extension NotebookViewModel {
       }
 
     } catch {
+      // A page of a table or page the viewer has left is not shown or recorded, failed or not
+      if let pageState, dataViewer?.loadKey != pageState.loadKey { return }
       let executionTime = Date().timeIntervalSince(startTime)
 
       // Clear multi-statement state on error

@@ -2,6 +2,7 @@
 // Which Cell Value viewer a value gets: geometry bytes by column type or WKB header, vector
 // text only for a vector column or one of unknown type, so a JSON array in TEXT stays text.
 // Format JSON sizes its output, not its input, before anything is highlighted.
+// A binary value in a Display As format decodes to a tree or text; bad bytes keep the raw view.
 
 import Foundation
 import Testing
@@ -117,5 +118,25 @@ import Testing
   func outputPrefixEndsOnACharacterBoundary(maxBytes: Int, shown: String) {
     let data = Data("aaa\u{1F1EB}\u{1F1F7}b".utf8)
     #expect(CellInfoContent.prefixText(data, maxBytes: maxBytes) == shown)
+  }
+
+  @Test func displayAsFormatPicksTheDecodedViewer() throws {
+    // MessagePack {"a": 1}
+    let map = Data([0x81, 0xA1, 0x61, 0x01])
+    let tree = try #require(CellInfoContent.decodedNode(.data(map), format: .messagePack))
+    #expect(tree.kind == .map)
+    #expect(tree.children.map(\.text) == ["1"])
+    let uuid = Data(0..<16)
+    let text = CellInfoContent.decodedNode(.data(uuid), format: .uuid)?.text
+    #expect(text == BinaryDisplayFormat.uuid.text(for: uuid))
+  }
+
+  @Test func sizeFormatTextOrBadBytesKeepTheRawViewer() {
+    let map = Data([0x81, 0xA1, 0x61, 0x01])
+    #expect(CellInfoContent.decodedNode(.data(map), format: .size) == nil)
+    #expect(CellInfoContent.decodedNode(.string("gaQ="), format: .messagePack) == nil)
+    // 0xC1 is never used in MessagePack
+    #expect(CellInfoContent.decodedNode(.data(Data([0xC1])), format: .messagePack) == nil)
+    #expect(CellInfoContent.decodedNode(.data(Data([1, 2, 3])), format: .uuid) == nil)
   }
 }

@@ -403,6 +403,7 @@ nonisolated struct SavedFiltersLocalDataProvider: LocalDataProvider {
       ("savedMongoQueries.json", \.mongoQueries),
       ("savedMongoPipelines.json", \.mongoPipelines),
       ("mongoViewPreferences.json", \.mongoViewPreferences),
+      ("gridColumnPrefs.json", \.gridColumnPrefs),
     ]
   }
 
@@ -416,6 +417,7 @@ nonisolated struct SavedFiltersLocalDataProvider: LocalDataProvider {
       + LocalDataJSON.keyedArrayCount(stored.mongoQueries)
       + LocalDataJSON.keyedArrayCount(stored.mongoPipelines)
       + LocalDataJSON.keyCount(stored.mongoViewPreferences)
+      + LocalDataJSON.keyCount(stored.gridColumnPrefs)
     return LocalDataSummary(bytes: bytes, itemCount: count, location: nil)
   }
 

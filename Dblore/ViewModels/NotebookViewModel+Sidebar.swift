@@ -35,9 +35,11 @@ extension NotebookViewModel {
     rowData: [String: CellValue]? = nil,
     primaryKeyColumns: [String] = [],
     editTarget: EditTarget? = nil,
-    cellId: UUID? = nil
+    cellId: UUID? = nil,
+    binaryFormat: BinaryDisplayFormat = .size
   ) {
     cellDetailEditTarget = editTarget
+    cellDetailBinaryFormat = binaryFormat
     showSidebar(
       content: .cellInfo(
         columnName: columnName,
@@ -199,9 +201,11 @@ extension NotebookViewModel {
 
   /// Cell clicked in the result grid at result column `index` (`row` is the displayed row's
   /// values, `originalRow` its index into `result.rows`): a JSON value opens in the JSON
-  /// viewer, any other value in the cell detail
+  /// viewer, any other value in the cell detail, decoded by the column's Display As
+  /// `binaryFormat`
   func showGridCellInSidebar(
-    row: [CellValue], originalRow: Int, column index: Int, result: CellResult, cellId: UUID?
+    row: [CellValue], originalRow: Int, column index: Int, result: CellResult, cellId: UUID?,
+    binaryFormat: BinaryDisplayFormat = .size
   ) {
     guard result.columns.indices.contains(index) else { return }
     let column = result.columns[index]
@@ -218,7 +222,8 @@ extension NotebookViewModel {
         rowData: CellResult.rowData(columns: result.columns, row: row),
         primaryKeyColumns: result.primaryKeyColumns,
         editTarget: result.editTarget,
-        cellId: cellId
+        cellId: cellId,
+        binaryFormat: binaryFormat
       )
       cellDetailRow = originalRow
     }

@@ -55,7 +55,7 @@ struct ViewModelSidebarTests {
       rowCount: 3)
     let coordinator = ResultGridCoordinator()
     coordinator.update(NSTableView(), result: result, sortColumn: "id", ascending: false)
-    coordinator.onShowCellDetails = { row, originalRow, column in
+    coordinator.onShowCellDetails = { row, originalRow, column, _ in
       viewModel.showGridCellInSidebar(
         row: row, originalRow: originalRow, column: column, result: result, cellId: nil)
     }

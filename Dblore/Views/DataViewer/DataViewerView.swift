@@ -180,6 +180,8 @@ struct DataViewerView: View {
         EditorResultGridView(
           result: result, viewModel: viewModel,
           hiddenColumns: viewModel.dataViewer?.hiddenColumns ?? [],
+          frozenThroughColumn: viewModel.dataViewer?.frozenThroughColumn,
+          onFreezeChange: { viewModel.setFrozenThroughColumn($0) },
           highlights: viewModel.dataViewer?.highlights ?? [],
           dialect: viewModel.dataViewer?.databaseType ?? .postgresql,
           canHighlight: true,

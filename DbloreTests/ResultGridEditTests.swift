@@ -119,7 +119,7 @@ struct ResultGridEditTests {
       result: result, config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
     let (coordinator, tableView) = makeGrid(viewModel, result: result)
     var detailsColumn: Int?
-    coordinator.onShowCellDetails = { _, _, column in detailsColumn = column }
+    coordinator.onShowCellDetails = { _, _, column, _ in detailsColumn = column }
 
     coordinator.beginEditing(tableView, row: 0, column: 1)
 
