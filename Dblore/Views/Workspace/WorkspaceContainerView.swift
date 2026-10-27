@@ -275,6 +275,10 @@ struct WorkspaceContainerView: View {
                   }
 
                   WorkspaceInfoButton(workspaceManager: workspaceManager)
+
+                  if workspaceManager.workspace.fileURL != nil {
+                    WorkspaceLockButton(workspaceManager: workspaceManager)
+                  }
                 }
                 .padding(.trailing, Spacing.xsm)
               }
@@ -1679,6 +1683,30 @@ struct WorkspaceInfoButton: View {
     .controlSize(.small)
     .blockDoubleClickZoom()
     .help("Details")
+  }
+}
+
+/// Lock button of a saved workspace, beside Details: an unlocked workspace opens Lock Workspace,
+/// a locked one closes at once (its next open asks again)
+struct WorkspaceLockButton: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    let isLocked = workspaceManager.lockKeyId != nil
+    Button {
+      if isLocked {
+        Task { _ = await WorkspaceWindowManager.shared.closeWorkspace(id: workspaceManager.id) }
+      } else {
+        workspaceManager.openLockSheet(.lock)
+      }
+    } label: {
+      Image(systemName: isLocked ? "lock.fill" : "lock.open")
+        .font(.system(size: 12))
+    }
+    .buttonStyle(GhostButtonStyle(isActive: isLocked, iconOnly: true))
+    .controlSize(.small)
+    .blockDoubleClickZoom()
+    .help(isLocked ? "Lock and Close Workspace" : "Lock Workspace...")
   }
 }
 
