@@ -431,8 +431,6 @@ struct WelcomeRecents: View {
   @State private var tab: RecentsTab = .workspaces
   /// Row being opened; every row is disabled meanwhile
   @State private var loadingId: UUID?
-  /// Keeps rows readable on wide windows
-  private let contentMaxWidth: CGFloat = 680
 
   private var query: String { filter.trimmingCharacters(in: .whitespaces) }
 
@@ -503,9 +501,8 @@ struct WelcomeRecents: View {
             .strokeBorder(Color.border, lineWidth: pixelLength)
         )
       }
-      .frame(maxWidth: contentMaxWidth)
-      .padding(.horizontal, Spacing.xl)
-      .padding(.vertical, Spacing.xl)
+      // Same inset on all four sides, lined up with the native tab bar's edges
+      .padding(Spacing.md)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .onAppear {
         // Open on the list that has something in it
