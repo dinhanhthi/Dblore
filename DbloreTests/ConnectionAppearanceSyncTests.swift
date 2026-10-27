@@ -45,7 +45,7 @@ struct ConnectionAppearanceSyncTests {
     try body(defaults)
   }
 
-  private static func withDefaults(_ body: (UserDefaults) async throws -> Void) async throws {
+  private static func withDefaultsAsync(_ body: (UserDefaults) async throws -> Void) async throws {
     let name = "ConnectionAppearanceSyncTests-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: name))
     defer { defaults.removePersistentDomain(forName: name) }
@@ -160,7 +160,7 @@ struct ConnectionAppearanceSyncTests {
 
   @Test("An auto-connect from an opened file keeps the saved color and group")
   func fileConnectKeepsSavedAppearance() async throws {
-    try await Self.withDefaults { defaults in
+    try await Self.withDefaultsAsync { defaults in
       let saved = Self.config(.cyan, group: "Prod")
       #expect(
         SessionManager.saveConnection(
@@ -180,7 +180,7 @@ struct ConnectionAppearanceSyncTests {
 
   @Test("An untouched form connect from an opened file keeps the saved color and group")
   func untouchedFormConnectKeepsSavedAppearance() async throws {
-    try await Self.withDefaults { defaults in
+    try await Self.withDefaultsAsync { defaults in
       let saved = Self.config(.cyan, group: "Prod")
       #expect(
         SessionManager.saveConnection(
@@ -236,7 +236,7 @@ struct ConnectionAppearanceSyncTests {
 
   @Test("A form connect writes the form's color and group, clearing included")
   func formConnectWritesAppearance() async throws {
-    try await Self.withDefaults { defaults in
+    try await Self.withDefaultsAsync { defaults in
       let saved = Self.config(.purple, group: "Prod")
       #expect(
         SessionManager.saveConnection(
@@ -266,7 +266,7 @@ struct ConnectionAppearanceSyncTests {
 
   @Test("A form connect held for the Safe Mode unlock still writes the form's color and group")
   func heldFormConnectWritesAppearance() async throws {
-    try await Self.withDefaults { defaults in
+    try await Self.withDefaultsAsync { defaults in
       var saved = Self.config(.purple, group: "Prod")
       saved.applyCommitStyle(.review)
       #expect(

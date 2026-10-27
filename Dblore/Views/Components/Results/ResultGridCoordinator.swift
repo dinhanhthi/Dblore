@@ -1483,7 +1483,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     // The frozen pane shows the same rows: staged tints in both
     let tables = [tableView] + (frozenPane.map { [$0.table] } ?? [])
     if model.rowCount != previousCount {
-      tables.forEach { $0.reloadData() }
+      for table in tables { table.reloadData() }
       return
     }
     guard !dirty.isEmpty else { return }

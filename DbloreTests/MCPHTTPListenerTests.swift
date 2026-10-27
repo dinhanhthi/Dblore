@@ -200,7 +200,7 @@ struct MCPHTTPListenerTests {
       let refused = try holdConnections(port, count: cap, sending: unauthenticated)
       return (fds: idle.fds + refused.fds, statuses: refused.statuses)
     }
-    defer { held.fds.forEach { close($0) } }
+    defer { for fd in held.fds { close(fd) } }
     #expect(held.statuses == Array(repeating: 401, count: cap))
     #expect(try await exchange(port, request(port)).status == 200)
     await server.stop()
@@ -214,7 +214,7 @@ struct MCPHTTPListenerTests {
     let keepAlive = request(port).replacingOccurrences(of: "Connection: close\r\n", with: "")
     let opened = try await offPool { try holdConnections(port, count: cap, sending: keepAlive) }
     var held = opened.fds
-    defer { held.forEach { close($0) } }
+    defer { for fd in held { close(fd) } }
     #expect(opened.statuses == Array(repeating: 200, count: cap))
     let refused = try await exchange(port, request(port))
     #expect(refused.status == 503)
@@ -326,7 +326,7 @@ private func holdConnections(
       statuses.append(try readResponse(fd).status)
     }
   } catch {
-    fds.forEach { close($0) }
+    for fd in fds { close(fd) }
     throw error
   }
   return (fds, statuses)

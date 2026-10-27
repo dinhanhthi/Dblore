@@ -94,10 +94,10 @@ nonisolated enum SQLiteFileBackup {
     let presenters = SQLiteFileAccess.sidecarSuffixes.map {
       SQLiteFileAccess.SidecarFilePresenter(primaryURL: destination, suffix: $0, queue: queue)
     }
-    presenters.forEach { SQLiteFileAccess.addFilePresenter($0) }
+    for presenter in presenters { SQLiteFileAccess.addFilePresenter(presenter) }
     SQLiteFileAccess.waitForPresenterRegistration()
     // Queued behind the adds: a registration that outlived the wait is removed once it ends
-    defer { presenters.forEach { SQLiteFileAccess.removeFilePresenter($0) } }
+    defer { for presenter in presenters { SQLiteFileAccess.removeFilePresenter(presenter) } }
     for presenter in presenters {
       let name = presenter.sidecarURL.lastPathComponent
       var info = stat()
