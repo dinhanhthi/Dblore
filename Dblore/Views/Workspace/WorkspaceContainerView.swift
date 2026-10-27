@@ -240,7 +240,7 @@ struct WorkspaceContainerView: View {
             Color.clear
               .frame(
                 width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
-                  + workspaceManager.connectionState.connectionButtonsWidth,
+                  + workspaceManager.titleBarButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
               .background {
@@ -275,6 +275,10 @@ struct WorkspaceContainerView: View {
                   }
 
                   WorkspaceInfoButton(workspaceManager: workspaceManager)
+
+                  if workspaceManager.workspace.fileURL != nil {
+                    WorkspaceLockButton(workspaceManager: workspaceManager)
+                  }
                 }
                 .padding(.trailing, Spacing.xsm)
               }
@@ -307,8 +311,7 @@ struct WorkspaceContainerView: View {
             || workspaceManager.mongoOverview != nil ? nil : activeViewModel,
           connectionState: workspaceManager.connectionState,
           connectionConfig: workspaceManager.workspace.connectionConfig,
-          transport: workspaceManager.mysqlTransport,
-          workspaceManager: workspaceManager
+          transport: workspaceManager.mysqlTransport
         )
       }
       // The native tab bar starts after the left sidebar, at the width it renders with. In full
@@ -1450,7 +1453,7 @@ struct WorkspaceTitleBarTabsView: View {
         Color.clear
           .frame(
             width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
-              + workspaceManager.connectionState.connectionButtonsWidth)
+              + workspaceManager.titleBarButtonsWidth)
       } else {
         Color.clear.frame(width: 10)
       }
@@ -1680,6 +1683,39 @@ struct WorkspaceInfoButton: View {
     .controlSize(.small)
     .blockDoubleClickZoom()
     .help("Details")
+  }
+}
+
+extension WorkspaceManager {
+  /// Title-bar width for the buttons after the sidebar toggle: the connection buttons, plus the
+  /// lock button of a saved workspace (31pt), so the toggle never slides under the traffic lights
+  var titleBarButtonsWidth: CGFloat {
+    connectionState.connectionButtonsWidth + (workspace.fileURL != nil ? 31 : 0)
+  }
+}
+
+/// Lock button of a saved workspace, beside Details: an unlocked workspace opens Lock Workspace,
+/// a locked one closes at once (its next open asks again)
+struct WorkspaceLockButton: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    let isLocked = workspaceManager.lockKeyId != nil
+    Button {
+      if isLocked {
+        Task { _ = await WorkspaceWindowManager.shared.closeWorkspace(id: workspaceManager.id) }
+      } else {
+        workspaceManager.openLockSheet(.lock)
+      }
+    } label: {
+      Image(systemName: isLocked ? "lock.fill" : "lock.open")
+        .font(.system(size: 12))
+    }
+    // Background on hover only, like the AI and Settings buttons
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
+    .blockDoubleClickZoom()
+    .help(isLocked ? "Lock and Close Workspace" : "Lock Workspace...")
   }
 }
 

@@ -38,11 +38,7 @@ struct FooterView: View {
   var connectionConfig: ConnectionConfig?
   /// How the session is protected, when the engine reports it (MySQL); nil = unknown.
   var transport: MySQLTransport?
-  /// The workspace whose lock button sits at the far right (saved workspaces only)
-  var workspaceManager: WorkspaceManager?
   @Environment(\.pixelLength) private var pixelLength
-
-  private var showsLockButton: Bool { workspaceManager?.workspace.fileURL != nil }
 
   var body: some View {
     bar(viewModel: viewModel)
@@ -96,13 +92,8 @@ struct FooterView: View {
       if let viewModel {
         documentStats(viewModel: viewModel)
       }
-
-      if let workspaceManager, showsLockButton {
-        WorkspaceLockButton(workspaceManager: workspaceManager)
-      }
     }
-    // The lock button's own hover padding already keeps it off the edge
-    .padding(.trailing, showsLockButton ? Spacing.sm : Spacing.lg)
+    .padding(.trailing, Spacing.lg)
     .frame(height: ComponentSize.footerHeight)
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
@@ -323,31 +314,6 @@ struct FooterView: View {
     } else {
       return "Current file size"
     }
-  }
-}
-
-/// Lock button of a saved workspace, at the footer's far right: an unlocked workspace opens Lock
-/// Workspace, a locked one closes at once (its next open asks again)
-struct WorkspaceLockButton: View {
-  @Bindable var workspaceManager: WorkspaceManager
-
-  var body: some View {
-    let isLocked = workspaceManager.lockKeyId != nil
-    Button {
-      if isLocked {
-        Task { _ = await WorkspaceWindowManager.shared.closeWorkspace(id: workspaceManager.id) }
-      } else {
-        workspaceManager.openLockSheet(.lock)
-      }
-    } label: {
-      Image(systemName: isLocked ? "lock.fill" : "lock.open")
-        .font(.small)
-        .foregroundColor(.foregroundMuted)
-    }
-    // Background on hover only, like the header's icon buttons
-    .buttonStyle(GhostButtonStyle(iconOnly: true))
-    .controlSize(.small)
-    .help(isLocked ? "Lock and Close Workspace" : "Lock Workspace...")
   }
 }
 
