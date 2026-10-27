@@ -96,6 +96,7 @@ struct RecentWorkspaceEditorTests {
       entry: entry,
       name: "  Renamed  ",
       destination: destination,
+      iconColor: .green,
       recents: recents,
       openWorkspaces: []
     )
@@ -104,6 +105,10 @@ struct RecentWorkspaceEditorTests {
     #expect(recents.recentWorkspaces[0].name == "Renamed")
     #expect(recents.recentWorkspaces[0].fileURL == destination)
     #expect(recents.recentWorkspaces[0].tabCount == 2)
+    #expect(recents.recentWorkspaces[0].iconColor == .green)
+    // A later save rebuilds the entry from the workspace and keeps the picked color
+    recents.addWorkspace(WorkspaceHistoryEntry(fileURL: destination, name: "Renamed"))
+    #expect(recents.recentWorkspaces[0].iconColor == .green)
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     let saved = try decoder.decode(Workspace.self, from: Data(contentsOf: destination))
@@ -132,6 +137,7 @@ struct RecentWorkspaceEditorTests {
       entry: entry,
       name: "Kept",
       destination: destination,
+      iconColor: nil,
       recents: recents,
       openWorkspaces: [manager]
     )

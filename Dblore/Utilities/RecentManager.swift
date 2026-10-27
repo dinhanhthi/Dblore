@@ -101,11 +101,12 @@ class RecentManager {
 
   /// Add a workspace to recent list
   func addWorkspace(_ entry: WorkspaceHistoryEntry) {
-    // Keep the bookmarks already stored for this file when the new entry has none
+    // Keep the bookmarks and icon color already stored for this file when the new entry has none
     var entry = entry
     if let existing = recentWorkspaces.first(where: { $0.fileURL == entry.fileURL }) {
       entry.bookmark = entry.bookmark ?? existing.bookmark
       entry.folderBookmark = entry.folderBookmark ?? existing.folderBookmark
+      entry.iconColorName = entry.iconColorName ?? existing.iconColorName
     }
 
     // Remove if already exists (will re-add at top)

@@ -7,27 +7,29 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Edits the display name and file location of one recent workspace.
+/// Edits the display name, file location and icon color of one recent workspace.
 struct RecentWorkspaceEditModal: View {
   let entry: WorkspaceHistoryEntry
   @Binding var isPresented: Bool
-  var onSave: (WorkspaceHistoryEntry, String, URL) async throws -> Void
+  var onSave: (WorkspaceHistoryEntry, String, URL, AccentColor?) async throws -> Void
 
   @State private var name: String
   @State private var fileURL: URL
+  @State private var iconColor: AccentColor?
   @State private var isSaving = false
   @State private var errorMessage: String?
 
   init(
     entry: WorkspaceHistoryEntry,
     isPresented: Binding<Bool>,
-    onSave: @escaping (WorkspaceHistoryEntry, String, URL) async throws -> Void
+    onSave: @escaping (WorkspaceHistoryEntry, String, URL, AccentColor?) async throws -> Void
   ) {
     self.entry = entry
     self._isPresented = isPresented
     self.onSave = onSave
     self._name = State(initialValue: entry.name)
     self._fileURL = State(initialValue: entry.fileURL)
+    self._iconColor = State(initialValue: entry.iconColor)
   }
 
   private var trimmedName: String {
@@ -60,6 +62,33 @@ struct RecentWorkspaceEditModal: View {
               .controlSize(.small)
               .disabled(isSaving)
           }
+        }
+
+        FormField(label: "Icon color") {
+          CapsuleTabPicker(
+            selection: $iconColor,
+            tabs: [nil] + AccentColor.allCases.map { Optional($0) },
+            height: 28
+          ) { color in
+            Group {
+              if let color {
+                Circle()
+                  .fill(color.tagColor)
+                  .frame(width: 14, height: 14)
+              } else {
+                Image(systemName: "circle.slash")
+                  .font(.system(size: 13))
+                  .foregroundColor(.foregroundMuted)
+                  .frame(width: 14, height: 14)
+              }
+            }
+            .help(color?.rawValue ?? "Default color")
+            .accessibilityLabel(color?.rawValue ?? "Default color")
+          }
+          .fitsContent(selectedFill: Color.foreground.opacity(0.18), tabPadding: 3)
+          .fixedSize()
+          .disabled(isSaving)
+          .accessibilityLabel("Workspace icon color")
         }
 
         if let errorMessage {
@@ -127,9 +156,10 @@ struct RecentWorkspaceEditModal: View {
     errorMessage = nil
     let savedName = trimmedName
     let destination = fileURL
+    let color = iconColor
     Task { @MainActor in
       do {
-        try await onSave(entry, savedName, destination)
+        try await onSave(entry, savedName, destination, color)
         isSaving = false
         isPresented = false
       } catch {

@@ -26,16 +26,19 @@ enum RecentWorkspaceEditError: LocalizedError, Equatable {
 /// Rewrites a recent workspace's display name and, when asked, moves its .sqlws file.
 @MainActor
 enum RecentWorkspaceEditor {
-  /// Apply `name` and `destination` to `entry`.
+  /// Apply `name`, `destination` and the welcome row's `iconColor` to `entry`.
   /// An open workspace is written from memory so unsaved tabs are kept.
   /// A closed workspace is read from disk and only its name changes.
   static func apply(
     entry: WorkspaceHistoryEntry,
     name: String,
     destination: URL,
+    iconColor: AccentColor?,
     recents: RecentManager,
     openWorkspaces: [WorkspaceManager]
   ) throws {
+    var entry = entry
+    entry.iconColor = iconColor
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { throw RecentWorkspaceEditError.emptyName }
 

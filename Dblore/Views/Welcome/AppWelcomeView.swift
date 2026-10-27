@@ -246,12 +246,13 @@ struct AppWelcomeView: View {
   }
 
   private func saveWorkspaceEdit(
-    _ entry: WorkspaceHistoryEntry, _ name: String, _ destination: URL
+    _ entry: WorkspaceHistoryEntry, _ name: String, _ destination: URL, _ iconColor: AccentColor?
   ) async throws {
     try RecentWorkspaceEditor.apply(
       entry: entry,
       name: name,
       destination: destination,
+      iconColor: iconColor,
       recents: recentManager,
       openWorkspaces: Array(windowManager.workspaces.values)
     )
@@ -645,7 +646,7 @@ struct RecentWorkspaceRow: View {
           // Plain folder; the connection engine badges its bottom-right corner through a cutout
           Image(systemName: "folder")
             .font(.system(size: 17))
-            .foregroundColor(.foreground)
+            .foregroundColor(workspace.iconColor?.tagColor ?? .foreground)
             .mask {
               Rectangle()
                 .overlay(alignment: .bottomTrailing) {

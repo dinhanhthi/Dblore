@@ -19,6 +19,8 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   var bookmark: Data?
   /// Bookmark of the folder containing the .sqlws, re-granting its bookmark-less tab files
   var folderBookmark: Data?
+  /// Raw `AccentColor` of the folder icon on the welcome row (nil keeps the default tint)
+  var iconColorName: String?
 
   init(
     id: UUID = UUID(),
@@ -46,6 +48,13 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       && lhs.connectionDisplayString == rhs.connectionDisplayString
       && lhs.databaseType == rhs.databaseType
       && lhs.lastOpenedAt == rhs.lastOpenedAt && lhs.tabCount == rhs.tabCount
+      && lhs.iconColorName == rhs.iconColorName
+  }
+
+  /// Color picked for the folder icon; an unknown stored name reads as none
+  var iconColor: AccentColor? {
+    get { iconColorName.flatMap(AccentColor.init(rawValue:)) }
+    set { iconColorName = newValue?.rawValue }
   }
 
   /// Display string for the welcome screen
@@ -75,6 +84,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       bookmark: bookmark
     )
     edited.folderBookmark = folderBookmark
+    edited.iconColorName = iconColorName
     return edited
   }
 
