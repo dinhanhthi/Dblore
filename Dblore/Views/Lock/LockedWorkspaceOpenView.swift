@@ -314,11 +314,25 @@ struct WorkspaceUnlockView: View {
           .disabled(model.isWorking)
       }
 
+      SecureField("Lock Password", text: $model.password)
+        .textFieldStyle(.plain)
+        .inputStyle()
+        .onSubmit { Task { await model.unlockWithPassword() } }
+
+      if let message = model.message {
+        Text(verbatim: message)
+          .font(.small)
+          .foregroundColor(.destructive)
+          .multilineTextAlignment(.center)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      // Cancel and Unlock centered; the spinner sits apart so it never shifts them
       HStack(spacing: Spacing.sm) {
-        SecureField("Lock Password", text: $model.password)
-          .textFieldStyle(.plain)
-          .inputStyle()
-          .onSubmit { Task { await model.unlockWithPassword() } }
+        Button("Cancel") { onCancel() }
+          .buttonStyle(SecondaryButtonStyle())
+          .keyboardShortcut(.cancelAction)
+          .disabled(model.isWorking)
         if model.canUseKeychain {
           Button("Unlock") { Task { await model.unlockWithPassword() } }
             .buttonStyle(SecondaryButtonStyle())
@@ -329,16 +343,8 @@ struct WorkspaceUnlockView: View {
             .disabled(model.password.isEmpty || model.isWorking)
         }
       }
-
-      if let message = model.message {
-        Text(verbatim: message)
-          .font(.small)
-          .foregroundColor(.destructive)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-
-      HStack(spacing: Spacing.md) {
+      .frame(maxWidth: .infinity)
+      .overlay(alignment: .leading) {
         ProgressView()
           .controlSize(.small)
           .tint(.accent)
@@ -346,11 +352,6 @@ struct WorkspaceUnlockView: View {
           .animation(.easeIn(duration: 0.15), value: model.showsSpinner)
           // Opt out of the app-wide animation kill switch, only for the fade
           .transaction(value: model.showsSpinner) { $0.disablesAnimations = false }
-        Spacer()
-        Button("Cancel") { onCancel() }
-          .buttonStyle(SecondaryButtonStyle())
-          .keyboardShortcut(.cancelAction)
-          .disabled(model.isWorking)
       }
     }
     .padding(Spacing.xl)
