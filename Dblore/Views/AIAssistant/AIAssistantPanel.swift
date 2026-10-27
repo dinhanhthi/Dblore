@@ -56,6 +56,9 @@ struct AIAssistantPanel: View {
       // The bubble's card already sits below the bar.
       if !isFloating {
         Color.clear.frame(height: nativeTabBarHeight)
+        if nativeTabBarHeight > 0 {
+          Divider()
+        }
       }
       if isFloating {
         // Follows the foreground so it stays visible on the tinted bubble: lighter in dark, darker in light

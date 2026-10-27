@@ -129,8 +129,12 @@ struct WorkspaceContainerView: View {
               // view that starts at its edge extends up into the row
               .zIndex(1)
 
-              // Room for the native tab bar, which AppKit draws below the titlebar row
+              // Room for the native tab bar, which AppKit draws below the titlebar row; its line
+              // continues the one under the left sidebar's tabs
               Color.appBackground.frame(height: nativeTabBarHeight)
+              if nativeTabBarHeight > 0 {
+                Divider()
+              }
 
               // Pending Protected transaction (Commit / Rollback)
               if !workspaceManager.pendingTransaction.isIdle {

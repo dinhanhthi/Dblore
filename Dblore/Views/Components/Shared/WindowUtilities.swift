@@ -161,6 +161,11 @@ class DocumentWindowConfiguratorView: NSView {
   /// Gap between the zoom button and the first header control; with the zoom button's maxX at
   /// 72 (macOS 27) the width is 88, `ComponentSize.trafficLightWidth`, the strip's width before
   private static let trafficLightsTrailingGap: CGFloat = 16
+  /// How far the native tab bar is lowered, and its band grown: AppKit pins the bar to the top of
+  /// its band, so this centers it in a row as tall as the left sidebar's tab row (a 28pt picker
+  /// with `Spacing.sm` around it), whose bottom line the band's line continues
+  private static let tabBarDrop: CGFloat = 8
+  private weak var observedTabBar: NSView?
 
   override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
@@ -306,7 +311,9 @@ class DocumentWindowConfiguratorView: NSView {
     // The band below the titlebar row. In full screen the tab bar is pinned above the content,
     // which then needs no room for it.
     let topInset = window.frame.height - window.contentLayoutRect.maxY
-    let height = isVisible && !isFullScreen ? max(0, topInset - ComponentSize.tabBarHeight) : 0
+    let height =
+      isVisible && !isFullScreen
+      ? max(0, topInset - ComponentSize.tabBarHeight) + Self.tabBarDrop : 0
     if lastTabBarHeight != height {
       lastTabBarHeight = height
       onTabBarHeightChange?(height)
@@ -320,6 +327,51 @@ class DocumentWindowConfiguratorView: NSView {
       lastTrafficLightsWidth = width
       onTrafficLightsWidthChange?(width)
     }
+
+    if isVisible && !isFullScreen { lowerTabBar() }
+  }
+
+  /// Lowers the native tab bar by `tabBarDrop` inside its band. The bar is AppKit's private
+  /// `NSTabBar`: AppKit moves it to the selected tab's window and puts it back at the top of its
+  /// band then, so its frame is watched and the drop re-applied. Without that view (another macOS
+  /// release) the bar stays at the top of its band, which still has its full height.
+  private func lowerTabBar() {
+    guard let frameView = window?.contentView?.superview,
+      let bar = Self.findTabBar(in: frameView)
+    else { return }
+    if bar !== observedTabBar {
+      observedTabBar = bar
+      bar.postsFrameChangedNotifications = true
+      notificationObservers.append(
+        NotificationCenter.default.addObserver(
+          forName: NSView.frameDidChangeNotification, object: bar, queue: .main
+        ) { _ in
+          MainActor.assumeIsolated { Self.lower(bar) }
+        })
+    }
+    Self.lower(bar)
+  }
+
+  private static func findTabBar(in view: NSView) -> NSView? {
+    if String(describing: type(of: view)) == "NSTabBar" { return view }
+    for subview in view.subviews {
+      if let bar = findTabBar(in: subview) { return bar }
+    }
+    return nil
+  }
+
+  /// Only in a document window with its toolbar: full screen removes the toolbar, and the bar is
+  /// pinned at the top of the screen there
+  private static func lower(_ bar: NSView) {
+    guard let window = bar.window, window.tabbingIdentifier == .dbloreDocument,
+      window.toolbar != nil, !window.styleMask.contains(.fullScreen),
+      let band = bar.superview
+    else { return }
+    let room = band.bounds.height - bar.frame.height
+    guard room >= tabBarDrop else { return }
+    // AppKit puts the bar at the top of the band; move it `tabBarDrop` down from there
+    let y = band.isFlipped ? tabBarDrop : room - tabBarDrop
+    if bar.frame.origin.y != y { bar.setFrameOrigin(NSPoint(x: bar.frame.origin.x, y: y)) }
   }
 
   private func stopObserving() {
@@ -327,6 +379,7 @@ class DocumentWindowConfiguratorView: NSView {
     tabBarObservation = nil
     toolbarObservation = nil
     observedToolbar = nil
+    observedTabBar = nil
     notificationObservers.forEach(NotificationCenter.default.removeObserver)
     notificationObservers.removeAll()
     lastReported = nil
