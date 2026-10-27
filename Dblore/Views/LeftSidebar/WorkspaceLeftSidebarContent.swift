@@ -61,6 +61,10 @@ struct WorkspaceLeftSidebarContent: View {
         contentForSelectedTab
       }
     }
+    // The last tab closed: back to Public, where a table opens
+    .onChange(of: workspaceManager.activeTabId) { _, tabId in
+      if tabId == nil { selectedTab = .public }
+    }
     .sheet(item: $aggregationBuilder) { model in
       AggregationBuilderSheet(
         model: model, insertTarget: workspaceManager.activeViewModel,

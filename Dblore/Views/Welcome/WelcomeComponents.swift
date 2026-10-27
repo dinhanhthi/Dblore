@@ -63,44 +63,6 @@ struct WelcomeActionButton: View {
   }
 }
 
-/// Plain full-width sidebar row: icon and title, neutral fill on hover.
-struct WelcomeSidebarItem: View {
-  let title: String
-  let systemImage: String
-  var help: String?
-  let action: () -> Void
-
-  @State private var isHovering = false
-  @Environment(\.isEnabled) private var isEnabled
-
-  var body: some View {
-    Button(action: action) {
-      HStack(spacing: Spacing.sm) {
-        Image(systemName: systemImage)
-          .font(.system(size: 13))
-          .foregroundColor(.foregroundMuted)
-          .frame(width: 18)
-        Text(title)
-          .font(.callout)
-          .foregroundColor(.foreground)
-          .lineLimit(1)
-        Spacer(minLength: 0)
-      }
-      .padding(.horizontal, Spacing.sm)
-      .frame(height: 28)
-      .background(Capsule().fill(isHovering && isEnabled ? Color.hoverFill : Color.clear))
-      .contentShape(Rectangle())
-      // Disabled: the resting label at 50%
-      .opacity(isEnabled ? 1 : 0.5)
-    }
-    .buttonStyle(.plain)
-    .linkPointer()
-    .help(help ?? title)
-    .onHover { isHovering = $0 }
-    .animation(.easeOut(duration: 0.12), value: isHovering)
-  }
-}
-
 // MARK: - Filter Field
 
 /// Capsule search field (recent lists, the Settings title bar), with a clear button once it has text.
@@ -133,27 +95,6 @@ struct WelcomeFilterField: View {
     .frame(height: 30)
     .background(Capsule().fill(Color.controlBackground))
     .overlay(Capsule().strokeBorder(Color.border, lineWidth: pixelLength))
-  }
-}
-
-// MARK: - Section Header
-
-/// Uppercase list title followed by its item count.
-struct WelcomeSectionHeader: View {
-  let title: String
-  let count: Int
-
-  var body: some View {
-    HStack(spacing: Spacing.xs) {
-      Text(title.uppercased())
-        .font(.caption.weight(.semibold))
-        .tracking(0.5)
-      Text("\(count)")
-        .font(.caption)
-    }
-    .foregroundColor(.foregroundSubtle)
-    .padding(.horizontal, Spacing.sm)
-    .padding(.bottom, Spacing.xxs)
   }
 }
 

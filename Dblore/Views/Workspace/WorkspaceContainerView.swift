@@ -38,9 +38,9 @@ struct WorkspaceContainerView: View {
     return workspaceManager.viewModel(for: activeTabId)
   }
 
-  /// Whether the content area shows `WorkspaceWelcomeView` (no tab, no schema visualizer and no
-  /// MongoDB overview screen)
-  private var showsWorkspaceWelcome: Bool {
+  /// Whether the content area shows `WorkspaceEmptyStateView` (no tab, no schema visualizer and
+  /// no MongoDB overview screen)
+  private var showsEmptyState: Bool {
     !workspaceManager.isSchemaVisualizerActive && workspaceManager.mongoOverview == nil
       && activeViewModel == nil
   }
@@ -52,10 +52,8 @@ struct WorkspaceContainerView: View {
   }
 
   /// Whether the left sidebar beside the open right sidebars (AI assistant panel and the tab's
-  /// sidebar) leaves the tab content less than its minimum width. The compact workspace welcome
-  /// never has room for both sides.
+  /// sidebar) leaves the tab content less than its minimum width.
   private var sidebarsCrowdContent: Bool {
-    if showsWorkspaceWelcome { return true }
     guard let window = hostWindow.window else { return false }
     let windowWidth = window.contentLayoutRect.width
     let storedLeftWidth =
@@ -172,7 +170,7 @@ struct WorkspaceContainerView: View {
                   viewModel: viewModel
                 )
               } else {
-                WorkspaceWelcomeView(workspaceManager: workspaceManager)
+                WorkspaceEmptyStateView(workspaceManager: workspaceManager)
               }
             }
 
@@ -411,17 +409,13 @@ struct WorkspaceContainerView: View {
     .commandPaletteModal(workspaceManager: workspaceManager)
     .background(HostWindowReader(reference: hostWindow))
     .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isConnectionImportPresented)
-    // The workspace welcome (no tab open) keeps the small Welcome size; tabs need room
-    .documentWindowMode(
-      showsWorkspaceWelcome ? .compact : .regular, isTabbed: isNativeTabBarVisible
-    )
+    // Full size even with no tab open: the left sidebar opens tables from there
+    .documentWindowMode(.regular, isTabbed: isNativeTabBarVisible)
     .environment(\.hostWindowReference, hostWindow)
     // Here rather than on the tabs, so the theme also applies while no tab is open
     .windowAppearance(AppSettings.shared.themePreference.colorScheme)
     // When the tab content would lose its minimum width, only one side stays open: opening a
     // right sidebar collapses the left one and opening the left one collapses the right ones.
-    // The compact workspace welcome never has room for both, and closing the last tab with both
-    // open keeps the left sidebar
     .onChange(of: workspaceManager.aiAssistant.showsSidebarPanel) { _, shows in
       if shows { collapseLeftSidebarIfCrowded() }
     }
@@ -443,8 +437,15 @@ struct WorkspaceContainerView: View {
           if workspaceManager.isLeftSidebarVisible { collapseRightSidebarsIfCrowded() }
         })
     )
-    .onChange(of: showsWorkspaceWelcome) { _, shows in
-      if shows && workspaceManager.isLeftSidebarVisible { hideAIAssistantSidebar() }
+    // With no tab open, the left sidebar is where a table opens: show it (animated once the
+    // window is up). Not saved in the workspace settings, so the workspace does not turn dirty.
+    .onChange(of: showsEmptyState, initial: true) { wasEmpty, isEmpty in
+      guard isEmpty, !workspaceManager.isLeftSidebarVisible else { return }
+      if wasEmpty == isEmpty {
+        workspaceManager.isLeftSidebarVisible = true
+      } else {
+        withSidebarAnimation { workspaceManager.isLeftSidebarVisible = true }
+      }
     }
     // Shrinking the window with both sides open collapses the left sidebar once they stop fitting
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) {
