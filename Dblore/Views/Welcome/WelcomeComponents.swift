@@ -17,8 +17,6 @@ struct WelcomeSidebarColumn<Header: View, Actions: View, Footer: View>: View {
   @ViewBuilder let actions: Actions
   @ViewBuilder let footer: Footer
 
-  static var width: CGFloat { 220 }
-
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.xl) {
       header
@@ -34,7 +32,7 @@ struct WelcomeSidebarColumn<Header: View, Actions: View, Footer: View>: View {
     }
     .padding(Spacing.md)
     .padding(.top, topInset)
-    .frame(width: Self.width)
+    .frame(width: ComponentSize.welcomeSidebarWidth)
     .frame(maxHeight: .infinity, alignment: .top)
     .background(Color.cardBackground)
   }

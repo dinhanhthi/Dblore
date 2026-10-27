@@ -47,6 +47,8 @@ enum ComponentSize {
   /// Cell parameter form: adaptive column bounds for one `ParameterInputBlock`.
   static let parameterBlockMinWidth: CGFloat = 220
   static let parameterBlockMaxWidth: CGFloat = 320
+  /// Left column of the Welcome screens
+  static let welcomeSidebarWidth: CGFloat = 220
 
   // Tab bar and title bar
   /// Equals the titlebar row of the compact toolbar every document window installs (40pt on
