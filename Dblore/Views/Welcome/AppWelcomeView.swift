@@ -465,12 +465,6 @@ struct WelcomeRecents: View {
       VStack(spacing: Spacing.md) {
         HStack(spacing: Spacing.sm) {
           WelcomeFilterField(prompt: "Filter recents", text: $filter)
-          CapsuleTabPicker(
-            selection: $tab, tabs: [.workspaces, .connections], height: 30
-          ) { item in
-            CapsuleTabLabel(text: tabTitle(item), isSelected: tab == item)
-          }
-          .fitsContent()
           if tab == .connections && !connections.isEmpty {
             Button(action: onExportConnections) {
               Image(systemName: "square.and.arrow.up")
@@ -479,6 +473,12 @@ struct WelcomeRecents: View {
             .help("Export Connections...")
             .accessibilityLabel("Export Connections...")
           }
+          CapsuleTabPicker(
+            selection: $tab, tabs: [.workspaces, .connections], height: 30
+          ) { item in
+            CapsuleTabLabel(text: tabTitle(item), isSelected: tab == item)
+          }
+          .fitsContent()
         }
 
         // The list scrolls inside its own card, which ends above the bottom edge
