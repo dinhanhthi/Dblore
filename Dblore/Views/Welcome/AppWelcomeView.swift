@@ -571,7 +571,7 @@ struct WelcomeRecents: View {
 
   private func groupHeader(_ name: String) -> some View {
     Text(name)
-      .font(.caption.weight(.semibold))
+      .font(.subheadline.weight(.semibold))
       .foregroundColor(.foregroundMuted)
       .lineLimit(1)
       .padding(.horizontal, Spacing.sm)
@@ -644,15 +644,15 @@ struct RecentWorkspaceRow: View {
         } else {
           // Plain folder; the connection engine badges its bottom-right corner through a cutout
           Image(systemName: "folder")
-            .font(.system(size: 14))
+            .font(.system(size: 17))
             .foregroundColor(.foreground)
             .mask {
               Rectangle()
                 .overlay(alignment: .bottomTrailing) {
                   if workspace.databaseType != nil {
                     Circle()
-                      .frame(width: 14, height: 14)
-                      .offset(x: 4, y: 4)
+                      .frame(width: 16, height: 16)
+                      .offset(x: 5, y: 5)
                       .blendMode(.destinationOut)
                   }
                 }
@@ -663,9 +663,9 @@ struct RecentWorkspaceRow: View {
                 Image(type.iconAssetName)
                   .resizable()
                   .aspectRatio(contentMode: .fit)
-                  .frame(width: 12, height: 12)
+                  .frame(width: 14, height: 14)
                   .foregroundColor(type.brandColor)
-                  .offset(x: 3, y: 3)
+                  .offset(x: 4, y: 4)
               }
             }
         }
@@ -689,7 +689,7 @@ struct RecentWorkspaceRow: View {
           HStack(spacing: Spacing.xs) {
             if workspace.tabCount > 0 {
               Text("\(workspace.tabCount)")
-                .font(.caption.weight(.bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundColor(.foreground)
                 .help("Number of tabs open in this workspace")
               RecentMetaDot()
@@ -739,7 +739,7 @@ struct RecentConnectionRow: View {
           Image(connection.config.databaseType.iconAssetName)
             .resizable()
             .aspectRatio(contentMode: .fit)
-            .frame(width: 17, height: 17)
+            .frame(width: 20, height: 20)
             .foregroundColor(connection.config.databaseType.brandColor)
         }
       } title: {
@@ -748,7 +748,7 @@ struct RecentConnectionRow: View {
           if let color = connection.config.colorTag {
             Circle()
               .fill(color.tagColor)
-              .frame(width: 7, height: 7)
+              .frame(width: 8, height: 8)
               .help(color.rawValue)
               .accessibilityLabel("Color \(color.rawValue)")
           }
@@ -786,7 +786,7 @@ struct RecentConnectionRow: View {
 // MARK: - Recent Hover Buttons
 
 private enum RecentHoverMetrics {
-  static let diameter: CGFloat = 16
+  static let diameter: CGFloat = 20
 
   /// Minimum width of the trailing slot so the buttons never cover the detail text.
   static func slotWidth(buttonCount: Int) -> CGFloat {
@@ -833,11 +833,11 @@ private struct RecentHoverButton: View {
     switch mark {
     case .reveal:
       Image(systemName: "folder")
-        .font(.system(size: 9, weight: .semibold))
+        .font(.system(size: 11, weight: .semibold))
         .foregroundColor(color)
     case .configure:
       Image(systemName: "gearshape")
-        .font(.system(size: 9, weight: .semibold))
+        .font(.system(size: 11, weight: .semibold))
         .foregroundColor(color)
     case .remove:
       CenteredXMark(color: color)

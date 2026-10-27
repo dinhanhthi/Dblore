@@ -111,17 +111,17 @@ struct RecentRowLayout<Icon: View, Title: View, Detail: View, Trailing: View>: V
   var body: some View {
     HStack(spacing: Spacing.sm) {
       icon
-        .frame(width: 18)
+        .frame(width: 22)
 
       title
-        .font(.callout.weight(.medium))
+        .font(.body.weight(.medium))
         .foregroundColor(.foreground.opacity(0.85))
         .lineLimit(1)
         .truncationMode(.tail)
         .layoutPriority(1)
 
       detail
-        .font(.caption)
+        .font(.subheadline)
         .foregroundColor(.foregroundMuted)
         .lineLimit(1)
         .truncationMode(.tail)
@@ -129,12 +129,12 @@ struct RecentRowLayout<Icon: View, Title: View, Detail: View, Trailing: View>: V
       Spacer(minLength: Spacing.sm)
 
       trailing
-        .font(.caption)
+        .font(.subheadline)
         .foregroundColor(.foregroundSubtle)
         .layoutPriority(2)
     }
     .padding(.horizontal, Spacing.sm)
-    .frame(height: 30)
+    .frame(height: 36)
     .background(Capsule().fill(isHovering ? Color.cellBackgroundHover : Color.clear))
     .contentShape(Rectangle())
   }
