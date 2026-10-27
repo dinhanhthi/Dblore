@@ -23,6 +23,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       OR has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
     """
 
+  /// The session's own temp tables (pg_temp_N) are flagged; `pg_my_temp_schema()` is 0 until
+  /// the session creates one.
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     // Never analyzed (reltuples -1 on PG 14+, 0/0 before): fall back to the stats counter,
     // 0 there stays unknown (empty table, track_counts off or stats reset)
@@ -32,7 +34,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         c.relname::text,
         CASE WHEN c.reltuples < 0 OR (c.reltuples = 0 AND c.relpages = 0)
           THEN NULLIF(pg_stat_get_live_tuples(c.oid), 0)
-          ELSE c.reltuples::bigint END AS row_estimate
+          ELSE c.reltuples::bigint END AS row_estimate,
+        n.oid = pg_my_temp_schema() AS is_temporary
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relkind IN ('r', 'p')
@@ -43,12 +46,14 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       """
     var tables: [DatabaseTable] = []
     for row in try await rows(in: session, sql: query) {
-      guard row.count >= 3,
+      guard row.count >= 4,
         let schema = CatalogValue.string(row[0]),
         let name = CatalogValue.string(row[1])
       else { continue }
       tables.append(
-        DatabaseTable(schema: schema, name: name, rowCount: CatalogValue.optionalInt(row[2])))
+        DatabaseTable(
+          schema: schema, name: name, rowCount: CatalogValue.optionalInt(row[2]),
+          isTemporary: CatalogValue.bool(row[3]) ?? false))
     }
     return tables
   }
@@ -135,6 +140,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
         AND p.prokind = 'f'
+        AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
       """
     var functions: [DatabaseFunction] = []
@@ -164,6 +170,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
         AND p.prokind = 'p'
+        AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
       """
     var procedures: [DatabaseProcedure] = []
@@ -196,6 +203,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE NOT t.tgisinternal
         AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, c.relname, t.tgname
       """
     var triggers: [DatabaseTrigger] = []
@@ -595,40 +603,59 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     }
   }
 
-  /// Column modifiers from `information_schema`. Throws when the catalog query fails so the
-  /// actor can map a closed session; returns `columns` when the statement is not one table.
+  /// Column modifiers from `information_schema`, read for each column's own table: the table
+  /// OID and attribute number from the row description are bound, never a name. A column with
+  /// no table origin keeps its type. Throws when the catalog query fails so the actor can map a
+  /// closed session; returns `columns` when the statement is not one table.
   func enrichedColumns(
     _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
   ) async throws -> [ColumnInfo] {
-    guard !columns.isEmpty, let tableName = DatabaseConnectionManager.singleTableName(in: query)
+    guard !columns.isEmpty, DatabaseConnectionManager.singleTableName(in: query) != nil
     else { return columns }
 
-    let columnNames = columns.map { "'\($0.name)'" }.joined(separator: ", ")
-    let typeQuery = """
-      SELECT column_name, data_type,
-             character_maximum_length,
-             numeric_precision,
-             numeric_scale,
-             datetime_precision,
-             interval_type,
-             udt_name
-      FROM information_schema.columns
-      WHERE table_name = '\(tableName)'
-        AND column_name IN (\(columnNames))
-      """
-    var typeMap: [String: String] = [:]
-    for row in try await rows(in: session, sql: typeQuery) {
-      guard row.count >= 8,
-        let columnName = CatalogValue.string(row[0]),
-        let dataType = CatalogValue.string(row[1])
-      else { continue }
-      typeMap[columnName] = Self.detailedType(dataType: dataType, row: row)
+    var attributeNumbers: [UInt32: Set<Int>] = [:]
+    for origin in columns.compactMap(\.tableOrigin) {
+      guard let oid = origin.tableID.postgresOID else { continue }
+      attributeNumbers[oid, default: []].insert(origin.columnOrdinal)
+    }
+    var typeMap: [ColumnOrigin: String] = [:]
+    for (oid, numbers) in attributeNumbers.sorted(by: { $0.key < $1.key }) {
+      let list = numbers.sorted().map(String.init).joined(separator: ",")
+      let binds: [SQLBindValue] = [.text(String(oid)), .text("{\(list)}")]
+      for row in try await rows(in: session, sql: Self.columnTypeSQL, binds: binds) {
+        guard row.count >= 8,
+          let ordinal = CatalogValue.int(row[0]),
+          let dataType = CatalogValue.string(row[1])
+        else { continue }
+        let origin = ColumnOrigin(tableID: .postgresql(oid: oid), columnOrdinal: ordinal)
+        typeMap[origin] = Self.detailedType(dataType: dataType, row: row)
+      }
     }
     return columns.map { column in
-      guard let enrichedType = typeMap[column.name] else { return column }
+      guard let origin = column.tableOrigin, let enrichedType = typeMap[origin] else {
+        return column
+      }
       return ColumnInfo(name: column.name, type: enrichedType, origin: column.origin)
     }
   }
+
+  /// One table's columns by OID (`$1`) and attribute numbers (`$2`, an int4 array literal).
+  /// `ordinal_position` is the attnum; the table's names are joined in the catalog, never sent.
+  private static let columnTypeSQL = """
+    SELECT c.ordinal_position::int4, c.data_type,
+           c.character_maximum_length,
+           c.numeric_precision,
+           c.numeric_scale,
+           c.datetime_precision,
+           c.interval_type,
+           c.udt_name
+    FROM pg_class r
+    JOIN pg_namespace n ON n.oid = r.relnamespace
+    JOIN information_schema.columns c
+      ON c.table_schema = n.nspname AND c.table_name = r.relname
+    WHERE r.oid = $1::oid
+      AND c.ordinal_position = ANY($2::int4[])
+    """
 
   /// Exact row count. The actor turns a query failure into 0.
   func rowCount(

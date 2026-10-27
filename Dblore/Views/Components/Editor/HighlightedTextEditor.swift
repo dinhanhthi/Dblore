@@ -678,8 +678,10 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
         queue: .main
       ) { [weak self] _ in
         Task { @MainActor [weak self] in
-          guard let self = self, let textView = self.textView else { return }
-          // Unfocus the text view by resigning first responder
+          guard let self = self, let textView = self.textView,
+            textView.window?.firstResponder === textView
+          else { return }
+          // Unfocus the text view by resigning first responder (only this editor's focus)
           textView.window?.makeFirstResponder(nil)
         }
       }

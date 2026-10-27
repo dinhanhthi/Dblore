@@ -15,6 +15,8 @@ struct WorkspaceCommands: Commands {
   @BridgedFocusedValue(\.toggleAIAssistantAction) private var toggleAIAssistantAction
   @BridgedFocusedValue(\.openCommandPaletteAction) private var openCommandPaletteAction
   @BridgedFocusedValue(\.openDataRewindAction) private var openDataRewindAction
+  @BridgedFocusedValue(\.zoomTarget) private var zoomTarget
+  @BridgedFocusedValue(\.activeWorkspace) private var focusedWorkspace
 
   var body: some Commands {
     // Sidebar toggle commands - only show when no document is open
@@ -63,6 +65,54 @@ struct WorkspaceCommands: Commands {
         Label("Data Rewind...", systemImage: "clock.arrow.circlepath")
       }
       .disabled(openDataRewindAction == nil)
+
+      Divider()
+
+      Button("Zoom In") { zoom(by: 1) }
+        .keyboardShortcut("=", modifiers: .command)
+        .disabled(zoomTarget == nil)
+
+      // Cmd+Shift+= types "+", which the Cmd+= item does not match
+      Button("Zoom In (Alt)") { zoom(by: 1) }
+        .keyboardShortcut("+", modifiers: .command)
+        .disabled(zoomTarget == nil)
+
+      Button("Zoom Out") { zoom(by: -1) }
+        .keyboardShortcut("-", modifiers: .command)
+        .disabled(zoomTarget == nil)
+
+      Button("Actual Size") { resetZoom() }
+        .keyboardShortcut("0", modifiers: .command)
+        .disabled(zoomTarget == nil)
+    }
+  }
+
+  /// One step in (1) or out (-1) on the key window's zoom target. Font sizes are global.
+  private func zoom(by steps: Int) {
+    let settings = AppSettings.shared
+    switch zoomTarget {
+    case .grid:
+      settings.resultFontSize = AppSettings.steppedFontSize(settings.resultFontSize, by: steps)
+    case .editor:
+      settings.editorFontSize = AppSettings.steppedFontSize(settings.editorFontSize, by: steps)
+    case .diagram:
+      if steps > 0 {
+        focusedWorkspace?.zoomInVisualizer()
+      } else {
+        focusedWorkspace?.zoomOutVisualizer()
+      }
+    case nil:
+      break
+    }
+  }
+
+  /// The default font size, or the diagram at 100% (its pan stays)
+  private func resetZoom() {
+    switch zoomTarget {
+    case .grid: AppSettings.shared.resultFontSize = AppSettings.defaultResultFontSize
+    case .editor: AppSettings.shared.editorFontSize = AppSettings.defaultEditorFontSize
+    case .diagram: focusedWorkspace?.visualizerScale = 1.0
+    case nil: break
     }
   }
 }
@@ -116,6 +166,11 @@ struct OpenSchemaCompareActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Build Join Query (File menu): nil unless `WorkspaceManager.canBuildJoinQuery`
+struct OpenJoinBuilderActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -160,6 +215,11 @@ extension FocusedValues {
   var openSchemaCompareAction: (() -> Void)? {
     get { self[OpenSchemaCompareActionKey.self] }
     set { self[OpenSchemaCompareActionKey.self] = newValue }
+  }
+
+  var openJoinBuilderAction: (() -> Void)? {
+    get { self[OpenJoinBuilderActionKey.self] }
+    set { self[OpenJoinBuilderActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

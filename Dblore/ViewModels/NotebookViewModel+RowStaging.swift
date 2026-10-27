@@ -17,6 +17,9 @@ struct PendingStagedBatch: Sendable {
   var connectionEpoch: UInt64
   var historySource: QueryHistoryRecordSource = .dataViewerEdit
   var rowRanges: [ClosedRange<Int>?] = []
+  /// Multi-file import: the file of each statement, so a failure names it with its rows.
+  /// Empty for a one-file import.
+  var statementFiles: [String] = []
   /// Import only: the import sheet is still open to show the failure detail. False once the
   /// sheet closed for the Safe Mode confirmation.
   var reportsToImportSheet = true
@@ -32,6 +35,13 @@ struct PendingStagedBatch: Sendable {
   /// Data Rewind reads for a staged commit (`historySource` `.dataViewerEdit` only; an import
   /// never sends one)
   var rewindPlan: RewindPlan? = nil
+  /// Generate Rows: the INSERTs, made chunk by chunk while they are sent through
+  /// `executeGatedBatch(streamed:)`; `statements` is then empty and `preview` the run's summary
+  var streamed: StreamedBatch? = nil
+  /// Chunks of `streamed` done so far: 0 as the tab starts sending it, then after each one
+  var streamedProgress: (@Sendable (Int) -> Void)? = nil
+  /// The end of a `streamed` run Safe Mode held: its failure, or nil once it is sent or declined
+  var streamedCompletion: (@MainActor @Sendable (String?) -> Void)? = nil
 
   struct MongoInlineEdit: Sendable {
     /// The notebook cell to re-run, nil for the editor or the data viewer
@@ -65,6 +75,15 @@ extension NotebookViewModel {
   /// Why a table import is refused for this engine (`supportsDataImport`), or nil.
   var importUnsupportedReason: String? {
     unavailableFeatureMessage("Importing data", \.supportsDataImport)
+  }
+
+  /// Why Generate Rows is refused: the engine (`supportsRowStaging`), then a read-only
+  /// connection. Nil when rows can be generated.
+  var generateRowsUnavailableReason: String? {
+    if let reason = unavailableFeatureMessage("Generating rows", \.supportsRowStaging) {
+      return reason
+    }
+    return protectionPolicy.protectionLevel == .readOnly ? Self.connectionIsReadOnly : nil
   }
 
   /// Why staging actions do nothing, or nil when this data viewer can stage.
@@ -105,11 +124,31 @@ extension NotebookViewModel {
 
   /// Stages a copy of each row. Primary-key columns are left unset so the copy does not reuse
   /// the source key, then filled with the next integer when this table's key is not automatic.
+  /// A value a lazy page cut is loaded first (progress and Cancel): a failed or cancelled load
+  /// stages nothing (nil, after its message), so a cut prefix is never inserted.
   @discardableResult
   func stageDuplicate(rows: [Int]) async -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     if stagesDocuments { return openDocumentDuplicateEditor(rows: rows) }
-    guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
+    guard let target = stagedEditTarget, let result = editorResult else {
+      return Self.tableHasNoPrimaryKey
+    }
+    let pageRows = rows.filter { result.rows.indices.contains($0) }
+    if !pageRows.isEmpty, !unloadedCells(in: result).isEmpty {
+      let generation = lazyCells.generation
+      let cells = pageRows.flatMap { row in result.columns.indices.map { (row: row, column: $0) } }
+      guard await loadUnloadedCells(cells, of: result, action: "Duplicate Row") != nil else {
+        return nil
+      }
+      // The loaded values were written into this page only when it is still shown
+      guard lazyCells.generation == generation, editorResult?.timestamp == result.timestamp,
+        stagedEditTarget == target, let shown = editorResult
+      else { return Self.pageChangedWhileLoading }
+      let unloaded = unloadedCells(in: shown)
+      guard pageRows.allSatisfy({ unloaded[$0] == nil }) else {
+        return Self.pageChangedWhileLoading
+      }
+    }
     var copies = rows.compactMap { duplicatedValues(row: $0, target: target) }
     if copies.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
     if let column = integerPrimaryKeyColumn(),
@@ -238,21 +277,35 @@ extension NotebookViewModel {
   /// Success reloads the page and clears the set. Failure keeps the set and shows the error.
   /// Staged deletes are counted first (`stagedDeleteImpact`): a blocker with rows asks Commit
   /// Anyway or Cancel first, unless `ignoringBlockers` (the preview sheet's Commit Anyway); a
-  /// count not computed does not. Safe Mode confirms after either way.
+  /// count not computed does not. Safe Mode confirms after either way. A commit already in
+  /// flight refuses a second one, which would build and send the same batch again.
   func commitStaged(ignoringBlockers: Bool = false) async {
+    guard stagedBlockerContinuation == nil else {
+      showToast("Answer the open Commit Anyway prompt first.", type: .warning)
+      return
+    }
+    guard !isCommittingStaged else {
+      showToast("The staged changes are already being committed.", type: .warning)
+      return
+    }
+    isCommittingStaged = true
+    defer { isCommittingStaged = false }
     if stagesDocuments {
       await commitStagedDocuments()
       return
     }
     guard discardsInvalidatedStagedSet() == false else { return }
     await fillMissingIntegerKeys()
-    // The key lookup awaited: the page may have reloaded (no target: keep the set) or the table
-    // changed (discard with the warning). Only a live, valid set may clear silently below.
+    // The key lookup awaited: the set may be gone (Discard, its tab closed), the page may have
+    // reloaded (no target: keep the set) or the table changed (discard with the warning). Only
+    // a live, valid set may clear silently below.
+    guard dataViewer?.changeSet != nil else { return }
     guard discardsInvalidatedStagedSet() == false else { return }
     let checkedDeletes = dataViewer?.changeSet?.deletes
     isCheckingStagedDeletes = true
     let impact = await stagedDeleteImpact()
     isCheckingStagedDeletes = false
+    guard dataViewer?.changeSet != nil else { return }
     guard discardsInvalidatedStagedSet() == false else { return }
     if impact != nil, dataViewer?.changeSet?.deletes != checkedDeletes {
       showToast(
@@ -298,14 +351,10 @@ extension NotebookViewModel {
     await runConfirmedStagedBatch(batch)
   }
 
-  /// Shows the blockers with Commit Anyway / Cancel; true for Commit Anyway. A prompt that is
-  /// already open refuses the new request with a toast.
+  /// Shows the blockers with Commit Anyway / Cancel; true for Commit Anyway. `commitStaged`
+  /// refuses a new commit while this prompt is open.
   private func confirmCommitPastBlockers(_ impact: CascadeImpactSummary) async -> Bool {
-    guard stagedBlockerContinuation == nil else {
-      showToast("Answer the open Commit Anyway prompt first.", type: .warning)
-      return false
-    }
-    return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+    await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
       stagedBlockerContinuation = continuation
       stagedBlockerPrompt = impact
     }
@@ -349,9 +398,18 @@ extension NotebookViewModel {
     let started = Date()
     var failure: String?
     do {
-      let counts = try await connectionManager.executeGatedBatch(
-        batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
-        caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil)
+      let rowCount: Int
+      if let streamed = batch.streamed {
+        batch.streamedProgress?(0)
+        rowCount = try await connectionManager.executeGatedBatch(
+          streamed: streamed, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
+          caller: id, progress: batch.streamedProgress)
+      } else {
+        rowCount = try await connectionManager.executeGatedBatch(
+          batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
+          caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil
+        ).reduce(0, +)
+      }
       if batch.historySource == .dataViewerEdit { dataViewer?.changeSet = nil }
       // The page reloads with the same key, so a redo would target rows this batch changed
       if dataViewer != nil { undoManager.removeAllActions() }
@@ -359,7 +417,7 @@ extension NotebookViewModel {
         [
           QueryHistoryOutcome(
             sql: batch.preview, duration: Date().timeIntervalSince(started),
-            rowCount: counts.reduce(0, +), status: .success, errorMessage: nil)
+            rowCount: rowCount, status: .success, errorMessage: nil)
         ], source: batch.historySource)
       if dataViewer != nil {
         // Inserts and deletes changed the row count: count again with the page
@@ -367,12 +425,11 @@ extension NotebookViewModel {
         await loadDataViewerPage()
       }
     } catch {
-      let message = Self.batchFailureMessage(error, ranges: batch.rowRanges)
+      let message = Self.batchFailureMessage(error, batch: batch)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
         source: batch.historySource, errorMessage: message,
-        importSummary: Self.batchFailureMessage(
-          error, ranges: batch.rowRanges, detail: "Import failed"))
+        importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
       showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
       failure = message
     }
@@ -402,14 +459,41 @@ extension NotebookViewModel {
     return await runConfirmedStagedBatch(batch)
   }
 
+  /// Safe Mode confirmation for a Generate Rows run (`batch.streamed`), then the run in this
+  /// tab's transaction. Its summary `preview` is the one statement Safe Mode shows and the gate
+  /// pre-check reads: the streamed path itself never asks.
+  func beginGeneratedRowsBatch(_ batch: PendingStagedBatch) async -> String? {
+    if let reason = generateRowsUnavailableReason { return reason }
+    guard !hasPendingStagedChanges else {
+      return "Commit or discard staged changes before generating rows"
+    }
+    if let message = protectionBlockMessage(for: batch.preview) { return message }
+    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+      pendingExplainSQL = nil
+      pendingStagedBatch = batch
+      return nil
+    }
+    return await runConfirmedStagedBatch(batch)
+  }
+
+  /// `detail` after the failed statement's file and rows: "c.csv rows 3–7: ", "c.csv: " for
+  /// its CREATE TABLE, "Rows 3–7: " for a one-file import
   private static func batchFailureMessage(
-    _ error: Error, ranges: [ClosedRange<Int>?], detail: String? = nil
+    _ error: Error, batch: PendingStagedBatch, detail: String? = nil
   ) -> String {
     let detail = detail ?? error.localizedDescription
-    guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error,
-      ranges.indices.contains(index), let range = ranges[index]
-    else { return detail }
-    return "Rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+    guard case DatabaseError.batchStatementFailed(let index, _, _, _) = error else {
+      return detail
+    }
+    let range = batch.rowRanges.indices.contains(index) ? batch.rowRanges[index] : nil
+    let file = batch.statementFiles.indices.contains(index) ? batch.statementFiles[index] : nil
+    switch (file, range) {
+    case (let file?, let range?):
+      return "\(file) rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+    case (let file?, nil): return "\(file): \(detail)"
+    case (nil, let range?): return "Rows \(range.lowerBound)–\(range.upperBound): \(detail)"
+    case (nil, nil): return detail
+    }
   }
 
   /// Import errors can quote file values. The toast stays generic; the sheet shows the detail,
@@ -417,16 +501,21 @@ extension NotebookViewModel {
   private static func batchToastMessage(
     _ error: Error, batch: PendingStagedBatch, fullMessage: String
   ) -> String {
+    if batch.historySource == .generatedRows, case DatabaseError.batchCancelled = error {
+      return "Generate Rows cancelled"
+    }
     guard batch.historySource == .dataImport else { return fullMessage }
     if case DatabaseError.batchCancelled = error { return "Import cancelled" }
     let pointer =
       batch.reportsToImportSheet ? "See the import sheet for details." : "See History for details."
-    return batchFailureMessage(error, ranges: batch.rowRanges, detail: "Import failed. \(pointer)")
+    return batchFailureMessage(error, batch: batch, detail: "Import failed. \(pointer)")
   }
 
   // MARK: - Private
 
   static let rowNotOnPage = "That row is not on this page."
+  /// Shown when the page was read again while a duplicated row's full values loaded
+  static let pageChangedWhileLoading = "The page changed while full values loaded. Try again."
 
   /// What to do with an integer primary key on a new row.
   private enum IntegerKeyPlan {

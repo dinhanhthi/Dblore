@@ -80,7 +80,8 @@ nonisolated enum LocalDataCategory: String, CaseIterable, Sendable {
     case .connectionHistory: "Saved database connections, without passwords"
     case .recentItems: "Workspaces and files you opened recently"
     case .openTabs: "Tabs restored at the next launch. Open tabs stay until you quit."
-    case .savedFilters: "Filters, highlights, MongoDB queries and view modes saved for tables"
+    case .savedFilters:
+      "Filters, highlights, MongoDB queries, view modes and frozen columns saved for tables"
     case .sqlSnippets: "Snippets the SQL editor inserts by their trigger"
     case .sidebarFolders: "Folders of tables and views in the sidebar, per connection"
     case .schemaLayout: "Positions of tables on the schema diagram"

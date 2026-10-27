@@ -7,12 +7,15 @@ import Foundation
 
 /// `sqlite_schema` and `pragma_*` reads through `DatabaseSession.query`.
 nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
+  /// `pragma_database_list` lists `temp` only once the session holds a temp object.
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     var tables: [DatabaseTable] = []
     for schema in try await schemas(in: session) {
       let estimates = try await rowEstimates(schema: schema, in: session)
       for name in try await relations(schema: schema, type: "table", in: session) {
-        tables.append(DatabaseTable(schema: schema, name: name, rowCount: estimates[name]))
+        tables.append(
+          DatabaseTable(
+            schema: schema, name: name, rowCount: estimates[name], isTemporary: schema == "temp"))
       }
     }
     return tables

@@ -20,24 +20,22 @@ struct ConnectionAppearanceSyncTests {
   }
 
   private static func savedEntry(
-    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+    _ config: ConnectionConfig, defaults: UserDefaults
   ) -> ConnectionHistoryEntry? {
     SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
       .first { $0.config.host == config.host }
   }
 
-  private static func removeSaved(_ config: ConnectionConfig) {
-    if let entry = savedEntry(config) {
-      SessionManager.removeConnection(id: entry.id, passwords: NoPasswordStore())
-    }
-  }
-
-  private static func workspace(_ config: ConnectionConfig) -> WorkspaceManager {
+  /// Saves and connects go to `defaults` and an in-memory password store, never the Keychain
+  private static func workspace(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> WorkspaceManager {
     WorkspaceManager(
       workspace: Workspace(connectionConfig: config), restoreTabs: false,
       connectionManager: DatabaseConnectionManager(
         sessionFactory: FakeDatabaseSessionFactory(
-          capabilities: DatabaseType.postgresql.capabilities)))
+          capabilities: DatabaseType.postgresql.capabilities)),
+      defaults: defaults, passwords: RecordingConnectionPasswordStore())
   }
 
   private static func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
@@ -45,6 +43,13 @@ struct ConnectionAppearanceSyncTests {
     let defaults = try #require(UserDefaults(suiteName: name))
     defer { defaults.removePersistentDomain(forName: name) }
     try body(defaults)
+  }
+
+  private static func withDefaults(_ body: (UserDefaults) async throws -> Void) async throws {
+    let name = "ConnectionAppearanceSyncTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    try await body(defaults)
   }
 
   @Test("A save from outside the form takes the saved row's color, group and scripts")
@@ -76,6 +81,18 @@ struct ConnectionAppearanceSyncTests {
         WorkspaceManager.keepingSavedScripts(stranger, defaults: defaults).passwordCommandScript
           == nil)
 
+      // Another engine on the same unscoped key is not the saved row
+      var otherEngine = file
+      otherEngine.databaseType = .sqlite
+      #expect(
+        ConnectionKeychainKey.password(for: otherEngine)
+          == ConnectionKeychainKey.password(for: saved))
+      #expect(
+        WorkspaceManager.keepingSavedScripts(otherEngine, defaults: defaults).preConnectScript
+          == nil)
+      #expect(
+        WorkspaceManager.keepingSavedAppearance(otherEngine, defaults: defaults).colorTag == nil)
+
       // Remember off writes nothing, so the live values stay
       file.rememberConnection = false
       #expect(WorkspaceManager.keepingSavedAppearance(file, defaults: defaults) == file)
@@ -83,6 +100,40 @@ struct ConnectionAppearanceSyncTests {
       // No saved row: unchanged
       let other = Self.config(.green, group: "Staging")
       #expect(WorkspaceManager.keepingSavedAppearance(other, defaults: defaults) == other)
+    }
+  }
+
+  @Test("An opened file, an older copy or a fresh form draft never clears the saved lock")
+  func savedLockIsKept() throws {
+    try Self.withDefaults { defaults in
+      var saved = Self.config()
+      saved.isLocked = true
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+
+      var copy = saved
+      copy.isLocked = false
+      #expect(WorkspaceManager.keepingSavedAppearance(copy, defaults: defaults).isLocked)
+      #expect(WorkspaceManager.keepingSavedAIFields(copy, defaults: defaults).isLocked)
+
+      // A form connect saves a fresh draft of the same connection
+      #expect(
+        SessionManager.saveConnection(copy, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.isLocked == true)
+
+      // An Edit saves a stale draft over the row
+      let row = try #require(Self.savedEntry(saved, defaults: defaults))
+      #expect(
+        SessionManager.replaceConnection(
+          id: row.id, with: copy, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.isLocked == true)
+
+      // A first save keeps the draft's own value
+      var other = Self.config()
+      other.isLocked = true
+      #expect(
+        SessionManager.saveConnection(other, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(Self.savedEntry(other, defaults: defaults)?.config.isLocked == true)
     }
   }
 
@@ -109,45 +160,51 @@ struct ConnectionAppearanceSyncTests {
 
   @Test("An auto-connect from an opened file keeps the saved color and group")
   func fileConnectKeepsSavedAppearance() async throws {
-    let saved = Self.config(.cyan, group: "Prod")
-    defer { Self.removeSaved(saved) }
-    #expect(SessionManager.saveConnection(saved, passwords: NoPasswordStore()))
-    var file = saved
-    file.colorTag = nil
-    file.groupName = nil
-    let manager = Self.workspace(file)
+    try await Self.withDefaults { defaults in
+      let saved = Self.config(.cyan, group: "Prod")
+      #expect(
+        SessionManager.saveConnection(
+          saved, defaults: defaults, passwords: RecordingConnectionPasswordStore()))
+      var file = saved
+      file.colorTag = nil
+      file.groupName = nil
+      let manager = Self.workspace(file, defaults: defaults)
 
-    try await manager.connectWithoutUnlockCheck(config: file, isAutoConnect: true)
+      try await manager.connectWithoutUnlockCheck(config: file, isAutoConnect: true)
 
-    #expect(Self.savedEntry(saved)?.config.colorTag == .cyan)
-    #expect(Self.savedEntry(saved)?.config.groupName == "Prod")
-    #expect(manager.workspace.connectionConfig?.colorTag == .cyan)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.colorTag == .cyan)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.groupName == "Prod")
+      #expect(manager.workspace.connectionConfig?.colorTag == .cyan)
+    }
   }
 
   @Test("An untouched form connect from an opened file keeps the saved color and group")
   func untouchedFormConnectKeepsSavedAppearance() async throws {
-    let saved = Self.config(.cyan, group: "Prod")
-    defer { Self.removeSaved(saved) }
-    #expect(SessionManager.saveConnection(saved, passwords: NoPasswordStore()))
-    // An older file without color and group
-    var file = saved
-    file.colorTag = nil
-    file.groupName = nil
-    let manager = Self.workspace(file)
+    try await Self.withDefaults { defaults in
+      let saved = Self.config(.cyan, group: "Prod")
+      #expect(
+        SessionManager.saveConnection(
+          saved, defaults: defaults, passwords: RecordingConnectionPasswordStore()))
+      // An older file without color and group
+      var file = saved
+      file.colorTag = nil
+      file.groupName = nil
+      let manager = Self.workspace(file, defaults: defaults)
 
-    // The form (Workspace Info, or a failed auto-connect) opens on the manager's draft
-    #expect(manager.editingConnectionConfig.colorTag == .cyan)
-    #expect(manager.editingConnectionConfig.groupName == "Prod")
-    let autoConnect = try #require(manager.workspace.connectionConfig)
-    manager.presentConnectErrorIfActionable(
-      DatabaseError.engineUnavailable(.duckdb), config: autoConnect)
-    #expect(manager.editingConnectionConfig.colorTag == .cyan)
+      // The form (Workspace Info, or a failed auto-connect) opens on the manager's draft
+      #expect(manager.editingConnectionConfig.colorTag == .cyan)
+      #expect(manager.editingConnectionConfig.groupName == "Prod")
+      let autoConnect = try #require(manager.workspace.connectionConfig)
+      manager.presentConnectErrorIfActionable(
+        DatabaseError.engineUnavailable(.duckdb), config: autoConnect)
+      #expect(manager.editingConnectionConfig.colorTag == .cyan)
 
-    try await manager.connect(
-      config: manager.editingConnectionConfig, defaultCommitStyle: .immediate,
-      hasPassword: false, hasTouchID: false, fromForm: true)
-    #expect(Self.savedEntry(saved)?.config.colorTag == .cyan)
-    #expect(Self.savedEntry(saved)?.config.groupName == "Prod")
+      try await manager.connect(
+        config: manager.editingConnectionConfig, defaultCommitStyle: .immediate,
+        hasPassword: false, hasTouchID: false, fromForm: true)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.colorTag == .cyan)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.groupName == "Prod")
+    }
   }
 
   @Test("A DuckDB file opened from Finder opens the form on its saved color and group")
@@ -179,61 +236,67 @@ struct ConnectionAppearanceSyncTests {
 
   @Test("A form connect writes the form's color and group, clearing included")
   func formConnectWritesAppearance() async throws {
-    let saved = Self.config(.purple, group: "Prod")
-    defer { Self.removeSaved(saved) }
-    #expect(SessionManager.saveConnection(saved, passwords: NoPasswordStore()))
-    let manager = Self.workspace(saved)
+    try await Self.withDefaults { defaults in
+      let saved = Self.config(.purple, group: "Prod")
+      #expect(
+        SessionManager.saveConnection(
+          saved, defaults: defaults, passwords: RecordingConnectionPasswordStore()))
+      let manager = Self.workspace(saved, defaults: defaults)
 
-    var cleared = saved
-    cleared.colorTag = nil
-    cleared.groupName = nil
-    try await manager.connect(
-      config: cleared, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
-      fromForm: true)
-    #expect(Self.savedEntry(saved)?.config.colorTag == nil)
-    #expect(Self.savedEntry(saved)?.config.groupName == nil)
+      var cleared = saved
+      cleared.colorTag = nil
+      cleared.groupName = nil
+      try await manager.connect(
+        config: cleared, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+        fromForm: true)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.colorTag == nil)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.groupName == nil)
 
-    var edited = saved
-    edited.colorTag = .green
-    edited.groupName = "Staging"
-    try await manager.connect(
-      config: edited, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
-      fromForm: true)
-    #expect(Self.savedEntry(saved)?.config.colorTag == .green)
-    #expect(Self.savedEntry(saved)?.config.groupName == "Staging")
-    #expect(manager.workspace.connectionConfig?.groupName == "Staging")
+      var edited = saved
+      edited.colorTag = .green
+      edited.groupName = "Staging"
+      try await manager.connect(
+        config: edited, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+        fromForm: true)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.colorTag == .green)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.groupName == "Staging")
+      #expect(manager.workspace.connectionConfig?.groupName == "Staging")
+    }
   }
 
   @Test("A form connect held for the Safe Mode unlock still writes the form's color and group")
   func heldFormConnectWritesAppearance() async throws {
-    var saved = Self.config(.purple, group: "Prod")
-    saved.applyCommitStyle(.review)
-    defer { Self.removeSaved(saved) }
-    #expect(SessionManager.saveConnection(saved, passwords: NoPasswordStore()))
-    let manager = Self.workspace(saved)
-    var edited = saved
-    edited.applyCommitStyle(.immediate)
-    edited.colorTag = nil
-    edited.groupName = "Archive"
-    await #expect(throws: WorkspaceConnectError.unlockRequired) {
-      try await manager.connect(
-        config: edited, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false,
-        fromForm: true)
-    }
-    #expect(manager.pendingWeakeningFromForm == true)
-    manager.cancelPendingWeakeningConnect()
-    #expect(manager.pendingWeakeningFromForm == false)
-    await #expect(throws: WorkspaceConnectError.unlockRequired) {
-      try await manager.connect(
-        config: edited, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false,
-        fromForm: true)
-    }
+    try await Self.withDefaults { defaults in
+      var saved = Self.config(.purple, group: "Prod")
+      saved.applyCommitStyle(.review)
+      #expect(
+        SessionManager.saveConnection(
+          saved, defaults: defaults, passwords: RecordingConnectionPasswordStore()))
+      let manager = Self.workspace(saved, defaults: defaults)
+      var edited = saved
+      edited.applyCommitStyle(.immediate)
+      edited.colorTag = nil
+      edited.groupName = "Archive"
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(
+          config: edited, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false,
+          fromForm: true)
+      }
+      #expect(manager.pendingWeakeningFromForm == true)
+      manager.cancelPendingWeakeningConnect()
+      #expect(manager.pendingWeakeningFromForm == false)
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(
+          config: edited, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false,
+          fromForm: true)
+      }
 
-    try await manager.completePendingWeakeningConnect()
+      try await manager.completePendingWeakeningConnect()
 
-    #expect(manager.pendingWeakeningFromForm == false)
-    #expect(Self.savedEntry(saved)?.config.colorTag == nil)
-    #expect(Self.savedEntry(saved)?.config.groupName == "Archive")
+      #expect(manager.pendingWeakeningFromForm == false)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.colorTag == nil)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.groupName == "Archive")
+    }
   }
 
   @Test("The welcome filter also matches the group name")

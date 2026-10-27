@@ -138,6 +138,22 @@ extension SettingsModal.SettingsTab {
             "When enabled, Run executes the selection or the current line. Otherwise, Run executes the selection or the entire file. (Editor only)"
         ),
         .init(
+          card: "Formatter", title: "Formatter",
+          detail: FormatterSettingsSection.description + " Format SQL rules, preview"),
+        .init(card: "Formatter", title: "Indent", detail: "2 spaces, 4 spaces, Tab"),
+        .init(
+          card: "Formatter", title: "Keyword case",
+          detail: "UPPER, lower or Preserve for SQL keywords such as SELECT and FROM"),
+        .init(
+          card: "Formatter", title: "Function case",
+          detail: "UPPER, lower or Preserve for function names such as count and sum"),
+        .init(
+          card: "Formatter", title: "Comma position",
+          detail: "Trailing or Leading commas in lists"),
+        .init(
+          card: "Formatter", title: "Line width",
+          detail: "Off, 80, 100 or 120. Longer lines break at commas, AND and OR."),
+        .init(
           card: "Snippets", title: "SQL snippets",
           detail:
             "Add, edit or delete snippets: a trigger typed in a SQL editor expands a template with tab stops. ${1:default}, ${1}, $0 and \\$ for a literal dollar sign. Tab and Shift-Tab move between the placeholders."
@@ -273,6 +289,23 @@ extension SettingsModal.SettingsTab {
           card: "Safe Mode", title: "Safe Mode password",
           detail: "Set a password to enable protection (then Touch ID if you like)."),
         .init(card: "Safe Mode", title: "Use Touch ID"),
+        .init(
+          card: "Lock password", title: "Lock password",
+          detail:
+            "Set, change or remove the password that unlocks locked connections and workspaces, like Touch ID or the Mac password."
+        ),
+        .init(
+          card: "Lock password", title: "Change Lock password",
+          detail:
+            "Re-encrypts locked workspaces. Earlier backups and copies stay readable with the old password."
+        ),
+        .init(
+          card: "Relock", title: "Lock again after idle",
+          detail:
+            "5, 15, 30 or 60 minutes, or Never. Also when the screen locks or the Mac sleeps."),
+        .init(
+          card: "Locked items", title: "Locked items",
+          detail: "Locked connections and workspaces. Remove a lock."),
       ]
     case .plugins:
       return [

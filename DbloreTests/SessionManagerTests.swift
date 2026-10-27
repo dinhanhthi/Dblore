@@ -59,6 +59,46 @@ struct SessionManagerTests {
         \.config.name) == ["Renamed"])
   }
 
+  @Test("Reconnecting a saved row keeps its id, so settings keyed by id (MCP allowlist) survive")
+  func resaveKeepsRowID() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    var config = ConnectionConfig(host: "db.example", database: "app", username: "ada")
+    SessionManager.saveConnection(config, defaults: harness.defaults, passwords: harness.store)
+    let saved = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+
+    config.name = "Reconnected"
+    SessionManager.saveConnection(config, defaults: harness.defaults, passwords: harness.store)
+    let reloaded = SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store)
+    #expect(reloaded.map(\.id) == [saved.id])
+    #expect(reloaded.first?.config.name == "Reconnected")
+
+    // Another engine on the same unscoped key is another connection: it gets a new id
+    var sqlite = config
+    sqlite.databaseType = .sqlite
+    #expect(
+      ConnectionKeychainKey.password(for: sqlite) == ConnectionKeychainKey.password(for: config))
+    SessionManager.saveConnection(sqlite, defaults: harness.defaults, passwords: harness.store)
+    let replaced = SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store)
+    #expect(replaced.map(\.config.databaseType) == [.sqlite])
+    #expect(replaced.first?.id != saved.id)
+
+    // Same engine, other fields that only make the same unscoped key: another connection too
+    let original = ConnectionConfig(host: "h", port: 5432, database: "x:6000:y", username: "ada")
+    SessionManager.saveConnection(original, defaults: harness.defaults, passwords: harness.store)
+    let first = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first)
+    let colliding = ConnectionConfig(host: "h:5432:x", port: 6000, database: "y", username: "ada")
+    #expect(
+      ConnectionKeychainKey.password(for: colliding)
+        == ConnectionKeychainKey.password(for: original))
+    SessionManager.saveConnection(colliding, defaults: harness.defaults, passwords: harness.store)
+    let collided = SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store)
+    #expect(collided.first?.config.host == "h:5432:x")
+    #expect(collided.first?.id != first.id)
+  }
+
   @Test("Export then replace keeps the unknown entry")
   func exportReplaceRoundTripKeepsUnknownEntry() throws {
     let source = try Harness()

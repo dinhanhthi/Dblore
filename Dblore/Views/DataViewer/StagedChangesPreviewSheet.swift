@@ -40,6 +40,11 @@ struct StagedChangesPreviewSheet: View {
   /// Counting finished with a blocker that has rows: only Commit Anyway commits
   private var blocked: Bool { impact?.blocksCommit == true }
 
+  /// A commit is already counting or sending: a second one would send the batch again
+  private var commitInFlight: Bool {
+    viewModel.isCheckingStagedDeletes || viewModel.isCommittingStaged
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
@@ -91,11 +96,12 @@ struct StagedChangesPreviewSheet: View {
         if blocked {
           Button("Commit Anyway") { commit(ignoringBlockers: true) }
             .buttonStyle(DangerButtonStyle())
-            .disabled(sql.isEmpty || !viewModel.stagingEnabled)
+            .disabled(sql.isEmpty || !viewModel.stagingEnabled || commitInFlight)
         }
         Button("Commit") { commit() }
           .buttonStyle(PrimaryButtonStyle())
-          .disabled(sql.isEmpty || !viewModel.stagingEnabled || checking || blocked)
+          .disabled(
+            sql.isEmpty || !viewModel.stagingEnabled || checking || blocked || commitInFlight)
       }
       .modalBarPadding()
     }

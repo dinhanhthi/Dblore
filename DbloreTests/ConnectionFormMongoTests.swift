@@ -136,6 +136,32 @@ struct ConnectionFormMongoTests {
     try expectURIMatchesFields(try MongoConnectionDraft.prepared(srv))
   }
 
+  @Test func hostWithURIDelimitersIsAFieldError() throws {
+    var config = ConnectionFormContent.newFormDraft(databaseType: .mongodb)
+    for host in ["evil?tls=false", "evil/db", "evil#x", "user@evil", "a,evil", "evil host"] {
+      config.host = host
+      let rebuilt = MongoConnectionDraft.rebuilt(config)
+      #expect(
+        MongoConnectionDraft.fieldError(rebuilt)
+          == MongoURIParser.ParseError.invalidHost.errorDescription, "\(host)")
+      #expect(!ConnectionFormContent.isFormInputValid(rebuilt), "\(host)")
+      #expect(throws: MongoURIParser.ParseError.invalidHost) {
+        try MongoConnectionDraft.prepared(rebuilt)
+      }
+    }
+    // The query is not split off into the stored URI.
+    config.host = "evil?tls=false"
+    let stored = try MongoURIParser.parse(
+      try #require(MongoConnectionDraft.rebuilt(config).mongoURI))
+    #expect(stored.hosts.first?.name != "evil")
+    #expect(stored.tls == nil)
+
+    for host in ["db.example.com", "::1"] {
+      config.host = host
+      #expect(MongoConnectionDraft.fieldError(MongoConnectionDraft.rebuilt(config)) == nil)
+    }
+  }
+
   @Test func databaseAndUserAreOptional() {
     var config = ConnectionFormContent.newFormDraft(databaseType: .mongodb)
     config.host = "localhost"

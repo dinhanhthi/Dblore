@@ -120,6 +120,13 @@ extension NotebookViewModel {
   /// Pin the editor result (session only, the document is not changed)
   @discardableResult
   func pinEditorResult() -> Bool {
+    // A pin keeps its rows: a cut binary value would compare as if whole
+    if let result = editorResult, hasUnloadedCells(in: result) {
+      showToast(
+        "Pin refused: some binary values on this page are only partly loaded.",
+        type: .error)
+      return false
+    }
     guard let pin = Self.pin(editorResult, query: editorResult?.sourceQuery ?? editorContent)
     else { return false }
     editorPinnedResult = pin
@@ -157,8 +164,15 @@ extension NotebookViewModel {
       editorComparison = nil
     }
     let current = editorResult
+    // A cut binary value of a lazy page is unknown, never "changed"
+    var unknown: [Int: Set<String>] = [:]
+    if let current {
+      for (row, columns) in unloadedCells(in: current) {
+        unknown[row] = Set(columns.keys.map { current.columns[$0].name })
+      }
+    }
     return Task { [weak self] in
-      let comparison = await Self.compare(pin: pin, current: current)
+      let comparison = await Self.compare(pin: pin, current: current, unknown: unknown)
       guard let self, self.editorComparisonGeneration == generation else { return }
       self.editorComparison = comparison.map {
         SubjectComparison(subject: subject, comparison: $0)
@@ -186,7 +200,7 @@ extension NotebookViewModel {
   }
 
   private static func compare(
-    pin: PinnedResult?, current: CellResult?
+    pin: PinnedResult?, current: CellResult?, unknown: [Int: Set<String>] = [:]
   ) async
     -> CellComparison?
   {
@@ -201,6 +215,7 @@ extension NotebookViewModel {
     }.value
     if let planDiff { return .plan(planDiff) }
     return .rows(
-      await ResultComparison.compareInBackground(baseline: pin.result, current: current))
+      await ResultComparison.compareInBackground(
+        baseline: pin.result, current: current, unknown: unknown))
   }
 }

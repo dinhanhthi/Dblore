@@ -94,19 +94,10 @@ nonisolated enum SQLiteFileBackup {
     let presenters = SQLiteFileAccess.sidecarSuffixes.map {
       SQLiteFileAccess.SidecarFilePresenter(primaryURL: destination, suffix: $0, queue: queue)
     }
-    presenters.forEach(NSFileCoordinator.addFilePresenter)
-    let registered = SQLiteFileAccess.waitForPresenterRegistration()
-    // Removing waits for the arbiter too. Behind a stalled registration it stays queued.
-    defer {
-      let remove: @Sendable () -> Void = {
-        presenters.forEach(NSFileCoordinator.removeFilePresenter)
-      }
-      if registered {
-        SQLiteFileAccess.onPresenterQueue(remove)
-      } else {
-        SQLiteFileAccess.presenterQueue.async(execute: remove)
-      }
-    }
+    presenters.forEach { SQLiteFileAccess.addFilePresenter($0) }
+    SQLiteFileAccess.waitForPresenterRegistration()
+    // Queued behind the adds: a registration that outlived the wait is removed once it ends
+    defer { presenters.forEach { SQLiteFileAccess.removeFilePresenter($0) } }
     for presenter in presenters {
       let name = presenter.sidecarURL.lastPathComponent
       var info = stat()

@@ -46,6 +46,8 @@ extension NotebookViewModel {
     let generated = result.editTarget?.generatedColumns ?? []
     let target = result.editTarget
     let table = databaseTables.first { $0.schema == target?.schema && $0.name == target?.name }
+    // Cut values of a lazy page; a staged edit (a value other than the page's) replaced its cell
+    let unloaded = stagedInsertIndex == nil ? unloadedCells(in: result)[originalRow] ?? [:] : [:]
     let fields = result.columns.enumerated().map { index, column in
       let info = table?.columns.first { $0.name == column.name }
       let isPrimaryKey = primaryKey.contains(column.name)
@@ -56,8 +58,13 @@ extension NotebookViewModel {
       let isReadOnly =
         !editable || readOnlyIndexes.contains(index) || field.isGenerated
         || (isPrimaryKey && stagedInsertIndex == nil)
+      let unloadedLength = unloaded[index].flatMap { length in
+        result.rows[originalRow].indices.contains(index)
+          && result.rows[originalRow][index] == values[column.name] ? length : nil
+      }
       return RowDetailField(
-        field: field, original: values[column.name] ?? .null, isReadOnly: isReadOnly)
+        field: field, original: values[column.name] ?? .null, isReadOnly: isReadOnly,
+        unloadedLength: unloadedLength)
     }
 
     return RowDetailState(

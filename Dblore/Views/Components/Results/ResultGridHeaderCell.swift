@@ -4,9 +4,9 @@
 //
 //  Two-line header cell of the result grid, as in the old result table: the column name
 //  (yellow key before it for a primary-key column, search highlight on a column-name match)
-//  over the column type in a smaller muted font. The coordinator decides the content
-//  (ResultGridHeaderContent); the cell only draws it, plus the filter icon on the name line
-//  and the sort indicator on the type line.
+//  over the column type in a smaller muted font, and a pin after the key on the last frozen
+//  column. The coordinator decides the content (ResultGridHeaderContent); the cell only draws
+//  it, plus the filter icon on the name line and the sort indicator on the type line.
 //
 
 import AppKit
@@ -30,6 +30,8 @@ struct ResultGridHeaderContent: Equatable {
   var isRowNumber = false
   /// A category filter is hiding at least one value of this column
   var isFiltered = false
+  /// Last column of the frozen band (pin icon before the name)
+  var isFrozenThrough = false
 }
 
 final class ResultGridHeaderCell: NSTableHeaderCell {
@@ -117,6 +119,15 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
         from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
       titleX += size.width + Spacing.xs
     }
+    if content.isFrozenThrough, let pin = Self.pinImage() {
+      let size = pin.size
+      pin.draw(
+        in: NSRect(
+          x: titleX, y: top + (titleHeight - size.height) / 2, width: size.width,
+          height: size.height),
+        from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+      titleX += size.width + Spacing.xs
+    }
     draw(
       title(),
       in: NSRect(x: titleX, y: top, width: max(0, span.maxX - titleX), height: titleHeight))
@@ -137,11 +148,19 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     return max(0, span.maxX - span.minX)
   }
 
-  /// Width of the name line inside a header of `columnWidth`, after the key icon
+  /// Width of the name line inside a header of `columnWidth`, after the key and pin icons
   func nameLineWidth(columnWidth: CGFloat) -> CGFloat {
-    var width = lineSpanWidth(columnWidth: columnWidth)
+    max(0, lineSpanWidth(columnWidth: columnWidth) - leadingIconsWidth())
+  }
+
+  /// Width of the key and pin icons before the name, each with its gap
+  private func leadingIconsWidth() -> CGFloat {
+    var width: CGFloat = 0
     if content.isPrimaryKey, let key = Self.keyImage() {
-      width = max(0, width - key.size.width - Spacing.xs)
+      width += key.size.width + Spacing.xs
+    }
+    if content.isFrozenThrough, let pin = Self.pinImage() {
+      width += pin.size.width + Spacing.xs
     }
     return width
   }
@@ -155,11 +174,9 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
     let sample = NSRect(x: 0, y: 0, width: sampleWidth, height: 44)
     let sampleSpan = textSpan(columnRect: sample, headerBounds: sample)
     let chrome = sampleWidth - max(0, sampleSpan.maxX - sampleSpan.minX)
-    var nameWidth = (content.title as NSString).size(withAttributes: [.font: Self.titleFont])
-      .width
-    if content.isPrimaryKey, let key = Self.keyImage() {
-      nameWidth += key.size.width + Spacing.xs
-    }
+    let nameWidth =
+      (content.title as NSString).size(withAttributes: [.font: Self.titleFont]).width
+      + leadingIconsWidth()
     let typeWidth =
       content.type.map {
         ($0 as NSString).size(withAttributes: [.font: Self.typeFont]).width
@@ -296,5 +313,12 @@ final class ResultGridHeaderCell: NSTableHeaderCell {
       .withSymbolConfiguration(
         NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
           .applying(NSImage.SymbolConfiguration(paletteColors: [keyColor])))
+  }
+
+  private static func pinImage() -> NSImage? {
+    NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Frozen columns end here")?
+      .withSymbolConfiguration(
+        NSImage.SymbolConfiguration(pointSize: 9, weight: .regular)
+          .applying(NSImage.SymbolConfiguration(paletteColors: [typeColor])))
   }
 }

@@ -25,6 +25,17 @@ struct WorkspaceContainerView: View {
   @State private var isImportBusy = false
   @State private var importTabID: UUID?
   @State private var importDestination: TableImportDestination?
+  /// Import Files: its model, the tab it runs in and the table whose menu opened it
+  @State private var multiFileImport: MultiFileImportRequest?
+  @State private var isMultiFileImportPresented = false
+  @State private var isMultiFileImportBusy = false
+  /// Generate Rows: its model and the tab it runs in
+  @State private var generateRows: GenerateRowsPanelRequest?
+  @State private var isGenerateRowsPresented = false
+  @State private var isGenerateRowsBusy = false
+  /// Build Join Query: its model (the sheet opens its query in a new tab)
+  @State private var joinBuilder: JoinBuilderModel?
+  @State private var isJoinBuilderPresented = false
   @State private var isConnectionImportPresented = false
   /// Export SQL Dump / Copy Database File / Restore SQL Dump panel, and the tab it runs for
   @State private var backupSheet: BackupSheet?
@@ -99,7 +110,9 @@ struct WorkspaceContainerView: View {
     }
   }
 
-  var body: some View {
+  /// Sidebars, tabs, content and footer: not built while the window is covered (relocked), so
+  /// nothing of the workspace shows through or takes keyboard input
+  private var workspaceLayout: some View {
     GeometryReader { geometry in
       // Footer below the sidebar + content area: always full window width, unaffected by the
       // left sidebar toggle
@@ -113,6 +126,9 @@ struct WorkspaceContainerView: View {
               tabBarHeight: ComponentSize.tabBarHeight,
               maxWidth: geometry.size.width * 0.35,
               onImportTable: { requestImport(for: $0) },
+              onImportFiles: { requestMultiFileImport(schema: $0, table: $1) },
+              onGenerateRows: { requestGenerateRows(for: $0) },
+              onBuildJoinQuery: { requestJoinBuilder(initialTables: [$0]) },
               mongoAdmin: $sidebarMongoAdmin
             )
 
@@ -144,6 +160,11 @@ struct WorkspaceContainerView: View {
                 ConnectionLostBanner(workspaceManager: workspaceManager)
               }
 
+              // Auto-connect stopped on a locked connection (Unlock), with or without tabs
+              if workspaceManager.isConnectLocked, !workspaceManager.connectionState.isConnected {
+                LockedConnectionBanner(workspaceManager: workspaceManager)
+              }
+
               // A SQLite file opened read-only because its sidecar files cannot be written
               if workspaceManager.connectionState.isConnected,
                 workspaceManager.readOnlyFileNotice != nil
@@ -154,7 +175,9 @@ struct WorkspaceContainerView: View {
               // Content area
               if workspaceManager.isSchemaVisualizerActive {
                 // Schema visualizer at workspace level (overlays everything)
-                WorkspaceSchemaVisualizerContent(workspaceManager: workspaceManager)
+                WorkspaceSchemaVisualizerContent(
+                  workspaceManager: workspaceManager,
+                  onBuildJoinQuery: { requestJoinBuilder(initialTables: $0) })
               } else if let screen = workspaceManager.mongoOverview {
                 // MongoDB Databases / Collections at workspace level (over the tabs)
                 switch screen {
@@ -170,7 +193,9 @@ struct WorkspaceContainerView: View {
                   viewModel: viewModel
                 )
               } else {
+                // App-level toasts (connect warnings) need an overlay before a tab opens one
                 WorkspaceEmptyStateView(workspaceManager: workspaceManager)
+                  .overlay { ToastOverlay() }
               }
             }
 
@@ -215,7 +240,7 @@ struct WorkspaceContainerView: View {
             Color.clear
               .frame(
                 width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
-                  + workspaceManager.connectionState.connectionButtonsWidth,
+                  + workspaceManager.titleBarButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
               .background {
@@ -250,6 +275,10 @@ struct WorkspaceContainerView: View {
                   }
 
                   WorkspaceInfoButton(workspaceManager: workspaceManager)
+
+                  if workspaceManager.workspace.fileURL != nil {
+                    WorkspaceLockButton(workspaceManager: workspaceManager)
+                  }
                 }
                 .padding(.trailing, Spacing.xsm)
               }
@@ -296,6 +325,19 @@ struct WorkspaceContainerView: View {
               windowWidth: geometry.size.width) : 0)
       )
     }
+  }
+
+  var body: some View {
+    // A ZStack, not a Group: a Group hands every modifier below to each branch, so a cover
+    // change rebuilt the whole chain (the window reader lost its window, the close guard its
+    // button, the sheets their state)
+    ZStack {
+      if workspaceManager.lockCoverage == nil {
+        workspaceLayout
+      } else {
+        Color.appBackground
+      }
+    }
     // No min frame here: `documentWindowMode` sets the limits, and a fixed 600 overflowed the
     // 540 compact window (sidebars and the footer were cut off at the bottom)
     .background(Color.appBackground)
@@ -308,7 +350,8 @@ struct WorkspaceContainerView: View {
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
         windowTitle: WorkspaceWindowTitle.window(
-          fileName: workspaceManager.activeTab?.title,
+          // Covered: no file name in the title either
+          fileName: workspaceManager.lockCoverage == nil ? workspaceManager.activeTab?.title : nil,
           workspaceName: workspaceManager.workspace.name),
         isTabBarVisible: $isNativeTabBarVisible,
         tabBarHeight: $nativeTabBarHeight,
@@ -316,28 +359,11 @@ struct WorkspaceContainerView: View {
         isFullScreen: $isFullScreen)
     )
     .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
-    .pendingTransactionDialogs(workspaceManager: workspaceManager)
-    .confirmationDialog(
-      "Save changes?",
-      isPresented: $workspaceManager.showingCloseConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Save") {
-        Task {
-          await workspaceManager.saveAndCloseTab()
-        }
-      }
-      Button("Don't Save", role: .destructive) {
-        workspaceManager.closeTabWithoutSaving()
-      }
-      Button("Cancel", role: .cancel) {
-        workspaceManager.cancelClose()
-      }
-    } message: {
-      if let tabId = workspaceManager.tabToClose,
-        let tab = workspaceManager.tabs.first(where: { $0.id == tabId })
-      {
-        Text("Do you want to save changes to \"\(tab.title)\"?")
+    // The window's sheets and dialogs hang on this anchor, which exists only while the window
+    // is not covered: none shows over the cover, and one open at the relock goes away
+    .background {
+      if workspaceManager.lockCoverage == nil {
+        windowPresentations
       }
     }
     // Note: File opening is handled by AppDelegate.application(_:open:) in DbloreApp.swift
@@ -367,6 +393,7 @@ struct WorkspaceContainerView: View {
     .bridgedFocusedSceneValue(\.openDataDictionaryAction, dataDictionaryAction)
     .bridgedFocusedSceneValue(\.openSchemaCompareAction, schemaCompareAction)
     .bridgedFocusedSceneValue(\.activeViewModel, activeViewModel)
+    .bridgedFocusedSceneValue(\.activeWorkspace, workspaceManager)
     .connectionFormModal(workspaceManager: workspaceManager)
     .workspaceInfoModal(workspaceManager: workspaceManager)
     // After the connection form, so they open on top of it
@@ -379,9 +406,6 @@ struct WorkspaceContainerView: View {
       openToken: settingsOpenToken
     )
     .structureEditorPanel(workspaceManager: workspaceManager)
-    .dataDictionaryExportSheet(workspaceManager: workspaceManager)
-    .schemaCompareSheet(workspaceManager: workspaceManager)
-    .crossTableSearchSheet(workspaceManager: workspaceManager)
     .sidePanelOverlay(
       isPresented: Binding(
         get: { isImportPresented },
@@ -395,6 +419,46 @@ struct WorkspaceContainerView: View {
           initialDestination: importDestination, tables: workspaceManager.databaseTables)
       }
     }
+    .sidePanelOverlay(
+      isPresented: Binding(
+        get: { isMultiFileImportPresented },
+        set: { if $0 || !isMultiFileImportBusy { isMultiFileImportPresented = $0 } }
+      ),
+      width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
+    ) {
+      if let request = multiFileImport,
+        let viewModel = workspaceManager.viewModel(for: request.tabID)
+      {
+        MultiFileImportSheet(
+          viewModel: viewModel, model: request.model, table: request.table,
+          isPresented: $isMultiFileImportPresented, isBusy: $isMultiFileImportBusy
+        )
+        // A new request starts a fresh sheet (no edited file or task of the last one)
+        .id(ObjectIdentifier(request.model))
+      }
+    }
+    .sidePanelOverlay(
+      isPresented: Binding(
+        get: { isGenerateRowsPresented },
+        set: { if $0 || !isGenerateRowsBusy { isGenerateRowsPresented = $0 } }
+      ),
+      width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
+    ) {
+      if let request = generateRows, let viewModel = workspaceManager.viewModel(for: request.tabID)
+      {
+        GenerateRowsSheet(
+          viewModel: viewModel, model: request.model,
+          isPresented: $isGenerateRowsPresented, isBusy: $isGenerateRowsBusy
+        )
+        // A new request starts a fresh sheet (no settings or task of the last one)
+        .id(ObjectIdentifier(request.model))
+      }
+    }
+    .modifier(
+      JoinBuilderPanel(
+        workspaceManager: workspaceManager, model: joinBuilder,
+        isPresented: $isJoinBuilderPresented, menuAction: joinBuilderAction)
+    )
     .modifier(
       BackupPanel(workspaceManager: workspaceManager, sheet: $backupSheet, tabID: backupTabID)
     )
@@ -407,6 +471,23 @@ struct WorkspaceContainerView: View {
     .historyDetailModal(workspaceManager: workspaceManager)
     .sidebarMongoAdmin($sidebarMongoAdmin, workspaceManager: workspaceManager)
     .commandPaletteModal(workspaceManager: workspaceManager)
+    // Relocked: the panels and modals open below take no input and stay hidden under the cover
+    .disabled(workspaceManager.lockCoverage != nil)
+    .overlay {
+      if let coverage = workspaceManager.lockCoverage {
+        LockedOverlayView(coverage: coverage, workspaceManager: workspaceManager) {
+          hostWindow.window
+        }
+      }
+    }
+    // Covered: the AI request in flight stops, no field keeps the keyboard and every sheet
+    // and dialog of the window closes
+    .onChange(of: workspaceManager.lockCoverage != nil) { _, covered in
+      guard covered else { return }
+      if workspaceManager.aiAssistant.isGenerating { workspaceManager.aiAssistant.stop() }
+      hostWindow.window?.makeFirstResponder(nil)
+      dismissPresentationsForCover()
+    }
     .background(HostWindowReader(reference: hostWindow))
     .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isConnectionImportPresented)
     // Full size even with no tab open: the left sidebar opens tables from there
@@ -463,7 +544,9 @@ struct WorkspaceContainerView: View {
       WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id)
     }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
-      guard workspaceManager.isActiveWorkspace(in: hostWindow) else { return }
+      guard workspaceManager.isActiveWorkspace(in: hostWindow),
+        workspaceManager.lockCoverage == nil
+      else { return }
       if let raw = notification.userInfo?[SettingsPage.userInfoKey] as? String,
         let section = SettingsPage(rawValue: raw)
       {
@@ -474,6 +557,70 @@ struct WorkspaceContainerView: View {
         settingsSection = nil
         workspaceManager.isSettingsModalVisible.toggle()
       }
+    }
+  }
+
+  /// The window-level sheets and dialogs (each one a sheet on the window, above any overlay):
+  /// attached to an empty anchor that is not built while the window is covered
+  private var windowPresentations: some View {
+    Color.clear
+      .pendingTransactionDialogs(workspaceManager: workspaceManager)
+      .confirmationDialog(
+        "Save changes?",
+        isPresented: $workspaceManager.showingCloseConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Save") {
+          Task {
+            await workspaceManager.saveAndCloseTab()
+          }
+        }
+        Button("Don't Save", role: .destructive) {
+          workspaceManager.closeTabWithoutSaving()
+        }
+        Button("Cancel", role: .cancel) {
+          workspaceManager.cancelClose()
+        }
+      } message: {
+        if let tabId = workspaceManager.tabToClose,
+          let tab = workspaceManager.tabs.first(where: { $0.id == tabId })
+        {
+          Text("Do you want to save changes to \"\(tab.title)\"?")
+        }
+      }
+      .dataDictionaryExportSheet(workspaceManager: workspaceManager)
+      .schemaCompareSheet(workspaceManager: workspaceManager)
+      .lockWorkspaceSheet(workspaceManager: workspaceManager)
+      .crossTableSearchSheet(workspaceManager: workspaceManager)
+  }
+
+  /// The window was just covered: its sheets, dialogs and panels close (a running Lock
+  /// Workspace or schema compare keeps its sheet state and shows again after the unlock). Then,
+  /// once SwiftUI dismissed its own, any AppKit sheet still on the window (alerts, save panels)
+  /// ends as cancelled; an unlock prompt stays.
+  private func dismissPresentationsForCover() {
+    let manager = workspaceManager
+    if manager.showingCloseConfirmation { manager.cancelClose() }
+    if manager.isCommitConfirmationVisible {
+      manager.isCommitConfirmationVisible = false
+      manager.cancelCommitConfirmation()
+    }
+    if manager.isCommitUnlockVisible { manager.cancelCommitUnlock() }
+    manager.dataDictionaryExport?.cancel()
+    manager.closeSchemaCompare()
+    manager.lockSheet?.close()
+    if manager.isCrossTableSearchPresented { manager.crossTableSearch?.hide() }
+    if manager.pendingWeakeningConnect != nil { manager.cancelPendingWeakeningConnect() }
+    // MongoDB confirmations name what they act on; one that runs shows again after the unlock
+    sidebarMongoAdmin?.model.cancel()
+    if let model = manager.mongoBackup?.model, case .confirming = model.state { model.cancel() }
+    if let model = manager.mongoImport?.model, case .confirming = model.state { model.cancel() }
+    manager.isSettingsModalVisible = false
+    isConnectionImportPresented = false
+    Task {
+      try? await Task.sleep(for: .milliseconds(300))
+      guard manager.lockCoverage != nil, let window = hostWindow.window else { return }
+      UnlockPromptSheet.endSheets(on: window)
     }
   }
 
@@ -519,12 +666,81 @@ struct WorkspaceContainerView: View {
     return { [workspaceManager] in workspaceManager.openSchemaCompare() }
   }
 
+  private var joinBuilderAction: (() -> Void)? {
+    guard workspaceManager.canBuildJoinQuery else { return nil }
+    return { requestJoinBuilder() }
+  }
+
   private func requestImport(for table: DatabaseTable? = nil) {
     guard workspaceManager.canImportData else { return }
     let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
     importTabID = tabID
     importDestination = table.map { .existing(schema: $0.schema, table: $0.name) }
     isImportPresented = true
+  }
+
+  /// Import Files into `schema` (a table's menu passes its table: one file goes into it)
+  private func requestMultiFileImport(schema: String?, table: DatabaseTable?) {
+    guard workspaceManager.canImportData else { return }
+    let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
+    multiFileImport = MultiFileImportRequest(
+      model: MultiFileImportModel(schema: schema, tables: workspaceManager.databaseTables),
+      tabID: tabID, table: table)
+    isMultiFileImportPresented = true
+  }
+
+  /// Generate Rows into `table`, in the active tab or a new SQL file
+  private func requestGenerateRows(for table: DatabaseTable) {
+    guard workspaceManager.canGenerateRows else { return }
+    let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
+    generateRows = GenerateRowsPanelRequest(
+      model: GenerateRowsModel(schema: table.schema, table: table.name), tabID: tabID)
+    isGenerateRowsPresented = true
+  }
+
+  /// Build Join Query with `initialTables` picked in order (none from the File menu)
+  private func requestJoinBuilder(initialTables: [DatabaseTable] = []) {
+    guard workspaceManager.canBuildJoinQuery else { return }
+    joinBuilder = workspaceManager.makeJoinBuilderModel(initialTables: initialTables)
+    isJoinBuilderPresented = true
+  }
+}
+
+/// The Import Files panel's model, the tab it runs in and the table whose menu opened it
+private struct MultiFileImportRequest {
+  let model: MultiFileImportModel
+  let tabID: UUID
+  let table: DatabaseTable?
+}
+
+/// The Generate Rows panel's model and the tab it runs in
+private struct GenerateRowsPanelRequest {
+  let model: GenerateRowsModel
+  let tabID: UUID
+}
+
+/// The Build Join Query panel, and its File menu item's action (published here rather than in
+/// the container's body, whose chain is at the type checker's limit)
+private struct JoinBuilderPanel: ViewModifier {
+  let workspaceManager: WorkspaceManager
+  let model: JoinBuilderModel?
+  @Binding var isPresented: Bool
+  let menuAction: (() -> Void)?
+
+  func body(content: Content) -> some View {
+    content
+      .bridgedFocusedSceneValue(\.openJoinBuilderAction, menuAction)
+      .sidePanelOverlay(
+        isPresented: $isPresented, width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
+      ) {
+        if let model {
+          JoinBuilderSheet(
+            workspaceManager: workspaceManager, model: model, isPresented: $isPresented
+          )
+          // A new request starts a fresh sheet (no picks of the last one)
+          .id(ObjectIdentifier(model))
+        }
+      }
   }
 }
 
@@ -647,6 +863,9 @@ struct WorkspaceLeftSidebar: View {
   let tabBarHeight: CGFloat
   let maxWidth: CGFloat
   let onImportTable: (DatabaseTable) -> Void
+  let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
+  let onGenerateRows: (DatabaseTable) -> Void
+  let onBuildJoinQuery: (DatabaseTable) -> Void
   @Binding var mongoAdmin: SidebarMongoAdmin?
 
   /// Effective sidebar width from workspace settings or app settings
@@ -668,7 +887,8 @@ struct WorkspaceLeftSidebar: View {
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
           workspaceManager: workspaceManager, onImportTable: onImportTable,
-          mongoAdmin: $mongoAdmin)
+          onImportFiles: onImportFiles, onGenerateRows: onGenerateRows,
+          onBuildJoinQuery: onBuildJoinQuery, mongoAdmin: $mongoAdmin)
 
         if workspaceManager.isSchemaPaused {
           SchemaPausedFooter()
@@ -971,9 +1191,23 @@ struct WorkspaceTabContentView: View {
           return nil
         }
 
-        // Priority 1: If text editor is focused, unfocus it
+        // Priority 1: If text editor is focused, unfocus it. A result grid cell edit cancels
+        // first, before any observer or the blur can end the edit (ending it commits).
+        // Otherwise synchronous observers (cells, inline edits) run first; the blur then
+        // covers the editors and SwiftUI fields.
         if textViewIsFocused {
+          if let fieldEditor = eventWindow.firstResponder as? NSTextView,
+            fieldEditor.isFieldEditor,
+            let control = fieldEditor.delegate as? NSTextField,
+            let grid = control.delegate as? ResultGridCoordinator,
+            grid.control(
+              control, textView: fieldEditor,
+              doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+          {
+            return nil
+          }
           NotificationCenter.default.post(name: .unfocusEditor, object: nil)
+          eventWindow.makeFirstResponder(nil)
           return nil
         }
 
@@ -1193,6 +1427,7 @@ struct WorkspaceTitleBarTabsView: View {
   let hasLeftSidebar: Bool
   @Environment(\.trafficLightsWidth) private var trafficLightsWidth
   @Environment(\.colorScheme) private var colorScheme
+  @ObservedObject private var updater = UpdaterController.shared
 
   @State private var isHoveringNewTabButton = false
 
@@ -1218,7 +1453,7 @@ struct WorkspaceTitleBarTabsView: View {
         Color.clear
           .frame(
             width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
-              + workspaceManager.connectionState.connectionButtonsWidth)
+              + workspaceManager.titleBarButtonsWidth)
       } else {
         Color.clear.frame(width: 10)
       }
@@ -1257,6 +1492,17 @@ struct WorkspaceTitleBarTabsView: View {
       }
 
       HStack(spacing: Spacing.xxs) {
+        // Update button, while Sparkle has a new version waiting
+        if let version = updater.availableUpdateVersion {
+          Button(action: updater.checkForUpdates) {
+            Image(systemName: "arrow.down")
+          }
+          .buttonStyle(SuccessButtonStyle(iconOnly: true))
+          .controlSize(.small)
+          .blockDoubleClickZoom()
+          .help("Update to Dblore \(version)")
+        }
+
         // AI assistant button
         Button {
           workspaceManager.toggleAIAssistant()
@@ -1437,6 +1683,39 @@ struct WorkspaceInfoButton: View {
     .controlSize(.small)
     .blockDoubleClickZoom()
     .help("Details")
+  }
+}
+
+extension WorkspaceManager {
+  /// Title-bar width for the buttons after the sidebar toggle: the connection buttons, plus the
+  /// lock button of a saved workspace (31pt), so the toggle never slides under the traffic lights
+  var titleBarButtonsWidth: CGFloat {
+    connectionState.connectionButtonsWidth + (workspace.fileURL != nil ? 31 : 0)
+  }
+}
+
+/// Lock button of a saved workspace, beside Details: an unlocked workspace opens Lock Workspace,
+/// a locked one closes at once (its next open asks again)
+struct WorkspaceLockButton: View {
+  @Bindable var workspaceManager: WorkspaceManager
+
+  var body: some View {
+    let isLocked = workspaceManager.lockKeyId != nil
+    Button {
+      if isLocked {
+        Task { _ = await WorkspaceWindowManager.shared.closeWorkspace(id: workspaceManager.id) }
+      } else {
+        workspaceManager.openLockSheet(.lock)
+      }
+    } label: {
+      Image(systemName: isLocked ? "lock.fill" : "lock.open")
+        .font(.system(size: 12))
+    }
+    // Background on hover only, like the AI and Settings buttons
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.small)
+    .blockDoubleClickZoom()
+    .help(isLocked ? "Lock and Close Workspace" : "Lock Workspace...")
   }
 }
 

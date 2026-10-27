@@ -110,9 +110,12 @@ extension NotebookViewModel {
     guard let shown = statement ?? result, shown.error == nil, !shown.columns.isEmpty,
       let key = aiSessionKey, shown.aiSessionKey == key
     else { return nil }
+    // A cut binary cell reads as not loaded, never as its prefix. One row past the limit
+    // keeps `rowsTruncated`.
+    let rows = rowsMarkingUnloadedCells(of: shown, limit: AITools.queryRowLimit + 1)
     return AIQueryResult.make(
       from: QueryResult(
-        columns: shown.columns, rows: shown.rows, rowCount: shown.rowCount, executionTime: 0,
+        columns: shown.columns, rows: rows, rowCount: shown.rowCount, executionTime: 0,
         wasLimited: shown.wasLimited),
       maxRows: AITools.queryRowLimit)
   }

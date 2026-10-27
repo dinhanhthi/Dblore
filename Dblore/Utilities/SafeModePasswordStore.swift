@@ -5,23 +5,31 @@
 
 import Foundation
 import Security
+import os
 
 /// Storage for the Safe Mode password record (salted hash, never the plaintext).
 /// The app uses the Keychain; tests use `InMemoryPasswordStore` so the test host never shows a
 /// Keychain prompt (a prompt nobody clicks hangs the whole test run).
-protocol SafeModePasswordStore: AnyObject {
+nonisolated protocol SafeModePasswordStore: AnyObject, Sendable {
   func load() -> Data?
+  /// Tells a missing record from an unreadable one (locked keybag, denied access), so the Lock
+  /// path fails closed. The default reports every nil `load()` as missing (Safe Mode stores).
+  func loadRecord() -> KeychainRead
   @discardableResult func save(_ data: Data) -> Bool
   func delete()
 }
 
+nonisolated extension SafeModePasswordStore {
+  func loadRecord() -> KeychainRead { load().map(KeychainRead.found) ?? .notFound }
+}
+
 /// Keychain-backed store: generic password, service `ace.thi.dblore.safemode`,
 /// accessible only while unlocked and never migrated to another device.
-final class KeychainPasswordStore: SafeModePasswordStore {
-  nonisolated static let serviceName = "ace.thi.dblore.safemode"
-  nonisolated static let accountName = "safe-mode-password"
+nonisolated final class KeychainPasswordStore: SafeModePasswordStore {
+  static let serviceName = "ace.thi.dblore.safemode"
+  static let accountName = "safe-mode-password"
 
-  nonisolated static let vault = KeychainVault(
+  static let vault = KeychainVault(
     service: serviceName, accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
 
   func load() -> Data? {
@@ -40,22 +48,22 @@ final class KeychainPasswordStore: SafeModePasswordStore {
 }
 
 /// In-memory store used under XCTest and by unit tests
-final class InMemoryPasswordStore: SafeModePasswordStore {
-  private var data: Data?
+nonisolated final class InMemoryPasswordStore: SafeModePasswordStore {
+  private let data: OSAllocatedUnfairLock<Data?>
 
   init(data: Data? = nil) {
-    self.data = data
+    self.data = OSAllocatedUnfairLock(initialState: data)
   }
 
-  func load() -> Data? { data }
+  func load() -> Data? { data.withLock { $0 } }
 
   @discardableResult
   func save(_ data: Data) -> Bool {
-    self.data = data
+    self.data.withLock { $0 = data }
     return true
   }
 
   func delete() {
-    data = nil
+    data.withLock { $0 = nil }
   }
 }

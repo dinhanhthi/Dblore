@@ -256,8 +256,9 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   }
 
   /// Input text for a result value (nil for NULL). PostgreSQL: `true`/`false`, ISO 8601 dates,
-  /// `\x` hex bytes. MySQL: `1`/`0`, `YYYY-MM-DD HH:MM:SS.ffffff` (the session is UTC), and
-  /// bare hex bytes for `bindPlaceholder`'s `UNHEX(?)` (every MySQL bind is sent as a string).
+  /// `\x` hex bytes (bytea input). MySQL: `1`/`0`, `YYYY-MM-DD HH:MM:SS.ffffff` (the session is
+  /// UTC). MySQL, SQLite and DuckDB: bare hex bytes for `bindPlaceholder`'s `UNHEX(?)`, since
+  /// every bind is sent as text and a text bind would store text, not bytes.
   static func inputText(_ value: CellValue, dialect: SQLDialect) -> String? {
     let mysql = dialect == .mysql
     switch value {
@@ -271,17 +272,24 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
       guard mysql else { return text }
       return String(text.dropLast()).replacingOccurrences(of: "T", with: " ")
     case .data(let data):
-      let hex = data.map { String(format: "%02x", $0) }.joined()
-      return mysql ? hex : "\\x" + hex
+      let hex = data.hexDigits()
+      return bindsBytesAsHex(dialect) ? hex : "\\x" + hex
     }
   }
 
-  /// `placeholder` for `value`'s bind, or MySQL `UNHEX(placeholder)` for bytes (`inputText`).
+  /// `placeholder` for `value`'s bind, or `UNHEX(placeholder)` for bytes on MySQL, SQLite
+  /// (3.41+) and DuckDB (`inputText`), so the column stores a blob.
   static func bindPlaceholder(
     _ placeholder: String, _ value: CellValue, dialect: SQLDialect
   ) -> String {
-    if dialect == .mysql, case .data = value { return "UNHEX(\(placeholder))" }
+    if bindsBytesAsHex(dialect), case .data = value { return "UNHEX(\(placeholder))" }
     return placeholder
+  }
+
+  /// True when bytes bind as bare hex through `UNHEX`: every engine but PostgreSQL, whose
+  /// bytea reads `\x` hex input text
+  private static func bindsBytesAsHex(_ dialect: SQLDialect) -> Bool {
+    dialect == .mysql || dialect == .sqlite || dialect == .duckdb
   }
 }
 

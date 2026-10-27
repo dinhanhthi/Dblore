@@ -15,6 +15,8 @@ struct DatabaseTable: Identifiable, Sendable {
   var rowCount: Int?
   /// MongoDB collection kind markers. Empty for SQL tables.
   let collectionFlags: CollectionFlags
+  /// Session-scoped table: SQLite `temp` schema, PostgreSQL `pg_my_temp_schema()`.
+  let isTemporary: Bool
 
   /// Sidebar markers of a MongoDB collection.
   nonisolated struct CollectionFlags: OptionSet, Sendable {
@@ -30,7 +32,8 @@ struct DatabaseTable: Identifiable, Sendable {
     columns: [DatabaseColumn] = [],
     isExpanded: Bool = false,
     rowCount: Int? = nil,
-    collectionFlags: CollectionFlags = []
+    collectionFlags: CollectionFlags = [],
+    isTemporary: Bool = false
   ) {
     self.schema = schema
     self.name = name
@@ -38,6 +41,7 @@ struct DatabaseTable: Identifiable, Sendable {
     self.isExpanded = isExpanded
     self.rowCount = rowCount
     self.collectionFlags = collectionFlags
+    self.isTemporary = isTemporary
   }
 
   /// Full qualified name: schema.table

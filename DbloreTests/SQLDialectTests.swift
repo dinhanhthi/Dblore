@@ -210,7 +210,8 @@ struct SQLDialectTests {
     "Case-insensitive LIKE inserts fragments unchanged",
     arguments: [
       (SQLDialect.postgresql, #""weird""name"::text ILIKE 'o''brien'"#),
-      (SQLDialect.sqlite, #""weird""name" LIKE 'o''brien'"#),
+      (SQLDialect.sqlite, #"LOWER("weird""name") LIKE LOWER('o''brien')"#),
+      (SQLDialect.mysql, #"LOWER(CAST("weird""name" AS CHAR)) LIKE LOWER('o''brien')"#),
       (SQLDialect.duckdb, #""weird""name"::VARCHAR ILIKE 'o''brien'"#),
     ])
   func caseInsensitiveLike(dialect: SQLDialect, expected: String) {

@@ -12,7 +12,10 @@ extension NotebookViewModel {
   /// Load the current page (and the row count while unknown). A request made while a run is in
   /// flight is dropped by the guard, so the page is loaded again when the state changed meanwhile.
   func loadDataViewerPage() async {
-    while let state = dataViewer, let connectionManager, !isEditorQueryRunning {
+    while let current = dataViewer, let connectionManager, !isEditorQueryRunning {
+      let lazyColumns = dataViewerLazyColumns(current)
+      if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
+      guard let state = dataViewer else { return }
       let key = state.loadKey
       guard let query = dataViewerQuery(state) else { return }
       // maxRows >= pageSize never truncates a LIMIT pageSize page (no cap notice); MongoDB's
@@ -20,7 +23,7 @@ extension NotebookViewModel {
       if let page = query.page {
         await executeEditorQuery(
           page, maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound),
-          source: .internal)
+          source: .internal, pageState: isMongoDataViewer ? nil : state)
       } else {
         showEmptyDataViewerPage()
       }
@@ -45,6 +48,45 @@ extension NotebookViewModel {
 
       guard let current = dataViewer, current.loadKey != key else { return }
     }
+  }
+
+  /// The lazy columns of the viewed table from what is cached, never a catalog read: the
+  /// sidebar's columns of the table, else the shown page's columns and edit target. Nil
+  /// (`SELECT *`) for MongoDB, a view, a table without a primary key, nothing cached, or a
+  /// shown page without an edit target (an error, or a table that cannot be edited).
+  private func dataViewerLazyColumns(_ state: DataViewerState) -> [DataViewerState.LazyColumn]? {
+    guard !isMongoDataViewer, editorResult.map({ $0.editTarget != nil }) ?? true else {
+      return nil
+    }
+    var binaryValueColumns = Set<String>()
+    if let result = editorResult {
+      for (index, column) in result.columns.enumerated()
+      where result.rows.contains(where: { row in
+        guard index < row.count, case .data = row[index] else { return false }
+        return true
+      }) {
+        binaryValueColumns.insert(column.name)
+      }
+    }
+    // `SELECT *` leaves out the hidden columns of a SQLite virtual table
+    let cached =
+      databaseTables.first(where: {
+        $0.schema == state.schema && $0.name == state.name
+      })?.columns.filter { !$0.isHidden } ?? []
+    // The cache, unless a shown page of the table has other columns (stale either way: a
+    // column added or dropped since): then the shown page's columns
+    if !cached.isEmpty, editorResult.map({ $0.columns.map(\.name) == cached.map(\.name) }) ?? true {
+      return DataViewerState.lazyColumns(
+        cached.map { ($0.name, $0.type, $0.isPrimaryKey) },
+        databaseType: state.databaseType, orderColumns: state.orderColumns,
+        binaryValueColumns: binaryValueColumns)
+    }
+    guard let result = editorResult, let target = result.editTarget else { return nil }
+    let key = Set(target.primaryKeyColumns)
+    return DataViewerState.lazyColumns(
+      result.columns.map { ($0.name, $0.type, key.contains($0.name)) },
+      databaseType: state.databaseType, orderColumns: state.orderColumns,
+      binaryValueColumns: binaryValueColumns)
   }
 
   /// True for a data viewer on a MongoDB connection: pages are mongosh commands and the
@@ -221,6 +263,51 @@ extension NotebookViewModel {
 
   func showAllColumns() {
     dataViewer?.hiddenColumns.removeAll()
+  }
+
+  /// Freezes the leading columns through `name` (nil unfreezes) and remembers it for the table
+  func setFrozenThroughColumn(_ name: String?) {
+    guard dataViewer != nil else { return }
+    dataViewer?.frozenThroughColumn = name
+    if let key = gridColumnPrefsKey { gridColumnPrefsStore.setFrozenThrough(name, for: key) }
+  }
+
+  /// The frozen column and binary formats remembered for the table; call it when a table opens
+  func applyGridColumnPrefs() {
+    guard let key = gridColumnPrefsKey else { return }
+    dataViewer?.frozenThroughColumn = gridColumnPrefsStore.frozenThrough(for: key)
+    dataViewer?.binaryFormats = gridColumnPrefsStore.binaryFormats(for: key)
+  }
+
+  /// "Display As" of the grid's binary columns: the table's stored formats in a data viewer,
+  /// else this tab's session formats
+  var binaryFormats: [String: BinaryDisplayFormat] {
+    dataViewer?.binaryFormats ?? resultBinaryFormats
+  }
+
+  /// Shows binary column `column` as `format` (`.size` is the default): remembered for the
+  /// table in a data viewer, for the session otherwise. A Cell Value sidebar showing a cell of
+  /// that column switches to the new format.
+  func setBinaryFormat(_ format: BinaryDisplayFormat, column: String) {
+    let stored = format == .size ? nil : format
+    if dataViewer != nil {
+      dataViewer?.binaryFormats[column] = stored
+      if let key = gridColumnPrefsKey {
+        gridColumnPrefsStore.setBinaryFormat(format, column: column, for: key)
+      }
+    } else {
+      resultBinaryFormats[column] = stored
+    }
+    if case .cellInfo(let shownColumn, _, _, _, _, _, _) = rightSidebarContent,
+      shownColumn == column
+    {
+      cellDetailBinaryFormat = format
+    }
+  }
+
+  private var gridColumnPrefsKey: String? {
+    guard let state = dataViewer, let config = notebook.connectionConfig else { return nil }
+    return GridColumnPrefsStore.key(for: config, schema: state.schema, name: state.name)
   }
 }
 

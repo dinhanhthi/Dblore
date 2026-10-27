@@ -32,6 +32,7 @@ extension DatabaseConnectionManager {
     _ statements: [String], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil
   ) async throws -> SchemaChangeResult {
+    try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
       throw DatabaseError.schemaChangeRefused(
         "The connection changed; reload the structure and try again")
@@ -136,6 +137,7 @@ extension DatabaseConnectionManager {
       }
       if let classified = SQLStatementClassifier.classify(sql, dialect: dialect).first {
         noteSchemaChange(classified)
+        noteTemporaryTable(classified)
       }
       await batchCheckpointHook?(index)
     }

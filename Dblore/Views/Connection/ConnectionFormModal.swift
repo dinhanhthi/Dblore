@@ -23,6 +23,8 @@ struct ConnectionFormModal: View {
   var onOpenPluginSettings: @MainActor () -> Void = ConnectionErrorAction.postOpenPluginSettings
   /// See `ConnectionFormContent.draftGeneration`.
   var draftGeneration: Int = 0
+  /// See `ConnectionFormContent.opensOnDraft`.
+  var opensOnDraft: Bool = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -45,7 +47,8 @@ struct ConnectionFormModal: View {
         unrememberedSSHCredential: unrememberedSSHCredential,
         unlockConnectError: unlockConnectError,
         onOpenPluginSettings: onOpenPluginSettings,
-        draftGeneration: draftGeneration
+        draftGeneration: draftGeneration,
+        opensOnDraft: opensOnDraft
       )
     }
     .background(Color.cardBackground)
@@ -177,7 +180,8 @@ extension View {
     unlockConnectError: Binding<String?>? = nil,
     onOpenPluginSettings: @escaping @MainActor () -> Void = ConnectionErrorAction
       .postOpenPluginSettings,
-    draftGeneration: Int = 0
+    draftGeneration: Int = 0,
+    opensOnDraft: Bool = false
   ) -> some View {
     sidePanelOverlay(isPresented: isPresented, width: ConnectionFormModal.panelWidth) {
       ConnectionFormModal(
@@ -192,7 +196,8 @@ extension View {
         unrememberedSSHCredential: unrememberedSSHCredential,
         unlockConnectError: unlockConnectError,
         onOpenPluginSettings: onOpenPluginSettings,
-        draftGeneration: draftGeneration
+        draftGeneration: draftGeneration,
+        opensOnDraft: opensOnDraft
       )
     }
   }
@@ -213,7 +218,7 @@ extension View {
         set: { workspaceManager.editingConnectionConfig = $0 }
       ),
       onTestConnection: { config in
-        try await workspaceManager.connectionManager.testConnection(config: config)
+        try await workspaceManager.testConnection(config: config)
       },
       onConnect: { config, aiFieldsEdited in
         try await workspaceManager.connect(
@@ -225,7 +230,8 @@ extension View {
         get: { workspaceManager.lastUnlockConnectError },
         set: { workspaceManager.lastUnlockConnectError = $0 }
       ),
-      draftGeneration: workspaceManager.connectionFormDraftGeneration
+      draftGeneration: workspaceManager.connectionFormDraftGeneration,
+      opensOnDraft: workspaceManager.connectionFormOpensOnDraft
     )
     .sheet(
       isPresented: Binding(

@@ -73,6 +73,8 @@ struct DataViewerView: View {
       }
     }
     .background(Color.appBackground)
+    // View > Zoom: the grid is the tab's only zoomable pane
+    .bridgedFocusedSceneValue(\.zoomTarget, .grid)
     // A MongoDB collection remembers its view mode (Chart excepted) and page size
     .onChange(of: viewModel.dataViewerDisplayMode) { viewModel.saveMongoViewPreference() }
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in
@@ -178,6 +180,8 @@ struct DataViewerView: View {
         EditorResultGridView(
           result: result, viewModel: viewModel,
           hiddenColumns: viewModel.dataViewer?.hiddenColumns ?? [],
+          frozenThroughColumn: viewModel.dataViewer?.frozenThroughColumn,
+          onFreezeChange: { viewModel.setFrozenThroughColumn($0) },
           highlights: viewModel.dataViewer?.highlights ?? [],
           dialect: viewModel.dataViewer?.databaseType ?? .postgresql,
           canHighlight: true,

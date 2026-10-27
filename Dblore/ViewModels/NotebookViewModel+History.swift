@@ -13,6 +13,8 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
   case editor
   case dataViewerEdit
   case dataImport
+  /// Generate Rows: stored as a data import, with its own error text
+  case generatedRows
   case structure
   case rewind
   case `internal`
@@ -22,7 +24,7 @@ nonisolated enum QueryHistoryRecordSource: Sendable {
     case .cell: .cell
     case .editor: .editor
     case .dataViewerEdit: .dataViewerEdit
-    case .dataImport: .dataImport
+    case .dataImport, .generatedRows: .dataImport
     case .structure: .structure
     case .rewind: .rewind
     case .internal: nil

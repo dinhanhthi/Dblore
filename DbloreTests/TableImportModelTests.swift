@@ -415,11 +415,399 @@ struct TableImportModelTests {
     }
   }
 
+  @Test("Match keys: primary key first, then unique indexes on plain columns only")
+  func matchKeysFromIndexes() async {
+    let structure = keyStructure(
+      indexes: [
+        index("a_partial", [.column("code")], isPartial: true),
+        index("b_lower", [.column("org"), .expression("lower(name)")]),
+        index("c_plain", [.column("name")], isUnique: false),
+        index("users_email_key", [.column("email")]),
+        index("users_pkey", [.column("id")], isPrimary: true),
+        index("z_pair", [.column("org"), .column("code")]),
+      ],
+      constraints: [
+        .init(name: "users_pkey", kind: .primaryKey, columns: ["id"]),
+        .init(name: "users_email_key", kind: .unique, columns: ["email"]),
+      ])
+    let model = TableImportModel()
+    model.destination = .existing(schema: nil, table: "Users")
+    model.tables = [DatabaseTable(schema: "public", name: "users")]
+    let requested = StructureRequests()
+    await model.loadMatchKeys { schema, table in
+      await requested.record(schema, table)
+      return structure
+    }
+    #expect(await requested.last == ["public", "Users"])
+    #expect(model.matchKeys.map(\.columns) == [["id"], ["email"], ["org", "code"]])
+    #expect(model.matchKeys.map(\.isPrimaryKey) == [true, false, false])
+    #expect(model.matchKeys[0].displayName == "Primary key (id)")
+    #expect(model.matchKeys[2].displayName == "z_pair (org, code)")
+    #expect(model.matchModesUnavailableReason == nil)
+  }
+
+  @Test("A key known only as a constraint is offered unless its index has an expression part")
+  func matchKeysFromConstraints() async {
+    // SQLite INTEGER PRIMARY KEY and DuckDB keys have no index row; a constraint whose index
+    // has an expression part lists only its plain columns
+    let structure = keyStructure(
+      indexes: [index("u_mixed", [.column("a"), .expression(nil)])],
+      constraints: [
+        .init(name: nil, kind: .primaryKey, columns: ["id"]),
+        .init(name: "t_code_key", kind: .unique, columns: ["code"]),
+        .init(name: "u_mixed", kind: .unique, columns: ["a"]),
+      ])
+    let model = TableImportModel()
+    model.destination = .existing(schema: "main", table: "t")
+    await model.loadMatchKeys { _, _ in structure }
+    #expect(model.matchKeys.map(\.columns) == [["id"], ["code"]])
+    #expect(model.matchModesUnavailableReason == nil)
+  }
+
+  @Test("Without a primary key or plain unique index only Insert is available, with the reason")
+  func noMatchKeys() async {
+    let structure = keyStructure(
+      indexes: [index("p", [.column("a")], isPartial: true)], constraints: [])
+    let model = TableImportModel()
+    model.destination = .existing(schema: "main", table: "t")
+    await model.loadMatchKeys { _, _ in structure }
+    #expect(model.matchKeys.isEmpty)
+    #expect(
+      model.matchModesUnavailableReason
+        == "This table has no primary key or unique index on plain columns, so only Insert is available."
+    )
+    await model.loadMatchKeys { _, _ in throw DatabaseError.queryFailed("denied", 0) }
+    #expect(model.matchKeys.isEmpty)
+    #expect(model.matchModesUnavailableReason?.contains("denied") == true)
+  }
+
+  @Test("Keyed rows route to INSERT, UPDATE, skip or refused per mode, and the counts match")
+  func rowsRoutePerMode() async throws {
+    // Row 1 exists, 2 is new, 3 matches two rows, 4 has no key, 5 repeats row 2's key
+    let url = temporaryFile("id,name\n1,a\n2,b\n3,c\n,d\n2,e\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: "main", table: "t")
+    let structure = keyStructure(
+      columns: [column("id", "INTEGER"), column("name", "TEXT")], indexes: [],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    model.matchKey = model.matchKeys.first
+    #expect(model.matchKey != nil)
+    let reads = MatchReads(existing: ["1": 1, "3": 2])
+    let tooMany = "2 rows in the table match this key."
+    let repeated = "This key appears earlier in the file."
+    let cases: [(ImportMode, [String], [ClosedRange<Int>?], [Int], [Int])] = [
+      // mode, statement verbs, row ranges, [insert, update, skip], refused rows
+      (.insert, ["INSERT"], [2...4], [2, 0, 0], [1, 3, 5]),
+      (.update, ["UPDATE"], [1...1], [0, 1, 1], [3, 4, 5]),
+      (.insertOrUpdate, ["INSERT", "UPDATE"], [2...4, 1...1], [2, 1, 0], [3, 5]),
+      (.insertSkippingExisting, ["INSERT"], [2...4], [2, 0, 1], [3, 5]),
+    ]
+    for (mode, verbs, ranges, counts, refusedRows) in cases {
+      model.mode = mode
+      let batch = try await model.prepareBatch(
+        dialect: .sqlite, connectionEpoch: 1, readMatches: reads.read)
+      #expect(batch.statements.map { String($0.sql.prefix(6)) } == verbs, "\(mode)")
+      #expect(batch.rowRanges == ranges, "\(mode)")
+      let summary = try #require(model.matchSummary)
+      #expect([summary.inserts, summary.updates, summary.skips] == counts, "\(mode)")
+      #expect(summary.refusedCount == refusedRows.count, "\(mode)")
+      #expect(summary.refused.map(\.row) == refusedRows, "\(mode)")
+      #expect(summary.refused.first { $0.row == 3 }?.reason == tooMany)
+      #expect(summary.refused.first { $0.row == 5 }?.reason == repeated)
+      #expect(
+        batch.preview.hasPrefix("-- From file: \(counts[0]) to insert, \(counts[1]) to update"))
+    }
+    model.mode = .insertOrUpdate
+    let batch = try await model.prepareBatch(
+      dialect: .sqlite, connectionEpoch: 1, readMatches: reads.read)
+    #expect(batch.statements[0].values == ["2", "b", nil, "d"])
+    #expect(batch.statements[1].sql == #"UPDATE "t" SET "name" = ?1 WHERE "id" = ?2"#)
+    #expect(batch.statements[1].values == ["a", "1"])
+    #expect(model.matchSummary?.newRows == 2)
+    #expect(model.matchSummary?.existingRows == 1)
+  }
+
+  @Test("A failed match read stops the import before anything is written")
+  func matchReadFailureWritesNothing() async throws {
+    let url = temporaryFile("id,name\n1,a\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: "main", table: "t")
+    let structure = keyStructure(
+      columns: [column("id", "INTEGER"), column("name", "TEXT")], indexes: [],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    model.matchKey = model.matchKeys.first
+    model.mode = .insertOrUpdate
+    await #expect(throws: TableImportError.self) {
+      try await model.prepareBatch(
+        dialect: .sqlite, connectionEpoch: 1,
+        readMatches: { _ in throw DatabaseError.queryFailed("denied", 0) })
+    }
+    #expect(model.matchSummary == nil)
+    #expect(!model.isMatchingRows)
+  }
+
+  @Test("A keyed import inserts and updates through the tab, and History keeps the counts")
+  func keyedImportHistory() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-import-keyed-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", safeMode: .silent,
+      protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal(
+      "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES (1, 'a'), (3, 'c')")
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    let recorder = ImportHistoryRecorder()
+    viewModel.historyRecorder = recorder
+    let file = temporaryFile("id,name\n1,A\n2,B\n3,c\n2,Z\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let model = TableImportModel()
+    await model.loadFile(file)
+    model.destination = .existing(schema: "main", table: "t")
+
+    // An open transaction: the read would see (and could abort) it, so nothing is read or sent
+    _ = try await manager.execute(
+      userSQL: "BEGIN", policy: ProtectionPolicy(protectionLevel: .none))
+    await model.loadMatchKeys { try await manager.fetchTableStructure(schema: $0, table: $1) }
+    model.matchKey = model.matchKeys.first
+    #expect(model.matchKey != nil)
+    model.mode = .insertOrUpdate
+    #expect(await model.submit(to: viewModel) == false)
+    #expect(model.errorMessage?.contains("nothing was written") == true)
+    _ = try await manager.execute(
+      userSQL: "ROLLBACK", policy: ProtectionPolicy(protectionLevel: .none))
+    #expect(
+      try await manager.executeInternal("SELECT id, name FROM t ORDER BY id").rows == [
+        [.int(1), .string("a")], [.int(3), .string("c")],
+      ])
+
+    #expect(await model.submit(to: viewModel))
+    #expect(
+      try await manager.executeInternal("SELECT id, name FROM t ORDER BY id").rows == [
+        [.int(1), .string("A")], [.int(2), .string("B")], [.int(3), .string("c")],
+      ])
+    let entry = await recorder.nextEntry()
+    #expect(entry.status == .success)
+    #expect(entry.sql.hasPrefix("-- From file: 1 to insert, 2 to update, 0 skipped, 1 refused"))
+    #expect(entry.rowCount == 3)
+  }
+
+  @Test("Only keys whose columns are all imported are offered; losing the last goes to Insert")
+  func offeredKeysFollowMapping() async throws {
+    let url = temporaryFile("id,code,name\n1,a,x\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: "main", table: "t")
+    let structure = keyStructure(
+      columns: [column("id", "INTEGER"), column("code", "TEXT"), column("name", "TEXT")],
+      indexes: [index("t_code_key", [.column("code")])],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    #expect(model.offeredMatchKeys.map(\.columns) == [["id"], ["code"]])
+    #expect(model.mode == .insert)
+    #expect(model.matchKey == nil)
+
+    // Leaving Insert picks the primary key; going back to Insert drops the key (plain INSERT)
+    model.selectMode(.update)
+    #expect(model.mode == .update)
+    #expect(model.matchKey?.columns == ["id"])
+    model.selectMode(.insert)
+    #expect(model.matchKey == nil)
+    model.selectMode(.insertOrUpdate)
+
+    // The chosen key's column is no longer imported: the next offered key takes its place
+    model.mappings[0].included = false
+    model.syncMatchChoice()
+    #expect(model.offeredMatchKeys.map(\.columns) == [["code"]])
+    #expect(model.matchKey?.columns == ["code"])
+    #expect(model.mode == .insertOrUpdate)
+
+    // Names compare exactly, as the planner binds them: "Code" does not import "code"
+    model.mappings[1].targetName = "Code"
+    model.syncMatchChoice()
+    #expect(model.offeredMatchKeys.isEmpty)
+    #expect(model.matchKey == nil)
+    #expect(model.mode == .insert)
+    #expect(model.keyedModesUnavailableReason?.contains("Import every column of a key") == true)
+    model.selectMode(.update)
+    #expect(model.mode == .insert)
+
+    // A load reason wins over the mapping one
+    await model.loadMatchKeys { _, _ in throw DatabaseError.queryFailed("denied", 0) }
+    #expect(model.keyedModesUnavailableReason?.contains("denied") == true)
+  }
+
+  @Test("A debounced key load cancelled while it waits reads nothing")
+  func debouncedKeyLoadCancelled() async {
+    let model = TableImportModel()
+    model.destination = .existing(schema: "main", table: "t")
+    let requested = StructureRequests()
+    let structure = keyStructure(
+      indexes: [], constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    let load = Task {
+      await model.loadMatchKeys(after: .seconds(60)) { schema, table in
+        await requested.record(schema, table)
+        return structure
+      }
+    }
+    load.cancel()
+    await load.value
+    #expect(await requested.last.isEmpty)
+    #expect(!model.isLoadingMatchKeys)
+    #expect(model.matchKeys.isEmpty)
+  }
+
+  @Test("A keyed import shows its summary before Safe Mode; Back writes nothing")
+  func summaryBeforeSafeMode() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-import-review-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .alertAll, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal(
+      "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t VALUES (1, 'a')")
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    let file = temporaryFile("id,name\n1,A\n2,B\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let model = TableImportModel()
+    await model.loadFile(file)
+    model.destination = .existing(schema: "main", table: "t")
+    await model.loadMatchKeys { try await manager.fetchTableStructure(schema: $0, table: $1) }
+    model.selectMode(.insertOrUpdate)
+    let stored = { try await manager.executeInternal("SELECT id, name FROM t ORDER BY id").rows }
+    let original: [[CellValue]] = [[.int(1), .string("a")]]
+
+    // The counts come first: nothing is written and Safe Mode has not asked yet
+    #expect(await model.prepareImport(for: viewModel))
+    #expect(model.isReviewingMatches)
+    #expect(model.notice == nil)
+    #expect(model.matchSummary?.newRows == 1)
+    #expect(model.matchSummary?.existingRows == 1)
+    #expect(!viewModel.queryConfirmationState.showDialog)
+    #expect(try await stored() == original)
+
+    // Back: the prepared batch is gone, so a late Continue does nothing
+    model.endMatchReview()
+    #expect(!model.isReviewingMatches)
+    #expect(model.matchSummary == nil)
+    #expect(await model.confirmImport(to: viewModel) == false)
+    #expect(!viewModel.queryConfirmationState.showDialog)
+    #expect(try await stored() == original)
+
+    // Continue: the one Safe Mode decision, then the batch
+    #expect(await model.prepareImport(for: viewModel))
+    #expect(await model.confirmImport(to: viewModel))
+    #expect(!model.isReviewingMatches)
+    #expect(viewModel.queryConfirmationState.showDialog)
+    #expect(try await stored() == original)
+    await viewModel.executePendingQuery()
+    #expect(try await stored() == [[.int(1), .string("A")], [.int(2), .string("B")]])
+
+    // A failed match read stays in the sheet: no toast carries its detail
+    _ = try await manager.execute(
+      userSQL: "BEGIN", policy: ProtectionPolicy(protectionLevel: .none))
+    #expect(await model.prepareImport(for: viewModel) == false)
+    #expect(model.errorMessage?.contains("nothing was written") == true)
+    #expect(!model.isReviewingMatches)
+    #expect(toasts.isEmpty)
+    _ = try await manager.execute(
+      userSQL: "ROLLBACK", policy: ProtectionPolicy(protectionLevel: .none))
+  }
+
+  @Test("Every row skipped or refused is a notice with the summary, not an error")
+  func nothingToWriteIsNotice() async throws {
+    let url = temporaryFile("id,name\n1,a\n3,c\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: "main", table: "t")
+    let structure = keyStructure(
+      columns: [column("id", "INTEGER"), column("name", "TEXT")], indexes: [],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    model.selectMode(.insertSkippingExisting)
+    let reads = MatchReads(existing: ["1": 1, "3": 2])
+    #expect(
+      await model.prepareImport(dialect: .sqlite, connectionEpoch: 1, readMatches: reads.read)
+        == false)
+    #expect(model.errorMessage == nil)
+    #expect(model.notice == "No rows to write: 1 skipped, 1 refused.")
+    #expect(model.isReviewingMatches)
+    #expect(model.matchSummary?.refused.map(\.row) == [2])
+    model.endMatchReview()
+    #expect(model.notice == nil)
+    #expect(!model.isReviewingMatches)
+  }
+
+  private func keyStructure(
+    columns: [TableStructure.Column] = [], indexes: [TableStructure.Index],
+    constraints: [TableStructure.Constraint]
+  ) -> TableStructure {
+    TableStructure(
+      tableID: .sqlite(schema: "main", table: "t"), schema: "main", name: "t", columns: columns,
+      indexes: indexes, constraints: constraints)
+  }
+
+  private func column(_ name: String, _ dataType: String) -> TableStructure.Column {
+    TableStructure.Column(ordinal: 1, name: name, dataType: dataType, isNullable: true)
+  }
+
+  private func index(
+    _ name: String, _ keys: [TableStructure.Index.Key], isUnique: Bool = true,
+    isPrimary: Bool = false, isPartial: Bool = false
+  ) -> TableStructure.Index {
+    TableStructure.Index(
+      name: name, keys: keys, isUnique: isUnique, isPrimary: isPrimary, method: nil,
+      isPartial: isPartial, predicate: isPartial ? "a > 0" : nil)
+  }
+
   private func temporaryFile(_ contents: String, extension fileExtension: String) -> URL {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("dblore-import-\(UUID().uuidString).\(fileExtension)")
     try! Data(contents.utf8).write(to: url)
     return url
+  }
+}
+
+private actor StructureRequests {
+  private(set) var last: [String] = []
+
+  func record(_ schema: String, _ table: String) { last = [schema, table] }
+}
+
+/// Stub match reads (SQLite shape): the count of each listed position from its key text
+private struct MatchReads: Sendable {
+  let existing: [String: Int]
+
+  var read: @Sendable (BoundStatement) async throws -> [[CellValue]] {
+    { [existing] read in
+      let positions = read.sql.matches(of: /\((\d+), \?\d+\)/).map { Int($0.1)! }
+      return zip(positions, read.values).compactMap { position, value in
+        existing[value ?? ""].map { [.int(position), .int($0)] }
+      }
+    }
   }
 }
 

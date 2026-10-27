@@ -158,6 +158,8 @@ class NotebookViewModel {
   @ObservationIgnored var pendingStagedBatch: PendingStagedBatch?
   /// Commit is counting what the staged deletes also change (`stagedDeleteImpact`)
   var isCheckingStagedDeletes = false
+  /// A staged commit is in flight (key lookup, count, prompt or send): a second one is refused
+  var isCommittingStaged = false
   /// Inline grid edit waiting on Confirm or Password. Acceptance sends it through
   /// `sendInlineEdit`, not as user SQL.
   @ObservationIgnored var pendingInlineEdit: PendingInlineEdit?
@@ -165,6 +167,10 @@ class NotebookViewModel {
   var cellDetailEditTarget: EditTarget?
   /// Row of the sidebar cell in its result (index into `rows`), to find it again after a re-run
   var cellDetailRow: Int?
+  /// Display As format of the sidebar cell's column in its grid (session-only)
+  var cellDetailBinaryFormat: BinaryDisplayFormat = .size
+  /// Full values of the large binary cells the shown data-viewer page cut (session-only)
+  let lazyCells = LazyCellLoader()
   /// Row shown in Row Details, with its drafts (session-only)
   var rowDetail: RowDetailState?
 
@@ -198,6 +204,11 @@ class NotebookViewModel {
   var cellComparisons: [UUID: SubjectComparison] = [:]
   /// Editor tab pin. Never saved.
   var editorPinnedResult: PinnedResult?
+  /// Chart of the editor result, owned here so a layout switch (a new result view) keeps it.
+  /// Belongs to the result of timestamp `editorChartSpecStamp`; a new result starts from the
+  /// suggestion. Never saved.
+  var editorChartSpec: ChartSpec?
+  var editorChartSpecStamp: Date?
   var isEditorComparing = false
   var editorComparison: SubjectComparison?
   /// Bumped per refresh so an older comparison does not overwrite a newer one
@@ -254,6 +265,12 @@ class NotebookViewModel {
   var addRowFields: [NewRowField] = []
   /// Persistent store of the saved filters; tests inject an isolated one
   @ObservationIgnored var savedFilterStore = SavedFilterStore()
+  /// Persistent store of the grid column preferences (frozen columns); tests inject an
+  /// isolated one
+  @ObservationIgnored var gridColumnPrefsStore = GridColumnPrefsStore()
+  /// "Display As" of binary columns in this tab's ad hoc result grids (editor and notebook
+  /// cells) by column name, kept for the session; a data viewer stores its own per table
+  var resultBinaryFormats: [String: BinaryDisplayFormat] = [:]
   /// Query history. The app uses the SQLite store; the test host uses memory so unit tests
   /// never open `~/Library/Application Support/Dblore/History.sqlite`. Tests inject their own.
   @ObservationIgnored var historyRecorder: any QueryHistoryRecording =
@@ -507,7 +524,12 @@ class NotebookViewModel {
       pendingStagedBatch = nil
       pendingInlineEdit = nil
       queryConfirmationState.clear()
-      await runConfirmedStagedBatch(batch)
+      // A staged commit (not an import or a MongoDB inline edit): no second one while it is sent
+      let commits = batch.historySource == .dataViewerEdit && batch.mongoInlineEdit == nil
+      if commits { isCommittingStaged = true }
+      let failure = await runConfirmedStagedBatch(batch)
+      if commits { isCommittingStaged = false }
+      batch.streamedCompletion?(failure)
       return
     }
     if let edit = pendingInlineEdit {
@@ -537,6 +559,8 @@ class NotebookViewModel {
   /// Cancel the pending query execution
   func cancelPendingQuery() {
     pendingExplainSQL = nil
+    // A Generate Rows run waiting on this decision ends unsent
+    pendingStagedBatch?.streamedCompletion?(nil)
     pendingStagedBatch = nil
     pendingInlineEdit = nil
     if queryConfirmationState.runAllAwaitingUnlock {

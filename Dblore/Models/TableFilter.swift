@@ -30,7 +30,7 @@ enum FilterOperator: String, Codable, CaseIterable {
   }
 
   /// False for the null checks, which take no value
-  var needsValue: Bool { self != .isNull && self != .isNotNull }
+  nonisolated var needsValue: Bool { self != .isNull && self != .isNotNull }
 }
 
 /// How a condition joins the previous one (unused on the first row)
@@ -52,7 +52,7 @@ struct FilterCondition: Codable, Hashable, Identifiable {
 
   /// Has a column and, when the operator takes one, a value.
   /// A blank value still counts when `emptyStringIsValue` is set. An empty column does not.
-  var isComplete: Bool {
+  nonisolated var isComplete: Bool {
     !column.isEmpty && (!op.needsValue || !value.isEmpty || emptyStringIsValue)
   }
 }
@@ -97,10 +97,13 @@ struct TableFilter: Codable, Hashable {
 
   /// `a AND b OR c` over the complete conditions with literals escaped for `dialect`,
   /// nil when no condition is complete. The first complete row ignores its connector.
-  func whereClause(dialect: SQLDialect) -> String? {
+  /// A `qualifier` (a table alias) prefixes every column: `"o"."c"`.
+  nonisolated func whereClause(dialect: SQLDialect, qualifier: String? = nil) -> String? {
     var clause = ""
     for condition in conditions {
-      guard let sql = Self.sql(for: condition, dialect: dialect) else { continue }
+      guard let sql = Self.sql(for: condition, dialect: dialect, qualifier: qualifier) else {
+        continue
+      }
       if !clause.isEmpty {
         clause += condition.connector == .and ? " AND " : " OR "
       }
@@ -110,7 +113,7 @@ struct TableFilter: Codable, Hashable {
   }
 
   /// Dialect quoting, or the historical non-throwing quote when the name contains NUL.
-  private static func quotedIdentifier(_ name: String, dialect: SQLDialect) -> String {
+  private nonisolated static func quotedIdentifier(_ name: String, dialect: SQLDialect) -> String {
     do {
       return try dialect.quoteIdentifier(name)
     } catch {
@@ -118,9 +121,12 @@ struct TableFilter: Codable, Hashable {
     }
   }
 
-  private static func sql(for condition: FilterCondition, dialect: SQLDialect) -> String? {
+  private nonisolated static func sql(
+    for condition: FilterCondition, dialect: SQLDialect, qualifier: String?
+  ) -> String? {
     guard condition.isComplete else { return nil }
-    let column = quotedIdentifier(condition.column, dialect: dialect)
+    let prefix = qualifier.map { quotedIdentifier($0, dialect: dialect) + "." } ?? ""
+    let column = prefix + quotedIdentifier(condition.column, dialect: dialect)
     let value = dialect.literal(.string(condition.value))
     switch condition.op {
     case .equals: return "\(column) = \(value)"
@@ -132,9 +138,9 @@ struct TableFilter: Codable, Hashable {
     case .isNull: return "\(column) IS NULL"
     case .isNotNull: return "\(column) IS NOT NULL"
     case .like, .notLike, .ilike, .notIlike:
-      let pattern =
-        condition.likeEscape.map { "\(value) ESCAPE \(dialect.literal(.string($0)))" } ?? value
-      return likeSQL(column: column, value: pattern, op: condition.op, dialect: dialect)
+      let escape = condition.likeEscape.map { dialect.literal(.string($0)) }
+      return likeSQL(
+        column: column, value: value, escape: escape, op: condition.op, dialect: dialect)
     case .in:
       let items = condition.value.split(separator: ",")
         .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -146,17 +152,18 @@ struct TableFilter: Codable, Hashable {
   }
 
   /// PostgreSQL (`::text`) and DuckDB (`::VARCHAR`) cast to text and keep `LIKE` vs `ILIKE`.
-  /// SQLite is always `LIKE`. `caseInsensitiveLike` matches only the non-negated form of that text.
-  private static func likeSQL(
-    column: String, value: String, op: FilterOperator, dialect: SQLDialect
+  /// SQLite and MySQL have no `ILIKE`: `ilike` is `caseInsensitiveLike` (both sides lowered),
+  /// `notIlike` is `NOT LIKE`.
+  private nonisolated static func likeSQL(
+    column: String, value: String, escape: String?, op: FilterOperator, dialect: SQLDialect
   ) -> String {
-    let negated = op == .notLike || op == .notIlike
-    let insensitive = op == .ilike || op == .notIlike
-    if !negated && (insensitive || dialect.likeIsCaseInsensitive) {
-      return dialect.caseInsensitiveLike(column: column, pattern: value)
+    if op == .ilike {
+      return dialect.caseInsensitiveLike(column: column, pattern: value, escape: escape)
     }
+    let negated = op == .notLike || op == .notIlike
     let subject = dialect.likeSubject(column)
-    let keyword = insensitive && !dialect.likeIsCaseInsensitive ? "ILIKE" : "LIKE"
-    return "\(subject) \(negated ? "NOT " : "")\(keyword) \(value)"
+    let keyword = op == .notIlike && !dialect.likeIsCaseInsensitive ? "ILIKE" : "LIKE"
+    let pattern = escape.map { "\(value) ESCAPE \($0)" } ?? value
+    return "\(subject) \(negated ? "NOT " : "")\(keyword) \(pattern)"
   }
 }

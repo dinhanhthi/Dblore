@@ -46,6 +46,9 @@ extension ConnectionFormContent {
           Text(selectedHistoryEntry.map { historyTitle($0.config) } ?? "Select a connection")
             .lineLimit(1)
             .foregroundColor(selectedHistoryEntry != nil ? .foreground : .foregroundMuted)
+          if selectedHistoryEntry?.config.isLocked == true {
+            lockMark
+          }
           Spacer()
           Image(systemName: "chevron.up.chevron.down")
             .font(.caption)
@@ -118,6 +121,9 @@ extension ConnectionFormContent {
         .font(.body)
 
       historyShield(for: entry.config)
+      if entry.config.isLocked {
+        lockMark
+      }
       if entry.config.protectionLevel != .none {
         Image(systemName: entry.config.protectionLevel.iconName)
           .foregroundColor(
@@ -137,6 +143,15 @@ extension ConnectionFormContent {
       .buttonStyle(.plain)
       .linkPointer()
     }
+  }
+
+  /// Marks a locked row: its saved password loads only after the unlock
+  private var lockMark: some View {
+    Image(systemName: "lock.fill")
+      .font(.caption)
+      .foregroundColor(.foregroundMuted)
+      .help("Locked")
+      .accessibilityLabel("Locked")
   }
 
   /// A drawn, non-template dot: a menu item would draw a SwiftUI shape or a tinted symbol in
@@ -163,9 +178,13 @@ extension ConnectionFormContent {
 
   func loadConnectionHistory() {
     setConnectionHistory(SessionManager.loadHistory())
-    if let mostRecent = getConnectionHistory().first {
-      setSelectedHistoryId(mostRecent.id)
-      loadConnection(mostRecent)
+    let opening = Self.openingHistory(
+      history: getConnectionHistory(), draft: connectionConfig, opensOnDraft: opensOnDraft)
+    // Only a draft form writes the selection here; a fresh form keeps it for `deleteConnection`
+    if let entry = opening.load {
+      loadConnection(entry)
+    } else if opensOnDraft {
+      setSelectedHistoryId(opening.selectedHistoryId)
     }
   }
 
@@ -176,10 +195,18 @@ extension ConnectionFormContent {
     setConnectionHistory(SessionManager.loadHistory())
   }
 
+  /// The selection and the fields switch at once. A row whose lock is not unlocked in this
+  /// session fills no password (a cached one may predate a relock) and no client certificate
+  /// draft: it asks on this form's window and loads both only after the unlock; cancel keeps
+  /// the row selected with an empty password and the saved certificate untouched.
   func loadConnection(_ entry: ConnectionHistoryEntry) {
+    let blocked = LockCenter.shared.registry.refusal(for: entry.config) != nil
     setSelectedHistoryId(entry.id)
     setFieldsEngine(entry.config.databaseType)
     connectionConfig = entry.config
+    if blocked {
+      connectionConfig.password = ""
+    }
     resetCertificateDraft()
 
     if getInputMode() == .connectionString {
@@ -188,25 +215,70 @@ extension ConnectionFormContent {
     updateConnectionStringSSLMode(entry.config.sslMode)
     clearTestResult()
     clearParseError()
+    if blocked {
+      unlockSavedPassword(of: entry)
+    }
   }
 
-  func deleteConnection(_ id: UUID) {
-    SessionManager.removeConnection(id: id)
-    loadConnectionHistory()
+  private func unlockSavedPassword(of entry: ConnectionHistoryEntry) {
+    Task {
+      guard
+        await LockCenter.shared.requestUnlock(
+          for: entry.config, reason: "Unlock \(entry.shortDisplayName) to use it",
+          anchor: hostWindow.window),
+        // Not when another row was chosen while the prompt was open
+        getSelectedHistoryId() == entry.id,
+        ConnectionKeychainKey.password(for: connectionConfig) == entry.keychainKey
+      else { return }
+      if certificateDraftPending { restoreCertificateDraft() }
+      // Nor over a password typed while the prompt was open
+      guard connectionConfig.password.isEmpty else { return }
+      connectionConfig = RecentManager.shared.withSavedPassword(connectionConfig)
+      if getInputMode() == .connectionString {
+        setConnectionString(generateConnectionString())
+      }
+    }
+  }
 
-    if getSelectedHistoryId() == id {
+  /// Deleting the last row of a locked connection would drop its lock: a blocked row asks
+  /// first, and cancel or a refusal changes nothing.
+  func deleteConnection(_ id: UUID) {
+    Task {
+      if let entry = getConnectionHistory().first(where: { $0.id == id }) {
+        guard
+          await LockCenter.shared.requestUnlock(
+            for: entry.config, reason: "Unlock \(entry.shortDisplayName) to remove it",
+            anchor: hostWindow.window)
+        else { return }
+      }
+      guard SessionManager.removeConnection(id: id) else { return }
+      loadConnectionHistory()
+
+      if getSelectedHistoryId() == id {
+        setSelectedHistoryId(nil)
+        connectionConfig = Self.newFormDraft()
+        resetCertificateDraft()
+      }
+    }
+  }
+
+  /// Each locked connection asks first; cancel or a refusal changes nothing.
+  func clearAllHistory() {
+    Task {
+      let registry = LockCenter.shared.registry
+      for entry in getConnectionHistory() where registry.refusal(for: entry.config) != nil {
+        guard
+          await LockCenter.shared.requestUnlock(
+            for: entry.config, reason: "Unlock \(entry.shortDisplayName) to clear the history",
+            anchor: hostWindow.window)
+        else { return }
+      }
+      guard SessionManager.clearAllHistory() else { return }
+      loadConnectionHistory()
       setSelectedHistoryId(nil)
       connectionConfig = Self.newFormDraft()
       resetCertificateDraft()
     }
-  }
-
-  func clearAllHistory() {
-    SessionManager.clearAllHistory()
-    loadConnectionHistory()
-    setSelectedHistoryId(nil)
-    connectionConfig = Self.newFormDraft()
-    resetCertificateDraft()
   }
 
   /// Shield for any resolved style other than Immediate. Password tint only for Password.

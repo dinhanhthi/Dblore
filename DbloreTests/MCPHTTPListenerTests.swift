@@ -1,8 +1,8 @@
 // MCPHTTPListenerTests.swift
 // The MCP HTTP listener over a real loopback socket on an ephemeral port: request-head refusals,
 // the streamed body limit, the handler hand-off, keep-alive, a client disconnect cancelling its
-// handler, and start/stop lifecycle. Requests are written raw so the Host header is exactly what
-// the test sends.
+// handler, the connection and in-flight caps (503), and start/stop lifecycle. Requests are
+// written raw so the Host header is exactly what the test sends.
 
 import Darwin
 import Foundation
@@ -189,14 +189,93 @@ struct MCPHTTPListenerTests {
     await server.stop()
   }
 
+  @Test("Idle or unauthenticated connections hold no slot, so an agent still gets 200")
+  func idleConnectionsHoldNoSlot() async throws {
+    let server = makeServer()
+    let port = try await server.start(configuration())
+    let cap = MCPHTTPServer.maxConnections
+    let unauthenticated = request(port, auth: false)
+    let held = try await offPool {
+      let idle = try holdConnections(port, count: cap)
+      let refused = try holdConnections(port, count: cap, sending: unauthenticated)
+      return (fds: idle.fds + refused.fds, statuses: refused.statuses)
+    }
+    defer { held.fds.forEach { close($0) } }
+    #expect(held.statuses == Array(repeating: 401, count: cap))
+    #expect(try await exchange(port, request(port)).status == 200)
+    await server.stop()
+  }
+
+  @Test("Over the connection cap a request gets 503 with Retry-After; a closed slot frees")
+  func connectionCap() async throws {
+    let server = makeServer()
+    let port = try await server.start(configuration())
+    let cap = MCPHTTPServer.maxConnections
+    let keepAlive = request(port).replacingOccurrences(of: "Connection: close\r\n", with: "")
+    let opened = try await offPool { try holdConnections(port, count: cap, sending: keepAlive) }
+    var held = opened.fds
+    defer { held.forEach { close($0) } }
+    #expect(opened.statuses == Array(repeating: 200, count: cap))
+    let refused = try await exchange(port, request(port))
+    #expect(refused.status == 503)
+    #expect(refused.raw.contains("Retry-After: 2"))
+    #expect(refused.raw.contains("Connection: close"))
+    #expect(refused.body.contains("\"jsonrpc\":\"2.0\""))
+    close(held.removeLast())
+    var status = -1
+    let deadline = ContinuousClock.now + .seconds(5)
+    while status != 200, ContinuousClock.now < deadline, !Task.isCancelled {
+      status = try await exchange(port, request(port)).status
+      if status != 200 { try await Task.sleep(for: .milliseconds(10)) }
+    }
+    #expect(status == 200)
+    await server.stop()
+  }
+
+  @Test("Over the in-flight cap a request gets 503 without running; a finished slot frees")
+  func inFlightCap() async throws {
+    let started = OSAllocatedUnfairLock(initialState: 0)
+    let open = OSAllocatedUnfairLock(initialState: false)
+    let server = MCPHTTPServer { _ in
+      started.withLock { $0 += 1 }
+      while !open.withLock({ $0 }), !Task.isCancelled {
+        try? await Task.sleep(for: .milliseconds(10))
+      }
+      return .text(200, "")
+    }
+    let port = try await server.start(configuration())
+    let cap = MCPHTTPServer.maxInFlight
+    let raw = request(port)
+    async let replies = withThrowingTaskGroup(of: Int.self) { group in
+      for _ in 0..<cap { group.addTask { try await exchange(port, raw).status } }
+      return try await group.reduce(into: [Int]()) { $0.append($1) }
+    }
+    let deadline = ContinuousClock.now + .seconds(5)
+    while started.withLock({ $0 }) < cap, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(started.withLock { $0 } == cap)
+    let refused = try await exchange(port, raw)
+    #expect(refused.status == 503)
+    #expect(refused.raw.contains("Retry-After: 2"))
+    #expect(refused.raw.contains("Connection: close"))
+    #expect(started.withLock { $0 } == cap)
+    open.withLock { $0 = true }
+    #expect(try await replies == Array(repeating: 200, count: cap))
+    #expect(try await exchange(port, raw).status == 200)
+    await server.stop()
+  }
+
   // MARK: - Raw socket client
 
-  /// Runs the blocking socket exchange off the cooperative pool, where the handler task runs.
   private func exchange(_ port: Int, _ raw: String) async throws -> RawResponse {
+    try await offPool { try rawExchange(port, raw) }
+  }
+
+  /// Runs blocking socket work off the cooperative pool, where the handler task runs.
+  private func offPool<T: Sendable>(_ body: @escaping @Sendable () throws -> T) async throws -> T {
     try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global().async {
-        continuation.resume(with: Result { try rawExchange(port, raw) })
-      }
+      DispatchQueue.global().async { continuation.resume(with: Result { try body() }) }
     }
   }
 }
@@ -214,10 +293,79 @@ private func rawExchange(
 ) throws
   -> RawResponse
 {
+  let fd = try openConnection(port, address: address)
+  defer { close(fd) }
+  sendAll(fd, raw)
+  guard read else { return RawResponse(raw: "") }
+  var received = [UInt8]()
+  var buffer = [UInt8](repeating: 0, count: 4096)
+  while true {
+    let count = recv(fd, &buffer, buffer.count, 0)
+    guard count > 0 else { break }
+    received += buffer[0..<count]
+  }
+  guard !received.isEmpty else { throw POSIXError(.ECONNRESET) }
+  return RawResponse(raw: String(decoding: received, as: UTF8.self))
+}
+
+/// Opens `count` connections one after another; with `raw`, each sends it and reads its one
+/// response before the next opens. The connections stay open; the caller closes them.
+private func holdConnections(
+  _ port: Int, count: Int, sending raw: String? = nil
+) throws
+  -> (fds: [Int32], statuses: [Int])
+{
+  var fds: [Int32] = []
+  var statuses: [Int] = []
+  do {
+    for _ in 0..<count {
+      let fd = try openConnection(port)
+      fds.append(fd)
+      guard let raw else { continue }
+      sendAll(fd, raw)
+      statuses.append(try readResponse(fd).status)
+    }
+  } catch {
+    fds.forEach { close($0) }
+    throw error
+  }
+  return (fds, statuses)
+}
+
+private func sendAll(_ fd: Int32, _ raw: String) {
+  let bytes = Array(raw.utf8)
+  var sent = 0
+  while sent < bytes.count {
+    let count = bytes[sent...].withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
+    guard count > 0 else { break }
+    sent += count
+  }
+}
+
+/// Reads one response (head plus `Content-Length` body bytes) without waiting for a close.
+private func readResponse(_ fd: Int32) throws -> RawResponse {
+  var received = [UInt8]()
+  var buffer = [UInt8](repeating: 0, count: 4096)
+  while true {
+    let text = String(decoding: received, as: UTF8.self)
+    if let end = text.range(of: "\r\n\r\n") {
+      let length =
+        text[..<end.lowerBound].split(separator: "\r\n")
+        .first { $0.lowercased().hasPrefix("content-length:") }
+        .flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
+      if text[end.upperBound...].utf8.count >= length { return RawResponse(raw: text) }
+    }
+    let count = recv(fd, &buffer, buffer.count, 0)
+    guard count > 0 else { throw POSIXError(.ECONNRESET) }
+    received += buffer[0..<count]
+  }
+}
+
+/// A connected socket to `address:port` with a 5 s read timeout; the caller closes it.
+private func openConnection(_ port: Int, address: String = "127.0.0.1") throws -> Int32 {
   let isIPv6 = address.contains(":")
   let fd = socket(isIPv6 ? AF_INET6 : AF_INET, SOCK_STREAM, 0)
   guard fd >= 0 else { throw POSIXError(.EBADF) }
-  defer { close(fd) }
   var timeout = timeval(tv_sec: 5, tv_usec: 0)
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
   var noSigPipe: Int32 = 1
@@ -245,23 +393,10 @@ private func rawExchange(
       }
     }
   }
-  guard connected == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED) }
-
-  let bytes = Array(raw.utf8)
-  var sent = 0
-  while sent < bytes.count {
-    let count = bytes[sent...].withUnsafeBytes { send(fd, $0.baseAddress, $0.count, 0) }
-    guard count > 0 else { break }
-    sent += count
+  guard connected == 0 else {
+    let code = POSIXErrorCode(rawValue: errno) ?? .ECONNREFUSED
+    close(fd)
+    throw POSIXError(code)
   }
-  guard read else { return RawResponse(raw: "") }
-  var received = [UInt8]()
-  var buffer = [UInt8](repeating: 0, count: 4096)
-  while true {
-    let count = recv(fd, &buffer, buffer.count, 0)
-    guard count > 0 else { break }
-    received += buffer[0..<count]
-  }
-  guard !received.isEmpty else { throw POSIXError(.ECONNRESET) }
-  return RawResponse(raw: String(decoding: received, as: UTF8.self))
+  return fd
 }

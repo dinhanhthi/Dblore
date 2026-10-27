@@ -166,6 +166,7 @@ extension DatabaseConnectionManager {
     _ body: @escaping @Sendable (DumpSnapshotReader) async throws -> T
   ) async throws -> T {
     guard let databaseType else { throw DatabaseError.notConnected }
+    try refuseIfRelocked(config)
     if databaseType == .duckdb { return try await withDuckDBDumpSnapshot(body) }
     var serverInfo = mysqlServerInfo
     return try await withSession { session in

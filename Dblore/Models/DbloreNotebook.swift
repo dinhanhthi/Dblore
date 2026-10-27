@@ -47,6 +47,8 @@ struct DbloreNotebook: Codable, Identifiable, Sendable {
     metadata = try container.decode(NotebookMetadata.self, forKey: .metadata)
     connectionConfig = try container.decodeIfPresent(
       ConnectionConfig.self, forKey: .connectionConfig)
+    // Locks come from the saved rows: a file's flag never reaches the first save of its row
+    connectionConfig?.isLocked = false
     settings = try container.decode(NotebookSettings.self, forKey: .settings)
     documentType = try container.decode(DocumentType.self, forKey: .documentType)
   }

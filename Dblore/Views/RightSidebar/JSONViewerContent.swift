@@ -104,19 +104,16 @@ struct JSONViewerContent: View {
     isPrettyPrinted ? Self.prettyPrinted(json) : json
   }
 
-  /// `json` pretty-printed, or unchanged when it does not parse. Cached at any size until the
-  /// viewer closes.
+  /// `json` pretty-printed, or unchanged when it does not parse or its pretty form is too large
+  /// to highlight (deep nesting indents every element). Cached at any size until the viewer
+  /// closes.
   static func prettyPrinted(_ json: String) -> String {
     if let last = lastPrettyPrint, last.json == json { return last.pretty }
     var pretty = json
-    if let data = json.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data),
-      let prettyData = try? JSONSerialization.data(
-        withJSONObject: object, options: .prettyPrinted
-      ),
-      let prettyString = String(data: prettyData, encoding: .utf8)
+    if case .formatted(let text, _) = CellInfoContent.prettyPrintedJSON(
+      json, maxOutputBytes: CellInfoContent.maxHighlightedPrettyBytes)
     {
-      pretty = prettyString
+      pretty = text
     }
     lastPrettyPrint = (json, pretty)
     return pretty

@@ -282,7 +282,7 @@ struct DataViewerControls: View {
     Button(action: { Task { await viewModel.commitStaged() } }) {
       dataViewerCapsuleLabel(fill: .accentFill, bordered: false) {
         HStack(spacing: Spacing.xs) {
-          if viewModel.isCheckingStagedDeletes {
+          if viewModel.isCheckingStagedDeletes || viewModel.isCommittingStaged {
             ProgressView().controlSize(.mini)
           }
           Text("Commit")
@@ -296,11 +296,15 @@ struct DataViewerControls: View {
     .linkPointer()
     .fixedSize()
     .opacity(viewModel.stagingEnabled ? 1 : 0.5)
-    .disabled(!viewModel.stagingEnabled || viewModel.isCheckingStagedDeletes)
+    .disabled(
+      !viewModel.stagingEnabled || viewModel.isCheckingStagedDeletes
+        || viewModel.isCommittingStaged
+    )
     .help(
       viewModel.rowStagingUnavailableReason
         ?? (viewModel.isCheckingStagedDeletes
-          ? "Checking related rows…" : "Commit staged changes")
+          ? "Checking related rows…"
+          : viewModel.isCommittingStaged ? "Committing…" : "Commit staged changes")
     )
     .overlay { disabledStagingHelp }
   }

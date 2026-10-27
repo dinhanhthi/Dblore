@@ -15,7 +15,9 @@ struct ResultGridEditTests {
 
   private static let usersID = TableRef.postgresql(oid: 16_400)
 
-  private func makeResult(primaryKeyColumns: [String]) -> CellResult {
+  /// `name` is the name of row id 1, displayed first once sorted by id
+  private func makeResult(primaryKeyColumns: [String], name: CellValue = .string("a")) -> CellResult
+  {
     CellResult(
       columns: [
         ColumnInfo(
@@ -25,7 +27,7 @@ struct ResultGridEditTests {
           name: "name", type: "text",
           origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2)),
       ],
-      rows: [[.int(3), .string("c")], [.int(1), .string("a")], [.int(2), .string("b")]],
+      rows: [[.int(3), .string("c")], [.int(1), name], [.int(2), .string("b")]],
       rowCount: 3, sourceQuery: "SELECT * FROM users", tableName: "public.users",
       primaryKeyColumns: primaryKeyColumns,
       editTarget: EditTarget(
@@ -102,6 +104,27 @@ struct ResultGridEditTests {
     coordinator.onCommitEdit = { _, _, _ in delivered = true }
     coordinator.commitEdit(row: 0, column: 1, newValue: "new")
     #expect(delivered == false)
+  }
+
+  /// The inline field took a value of any size: an 18 MB geometry hung the main thread there
+  @Test(
+    "A 1 MB text or any binary value opens the sidebar Cell Value editor; a small value edits inline",
+    arguments: [
+      (CellValue.string(String(repeating: "x", count: 1 << 20)), true),
+      (CellValue.data(Data(count: 16)), true), (CellValue.string("small"), false),
+    ])
+  func inlineOrSidebar(value: CellValue, opensSidebar: Bool) {
+    let result = makeResult(primaryKeyColumns: ["id"], name: value)
+    let viewModel = makeViewModel(
+      result: result, config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
+    let (coordinator, tableView) = makeGrid(viewModel, result: result)
+    var detailsColumn: Int?
+    coordinator.onShowCellDetails = { _, _, column, _ in detailsColumn = column }
+
+    coordinator.beginEditing(tableView, row: 0, column: 1)
+
+    #expect(coordinator.isEditing == !opensSidebar)
+    #expect(detailsColumn == (opensSidebar ? 1 : nil))
   }
 
   @Test("A loaded data-viewer row goes through the cell edit and is not staged")

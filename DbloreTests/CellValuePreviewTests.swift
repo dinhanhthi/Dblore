@@ -1,6 +1,8 @@
 // CellValuePreviewTests.swift
 // Which Cell Value viewer a value gets: geometry bytes by column type or WKB header, vector
 // text only for a vector column or one of unknown type, so a JSON array in TEXT stays text.
+// Format JSON sizes its output, not its input, before anything is highlighted.
+// A binary value in a Display As format decodes to a tree or text; bad bytes keep the raw view.
 
 import Foundation
 import Testing
@@ -43,5 +45,98 @@ import Testing
       + [1.0, 2.0].flatMap { withUnsafeBytes(of: $0.bitPattern.littleEndian) { Array($0) } }
     let preview = await CellValuePreview.make(value: .data(Data(bytes)), columnType: "GEOMETRY")
     #expect(Self.isGeometry(preview))
+  }
+
+  /// The read-only view lays out a long line all at once, so a large value shows a prefix cut
+  /// on a character boundary: never half of a flag (two 4-byte scalars).
+  @Test(arguments: [
+    ("abc", 3, "abc"),
+    ("aaa\u{1F1EB}\u{1F1F7}b", 7, "aaa"),
+    ("aaa\u{1F1EB}\u{1F1F7}b", 11, "aaa\u{1F1EB}\u{1F1F7}"),
+  ])
+  func largeValueShowsAPrefixOnACharacterBoundary(text: String, maxBytes: Int, shown: String) {
+    #expect(CellInfoContent.displayText(text, maxBytes: maxBytes) == shown)
+  }
+
+  /// The note under a cut value says which text it measures: binary shows base64, Format JSON
+  /// its output, while Copy always copies the whole original value.
+  @Test(arguments: [
+    (false, false, "", "Copy copies the whole value."),
+    (true, false, " of base64 text.", "Copy copies the whole value."),
+    (false, true, " of formatted JSON.", "Copy copies the whole original value."),
+  ])
+  func truncationNoteNamesWhatItMeasures(
+    isBinary: Bool, isFormatted: Bool, kind: String, copy: String
+  ) {
+    let note = CellInfoContent.truncationNote(
+      shownBytes: 64 * 1024, totalBytes: 12_000_000, isBinary: isBinary, isFormatted: isFormatted)
+    #expect(note.hasPrefix("Showing the first "))
+    #expect(note.hasSuffix(copy))
+    #expect(note.contains("base64") == isBinary)
+    #expect(note.contains("formatted JSON") == isFormatted)
+    if !kind.isEmpty { #expect(note.contains(kind)) }
+  }
+
+  private static func nestedArray(depth: Int, elements: Int) -> String {
+    String(repeating: "[", count: depth)
+      + Array(repeating: "1", count: elements).joined(separator: ",")
+      + String(repeating: "]", count: depth)
+  }
+
+  /// Pretty-printing indents every element by its depth: a 61 KB array nested 512 deep grows to
+  /// 30 MB. Formatting gives up before writing that, so the main actor never highlights it.
+  @Test(arguments: [
+    (512, 30_000, CellInfoContent.maxHighlightedPrettyBytes),
+    (100, 30_000, CellInfoContent.maxHighlightedPrettyBytes),
+    (512, 40_000, CellInfoContent.maxFormattedBytes),
+  ])
+  func deeplyNestedArrayIsTooLargeToFormat(depth: Int, elements: Int, maxOutputBytes: Int) {
+    let json = Self.nestedArray(depth: depth, elements: elements)
+    #expect(
+      CellInfoContent.prettyPrintedJSON(json, maxOutputBytes: maxOutputBytes) == .tooLarge)
+  }
+
+  @Test func ordinaryJSONFormatsWhole() throws {
+    let json = #"{"a":[1,{"b":"c\/d","e":[]}],"f":null}"#
+    let object = try JSONSerialization.jsonObject(with: Data(json.utf8))
+    let pretty = try JSONSerialization.data(withJSONObject: object, options: .prettyPrinted)
+    // The size check is a lower bound: it never refuses JSON whose output fits
+    #expect(CellInfoContent.prettyPrintedLowerBound(object) <= pretty.count)
+    #expect(
+      CellInfoContent.prettyPrintedJSON(
+        json, maxOutputBytes: CellInfoContent.maxHighlightedPrettyBytes)
+        == .formatted(text: String(decoding: pretty, as: UTF8.self), totalBytes: pretty.count))
+    #expect(CellInfoContent.prettyPrintedJSON("{", maxOutputBytes: 1024) == .invalid)
+  }
+
+  /// A large output decodes only its first bytes, still cut on a character boundary
+  @Test(arguments: [
+    (5, "aaa"),
+    (10, "aaa"),
+    (11, "aaa\u{1F1EB}\u{1F1F7}"),
+  ])
+  func outputPrefixEndsOnACharacterBoundary(maxBytes: Int, shown: String) {
+    let data = Data("aaa\u{1F1EB}\u{1F1F7}b".utf8)
+    #expect(CellInfoContent.prefixText(data, maxBytes: maxBytes) == shown)
+  }
+
+  @Test func displayAsFormatPicksTheDecodedViewer() throws {
+    // MessagePack {"a": 1}
+    let map = Data([0x81, 0xA1, 0x61, 0x01])
+    let tree = try #require(CellInfoContent.decodedNode(.data(map), format: .messagePack))
+    #expect(tree.kind == .map)
+    #expect(tree.children.map(\.text) == ["1"])
+    let uuid = Data(0..<16)
+    let text = CellInfoContent.decodedNode(.data(uuid), format: .uuid)?.text
+    #expect(text == BinaryDisplayFormat.uuid.text(for: uuid))
+  }
+
+  @Test func sizeFormatTextOrBadBytesKeepTheRawViewer() {
+    let map = Data([0x81, 0xA1, 0x61, 0x01])
+    #expect(CellInfoContent.decodedNode(.data(map), format: .size) == nil)
+    #expect(CellInfoContent.decodedNode(.string("gaQ="), format: .messagePack) == nil)
+    // 0xC1 is never used in MessagePack
+    #expect(CellInfoContent.decodedNode(.data(Data([0xC1])), format: .messagePack) == nil)
+    #expect(CellInfoContent.decodedNode(.data(Data([1, 2, 3])), format: .uuid) == nil)
   }
 }

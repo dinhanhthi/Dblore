@@ -4,7 +4,8 @@
 // connection of the same engine and one of its schemas, read on a private short-lived connection
 // (`openSchemaCompareSource`) that is closed after the read, its failure, a cancel and the sheet
 // closing. A MySQL source in another database of the same server also gets its own connection
-// (MySQL lists only the connected database's tables).
+// (MySQL lists only the connected database's tables). A locked saved source asks to unlock
+// before its password is read; a cancelled unlock reads and compares nothing.
 // Compare reads the source, then the target (`SchemaSnapshotLoader`, with progress and Cancel),
 // diffs them (`SchemaDiff`) and builds the script for the ticked items
 // (`SchemaMigrationScriptBuilder`), off the main actor; ticking an item builds it again and
@@ -19,6 +20,7 @@
 // stale (Run is disabled) until the next compare; changing the source or the target clears the
 // result. History rows use source `.structure`.
 
+import AppKit
 import Foundation
 import Observation
 
@@ -76,6 +78,10 @@ struct SchemaCompareContext {
   var recordHistory: @MainActor ([QueryHistoryOutcome]) async -> Void
   /// A saved connection's password, called off the main actor (the Keychain in the app)
   var password: @Sendable (ConnectionConfig) -> String? = SchemaCompareContext.keychainPassword
+  /// Asks before a locked saved connection is read (tests pass a registry and prompter double)
+  var lockCenter: LockCenter = .shared
+  /// The window the unlock prompt opens on (over the sheet attached to it)
+  var unlockAnchor: @MainActor () -> NSWindow? = { nil }
 
   nonisolated static func keychainPassword(_ config: ConnectionConfig) -> String? {
     SessionManager.isRunningAsTestHost
@@ -111,6 +117,8 @@ final class SchemaCompareModel: Identifiable {
   struct SavedConnection: Identifiable, Hashable {
     let id: UUID
     let name: String
+    /// The row is locked: picking it as the source asks before its password is read
+    let isLocked: Bool
   }
 
   struct Progress: Equatable {
@@ -210,7 +218,7 @@ final class SchemaCompareModel: Identifiable {
     self.targetSchema = targetSchema
     savedEntries = savedConnections.filter { $0.config.databaseType == context.databaseType }
     self.savedConnections = savedEntries.map {
-      SavedConnection(id: $0.id, name: $0.shortDisplayName)
+      SavedConnection(id: $0.id, name: $0.shortDisplayName, isLocked: $0.config.isLocked)
     }
     sourceSchema = targetSchemas.first { $0 != targetSchema } ?? targetSchema
   }
@@ -405,6 +413,16 @@ final class SchemaCompareModel: Identifiable {
         throw CompareFailure.source("The saved connection is no longer available.")
       }
       name = entry.shortDisplayName
+      // A locked row asks first: its password (or password command) is read only after the
+      // unlock; a cancelled unlock ends the compare quietly, with nothing read
+      if context.lockCenter.registry.refusal(for: entry.config) != nil {
+        guard
+          await context.lockCenter.requestUnlock(
+            for: entry.config, reason: "Unlock \(name.prefix(80)) to compare with it",
+            anchor: context.unlockAnchor())
+        else { throw CancellationError() }
+        try Task.checkCancellation()
+      }
       do {
         config = try await Self.withSavedPassword(entry.config, password: context.password)
       } catch {

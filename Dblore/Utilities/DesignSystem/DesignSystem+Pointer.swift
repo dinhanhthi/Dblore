@@ -3,8 +3,8 @@
 //  Dblore
 //
 //  Pointing-hand cursor for clickable controls. Views call `linkPointer()`
-//  instead of raw `pointerStyle(.link)`, which needs macOS 15; below that it
-//  falls back to pushing and popping `NSCursor.pointingHand` on hover.
+//  instead of raw `pointerStyle(.link)`, which needs macOS 15 and on macOS 27
+//  leaves the arrow; it pushes and pops `NSCursor.pointingHand` on hover.
 //
 
 import AppKit
@@ -14,30 +14,34 @@ import SwiftUI
 
 extension View {
   /// Show the pointing-hand cursor while hovering this view.
-  @ViewBuilder
   func linkPointer() -> some View {
-    if #available(macOS 15, *) {
-      pointerStyle(.link)
-    } else {
-      modifier(LinkPointerFallback())
-    }
+    modifier(LinkPointer())
   }
 }
 
-/// macOS 14: push once on enter, pop once on exit, and pop if the view goes away while
-/// hovered (SwiftUI sends no hover exit then), so the cursor stack stays balanced.
-private struct LinkPointerFallback: ViewModifier {
+/// Push once on enter, pop once on exit, and pop if the view goes away while hovered
+/// (SwiftUI sends no hover exit then), so the cursor stack stays balanced. Every move inside
+/// sets the hand again: entering from another view or a modal, AppKit can put the arrow back
+/// right after the push.
+private struct LinkPointer: ViewModifier {
   @State private var pushed = false
 
   func body(content: Content) -> some View {
     content
-      .onHover { inside in
-        if inside, !pushed {
-          NSCursor.pointingHand.push()
-          pushed = true
-        } else if !inside, pushed {
-          NSCursor.pop()
-          pushed = false
+      .onContinuousHover { phase in
+        switch phase {
+        case .active:
+          if pushed {
+            NSCursor.pointingHand.set()
+          } else {
+            NSCursor.pointingHand.push()
+            pushed = true
+          }
+        case .ended:
+          if pushed {
+            NSCursor.pop()
+            pushed = false
+          }
         }
       }
       .onDisappear {

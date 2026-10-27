@@ -42,19 +42,26 @@ struct LaunchWorkspace: Codable, Sendable {
   var folderBookmark: Data?
   var workspace: Workspace?
   var textOverlays: [LaunchTextOverlay]
+  /// Text of a locked workspace's tabs (or of a tab sealed by another workspace): one envelope
+  /// (`LockEnvelope.Kind.launchOverlays`) per overlay, sealed with its key and opened only after
+  /// that workspace is unlocked. Such text is never in `textOverlays`. Optional, so a snapshot
+  /// written before it decodes and a plain one is stored as before.
+  var sealedOverlays: [Data]?
 
   init(
     fileURL: URL? = nil,
     bookmark: Data? = nil,
     folderBookmark: Data? = nil,
     workspace: Workspace? = nil,
-    textOverlays: [LaunchTextOverlay] = []
+    textOverlays: [LaunchTextOverlay] = [],
+    sealedOverlays: [Data]? = nil
   ) {
     self.fileURL = fileURL
     self.bookmark = bookmark
     self.folderBookmark = folderBookmark
     self.workspace = workspace
     self.textOverlays = textOverlays
+    self.sealedOverlays = sealedOverlays
   }
 
   /// Drops the embedded connection password. Untitled notebooks reconnect through

@@ -96,7 +96,7 @@ struct MySQLDialectSitesTests {
     arguments: [
       (FilterOperator.like, "CAST(`c` AS CHAR) LIKE 'v'"),
       (.notLike, "CAST(`c` AS CHAR) NOT LIKE 'v'"),
-      (.ilike, "CAST(`c` AS CHAR) LIKE 'v'"),
+      (.ilike, "LOWER(CAST(`c` AS CHAR)) LIKE LOWER('v')"),
       (.notIlike, "CAST(`c` AS CHAR) NOT LIKE 'v'"),
     ])
   func filter(op: FilterOperator, expected: String) {

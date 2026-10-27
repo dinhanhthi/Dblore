@@ -73,8 +73,9 @@ enum LaunchSessionCapture {
   static func saveNow() {
     guard !SessionManager.isRunningAsTestHost, isEnabled else { return }
     let captured = descriptors(windows: NSApp.windows, orderedWindows: NSApp.orderedWindows)
+    let windows = WorkspaceWindowManager.shared
     let session = session(
-      windows: captured, workspaces: WorkspaceWindowManager.shared.workspaces)
+      windows: captured, workspaces: windows.workspaces, lockedOpens: windows.lockedOpens)
     LaunchSessionStore(defaults: .standard).save(session)
   }
 
@@ -82,9 +83,13 @@ enum LaunchSessionCapture {
   /// the frontmost window (`orderedIndex`). Welcome stays welcome. A saved workspace stores its
   /// file and bookmarks. An untitled workspace stores the encoded document with the password
   /// cleared. Preview tabs are omitted. Text overlays are the live editor contents of dirty or
-  /// file-less tabs. Object source tabs are omitted too.
+  /// file-less tabs. Object source tabs are omitted too. Text of a locked workspace, or of a tab
+  /// sealed by one, is stored only sealed (a seal error drops it); a window still asking for a
+  /// locked workspace (`lockedOpens`, no manager yet) keeps its file and its still-sealed text,
+  /// and so does an open workspace for snapshot text it has not opened yet.
   static func session(
-    windows: [WindowDescriptor], workspaces: [UUID: WorkspaceManager]
+    windows: [WindowDescriptor], workspaces: [UUID: WorkspaceManager],
+    lockedOpens: [UUID: LockedWorkspaceOpen] = [:]
   ) -> LaunchSession {
     let grouped = Dictionary(grouping: windows, by: \.groupID)
     let groupOrder = grouped.keys.sorted { lhs, rhs in
@@ -102,7 +107,10 @@ enum LaunchSessionCapture {
         return lhs.orderedIndex < rhs.orderedIndex
       }
       let recorded: [LaunchWindow] = members.compactMap { descriptor in
-        guard let content = content(for: descriptor, workspaces: workspaces) else { return nil }
+        guard
+          let content = content(
+            for: descriptor, workspaces: workspaces, lockedOpens: lockedOpens)
+        else { return nil }
         return LaunchWindow(
           frame: descriptor.frame,
           isMiniaturized: descriptor.isMiniaturized,
@@ -168,28 +176,43 @@ enum LaunchSessionCapture {
   }
 
   private static func content(
-    for descriptor: WindowDescriptor, workspaces: [UUID: WorkspaceManager]
+    for descriptor: WindowDescriptor, workspaces: [UUID: WorkspaceManager],
+    lockedOpens: [UUID: LockedWorkspaceOpen]
   ) -> LaunchWindowContent? {
     switch descriptor.content {
     case .welcome:
       return .welcome
     case .workspace(let id):
-      guard let manager = workspaces[id] else { return nil }
-      return .workspace(launchWorkspace(for: manager))
+      if let manager = workspaces[id] {
+        return .workspace(launchWorkspace(for: manager))
+      }
+      guard let open = lockedOpens[id] else { return nil }
+      // Still asking: reopened (and asked) again next launch. Its plaintext text from an older
+      // snapshot cannot be sealed without the unlock, so it is not kept.
+      return .workspace(
+        LaunchWorkspace(
+          fileURL: open.url, bookmark: open.bookmark, folderBookmark: open.folderBookmark,
+          sealedOverlays: open.sealedLaunchOverlays.isEmpty ? nil : open.sealedLaunchOverlays))
     }
   }
 
   private static func launchWorkspace(for manager: WorkspaceManager) -> LaunchWorkspace {
     let overlays = textOverlays(of: manager)
+    // Live text first (the first text of a tab wins at restore), then the snapshot text not
+    // opened yet, as it is
+    let all = overlays.sealed + manager.keptSealedOverlays
+    let sealed = all.isEmpty ? nil : all
     if let fileURL = manager.workspace.fileURL {
       return LaunchWorkspace(
         fileURL: fileURL,
         bookmark: manager.workspaceBookmark,
         folderBookmark: manager.folderBookmark,
-        textOverlays: overlays)
+        textOverlays: overlays.plain,
+        sealedOverlays: sealed)
     }
     var embedded = LaunchWorkspace(
-      workspace: decodedWorkspace(from: manager), textOverlays: overlays)
+      workspace: decodedWorkspace(from: manager), textOverlays: overlays.plain,
+      sealedOverlays: sealed)
     embedded.clearPasswords()
     return embedded
   }
@@ -203,9 +226,42 @@ enum LaunchSessionCapture {
     return try? decoder.decode(Workspace.self, from: data)
   }
 
+  /// Live text split by key: plaintext, or one envelope per overlay of a tab whose document
+  /// carries a lock key id (else the workspace's). Sealing is AES-GCM with the open session
+  /// (`LockedFileIO.sealPayload`, synchronous for quit); on error that text is dropped, never
+  /// stored as plaintext.
+  private static func textOverlays(
+    of manager: WorkspaceManager
+  ) -> (plain: [LaunchTextOverlay], sealed: [Data]) {
+    var plain: [LaunchTextOverlay] = []
+    var sealed: [Data] = []
+    for overlay in liveOverlays(of: manager) {
+      let keyId =
+        manager.notebookDocument(for: overlay.tabId)?.lockKeyId
+        ?? manager.editorDocument(for: overlay.tabId)?.lockKeyId ?? manager.lockKeyId
+      guard let keyId else {
+        plain.append(overlay)
+        continue
+      }
+      do {
+        sealed.append(
+          try manager.lockedIO.sealPayload(
+            JSONEncoder().encode(overlay), kind: .launchOverlays, lockKeyId: keyId))
+      } catch {
+        let reason = error.localizedDescription
+        Task {
+          await AppLogger.shared.warning(
+            "Launch snapshot: the text of a locked tab was not kept: \(reason)",
+            category: "Workspace")
+        }
+      }
+    }
+    return (plain, sealed)
+  }
+
   /// Live notebook cells or SQL editor text. The stored document can be behind the editor.
   /// Preview and object source tabs are omitted, matching `encodedWorkspaceData()`.
-  private static func textOverlays(of manager: WorkspaceManager) -> [LaunchTextOverlay] {
+  private static func liveOverlays(of manager: WorkspaceManager) -> [LaunchTextOverlay] {
     manager.tabs.compactMap { tab in
       guard !tab.isPreview, !tab.isReadOnlySource, tab.isDirty || tab.fileURL == nil else {
         return nil

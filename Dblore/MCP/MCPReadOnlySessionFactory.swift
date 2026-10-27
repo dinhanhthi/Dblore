@@ -192,6 +192,10 @@ nonisolated final class MCPReadOnlySession: DatabaseSession, @unchecked Sendable
     await inner.interrupt()
   }
 
+  func transactionOpenAfterInterrupt() async -> Bool? {
+    await inner.transactionOpenAfterInterrupt()
+  }
+
   func formatError(_ error: Error) -> String {
     inner.formatError(error)
   }

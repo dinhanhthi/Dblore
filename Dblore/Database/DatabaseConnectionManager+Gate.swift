@@ -20,6 +20,15 @@ nonisolated enum GateDecision: Sendable, Equatable {
   case blocked(statementIndex: Int, kind: StatementKind, reason: String)
 }
 
+/// The INSERTs of a Generate Rows run, made one chunk at a time inside the run's transaction
+/// (`executeGatedBatch(streamed:)`), so the whole run is never in memory.
+nonisolated struct StreamedBatch: Sendable {
+  /// The quoted table the rows go into: the run's one pending summary names it
+  let relation: String
+  /// The next chunk's INSERT statements (each with its `expectedRows`); nil once the run is done
+  let nextChunk: @Sendable () async throws -> [BoundStatement]?
+}
+
 extension DatabaseConnectionManager {
   // MARK: - Gated entry points (user SQL)
 
@@ -61,6 +70,7 @@ extension DatabaseConnectionManager {
     _ userSQL: String, parameters: [String: SQLBindValue]?, policy: ProtectionPolicy,
     maxRows: Int, caller: UUID?, expectedEpoch: UInt64?
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
+    try refuseIfRelocked(config)
     guard let parameters else {
       let (statements, protectedMode) = try authorize(userSQL, policy: policy)
       return try await runUserStatements(
@@ -198,6 +208,7 @@ extension DatabaseConnectionManager {
     _ statements: [BoundStatement], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil, rewind: RewindPlan? = nil, rewinding: [Int64] = []
   ) async throws -> [Int] {
+    try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
@@ -222,6 +233,42 @@ extension DatabaseConnectionManager {
     return try await runStagedBatch(
       statements, caller: caller, protectedMode: effective.protectedMode,
       cancellationGeneration: cancellationGeneration, rewind: rewind, rewinding: rewinding)
+  }
+
+  /// Send a streamed batch (Generate Rows) in one transaction, under the same rules as the
+  /// staged batch above. A run always writes, so a read-only connection is refused before any
+  /// chunk is made; every other check runs before anything is sent, and each chunk is classified
+  /// and checked against the policy as it is made (it must be DML), before it is sent.
+  /// `progress` gets the number of chunks done after each one. A cancel, a chunk the source
+  /// fails to make or the server refuses, or a relock rolls back the whole run.
+  /// - Returns: the rows inserted.
+  func executeGatedBatch(
+    streamed source: StreamedBatch, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
+    caller: UUID? = nil, progress: (@Sendable (Int) -> Void)? = nil
+  ) async throws -> Int {
+    try refuseIfRelocked(config)
+    guard epoch == connectionEpoch else {
+      throw DatabaseError.notEditable("the connection changed; run the query again to edit")
+    }
+    try refuseIfRowEditsUnsupported()
+    let effective = effectivePolicy(for: policy)
+    if effective.protectionLevel == .readOnly {
+      throw DatabaseError.blockedByProtection(
+        statementIndex: 0, kind: .dml,
+        reason: "Generating rows is not allowed on a read-only connection")
+    }
+    try refuseIfEnding()
+    try refuseIfOwnedByAnotherCaller(caller)
+    try refuseIfAborted()
+    guard session != nil else { throw DatabaseError.notConnected }
+    try refuseIfConnectionClosed()
+    // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
+    commitGuard.inFlight += 1
+    defer { commitGuard.inFlight -= 1 }
+    let cancellationGeneration = batchCancellationGeneration
+    return try await runStreamedBatch(
+      source, caller: caller, policy: effective, cancellationGeneration: cancellationGeneration,
+      progress: progress)
   }
 
   /// Throws `DatabaseError.notEditable` when the connected engine has no grid edits
@@ -269,6 +316,7 @@ extension DatabaseConnectionManager {
   func authorize(
     _ sql: String, policy: ProtectionPolicy
   ) throws -> (statements: [ClassifiedStatement], protectedMode: Bool) {
+    try refuseIfRelocked(config)
     let effective = effectivePolicy(for: policy)
     let statements = Self.classifyUserSQL(sql, config: config)
     if case .blocked(let index, let kind, let reason) = Self.evaluate(
@@ -277,6 +325,26 @@ extension DatabaseConnectionManager {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
     return (statements, effective.protectedMode)
+  }
+
+  /// Throws `DatabaseError.connectionLocked` when `config`'s identity is locked and not
+  /// unlocked in this session (after a relock), before anything is sent. Checked by every
+  /// user-initiated entry, every read that returns rows or documents (export and backup
+  /// streams, the SQL dump snapshot, the Schema tab's sample) and Commit; only catalog and
+  /// introspection refreshes and this manager's internal resets are not checked. A SQLite
+  /// connection is refused too while any file it attached (configured, or by a typed ATTACH) is
+  /// refused (`SQLiteFileAccess.refusesAttaching`), until a reconnect leaves that file out.
+  func refuseIfRelocked(_ config: ConnectionConfig?) throws {
+    guard let config else { return }
+    if let refusal = lockSource.refusal(for: config) { throw refusal }
+    guard config.databaseType == .sqlite else { return }
+    let attached = Set(config.attachedDatabases.map(\.path))
+      .union((session as? SQLiteSession)?.attachedFiles ?? [])
+    if attached.contains(where: {
+      SQLiteFileAccess.refusesAttaching($0, lockSource: lockSource, servesMCP: servesMCP)
+    }) {
+      throw DatabaseError.connectionLocked
+    }
   }
 
   /// Dialect of the connected database. No connection keeps today's PostgreSQL rules.

@@ -20,7 +20,8 @@ struct Workspace: Codable, Identifiable, Sendable {
   /// Connection configuration (password NOT stored, use keychainKey)
   var connectionConfig: ConnectionConfig?
 
-  /// Keychain key for retrieving password
+  /// Keychain key written on connect, kept for older workspace files. Never read: `keychainKey`
+  /// derives the key from `connectionConfig`
   var connectionKeychainKey: String?
 
   // MARK: - Tabs
@@ -105,6 +106,8 @@ struct Workspace: Codable, Identifiable, Sendable {
     name = try container.decode(String.self, forKey: .name)
     connectionConfig = try container.decodeIfPresent(
       ConnectionConfig.self, forKey: .connectionConfig)
+    // Locks come from the saved rows: a file's flag never reaches the first save of its row
+    connectionConfig?.isLocked = false
     connectionKeychainKey = try container.decodeIfPresent(
       String.self, forKey: .connectionKeychainKey)
     tabs = try container.decodeIfPresent([WorkspaceTabReference].self, forKey: .tabs) ?? []
@@ -144,9 +147,10 @@ struct Workspace: Codable, Identifiable, Sendable {
 
   // MARK: - Helpers
 
-  /// Returns the keychain key for the connection
+  /// Keychain key of the connection, derived from `connectionConfig`: a file never picks which
+  /// saved password is read, so the stored `connectionKeychainKey` is ignored.
   var keychainKey: String? {
-    connectionKeychainKey ?? connectionConfig.map(ConnectionKeychainKey.password(for:))
+    connectionConfig.map(ConnectionKeychainKey.password(for:))
   }
 
   /// Display string for the workspace

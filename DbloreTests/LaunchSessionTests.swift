@@ -1,8 +1,10 @@
 // LaunchSessionTests.swift
 // Launch snapshot: Codable round trip, group order, UserDefaults load, passwords
 // stripped from the stored JSON, the pure restore plan, descriptor capture, and
-// reapplying overlay text when a snapshot is reopened.
+// reapplying overlay text when a snapshot is reopened. A locked workspace's text is stored only
+// sealed (envelope kind 5).
 
+import CryptoKit
 import Foundation
 import Testing
 
@@ -273,6 +275,7 @@ struct LaunchSessionTests {
       host: "db.example", database: "app", username: "ada", password: secret)
     let untitled = WorkspaceManager(
       workspace: Workspace(name: "Scratch", connectionConfig: connection), restoreTabs: false)
+    untitled.workspace.connectionConfig?.password = secret  // as a connect leaves it
 
     let session = LaunchSessionCapture.session(
       windows: [
@@ -517,6 +520,142 @@ struct LaunchSessionTests {
       Issue.record("takeFrontWindowClaim should return nil after the front window is claimed")
     }
     #expect(LaunchRestorer.isRestoring == true)
+  }
+
+  // MARK: - Locked workspaces (envelope kind 5)
+
+  @Test("A locked workspace's dirty text is stored only sealed, never as plaintext")
+  func lockedWorkspaceTextIsSealed() throws {
+    let sessions = WorkspaceLockSessions()
+    let lock = try lockSession()
+    let manager = WorkspaceManager(
+      workspace: Workspace(name: "Locked", fileURL: URL(fileURLWithPath: "/tmp/locked.sqlws")),
+      restoreTabs: false)
+    manager.lockedIO = LockedFileIO(sessions: sessions, registry: LockRegistry())
+    manager.lockKeyId = lock.workspaceId
+    sessions.hold(lock, by: manager.id)
+    let tabID = manager.newSQLFile()
+    editTab(tabID, in: manager, dirty: true)
+    try #require(manager.viewModel(for: tabID)).editorContent = lockedText
+
+    try withIsolatedDefaults { suite in
+      let store = LaunchSessionStore(defaults: suite)
+      store.save(
+        LaunchSessionCapture.session(
+          windows: [
+            descriptor(
+              group: "locked", tab: 0, selected: true, ordered: 0, x: 1,
+              content: .workspace(manager.id))
+          ],
+          workspaces: [manager.id: manager]))
+
+      let data = try #require(suite.data(forKey: LaunchSessionStore.key))
+      #expect(data.range(of: Data(lockedText.utf8)) == nil)
+      guard case .workspace(let stored) = store.load()?.windows.first?.content else {
+        Issue.record("Expected the locked workspace window")
+        return
+      }
+      #expect(stored.textOverlays.isEmpty)
+      let sealed = try #require(stored.sealedOverlays?.first)
+      #expect(stored.sealedOverlays?.count == 1)
+      let header = try #require(try LockEnvelope.sniff(sealed))
+      #expect(header.kind == .launchOverlays)
+      #expect(header.workspaceId == lock.workspaceId)
+      let overlay = try JSONDecoder().decode(
+        LaunchTextOverlay.self, from: LockEnvelope.open(sealed, contentKey: lock.contentKey))
+      #expect(overlay == LaunchTextOverlay(tabId: tabID, text: .script(lockedText)))
+    }
+  }
+
+  @Test("A tab sealed by another workspace keeps its text sealed inside a plain workspace")
+  func foreignSealedTabTextIsSealed() throws {
+    let sessions = WorkspaceLockSessions()
+    let lock = try lockSession()
+    let manager = WorkspaceManager(workspace: Workspace(name: "Plain"), restoreTabs: false)
+    manager.lockedIO = LockedFileIO(sessions: sessions, registry: LockRegistry())
+    sessions.hold(lock, by: manager.id)
+    let sealedID = manager.newSQLFile()
+    try #require(manager.editorDocument(for: sealedID)).lockKeyId = lock.workspaceId
+    try #require(manager.viewModel(for: sealedID)).editorContent = lockedText
+    let plainID = manager.newSQLFile()
+    try #require(manager.viewModel(for: plainID)).editorContent = "select plain"
+
+    let session = LaunchSessionCapture.session(
+      windows: [
+        descriptor(
+          group: "plain", tab: 0, selected: true, ordered: 0, x: 1,
+          content: .workspace(manager.id))
+      ],
+      workspaces: [manager.id: manager])
+
+    guard case .workspace(let stored) = session.windows.first?.content else {
+      Issue.record("Expected the plain workspace window")
+      return
+    }
+    #expect(
+      stored.textOverlays == [LaunchTextOverlay(tabId: plainID, text: .script("select plain"))])
+    let sealed = try #require(stored.sealedOverlays?.first)
+    #expect(try LockEnvelope.sniff(sealed)?.workspaceId == lock.workspaceId)
+    #expect(try JSONEncoder().encode(session).range(of: Data(lockedText.utf8)) == nil)
+  }
+
+  @Test("A seal error drops the locked text instead of storing it as plaintext")
+  func sealErrorDropsOverlay() throws {
+    let manager = WorkspaceManager(
+      workspace: Workspace(name: "Locked", fileURL: URL(fileURLWithPath: "/tmp/locked.sqlws")),
+      restoreTabs: false)
+    // Its key is not open here: sealing fails
+    manager.lockedIO = LockedFileIO(sessions: WorkspaceLockSessions(), registry: LockRegistry())
+    manager.lockKeyId = UUID()
+    let tabID = manager.newSQLFile()
+    editTab(tabID, in: manager, dirty: true)
+    try #require(manager.viewModel(for: tabID)).editorContent = lockedText
+
+    let session = LaunchSessionCapture.session(
+      windows: [
+        descriptor(
+          group: "locked", tab: 0, selected: true, ordered: 0, x: 1,
+          content: .workspace(manager.id))
+      ],
+      workspaces: [manager.id: manager])
+
+    guard case .workspace(let stored) = session.windows.first?.content else {
+      Issue.record("Expected the locked workspace window to stay")
+      return
+    }
+    #expect(stored.fileURL == URL(fileURLWithPath: "/tmp/locked.sqlws"))
+    #expect(stored.textOverlays.isEmpty)
+    #expect(stored.sealedOverlays?.isEmpty ?? true)
+    #expect(try JSONEncoder().encode(session).range(of: Data(lockedText.utf8)) == nil)
+  }
+
+  @Test("A snapshot written before sealed overlays still decodes; a plain one keeps its format")
+  func olderSnapshotDecodes() throws {
+    let older = """
+      {"windows":[{"frame":{"x":1,"y":2,"width":3,"height":4},"isMiniaturized":false,\
+      "groupIndex":0,"tabIndex":0,"isSelectedInGroup":true,"content":{"workspace":{"_0":\
+      {"fileURL":"file:///tmp/old.sqlws","textOverlays":[]}}}}]}
+      """
+    let session = try JSONDecoder().decode(LaunchSession.self, from: Data(older.utf8))
+    guard case .workspace(let workspace) = session.windows.first?.content else {
+      Issue.record("Expected the older workspace window")
+      return
+    }
+    #expect(workspace.fileURL == URL(string: "file:///tmp/old.sqlws"))
+    #expect(workspace.sealedOverlays == nil)
+
+    let json = try #require(String(data: try JSONEncoder().encode(session), encoding: .utf8))
+    #expect(!json.contains("sealedOverlays"))
+  }
+
+  private let lockedText = "SELECT locked_secret_text;"
+
+  private func lockSession() throws -> WorkspaceLockSession {
+    let id = UUID()
+    let key = SymmetricKey(size: .bits256)
+    let block = try LockEnvelope.makeWrapBlock(
+      contentKey: key, password: "a lock password", workspaceId: id, iterations: 100_000)
+    return WorkspaceLockSession(workspaceId: id, contentKey: key, wrapBlock: block)
   }
 
   private func window(

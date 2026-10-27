@@ -14,6 +14,9 @@ struct CellInfoContent: View {
   let onSave: ((String) -> Void)?
   let isReadOnly: Bool
   let onSetNull: () -> Void
+  /// Display As format of the cell's column: a binary value in a decoded format shows as a tree
+  /// (or its hex / UUID text) instead of base64; Edit and Copy stay on the raw value
+  var binaryFormat: BinaryDisplayFormat = .size
 
   @State private var isCopied = false
   @State private var isEditing = false
@@ -23,20 +26,46 @@ struct CellInfoContent: View {
   @State private var validationError: String?
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
+  /// Size of the whole Format JSON output; above `maxHighlightedPrettyBytes`, `beautifiedJSON` is
+  /// its first `maxShownBytes`
+  @State private var formattedTotalBytes = 0
   @State private var isWordWrapEnabled = true
   /// Off-main Format JSON of a large value; nil when idle
   @State private var formatTask: Task<Void, Never>?
-  /// Geometry or vector viewer for the value, parsed off the main actor; nil for other values
-  @State private var preview: CellValuePreview?
+  /// Copy of the whole value, built off main; only a newer copy cancels it
+  @State private var copyTask: Task<Void, Never>?
+  /// Viewer and text of a value, built off the main actor; the value area shows a loading card
+  /// until they match `value`
+  @State private var loaded: Loaded?
+  /// Why the full value of a cut cell (`NotebookViewModel.unloadedSidebarCell`) did not load
+  @State private var lazyLoadError: String?
   @FocusState private var isTextEditorFocused: Bool
 
   /// Values above this many UTF-8 bytes are never beautified or highlighted on the main actor:
-  /// they show raw in a LargeTextView, and Format JSON pretty-prints them off the main actor
-  static let maxHighlightedBytes = 256 * 1024
+  /// they show raw in a LargeTextView, and Format JSON pretty-prints them off the main actor.
+  /// A SwiftUI Text lays out a 256 KB line in about 200 ms on the main thread.
+  nonisolated static let maxHighlightedBytes = 64 * 1024
+
+  /// Formatted JSON above this many UTF-8 bytes shows as plain text, never highlighted:
+  /// pretty-printing indents each element by its depth (a 61 KB array nested 512 deep grows to
+  /// 30 MB), and highlighting costs about 8 ms per KB on the main actor in a Debug build.
+  nonisolated static let maxHighlightedPrettyBytes = 2 * maxHighlightedBytes
+
+  /// Format JSON gives up on output above this many UTF-8 bytes rather than writing it
+  nonisolated static let maxFormattedBytes = 32 * 1024 * 1024
+
+  /// A large value shows its first this many UTF-8 bytes. The text view lays out a whole
+  /// paragraph at once on the main thread: about 15 ms for a 64 KB line, 1.8 s for 12 MB.
+  nonisolated static let maxShownBytes = 64 * 1024
 
   @Environment(NotebookViewModel.self) private var viewModel
 
   var body: some View {
+    // A cell a lazy data-viewer page cut: its full value loads first, the prefix is never shown,
+    // decoded, edited or copied
+    let unloaded = viewModel.unloadedSidebarCell
+    let ready = unloaded == nil && loaded?.source == source ? loaded : nil
+    let preview = ready?.preview
     VStack(alignment: .leading, spacing: 0) {
       // Fixed header section
       VStack(alignment: .leading, spacing: Spacing.md) {
@@ -142,12 +171,11 @@ struct CellInfoContent: View {
                 helpText: isBeautified
                   ? "Show Original" : isLargeValue ? "Format JSON" : "Beautify JSON",
                 isActive: isBeautified,
-                action: isBeautified
-                  ? showOriginal : isLargeValue ? formatLargeJSON : { beautifyJSON() }
+                action: isBeautified ? showOriginal : formatJSON
               )
             }
 
-            if !isReadOnly {
+            if !isReadOnly && unloaded == nil {
               FloatingPanelButton(
                 icon: "pencil",
                 helpText: "Edit Value",
@@ -162,6 +190,7 @@ struct CellInfoContent: View {
               useSymbolEffect: true,
               action: copyToClipboard
             )
+            .disabled(unloaded != nil)
           }
         }
       }
@@ -218,23 +247,46 @@ struct CellInfoContent: View {
           }
         }
       } else {
-        // Read-only view for non-boolean types
-        if let preview {
+        // Read-only view for non-boolean types. An explicit Display As format comes before a
+        // geometry found by its header.
+        if let unloaded {
+          UnloadedValueCard(length: unloaded.length, error: lazyLoadError)
+        } else if let tree = ready?.tree {
+          BinaryValueTreeView(root: tree)
+        } else if let preview {
           switch preview {
           case .geometry(let sketch):
             GeometryPreview(sketch: sketch)
           case .vector(let vector):
             VectorPreview(vector: vector, text: value.fullString)
           }
-        } else if isLargeValue {
+        } else if ready == nil {
+          CellValueLoadingCard()
+        } else if isLargeValue
+          || (isBeautified && formattedTotalBytes > Self.maxHighlightedPrettyBytes)
+        {
           // Too large for a SwiftUI Text: lazily laid-out text view, never highlighted
-          LargeTextView(
-            text: isBeautified ? beautifiedJSON : value.fullString,
-            wrapsLines: isWordWrapEnabled
-          )
-          .frame(maxHeight: .infinity, alignment: .top)
-          .background(Color.tableHeaderBackground)
-          .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            LargeTextView(
+              text: isBeautified ? beautifiedJSON : ready?.text ?? "",
+              wrapsLines: isWordWrapEnabled
+            )
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Color.tableHeaderBackground)
+            .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+
+            let shown = isBeautified ? beautifiedJSON.utf8.count : ready?.text.utf8.count ?? 0
+            let total = isBeautified ? formattedTotalBytes : ready?.totalBytes ?? 0
+            if shown < total {
+              Text(
+                Self.truncationNote(
+                  shownBytes: shown, totalBytes: total, isBinary: isBinaryValue,
+                  isFormatted: isBeautified)
+              )
+              .font(.caption)
+              .foregroundColor(.foregroundSubtle)
+            }
+          }
         } else if isBeautified {
           // Nested ScrollViews for both axes to avoid centering issue
           // Horizontal outside so scrollbar is always visible at bottom
@@ -264,7 +316,7 @@ struct CellInfoContent: View {
           if isWordWrapEnabled {
             // With word wrap: only vertical scroll
             ScrollView(.vertical, showsIndicators: true) {
-              Text(value.fullString)
+              Text(ready?.text ?? "")
                 .font(.mono)
                 .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
                 .italic(value.isNull)
@@ -282,7 +334,7 @@ struct CellInfoContent: View {
             // Horizontal outside so scrollbar is always visible at bottom
             ScrollView(.horizontal, showsIndicators: true) {
               ScrollView(.vertical, showsIndicators: true) {
-                Text(value.fullString)
+                Text(ready?.text ?? "")
                   .font(.mono)
                   .foregroundColor(value.isNull ? .foregroundSubtle : .foreground)
                   .italic(value.isNull)
@@ -304,14 +356,24 @@ struct CellInfoContent: View {
         editedBoolValue = boolValue
         originalBoolValue = boolValue
       }
-      beautifyJSON(silent: true)
     }
+    // A Copy still building finishes: the user asked for that value
     .onDisappear(perform: cancelFormat)
-    .task(id: CellValuePreview.Source(value: value, columnType: columnType)) {
-      preview = nil
-      let parsed = await CellValuePreview.make(value: value, columnType: columnType)
+    .task(id: LazyRequest(cell: unloaded?.cell, generation: viewModel.lazyCells.generation)) {
+      lazyLoadError = nil
+      guard let unloaded = viewModel.unloadedSidebarCell else { return }
+      lazyLoadError = await viewModel.loadSidebarCell(unloaded.cell, length: unloaded.length)
+    }
+    .task(id: ValueRequest(source: source, isUnloaded: unloaded != nil)) {
+      // A cut value is never decoded: the full one comes as a new `value`
+      guard viewModel.unloadedSidebarCell == nil else { return }
+      let built = await Self.load(source)
       guard !Task.isCancelled else { return }
-      preview = parsed
+      loaded = built
+      // A JSON object or array shows formatted when its output is small enough to highlight
+      if let formatted = built.formatted {
+        showFormatted(formatted, totalBytes: formatted.utf8.count)
+      }
     }
     .onChange(of: value) { _, newValue in
       // Reset beautified state when value changes
@@ -324,8 +386,120 @@ struct CellInfoContent: View {
         editedBoolValue = boolValue
         originalBoolValue = boolValue
       }
-      beautifyJSON(silent: true)
     }
+  }
+
+  private var source: CellValuePreview.Source {
+    CellValuePreview.Source(value: value, columnType: columnType, binaryFormat: binaryFormat)
+  }
+
+  /// The full-value load of a cut cell, again for a new page (the loader forgot older loads)
+  private struct LazyRequest: Equatable {
+    let cell: LazyCell?
+    let generation: Int
+  }
+
+  /// The off-main build of the shown value, again once a cut value is whole
+  private struct ValueRequest: Equatable {
+    let source: CellValuePreview.Source
+    let isUnloaded: Bool
+  }
+
+  /// Viewer and display text of a value (base64 for binary), built together off the main actor.
+  /// `text` is at most `maxShownBytes`; `totalBytes` is the size of the whole text. `formatted`
+  /// is the pretty form of a JSON object or array, when it can be highlighted. `tree` is a
+  /// binary value decoded by its Display As format (`decodedNode`); it needs no text.
+  nonisolated struct Loaded: Sendable {
+    let source: CellValuePreview.Source
+    let preview: CellValuePreview?
+    let text: String
+    let totalBytes: Int
+    var formatted: String?
+    var tree: BinaryValueNode?
+  }
+
+  /// `@concurrent` leaves the main actor: a geometry can hold a million points, and the base64 of
+  /// a large blob is megabytes. A geometry viewer needs no text.
+  @concurrent nonisolated private static func load(
+    _ source: CellValuePreview.Source
+  ) async
+    -> Loaded
+  {
+    if let tree = decodedNode(source.value, format: source.binaryFormat) {
+      return Loaded(source: source, preview: nil, text: "", totalBytes: 0, tree: tree)
+    }
+    let preview = await CellValuePreview.make(value: source.value, columnType: source.columnType)
+    if case .geometry = preview {
+      return Loaded(source: source, preview: preview, text: "", totalBytes: 0)
+    }
+    let text = source.value.fullString
+    var loaded = Loaded(
+      source: source, preview: preview, text: displayText(text, maxBytes: maxShownBytes),
+      totalBytes: text.utf8.count)
+    switch source.value {
+    case .string, .json:
+      let first = text.first(where: { !$0.isWhitespace })
+      guard preview == nil, first == "{" || first == "[", text.utf8.count <= maxHighlightedBytes,
+        case .formatted(let pretty, _) = prettyPrintedJSON(
+          text, maxOutputBytes: maxHighlightedPrettyBytes)
+      else { break }
+      loaded.formatted = pretty
+    default:
+      break
+    }
+    return loaded
+  }
+
+  /// What the Cell Value viewer shows for a binary value in a Display As format: the decoded
+  /// MessagePack or Protobuf tree, or one node holding the hex or UUID text (hex cut to
+  /// `maxShownBytes` characters). Nil for the size format, a value that is not binary, or bytes
+  /// that do not fit the format: the viewer then shows the raw value.
+  nonisolated static func decodedNode(
+    _ value: CellValue, format: BinaryDisplayFormat
+  ) -> BinaryValueNode? {
+    guard case .data(let data) = value else { return nil }
+    switch format {
+    case .size:
+      return nil
+    case .messagePack, .protobuf:
+      return format.tree(for: data)
+    case .hex, .uuid, .uuidSwappedTime:
+      return format.text(for: data, limit: maxShownBytes).map {
+        BinaryValueNode(kind: .binary, text: $0)
+      }
+    }
+  }
+
+  /// `text` cut to at most `maxBytes` UTF-8 bytes, on a character boundary
+  nonisolated static func displayText(_ text: String, maxBytes: Int) -> String {
+    guard text.utf8.count > maxBytes else { return text }
+    var bytes = 0
+    let end =
+      text.firstIndex { character in
+        bytes += character.utf8.count
+        return bytes > maxBytes
+      } ?? text.endIndex
+    return String(text[..<end])
+  }
+
+  nonisolated private static func byteCount(_ bytes: Int) -> String {
+    ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .memory)
+  }
+
+  /// Note under a cut value. Binary shows its base64 text, Format JSON its output; Copy always
+  /// copies the whole original value.
+  nonisolated static func truncationNote(
+    shownBytes: Int, totalBytes: Int, isBinary: Bool, isFormatted: Bool
+  ) -> String {
+    let kind = isFormatted ? " of formatted JSON" : isBinary ? " of base64 text" : ""
+    let copied = isFormatted ? "the whole original value" : "the whole value"
+    return
+      "Showing the first \(byteCount(shownBytes)) of \(byteCount(totalBytes))\(kind). Copy copies \(copied)."
+  }
+
+  /// Whole text of a value; `@concurrent` leaves the main actor (base64 of a large blob)
+  @concurrent nonisolated private static func fullText(_ value: CellValue) async -> String {
+    value.fullString
   }
 
   private var valueTypeName: String {
@@ -348,8 +522,16 @@ struct CellInfoContent: View {
     return false
   }
 
+  /// Text that Word Wrap and Format JSON apply to: a string or a JSON value
   private var isStringValue: Bool {
-    if case .string = value {
+    switch value {
+    case .string, .json: true
+    default: false
+    }
+  }
+
+  private var isBinaryValue: Bool {
+    if case .data = value {
       return true
     }
     return false
@@ -425,15 +607,23 @@ struct CellInfoContent: View {
   }
 
   private func copyToClipboard() {
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(value.fullString, forType: .string)
+    let value = value
+    copyTask?.cancel()
+    copyTask = Task {
+      let text = await Self.fullText(value)
+      // A newer copy replaced this one: keep its clipboard
+      guard !Task.isCancelled else { return }
+      copyTask = nil
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(text, forType: .string)
 
-    // Show checkmark feedback
-    isCopied = true
+      // Show checkmark feedback
+      isCopied = true
 
-    // Reset back to copy icon after 500ms
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-      isCopied = false
+      // Reset back to copy icon after 500ms
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        isCopied = false
+      }
     }
   }
 
@@ -447,87 +637,37 @@ struct CellInfoContent: View {
 
   // MARK: - JSON Beautification
 
-  /// `silent` is used for automatic beautification: no toasts, and only for JSON objects/arrays.
-  private func beautifyJSON(silent: Bool = false) {
-    guard case .string(let stringValue) = value, !isLargeValue else { return }
-
-    if silent {
-      let first = stringValue.first(where: { !$0.isWhitespace })
-      guard first == "{" || first == "[" else { return }
-    }
-
-    // Try to parse the string as JSON
-    guard let data = stringValue.data(using: .utf8) else {
-      if !silent { viewModel.showToast("Cannot convert string to data.", type: .error) }
-      return
-    }
-
-    // Try to parse and validate that entire string is consumed
-    let parsedObject: Any
-
-    do {
-      parsedObject = try JSONSerialization.jsonObject(
-        with: data,
-        options: .allowFragments
-      )
-
-      // Check if entire data was consumed by trying to parse again from start
-      // If there's trailing data, JSONSerialization will only parse the first valid object
-      let serializedData = try JSONSerialization.data(
-        withJSONObject: parsedObject, options: .fragmentsAllowed)
-
-      // Compare original data length with serialized length
-      // If original is significantly longer, there's likely trailing invalid JSON
-      if data.count > Int(Double(serializedData.count) * 1.5) {
-        if silent { return }
-        viewModel.showToast(
-          "Warning: Only the first valid JSON object was beautified. The input contains multiple objects or invalid trailing data.",
-          type: .warning
-        )
-      }
-
-      // Generate pretty printed version
-      let prettyData = try JSONSerialization.data(
-        withJSONObject: parsedObject,
-        options: [.prettyPrinted, .fragmentsAllowed]
-      )
-
-      guard let prettyString = String(data: prettyData, encoding: .utf8) else {
-        if !silent {
-          viewModel.showToast("Cannot convert beautified data to string.", type: .error)
-        }
-        return
-      }
-
-      // Set beautified state
-      beautifiedJSON = prettyString
-      isBeautified = true
-
-    } catch {
-      // Show error toast if not valid JSON
-      if !silent { viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error) }
-      return
-    }
-  }
-
   private func showOriginal() {
     isBeautified = false
     beautifiedJSON = ""
   }
 
-  /// Format JSON for a large value: pretty-prints off the main actor, shown raw (no highlight)
-  private func formatLargeJSON() {
-    guard case .string(let stringValue) = value, formatTask == nil else { return }
+  private func showFormatted(_ text: String, totalBytes: Int) {
+    beautifiedJSON = text
+    formattedTotalBytes = totalBytes
+    isBeautified = true
+  }
+
+  /// Format JSON pretty-prints off the main actor; output too large to highlight shows as plain
+  /// text, cut to `maxShownBytes`
+  private func formatJSON() {
+    guard let stringValue = jsonText, formatTask == nil else { return }
+    if let formatted = loaded?.source == source ? loaded?.formatted : nil {
+      showFormatted(formatted, totalBytes: formatted.utf8.count)
+      return
+    }
     formatTask = Task {
-      let pretty = await Self.prettyPrintedJSON(stringValue)
+      let pretty = await Self.formattedJSON(stringValue)
       guard !Task.isCancelled else { return }
       formatTask = nil
-      guard let pretty else {
+      switch pretty {
+      case .formatted(let text, let totalBytes):
+        showFormatted(text, totalBytes: totalBytes)
+      case .tooLarge:
+        viewModel.showToast("The formatted JSON would be too large to show.", type: .warning)
+      case .invalid:
         viewModel.showToast("Invalid JSON format. Cannot beautify.", type: .error)
-        return
       }
-      beautifiedJSON = pretty
-      isBeautified = true
     }
   }
 
@@ -536,14 +676,137 @@ struct CellInfoContent: View {
     formatTask = nil
   }
 
-  /// Pretty-printed `json`, or nil when it is not valid JSON. `@concurrent` leaves the main actor.
-  @concurrent nonisolated private static func prettyPrintedJSON(_ json: String) async -> String? {
-    guard let data = json.data(using: .utf8),
-      let object = try? JSONSerialization.jsonObject(with: data, options: .allowFragments),
+  /// Text of a string or JSON value, the one Format JSON reads
+  private var jsonText: String? {
+    switch value {
+    case .string(let text), .json(let text): text
+    default: nil
+    }
+  }
+
+  /// Pretty-printed JSON, or why there is none
+  nonisolated enum PrettyJSON: Equatable, Sendable {
+    /// `text` is the whole output up to `maxHighlightedPrettyBytes`, else its first
+    /// `maxShownBytes`; `totalBytes` is the size of the whole
+    case formatted(text: String, totalBytes: Int)
+    /// The output would pass the cap
+    case tooLarge
+    case invalid
+  }
+
+  /// `json` pretty-printed, given up before writing more than `maxOutputBytes`
+  nonisolated static func prettyPrintedJSON(_ json: String, maxOutputBytes: Int) -> PrettyJSON {
+    guard
+      let object = try? JSONSerialization.jsonObject(
+        with: Data(json.utf8), options: .allowFragments)
+    else { return .invalid }
+    guard prettyPrintedLowerBound(object) <= maxOutputBytes else { return .tooLarge }
+    guard
       let pretty = try? JSONSerialization.data(
         withJSONObject: object, options: [.prettyPrinted, .fragmentsAllowed])
-    else { return nil }
-    return String(data: pretty, encoding: .utf8)
+    else { return .invalid }
+    guard pretty.count <= maxOutputBytes else { return .tooLarge }
+    let text =
+      pretty.count <= maxHighlightedPrettyBytes
+      ? String(decoding: pretty, as: UTF8.self) : prefixText(pretty, maxBytes: maxShownBytes)
+    return .formatted(text: text, totalBytes: pretty.count)
+  }
+
+  /// Bytes that pretty-printing `object` writes at least: every element of an array or object
+  /// gets a newline and two spaces per level, then one byte or more. JSONSerialization parses at
+  /// most 512 levels.
+  nonisolated static func prettyPrintedLowerBound(_ object: Any) -> Int {
+    var total = 0
+    var containers: [(children: [Any], depth: Int)] = []
+    func visit(_ node: Any, depth: Int) {
+      if let array = node as? [Any] {
+        containers.append((array, depth))
+      } else if let dictionary = node as? [String: Any] {
+        containers.append((Array(dictionary.values), depth))
+      }
+    }
+    visit(object, depth: 0)
+    while let (children, depth) = containers.popLast() {
+      total += children.count * (2 * (depth + 1) + 2)
+      for child in children { visit(child, depth: depth + 1) }
+    }
+    return total
+  }
+
+  /// The first `maxBytes` UTF-8 bytes of `data` as text, cut on a character boundary, without
+  /// decoding the rest. It decodes a few bytes past the cut: a character that crosses the cut
+  /// still ends past `maxBytes`, so `displayText` drops it.
+  nonisolated static func prefixText(_ data: Data, maxBytes: Int) -> String {
+    var count = min(data.count, maxBytes + 4)
+    // Back off to the start of a scalar: UTF-8 continuation bytes are 0b10xxxxxx
+    while count < data.count, data[data.startIndex + count] & 0xC0 == 0x80 { count -= 1 }
+    return displayText(String(decoding: data.prefix(count), as: UTF8.self), maxBytes: maxBytes)
+  }
+
+  /// Format JSON output; `@concurrent` leaves the main actor
+  @concurrent nonisolated private static func formattedJSON(_ json: String) async -> PrettyJSON {
+    prettyPrintedJSON(json, maxOutputBytes: maxFormattedBytes)
+  }
+}
+
+/// Same shape as `CellValueLoadingCard`: the full size of a cut binary value while it loads
+/// (spinner after ~150 ms), or why it could not be loaded
+private struct UnloadedValueCard: View {
+  let length: Int
+  let error: String?
+  @State private var showsSpinner = false
+
+  var body: some View {
+    VStack(spacing: Spacing.sm) {
+      Text("<\(length) bytes>")
+        .font(.mono)
+        .foregroundColor(.foregroundMuted)
+      if let error {
+        Text("The full value could not be loaded: \(error)")
+          .font(.caption)
+          .foregroundColor(.destructive)
+          .multilineTextAlignment(.center)
+      } else {
+        ProgressView()
+          .controlSize(.small)
+          .tint(.accent)
+          .opacity(showsSpinner ? 1 : 0)
+          .animation(.easeIn(duration: 0.15), value: showsSpinner)
+          // Opt out of the app-wide animation kill switch, only for the fade
+          .transaction(value: showsSpinner) { $0.disablesAnimations = false }
+      }
+    }
+    .padding(Spacing.md)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.tableHeaderBackground)
+    .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+    .task {
+      try? await Task.sleep(for: .milliseconds(150))
+      showsSpinner = true
+    }
+  }
+}
+
+/// Card in the value's place while it loads. Its spinner fades in after 150 ms, so a fast load
+/// never flashes it.
+private struct CellValueLoadingCard: View {
+  @State private var showsSpinner = false
+
+  var body: some View {
+    ProgressView()
+      .controlSize(.small)
+      .tint(.accent)
+      .opacity(showsSpinner ? 1 : 0)
+      .animation(.easeIn(duration: 0.15), value: showsSpinner)
+      // Opt out of the app-wide animation kill switch, only for the fade
+      .transaction(value: showsSpinner) { $0.disablesAnimations = false }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.tableHeaderBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      .task {
+        try? await Task.sleep(for: .milliseconds(150))
+        showsSpinner = true
+      }
   }
 }
 
@@ -557,10 +820,12 @@ enum CellValuePreview: Sendable {
   case geometry(GeometrySketch)
   case vector(VectorValue)
 
-  /// What `make` reads: a new value or column type parses again.
+  /// What `make` reads: a new value or column type parses again. `binaryFormat` is the column's
+  /// Display As format, which `CellInfoContent` decodes first.
   struct Source: Equatable {
     let value: CellValue
     let columnType: String
+    var binaryFormat: BinaryDisplayFormat = .size
   }
 
   /// nil when the value is neither. `@concurrent` leaves the main actor: a geometry can hold a

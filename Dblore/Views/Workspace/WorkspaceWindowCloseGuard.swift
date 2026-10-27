@@ -2,9 +2,10 @@
 //  WorkspaceWindowCloseGuard.swift
 //  Dblore
 //
-//  Routes the window's close button through `resolvePendingTransaction(action: .closeWindow)`
-//  while a Protected transaction is pending (Commit / Roll back / Cancel; Cancel keeps the
-//  window). Only the button is retargeted: SwiftUI keeps its own window delegate.
+//  Routes the window's close button through `closeWorkspace`: the workspace closes with its
+//  window (Protected transaction and unsaved-changes prompts first; Cancel keeps the window), so
+//  no connection stays open behind a closed window and a locked workspace asks again at its next
+//  open. Only the button is retargeted: SwiftUI keeps its own window delegate.
 //
 
 import AppKit
@@ -46,15 +47,12 @@ struct WorkspaceWindowCloseGuard: NSViewRepresentable {
 
     @objc private func closeButtonClicked(_ sender: Any?) {
       guard let window else { return }
-      guard let manager = workspaceManager,
-        WorkspaceTransactionRules.requiresResolution(
-          state: manager.pendingTransaction, action: .closeWindow, originTabId: nil)
-      else {
+      guard let manager = workspaceManager else {
         closeWindow(window)
         return
       }
       Task { @MainActor in
-        if await manager.resolvePendingTransaction(action: .closeWindow) {
+        if await WorkspaceWindowManager.shared.closeWorkspace(id: manager.id) {
           closeWindow(window)
         }
       }

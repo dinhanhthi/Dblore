@@ -27,6 +27,12 @@
 //   SQLite rule) or the connection is Read-only protected. In-memory databases cannot open
 //   read-only; the actor's gate still applies to them;
 // - `lock_configuration=true` last, so later SQL cannot undo any of this.
+//
+// No attached databases (decision A2): `ConnectionConfig.validatedAttachedDatabases()` drops them
+// on DuckDB and typed ATTACH/DETACH stays refused. An attachment made before
+// `lock_configuration` can be DETACHed and re-ATTACHed READ_WRITE after it, and
+// `COPY ... TO '<attached path>' (USE_TMP_FILE false)` overwrites the file, so only the statement
+// gate would stop it (DuckDBAttachTests pins the engine behavior).
 
 import Foundation
 
@@ -199,6 +205,24 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
   /// is meant to stop.
   func interrupt() async {
     interruptNow()
+  }
+
+  /// After a statement failed inside a transaction: whether DuckDB aborted it (only ROLLBACK
+  /// works, and a COMMIT answers success while it rolls back). Interrupts and most execution
+  /// errors abort it; parse, catalog and binder errors do not (DuckDB 1.5). Asked with a trivial
+  /// statement, which cannot fail inside a healthy transaction: any failure of it counts as
+  /// aborted (so a later COMMIT never answers success). Nil only when the probe could not run.
+  func transactionAborted() async -> Bool? {
+    try? await run { () -> Bool in
+      let open = try self.requireOpen()
+      self.interruptReads(open)
+      do {
+        try self.exec("SELECT 1", open)
+        return false
+      } catch {
+        return true
+      }
+    }
   }
 
   func formatError(_ error: Error) -> String {

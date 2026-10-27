@@ -58,7 +58,7 @@ extension SchemaGraphNSView {
   func drawNodes(_ context: CGContext) {
     for node in graph.nodes {
       let rect = nodeRect(for: node)
-      let isSelected = selectedNodeId == node.id
+      let isSelected = selectedNodeId == node.id || selectedNodeIds.contains(node.id)
       let isHovered = hoveredNodeId == node.id
       let isHighlightedByEdge = isNodeHighlightedByEdge(node.id)
       let isConnectedToSelected = isNodeConnectedToSelectedNode(node.id)

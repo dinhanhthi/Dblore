@@ -1,6 +1,7 @@
 // UUIDGenerator.swift
 // UUID text for "Generate UUID" and "Generate UUIDv7": lowercase canonical 8-4-4-4-12 form.
-// v4 comes from Foundation, v7 follows RFC 9562 section 5.7; `fits` picks the columns.
+// v4 comes from Foundation (or a given generator, section 5.4), v7 follows RFC 9562 section
+// 5.7; `fits` picks the columns.
 
 import Foundation
 
@@ -27,6 +28,18 @@ nonisolated enum UUIDGenerator {
     UUID().uuidString.lowercased()
   }
 
+  /// RFC 9562 section 5.4: version 4 in the high nibble of byte 6, variant `10` in the high
+  /// bits of byte 8, and every other bit from `random`
+  static func v4(using random: inout some RandomNumberGenerator) -> String {
+    var bytes = [UInt8](repeating: 0, count: 16)
+    for index in 0..<16 {
+      bytes[index] = random.next()
+    }
+    bytes[6] = 0x40 | (bytes[6] & 0x0F)
+    bytes[8] = 0x80 | (bytes[8] & 0x3F)
+    return text(bytes)
+  }
+
   /// A time-ordered (version 7) UUID for the current time
   static func v7() -> String {
     var random = SystemRandomNumberGenerator()
@@ -47,6 +60,10 @@ nonisolated enum UUIDGenerator {
     }
     bytes[6] = 0x70 | (bytes[6] & 0x0F)
     bytes[8] = 0x80 | (bytes[8] & 0x3F)
+    return text(bytes)
+  }
+
+  private static func text(_ bytes: [UInt8]) -> String {
     let uuid = UUID(
       uuid: (
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],

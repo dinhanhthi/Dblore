@@ -25,13 +25,15 @@ struct UpdaterControllerTests {
   private final class Counter: @unchecked Sendable {
     var starts = 0
     var checks = 0
+    var backgroundChecks = 0
   }
 
   private func makeController(_ counter: Counter) -> UpdaterController {
     UpdaterController(
       isTestHost: false,
       startAction: { counter.starts += 1 },
-      checkAction: { counter.checks += 1 })
+      checkAction: { counter.checks += 1 },
+      backgroundCheckAction: { counter.backgroundChecks += 1 })
   }
 
   @Test("start schedules startUpdater after the delay, not synchronously")
@@ -77,6 +79,45 @@ struct UpdaterControllerTests {
     gate.resume()
     await task?.value
     #expect(counter.starts == 1)
+  }
+
+  @Test("the delayed start also checks in the background once")
+  func testDelayedStartChecksInBackground() async {
+    let counter = Counter()
+    let gate = Gate()
+    let controller = makeController(counter)
+
+    let task = controller.start(sleep: { _ in await gate.wait() })
+    #expect(counter.backgroundChecks == 0)
+
+    gate.resume()
+    await task?.value
+    #expect(counter.backgroundChecks == 1)
+  }
+
+  @Test("a user check before the delayed start skips the background check")
+  func testUserCheckSkipsBackgroundCheck() async {
+    let counter = Counter()
+    let gate = Gate()
+    let controller = makeController(counter)
+
+    let task = controller.start(sleep: { _ in await gate.wait() })
+    controller.checkForUpdates()
+    gate.resume()
+    await task?.value
+    #expect(counter.backgroundChecks == 0)
+  }
+
+  @Test("a found update stays available until its session finishes")
+  func testAvailableUpdateLifecycle() {
+    let controller = makeController(Counter())
+    #expect(controller.availableUpdateVersion == nil)
+
+    controller.updateFound(version: "0.9.0")
+    #expect(controller.availableUpdateVersion == "0.9.0")
+
+    controller.updateSessionFinished()
+    #expect(controller.availableUpdateVersion == nil)
   }
 
   @Test("a controller released before the delay elapses never starts the updater")

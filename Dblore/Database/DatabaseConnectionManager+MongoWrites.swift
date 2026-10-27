@@ -20,6 +20,7 @@ extension DatabaseConnectionManager {
     caller: UUID? = nil, expectedRows: [Int]?, progress: (@Sendable (Int) -> Void)? = nil
   ) async throws -> [CommandResult] {
     try await PerfSignpost.interval("mongo.typedWrites") {
+      try refuseIfRelocked(config)
       guard epoch == connectionEpoch else {
         throw DatabaseError.notEditable("the connection changed; run the query again to edit")
       }

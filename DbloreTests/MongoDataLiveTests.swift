@@ -2,11 +2,11 @@
 // Many-document writes and streamed reads against the docker fixture (mongo:8.0 on 27018, users
 // in `admin`) through a real DatabaseConnectionManager: a typed insertMany split by
 // `MongoInsertBatcher` into two batches through `executeGatedMongoCommands` lands every
-// document, and `streamMongoDocuments` reads them back across getMore pages. A backup of two
-// collections of `dblore_test` (one capped, one with a unique and a 2d index) restores into
-// `dblore_test_other` with the same counts and indexes. Opt-in (`.requiresMongo`), serialized;
-// collections have unique `data_live_` names and are dropped before and after, and
-// `dblore_test_other` is dropped before and after.
+// document, and `streamMongoDocuments` reads them back across getMore pages (a relock between
+// pages stops the stream). A backup of two collections of `dblore_test` (one capped, one with a
+// unique and a 2d index) restores into `dblore_test_other` with the same counts and indexes.
+// Opt-in (`.requiresMongo`), serialized; collections have unique `data_live_` names and are
+// dropped before and after, and `dblore_test_other` is dropped before and after.
 
 import Foundation
 import Testing
@@ -76,6 +76,47 @@ struct MongoDataLiveTests {
       #expect(sizes.count >= 2, "\(sizes)")
       #expect(sizes.reduce(0, +) == 250)
       #expect(await pages.ids == (0..<250).map { MongoValue.int32(Int32($0)) })
+    } catch {
+      await manager.disconnect()
+      await MongoSessionTests.drop(name)
+      throw error
+    }
+    await manager.disconnect()
+    await MongoSessionTests.drop(name)
+  }
+
+  @Test("A relock while documents stream stops the stream before the next page", .requiresMongo)
+  func relockStopsStream() async throws {
+    let name = Self.uniqueName()
+    await MongoSessionTests.drop(name)
+    let config = MongoSessionTests.config()
+    let registry = LockRegistry()
+    registry.setLockedConnections([LockIdentity(config)])
+    registry.grant(LockIdentity(config))
+    let manager = DatabaseConnectionManager(lockSource: registry)
+    do {
+      try await manager.connect(config: config)
+      let policy = ProtectionPolicy(protectionLevel: .none)
+      let documents = (0..<3).map {
+        MongoValue.document([MongoValue.Field("_id", .int32(Int32($0)))])
+      }
+      _ = try await manager.executeGatedMongoCommands(
+        [.insertMany(collection: name, documents: documents)], policy: policy,
+        connectionEpoch: await manager.connectionEpoch, expectedRows: [3])
+
+      // Pages of one document; the lock comes back once the first is handed out
+      let pages = Pages()
+      do {
+        _ = try await manager.streamMongoDocuments(
+          .find(collection: name, filter: nil, projection: nil, sort: nil, skip: nil, limit: nil),
+          policy: policy, pageSize: 1
+        ) { page in
+          await pages.add(page)
+          registry.relockAll()
+        }
+        Issue.record("Expected the relocked stream to be refused")
+      } catch DatabaseError.connectionLocked {}
+      #expect(await pages.sizes == [1])
     } catch {
       await manager.disconnect()
       await MongoSessionTests.drop(name)

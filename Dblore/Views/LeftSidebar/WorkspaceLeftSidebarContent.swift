@@ -6,7 +6,8 @@
 //  Used when workspace is connected but no document is open
 //  The Public tab leaves out the connection's hidden schemas (only here: the loaded schema,
 //  autocomplete, schema search and AI context keep them), and lists each schema's folders
-//  (`SidebarFolderStore`) above its ungrouped tables and views.
+//  (`SidebarFolderStore`) above its ungrouped tables and views. The session's temporary objects
+//  sit in one Temporary section on top, outside every schema group, folder and the filter menu.
 //
 
 import SwiftUI
@@ -16,6 +17,12 @@ import SwiftUI
 struct WorkspaceLeftSidebarContent: View {
   @Bindable var workspaceManager: WorkspaceManager
   let onImportTable: (DatabaseTable) -> Void
+  /// Import Files: the schema the files go into, and the table whose menu opened it
+  let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
+  /// Generate Rows into the table whose menu opened it
+  let onGenerateRows: (DatabaseTable) -> Void
+  /// The join query builder, the table whose menu opened it picked first
+  let onBuildJoinQuery: (DatabaseTable) -> Void
   /// The collection or view change started here; the workspace container presents its form
   @Binding var mongoAdmin: SidebarMongoAdmin?
   @State private var selectedTab: SidebarTab = .public
@@ -263,14 +270,23 @@ struct WorkspaceLeftSidebarContent: View {
     !hiddenSchemas.contains(schema)
   }
 
-  /// The Public tab's objects of the listed schemas (`hidden` left out) that match the filter
-  private func publicEntities(hidden: Set<String>) -> PublicEntities {
+  /// The Public tab's objects that match the filter: those of the listed schemas (hidden ones
+  /// left out), and apart, the session's temporary ones (`schemas.temporary`, `temporarySplit`),
+  /// never hidden
+  private func publicEntities(
+    _ schemas: PublicSchemas
+  ) -> (listed: PublicEntities, temporary: PublicEntities) {
     let keywords = publicKeywords
-    func matches(_ schema: String, _ text: String) -> Bool {
-      !hidden.contains(schema) && SidebarEntityFilter.matchesAll(text, keywords: keywords)
+    let hidden = schemas.hidden
+    let temporarySchemas = schemas.temporary
+    func shown(_ schema: String) -> Bool {
+      !hidden.contains(schema) || temporarySchemas.contains(schema)
     }
-    let tables = workspaceManager.databaseTables.compactMap { table -> FilteredTable? in
-      guard !hidden.contains(table.schema),
+    func matches(_ schema: String, _ text: String) -> Bool {
+      shown(schema) && SidebarEntityFilter.matchesAll(text, keywords: keywords)
+    }
+    func filtered(_ table: DatabaseTable) -> FilteredTable? {
+      guard
         let match = SidebarEntityFilter.matchColumns(
           name: table.name, columns: table.columns, keywords: keywords)
       else { return nil }
@@ -278,8 +294,10 @@ struct WorkspaceLeftSidebarContent: View {
         source: table, columns: match.columns, expandForMatch: match.expandForMatch,
         folderMember: SidebarFolder.member(schema: table.schema, name: table.name))
     }
+    let split = SidebarSectionModel.temporarySplit(
+      workspaceManager.databaseTables, temporarySchemas: temporarySchemas)
     let views = workspaceManager.databaseViews.compactMap { view -> FilteredView? in
-      guard !hidden.contains(view.schema),
+      guard shown(view.schema),
         let match = SidebarEntityFilter.matchColumns(
           name: view.name, columns: view.columns, keywords: keywords)
       else { return nil }
@@ -287,8 +305,8 @@ struct WorkspaceLeftSidebarContent: View {
         source: view, columns: match.columns, expandForMatch: match.expandForMatch,
         folderMember: SidebarFolder.member(schema: view.schema, name: view.name))
     }
-    return PublicEntities(
-      tables: tables, views: views,
+    let all = PublicEntities(
+      tables: [], views: views,
       functions: workspaceManager.databaseFunctions.filter { matches($0.schema, $0.name) },
       procedures: workspaceManager.databaseProcedures.filter { matches($0.schema, $0.name) },
       // A keyword may hit the trigger name or its table
@@ -298,6 +316,14 @@ struct WorkspaceLeftSidebarContent: View {
       // Nil until the Sequences or Types section has read them
       sequences: workspaceManager.databaseSequences.items?.filter { matches($0.schema, $0.name) },
       userTypes: workspaceManager.databaseUserTypes.items?.filter { matches($0.schema, $0.name) })
+    var listed = all.filtered { !temporarySchemas.contains($0) }
+    listed.tables = split.regular.filter { !hidden.contains($0.schema) }.compactMap(filtered)
+    var temporary = all.filtered { temporarySchemas.contains($0) }
+    temporary.tables = split.temporary.compactMap(filtered)
+    // Read by a schema group's section: the Temporary section shows no unread one
+    temporary.sequences = temporary.sequences ?? []
+    temporary.userTypes = temporary.userTypes ?? []
+    return (listed, temporary)
   }
 
   private var filteredUsers: [DatabaseUser] {
@@ -334,14 +360,19 @@ struct WorkspaceLeftSidebarContent: View {
     }
 
     func inSchema(_ schema: String) -> PublicEntities {
+      filtered { $0 == schema }
+    }
+
+    /// The objects of the schemas `keeps` takes
+    func filtered(_ keeps: (String) -> Bool) -> PublicEntities {
       PublicEntities(
-        tables: tables.filter { $0.source.schema == schema },
-        views: views.filter { $0.source.schema == schema },
-        functions: functions.filter { $0.schema == schema },
-        procedures: procedures.filter { $0.schema == schema },
-        triggers: triggers.filter { $0.schema == schema },
-        sequences: sequences?.filter { $0.schema == schema },
-        userTypes: userTypes?.filter { $0.schema == schema })
+        tables: tables.filter { keeps($0.source.schema) },
+        views: views.filter { keeps($0.source.schema) },
+        functions: functions.filter { keeps($0.schema) },
+        procedures: procedures.filter { keeps($0.schema) },
+        triggers: triggers.filter { keeps($0.schema) },
+        sequences: sequences?.filter { keeps($0.schema) },
+        userTypes: userTypes?.filter { keeps($0.schema) })
     }
   }
 
@@ -483,8 +514,10 @@ struct WorkspaceLeftSidebarContent: View {
   private struct PublicSchemas {
     /// Schemas the tab leaves out; none on engines without the schema filter
     let hidden: Set<String>
-    /// Schemas that hold at least one object, hidden ones included
+    /// Schemas that hold at least one object, hidden ones included, temporary ones left out
     let all: Set<String>
+    /// The session's temporary schemas (`SidebarSectionModel.temporarySchemas`), never hidden
+    let temporary: Set<String>
     /// Listed schemas holding an object read with the schema (not the sequences and types read
     /// on expand): they alone pick the flat or grouped layout, so expanding a section never
     /// flips it
@@ -498,7 +531,9 @@ struct WorkspaceLeftSidebarContent: View {
 
   private var publicSchemas: PublicSchemas {
     let hidden = hiddenSchemas
-    var loaded = Set(workspaceManager.databaseTables.map(\.schema))
+    let tables = workspaceManager.databaseTables
+    // Temporary tables and schemas name no schema of the tab
+    var loaded = Set(tables.filter { !$0.isTemporary }.map(\.schema))
     loaded.formUnion(workspaceManager.databaseViews.map(\.schema))
     loaded.formUnion(workspaceManager.databaseFunctions.map(\.schema))
     loaded.formUnion(workspaceManager.databaseProcedures.map(\.schema))
@@ -506,8 +541,13 @@ struct WorkspaceLeftSidebarContent: View {
     var all = loaded
     all.formUnion((workspaceManager.databaseSequences.items ?? []).map(\.schema))
     all.formUnion((workspaceManager.databaseUserTypes.items ?? []).map(\.schema))
+    let temporary = SidebarSectionModel.temporarySchemas(
+      all, tables: tables, databaseType: connectionDatabaseType)
+    loaded.subtract(temporary)
+    all.subtract(temporary)
     return PublicSchemas(
-      hidden: hidden, all: all, schemaLoad: loaded.subtracting(hidden),
+      hidden: hidden, all: all, temporary: temporary,
+      schemaLoad: loaded.subtracting(hidden),
       listed: SidebarSectionModel.listedSchemas(
         all, hidden: hidden, defaultSchema: connectionDatabaseType.dialect.defaultSchema))
   }
@@ -528,7 +568,7 @@ struct WorkspaceLeftSidebarContent: View {
 
   private var publicTabContent: some View {
     let schemaState = publicSchemas
-    let entities = publicEntities(hidden: schemaState.hidden)
+    let (entities, temporary) = publicEntities(schemaState)
     let schemas = schemaState.listed
     let index = folderIndex
     let showsFilterMenu = showsSchemaFilter(schemaState)
@@ -557,15 +597,24 @@ struct WorkspaceLeftSidebarContent: View {
         SidebarFilterField(text: $publicFilter)
       }
 
-      if schemaState.isEverySchemaHidden {
+      if SidebarSectionModel.showsEverySchemaHiddenScreen(
+        listed: schemas, schemas: schemaState.all, hidden: schemaState.hidden,
+        hasTemporary: !temporary.isEmpty)
+      {
         everySchemaHiddenState
-      } else if !publicKeywords.isEmpty && entities.isEmpty {
+      } else if !publicKeywords.isEmpty && entities.isEmpty && temporary.isEmpty {
         noMatchesState
       } else {
         ScrollView {
           VStack(alignment: .leading, spacing: Spacing.sm) {
-            // One schema keeps the flat layout; two or more get one group per schema
-            if schemaState.schemaLoad.count > 1
+            if !temporary.isEmpty {
+              temporarySection(temporary)
+            }
+            // Every schema hidden: the notice under Temporary. One schema keeps the flat
+            // layout; two or more get one group per schema
+            if schemaState.isEverySchemaHidden {
+              everySchemaHiddenState
+            } else if schemaState.schemaLoad.count > 1
               && SidebarSectionModel.groupsBySchema(queryLanguage)
             {
               ForEach(schemas, id: \.self) { schema in
@@ -581,6 +630,8 @@ struct WorkspaceLeftSidebarContent: View {
                         schema: schema)
                     }
                   }
+                  // The schema's menu: the database's, with Import Files into this schema
+                  .contextMenu { databaseMenuItems(schema: schema) }
                   .id(publicKeywords.isEmpty ? schema : "\(schema)-filtered")
                 }
               }
@@ -597,28 +648,53 @@ struct WorkspaceLeftSidebarContent: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
         // The database's menu: section headers and empty space (rows keep their own menus)
-        .contextMenu {
-          if queryLanguage == .sql {
-            Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
-              .disabled(!workspaceManager.canExportDataDictionary)
-          }
-          if workspaceManager.supportsSchemaCompare {
-            Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
-              .disabled(!workspaceManager.canCompareSchemas)
-          }
-        }
+        .contextMenu { databaseMenuItems(schema: nil) }
       }
+    }
+  }
+
+  /// The session's temporary objects above the schema groups, in a schema group's sections
+  /// (no folder, no New Table), rows named with their schema once the tables span two
+  private func temporarySection(_ entities: PublicEntities) -> some View {
+    let showsSchema = SidebarSectionModel.temporaryRowsShowSchema(entities.tables.map(\.source))
+    return EntitySection(title: "Temporary", count: entities.count, icon: "clock") {
+      VStack(alignment: .leading, spacing: Spacing.xs) {
+        entitySections(
+          entities, folders: [], folderIndex: nil, idPrefix: "temporary-section.",
+          showsEmptySections: false, showsSchema: showsSchema, schema: nil, offersCreate: false)
+      }
+    }
+    .id(publicKeywords.isEmpty ? "temporary-section" : "temporary-section-filtered")
+  }
+
+  /// The database's menu items; `schema` is the schema group they open on (nil: the database,
+  /// whose files go into the schema New Table targets)
+  @ViewBuilder
+  private func databaseMenuItems(schema: String?) -> some View {
+    if queryLanguage == .sql {
+      if connectionDatabaseType.capabilities.supportsDataImport {
+        Button("Import Files...") { onImportFiles(schema ?? createTableSchemas.first, nil) }
+          .disabled(!workspaceManager.canImportData)
+      }
+      Button("Export Data Dictionary...") { workspaceManager.openDataDictionaryExport() }
+        .disabled(!workspaceManager.canExportDataDictionary)
+    }
+    if workspaceManager.supportsSchemaCompare {
+      Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
+        .disabled(!workspaceManager.canCompareSchemas)
     }
   }
 
   /// `folders`, then the language's sections (`SidebarSectionModel`) of the ungrouped
   /// `entities`. `idPrefix` keeps section ids unique per schema; `showsSchema` adds the
   /// "(schema)" label to table and view rows; `schema` is the group the sections sit in (nil:
-  /// flat list), New Table's default target.
+  /// flat list), New Table's default target; without `offersCreate` the Tables header offers no
+  /// New Table.
   @ViewBuilder
   private func entitySections(
     _ entities: PublicEntities, folders: [FolderContent], folderIndex: FolderIndex?,
-    idPrefix: String, showsEmptySections: Bool, showsSchema: Bool, schema: String?
+    idPrefix: String, showsEmptySections: Bool, showsSchema: Bool, schema: String?,
+    offersCreate: Bool = true
   ) -> some View {
     ForEach(folders) { content in
       folderSection(content, showsSchema: showsSchema, folderIndex: folderIndex)
@@ -631,7 +707,8 @@ struct WorkspaceLeftSidebarContent: View {
     ) { section in
       entitySection(
         section, entities, folderIndex: folderIndex, idPrefix: idPrefix,
-        showsEmptySections: showsEmptySections, showsSchema: showsSchema, schema: schema)
+        showsEmptySections: showsEmptySections, showsSchema: showsSchema, schema: schema,
+        offersCreate: offersCreate)
     }
   }
 
@@ -639,7 +716,7 @@ struct WorkspaceLeftSidebarContent: View {
   private func entitySection(
     _ section: SidebarSectionModel.Section, _ entities: PublicEntities,
     folderIndex: FolderIndex?, idPrefix: String, showsEmptySections: Bool, showsSchema: Bool,
-    schema: String?
+    schema: String?, offersCreate: Bool
   ) -> some View {
     switch section.kind {
     case .tables:
@@ -649,8 +726,8 @@ struct WorkspaceLeftSidebarContent: View {
           count: entities.tables.count,
           icon: section.icon,
           isExpanded: true,
-          createTitle: tablesCreateTitle,
-          onCreate: tablesCreateAction(schema: schema)
+          createTitle: offersCreate ? tablesCreateTitle : nil,
+          onCreate: offersCreate ? tablesCreateAction(schema: schema) : nil
         ) {
           ForEach(entities.tables) { table in
             tableRow(table, showsSchema: showsSchema, folderIndex: folderIndex)
@@ -799,11 +876,14 @@ struct WorkspaceLeftSidebarContent: View {
     perform(.copyName, name: name, schema: schema, open: {})
   }
 
-  /// `folderID` is the folder listing the row, nil when ungrouped
+  /// `folderID` is the folder listing the row, nil when ungrouped. A temporary table row on
+  /// MySQL offers nothing that reads its structure or columns (`rowReadsStructure`).
   private func tableRow(
     _ table: FilteredTable, showsSchema: Bool, folderIndex: FolderIndex?, folderID: UUID? = nil
   ) -> some View {
-    TableRowView(
+    let readsStructure = SidebarSectionModel.rowReadsStructure(
+      table.source, databaseType: connectionDatabaseType)
+    return TableRowView(
       table: table.display,
       isExpanded: table.expandForMatch || table.source.isExpanded,
       isSelected: isOpenInActiveTab(
@@ -821,16 +901,23 @@ struct WorkspaceLeftSidebarContent: View {
       },
       onImport: connectionDatabaseType.capabilities.supportsDataImport
         ? { onImportTable(table.source) } : nil,
-      structureMenuTitle: SidebarSectionModel.structureMenuTitle(for: connectionDatabaseType),
+      onImportFiles: connectionDatabaseType.capabilities.supportsDataImport
+        ? { onImportFiles(table.source.schema, table.source) } : nil,
+      onGenerateRows: connectionDatabaseType.capabilities.supportsRowStaging && readsStructure
+        ? { onGenerateRows(table.source) } : nil,
+      structureMenuTitle: readsStructure
+        ? SidebarSectionModel.structureMenuTitle(for: connectionDatabaseType) : nil,
       onEditStructure: {
         workspaceManager.openStructureEditor(
           schema: table.source.schema, table: table.source.name)
       },
       menuActions: SidebarSectionModel.rowActions(
         for: .tables, name: table.source.name, language: queryLanguage,
-        canChangeSchema: canChangeSchema,
-        canImportDocuments: workspaceManager.canImportDocuments),
+        canChangeSchema: canChangeSchema && readsStructure,
+        canImportDocuments: workspaceManager.canImportDocuments,
+        canBuildJoinQuery: workspaceManager.canBuildJoinQuery && readsStructure),
       onMenuAction: { action in
+        guard action != .buildJoinQuery else { return onBuildJoinQuery(table.source) }
         perform(action, name: table.source.name, schema: table.source.schema) {
           openTable(table.source)
         }
@@ -935,6 +1022,9 @@ struct WorkspaceLeftSidebarContent: View {
       if let view { startMongoAdmin(.duplicateView(view)) }
     case .editDefinition:
       if let view { startMongoAdmin(.editView(view)) }
+    case .buildJoinQuery:
+      // Run by the table row itself, with its table
+      break
     }
   }
 
@@ -1128,8 +1218,11 @@ private struct SidebarMongoAdminPresenter: ViewModifier {
       })
   }
 
+  /// Never over a relocked window's cover (a pending confirmation is cancelled when the cover
+  /// shows; a running one shows again after the unlock)
   private var isConfirmPresented: Binding<Bool> {
-    admin.map { MongoAdminConfirmSheet.isPresented($0.model) } ?? .constant(false)
+    guard workspaceManager.lockCoverage == nil, let admin else { return .constant(false) }
+    return MongoAdminConfirmSheet.isPresented(admin.model)
   }
 
   func body(content: Content) -> some View {

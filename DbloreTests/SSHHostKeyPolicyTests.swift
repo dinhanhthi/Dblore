@@ -196,7 +196,8 @@ struct SSHHostKeyPolicyTests {
     #expect(rsa.localizedDescription.contains("bastion.example:2223"))
     #expect(
       rsa.localizedDescription.contains(
-        "uses an RSA host key, which is not supported; enable an ed25519 or ECDSA host key"))
+        "share no key-exchange, host-key, cipher or MAC algorithm"))
+    #expect(rsa.localizedDescription.contains("only RSA host keys or only SHA-1 algorithms"))
     #expect(DatabaseError.sshAuthenticationFailed.localizedDescription.contains("SSH"))
     #expect(DatabaseError.sshHandshakeTimedOut.localizedDescription.contains("SSH"))
   }

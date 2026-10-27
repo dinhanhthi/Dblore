@@ -4,6 +4,9 @@
 //
 //  Reusable component for "Run with query (click to copy)" bar.
 //  Used in both notebook mode and editor mode.
+//  Copies and the Export sheet of a lazy data-viewer page load its cut cells first
+//  (`loadedResult`): the sheet only ever receives the fully loaded result, and a failed or
+//  cancelled load copies nothing and opens no sheet.
 //
 
 import SwiftUI
@@ -144,12 +147,12 @@ struct QueryCopyBar: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
       .sheet(item: $exportRequest) { request in
         ResultExportSheet(
-          result: result,
+          result: request.result,
           format: request.format,
           queryLanguage: queryLanguage,
           queryIndex: queryIndex,
           onExport: { options in
-            let exported = result
+            let exported = request.result
             let index = queryIndex
             let exportDialect = dialect
             exportRequest = nil
@@ -243,35 +246,35 @@ struct QueryCopyBar: View {
     Menu {
       // Download section
       Section("Download result data") {
-        Button(action: { exportRequest = ExportRequest(format: .csv) }) {
+        Button(action: { requestExport(.csv) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as CSV")
           }
         }
 
-        Button(action: { exportRequest = ExportRequest(format: .excel) }) {
+        Button(action: { requestExport(.excel) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as Excel")
           }
         }
 
-        Button(action: { exportRequest = ExportRequest(format: .json) }) {
+        Button(action: { requestExport(.json) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as JSON")
           }
         }
 
-        Button(action: { exportRequest = ExportRequest(format: .markdown) }) {
+        Button(action: { requestExport(.markdown) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("Download as Markdown")
           }
         }
 
-        Button(action: { exportRequest = ExportRequest(format: .pdf) }) {
+        Button(action: { requestExport(.pdf) }) {
           HStack {
             Image(systemName: "arrow.down.doc")
             Text("PDF")
@@ -279,7 +282,7 @@ struct QueryCopyBar: View {
         }
 
         if ResultExportSheet.exportFormats(for: queryLanguage).contains(.sqlInsert) {
-          Button(action: { exportRequest = ExportRequest(format: .sqlInsert) }) {
+          Button(action: { requestExport(.sqlInsert) }) {
             HStack {
               Image(systemName: "arrow.down.doc")
               Text("SQL INSERT")
@@ -288,7 +291,7 @@ struct QueryCopyBar: View {
         }
 
         if ResultExportSheet.exportFormats(for: queryLanguage).contains(.parquet) {
-          Button(action: { exportRequest = ExportRequest(format: .parquet) }) {
+          Button(action: { requestExport(.parquet) }) {
             HStack {
               Image(systemName: "arrow.down.doc")
               Text("Parquet")
@@ -374,9 +377,68 @@ struct QueryCopyBar: View {
 
   // MARK: - Download/Copy Actions
 
-  private struct ExportRequest: Identifiable {
+  /// The Export sheet's format and the result it exports (cut cells already loaded)
+  struct ExportRequest: Identifiable {
     let id = UUID()
     let format: ExportFormat
+    let result: CellResult
+  }
+
+  /// `result` with every cut cell of a lazy data-viewer page loaded (progress and Cancel in
+  /// the grid), the same result when it has none; nil when a load failed or was cancelled
+  /// (the view model told the user): nothing is copied or exported.
+  static func loadedResult(
+    _ result: CellResult, viewModel: NotebookViewModel?, action: String
+  ) async -> CellResult? {
+    guard let viewModel, viewModel.hasUnloadedCells(in: result) else { return result }
+    return await viewModel.fullyLoadedResult(result, action: action)
+  }
+
+  /// The Export sheet request for `format`, its result fully loaded; nil opens no sheet
+  static func exportRequest(
+    format: ExportFormat, result: CellResult, viewModel: NotebookViewModel?
+  ) async -> ExportRequest? {
+    guard let loaded = await loadedResult(result, viewModel: viewModel, action: "Export") else {
+      return nil
+    }
+    return ExportRequest(format: format, result: loaded)
+  }
+
+  /// Opens the Export sheet: at once for a result with no cut cell, else once they loaded
+  private func requestExport(_ format: ExportFormat) {
+    guard let viewModel, viewModel.hasUnloadedCells(in: result) else {
+      exportRequest = ExportRequest(format: format, result: result)
+      return
+    }
+    let result = result
+    Task {
+      guard
+        let request = await Self.exportRequest(
+          format: format, result: result, viewModel: viewModel)
+      else { return }
+      exportRequest = request
+    }
+  }
+
+  /// Runs `copy` on the result (at once, or once its cut cells loaded), then shows `feedback`
+  private func handleCopy(_ feedback: CopyFeedbackType, _ copy: @escaping (CellResult) -> Void) {
+    let finish = { (copied: CellResult) in
+      copy(copied)
+      showCopyFeedback = feedback
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        showCopyFeedback = nil
+      }
+    }
+    guard let viewModel, viewModel.hasUnloadedCells(in: result) else {
+      finish(result)
+      return
+    }
+    let result = result
+    Task {
+      guard let loaded = await Self.loadedResult(result, viewModel: viewModel, action: "Copy")
+      else { return }
+      finish(loaded)
+    }
   }
 
   enum CopyFeedbackType {
@@ -399,34 +461,21 @@ struct QueryCopyBar: View {
   }
 
   private func handleCopyTSV(result: CellResult) {
-    DataExporter.copyTSV(result: result)
-    showCopyFeedback = .tsv
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-      showCopyFeedback = nil
-    }
+    handleCopy(.tsv) { DataExporter.copyTSV(result: $0) }
   }
 
   private func handleCopyJSON(result: CellResult) {
-    DataExporter.copyJSON(result: result)
-    showCopyFeedback = .json
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-      showCopyFeedback = nil
-    }
+    handleCopy(.json) { DataExporter.copyJSON(result: $0) }
   }
 
   private func handleCopyMarkdown(result: CellResult) {
-    DataExporter.copyMarkdown(result: result)
-    showCopyFeedback = .markdown
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-      showCopyFeedback = nil
-    }
+    handleCopy(.markdown) { DataExporter.copyMarkdown(result: $0) }
   }
 
   private func handleCopyInsert(result: CellResult) {
-    DataExporter.copyInsert(result: result, table: result.tableName, dialect: dialect)
-    showCopyFeedback = .insert
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-      showCopyFeedback = nil
+    let dialect = dialect
+    handleCopy(.insert) {
+      DataExporter.copyInsert(result: $0, table: $0.tableName, dialect: dialect)
     }
   }
 }

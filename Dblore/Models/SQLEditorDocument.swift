@@ -34,6 +34,9 @@ final class SQLEditorDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
   /// Callback to notify view that external reload happened
   var onExternalReload: (() -> Void)?
 
+  /// The id of the workspace whose key sealed this file (nil: plaintext); writes seal with it
+  var lockKeyId: UUID?
+
   // MARK: - NSFilePresenter Protocol
 
   var presentedItemURL: URL? { _presentedItemURL }
@@ -83,16 +86,17 @@ final class SQLEditorDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   /// Set the file URL for monitoring. Call this after document is opened.
   func setFileURL(_ url: URL?) {
-    // Remove from old presenter if URL changes
+    // Remove from old presenter if URL changes. Both calls are queued (`SQLiteFileAccess`), so
+    // a stalled file arbiter never blocks the main thread.
     if _presentedItemURL != nil {
-      NSFileCoordinator.removeFilePresenter(self)
+      SQLiteFileAccess.removeFilePresenter(self)
     }
 
     _presentedItemURL = url
 
     // Register as file presenter if we have a valid URL
     if url != nil {
-      NSFileCoordinator.addFilePresenter(self)
+      SQLiteFileAccess.addFilePresenter(self)
       updateLastKnownModificationDate()
     }
   }
@@ -171,19 +175,26 @@ final class SQLEditorDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   // MARK: - Reload from Disk
 
-  /// Reload the document content from disk
-  func reloadFromDisk() throws {
+  /// Reload the document content from disk. A sealed file is read and opened off the main
+  /// actor (asking `unlock` when its workspace is not open); `holder` (the window's workspace
+  /// id) holds the session that opened it.
+  func reloadFromDisk(
+    holder: UUID, io: LockedFileIO = .shared, unlock: LockedFileIO.Unlock
+  ) async throws {
     guard let url = _presentedItemURL else {
       throw CocoaError(.fileReadNoSuchFile)
     }
 
-    let data = try Data(contentsOf: url)
-    guard let reloadedContent = String(data: data, encoding: .utf8) else {
+    let read = try await io.read(from: url, unlock: unlock)
+    guard let reloadedContent = String(data: read.plaintext, encoding: .utf8) else {
       throw CocoaError(.fileReadCorruptFile)
     }
+    if let session = read.session { io.sessions.hold(session, by: holder) }
 
     // Update content on main thread
     content = reloadedContent
+    // A plaintext replacement of a sealed file keeps the key: the next save seals it again
+    lockKeyId = read.session?.workspaceId ?? lockKeyId
     updateLastKnownModificationDate()
 
     // Notify view to update its state
@@ -194,9 +205,8 @@ final class SQLEditorDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   deinit {
     changeDebounceTask?.cancel()
-    if _presentedItemURL != nil {
-      NSFileCoordinator.removeFilePresenter(self)
-    }
+    // No removal here: the arbiter retains a registered presenter, so deinit runs only once
+    // it is off the arbiter (never registered, or removed by a later `setFileURL`)
   }
 
   // MARK: - Snapshot and FileWrapper

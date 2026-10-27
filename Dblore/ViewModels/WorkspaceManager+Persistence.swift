@@ -7,6 +7,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 // MARK: - Workspace Persistence
 
@@ -39,6 +40,9 @@ extension WorkspaceManager {
       try? await Task.sleep(for: .seconds(Self.autoSaveDelay))
 
       guard let self, !Task.isCancelled else { return }
+      // Paused while the Lock password changes: its re-seal rewrites this workspace's files
+      if self.lockKeyId != nil { await self.lockCenter.passwordChangeFinished() }
+      guard !Task.isCancelled else { return }
 
       do {
         try await self.saveWorkspace()
@@ -97,7 +101,9 @@ extension WorkspaceManager {
     }
     workspace.fileURL = url
 
-    try writeEncodedWorkspace(to: url)
+    // Sealed with the workspace's key when it is locked, off the main actor
+    try await lockedIO.write(
+      encodedWorkspaceData(), kind: .workspace, lockKeyId: lockKeyId, to: url)
 
     isDirty = false
     // Once per location: a failed bookmark is not retried on every auto-save
@@ -120,12 +126,24 @@ extension WorkspaceManager {
       try writeEncodedWorkspace(to: url)
       isDirty = false
     } catch {
-      // Quit must keep going. A panel here would ask the user to save on the way out.
+      // Quit must keep going. A panel here would ask the user to save on the way out. Logged
+      // synchronously: the process exits right after the flush.
+      Self.quitLog.error(
+        "Quit flush of a workspace failed: \(error.localizedDescription, privacy: .private)")
     }
   }
 
+  private static let quitLog = Logger(subsystem: "ace.thi.dblore.app", category: "Workspace")
+
+  /// The quit flush's synchronous write: a locked workspace is sealed with its open session
+  /// (AES-GCM only), and a seal error writes nothing, never plaintext; nor does a plaintext
+  /// write over a sealed file
   private func writeEncodedWorkspace(to url: URL) throws {
-    let data = try encodedWorkspaceData()
+    if lockKeyId == nil, LockedFileIO.isEnvelope(at: url) { throw LockedFileIOError.sealedTarget }
+    let plaintext = try encodedWorkspaceData()
+    let data =
+      try lockKeyId.map { try lockedIO.sealPayload(plaintext, kind: .workspace, lockKeyId: $0) }
+      ?? plaintext
     try SecurityScopedAccess.write(data, to: url)
   }
 
@@ -133,10 +151,13 @@ extension WorkspaceManager {
   var recentEntry: WorkspaceHistoryEntry? {
     var entry = WorkspaceHistoryEntry.from(workspace, bookmark: workspaceBookmark)
     entry?.folderBookmark = folderBookmark
+    entry?.isLocked = lockKeyId != nil
     return entry
   }
 
-  /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON
+  /// Update the workspace with the current tabs (and their bookmarks) and encode it as .sqlws JSON.
+  /// Always plaintext: only the writers hand it to LockedFileIO, so it is sealed once. Tabs whose
+  /// unlock was refused at load stay in it (after the open tabs) unless their file is open again.
   func encodedWorkspaceData() throws -> Data {
     // Preview and object source tabs are session-only: an active one hands over to the latest
     // persisted tab
@@ -148,6 +169,10 @@ extension WorkspaceManager {
         dataViewer: state.map {
           .init(schema: $0.schema, name: $0.name, orderColumns: $0.orderColumns)
         })
+    }
+    let saved = workspace.tabs
+    workspace.tabs += unrestoredLockedTabs.filter { ref in
+      !saved.contains { $0.id == ref.id || $0.fileURL == ref.fileURL }
     }
     let activeIsSessionOnly = tabs.contains {
       $0.id == activeTabId && ($0.isPreview || $0.isReadOnlySource)
@@ -574,6 +599,7 @@ extension WorkspaceManager {
 
   /// Show connection form modal
   func showConnectionForm() {
+    connectionFormOpensOnDraft = false
     isConnectionFormModalVisible = true
   }
 

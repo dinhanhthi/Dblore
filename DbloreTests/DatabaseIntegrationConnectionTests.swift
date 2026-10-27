@@ -293,8 +293,9 @@ struct DatabaseIntegrationConnectionTests {
       if let firstRow = result.rows.first {
         #expect(firstRow.count == 3, "Row should have 3 values")
 
-        // All date/time values are decoded as .date type
-        for value in firstRow {
+        // DATE is its date text (no time zone); the timestamps are decoded as .date
+        #expect(firstRow.first == .string("2024-01-15"))
+        for value in firstRow.dropFirst() {
           if case .date(let dateValue) = value {
             #expect(dateValue.timeIntervalSince1970 > 0, "Date should be valid")
           } else {

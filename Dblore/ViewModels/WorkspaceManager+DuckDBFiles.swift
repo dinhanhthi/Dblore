@@ -172,6 +172,8 @@ extension WorkspaceManager {
     } catch {
       if added { duckDBFileAccess.removeValue(forKey: path)?.release() }
       if case WorkspaceConnectError.pendingTransactionKept = error { return false }
+      // The unlock of a locked file was cancelled: nothing to show
+      if case WorkspaceConnectError.unlockRequired = error { return false }
       WorkspaceWindowManager.shared.showToast(
         "DuckDB could not open the file: \(error.localizedDescription)", type: .error)
       presentConnectErrorIfActionable(error, config: config)

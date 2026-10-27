@@ -111,19 +111,20 @@ struct OutsideMCPServersSection: View {
   var body: some View {
     SettingsGroupCard(title: "Outside MCP servers") {
       VStack(alignment: .leading, spacing: Spacing.md) {
-        note(
-          "MCP servers whose tools the AI chat may call. A new server is off: test it, tick the tools to allow, then turn it on. Every call waits for your approval."
-        )
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          note(
+            "MCP servers whose tools the AI chat may call. A new server is off: test it, tick the tools to allow, then turn it on. Every call waits for your approval."
+          )
+          warning(
+            "Tool results are untrusted data: a server can return text that tries to steer the AI. Add only servers you trust."
+          )
+        }
         ForEach(model.store.servers) { server in
           Divider()
           serverRow(server)
         }
         Divider()
         addForm
-        Divider()
-        warning(
-          "Tool results are untrusted data: a server can return text that tries to steer the AI. Add only servers you trust."
-        )
       }
     }
   }

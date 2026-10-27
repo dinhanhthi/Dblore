@@ -160,8 +160,9 @@ struct SQLiteIntrospectorTests {
     try await session.open()
     do {
       _ = try await session.command("CREATE TABLE local (id INTEGER PRIMARY KEY)", binds: [])
-      _ = try await session.command(
-        "ATTACH DATABASE ? AS other", binds: [.text(otherURL.path)])
+      // A quoted path: the session refuses a bound ATTACH file name
+      let quoted = otherURL.path.replacingOccurrences(of: "'", with: "''")
+      _ = try await session.command("ATTACH DATABASE '\(quoted)' AS other", binds: [])
       let tables = try await introspector.tables(in: session)
       let item = try #require(tables.first { $0.schema == "other" && $0.name == "item" })
       #expect(item.rowCount == nil)

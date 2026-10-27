@@ -25,11 +25,15 @@ struct TableRowView: View {
   let onColumnClick: (String) -> Void
   /// Nil hides "Import Data..." (the engine has no table import)
   let onImport: (() -> Void)?
+  /// Nil hides "Import Files..." (several files, the one file going into this table)
+  var onImportFiles: (() -> Void)? = nil
+  /// Nil hides "Generate Rows..." (the engine has no row staging)
+  var onGenerateRows: (() -> Void)? = nil
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
-  /// Menu items of a MongoDB collection, or an SQL table's Rename and Drop Table (after the
-  /// structure item)
+  /// Menu items of a MongoDB collection, or an SQL table's Build Join Query From Here, Rename and
+  /// Drop Table (after the structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
   /// Move to Folder and Remove from Folder, and the drag onto a folder. Nil offers neither.
@@ -121,6 +125,12 @@ struct TableRowView: View {
         }
         if let onImport {
           Button("Import Data...", action: onImport)
+        }
+        if let onImportFiles {
+          Button("Import Files...", action: onImportFiles)
+        }
+        if let onGenerateRows {
+          Button("Generate Rows...", action: onGenerateRows)
         }
         if let structureMenuTitle {
           Button(structureMenuTitle, action: onEditStructure)

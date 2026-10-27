@@ -23,25 +23,34 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 ## Features
 
 - **Notebooks and SQL editor**: `.dblore` notebooks with inline results, plain `.sql` tabs
-  and quick Markdown notes, in one tidy workspace
+  and quick Markdown notes, in one tidy workspace. Autocomplete knows CTE columns and offers
+  select-list aliases after ORDER BY, Format SQL follows your indent, case, comma and
+  line-width rules, and View > Zoom resizes the focused editor, grid or schema diagram
 - **Schema browser**: tables, columns and types, a quick filter and a canvas with foreign-key
   lines that you can copy or save as Mermaid or Graphviz DOT. Group tables and views into
   sidebar folders, hide schemas you do not use, and find a value in the text of every table.
-  PostgreSQL also lists sequences, enums, domains and composite types
+  A Temporary section lists the session's temp tables. PostgreSQL also lists sequences, enums,
+  domains and composite types
+- **Join query builder**: pick tables (also by multi-select on the canvas) and get the join
+  along their foreign keys, with columns, filters and a live SQL preview
 - **Compare Schemas**: compare two schemas of the same engine (PostgreSQL, MySQL/MariaDB,
   SQLite), review the exact script and run it through Safe Mode. Drops are unticked by default
 - **Data Dictionary**: export the columns, indexes and foreign keys of every table as Markdown
   or standalone HTML
 - **Structure editor**: add, change and drop columns, indexes and keys, create, rename,
   comment and drop tables, with a preview of the exact SQL that runs
-- **Results grid**: sort, search, filter, edit values inline, add rows from a form, follow
-  foreign keys, inspect cells as JSON, pin a result to compare re-runs, see Count, Sum and
-  Avg of a selection, and highlight cells or rows with several rules at once. Before a delete,
-  Preview SQL lists the rows it removes by cascade, nulls or leaves pointing at it, and a
-  change to a table without a primary key is refused instead of dropped. Set a value, NULL,
-  DEFAULT or a fresh UUID on several cells in one change, choose what Cmd+C copies (TSV, CSV,
-  JSON or Markdown, with formulas neutralized for spreadsheets), and see invisible characters
-  as marks
+- **Results grid**: sort, search, filter, freeze leading columns (table tabs), edit values
+  inline, add rows from a form, follow foreign keys, inspect cells as JSON, pin a result to
+  compare re-runs, see Count, Sum and Avg of a selection, and highlight cells or rows with
+  several rules at once.
+  Before a delete, Preview SQL lists the rows it removes by cascade, nulls or leaves pointing at
+  it, and a change to a table without a primary key is refused instead of dropped. Set a value,
+  NULL, DEFAULT or a fresh UUID on several cells in one change, choose what Cmd+C copies (TSV,
+  CSV, JSON or Markdown, with formulas neutralized for spreadsheets), and see invisible
+  characters as marks
+- **Binary values**: show a binary column as hex, UUID, MessagePack or Protobuf with Display
+  As. Table tabs read binary cells up to 64 KB; a longer value shows as "not loaded" and is
+  loaded by its key when you open or copy it, and never written back unloaded
 - **Data Rewind**: edits made in the data viewer keep the rows before and after, so you can
   preview and run the SQL that puts them back (PostgreSQL, MySQL, SQLite). The copies stay on
   this Mac and are never backed up
@@ -49,12 +58,21 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   per value of a column
 - **Geometry and vector viewers**: draw PostGIS and MySQL geometry values, and summarize
   pgvector values, in Cell Value
-- **Import and export**: import CSV, TSV and JSON; export to Excel, CSV, JSON, Markdown, PDF,
-  TSV, SQL `INSERT` and Parquet (with the DuckDB plugin)
+- **Import and export**: import CSV, TSV and JSON as Insert, Update, Insert or Update or
+  Insert skipping existing rows (matched by a primary or unique key), and several files or a
+  folder in one transaction; export to Excel, CSV, JSON, Markdown, PDF, TSV, SQL `INSERT` and
+  Parquet (with the DuckDB plugin)
+- **Generate Rows**: fill a PostgreSQL, MySQL/MariaDB or SQLite table with up to 1,000,000
+  rows of seeded sample data that follow its types, foreign keys and unique keys, in one
+  transaction you can cancel
 - **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB database to a
   `.sql` file and restore it
 - **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
   transactions, Touch ID to unlock
+- **Lock**: lock a saved connection, a SQLite or DuckDB file or a whole workspace behind Touch
+  ID, the Mac password or a Lock password. A locked workspace's files are encrypted on disk, and
+  locked items relock on sleep, screen lock, idle time or quit. Changing the Lock password keeps
+  each workspace's key, so older copies still open with the old one
 - **AI assistant**: write, explain, fix, review and optimize queries with your own key
   (including Google Gemini, xAI and Requesty) or a local model (on-device models need the
   On-device AI plugin). Slash commands and `@` mentions attach
@@ -64,9 +82,10 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   "Send result rows to AI". Optional inline suggestions appear as gray text in SQL editors
 - **Outside MCP servers**: add an MCP server by URL and let the AI chat call the tools you
   tick, one approved call at a time
-- **MCP server**: let AI agents read the connections you allow, on this Mac only. Off by
-  default. An opt-in write tool runs one change at a time on connections you
-  give a write scope, and only after you approve the exact statement in Dblore
+- **MCP server**: let AI agents read the connections you allow (never a locked one), on this
+  Mac only, with capped connections and requests. Off by default. An opt-in write tool runs one
+  change at a time on connections you give a write scope, and only after you approve the exact
+  statement in Dblore
 - **Query Insights**: group the queries in History by shape and see runs, average, p95 and
   slowest time and error rate over 24 hours, 7 or 30 days
 - **SQL snippets**: trigger words that expand to templates with tab stops
@@ -94,7 +113,7 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   administration, bulk update and delete, JSON and CSV export and import, and backup and
   restore
 - **SQLite**: open a file and work with it like a server connection, with an EXPLAIN QUERY
-  PLAN tree
+  PLAN tree, and attach up to 10 other SQLite files on every connect
 
 ## Plugins
 
@@ -112,8 +131,8 @@ features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 
 - **Download the app:** get the latest signed &amp; notarized DMG from the
   [Releases page](https://github.com/dinhanhthi/Dblore/releases/latest), open it and
-  drag Dblore to Applications. From v0.2.0 on, it updates itself
-  (**Dblore > Check for Updates…**).
+  drag Dblore to Applications. From v0.2.0 on, it updates itself: a green update
+  button shows when a new version is out (**Dblore > Check for Updates…** checks now).
 - **Or build from source:** see below.
 
 ## Requirements

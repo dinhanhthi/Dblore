@@ -77,6 +77,11 @@ struct AppWindowView: View {
           .onAppear {
             windowManager.setActiveWorkspace(id)
           }
+      } else if let id = workspaceId, let open = windowManager.lockedOpens[id] {
+        // A locked workspace opened here from Welcome (or onto it): Cancel shows Welcome again
+        LockedWorkspacePlaceholder(open: open, replacesWelcome: true) {
+          workspaceId = nil
+        }
       } else if pendingFileOpen.hasPendingFiles && !windowManager.workspaces.isEmpty {
         // Show file open chooser when files are waiting and workspaces exist
         FileOpenChooserView(
@@ -259,6 +264,9 @@ struct NewWorkspaceWindowView: View {
           .onAppear {
             windowManager.setActiveWorkspace(workspaceId)
           }
+      } else if let open = windowManager.lockedOpens[workspaceId] {
+        // Made for this open: Cancel closes the window
+        LockedWorkspacePlaceholder(open: open, replacesWelcome: false)
       } else {
         // Workspace not found - show error
         VStack(spacing: Spacing.md) {
@@ -418,9 +426,11 @@ class NewWindowStore {
     }
   }
 
-  /// Find the NSWindow displaying a specific workspace
+  /// Find the NSWindow displaying a specific workspace, including a Welcome window that opened it
+  /// (known only through `register`)
   func findWindow(for workspaceId: UUID) -> NSWindow? {
     windowControllers.first { $0.workspaceId == workspaceId }?.controller.window
+      ?? NSApp.windows.first { registrations[$0.windowNumber] == .workspace(workspaceId) }
   }
 
   /// The window a new window should join as a tab, or nil to open it standalone.

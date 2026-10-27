@@ -394,10 +394,15 @@ struct ChatGPTCodexClientTests {
     let pending = Task { try await provider.validTokens() }
     try await waitForRequest(counter)
     await provider.signOut()
+    // Sign-out cancels the refresh, which settles at once (before the stub answers): let it
+    // report the sign-out before signing in, so the order never races
+    await #expect(throws: AIClientError.http(status: 401, message: "Signed out of ChatGPT")) {
+      _ = try await pending.value
+    }
     let saved = await provider.store(makeTokens(access: "access-B", refresh: "refresh-B"))
     #expect(saved)
     gate.signal()
-    let result = try await pending.value
+    let result = try await provider.validTokens()
     #expect(result.accessToken == "access-B")
     #expect(ChatGPTTokenStorage.load(from: store)?.refreshToken == "refresh-B")
   }

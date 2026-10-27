@@ -126,6 +126,10 @@ struct DataSettingsSection: View {
         Text("Deletes the saved SSH password or private key for account \(item.account).")
       case .sshHostKey:
         Text("Forgets the trusted SSH host key for account \(item.account).")
+      case .lockPassword:
+        Text(DataSettingsWarnings.lockPassword)
+      case .lockContentKey:
+        Text(DataSettingsWarnings.lockContentKey)
       default:
         Text(
           "Removes \(item.label) (\(dataSecretKindTitle(item.kind))). The saved value is deleted.")
@@ -245,7 +249,11 @@ struct DataSettingsSection: View {
 
   /// Accounts of these kinds are encoded identities, so the kind is the readable title.
   private func showsKindFirst(_ item: SecretItem) -> Bool {
-    [.clientCertificate, .sshCredential, .sshHostKey, .outsideMCPToken].contains(item.kind)
+    [
+      .clientCertificate, .sshCredential, .sshHostKey, .outsideMCPToken, .mcpServerToken,
+      .lockContentKey,
+    ]
+    .contains(item.kind)
   }
 
   private var clearIsPresented: Binding<Bool> {
@@ -481,7 +489,29 @@ private func dataSecretKindTitle(_ kind: SecretKind) -> String {
   case .sshCredential: "SSH credentials"
   case .sshHostKey: "Trusted SSH host keys"
   case .outsideMCPToken: "Outside MCP server token"
+  case .mcpServerToken: "Dblore MCP server token"
+  case .lockPassword: "Lock password"
+  case .lockContentKey: "Locked workspace key"
   }
+}
+
+/// What deleting Lock items does, said before the user confirms
+enum DataSettingsWarnings {
+  static let lockPassword =
+    "Deletes the Lock password from this Mac. Locked connections then unlock only with Touch ID "
+    + "or the Mac password. Workspace keys are not deleted. While a locked workspace uses the Lock "
+    + "password it is kept: remove those locks first. Touch ID or the Mac password confirms."
+  static let lockContentKey =
+    "Deletes this locked workspace's key from this Mac. The workspace then opens only with the "
+    + "Lock password; without it, it cannot be opened. Touch ID or the Mac password confirms."
+  static let clearAllLocks =
+    "Locked workspace keys are deleted too: those workspaces then open only with the Lock "
+    + "password. The Lock password itself is kept while a locked workspace uses it. While "
+    + "anything is locked, Touch ID or the Mac password confirms first."
+  static let importLocks =
+    "Locks in the backup replace the current ones: a connection or workspace locked here but "
+    + "not in the backup loses its lock. While anything is locked, Touch ID or the Mac password "
+    + "confirms first."
 }
 
 /// Category checkboxes. Local models start unchecked and are labeled with their size.
@@ -698,6 +728,11 @@ private struct DataClearAllSheet: View {
           )
           .font(.small)
           .foregroundColor(.foregroundSubtle)
+          if alsoDeleteSecrets {
+            Text(DataSettingsWarnings.clearAllLocks)
+              .font(.small)
+              .foregroundColor(.warning)
+          }
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)

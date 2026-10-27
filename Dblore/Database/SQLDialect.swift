@@ -195,14 +195,18 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
-  /// `column` and `pattern` are SQL fragments, inserted unchanged.
-  func caseInsensitiveLike(column: String, pattern: String) -> String {
-    switch engine {
-    case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
-    case .sqlite: "\(column) LIKE \(pattern)"
-    case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
-    case .mysql: "CAST(\(column) AS CHAR) LIKE \(pattern)"
-    }
+  /// `column`, `pattern` and `escape` are SQL fragments, inserted unchanged; `escape` follows
+  /// the comparison as `ESCAPE escape`. SQLite and MySQL lower both sides (a MySQL `_bin`
+  /// collation makes `LIKE` case-sensitive), the form Find a Value in Every Table searches with.
+  func caseInsensitiveLike(column: String, pattern: String, escape: String? = nil) -> String {
+    let comparison =
+      switch engine {
+      case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
+      case .sqlite: "LOWER(\(column)) LIKE LOWER(\(pattern))"
+      case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
+      case .mysql: "LOWER(CAST(\(column) AS CHAR)) LIKE LOWER(\(pattern))"
+      }
+    return escape.map { "\(comparison) ESCAPE \($0)" } ?? comparison
   }
 
   /// `'text'`, with `'` doubled. PostgreSQL text that contains `\` is `E'...'`:
@@ -240,14 +244,39 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   private func dataLiteral(_ data: Data) -> String {
     switch engine {
     case .postgresql, .mongodb:
-      let hex = data.map { String(format: "%02x", $0) }.joined()
-      return "'\\x\(hex)'"
+      return "'\\x\(data.hexDigits())'"
     case .sqlite, .mysql:
-      let hex = data.map { String(format: "%02X", $0) }.joined()
-      return "X'\(hex)'"
+      return "X'\(data.hexDigits(uppercase: true))'"
     case .duckdb:
-      let escaped = data.map { String(format: "\\x%02X", $0) }.joined()
-      return "'\(escaped)'::BLOB"
+      return "'\(data.hexDigits(uppercase: true, bytePrefix: "\\x"))'::BLOB"
+    }
+  }
+}
+
+extension Data {
+  /// Two hex digits per byte, each pair after `bytePrefix`. Written straight into the string's
+  /// buffer: a multi-megabyte value takes milliseconds, not the seconds of a per-byte
+  /// `String(format:)`.
+  nonisolated func hexDigits(uppercase: Bool = false, bytePrefix: String = "") -> String {
+    let digits: StaticString = uppercase ? "0123456789ABCDEF" : "0123456789abcdef"
+    let prefix = Array(bytePrefix.utf8)
+    let length = count * (2 + prefix.count)
+    return String(unsafeUninitializedCapacity: length) { buffer in
+      digits.withUTF8Buffer { table in
+        withUnsafeBytes { bytes in
+          var index = 0
+          for byte in bytes {
+            for character in prefix {
+              buffer[index] = character
+              index += 1
+            }
+            buffer[index] = table[Int(byte >> 4)]
+            buffer[index + 1] = table[Int(byte & 0x0f)]
+            index += 2
+          }
+        }
+      }
+      return length
     }
   }
 }

@@ -255,10 +255,13 @@ nonisolated struct DataRewindLocalDataProvider: LocalDataProvider {
 
 nonisolated struct ConnectionHistoryLocalDataProvider: LocalDataProvider {
   var client: LocalDefaultsClient
+  /// Restore and clear refuse while a stored row's lock is not unlocked in this session
+  var registry: LockRegistry
   var category: LocalDataCategory { .connectionHistory }
 
-  init(defaults: UserDefaults, domainName: String) {
+  init(defaults: UserDefaults, domainName: String, registry: LockRegistry = .shared) {
     client = LocalDefaultsClient(defaults: defaults, domainName: domainName)
+    self.registry = registry
   }
 
   func summary() async -> LocalDataSummary {
@@ -277,18 +280,34 @@ nonisolated struct ConnectionHistoryLocalDataProvider: LocalDataProvider {
   }
 
   func importData(from folder: URL) async throws {
-    SessionManager.replace(
-      history: LocalDataFiles.read(named: "connectionHistory.json", from: folder),
-      legacySession: LocalDataFiles.read(named: "savedSession.json", from: folder),
-      defaults: client.defaults,
-      domainName: client.domainName
-    )
+    guard
+      SessionManager.replace(
+        history: LocalDataFiles.read(named: "connectionHistory.json", from: folder),
+        legacySession: LocalDataFiles.read(named: "savedSession.json", from: folder),
+        defaults: client.defaults,
+        domainName: client.domainName,
+        registry: registry
+      )
+    else { throw DatabaseError.connectionLocked }
+    await publishLocks()
     LocalDataNotifications.post(category)
   }
 
   func clear() async throws {
-    SessionManager.clearAll(defaults: client.defaults, domainName: client.domainName)
+    guard
+      SessionManager.clearAll(
+        defaults: client.defaults, domainName: client.domainName, registry: registry)
+    else { throw DatabaseError.connectionLocked }
+    await publishLocks()
     LocalDataNotifications.post(category)
+  }
+
+  /// The registry follows the restored or cleared rows' locks (no Keychain read)
+  private func publishLocks() async {
+    await MainActor.run {
+      _ = SessionManager.loadHistory(
+        defaults: client.defaults, passwords: NoPasswordStore(), registry: registry)
+    }
   }
 }
 
@@ -384,6 +403,7 @@ nonisolated struct SavedFiltersLocalDataProvider: LocalDataProvider {
       ("savedMongoQueries.json", \.mongoQueries),
       ("savedMongoPipelines.json", \.mongoPipelines),
       ("mongoViewPreferences.json", \.mongoViewPreferences),
+      ("gridColumnPrefs.json", \.gridColumnPrefs),
     ]
   }
 
@@ -397,6 +417,7 @@ nonisolated struct SavedFiltersLocalDataProvider: LocalDataProvider {
       + LocalDataJSON.keyedArrayCount(stored.mongoQueries)
       + LocalDataJSON.keyedArrayCount(stored.mongoPipelines)
       + LocalDataJSON.keyCount(stored.mongoViewPreferences)
+      + LocalDataJSON.keyCount(stored.gridColumnPrefs)
     return LocalDataSummary(bytes: bytes, itemCount: count, location: nil)
   }
 
@@ -650,12 +671,14 @@ nonisolated struct LogsLocalDataProvider: LocalDataProvider {
   }
 
   func export(to folder: URL) async throws {
+    AppLogger.flushFileWrites()
     try LocalDataFiles.exportChildren(of: root, to: folder) {
       $0.pathExtension.lowercased() == "log"
     }
   }
 
   func importData(from folder: URL) async throws {
+    AppLogger.flushFileWrites()
     try LocalDataFiles.replaceChildren(of: root, with: folder) {
       $0.pathExtension.lowercased() == "log"
     }

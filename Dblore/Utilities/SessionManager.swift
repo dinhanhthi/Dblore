@@ -68,12 +68,18 @@ class SessionManager {
   /// Load connection history (sorted by most recent first)
   static func loadHistory(
     defaults: UserDefaults = .standard,
-    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore()
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    registry: LockRegistry = .shared
   ) -> [ConnectionHistoryEntry] {
     var entries = storedEntries(defaults: defaults).known
+    publishLocks(entries, defaults: defaults, registry: registry)
 
-    // Load passwords for engines that store one. Others are not queried.
-    for i in 0..<entries.count where entries[i].config.databaseType.capabilities.usesPassword {
+    // Load passwords for engines that store one. Others are not queried, nor is a row whose
+    // lock is not unlocked in this session: it loads without its password until then.
+    for i in 0..<entries.count
+    where entries[i].config.databaseType.capabilities.usesPassword
+      && registry.refusal(for: entries[i].config) == nil
+    {
       let key = entries[i].keychainKey
       if let password = passwords.loadPassword(forKey: key) {
         entries[i].config.password = password
@@ -140,7 +146,9 @@ class SessionManager {
   /// Maximum number of connection history entries to store
   static let maxConnectionHistorySize = 50
 
-  /// Add or update connection in history
+  /// Add or update connection in history. Refused (false, nothing changed) when it would
+  /// overwrite another connection's row on the same key whose lock is not unlocked in this
+  /// session.
   @discardableResult
   static func saveConnection(
     _ config: ConnectionConfig,
@@ -148,20 +156,45 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
-    sshCredential: SSHStoredCredential? = nil
+    sshCredential: SSHStoredCredential? = nil,
+    registry: LockRegistry = .shared
   ) -> Bool {
-    let config = singleLineName(config)
+    var config = singleLineName(config)
     guard config.rememberConnection else {
       // If remember is disabled, don't add to history
       return true
     }
 
-    var history = loadHistory(defaults: defaults, passwords: passwords)
+    var history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
     let previous = history
-    let newEntry = ConnectionHistoryEntry(config: config)
-
+    // Locked by the form's toggle before the first save (nothing else sets a draft's lock)
+    let locksNewRow = config.isLocked
+    let key = ConnectionKeychainKey.password(for: config)
     // Check if connection already exists (same host+port+db+user)
-    if let index = history.firstIndex(where: { $0.keychainKey == newEntry.keychainKey }) {
+    let index = history.firstIndex(where: { $0.keychainKey == key })
+    // A replaced row of the same connection keeps its id: the MCP allowlist and write scopes
+    // are keyed by it. Another engine or other fields on the same unscoped key are another
+    // connection.
+    let keptID = index.flatMap { history[$0].isSavedRow(of: config) ? history[$0].id : nil }
+    // Another connection's row on this key is overwritten: refused while its lock is blocked
+    if let index, keptID == nil, registry.refusal(for: history[index].config) != nil {
+      return false
+    }
+    // It keeps the row's lock too: a form draft never changes it (only the lock toggle does)
+    if keptID != nil, let index { config.isLocked = history[index].config.isLocked }
+    // A locked row of another connection on the same key is overwritten: the new row is saved locked
+    if let index, history[index].config.isLocked { config.isLocked = true }
+    // Every saved row of a locked identity carries the lock (another database of the login)
+    let inheritsLock = hasLockedRow(of: config, in: history)
+    if inheritsLock { config.isLocked = true }
+    // A new row the form locked creates its lock here: this session keeps using it, as the
+    // toggle on a saved row does. A lock taken from another row is never granted.
+    let grantsNewLock = locksNewRow && index == nil && !inheritsLock
+    let lockedBefore = registry.lockedIdentities
+    let generation = registry.generation
+    let newEntry = ConnectionHistoryEntry(id: keptID ?? UUID(), config: config)
+
+    if let index {
       // Update existing entry (refresh timestamp)
       history[index] = newEntry
     } else {
@@ -169,19 +202,29 @@ class SessionManager {
       history.insert(newEntry, at: 0)
     }
 
-    // Trim to max size
-    if history.count > maxConnectionHistorySize {
-      history = Array(history.prefix(maxConnectionHistorySize))
+    // Trim to max size: the oldest unlocked rows go, never a locked row (its lock would be lost
+    // without asking) nor the row just saved; locked rows alone may stay over the cap
+    while history.count > maxConnectionHistorySize,
+      let oldest = history.lastIndex(where: { !$0.config.isLocked && $0.id != newEntry.id })
+    {
+      history.remove(at: oldest)
     }
 
     guard let encoded = encodedHistory(history, defaults: defaults),
       ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates),
       saveSSHCredential(sshCredential, for: config, to: sshCredentials)
     else { return false }
+    // The overwritten connection's password is not the new one's
+    if let index, keptID == nil { deleteStoredPassword(for: previous[index], passwords: passwords) }
     if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
       passwords.savePassword(config.password, forKey: newEntry.keychainKey)
     }
     defaults.set(encoded, forKey: historyKey)
+    publishLocks(history, defaults: defaults, registry: registry)
+    if grantsNewLock {
+      grantNewLocks(
+        of: [config], lockedBefore: lockedBefore, generation: generation, registry: registry)
+    }
     for entry in previous where !history.contains(where: { $0.keychainKey == entry.keychainKey }) {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
@@ -200,9 +243,10 @@ class SessionManager {
     _ imported: [ImportedConnection],
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    registry: LockRegistry = .shared
   ) -> BulkSaveReport {
-    let history = loadHistory(defaults: defaults, passwords: passwords)
+    let history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
     let freeSlots = max(0, maxConnectionHistorySize - history.count)
     var report = BulkSaveReport()
     var seen = savedConnectionKeys(defaults: defaults)
@@ -214,6 +258,7 @@ class SessionManager {
       var saved = singleLineName(item.config)
       saved.rememberConnection = true
       saved.password = item.password ?? ""
+      if hasLockedRow(of: saved, in: history) { saved.isLocked = true }
       let name = reportName(saved.name.isEmpty ? saved.displayString : saved.name)
       let entry = ConnectionHistoryEntry(config: saved)
       guard !seen.contains(entry.keychainKey) else {
@@ -255,6 +300,7 @@ class SessionManager {
       passwords.savePassword(pending.password, forKey: pending.key)
     }
     defaults.set(encoded, forKey: historyKey)
+    publishLocks(kept + history, defaults: defaults, registry: registry)
     report.added = kept.count
     return report
   }
@@ -297,7 +343,10 @@ class SessionManager {
 
   /// Replace one history row in place. The id, position, and last-used date stay.
   /// A changed host, port, database, or username takes the password with it.
-  /// An empty password deletes the stored one. Remember off removes the row.
+  /// An empty password deletes the stored one. Remember off removes the row. The row's lock stays:
+  /// a form draft never removes it, and adds one only when the form's toggle locked the draft.
+  /// Refused (false, nothing changed) while the row, the edited target or a row the edit
+  /// overwrites reaches a lock not unlocked in this session.
   @discardableResult
   static func replaceConnection(
     id: UUID,
@@ -306,37 +355,59 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
-    sshCredential: SSHStoredCredential? = nil
+    sshCredential: SSHStoredCredential? = nil,
+    registry: LockRegistry = .shared
   ) -> Bool {
-    let config = singleLineName(config)
-    var history = loadHistory(defaults: defaults, passwords: passwords)
+    var config = singleLineName(config)
+    var history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
     let oldHistory = history
     guard let index = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
         config, defaults: defaults, passwords: passwords, certificates: certificates,
-        sshCredentials: sshCredentials, sshCredential: sshCredential)
+        sshCredentials: sshCredentials, sshCredential: sshCredential, registry: registry)
     }
 
     let previous = history[index]
+    guard registry.refusal(for: previous.config) == nil, registry.refusal(for: config) == nil
+    else { return false }
     if !config.rememberConnection {
       if !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey }) {
         deleteStoredPassword(for: previous, passwords: passwords)
       }
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
+      publishLocks(history, defaults: defaults, registry: registry)
       pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
       pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
       return true
     }
 
+    // The form's toggle locked a retargeted draft no saved row matched: the lock is born here
+    let locksDraft = config.isLocked
+    config.isLocked = previous.config.isLocked || config.isLocked
+    // Counted before the rows on the new key are removed: retargeting an unlocked row onto a
+    // locked login keeps that login locked
+    let inheritsLock = hasLockedRow(of: config, in: history)
+    if inheritsLock { config.isLocked = true }
+    // A lock the draft added is granted for this session, as a first locked save is; a lock
+    // taken from another row is never granted
+    let grantsNewLock = locksDraft && !previous.config.isLocked && !inheritsLock
+    let lockedBefore = registry.lockedIdentities
+    let generation = registry.generation
     var updated = previous
     updated.config = config
     let newKey = updated.keychainKey
+    // Another connection's row on the new key is overwritten: refused while its lock is blocked
+    guard
+      !history.contains(where: {
+        $0.id != id && $0.keychainKey == newKey && registry.refusal(for: $0.config) != nil
+      })
+    else { return false }
     history.removeAll { $0.id != id && $0.keychainKey == newKey }
     guard let kept = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
         config, defaults: defaults, passwords: passwords, certificates: certificates,
-        sshCredentials: sshCredentials, sshCredential: sshCredential)
+        sshCredentials: sshCredentials, sshCredential: sshCredential, registry: registry)
     }
     history[kept] = updated
     guard let encoded = encodedHistory(history, defaults: defaults),
@@ -356,6 +427,11 @@ class SessionManager {
       }
     }
     defaults.set(encoded, forKey: historyKey)
+    publishLocks(history, defaults: defaults, registry: registry)
+    if grantsNewLock {
+      grantNewLocks(
+        of: [config], lockedBefore: lockedBefore, generation: generation, registry: registry)
+    }
     pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
     pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
     return true
@@ -366,14 +442,20 @@ class SessionManager {
     return loadHistory().first?.config
   }
 
-  /// Clear all connection history
+  /// Clear all connection history. Refused (false, nothing changed) while a row reaches a lock
+  /// not unlocked in this session.
+  @discardableResult
   static func clearAllHistory(
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
-    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
-  ) {
-    let history = loadHistory(defaults: defaults, passwords: passwords)
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    registry: LockRegistry = .shared
+  ) -> Bool {
+    let history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
+    guard !history.contains(where: { registry.refusal(for: $0.config) != nil }) else {
+      return false
+    }
 
     for entry in history {
       deleteStoredPassword(for: entry, passwords: passwords)
@@ -382,28 +464,36 @@ class SessionManager {
     pruneSSHCredentials(previous: history, current: [], sshCredentials: sshCredentials)
 
     defaults.removeObject(forKey: historyKey)
+    publishLocks([], defaults: defaults, registry: registry)
+    return true
   }
 
-  /// Remove specific connection from history
+  /// Remove specific connection from history. Refused (false, nothing changed) while the row
+  /// reaches a lock not unlocked in this session: deleting its last row would drop the lock.
+  @discardableResult
   static func removeConnection(
     id: UUID,
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
-    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared
-  ) {
-    var history = loadHistory(defaults: defaults, passwords: passwords)
+    sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    registry: LockRegistry = .shared
+  ) -> Bool {
+    var history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
 
     if let index = history.firstIndex(where: { $0.id == id }) {
+      guard registry.refusal(for: history[index].config) == nil else { return false }
       let previous = history
       deleteStoredPassword(for: history[index], passwords: passwords)
 
       // Remove from array
       history.remove(at: index)
       saveHistory(history, defaults: defaults)
+      publishLocks(history, defaults: defaults, registry: registry)
       pruneCertificates(previous: previous, current: history, certificates: certificates)
       pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
     }
+    return true
   }
 
   // MARK: - Legacy Methods (Backward Compatibility)
@@ -434,14 +524,76 @@ class SessionManager {
     return !loadHistory().isEmpty
   }
 
-  // MARK: - Keychain Helpers
+  // MARK: - Lock State
 
-  /// Get password from keychain for a specific key
-  /// - Parameter key: The keychain key (`ConnectionKeychainKey.password(for:)`)
-  /// - Returns: The password if found, nil otherwise
-  static func getPasswordFromKeychain(for key: String) -> String? {
-    return KeychainConnectionPasswordStore().loadPassword(forKey: key)
+  /// Republishes the identities of `history`'s locked rows. The shared registry takes only the
+  /// app's own history: never an isolated suite's, and nothing under the test host.
+  private static func publishLocks(
+    _ history: [ConnectionHistoryEntry], defaults: UserDefaults, registry: LockRegistry
+  ) {
+    guard
+      registry !== LockRegistry.shared
+        || (defaults === UserDefaults.standard && !isRunningAsTestHost)
+    else { return }
+    registry.setLockedConnections(
+      Set(history.filter(\.config.isLocked).flatMap { LockIdentity.all($0.config) }))
   }
+
+  /// The lock toggle: sets `isLocked` on every saved row that reaches `identity`
+  /// (`LockIdentity.all`) and republishes the registry. Locking grants the identities it adds
+  /// for this session (after the republish, which drops grants outside the locked set), so an
+  /// open window keeps working until the next relock. Unlocking is refused (false, nothing
+  /// changed) while such a row reaches a lock not unlocked in this session. Reads no Keychain
+  /// item.
+  @discardableResult
+  static func setLocked(
+    _ locked: Bool, for identity: LockIdentity, defaults: UserDefaults = .standard,
+    registry: LockRegistry = .shared
+  ) -> Bool {
+    var history = storedEntries(defaults: defaults).known
+    publishLocks(history, defaults: defaults, registry: registry)
+    let matched = history.indices.filter { LockIdentity.all(history[$0].config).contains(identity) }
+    guard locked || !matched.contains(where: { registry.refusal(for: history[$0].config) != nil })
+    else { return false }
+    for index in matched { history[index].config.isLocked = locked }
+    guard let encoded = encodedHistory(history, defaults: defaults) else { return false }
+    let lockedBefore = registry.lockedIdentities
+    let generation = registry.generation
+    defaults.set(encoded, forKey: historyKey)
+    publishLocks(history, defaults: defaults, registry: registry)
+    if locked {
+      grantNewLocks(
+        of: matched.map { history[$0].config }, lockedBefore: lockedBefore,
+        generation: generation, registry: registry)
+    }
+    return true
+  }
+
+  /// Grants the identities of `configs` that were not locked before this change, never one
+  /// locked earlier (that would unlock it without asking), and none when a relock landed since
+  /// `generation` was read
+  private static func grantNewLocks(
+    of configs: [ConnectionConfig], lockedBefore: Set<LockIdentity>, generation: Int,
+    registry: LockRegistry
+  ) {
+    let reached = Set(configs.flatMap { LockIdentity.all($0) })
+    let added = registry.lockedIdentities.subtracting(lockedBefore).intersection(reached)
+    _ = registry.grant(added, ifGeneration: generation)
+  }
+
+  /// Whether a row of `history` locks an identity `config` reaches (`LockIdentity.all`)
+  private static func hasLockedRow(
+    of config: ConnectionConfig, in history: [ConnectionHistoryEntry]
+  ) -> Bool {
+    // No locked row: no `stat` or URI parsing on a save
+    guard history.contains(where: \.config.isLocked) else { return false }
+    let identities = LockIdentity.all(config)
+    return history.contains {
+      $0.config.isLocked && !identities.isDisjoint(with: LockIdentity.all($0.config))
+    }
+  }
+
+  // MARK: - Keychain Helpers
 
   private static func keychainKey(for config: ConnectionConfig) -> String {
     ConnectionKeychainKey.password(for: config)
@@ -525,11 +677,17 @@ class SessionManager {
     )
   }
 
-  /// Replaces the history blobs. Does not read or write the Keychain.
+  /// Replaces the history blobs. Does not read or write the Keychain. Refused (false, nothing
+  /// changed) while a stored row reaches a lock not unlocked in this session.
+  @discardableResult
   nonisolated static func replace(
-    history: Data?, legacySession: Data?, defaults: UserDefaults, domainName: String
-  ) {
+    history: Data?, legacySession: Data?, defaults: UserDefaults, domainName: String,
+    registry: LockRegistry = .shared
+  ) -> Bool {
     var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    guard !hasBlockedRow(domain[historyKey] as? Data, registry) else {
+      return false
+    }
     if let history {
       domain[historyKey] = history
     } else {
@@ -541,14 +699,38 @@ class SessionManager {
       domain.removeValue(forKey: legacySessionKey)
     }
     defaults.setPersistentDomain(domain, forName: domainName)
+    return true
   }
 
-  /// Removes connection-history entries from `domainName` only.
-  nonisolated static func clearAll(defaults: UserDefaults, domainName: String) {
+  /// Removes connection-history entries from `domainName` only. Refused (false, nothing
+  /// changed) while a stored row reaches a lock not unlocked in this session.
+  @discardableResult
+  nonisolated static func clearAll(
+    defaults: UserDefaults, domainName: String, registry: LockRegistry = .shared
+  ) -> Bool {
     var domain = defaults.persistentDomain(forName: domainName) ?? [:]
+    guard !hasBlockedRow(domain[historyKey] as? Data, registry) else {
+      return false
+    }
     domain.removeValue(forKey: historyKey)
     domain.removeValue(forKey: legacySessionKey)
     defaults.setPersistentDomain(domain, forName: domainName)
+    return true
+  }
+
+  /// Whether a row of a stored history blob reaches an identity `registry` blocks. Only each
+  /// row's `config` is decoded; a row this build cannot decode reaches none.
+  private nonisolated static func hasBlockedRow(_ blob: Data?, _ registry: LockRegistry) -> Bool {
+    guard !registry.lockedIdentities.isEmpty, let blob,
+      let rows = try? JSONSerialization.jsonObject(with: blob) as? [Any]
+    else { return false }
+    return rows.contains { row in
+      guard let object = (row as? [String: Any])?["config"],
+        let data = try? JSONSerialization.data(withJSONObject: object),
+        let config = try? JSONDecoder().decode(ConnectionConfig.self, from: data)
+      else { return false }
+      return registry.refusal(for: config) != nil
+    }
   }
 }
 

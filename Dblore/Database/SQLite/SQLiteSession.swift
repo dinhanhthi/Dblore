@@ -2,6 +2,8 @@
 // One SQLite file connection. Every sqlite3 call except `sqlite3_interrupt` runs on one serial
 // queue. Interrupt is safe from another thread while a statement is inside `sqlite3_step`.
 // `load_extension` stays disabled (SQLite's default). Binds use `?` and never enter SQL text.
+// The configured attached databases are attached at open; after them an authorizer refuses a
+// typed ATTACH of a locked file (`LockRegistry`), and one whose file name is not a literal.
 
 import Foundation
 import SQLite3
@@ -37,6 +39,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   let closeEvents: AsyncStream<SessionCloseReason>
 
   private let config: ConnectionConfig
+  /// Locks checked for every attached file (configured or typed)
+  private let lockSource: LockRegistry
   /// Read-only with normal locking (`SQLITE_OPEN_READONLY`) and never the `immutable=1`
   /// fallback of a read-only file, so a read transaction sees rows still in another
   /// connection's WAL and is a stable snapshot (SQL dump)
@@ -55,7 +59,20 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   /// before `sqlite3_step` starts (which `sqlite3_interrupt` alone ignores) still aborts the
   /// statement. Cleared with the deadline when no statement is running.
   private var interruptRequested = false
+  /// A command or a read is between its start and its end (`clearDeadline`): `interrupt` sets
+  /// `interruptRequested` only then, so a Cancel landing as a statement ends never stops the next
+  private var statementRunning = false
   private var reads: [UUID: ReadState] = [:]
+  /// The configured attachments left out at open, one warning each (behind `stateLock`)
+  private var skippedAttachments: [String] = []
+  /// Every file attached: configured ones, and each one a typed ATTACH was allowed to open
+  /// (recorded at prepare, also when the ATTACH then failed; behind `stateLock`)
+  private var attachedPaths: Set<String> = []
+  /// An MCP connection: a locked file is refused even when unlocked in the app (behind
+  /// `stateLock`, set before `open`)
+  private var servesMCP = false
+  /// Why the authorizer refused the ATTACH being prepared; the error of that prepare
+  private var attachDenial: String?
 
   /// Virtual-machine instructions between progress-handler checks. Small enough that a one-second
   /// statement timeout fires while a recursive query is still inside one `sqlite3_step`.
@@ -65,8 +82,11 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     extendedCode: SQLITE_ERROR, message: "SQLite does not support server cursors")
 
   /// `snapshotReadOnly`: open read-only without `immutable=1` (see `snapshotReadOnly`)
-  init(config: ConnectionConfig, snapshotReadOnly: Bool = false) {
+  init(
+    config: ConnectionConfig, snapshotReadOnly: Bool = false, lockSource: LockRegistry = .shared
+  ) {
     self.config = config
+    self.lockSource = lockSource
     self.snapshotReadOnly = snapshotReadOnly
     capabilities = config.databaseType.capabilities
     statementTimeoutSeconds =
@@ -84,6 +104,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     }
     if let handle {
       sqlite3_progress_handler(handle, 0, nil, nil)
+      sqlite3_set_authorizer(handle, nil, nil)
       sqlite3_interrupt(handle)
       for read in reads.values {
         if let statement = read.statement {
@@ -100,6 +121,27 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
 
   func open() async throws {
     try await run { try self.openOnQueue() }
+  }
+
+  /// One warning per configured attachment the last open left out (locked, missing, unreadable)
+  var attachWarnings: [String] {
+    withState { skippedAttachments }
+  }
+
+  /// The files this connection attached (`attachedPaths`), for the manager's relock check
+  var attachedFiles: Set<String> {
+    withState { attachedPaths }
+  }
+
+  /// Makes this an MCP session: no locked file is attached, even one unlocked in the app.
+  /// Call before `open`.
+  func refuseLockedFilesForMCP() {
+    withState { servesMCP = true }
+  }
+
+  private func refusesAttaching(_ path: String) -> Bool {
+    SQLiteFileAccess.refusesAttaching(
+      path, lockSource: lockSource, servesMCP: withState { servesMCP })
   }
 
   func close() async {
@@ -180,7 +222,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   /// Stops the statement currently inside `sqlite3_step`. Does not hop to the serial queue:
   /// that queue is blocked in the step this call is meant to abort.
   func interrupt() async {
-    requestInterrupt()
+    withState {
+      if statementRunning { interruptRequested = true }
+    }
     if let handle = withState({ db }) {
       sqlite3_interrupt(handle)
     }
@@ -234,6 +278,95 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       closeOnQueue()
       throw error
     }
+    let skipped = attachConfigured()
+    withState { skippedAttachments = skipped }
+    let installed = sqlite3_set_authorizer(
+      opened,
+      { context, action, fileName, _, _, _ in
+        guard action == SQLITE_ATTACH, let context else { return SQLITE_OK }
+        return Unmanaged<SQLiteSession>.fromOpaque(context).takeUnretainedValue()
+          .authorizeAttach(fileName)
+      }, Unmanaged.passUnretained(self).toOpaque())
+    // Fail closed: without the authorizer a typed ATTACH would reach a locked file
+    if installed != SQLITE_OK {
+      let error = currentError(code: installed)
+      closeOnQueue()
+      throw error
+    }
+  }
+
+  /// Attaches the configured databases (`validatedAttachedDatabases`), with `ATTACH ? AS "name"`
+  /// and the path bound, before the authorizer is set and before any BEGIN. A locked, missing or
+  /// unreadable file (not a database, a sidecar that cannot open) is left out and named in a
+  /// warning; the connection opens either way. A read-only connection attaches read-only: ATTACH
+  /// opens every file with the main file's flags (`SQLITE_OPEN_READONLY`). A missing file is
+  /// never attached: the read-write flags (`SQLITE_OPEN_CREATE`) would create an empty one.
+  private func attachConfigured() -> [String] {
+    let (attachments, warnings) = config.validatedAttachedDatabases()
+    var skipped = warnings
+    for attachment in attachments {
+      let reason: String
+      if refusesAttaching(attachment.path) {
+        reason = "its file is locked."
+      } else if !FileManager.default.fileExists(atPath: attachment.path) {
+        reason = "\"\((attachment.path as NSString).lastPathComponent)\" was not found."
+      } else {
+        do {
+          try attach(attachment)
+          withState { _ = attachedPaths.insert(attachment.path) }
+          continue
+        } catch {
+          reason = formatError(error)
+        }
+      }
+      skipped.append(SQLiteFileAccess.attachmentSkipped(attachment.name, reason))
+    }
+    return skipped
+  }
+
+  private func attach(_ attachment: AttachedDatabase) throws {
+    let name = attachment.name.replacingOccurrences(of: "\"", with: "\"\"")
+    let statement = try prepare("ATTACH ? AS \"\(name)\"")
+    defer { sqlite3_finalize(statement) }
+    try bind(statement, [.text(attachment.path)])
+    let code = sqlite3_step(statement)
+    if code != SQLITE_DONE { throw currentError(code: code) }
+  }
+
+  /// The authorizer's answer to an ATTACH in user SQL. It runs at prepare, before any bind, so
+  /// a file name it cannot read (a bound parameter or any other expression: `fileName` is nil)
+  /// is refused; a literal name is refused when its file (a `file:` URI's path) is locked. An
+  /// allowed file is recorded (`attachedFiles`), so a later relock of it stops this connection.
+  fileprivate func authorizeAttach(_ fileName: UnsafePointer<CChar>?) -> Int32 {
+    guard let fileName else {
+      attachDenial = "ATTACH refused: write the file name as a quoted string"
+      return SQLITE_DENY
+    }
+    guard let path = Self.attachedFilePath(String(cString: fileName)) else {
+      attachDenial = "ATTACH refused: the file URI cannot be read"
+      return SQLITE_DENY
+    }
+    guard !refusesAttaching(path) else {
+      attachDenial = "ATTACH refused: the database file is locked; unlock it in Dblore first"
+      return SQLITE_DENY
+    }
+    if !path.isEmpty { withState { _ = attachedPaths.insert(path) } }
+    return SQLITE_OK
+  }
+
+  /// The file SQLite opens for an ATTACH file name: the path of a `file:` URI (this SQLite reads
+  /// them, SQLITE_USE_URI), a relative name against the working directory; nil for a URI that
+  /// does not parse or decodes to a NUL. An empty name (a temporary database) stays empty.
+  private static func attachedFilePath(_ name: String) -> String? {
+    var path = name
+    if name.hasPrefix("file:") {
+      guard let components = URLComponents(string: name) else { return nil }
+      path = components.path
+      // A decoded `%00` would end the name SQLite opens early
+      if path.contains("\0") { return nil }
+    }
+    guard !path.isEmpty, !path.hasPrefix("/") else { return path }
+    return FileManager.default.currentDirectoryPath + "/" + path
   }
 
   /// `mode=ro` (normal locking, reads the -wal). SQLite may still create the -wal and -shm next
@@ -275,6 +408,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   private func closeOnQueue() {
     guard let handle = withState({ db }) else { return }
     sqlite3_progress_handler(handle, 0, nil, nil)
+    sqlite3_set_authorizer(handle, nil, nil)
     for id in Array(reads.keys) {
       finishRead(id)
     }
@@ -313,6 +447,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       let described = columnInfos(statement)
       let id = UUID()
       reads[id] = ReadState(statement: statement, declaredTypes: described.declared)
+      withState { statementRunning = true }
       return PreparedRead(id: id, columns: described.columns)
     } catch {
       sqlite3_finalize(statement)
@@ -331,6 +466,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       }
       self.reads[id] = read
       self.publish(read.deadline)
+      self.withState { self.statementRunning = true }
       let code = sqlite3_step(statement)
       switch code {
       case SQLITE_ROW:
@@ -361,11 +497,15 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       throw SQLiteSessionError(extendedCode: SQLITE_MISUSE, message: "database is closed")
     }
     var statement: OpaquePointer?
+    attachDenial = nil
     let code = sql.withCString { pointer in
       sqlite3_prepare_v2(db, pointer, -1, &statement, nil)
     }
     guard code == SQLITE_OK, let prepared = statement else {
-      let error = errorFrom(db, fallback: code, fallbackMessage: "unable to prepare statement")
+      var error = errorFrom(db, fallback: code, fallbackMessage: "unable to prepare statement")
+      if let denial = attachDenial {
+        error = SQLiteSessionError(extendedCode: error.extendedCode, message: denial)
+      }
       sqlite3_finalize(statement)
       throw error
     }
@@ -541,6 +681,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     stateLock.lock()
     publishedDeadline = deadline
     timedOut = false
+    statementRunning = true
+    // A stale request is not this statement's; one from `close` still stops it
+    interruptRequested = didEmitClose
     stateLock.unlock()
   }
 
@@ -560,6 +703,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     stateLock.lock()
     publishedDeadline = nil
     interruptRequested = false
+    statementRunning = false
     stateLock.unlock()
   }
 

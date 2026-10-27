@@ -58,14 +58,22 @@ struct DbloreConnectionFileTests {
     config.clientCertificate = ClientCertificateInfo(
       subject: "PLANTED-cert-subject", expiry: Date(), hasCA: true)
     config.fileBookmark = Data("PLANTED-bookmark".utf8)
+    // The lock lives on the saved row only: an export never carries it
+    config.isLocked = true
+    // Attached databases are local paths with bookmarks: an export never carries them
+    let attachment = AttachedDatabase(
+      name: "PLANTED_attached", path: "/Users/ada/PLANTED-attached.sqlite",
+      bookmark: Data("PLANTED-attached-bookmark".utf8))
+    config.attachedDatabases = [attachment]
     var mongo = ConnectionConfig(
       databaseType: .mongodb, host: "mongo.example.com", port: 27017, database: "app",
       username: "ada", password: "PLANTED-mongo-password")
     mongo.mongoURI = "mongodb://ada:PLANTED-uri-secret@mongo.example.com:27017/app?replicaSet=rs0"
     mongo.mongoHomeDatabase = "app"
-    let sqlite = ConnectionConfig(
+    var sqlite = ConnectionConfig(
       databaseType: .sqlite, database: "/Users/ada/PLANTED-path.sqlite",
       fileBookmark: Data("PLANTED-sqlite-bookmark".utf8))
+    sqlite.attachedDatabases = [attachment]
 
     let file = DbloreConnectionFile(
       connections: [config, mongo, sqlite].compactMap(DbloreConnectionFile.Connection.init))
@@ -86,6 +94,10 @@ struct DbloreConnectionFileTests {
       forbidden.contains { key.lowercased().contains($0) }
     }
     #expect(leaked.isEmpty, "secret-like keys: \(leaked.sorted())")
+    #expect(!keys.contains("isLocked"), "the lock flag is never exported")
+    #expect(
+      !keys.contains { $0.lowercased().contains("attach") }, "attached databases are never exported"
+    )
     #expect(text.contains("replicaSet=rs0"), "the connection string keeps its options")
   }
 

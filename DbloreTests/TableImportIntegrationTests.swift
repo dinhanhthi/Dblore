@@ -144,4 +144,55 @@ struct TableImportIntegrationTests {
       #expect(result.rows.isEmpty)
     }
   }
+
+  // MARK: - Keyed modes
+
+  @Test("Update and Insert or Update match an integer key", .timeLimit(.minutes(1)))
+  func keyedModes() async throws {
+    try await withConnection { manager, viewModel, table in
+      _ = try await manager.executeInternal(
+        "CREATE TABLE \(table) (id integer PRIMARY KEY, name text)")
+      _ = try await manager.executeInternal("INSERT INTO \(table) VALUES (1, 'a'), (2, 'b')")
+      let rows = {
+        try await manager.executeInternal("SELECT id, name FROM \(table) ORDER BY id").rows
+      }
+
+      // Update: the counts come before anything is written; 1 is updated, 3 is skipped
+      let update = try await Self.keyedModel(
+        "id,name\n1,A\n3,C\n", table: table, mode: .update, manager: manager)
+      defer { try? FileManager.default.removeItem(at: update.fileURL!) }
+      #expect(update.matchKey?.isPrimaryKey == true)
+      #expect(await update.prepareImport(for: viewModel), "\(update.errorMessage ?? "")")
+      let summary = try #require(update.matchSummary)
+      #expect([summary.newRows, summary.existingRows, summary.refusedCount] == [1, 1, 0] as [Int])
+      #expect([summary.inserts, summary.updates, summary.skips] == [0, 1, 1] as [Int])
+      #expect(try await rows() == [[.int(1), .string("a")], [.int(2), .string("b")]])
+      #expect(await update.confirmImport(to: viewModel), "\(update.errorMessage ?? "")")
+      #expect(try await rows() == [[.int(1), .string("A")], [.int(2), .string("b")]])
+
+      // Insert or Update: 2 is updated, 4 inserted
+      let upsert = try await Self.keyedModel(
+        "id,name\n2,B\n4,D\n", table: table, mode: .insertOrUpdate, manager: manager)
+      defer { try? FileManager.default.removeItem(at: upsert.fileURL!) }
+      #expect(await upsert.submit(to: viewModel), "\(upsert.errorMessage ?? "")")
+      #expect(upsert.matchSummary?.inserts == 1)
+      #expect(upsert.matchSummary?.updates == 1)
+      #expect(
+        try await rows() == [
+          [.int(1), .string("A")], [.int(2), .string("B")], [.int(4), .string("D")],
+        ])
+    }
+  }
+
+  /// A keyed import of `csv` into the existing `table` in `mode`, its keys loaded (the primary
+  /// key is chosen)
+  private static func keyedModel(
+    _ csv: String, table: String, mode: ImportMode, manager: DatabaseConnectionManager
+  ) async throws -> TableImportModel {
+    let model = try await Self.model(csv, extension: "csv")
+    model.destination = .existing(schema: "public", table: table)
+    await model.loadMatchKeys { try await manager.fetchTableStructure(schema: $0, table: $1) }
+    model.selectMode(mode)
+    return model
+  }
 }

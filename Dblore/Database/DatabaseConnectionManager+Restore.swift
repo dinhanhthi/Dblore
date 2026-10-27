@@ -1122,6 +1122,7 @@ extension DatabaseConnectionManager {
     _ plan: SQLRestorePlan, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil, progress: @escaping @Sendable (SQLRestoreProgress) -> Void = { _ in }
   ) async throws -> SQLRestoreSummary {
+    try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
       throw SQLRestoreError.connectionChanged
     }

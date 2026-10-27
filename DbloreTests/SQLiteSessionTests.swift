@@ -141,6 +141,23 @@ struct SQLiteSessionTests {
     }
   }
 
+  @Test("An interrupt with no running statement does not stop the next statement")
+  func idleInterruptDoesNotStopNextStatement() async throws {
+    try await withWritableDatabase(statementTimeoutSeconds: 30) { session in
+      await session.interrupt()
+      // Long enough to reach the progress handler, which checks the interrupt flag
+      let counted = """
+        WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c LIMIT 100000)
+        SELECT max(x) FROM c
+        """
+      // A read first: a command resets the flag when it starts, a read relies on the guard
+      let read = try await collect(session, counted)
+      #expect(read.rows == [[.int(100000)]])
+      let command = try await session.command("CREATE TABLE n AS " + counted, binds: [])
+      #expect(command.tag == "CREATE")
+    }
+  }
+
   @Test("The progress handler stops a statement at the connection timeout")
   func progressHandlerTimeout() async throws {
     try await withWritableDatabase(statementTimeoutSeconds: 1) { session in

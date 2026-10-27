@@ -42,7 +42,9 @@ struct ResultGridNotebookTests {
   func showCellDetails() {
     let (coordinator, _) = makeGrid(sortColumn: "id")
     var shown: (row: [CellValue], originalRow: Int, column: Int)?
-    coordinator.onShowCellDetails = { shown = ($0, $1, $2) }
+    coordinator.onShowCellDetails = { row, originalRow, column, _ in
+      shown = (row, originalRow, column)
+    }
     coordinator.showCellDetails(row: 0, column: 1)
     #expect(shown?.row == [.int(1), .string("ab")])
     #expect(shown?.originalRow == 1)
@@ -59,7 +61,7 @@ struct ResultGridNotebookTests {
     tableView.frame = NSRect(x: 0, y: 0, width: 400, height: 78)
     tableView.moveColumn(1, toColumn: 2)  // on screen: #, name, id
     var shown: (originalRow: Int, column: Int)?
-    coordinator.onShowCellDetails = { shown = ($1, $2) }
+    coordinator.onShowCellDetails = { _, originalRow, column, _ in shown = (originalRow, column) }
 
     // Row 1, second on-screen result column
     tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 2).midX, y: 30))
@@ -90,7 +92,9 @@ struct ResultGridNotebookTests {
     var shownRow: (row: [CellValue], originalRow: Int)?
     var shownCell: (originalRow: Int, column: Int)?
     coordinator.onShowRowDetails = { shownRow = ($0, $1) }
-    coordinator.onShowCellDetails = { shownCell = ($1, $2) }
+    coordinator.onShowCellDetails = { _, originalRow, column, _ in
+      shownCell = (originalRow, column)
+    }
 
     // Row 1 of the "#" column
     tableView.updateDetailsButton(at: NSPoint(x: tableView.rect(ofColumn: 0).midX, y: 30))

@@ -92,24 +92,30 @@ nonisolated extension ResultDiff {
 nonisolated enum ResultComparison {
   static let defaultRowCap = 10_000
 
+  /// `unknown`: column names by row index into `current.rows` whose current value is not known
+  /// (a binary value read only in part): such a cell never counts as changed
   static func compare(
-    baseline: CellResult, current: CellResult, rowCap: Int = defaultRowCap
+    baseline: CellResult, current: CellResult, rowCap: Int = defaultRowCap,
+    unknown: [Int: Set<String>] = [:]
   ) -> ResultDiff {
     PerfSignpost.interval("result.compare") {
-      diff(baseline: baseline, current: current, rowCap: rowCap)
+      diff(baseline: baseline, current: current, rowCap: rowCap, unknown: unknown)
     }
   }
 
   /// Runs `compare` off the main actor
   static func compareInBackground(
-    baseline: CellResult, current: CellResult, rowCap: Int = defaultRowCap
+    baseline: CellResult, current: CellResult, rowCap: Int = defaultRowCap,
+    unknown: [Int: Set<String>] = [:]
   ) async -> ResultDiff {
     await Task.detached(priority: .userInitiated) {
-      compare(baseline: baseline, current: current, rowCap: rowCap)
+      compare(baseline: baseline, current: current, rowCap: rowCap, unknown: unknown)
     }.value
   }
 
-  private static func diff(baseline: CellResult, current: CellResult, rowCap: Int) -> ResultDiff {
+  private static func diff(
+    baseline: CellResult, current: CellResult, rowCap: Int, unknown: [Int: Set<String>]
+  ) -> ResultDiff {
     let cap = max(rowCap, 0)
     let truncated = baseline.rows.count > cap || current.rows.count > cap
     let baselineRows = Array(baseline.rows.prefix(cap))
@@ -129,7 +135,7 @@ nonisolated enum ResultComparison {
 
     var rows: RowDiff?
     if let key = sharedPrimaryKey(baseline, current, baselineIndex, currentIndex) {
-      rows = primaryKeyDiff(sides, key: key, shared: shared)
+      rows = primaryKeyDiff(sides, key: key, shared: shared, unknown: unknown)
     }
     let mode: ResultDiff.Mode = rows == nil ? .multiset : .primaryKey(baseline.primaryKeyColumns)
     let rowDiff = rows ?? multisetDiff(sides, shared: shared)
@@ -176,7 +182,9 @@ nonisolated enum ResultComparison {
   }
 
   /// nil when a key repeats on either side (e.g. a join carrying one table's key)
-  private static func primaryKeyDiff(_ sides: Sides, key: [String], shared: [String]) -> RowDiff? {
+  private static func primaryKeyDiff(
+    _ sides: Sides, key: [String], shared: [String], unknown: [Int: Set<String>]
+  ) -> RowDiff? {
     guard
       let baselineByKey = rowsByKey(sides.baselineRows, key.map { sides.baselineColumn[$0]! }),
       let currentByKey = rowsByKey(sides.currentRows, key.map { sides.currentColumn[$0]! })
@@ -192,7 +200,9 @@ nonisolated enum ResultComparison {
       }
       let currentRow = sides.currentRows[currentIndex]
       let changed = compared.filter {
-        ValueKey(row, sides.baselineColumn[$0]!) != ValueKey(currentRow, sides.currentColumn[$0]!)
+        unknown[currentIndex]?.contains($0) != true
+          && ValueKey(row, sides.baselineColumn[$0]!)
+            != ValueKey(currentRow, sides.currentColumn[$0]!)
       }
       if changed.isEmpty {
         result.unchanged += 1

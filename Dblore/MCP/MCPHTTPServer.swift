@@ -2,10 +2,13 @@
 // The MCP Streamable HTTP listener: HTTP/1.1 on 127.0.0.1 only (NIOHTTP1 + NIOPosix), one
 // endpoint, `POST /mcp`. `MCPRequestValidator` checks each request head before any body is read;
 // the body is buffered up to the limit (413 while it streams), then the injected handler runs
-// off the event loop and its response is written back on the connection's loop. Refusals close
-// the connection; answered requests honour keep-alive. A client that closes its connection while
-// its handler runs cancels the handler (a waiting write approval is denied). JSON-RPC lives in
-// the handler.
+// off the event loop and its response is written back on the connection's loop. A connection
+// takes one of `maxConnections` slots only when a request head first passes validation (token
+// included) and keeps it until it closes, so idle or unauthenticated sockets never hold one. Over
+// either that cap or `maxInFlight` running handlers, a validated request gets 503 instead.
+// Refusals close the connection; answered requests honour keep-alive. A client that closes its
+// connection while its handler runs cancels the handler (a waiting write approval is denied).
+// JSON-RPC lives in the handler.
 
 import Foundation
 import NIOCore
@@ -32,6 +35,13 @@ nonisolated struct MCPHTTPResponse: Sendable, Equatable {
     headers["Content-Type"] = "text/plain; charset=utf-8"
     return MCPHTTPResponse(status: status, headers: headers, body: Data(message.utf8))
   }
+
+  /// Over a cap: 503 with a JSON-RPC error (server error range, id unknown).
+  static let busy = MCPHTTPResponse(
+    status: 503, headers: ["Content-Type": "application/json", "Retry-After": "2"],
+    body: Data(
+      #"{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Server busy, retry later."}}"#
+        .utf8))
 }
 
 actor MCPHTTPServer {
@@ -45,6 +55,10 @@ actor MCPHTTPServer {
   }
 
   static let host = "127.0.0.1"
+  /// Connections that sent a validated request and running handlers; over either cap a
+  /// validated request gets `busy` (503).
+  static let maxConnections = 16
+  static let maxInFlight = 8
 
   private enum State {
     case stopped
@@ -178,27 +192,56 @@ actor MCPHTTPServer {
   }
 }
 
-/// The handler tasks of one running listener, so stop can cancel and await them.
+/// The handler tasks of one running listener, so stop can cancel and await them, and its
+/// connection and in-flight slots.
 private nonisolated final class MCPRequestTasks: Sendable {
   private struct State {
     var accepting = true
     var tasks: [UUID: Task<Void, Never>] = [:]
+    var connections = 0
+    var inFlight = 0
+  }
+
+  enum Start {
+    case started(Task<Void, Never>)
+    case busy
+    case stopping
   }
 
   private let state = OSAllocatedUnfairLock(initialState: State())
 
-  /// Starts `body` unless the listener is stopping; nil when refused.
-  func run(_ body: @escaping @Sendable () async -> Void) -> Task<Void, Never>? {
+  /// Takes a connection slot; false over `maxConnections`.
+  func openConnection() -> Bool {
+    state.withLock { state in
+      guard state.connections < MCPHTTPServer.maxConnections else { return false }
+      state.connections += 1
+      return true
+    }
+  }
+
+  func closeConnection() {
+    state.withLock { $0.connections -= 1 }
+  }
+
+  /// Starts `body` in an in-flight slot that `body` frees with `finishRequest()`, unless the
+  /// listener is stopping or every slot is taken.
+  func run(_ body: @escaping @Sendable () async -> Void) -> Start {
     let id = UUID()
     return state.withLock { state in
-      guard state.accepting else { return nil }
+      guard state.accepting else { return .stopping }
+      guard state.inFlight < MCPHTTPServer.maxInFlight else { return .busy }
+      state.inFlight += 1
       let task = Task {
         await body()
         self.state.withLock { _ = $0.tasks.removeValue(forKey: id) }
       }
       state.tasks[id] = task
-      return task
+      return .started(task)
     }
+  }
+
+  func finishRequest() {
+    state.withLock { $0.inFlight -= 1 }
   }
 
   func drain() async {
@@ -227,6 +270,9 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
   private var body = ByteBuffer()
   /// The handler task of the request in flight, cancelled when the client goes away
   private var inFlight: Task<Void, Never>?
+  /// Holds a connection slot, taken at the first valid request head; over the cap that request
+  /// is answered `busy`.
+  private var counted = false
 
   init(
     validator: MCPRequestValidator, handler: @escaping MCPHTTPServer.Handler,
@@ -243,7 +289,13 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
       body.clear()
       switch validator.validate(head) {
       case .proceed:
-        self.head = head
+        if !counted { counted = tasks.openConnection() }
+        if counted {
+          self.head = head
+        } else {
+          self.head = nil
+          Self.write(.busy, version: head.version, keepAlive: false, context: context)
+        }
       case .reject(let response):
         self.head = nil
         Self.write(response, version: head.version, keepAlive: false, context: context)
@@ -267,7 +319,10 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
     }
   }
 
+  /// Fires on every close (peer close, reset, error or our own), so the slot never leaks.
   func channelInactive(context: ChannelHandlerContext) {
+    if counted { tasks.closeConnection() }
+    counted = false
     inFlight?.cancel()
     inFlight = nil
     context.fireChannelInactive()
@@ -286,14 +341,24 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
     let version = head.version
     let keepAlive = head.isKeepAlive
     let connection = NIOLoopBound(self, eventLoop: eventLoop)
-    inFlight = tasks.run {
+    let tasks = self.tasks
+    let start = tasks.run {
       let response = await handler(request)
+      // Freed before the write, so a client that got its answer finds the slot free.
+      tasks.finishRequest()
       eventLoop.execute {
         connection.value.inFlight = nil
         Self.write(response, version: version, keepAlive: keepAlive, context: bound.value)
       }
     }
-    if inFlight == nil { context.close(promise: nil) }
+    switch start {
+    case .started(let task):
+      inFlight = task
+    case .busy:
+      Self.write(.busy, version: version, keepAlive: false, context: context)
+    case .stopping:
+      context.close(promise: nil)
+    }
   }
 
   private static func write(

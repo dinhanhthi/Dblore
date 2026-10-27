@@ -17,6 +17,13 @@ extension TableRef {
   nonisolated static func postgresql(oid: UInt32) -> TableRef {
     TableRef("pg:\(oid)")
   }
+
+  /// OID from `postgresql(oid:)`. Nil for any other identity.
+  nonisolated var postgresOID: UInt32? {
+    let prefix = "pg:"
+    guard identity.hasPrefix(prefix) else { return nil }
+    return UInt32(identity.dropFirst(prefix.count))
+  }
 }
 
 extension ColumnInfo {
@@ -229,7 +236,31 @@ extension DatabaseConnectionManager {
         return .string(value)
       }
 
-    case .date, .timestamp, .timestamptz:
+    case .date:
+      // No time and no time zone: the date text, never midnight UTC
+      if cell.format == .text {
+        if let value = try? cell.decode(String.self, context: .default) { return .string(value) }
+      } else if var buffer = cell.bytes, buffer.readableBytes == 4,
+        let days = buffer.readInteger(endianness: .big, as: Int32.self)
+      {
+        return .string(dateText(daysSince2000: days))
+      }
+
+    case .point:
+      // point_send: x then y as big-endian float8; shown as point_out's text, `(1.5,-2)`
+      if cell.format == .text {
+        if let value = try? cell.decode(String.self, context: .default) { return .string(value) }
+      } else {
+        var buffer = bytes
+        guard buffer.readableBytes == 16,
+          let x = buffer.readInteger(endianness: .big, as: UInt64.self),
+          let y = buffer.readInteger(endianness: .big, as: UInt64.self)
+        else { return .data(Data(buffer: bytes)) }
+        return .string(
+          "(\(float8Text(Double(bitPattern: x))),\(float8Text(Double(bitPattern: y))))")
+      }
+
+    case .timestamp, .timestamptz:
       if let value = try? cell.decode(Date.self, context: .default) {
         return .date(value)
       }
@@ -333,6 +364,47 @@ extension DatabaseConnectionManager {
     }
 
     return .null
+  }
+
+  /// date_send's days since 2000-01-01 as the server's ISO text: `2025-01-01`, `0044-03-15 BC`,
+  /// `infinity` / `-infinity`.
+  private nonisolated static func dateText(daysSince2000 days: Int32) -> String {
+    if days == Int32.max { return "infinity" }
+    if days == Int32.min { return "-infinity" }
+    return CivilDate.text(daysSince1970: Int(days) + 10_957, bcSuffix: " BC")
+  }
+
+  /// float8out's text: the shortest round-trip digits, fixed for decimal exponents -4...14
+  /// (`0.0001`, `100000000000000`), else scientific with a signed two-digit-minimum exponent
+  /// (`1e-05`, `1e+15`); `-0`, `NaN`, `Infinity`, `-Infinity`.
+  private nonisolated static func float8Text(_ value: Double) -> String {
+    if value.isNaN { return "NaN" }
+    if value.isInfinite { return value < 0 ? "-Infinity" : "Infinity" }
+    let sign = value.sign == .minus ? "-" : ""
+    if value == 0 { return sign + "0" }
+    // Swift's description has the same shortest digits; only its layout differs.
+    let parts = value.magnitude.description.split(separator: "e")
+    let mantissa = parts[0]
+    var exponent =
+      (mantissa.firstIndex(of: ".").map { mantissa[..<$0].count } ?? mantissa.count) - 1
+    if parts.count == 2, let shift = Int(parts[1]) { exponent += shift }
+    var digits = mantissa.filter { $0 != "." }
+    while digits.first == "0" {
+      digits.removeFirst()
+      exponent -= 1
+    }
+    while digits.last == "0" { digits.removeLast() }
+    guard (-4...14).contains(exponent) else {
+      let fraction = digits.dropFirst()
+      let power = String(abs(exponent))
+      return sign + digits.prefix(1) + (fraction.isEmpty ? "" : "." + fraction) + "e"
+        + (exponent < 0 ? "-" : "+") + (power.count < 2 ? "0" : "") + power
+    }
+    if exponent < 0 { return sign + "0." + String(repeating: "0", count: -exponent - 1) + digits }
+    if digits.count <= exponent + 1 {
+      return sign + digits + String(repeating: "0", count: exponent + 1 - digits.count)
+    }
+    return sign + digits.prefix(exponent + 1) + "." + digits.dropFirst(exponent + 1)
   }
 
   /// halfvec_send: dim (UInt16), unused (UInt16), then dim IEEE half floats, all big-endian.
@@ -445,9 +517,8 @@ extension DatabaseConnectionManager {
 
     let dimension = remainingBytes / 4
 
-    // Sanity check: dimension should be reasonable (1-10000)
-    // pgvector typically uses dimensions like 384, 768, 1536 for embeddings
-    guard dimension > 0 && dimension <= 10000 else {
+    // Sanity check: within what VectorValue reads (the UInt16 header already caps it at 65,535)
+    guard dimension > 0 && dimension <= VectorValue.maxDimensions else {
       return nil
     }
 

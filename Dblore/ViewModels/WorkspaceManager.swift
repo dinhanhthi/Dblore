@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import CryptoKit
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -49,6 +50,11 @@ class WorkspaceManager: Identifiable {
 
   /// Single database connection for entire workspace
   let connectionManager: DatabaseConnectionManager
+  /// Where the recent list and its passwords are read and saved (tests pass isolated stores)
+  let defaults: UserDefaults
+  let passwords: any ConnectionPasswordStore
+  /// Asks before a connect of a locked connection (tests pass a registry and prompter double)
+  let lockCenter: LockCenter
   /// AI chat state shared by the workspace: schema structure, plus the rows of the read-only
   /// queries it runs (shown to the user only, never sent to the AI provider)
   let aiAssistant = AIAssistantViewModel()
@@ -70,6 +76,13 @@ class WorkspaceManager: Identifiable {
   var canImportData: Bool {
     connectionState.isConnected
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
+  }
+
+  /// Generate Rows (table context menu): connected, and the engine stages rows
+  /// (`supportsRowStaging`: PostgreSQL, SQLite, MySQL/MariaDB).
+  var canGenerateRows: Bool {
+    connectionState.isConnected
+      && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsRowStaging
   }
 
   /// Import Documents (File menu, collection row) on MongoDB: connected, not read-only, and a
@@ -107,6 +120,11 @@ class WorkspaceManager: Identifiable {
   var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
+  /// Auto-connect stopped on a locked connection: "Locked: unlock to connect" with Unlock
+  /// (`unlockAndConnect()`) until a connect succeeds
+  var isConnectLocked = false
+  /// `unlockAndConnect()` is running (its Unlock buttons are disabled)
+  var isUnlockingConnect = false
   /// Set after a SQLite connect when the app opened the file read-only (no sidecar access)
   var readOnlyFileNotice: String?
   /// MySQL or MariaDB version of the last MySQL connect, shared with the tabs (Explain Analyze)
@@ -179,6 +197,35 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var duckDBReconnectPrompt: (@MainActor () async -> Bool)?
   @ObservationIgnored var accessHooks = SecurityScopedAccessHooks.live
   @ObservationIgnored var recents = RecentManager.shared
+
+  // MARK: - Lock
+
+  /// Reads the workspace's files, opening envelopes off the main actor (tests pass their own
+  /// sessions and registry). This workspace holds every session it opens until it closes.
+  @ObservationIgnored var lockedIO = LockedFileIO.shared
+  /// Asked when a sealed file's workspace is not open here or was relocked
+  @ObservationIgnored var unlockLockedFile: LockedFileIO.Unlock = LockedFileIO.keychainUnlock(
+    reason: "open a file of a locked workspace")
+  /// The workspaces whose unlock was refused for a tab file at load (`hasTabSealed`)
+  @ObservationIgnored private var tabsRefusedUnlock: Set<UUID> = []
+  /// Launch restore's sealed text not opened yet (asking, or refused): the next snapshot writes
+  /// it back unchanged
+  @ObservationIgnored private(set) var keptSealedOverlays: [Data] = []
+  /// The one run opening `keptSealedOverlays` (every window of this workspace joins it)
+  @ObservationIgnored private(set) var sealedOverlayTask: Task<Void, Never>?
+  /// Envelopes that run already handled (opened, refused or not snapshot text)
+  @ObservationIgnored private var triedSealedOverlays: Set<Data> = []
+  /// Keys whose unlock was refused for snapshot text: not asked again
+  @ObservationIgnored private var refusedSealedKeys: Set<UUID> = []
+  /// The saved tabs whose unlock was refused at load: not open (no snapshot text recreates them
+  /// over their sealed file), kept in the saved .sqlws so a later open can restore them
+  @ObservationIgnored private(set) var unrestoredLockedTabs: [WorkspaceTabReference] = []
+  /// The id of the workspace whose key sealed the .sqlws (nil: plaintext); writes seal with it,
+  /// and so do the tabs created here. Observed: the File menu shows Lock or Remove Lock.
+  var lockKeyId: UUID?
+  /// The open Lock Workspace / Remove Lock sheet
+  var lockSheet: LockWorkspaceModel?
+
   /// Creates the manager of the window a tab moves to (injectable for tests)
   @ObservationIgnored var makeWindowManager: (ConnectionConfig?) -> WorkspaceManager = {
     WorkspaceWindowManager.shared.newWorkspace(connection: $0)
@@ -208,6 +255,8 @@ class WorkspaceManager: Identifiable {
   /// failed connect). An open form then takes the new draft as is: its fields belong to the
   /// draft's engine and no Recent row stays selected.
   var connectionFormDraftGeneration = 0
+  /// The form was opened on such a draft (true) or by Connect (false, loads the most recent row).
+  var connectionFormOpensOnDraft = false
   var isWorkspaceInfoModalVisible: Bool = false
   /// Tab shown when the details modal opens. The info button starts on Workspace.
   var workspaceInfoTab: WorkspaceInfoTab = .workspace
@@ -351,16 +400,38 @@ class WorkspaceManager: Identifiable {
 
   init(
     workspace: Workspace, restoreTabs: Bool = true,
-    connectionManager: DatabaseConnectionManager = .withTrustPrompt()
+    connectionManager: DatabaseConnectionManager = .withTrustPrompt(),
+    defaults: UserDefaults = .standard,
+    passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
+    sanitizesFileConfig: Bool = true, lockCenter: LockCenter = .shared
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
-    // An opened file's AI policy never weakens the saved one, the form opens on the saved
-    // color and group (a form connect writes what the form shows), and its scripts are the
-    // saved row's only
+    self.defaults = defaults
+    self.passwords = passwords
+    self.lockCenter = lockCenter
+    // A config read from a file (`sanitizesFileConfig`; off for the app's in-memory config, see
+    // `createNew(connection:)`): its AI policy never weakens the saved one, the form opens on the
+    // saved color and group (a form connect writes what the form shows), its scripts and
+    // transport (TLS mode, SSH tunnel, client certificate, connection string) are the saved
+    // row's only, and it never weakens the saved row's protection. Its own password is never
+    // used (a connect reads the Keychain or the form), so it is dropped
     var workspace = workspace
-    workspace.connectionConfig = Self.sanitizedFileAIPolicy(workspace.connectionConfig)
-      .map { Self.keepingSavedScripts(Self.keepingSavedAppearance($0)) }
+    if sanitizesFileConfig {
+      workspace.connectionConfig = Self.sanitizedFileAIPolicy(
+        workspace.connectionConfig, defaults: defaults
+      )
+      .map {
+        var config = Self.keepingSavedProtection(
+          Self.keepingSavedTransport(
+            Self.keepingSavedScripts(
+              Self.keepingSavedAppearance($0, defaults: defaults), defaults: defaults),
+            defaults: defaults),
+          defaults: defaults)
+        config.password = ""
+        return config
+      }
+    }
     self.workspace = workspace
     editingConnectionConfig = workspace.connectionConfig ?? ConnectionFormContent.newFormDraft()
     settingsResolver = SettingsResolver(workspaceSettings: workspace.settings)
@@ -440,69 +511,156 @@ class WorkspaceManager: Identifiable {
     }
   }
 
-  /// Create a new untitled workspace
+  /// Create a new untitled workspace. `connection` is the app's own (the Welcome form, a recent
+  /// card, a moved tab), not a file's: it reaches `connect` as is.
   static func createNew(connection: ConnectionConfig? = nil) -> WorkspaceManager {
     let workspace = Workspace.newUntitled(connection: connection)
-    return WorkspaceManager(workspace: workspace)
+    return WorkspaceManager(workspace: workspace, sanitizesFileConfig: false)
   }
 
   /// Load workspace from URL, reading it (and its tab files) through the stored bookmarks of
   /// its recent entry. Called on user action only: a permission failure asks the user to
-  /// select the file again, or once for the folder of bookmark-less tab files.
+  /// select the file again, or once for the folder of bookmark-less tab files. A sealed file is
+  /// read and opened off the main actor (asking `unlock` when its workspace is not open) before
+  /// any JSON is decoded; a refused unlock decodes nothing. A plaintext .sqlws of a workspace
+  /// that was locked (`markedLocked`: its Recents entry; or a tab file sealed with its own id)
+  /// is never a silent downgrade: with such a tab it keeps the workspace's key, so the next
+  /// save seals again, and warns; with nothing sealed left it is refused. `expectsEnvelope`
+  /// (the file was sealed when sniffed): a plaintext file now is refused. A sealed file whose
+  /// content names another workspace than its envelope is refused before any tab is read, and
+  /// so is a file whose workspace id `isOpen` (another file of it is open or being opened).
+  /// Access started here is released when the load throws.
   static func load(
     from url: URL, bookmark: Data? = nil, folderBookmark: Data? = nil,
-    hooks: SecurityScopedAccessHooks = .live
+    hooks: SecurityScopedAccessHooks = .live, lockedIO: LockedFileIO = .shared,
+    unlock: @escaping LockedFileIO.Unlock = LockedFileIO.keychainUnlock(
+      reason: "open a locked workspace"),
+    markedLocked: Bool = false, expectsEnvelope: Bool = false,
+    isOpen: @MainActor (UUID) -> Bool = { _ in false }
   ) async throws -> WorkspaceManager {
     try await PerfSignpost.interval("workspace.load") {
       let access = hooks.access(bookmark)
       let folderAccess = hooks.access(folderBookmark)
-      var fileURL = access?.isStale == true ? access?.url ?? url : url
-      var fileBookmark = access?.bookmark
-      let data: Data
       do {
-        data = try Data(contentsOf: fileURL)
-      } catch let error where SecurityScopedAccess.isPermissionError(error) {
-        guard let chosen = await hooks.chooseFile(fileURL) else { throw error }
-        data = try Data(contentsOf: chosen)
-        fileURL = chosen
-        fileBookmark = nil
+        return try await load(
+          from: url, access: access, folderAccess: folderAccess, hooks: hooks,
+          lockedIO: lockedIO, unlock: unlock, markedLocked: markedLocked,
+          expectsEnvelope: expectsEnvelope, isOpen: isOpen)
+      } catch {
+        access?.token.release()
+        folderAccess?.token.release()
+        throw error
       }
-      let decoder = JSONDecoder()
-      decoder.dateDecodingStrategy = .iso8601
-      var workspace = try decoder.decode(Workspace.self, from: data)
-      workspace.fileURL = fileURL
-      workspace.lastOpenedAt = Date()
+    }
+  }
 
-      // Don't restore tabs in init - we'll do it here with proper viewModels
-      let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
-      manager.accessHooks = hooks
-      manager.workspaceAccess = fileBookmark == nil ? nil : access?.token
-      manager.folderAccess = folderAccess?.token
-      manager.folderBookmark = folderAccess?.bookmark
-      manager.workspaceBookmark = fileBookmark ?? hooks.makeBookmark(fileURL)
-      manager.workspaceBookmarkURL = fileURL
+  private static func load(
+    from url: URL, access: SecurityScopedAccessHooks.Access?,
+    folderAccess: SecurityScopedAccessHooks.Access?, hooks: SecurityScopedAccessHooks,
+    lockedIO: LockedFileIO, unlock: @escaping LockedFileIO.Unlock, markedLocked: Bool,
+    expectsEnvelope: Bool, isOpen: @MainActor (UUID) -> Bool
+  ) async throws -> WorkspaceManager {
+    var fileURL = access?.isStale == true ? access?.url ?? url : url
+    var fileBookmark = access?.bookmark
+    let read: LockedFileIO.Read
+    do {
+      read = try await lockedIO.read(from: fileURL, kind: .workspace, unlock: unlock)
+    } catch let error where SecurityScopedAccess.isPermissionError(error) {
+      guard let chosen = await hooks.chooseFile(fileURL) else { throw error }
+      read = try await lockedIO.read(from: chosen, kind: .workspace, unlock: unlock)
+      fileURL = chosen
+      fileBookmark = nil
+    }
+    // Changed to plaintext since it was sniffed sealed
+    if expectsEnvelope, read.session == nil { throw WorkspaceOpenError.lockDowngraded }
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    var workspace = try decoder.decode(Workspace.self, from: read.plaintext)
+    // The envelope's id is the key the content was sealed with: content naming another
+    // workspace opens nothing (no tab read, no auto-connect)
+    if let session = read.session, session.workspaceId != workspace.id {
+      throw WorkspaceOpenError.mismatchedEnvelope
+    }
+    // A copy of a workspace already open: refused before its tabs are read (no prompt)
+    if isOpen(workspace.id) { throw WorkspaceOpenError.otherCopyOpen }
+    workspace.fileURL = fileURL
+    workspace.lastOpenedAt = Date()
 
-      // Restore tabs from saved workspace with their original IDs; save refreshed bookmarks
-      if await manager.restoreTabs(workspace.tabs) {
-        manager.markDirtyAndScheduleAutoSave()
-      }
+    // Don't restore tabs in init - we'll do it here with proper viewModels
+    let manager = WorkspaceManager(workspace: workspace, restoreTabs: false)
+    manager.lockedIO = lockedIO
+    manager.unlockLockedFile = unlock
+    manager.lockKeyId = read.session?.workspaceId
+    // Held before the tabs are read: they open with this session without asking again
+    manager.hold(read.session)
+    manager.accessHooks = hooks
+    manager.workspaceAccess = fileBookmark == nil ? nil : access?.token
+    // Access to a file the user chose again is not kept: it has no bookmark to resolve
+    if fileBookmark == nil { access?.token.release() }
+    manager.folderAccess = folderAccess?.token
+    manager.folderBookmark = folderAccess?.bookmark
+    manager.workspaceBookmark = fileBookmark ?? hooks.makeBookmark(fileURL)
+    manager.workspaceBookmarkURL = fileURL
 
-      // Restore active tab
-      if let activeId = workspace.activeTabId,
-        manager.tabs.contains(where: { $0.id == activeId })
-      {
-        manager.activeTabId = activeId
-      } else if let firstTab = manager.tabs.first {
-        manager.activeTabId = firstTab.id
-      }
+    // Restore tabs from saved workspace with their original IDs; save refreshed bookmarks
+    let bookmarksChanged = await manager.restoreTabs(workspace.tabs)
 
+    // A plaintext .sqlws of a locked workspace: kept locked when one of its tabs is still
+    // sealed with its key (opened or refused), refused when nothing is left to seal it with
+    let keepsLock = read.session == nil && manager.hasTabSealed(by: workspace.id)
+    if read.session == nil, !keepsLock, markedLocked {
+      // A workspace of that id opened meanwhile holds its sessions under the same id
+      manager.releaseFileAccess(keepsSessions: isOpen(workspace.id))
+      throw WorkspaceOpenError.lockDowngraded
+    }
+    if keepsLock {
+      manager.lockKeyId = workspace.id
+      lockedIO.registry.registerWorkspace(workspace.id)
+    }
+    if bookmarksChanged {
+      manager.markDirtyAndScheduleAutoSave()
+    }
+
+    // Restore active tab
+    if let activeId = workspace.activeTabId,
+      manager.tabs.contains(where: { $0.id == activeId })
+    {
+      manager.activeTabId = activeId
+    } else if let firstTab = manager.tabs.first {
+      manager.activeTabId = firstTab.id
+    }
+
+    if keepsLock {
+      // Changed outside Dblore: no auto-connect to whatever the plain file names
+      let next =
+        lockedIO.sessions.session(for: workspace.id) == nil
+        ? "it is not saved until its encrypted files are unlocked."
+        : "it is encrypted again when it is saved."
+      WorkspaceWindowManager.shared.showToast(
+        "\(workspace.name) was locked, but its workspace file is not encrypted now. It stays "
+          + "locked: \(next)", type: .warning)
+    } else if workspace.connectionConfig != nil {
       // Auto-connect in the background: the window opens at once, showing "connecting"
-      if workspace.connectionConfig != nil {
-        manager.connectionState = .connecting
-        manager.autoConnectTask = Task { await manager.autoConnectIfNeeded() }
-      }
+      manager.connectionState = .connecting
+      manager.autoConnectTask = Task { await manager.autoConnectIfNeeded() }
+    }
 
-      return manager
+    return manager
+  }
+
+  /// Whether a tab file read at load is sealed with the key of workspace `id`: its document
+  /// opened with it, or its unlock was refused
+  private func hasTabSealed(by id: UUID) -> Bool {
+    tabsRefusedUnlock.contains(id)
+      || notebookDocuments.values.contains { $0.lockKeyId == id }
+      || editorDocuments.values.contains { $0.lockKeyId == id }
+  }
+
+  /// The unlock asked for a sealed file once this workspace has a window: a sheet on that
+  /// window (Touch ID or the Mac password, or the Lock password)
+  var windowUnlock: LockedFileIO.Unlock {
+    WorkspaceUnlockPrompt.unlock(reason: "open a file of a locked workspace") { [weak self] in
+      self.flatMap { NewWindowStore.shared.findWindow(for: $0.id) }
     }
   }
 
@@ -585,12 +743,13 @@ class WorkspaceManager: Identifiable {
         config.fileBookmark = bookmark
       }
       if savesConnection, config.mongoHomeDatabase == nil {
-        if !aiFieldsEdited { config = Self.keepingSavedAIFields(config) }
+        if !aiFieldsEdited { config = Self.keepingSavedAIFields(config, defaults: defaults) }
         config =
           fromForm
-          ? Self.keepingSavedHiddenSchemas(config, current: workspace.connectionConfig)
-          : Self.keepingSavedAppearance(config)
-        guard SessionManager.saveConnection(config) else {
+          ? Self.keepingSavedHiddenSchemas(
+            config, current: workspace.connectionConfig, defaults: defaults)
+          : Self.keepingSavedAppearance(config, defaults: defaults)
+        guard SessionManager.saveConnection(config, defaults: defaults, passwords: passwords) else {
           throw CertificateFormError.keychainSave
         }
       }
@@ -609,6 +768,7 @@ class WorkspaceManager: Identifiable {
       mysqlTransport = await connectionManager.mysqlTransport
       connectionState = .connected
       connectionLostMessage = nil
+      isConnectLocked = false
       readOnlyFileNotice = await connectionManager.sqliteReadOnlyReason
       mysqlServerInfo = await connectionManager.mysqlServerInfo
       await refreshPendingTransaction()
@@ -635,8 +795,16 @@ class WorkspaceManager: Identifiable {
     }
   }
 
-  func testConnection() async throws -> Bool {
-    try await connectionManager.testConnection(config: editingConnectionConfig)
+  /// Test from a workspace form. A locked connection asks first (on this workspace's window) and
+  /// is tested with its saved password, read after the grant.
+  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
+  ///   tested or read)
+  func testConnection(config: ConnectionConfig) async throws -> Bool {
+    var config = config
+    if lockCenter.registry.refusal(for: config) != nil {
+      config = try await unlockedForConnect(config, to: "test it")
+    }
+    return try await connectionManager.testConnection(config: config)
   }
 
   /// A user-initiated connect replaces a pending auto-connect: cancel it and wait until it is
@@ -658,14 +826,34 @@ class WorkspaceManager: Identifiable {
   }
 
   func autoConnectIfNeeded() async {
-    guard !Task.isCancelled, let config = workspace.connectionConfig else { return }
+    guard !Task.isCancelled, let fileConfig = workspace.connectionConfig else { return }
+    // Without a saved row of this config (`hasSavedTransport`) the file chose the transport:
+    // read no password, run no password command, open the form prefilled for the user to type
+    // the password
+    if fileConfig.databaseType.capabilities.usesPassword,
+      !Self.hasSavedTransport(fileConfig, defaults: defaults)
+    {
+      if !Task.isCancelled { presentPrefilledConnectForm(fileConfig) }
+      return
+    }
+    let config = autoConnectConfig(fileConfig)
+    // A locked connection never connects nor reads its password here: the window shows Locked
+    // and its Unlock asks (`unlockAndConnect()`)
+    if lockCenter.registry.refusal(for: config) != nil {
+      if !Task.isCancelled {
+        connectionState = .disconnected
+        isConnectLocked = true
+      }
+      return
+    }
 
     var configWithPassword = config
     // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
-    // unless a password command prints it on connect
+    // unless a password command prints it on connect. Only the key of this config is read
+    // (`Workspace.keychainKey`), never one a file names for another connection.
     if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil {
       guard let keychainKey = workspace.keychainKey,
-        let password = SessionManager.getPasswordFromKeychain(for: keychainKey)
+        let password = passwords.loadPassword(forKey: keychainKey)
       else {
         // No stored password: never leave the UI on "connecting"
         if !Task.isCancelled { connectionState = .disconnected }
@@ -698,32 +886,82 @@ class WorkspaceManager: Identifiable {
     }
   }
 
+  /// The saved row's transport, scripts and protection as they are now (init kept the ones it
+  /// had then)
+  private func autoConnectConfig(_ fileConfig: ConnectionConfig) -> ConnectionConfig {
+    Self.keepingSavedProtection(
+      Self.keepingSavedScripts(
+        Self.keepingSavedTransport(fileConfig, defaults: defaults), defaults: defaults),
+      defaults: defaults)
+  }
+
+  /// Unlock of a workspace whose auto-connect stopped on a lock (`isConnectLocked`): the connect
+  /// hold asks, reads the saved password after the grant and connects. Cancel keeps Locked.
+  func unlockAndConnect() async {
+    guard !isUnlockingConnect, let fileConfig = workspace.connectionConfig else { return }
+    isUnlockingConnect = true
+    defer { isUnlockingConnect = false }
+    let config = autoConnectConfig(fileConfig)
+    // Unlocked in another window since: connect as auto-connect does (it reads the password)
+    guard lockCenter.registry.refusal(for: config) != nil else {
+      isConnectLocked = false
+      connectionState = .connecting
+      autoConnectTask = Task { await autoConnectIfNeeded() }
+      return
+    }
+    do {
+      try await connect(config: config)
+    } catch WorkspaceConnectError.unlockRequired {
+      // Cancelled: still locked, nothing to show
+    } catch {
+      WorkspaceWindowManager.shared.showToast(
+        "Connect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)
+      presentConnectErrorIfActionable(error, config: config)
+    }
+  }
+
+  /// The connect form on `config`, without a password, for an opened file with no saved row.
+  private func presentPrefilledConnectForm(_ config: ConnectionConfig) {
+    var config = config
+    config.password = ""
+    connectionState = .disconnected
+    editingConnectionConfig = config
+    connectionFormDraftGeneration += 1
+    connectionFormOpensOnDraft = true
+    lastUnlockConnectError = nil
+    isConnectionFormModalVisible = true
+  }
+
   /// A connect outside the form (auto-connect, a Welcome recent card) failed with an error the
   /// form offers an action for (missing plugin): open the form showing the error and its button.
   func presentConnectErrorIfActionable(_ error: any Error, config: ConnectionConfig) {
     guard ConnectionErrorAction.action(for: error) != nil else { return }
     editingConnectionConfig = config
     connectionFormDraftGeneration += 1
+    connectionFormOpensOnDraft = true
     lastUnlockConnectError = error.localizedDescription
     isConnectionFormModalVisible = true
   }
 
   /// A `.duckdb` file opened from Finder: the connection form, prefilled to open it read-only.
   /// The bookmark is made now, while the Finder grant lasts. Without the plugin, the form also
-  /// shows the missing-plugin error and its Install button.
+  /// shows the missing-plugin error and its Install button. A locked file opens the form at once
+  /// with its lock mark; its connect asks first (`connect`), over the form.
   func presentDuckDBFile(_ url: URL) {
     // A file saved before opens on its saved color and group (a form connect writes them)
     let config = Self.keepingSavedAppearance(
       ConnectionFormContent.applyingDuckDBChoice(
         .open(path: url.path, bookmark: accessHooks.makeBookmark(url)),
-        to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil
-      ).config)
+        to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil,
+        registry: lockCenter.registry
+      ).config, defaults: defaults)
     guard PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
     }
     editingConnectionConfig = config
     connectionFormDraftGeneration += 1
+    connectionFormOpensOnDraft = true
     lastUnlockConnectError = nil
     isConnectionFormModalVisible = true
   }
@@ -750,6 +988,7 @@ class WorkspaceManager: Identifiable {
   @discardableResult
   func newNotebook() -> UUID {
     let document = DbloreDocument()
+    document.lockKeyId = lockKeyId
     let viewModel = createViewModel(for: document.notebook)
     viewModel.viewMode = .notebook
 
@@ -768,6 +1007,7 @@ class WorkspaceManager: Identifiable {
   @discardableResult
   func newSQLFile(content: String = "") -> UUID {
     let document = SQLEditorDocument(content: content)
+    document.lockKeyId = lockKeyId
     let cell = NotebookCell(cellType: .sql, content: content)
     let notebook = DbloreNotebook(cells: [cell], documentType: .script)
     let viewModel = createViewModel(for: notebook)
@@ -846,6 +1086,7 @@ class WorkspaceManager: Identifiable {
   @discardableResult
   func newMarkdownFile() -> UUID {
     let document = SQLEditorDocument()
+    document.lockKeyId = lockKeyId
     let cell = NotebookCell(cellType: .sql, content: "")
     let notebook = DbloreNotebook(cells: [cell], documentType: .script)
     let viewModel = createViewModel(for: notebook)
@@ -910,6 +1151,7 @@ class WorkspaceManager: Identifiable {
         viewModel.dataViewerDisplayMode = .grid
         viewModel.applyMongoViewPreference()
         viewModel.applySavedHighlights()
+        viewModel.applyGridColumnPrefs()
         tabs[index].title = state.title
         selectTab(id: tabs[index].id)
         Task { await viewModel.loadDataViewerPage() }
@@ -922,6 +1164,7 @@ class WorkspaceManager: Identifiable {
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
     viewModel.applySavedHighlights()
+    viewModel.applyGridColumnPrefs()
     if let filter {
       viewModel.filterDraft = filter
     }
@@ -968,6 +1211,10 @@ class WorkspaceManager: Identifiable {
           bookmarksChanged = try await restoreTab(tabRef: tabRef) || bookmarksChanged
         }
       } catch {
+        if case LockedFileIOError.unlockRefused(let id) = error {
+          tabsRefusedUnlock.insert(id)
+          unrestoredLockedTabs.append(tabRef)
+        }
         // Log error but continue loading other tabs
         if SecurityScopedAccess.isPermissionError(error) {
           deniedFiles.append(fileURL.lastPathComponent)
@@ -1004,6 +1251,7 @@ class WorkspaceManager: Identifiable {
     viewModel.dataViewer = state
     viewModel.applyMongoViewPreference()
     viewModel.applySavedHighlights()
+    viewModel.applyGridColumnPrefs()
     tabs.append(tabRef.toTabItem())
     viewModels[tabRef.id] = viewModel
   }
@@ -1030,7 +1278,9 @@ class WorkspaceManager: Identifiable {
     // Create tab with original ID from workspace
     var tab = tabRef.toTabItem()
     tab.fileURL = fileURL
-    let data = try Data(contentsOf: fileURL)
+    let read = try await lockedIO.read(
+      from: fileURL, kind: Self.envelopeKind(of: tabRef.documentType), unlock: unlockLockedFile)
+    let data = read.plaintext
 
     switch tabRef.documentType {
     case .notebook:
@@ -1039,6 +1289,7 @@ class WorkspaceManager: Identifiable {
 
       let document = DbloreDocument(notebook: decodedNotebook)
       document.setFileURL(fileURL)
+      document.lockKeyId = read.session?.workspaceId
 
       let viewModel = createViewModel(for: document.notebook)
       viewModel.viewMode = .notebook
@@ -1054,6 +1305,7 @@ class WorkspaceManager: Identifiable {
 
       let document = SQLEditorDocument(content: content)
       document.setFileURL(fileURL)
+      document.lockKeyId = read.session?.workspaceId
 
       let cell = NotebookCell(cellType: .sql, content: content)
       let notebook = DbloreNotebook(cells: [cell], documentType: .script)
@@ -1068,10 +1320,22 @@ class WorkspaceManager: Identifiable {
     case .dataViewer:
       return false  // File-less: restored by restoreDataViewer
     }
+    hold(read.session)
     tabAccess[tab.id] = access?.token
     let bookmark = access?.bookmark ?? accessHooks.makeBookmark(fileURL)
     tabBookmarks[tab.id] = bookmark
     return bookmark != tabRef.bookmark
+  }
+
+  /// The envelope kind a tab file of `type` is sealed as (nil: a file-less tab)
+  nonisolated static func envelopeKind(of type: TabDocumentType) -> LockEnvelope.Kind? {
+    switch type {
+    case .notebook: .notebook
+    // .sql and MongoDB .js scripts
+    case .sqlFile: .script
+    case .markdown: .markdown
+    case .dataViewer: nil
+    }
   }
 
   /// What opening a file from Finder (or the workspace chooser) does with it.
@@ -1130,15 +1394,17 @@ class WorkspaceManager: Identifiable {
     // Read through the file's stored bookmark; on a permission failure ask for the file
     var access = accessHooks.access(recents.documentBookmark(for: url))
     var url = access?.isStale == true ? access?.url ?? url : url
-    let data: Data
+    let read: LockedFileIO.Read
+    let kind = Self.envelopeKind(of: docType)
     do {
-      data = try Data(contentsOf: url)
+      read = try await lockedIO.read(from: url, kind: kind, unlock: unlockLockedFile)
     } catch let error where SecurityScopedAccess.isPermissionError(error) {
       guard let chosen = await accessHooks.chooseFile(url) else { throw error }
-      data = try Data(contentsOf: chosen)
+      read = try await lockedIO.read(from: chosen, kind: kind, unlock: unlockLockedFile)
       url = chosen
       access = nil
     }
+    let data = read.plaintext
     let title = url.lastPathComponent
 
     let tab = TabItem(
@@ -1154,6 +1420,7 @@ class WorkspaceManager: Identifiable {
 
       let document = DbloreDocument(notebook: decodedNotebook)
       document.setFileURL(url)
+      document.lockKeyId = read.session?.workspaceId
 
       let viewModel = createViewModel(for: document.notebook)
       viewModel.viewMode = .notebook
@@ -1169,6 +1436,7 @@ class WorkspaceManager: Identifiable {
 
       let document = SQLEditorDocument(content: content)
       document.setFileURL(url)
+      document.lockKeyId = read.session?.workspaceId
 
       let cell = NotebookCell(cellType: .sql, content: content)
       let notebook = DbloreNotebook(cells: [cell], documentType: .script)
@@ -1183,6 +1451,7 @@ class WorkspaceManager: Identifiable {
     case .dataViewer:
       return  // Never detected from a file URL
     }
+    hold(read.session)
     tabAccess[tab.id] = access?.token
     let bookmark = access?.bookmark ?? accessHooks.makeBookmark(url)
     tabBookmarks[tab.id] = bookmark
@@ -1386,8 +1655,10 @@ class WorkspaceManager: Identifiable {
     moveTab(from: tabs.count - 1, to: min(closed.index, tabs.count - 1))
   }
 
-  /// Stop accessing the workspace, its folder and its tab files (workspace closed)
-  func releaseFileAccess() {
+  /// Stop accessing the workspace, its folder and its tab files, and release the lock sessions
+  /// it held (workspace closed). `keepsSessions`: an open window with the same workspace id
+  /// holds them under that id (a second file of it refused at open)
+  func releaseFileAccess(keepsSessions: Bool = false) {
     activeUnrememberedCertificate = nil
     pendingWeakeningCertificate = nil
     activeUnrememberedSSHCredential = nil
@@ -1399,29 +1670,138 @@ class WorkspaceManager: Identifiable {
     folderAccess?.release()
     folderAccess = nil
     releaseDuckDBFileAccess()
+    if !keepsSessions { lockedIO.sessions.release(holder: id) }
+  }
+
+  /// Keeps `session` open while this workspace is (released by `releaseFileAccess`)
+  private func hold(_ session: WorkspaceLockSession?) {
+    if let session { lockedIO.sessions.hold(session, by: id) }
   }
 
   /// Reapplies snapshot text onto a tab `load` already restored, or creates the tab when it
   /// was file-less and therefore skipped. Uses the overlay's tab id. `newNotebook()` and
-  /// `newSQLFile()` are not used: they mint new ids.
-  func restoreOverlayTab(_ overlay: LaunchTextOverlay) {
+  /// `newSQLFile()` are not used: they mint new ids. A tab it creates seals with `sealedWith`
+  /// (the key of the snapshot text's envelope), else with this workspace's key. Sealed text is
+  /// applied only as `acceptsSealedOverlay` allows. False when not applied.
+  @discardableResult
+  func restoreOverlayTab(_ overlay: LaunchTextOverlay, sealedWith sealingKey: UUID? = nil) -> Bool {
+    // Its file stayed sealed: an overlay over it could never be saved
+    guard !unrestoredLockedTabs.contains(where: { $0.id == overlay.tabId }) else { return false }
+    if let sealingKey, !acceptsSealedOverlay(tabId: overlay.tabId, keyId: sealingKey) {
+      return false
+    }
+    let keyId = sealingKey ?? lockKeyId
     switch overlay.text {
     case .notebook(let cells):
-      restoreNotebookOverlay(tabId: overlay.tabId, cells: cells)
+      restoreNotebookOverlay(tabId: overlay.tabId, cells: cells, keyId: keyId)
     case .script(let script):
-      restoreScriptOverlay(tabId: overlay.tabId, script: script, documentType: .sqlFile)
+      restoreScriptOverlay(
+        tabId: overlay.tabId, script: script, documentType: .sqlFile, keyId: keyId)
     case .markdown(let text):
-      restoreScriptOverlay(tabId: overlay.tabId, script: text, documentType: .markdown)
+      restoreScriptOverlay(
+        tabId: overlay.tabId, script: text, documentType: .markdown, keyId: keyId)
     }
     markDirty(tabId: overlay.tabId)
+    return true
   }
 
-  /// After `load`, reapplies every overlay and selects the saved active tab once it exists.
+  /// Text sealed with `keyId` never replaces a document of another key (a plaintext one would
+  /// save it unsealed, another key's would be rewritten under this one), except this
+  /// workspace's own key on its plaintext document (the snapshot seals that tab's text with it;
+  /// the document keeps its key). It makes a new tab when it is this workspace's key, or for one
+  /// of its saved tabs when a document of it already carries that key (a saved tab's file that
+  /// did not load is never sealed with a key the workspace does not use).
+  private func acceptsSealedOverlay(tabId: UUID, keyId: UUID) -> Bool {
+    if let existing = notebookDocuments[tabId] {
+      return existing.lockKeyId == keyId || (existing.lockKeyId == nil && keyId == lockKeyId)
+    }
+    if let existing = editorDocuments[tabId] {
+      return existing.lockKeyId == keyId || (existing.lockKeyId == nil && keyId == lockKeyId)
+    }
+    if keyId == lockKeyId { return true }
+    return workspace.tabs.contains { $0.id == tabId }
+      && (notebookDocuments.values.contains { $0.lockKeyId == keyId }
+        || editorDocuments.values.contains { $0.lockKeyId == keyId })
+  }
+
+  /// After `load`, reapplies the snapshot's plaintext text and selects the saved active tab
+  /// once it exists. Plaintext text (anyone can write the snapshot) never lands in a locked
+  /// workspace nor in a tab whose document is sealed: only sealed text does there.
   func applyLaunchOverlays(_ overlays: [LaunchTextOverlay]) {
-    for overlay in overlays {
+    for overlay in overlays where acceptsPlaintextOverlay(tabId: overlay.tabId) {
       restoreOverlayTab(overlay)
     }
     restoreLaunchActiveTab()
+  }
+
+  private func acceptsPlaintextOverlay(tabId: UUID) -> Bool {
+    lockKeyId == nil && notebookDocuments[tabId]?.lockKeyId == nil
+      && editorDocuments[tabId]?.lockKeyId == nil
+  }
+
+  /// `startSealedLaunchOverlays`, returning once its run has ended
+  func applySealedLaunchOverlays(_ sealed: [Data]) async {
+    startSealedLaunchOverlays(sealed)
+    await sealedOverlayTask?.value
+  }
+
+  /// Launch restore: the snapshot's sealed tab text, opened off the main actor with the open
+  /// session of its key, else after `unlockLockedFile` asks. One run per workspace: every
+  /// window of it adds its envelopes to that run, so each key is asked at most once (a refused
+  /// key is not asked again). Text not opened yet or refused stays in `keptSealedOverlays`,
+  /// which the next snapshot writes back unchanged.
+  func startSealedLaunchOverlays(_ sealed: [Data]) {
+    for item in sealed
+    where !keptSealedOverlays.contains(item) && !triedSealedOverlays.contains(item) {
+      keptSealedOverlays.append(item)
+    }
+    guard sealedOverlayTask == nil, keptSealedOverlays.contains(where: isUntried) else { return }
+    sealedOverlayTask = Task { [weak self] in await self?.openKeptSealedOverlays() }
+  }
+
+  private func isUntried(_ item: Data) -> Bool {
+    !triedSealedOverlays.contains(item)
+  }
+
+  /// Opens the kept envelopes not tried yet, again while windows add more
+  private func openKeptSealedOverlays() async {
+    while true {
+      let batch = keptSealedOverlays.filter(isUntried)
+      guard !batch.isEmpty else {
+        // Ends in the same step as the last check: a window adding text later starts a new run
+        sealedOverlayTask = nil
+        return
+      }
+      triedSealedOverlays.formUnion(batch)
+      let result = await LaunchSessionRestore.openSealedOverlays(
+        batch, io: lockedIO, unlock: unlockLockedFile, refusedKeys: refusedSealedKeys)
+      // Closed while it ran: nothing is applied or held
+      guard !Task.isCancelled else {
+        sealedOverlayTask = nil
+        return
+      }
+      refusedSealedKeys.formUnion(result.refusedKeys)
+      let kept = Set(result.refused).union(applyOpenedLaunchOverlays(result.opened))
+      keptSealedOverlays.removeAll { batch.contains($0) && !kept.contains($0) }
+    }
+  }
+
+  /// Applies snapshot text opened from its envelopes; this workspace holds the session of each
+  /// key it used, so the tab seals again on its next save or snapshot. Returns the envelopes of
+  /// the text not applied (another key's document or a stray tab), kept as they are.
+  @discardableResult
+  func applyOpenedLaunchOverlays(_ opened: [LaunchSessionRestore.OpenedOverlay]) -> Set<Data> {
+    guard !opened.isEmpty else { return [] }
+    var notApplied: Set<Data> = []
+    for item in opened {
+      if restoreOverlayTab(item.overlay, sealedWith: item.session.workspaceId) {
+        hold(item.session)
+      } else {
+        notApplied.insert(item.envelope)
+      }
+    }
+    restoreLaunchActiveTab()
+    return notApplied
   }
 
   /// Untitled launch window: file tabs go through the saved-file restore, then every overlay
@@ -1446,7 +1826,7 @@ class WorkspaceManager: Identifiable {
 
   /// Merges by cell id: a cell already loaded from disk keeps its metadata (chart, parameters,
   /// result visibility) and takes only the overlay text and type. Order follows the overlay.
-  private func restoreNotebookOverlay(tabId: UUID, cells: [LaunchNotebookCell]) {
+  private func restoreNotebookOverlay(tabId: UUID, cells: [LaunchNotebookCell], keyId: UUID?) {
     let saved = Dictionary(
       (notebookDocuments[tabId]?.notebook.cells ?? []).map { ($0.id, $0) },
       uniquingKeysWith: { first, _ in first })
@@ -1468,6 +1848,9 @@ class WorkspaceManager: Identifiable {
     } else {
       let notebook = DbloreNotebook(cells: notebookCells, documentType: .notebook)
       document = DbloreDocument(notebook: notebook)
+      // Not read from its file: it seals as its snapshot text was sealed (else as this workspace
+      // does), and LockedFileIO refuses a plaintext write over a sealed file
+      document.lockKeyId = keyId
       if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
         document.setFileURL(url)
       }
@@ -1482,7 +1865,7 @@ class WorkspaceManager: Identifiable {
   }
 
   private func restoreScriptOverlay(
-    tabId: UUID, script: String, documentType: TabDocumentType
+    tabId: UUID, script: String, documentType: TabDocumentType, keyId: UUID?
   ) {
     let document: SQLEditorDocument
     if let existing = editorDocuments[tabId] {
@@ -1490,6 +1873,8 @@ class WorkspaceManager: Identifiable {
       document = existing
     } else {
       document = SQLEditorDocument(content: script)
+      // See restoreNotebookOverlay
+      document.lockKeyId = keyId
       if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
         document.setFileURL(url)
       }
@@ -1588,9 +1973,14 @@ class WorkspaceManager: Identifiable {
     }
   }
 
+  /// Writes the tab's document to `url`, sealed with the document's own lock key id (the
+  /// workspace that sealed it, even another one; nil: plaintext), off the main actor
   private func saveToURL(tabId: UUID, url: URL) async throws {
     guard let tab = tabs.first(where: { $0.id == tabId }) else { return }
 
+    let data: Data
+    let kind: LockEnvelope.Kind
+    let keyId: UUID?
     switch tab.documentType {
     case .notebook:
       guard let document = notebookDocuments[tabId],
@@ -1598,28 +1988,39 @@ class WorkspaceManager: Identifiable {
       else { return }
       document.notebook = viewModel.notebook
       let includeResults = settingsResolver.includeResultsOnSave
-      let data = try DocumentCoder.encode(
+      data = try DocumentCoder.encode(
         document.notebook,
         includeResultsOnSave: includeResults,
         useCompactFormat: false
       )
-      try SecurityScopedAccess.write(data, to: url)
+      kind = .notebook
+      keyId = document.lockKeyId
 
     case .sqlFile, .markdown:
       guard let document = editorDocuments[tabId],
         let viewModel = viewModels[tabId]
       else { return }
       document.content = viewModel.editorContent
-      guard let data = viewModel.editorContent.data(using: .utf8) else {
+      guard let encoded = viewModel.editorContent.data(using: .utf8) else {
         throw CocoaError(.fileWriteUnknown)
       }
-      try SecurityScopedAccess.write(data, to: url)
+      data = encoded
+      // .sql and MongoDB .js scripts are both `.sqlFile`
+      kind = tab.documentType == .markdown ? .markdown : .script
+      keyId = document.lockKeyId
 
     case .dataViewer:
       return  // Unreachable: saveTab returns early
     }
 
+    // Clean before the write: an edit while it runs marks the tab dirty again
     markClean(tabId: tabId)
+    do {
+      try await lockedIO.write(data, kind: kind, lockKeyId: keyId, to: url)
+    } catch {
+      markDirty(tabId: tabId)
+      throw error
+    }
   }
 
   private func saveWithPanel(tabId: UUID) async throws {
@@ -1972,5 +2373,288 @@ extension WorkspaceManager {
     }
 
     return manager
+  }
+}
+
+// MARK: - Lock Workspace and Remove Lock
+
+/// What Lock Workspace did
+struct WorkspaceLockReport: Sendable {
+  /// Where this Mac keeps the content key (`.unavailable`: the Lock password only)
+  let mode: LockKeyMode
+  /// Files left unencrypted: Retry (`retryLockWrites`) seals them, or a later save of their tab
+  let failures: [LockedFileIO.FileFailure]
+}
+
+/// Why Lock Workspace did not start. Nothing was written.
+enum WorkspaceLockError: LocalizedError, Equatable {
+  case notSaved
+  case alreadyLocked
+  case keychain(LockKeyStoreError)
+  /// A change or removal of the Lock password is running
+  case passwordChanging
+
+  var errorDescription: String? {
+    switch self {
+    case .notSaved: return "Save the workspace before locking it."
+    case .passwordChanging:
+      return "The Lock password is being changed. Try again when it is done."
+    case .alreadyLocked: return "The workspace is already locked."
+    case .keychain(.retryable):
+      return "The Keychain is locked. Unlock the Mac and try again."
+    case .keychain: return "The Keychain did not store the workspace key."
+    }
+  }
+}
+
+/// Why a workspace file was not opened
+enum WorkspaceOpenError: Error, Equatable, LocalizedError {
+  /// Its Recents entry says locked, but the file is plaintext and nothing sealed is left
+  case lockDowngraded
+  /// The decrypted .sqlws names another workspace than its envelope
+  case mismatchedEnvelope
+  /// Another file with the same workspace id is open or being opened
+  case otherCopyOpen
+
+  var errorDescription: String? {
+    switch self {
+    case .lockDowngraded:
+      return "This workspace was locked, but its file is not encrypted now, so it was not "
+        + "opened. If its lock was removed on purpose, remove it from Recent Workspaces and "
+        + "open the file again."
+    case .mismatchedEnvelope:
+      return "The workspace file does not match its encryption, so it was not opened."
+    case .otherCopyOpen:
+      return "Another file of this workspace is open or being opened. Close its window, then "
+        + "open this file."
+    }
+  }
+}
+
+extension WorkspaceManager {
+  /// A saved workspace that is not locked yet
+  var canLockWorkspace: Bool { lockKeyId == nil && workspace.fileURL != nil }
+
+  /// Opens the Lock Workspace or Remove Lock sheet at once; nothing is read before it shows
+  func openLockSheet(_ mode: LockWorkspaceModel.Mode) {
+    guard lockSheet == nil, mode == .remove ? lockKeyId != nil : canLockWorkspace else { return }
+    lockSheet = LockWorkspaceModel(manager: self, mode: mode)
+  }
+
+  /// Seals the workspace with a new content key wrapped with `password` (the verified Lock
+  /// password): the key goes to this Mac's Keychain (or nowhere, the Lock-password-only branch),
+  /// the workspace is registered and granted for this session, the manager and every open
+  /// document take its key (a document sealed by another workspace keeps that one), then the
+  /// .sqlws and each tab file are rewritten, one atomic write each, with `progress(done, total)`.
+  /// Tab files are sealed from their saved bytes: unsaved edits stay unsaved. Refused while
+  /// `center` changes or removes the Lock password (`password` was checked against that record).
+  func lockWorkspace(
+    password: String, keyStore: LockKeyStore = LockKeyStore(),
+    iterations: Int = SafeModePasswordRecord.lockIterations, center: LockCenter = .shared,
+    progress: @escaping (Int, Int) -> Void = { _, _ in }
+  ) async throws -> WorkspaceLockReport {
+    guard lockKeyId == nil else { throw WorkspaceLockError.alreadyLocked }
+    guard let url = workspace.fileURL else { throw WorkspaceLockError.notSaved }
+    // Held to the last sealed file: a Lock password change waits, and this waits for one
+    guard center.beginWorkspaceLock() else { throw WorkspaceLockError.passwordChanging }
+    defer { center.endWorkspaceLock() }
+    let id = workspace.id
+    let registry = lockedIO.registry
+    let generation = registry.generation
+    let session = try await Self.makeLockSession(id, password: password, iterations: iterations)
+    let mode: LockKeyMode
+    do {
+      mode = try await Self.storeKey(session.contentKey, for: id, in: keyStore)
+    } catch let error as LockKeyStoreError {
+      throw WorkspaceLockError.keychain(error)
+    }
+    // Registered before the grant, which drops identities that are not locked; a relock since
+    // the start leaves the workspace blocked
+    registry.registerWorkspace(id)
+    _ = registry.grant(.workspace(id), ifGeneration: generation)
+    lockedIO.sessions.hold(session, by: self.id)
+    autoSaveTask?.cancel()
+    lockKeyId = id
+    // Kept apart from Recents, so a Lock password change re-seals it after it left Recents
+    if let entry = recentEntry { recents.lockedWorkspaces.add(entry) }
+    for tab in tabs where tab.documentType != .dataViewer && !tab.isReadOnlySource {
+      if let document = notebookDocuments[tab.id], document.lockKeyId == nil {
+        document.lockKeyId = id
+      } else if let document = editorDocuments[tab.id], document.lockKeyId == nil {
+        document.lockKeyId = id
+      }
+    }
+    let failures = await sealFiles(
+      workspace: url, tabFiles: lockedTabFiles(id), with: session, progress: progress)
+    return WorkspaceLockReport(mode: mode, failures: failures)
+  }
+
+  /// Lock Workspace's Retry: writes the files of `failed` again, sealed (the .sqlws, and the tab
+  /// files whose document carries the key), with `progress`; returns the files still
+  /// unencrypted. A failed file whose tab was closed since stays in the result as it was.
+  func retryLockWrites(
+    _ failed: [LockedFileIO.FileFailure], progress: @escaping (Int, Int) -> Void = { _, _ in }
+  ) async -> [LockedFileIO.FileFailure] {
+    guard let id = lockKeyId, let session = lockedIO.sessions.session(for: id) else {
+      return failed
+    }
+    let urls = Set(failed.map(\.url))
+    let workspaceURL = workspace.fileURL.flatMap { urls.contains($0) ? $0 : nil }
+    let files = lockedTabFiles(id).filter { urls.contains($0.url) }
+    let retried = Set(files.map(\.url) + [workspaceURL].compactMap { $0 })
+    let failures = await sealFiles(
+      workspace: workspaceURL, tabFiles: files, with: session, progress: progress)
+    return failures + failed.filter { !retried.contains($0.url) }
+  }
+
+  /// Writes the workspace's tab files and then its .sqlws as plaintext (with `progress`). Only
+  /// when every file was written does it clear the key ids, delete the Keychain item,
+  /// unregister the workspace and release its session; otherwise the workspace stays locked,
+  /// the tab files already written are sealed again, and the files that failed are returned,
+  /// followed by those it could not seal again (now unencrypted).
+  /// Runs only with the owner's confirmation of this workspace (`authorization`, from
+  /// `LockCenter.authorizeRemoveLock`); another workspace's is refused with nothing written, and
+  /// so is any while the Lock password changes (`lockCenter`, held to the last write).
+  func removeLock(
+    authorization: RemoveLockAuthorization, keyStore: LockKeyStore = LockKeyStore(),
+    progress: @escaping (Int, Int) -> Void = { _, _ in }
+  ) async -> [LockedFileIO.FileFailure] {
+    guard let id = lockKeyId, let url = workspace.fileURL else { return [] }
+    guard authorization.workspaceId == id else {
+      return [.init(url: url, reason: "Remove Lock was not confirmed for this workspace.")]
+    }
+    // A Lock password change re-seals this workspace's files: never both at once
+    guard lockCenter.beginWorkspaceLock() else {
+      return [.init(url: url, reason: WorkspaceLockError.passwordChanging.errorDescription ?? "")]
+    }
+    defer { lockCenter.endWorkspaceLock() }
+    autoSaveTask?.cancel()
+    let files = lockedTabFiles(id)
+    let total = files.count + 1
+    var failures: [LockedFileIO.FileFailure] = []
+    var written: [(url: URL, kind: LockEnvelope.Kind)] = []
+    for (index, file) in files.enumerated() {
+      do {
+        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: nil)
+        written.append(file)
+      } catch {
+        failures.append(.init(url: file.url, reason: error.localizedDescription))
+      }
+      progress(index + 1, total)
+    }
+    guard failures.isEmpty else {
+      return failures + (await sealAgain(written, id: id))
+    }
+    do {
+      try await lockedIO.write(
+        encodedWorkspaceData(), kind: .workspace, lockKeyId: nil, to: url, replacingEnvelope: true
+      )
+    } catch {
+      return [.init(url: url, reason: error.localizedDescription)]
+        + (await sealAgain(written, id: id))
+    }
+    progress(total, total)
+
+    for document in notebookDocuments.values where document.lockKeyId == id {
+      document.lockKeyId = nil
+    }
+    for document in editorDocuments.values where document.lockKeyId == id {
+      document.lockKeyId = nil
+    }
+    lockKeyId = nil
+    isDirty = false
+    recents.lockedWorkspaces.remove(id: id, fileURL: url)
+    if let entry = recentEntry { recents.addWorkspace(entry) }
+    keyStore.remove(for: id)
+    lockedIO.registry.unregisterWorkspace(id)
+    lockedIO.sessions.release(id, holder: self.id)
+    return []
+  }
+
+  /// The saved tab files whose document carries `id`'s key, with the envelope kind of each
+  private func lockedTabFiles(_ id: UUID) -> [(url: URL, kind: LockEnvelope.Kind)] {
+    var files: [(url: URL, kind: LockEnvelope.Kind)] = []
+    for tab in tabs where tab.documentType != .dataViewer && !tab.isReadOnlySource {
+      guard let fileURL = tab.fileURL else { continue }
+      if notebookDocuments[tab.id]?.lockKeyId == id {
+        files.append((fileURL, .notebook))
+      } else if editorDocuments[tab.id]?.lockKeyId == id {
+        files.append((fileURL, tab.documentType == .markdown ? .markdown : .script))
+      }
+    }
+    return files
+  }
+
+  /// Saves the .sqlws when `workspaceURL` is set (sealed: the workspace carries the key), then
+  /// rewrites each tab file as `session`'s envelope, with `progress(done, total)`; returns the
+  /// files left as they were
+  private func sealFiles(
+    workspace workspaceURL: URL?, tabFiles files: [(url: URL, kind: LockEnvelope.Kind)],
+    with session: WorkspaceLockSession, progress: (Int, Int) -> Void
+  ) async -> [LockedFileIO.FileFailure] {
+    let total = files.count + (workspaceURL == nil ? 0 : 1)
+    var done = 0
+    var failures: [LockedFileIO.FileFailure] = []
+    if let workspaceURL {
+      do {
+        try await saveWorkspace()
+      } catch {
+        failures.append(.init(url: workspaceURL, reason: error.localizedDescription))
+      }
+      done += 1
+      progress(done, total)
+    }
+    for file in files {
+      do {
+        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+      } catch {
+        failures.append(.init(url: file.url, reason: error.localizedDescription))
+      }
+      done += 1
+      progress(done, total)
+    }
+    return failures
+  }
+
+  /// After a Remove Lock that failed: seals again the tab files it already wrote as plaintext;
+  /// each one it cannot seal is returned, said to be unencrypted now
+  private func sealAgain(
+    _ files: [(url: URL, kind: LockEnvelope.Kind)], id: UUID
+  ) async -> [LockedFileIO.FileFailure] {
+    let session = lockedIO.sessions.session(for: id)
+    var failures: [LockedFileIO.FileFailure] = []
+    for file in files {
+      do {
+        guard let session else { throw LockedFileIOError.sessionMissing(id) }
+        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+      } catch {
+        failures.append(
+          .init(
+            url: file.url,
+            reason:
+              "Now unencrypted, it could not be encrypted again: \(error.localizedDescription)"))
+      }
+    }
+    return failures
+  }
+
+  /// A new content key and its wrap block under `password`, checked by unwrapping it before
+  /// any file depends on it. Runs PBKDF2 twice, off the main actor.
+  @concurrent nonisolated private static func makeLockSession(
+    _ id: UUID, password: String, iterations: Int
+  ) async throws -> WorkspaceLockSession {
+    let key = SymmetricKey(size: .bits256)
+    let block = try LockEnvelope.makeWrapBlock(
+      contentKey: key, password: password, workspaceId: id, iterations: iterations)
+    guard try LockEnvelope.unwrapKey(block, password: password) == key else {
+      throw LockEnvelopeError.wrongPassword
+    }
+    return WorkspaceLockSession(workspaceId: id, contentKey: key, wrapBlock: block)
+  }
+
+  @concurrent nonisolated private static func storeKey(
+    _ key: SymmetricKey, for id: UUID, in keyStore: LockKeyStore
+  ) async throws -> LockKeyMode {
+    try keyStore.store(key, for: id)
   }
 }

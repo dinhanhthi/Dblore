@@ -150,7 +150,7 @@ struct WorkspaceInfoModal: View {
           ConnectionFormContent(
             connectionConfig: $workspaceManager.editingConnectionConfig,
             onTestConnection: { config in
-              try await workspaceManager.connectionManager.testConnection(config: config)
+              try await workspaceManager.testConnection(config: config)
             },
             onConnect: { config, aiFieldsEdited in
               try await workspaceManager.connect(

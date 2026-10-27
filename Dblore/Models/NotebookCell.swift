@@ -195,6 +195,9 @@ struct CellResult: Codable, Sendable {
   /// Session-only: bumped when the rows are replaced under the same `timestamp` (the inline
   /// edit refresh), so views keyed on the rows of a run rebuild.
   var dataRevision = 0
+  /// Session-only: the binary values of a lazy data-viewer page that hold only their first
+  /// bytes. Carried by the result, so a copy of it never takes a prefix for the whole value.
+  var truncation: DataViewerState.Truncation? = nil
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery

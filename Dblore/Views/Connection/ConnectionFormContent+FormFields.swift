@@ -209,11 +209,15 @@ extension ConnectionFormContent {
   @ViewBuilder
   private func certificateSection(for mode: SSLMode) -> some View {
     let fields = Self.certificateFields(for: connectionConfig.databaseType, sslMode: mode)
-    if fields == .none {
-      removeClientCertificateButton()
-    } else {
-      clientCertificateSection(offersClientCertificate: fields == .clientCertificateAndCA)
+    Group {
+      if fields == .none {
+        removeClientCertificateButton()
+      } else {
+        clientCertificateSection(offersClientCertificate: fields == .clientCertificateAndCA)
+      }
     }
+    // A locked row's saved certificate is not in the form until the unlock restores it
+    .disabled(certificateDraftPending)
   }
 
   private func usernameField() -> some View {
@@ -562,7 +566,14 @@ extension ConnectionFormContent {
     caFilePicked = false
     passphraseEdited = false
     certificateError = nil
+    certificateDraftPending = false
     guard connectionConfig.clientCertificate != nil else { return }
+    // A row whose lock is not unlocked in this session keeps its key and passphrase in the
+    // keychain: the unlock restores the draft, and until then Save keeps the saved certificate
+    guard Self.readsSavedCertificate(for: connectionConfig) else {
+      certificateDraftPending = true
+      return
+    }
     // Not in the keychain: held as a draft so Connect uses it instead of the store.
     if let material = Self.unrememberedMaterial(unrememberedCertificate?(), for: connectionConfig) {
       certificatePEM = material.certificatePEM
@@ -580,6 +591,14 @@ extension ConnectionFormContent {
     privateKeyPEM = material.privateKeyPEM
     caPEM = material.caPEM
     certificatePassphrase = material.passphrase ?? ""
+  }
+
+  /// Whether the saved client certificate of `config` may be read into the form: not while
+  /// any lock it reaches is blocked
+  static func readsSavedCertificate(
+    for config: ConnectionConfig, registry: LockRegistry = .shared
+  ) -> Bool {
+    registry.refusal(for: config) == nil
   }
 
   /// A different connection was loaded or the form was blanked: drop any draft, picked or not.
@@ -630,8 +649,11 @@ extension ConnectionFormContent {
       throw CertificateFormError.tlsMode
     }
 
-    if !certificateDraftChanged {
-      if config.clientCertificate != nil && ClientCertificateStoreFactory.load(for: config) == nil {
+    // A draft never restored (its row was locked) keeps the saved certificate
+    if !certificateDraftChanged || certificateDraftPending {
+      if config.clientCertificate != nil, Self.readsSavedCertificate(for: config),
+        ClientCertificateStoreFactory.load(for: config) == nil
+      {
         throw CertificateFormError.missingMaterial
       }
       return config
@@ -655,13 +677,15 @@ extension ConnectionFormContent {
 
   func certificateMaterialForOperation(_ config: ConnectionConfig) -> ClientCertificateMaterial? {
     guard config.clientCertificate != nil else { return nil }
-    if certificateDraftChanged,
+    if certificateDraftChanged, !certificateDraftPending,
       let material = Self.draftMaterial(
         certificatePEM: certificatePEM, privateKeyPEM: privateKeyPEM, caPEM: caPEM,
         passphrase: certificatePassphrase)
     {
       return material
     }
+    // A blocked lock: the session reads the store itself once the connect is unlocked
+    guard Self.readsSavedCertificate(for: config) else { return nil }
     return ClientCertificateStoreFactory.load(for: config)
   }
 
@@ -693,7 +717,7 @@ extension ConnectionFormContent {
     return try certificateInfo(from: certificatePEM, hasCA: material.caPEM != nil)
   }
 
-  /// Name plus Browse. The chosen path is shown under the button.
+  /// Name plus Browse, then the attached databases. The chosen path is shown under the button.
   @ViewBuilder
   func sqliteSimpleFields() -> some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -716,6 +740,8 @@ extension ConnectionFormContent {
             .textSelection(.enabled)
         }
       }
+
+      attachedDatabasesSection()
     }
   }
 
@@ -842,7 +868,7 @@ extension ConnectionFormContent {
 
   /// Runs `onPick` with the chosen path and its security-scoped bookmark (nil when the file
   /// does not exist yet, as for a new file).
-  private func presentFilePanel(
+  func presentFilePanel(
     _ panel: NSSavePanel,
     onPick: @escaping @MainActor (_ path: String, _ bookmark: Data?) -> Void
   ) {
@@ -1002,28 +1028,99 @@ extension ConnectionFormContent {
 
   // MARK: - Safety
 
-  /// Server-side session brakes and row cap override.
+  /// The lock toggle, server-side session brakes and row cap override. File engines have no
+  /// lock or idle brake, so they show only the statement timeout and the row cap.
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
+    let fileBased = connectionConfig.databaseType.capabilities.isFileBased
     VStack(alignment: .leading, spacing: Spacing.sm) {
-      safetyRow(
-        brakeField(
-          "Statement timeout (seconds)", global: global.statement,
-          value: $connectionConfig.statementTimeoutSeconds,
-          range: SessionBrakeLimits.statementTimeoutRange),
-        brakeField(
-          "Lock timeout (seconds)", global: global.lock,
-          value: $connectionConfig.lockTimeoutSeconds,
-          range: SessionBrakeLimits.lockTimeoutRange))
+      // A lock lives on saved rows; a file engine needs a file to lock
+      if connectionConfig.rememberConnection,
+        !fileBased
+          || (!connectionConfig.database.isEmpty
+            && connectionConfig.database != DuckDBSession.inMemoryPath)
+      {
+        lockConnectionToggle()
+      }
 
-      if pairsAllSafetyFields {
+      if fileBased {
+        statementTimeoutField(global: global.statement)
+      } else {
+        safetyRow(
+          statementTimeoutField(global: global.statement),
+          brakeField(
+            "Lock timeout (seconds)", global: global.lock,
+            value: $connectionConfig.lockTimeoutSeconds,
+            range: SessionBrakeLimits.lockTimeoutRange))
+      }
+
+      if pairsAllSafetyFields && !fileBased {
         safetyRow(idleTimeoutField(global: global.idle), rowCapField())
       } else {
-        idleTimeoutField(global: global.idle)
+        if !fileBased { idleTimeoutField(global: global.idle) }
         rowCapField()
       }
+    }
+  }
+
+  /// Bound to the saved rows of this login or file, not only the draft: locking writes them at
+  /// once (this session keeps using the connection until the next relock); unlocking asks on
+  /// this form's window first. A draft with no saved row is locked by its first save.
+  private func lockConnectionToggle() -> some View {
+    HStack {
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Lock this connection")
+          .font(.body)
+        Text(
+          "Ask for Touch ID, the Mac password or the Lock password before it opens again after Dblore relocks."
+        )
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
+      }
+
+      Spacer()
+
+      Toggle(
+        "", isOn: Binding(get: { connectionConfig.isLocked }, set: setConnectionLocked)
+      )
+      .labelsHidden()
+      .toggleStyle(.switch)
+      .tint(.accent)
+      .controlSize(.mini)
+    }
+  }
+
+  private func setConnectionLocked(_ locked: Bool) {
+    let config = connectionConfig
+    let identity = LockIdentity(config)
+    guard !locked else {
+      guard SessionManager.setLocked(true, for: identity) else { return }
+      connectionConfig.isLocked = true
+      // Recents and every open form show the lock mark
+      LocalDataNotifications.post(.connectionHistory)
+      return
+    }
+    Task {
+      guard
+        await LockCenter.shared.requestUnlock(
+          for: config, reason: "Unlock \(historyTitle(config)) to remove its lock",
+          anchor: hostWindow.window)
+      else { return }
+      // Another saved row of this login can reach a lock of its own (a MongoDB host): it asks too
+      for row in SessionManager.loadHistory(passwords: NoPasswordStore())
+      where LockIdentity.all(row.config).contains(identity) {
+        guard
+          await LockCenter.shared.requestUnlock(
+            for: row.config, reason: "Unlock \(historyTitle(row.config)) to remove its lock",
+            anchor: hostWindow.window)
+        else { return }
+      }
+      guard SessionManager.setLocked(false, for: identity) else { return }
+      // Still the same login or file after the prompt
+      if LockIdentity(connectionConfig) == identity { connectionConfig.isLocked = false }
+      LocalDataNotifications.post(.connectionHistory)
     }
   }
 
@@ -1033,6 +1130,13 @@ extension ConnectionFormContent {
       leading.frame(maxWidth: .infinity, alignment: .leading)
       trailing.frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  private func statementTimeoutField(global: Int) -> some View {
+    brakeField(
+      "Statement timeout (seconds)", global: global,
+      value: $connectionConfig.statementTimeoutSeconds,
+      range: SessionBrakeLimits.statementTimeoutRange)
   }
 
   private func idleTimeoutField(global: Int) -> some View {
@@ -1219,18 +1323,38 @@ private struct ConnectionGroupField: View {
   }
 }
 
-/// Password input with its own visibility state so the eye toggle re-renders reliably.
+/// Password input with its own visibility state so the eye toggle re-renders reliably. Only a
+/// password typed here from an empty field shows freely; any other value (a saved password
+/// from the Keychain, a loaded row or draft) shows only after Touch ID or the Mac password,
+/// and hides again when the form replaces it.
 private struct PasswordInputField: View {
   @Binding var password: String
   @State private var isVisible = false
+  /// The value this field may show: typed here, or revealed after owner authentication
+  @State private var shownValue: String?
+  @State private var isAuthenticating = false
+
+  private var showsPassword: Bool {
+    isVisible && (password.isEmpty || password == shownValue)
+  }
+
+  /// Typing keeps the value showable only when the value before it was
+  private var typedPassword: Binding<String> {
+    Binding(
+      get: { password },
+      set: { newValue in
+        if password.isEmpty || password == shownValue { shownValue = newValue }
+        password = newValue
+      })
+  }
 
   var body: some View {
     Group {
-      if isVisible {
-        TextField("password", text: $password)
+      if showsPassword {
+        TextField("password", text: typedPassword)
           .textFieldStyle(.plain)
       } else {
-        SecureField("password", text: $password)
+        SecureField("password", text: typedPassword)
           .textFieldStyle(.plain)
       }
     }
@@ -1239,13 +1363,47 @@ private struct PasswordInputField: View {
     .padding(.trailing, Spacing.lg)
     .inputCapsuleStyle()
     .overlay(alignment: .trailing) {
-      Button(action: { isVisible.toggle() }) {
-        Image(systemName: isVisible ? "eye.slash.fill" : "eye.fill")
+      Button(action: toggleVisibility) {
+        Image(systemName: showsPassword ? "eye.slash.fill" : "eye.fill")
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .controlSize(.small)
-      .help(isVisible ? "Hide password" : "Show password")
+      .disabled(isAuthenticating)
+      .help(showsPassword ? "Hide password" : "Show password")
       .padding(.trailing, Spacing.xs)
+    }
+    // The form put another value in (a loaded row, a new draft): it asks again
+    .onChange(of: password) { _, newValue in
+      guard newValue != shownValue else { return }
+      shownValue = nil
+      isVisible = false
+    }
+  }
+
+  private func toggleVisibility() {
+    guard !showsPassword else {
+      isVisible = false
+      return
+    }
+    guard !password.isEmpty, password != shownValue else {
+      isVisible = true
+      return
+    }
+    let value = password
+    isAuthenticating = true
+    Task {
+      let authenticator: any BiometricAuthenticator =
+        SessionManager.isRunningAsTestHost
+        ? UnavailableBiometricAuthenticator() : LAContextBiometricAuthenticator()
+      let proof = await authenticator.authenticateOwner(reason: "show the saved password")
+      isAuthenticating = false
+      guard let proof else { return }
+      // Nothing reads the Keychain with it: end the context's reuse window at once
+      proof.invalidate()
+      // Not a value the form put in while the prompt was open
+      guard password == value else { return }
+      shownValue = value
+      isVisible = true
     }
   }
 }

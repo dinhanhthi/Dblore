@@ -55,6 +55,16 @@ extension WorkspaceManager {
     guard pendingTransaction.isIdle else {
       return NotebookViewModel.transactionPendingElsewhereMessage
     }
+    // A connection relocked since its connect asks again, on this workspace's window, before
+    // anything closes
+    if lockCenter.registry.refusal(for: current) != nil {
+      let title = current.name.isEmpty ? current.displayString : current.name
+      guard
+        await lockCenter.requestUnlock(
+          for: current, reason: "Unlock \(title.prefix(80)) to switch databases",
+          anchor: NewWindowStore.shared.findWindow(for: id))
+      else { return "Unlock the connection to switch databases" }
+    }
 
     for id in tabs.map(\.id) where viewModels[id]?.dataViewer?.schema == old {
       closeTabImmediately(id: id)

@@ -1,7 +1,8 @@
 // SQLiteFileAccess.swift
-// Sandbox access for one SQLite or DuckDB file. Resolves the security-scoped bookmark, registers
-// sidecar file presenters, then probes writability. `release()` drops presenters and stops
-// access. Bookmarks go through `SecurityScopedAccess`.
+// Sandbox access for one SQLite or DuckDB file (a main file, or each attached file with its own
+// grant). Resolves the security-scoped bookmark, registers sidecar file presenters, then probes
+// writability. `release()` drops presenters and stops access. Bookmarks go through
+// `SecurityScopedAccess`.
 
 import Foundation
 import SQLite3
@@ -24,6 +25,29 @@ nonisolated enum SQLiteFileAccess {
 
   /// The write probe could not open a sidecar (`-wal`, `-shm`, or `-journal`).
   struct SidecarDenied: Error, Equatable {}
+
+  /// The file database at `path`, for its lock (`LockRegistry.refusal(for:)`): an attached
+  /// file, or the file of a typed ATTACH
+  static func lockConfig(forFile path: String, engine: DatabaseType = .sqlite) -> ConnectionConfig {
+    ConnectionConfig(databaseType: engine, database: path)
+  }
+
+  /// Whether the file at `path` may not be attached or read: blocked (locked, not unlocked in
+  /// this app session), or for an MCP connection locked at all (MCP never serves a locked file,
+  /// even one the user unlocked in the app). Nothing locked: false without `stat`.
+  static func refusesAttaching(
+    _ path: String, engine: DatabaseType = .sqlite, lockSource: LockRegistry, servesMCP: Bool
+  ) -> Bool {
+    let config = lockConfig(forFile: path, engine: engine)
+    guard servesMCP else { return lockSource.refusal(for: config) != nil }
+    guard !lockSource.lockedIdentities.isEmpty else { return false }
+    return LockIdentity.all(config).contains(where: lockSource.isLocked)
+  }
+
+  /// The warning for an attached database left out on connect
+  static func attachmentSkipped(_ name: String, _ reason: String) -> String {
+    "Attached database \"\(name)\" skipped: \(reason)"
+  }
 
   enum Failure: Error, Equatable {
     case missingBookmark
@@ -48,12 +72,12 @@ nonisolated enum SQLiteFileAccess {
     }
     /// Arbiter calls go through `presenterQueue`, in order, so none blocks the caller
     var addPresenter: (SidecarFilePresenter) -> Void = { presenter in
-      presenterQueue.async { NSFileCoordinator.addFilePresenter(presenter) }
+      SQLiteFileAccess.addFilePresenter(presenter)
     }
     /// Once after the presenters of one open are added
     var waitForPresenters: () -> Void = { waitForPresenterRegistration() }
     var removePresenter: @Sendable (SidecarFilePresenter) -> Void = { presenter in
-      presenterQueue.async { NSFileCoordinator.removeFilePresenter(presenter) }
+      SQLiteFileAccess.removeFilePresenter(presenter)
     }
     var probe: (URL) throws -> Void = { url in
       try probeWritable(url)
@@ -98,6 +122,17 @@ nonisolated enum SQLiteFileAccess {
   @discardableResult
   static func waitForPresenterRegistration() -> Bool {
     onPresenterQueue { _ = NSFileCoordinator.filePresenters }
+  }
+
+  /// Queues the registration of `presenter` on `presenterQueue` and returns at once
+  static func addFilePresenter(_ presenter: any NSFilePresenter & Sendable) {
+    presenterQueue.async { NSFileCoordinator.addFilePresenter(presenter) }
+  }
+
+  /// Queues the removal of `presenter` on `presenterQueue` and returns at once. It runs after
+  /// every add queued before it, so an add that outlived its wait is still undone, never early.
+  static func removeFilePresenter(_ presenter: any NSFilePresenter & Sendable) {
+    presenterQueue.async { NSFileCoordinator.removeFilePresenter(presenter) }
   }
 
   /// Runs `work` on `presenterQueue` and waits for it at most `presenterRegistrationTimeout`,

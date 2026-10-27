@@ -105,61 +105,13 @@ struct ChartConfigBar: View {
 
   private static let maxYColumns = 5
 
+  /// Whole controls wrap to the next line when the bar is narrow (side-by-side layout)
   var body: some View {
-    HStack(spacing: Spacing.sm) {
-      labeled("Kind") {
-        capsuleMenu(kindTitle(spec.kind)) {
-          ForEach([ChartKind.bar, .line, .area, .point], id: \.rawValue) { kind in
-            menuChoice(kindTitle(kind), selected: spec.kind == kind) {
-              spec.kind = kind
-            }
-          }
-        }
+    HStack(alignment: .top, spacing: Spacing.sm) {
+      AIFlowLayout(spacing: Spacing.sm) {
+        controls
       }
-      labeled("X") {
-        capsuleMenu(spec.xColumn ?? "Row") {
-          menuChoice("Row", selected: spec.xColumn == nil) {
-            spec.xColumn = nil
-          }
-          ForEach(xNames, id: \.self) { name in
-            menuChoice(name, selected: spec.xColumn == name) {
-              spec.xColumn = name
-            }
-          }
-        }
-      }
-      labeled("Y") {
-        capsuleMenu(ySummary, help: "Y columns, up to \(Self.maxYColumns)") {
-          ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
-            yToggle(column.name)
-          }
-        }
-      }
-      labeled("Series") {
-        capsuleMenu(spec.seriesColumn ?? "None") {
-          menuChoice("None", selected: spec.seriesColumn == nil) {
-            spec.seriesColumn = nil
-          }
-          ForEach(seriesNames, id: \.self) { name in
-            menuChoice(name, selected: spec.seriesColumn == name) {
-              spec.seriesColumn = name
-            }
-          }
-        }
-      }
-      labeled("Split by") {
-        capsuleMenu(spec.facetColumn ?? "None", help: "One small chart per value, up to 12") {
-          menuChoice("None", selected: spec.facetColumn == nil) {
-            spec.facetColumn = nil
-          }
-          ForEach(facetNames, id: \.self) { name in
-            menuChoice(name, selected: spec.facetColumn == name) {
-              spec.facetColumn = name
-            }
-          }
-        }
-      }
-      Spacer(minLength: Spacing.sm)
+      .frame(maxWidth: .infinity, alignment: .leading)
       Button(action: onExport) {
         Image(systemName: "square.and.arrow.up")
       }
@@ -167,6 +119,62 @@ struct ChartConfigBar: View {
       .controlSize(.small)
       .disabled(!exportEnabled)
       .help("Export chart as PNG")
+    }
+  }
+
+  @ViewBuilder
+  private var controls: some View {
+    labeled("Kind") {
+      capsuleMenu(kindTitle(spec.kind)) {
+        ForEach([ChartKind.bar, .line, .area, .point], id: \.rawValue) { kind in
+          menuChoice(kindTitle(kind), selected: spec.kind == kind) {
+            spec.kind = kind
+          }
+        }
+      }
+    }
+    labeled("X") {
+      capsuleMenu(spec.xColumn ?? "Row") {
+        menuChoice("Row", selected: spec.xColumn == nil) {
+          spec.xColumn = nil
+        }
+        ForEach(xNames, id: \.self) { name in
+          menuChoice(name, selected: spec.xColumn == name) {
+            spec.xColumn = name
+          }
+        }
+      }
+    }
+    labeled("Y") {
+      capsuleMenu(ySummary, help: "Y columns, up to \(Self.maxYColumns)") {
+        ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+          yToggle(column.name)
+        }
+      }
+    }
+    labeled("Series") {
+      capsuleMenu(spec.seriesColumn ?? "None") {
+        menuChoice("None", selected: spec.seriesColumn == nil) {
+          spec.seriesColumn = nil
+        }
+        ForEach(seriesNames, id: \.self) { name in
+          menuChoice(name, selected: spec.seriesColumn == name) {
+            spec.seriesColumn = name
+          }
+        }
+      }
+    }
+    labeled("Split by") {
+      capsuleMenu(spec.facetColumn ?? "None", help: "One small chart per value, up to 12") {
+        menuChoice("None", selected: spec.facetColumn == nil) {
+          spec.facetColumn = nil
+        }
+        ForEach(facetNames, id: \.self) { name in
+          menuChoice(name, selected: spec.facetColumn == name) {
+            spec.facetColumn = name
+          }
+        }
+      }
     }
   }
 
@@ -217,8 +225,11 @@ struct ChartConfigBar: View {
       Text(title)
         .font(.small)
         .foregroundStyle(Color.foreground)
+        .lineLimit(1)
+        .fixedSize()
       content()
     }
+    .fixedSize()
   }
 
   private var xNames: [String] {

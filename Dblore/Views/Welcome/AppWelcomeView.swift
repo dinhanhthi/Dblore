@@ -78,7 +78,7 @@ struct AppWelcomeView: View {
           onRemoveWorkspace: { recentManager.removeWorkspace(id: $0.id) },
           onOpenConnection: openConnectionAsWorkspace,
           onEditConnection: editConnection,
-          onRemoveConnection: { recentManager.removeConnection(id: $0.id) },
+          onRemoveConnection: removeConnection,
           onExportConnections: showConnectionExport,
           onNewWorkspace: createNewWorkspace,
           onConnect: showConnectionForm
@@ -191,9 +191,11 @@ struct AppWelcomeView: View {
   private func openWorkspace(_ entry: WorkspaceHistoryEntry) {
     Task {
       do {
-        let manager = try await WorkspaceWindowManager.shared.openWorkspace(url: entry.fileURL)
+        // A locked workspace returns after a sniff of its first bytes: this window switches to
+        // its locked placeholder at once and asks there
+        let id = try await WorkspaceWindowManager.shared.requestWorkspace(url: entry.fileURL)
         // Open workspace in THIS window (replace welcome)
-        onWorkspaceSelected?(manager.id)
+        onWorkspaceSelected?(id)
       } catch let error as NSError {
         await AppLogger.shared.error("Failed to open workspace: \(error)", category: "Workspace")
         // Show user-friendly toast message
@@ -223,20 +225,49 @@ struct AppWelcomeView: View {
   }
 
   private func openConnectionAsWorkspace(_ entry: ConnectionHistoryEntry) {
+    // The workspace replaces Welcome in this window, which the unlock prompt belongs to
+    let window = hostWindow.window
+    // A blocked row opens without a password the list loaded before a relock; it is read
+    // again after the unlock
+    var seed = entry.config
+    if LockCenter.shared.registry.refusal(for: seed) != nil { seed.password = "" }
     // Create new workspace with this connection
-    let manager = WorkspaceWindowManager.shared.newWorkspace(connection: entry.config)
+    let manager = WorkspaceWindowManager.shared.newWorkspace(connection: seed)
     // Open workspace in THIS window (replace welcome)
     onWorkspaceSelected?(manager.id)
+    // Now, so the connect's unlock prompt finds this window before the view registers it
+    if let window { NewWindowStore.shared.register(window, workspaceId: manager.id) }
 
     // Auto-connect
     Task {
+      // A locked row asks first (the connect hold) and connects with its saved password; cancel
+      // leaves the workspace disconnected, without a toast. A row unlocked since the list
+      // loaded reads its password here.
+      let config = recentManager.withSavedPassword(seed)
       do {
-        try await manager.connect(config: entry.config)
+        try await manager.connect(config: config)
+      } catch WorkspaceConnectError.unlockRequired {
+        return
       } catch {
         await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
         // The window now shows the workspace: its form offers the plugin install
-        manager.presentConnectErrorIfActionable(error, config: entry.config)
+        manager.presentConnectErrorIfActionable(error, config: config)
       }
+    }
+  }
+
+  /// Unlocks `config` on this window when its lock is blocked; true when it may be used
+  private func unlock(_ config: ConnectionConfig, reason: String) async -> Bool {
+    await LockCenter.shared.requestUnlock(for: config, reason: reason, anchor: hostWindow.window)
+  }
+
+  /// Deleting the last row of a locked connection would drop its lock: a blocked row asks first
+  private func removeConnection(_ entry: ConnectionHistoryEntry) {
+    Task {
+      guard
+        await unlock(entry.config, reason: "Unlock \(entry.shortDisplayName) to remove it")
+      else { return }
+      recentManager.removeConnection(id: entry.id)
     }
   }
 
@@ -245,16 +276,23 @@ struct AppWelcomeView: View {
     isWorkspaceEditPresented = true
   }
 
+  /// A closed locked workspace asks on this window (Touch ID or the Mac password when this
+  /// Mac keeps its key, else the Lock password) once Save reads its file; Cancel changes nothing
   private func saveWorkspaceEdit(
     _ entry: WorkspaceHistoryEntry, _ name: String, _ destination: URL, _ iconColor: AccentColor?
   ) async throws {
-    try RecentWorkspaceEditor.apply(
+    let hostWindow = hostWindow
+    // The entry's name came from the file: one short line in the sheet and the system prompt
+    let shown = LockedWorkspaceOpen.displayName(entry.name)
+    try await RecentWorkspaceEditor.apply(
       entry: entry,
       name: name,
       destination: destination,
       iconColor: iconColor,
       recents: recentManager,
-      openWorkspaces: Array(windowManager.workspaces.values)
+      openWorkspaces: Array(windowManager.workspaces.values),
+      unlock: WorkspaceUnlockPrompt.unlock(
+        title: shown, reason: "rename \(shown)", anchor: { hostWindow.window })
     )
   }
 
@@ -265,23 +303,49 @@ struct AppWelcomeView: View {
     isShowingConnectionSidebar = true
   }
 
-  /// A fresh picker each time: all saved connections checked, favorites of no workspace.
+  /// A fresh picker each time: all saved connections checked, favorites of no workspace. Each
+  /// locked connection asks first; after a cancel the rest stay locked and out of the file.
   private func showConnectionExport() {
-    exportModel = ConnectionExportModel(
-      connections: recentManager.recentConnections, workspaces: windowManager.allWorkspaces)
-    isExportPresented = true
+    Task {
+      let connections = recentManager.recentConnections
+      for entry in connections
+      where LockCenter.shared.registry.refusal(for: entry.config) != nil
+        && DbloreConnectionFile.Connection(config: entry.config) != nil
+      {
+        guard
+          await unlock(
+            entry.config, reason: "Unlock \(entry.shortDisplayName) to export it")
+        else { break }
+      }
+      exportModel = ConnectionExportModel(
+        connections: connections, workspaces: windowManager.allWorkspaces)
+      isExportPresented = true
+    }
   }
 
+  /// A locked row asks first and then opens with its saved password; cancel does nothing
   private func editConnection(_ entry: ConnectionHistoryEntry) {
-    editingConnectionId = entry.id
-    editingConnectionConfig = entry.config
-    isShowingConnectionSidebar = true
+    Task {
+      guard await unlock(entry.config, reason: "Unlock \(entry.shortDisplayName) to edit it")
+      else { return }
+      editingConnectionId = entry.id
+      editingConnectionConfig = recentManager.withSavedPassword(entry.config)
+      isShowingConnectionSidebar = true
+    }
   }
 
   /// Connect creates a workspace. Save updates the recent card that was opened; unless the AI
   /// fields were edited it keeps the saved row's AI policy and rules, so a stale form copy never
   /// loosens a policy another window saved meanwhile.
+  /// A locked connection asks first (in Edit mode the edited row and its target); cancel keeps
+  /// the form as it is.
   private func submitConnectionForm(_ config: ConnectionConfig, aiFieldsEdited: Bool) async throws {
+    let edited = recentManager.recentConnections.first { $0.id == editingConnectionId }
+    for locked in [edited?.config, config].compactMap(\.self) {
+      guard await unlock(locked, reason: "Unlock this connection to save it") else {
+        throw WorkspaceConnectError.unlockRequired
+      }
+    }
     if let id = editingConnectionId {
       let row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
       guard recentManager.replaceConnection(id: id, with: row) else {
@@ -292,9 +356,16 @@ struct AppWelcomeView: View {
     try await connectAndCreateWorkspaceForWelcome(config, aiFieldsEdited: aiFieldsEdited)
   }
 
+  /// A locked connection asks first and is tested with its saved password; cancel keeps the
+  /// form as it is.
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
+    let blocked = LockCenter.shared.registry.refusal(for: config) != nil
+    guard await unlock(config, reason: "Unlock this connection to test it") else {
+      throw WorkspaceConnectError.unlockRequired
+    }
     let tempManager = Self.makeTestConnectionManager()
-    return try await tempManager.testConnection(config: config)
+    return try await tempManager.testConnection(
+      config: blocked ? recentManager.withSavedPassword(config) : config)
   }
 
   /// Test Connection before a workspace exists. Asks through the app-wide trust sheet.
@@ -365,11 +436,19 @@ struct WelcomeSidebar: View {
         action: onImport)
     } footer: {
       HStack(spacing: Spacing.sm) {
-        Button(action: updater.checkForUpdates) {
-          Image(systemName: "arrow.triangle.2.circlepath")
+        if let version = updater.availableUpdateVersion {
+          Button(action: updater.checkForUpdates) {
+            Image(systemName: "arrow.down")
+          }
+          .buttonStyle(SuccessButtonStyle(iconOnly: true))
+          .help("Update to Dblore \(version)")
+        } else {
+          Button(action: updater.checkForUpdates) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+          }
+          .help("Check for Updates")
+          .disabled(!updater.canCheckForUpdates)
         }
-        .help("Check for Updates")
-        .disabled(!updater.canCheckForUpdates)
 
         Button {
           openURL(Self.repositoryURL)
@@ -673,7 +752,18 @@ struct RecentWorkspaceRow: View {
             }
         }
       } title: {
-        Text(workspace.name)
+        HStack(spacing: Spacing.xs) {
+          Text(workspace.name)
+          // From the entry alone: a workspace locked with the Lock password only has no
+          // Keychain item and still shows it
+          if workspace.isLocked {
+            Image(systemName: "lock.fill")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+              .help("Locked")
+              .accessibilityLabel("Locked")
+          }
+        }
       } detail: {
         if let connection = workspace.connectionDisplayString, !connection.isEmpty {
           Text(connection)
@@ -756,6 +846,13 @@ struct RecentConnectionRow: View {
               .accessibilityLabel("Color \(color.rawValue)")
           }
           Text(connection.shortDisplayName)
+          if connection.config.isLocked {
+            Image(systemName: "lock.fill")
+              .font(.caption)
+              .foregroundColor(.foregroundMuted)
+              .help("Locked")
+              .accessibilityLabel("Locked")
+          }
         }
       } detail: {
         Text(connection.config.displayString)

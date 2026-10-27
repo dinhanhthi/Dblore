@@ -128,6 +128,210 @@ struct SQLAutocompleteProviderTests {
     #expect(suggestions.contains { $0.text == "users" })
   }
 
+  // MARK: - CTE columns and ORDER BY / GROUP BY aliases
+
+  /// Suggestion texts with the cursor at `|` in `sql`
+  private func suggest(_ provider: SQLAutocompleteProvider, _ sql: String) -> [String] {
+    let cursor = (sql as NSString).range(of: "|").location
+    let text = sql.replacingOccurrences(of: "|", with: "")
+    return provider.getSuggestions(for: text, at: cursor, dialect: .postgresql).map(\.text)
+  }
+
+  private func cteProvider() -> SQLAutocompleteProvider {
+    let provider = SQLAutocompleteProvider()
+    provider.update(tables: [
+      table("users", columns: ["user_id", "user_name", "tag"]),
+      table("orders", columns: ["id", "total", "zeta_total"]),
+    ])
+    return provider
+  }
+
+  @Test("a CTE column list names its columns")
+  func cteColumnList() {
+    let provider = cteProvider()
+    let sql =
+      "WITH recent (order_id, amount) AS (SELECT id, total FROM orders) SELECT am| FROM recent"
+    #expect(suggest(provider, sql).contains("amount"))
+    let scope = provider.statementScope(
+      in: sql.replacingOccurrences(of: "|", with: ""), cursor: 0, dialect: .postgresql)
+    #expect(scope.ctes.map(\.name) == ["recent"])
+    #expect(scope.ctes.first?.columns == ["order_id", "amount"])
+  }
+
+  @Test("CTE columns come from the body's select list, aliases included")
+  func cteSelectAliases() {
+    let provider = cteProvider()
+    let sql =
+      "WITH stats AS (SELECT o.id, count(*) AS order_count, max(total) last_total, total + 1 "
+      + "FROM orders o GROUP BY o.id) SELECT | FROM stats"
+    let scope = provider.statementScope(
+      in: sql.replacingOccurrences(of: "|", with: ""), cursor: 0, dialect: .postgresql)
+    #expect(scope.ctes.first?.columns == ["id", "order_count", "last_total"])
+    #expect(scope.referencedCTEs == ["stats"])
+    #expect(
+      suggest(provider, sql.replacingOccurrences(of: "|", with: "order|")).contains("order_count"))
+    #expect(
+      suggest(provider, sql.replacingOccurrences(of: "|", with: "last|")).contains("last_total"))
+  }
+
+  @Test("* and t.* expand from schema tables and earlier CTEs")
+  func cteStarExpansion() {
+    let provider = cteProvider()
+    let sql =
+      "WITH u AS (SELECT * FROM users), v AS (SELECT x.*, 1 AS extra FROM u AS x JOIN orders o ON 1=1), "
+      + "w AS (SELECT o.* FROM v, orders o) SELECT * FROM w"
+    let scope = provider.statementScope(in: sql, cursor: 0, dialect: .postgresql)
+    #expect(scope.ctes.map(\.name) == ["u", "v", "w"])
+    #expect(scope.ctes[0].columns == ["user_id", "user_name", "tag"])
+    #expect(scope.ctes[1].columns == ["user_id", "user_name", "tag", "extra"])
+    #expect(scope.ctes[2].columns == ["id", "total", "zeta_total"])
+  }
+
+  @Test("CTE names are offered as tables, their columns only when used as a source")
+  func cteNamesAsTables() {
+    let provider = cteProvider()
+    let tables = provider.getSuggestions(
+      for: "WITH active_users AS (SELECT 1 AS a) SELECT * FROM act", at: 54, dialect: .postgresql)
+    let match = tables.first { $0.text == "active_users" }
+    guard case .table = match?.type else {
+      Issue.record("no CTE table suggestion")
+      return
+    }
+    // A CTE source is table context: no fallback to every schema column
+    let columns = suggest(provider, "WITH c AS (SELECT 1 AS zeta_c) SELECT zeta| FROM c")
+    #expect(columns.contains("zeta_c"))
+    #expect(!columns.contains("zeta_total"))
+    // A CTE that is not a source offers no columns
+    #expect(
+      !suggest(provider, "WITH c AS (SELECT 1 AS zeta_c) SELECT zeta| FROM orders").contains(
+        "zeta_c"))
+  }
+
+  @Test("nested, recursive and quoted CTEs")
+  func nestedAndRecursiveCTEs() {
+    let provider = cteProvider()
+    let nested =
+      "WITH outer_cte AS (WITH inner_cte AS (SELECT 1 AS deep) "
+      + "SELECT deep, s.v AS shallow FROM inner_cte, (SELECT 2 AS v) s) SELECT * FROM outer_cte"
+    let scope = provider.statementScope(in: nested, cursor: 0, dialect: .postgresql)
+    #expect(scope.ctes.map(\.name) == ["inner_cte", "outer_cte"])
+    #expect(scope.ctes[1].columns == ["deep", "shallow"])
+
+    let recursive =
+      "WITH RECURSIVE r AS MATERIALIZED (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r), "
+      + "q (k) AS (SELECT 1) SELECT * FROM r"
+    let recursiveScope = provider.statementScope(in: recursive, cursor: 0, dialect: .postgresql)
+    #expect(recursiveScope.ctes.map(\.columns) == [["n"], ["k"]])
+
+    let quoted =
+      "WITH `Recent Rows` AS (SELECT id AS `Row Id` FROM orders) SELECT * FROM `Recent Rows`"
+    let quotedScope = provider.statementScope(in: quoted, cursor: 0, dialect: .mysql)
+    #expect(quotedScope.ctes.first?.name == "Recent Rows")
+    #expect(quotedScope.ctes.first?.columns == ["Row Id"])
+    #expect(quotedScope.referencedCTEs == ["recent rows"])
+  }
+
+  @Test("after ORDER BY the select aliases come first, then columns")
+  func orderByAliasesFirst() {
+    let provider = cteProvider()
+    let result = suggest(
+      provider,
+      "SELECT user_name AS name_label, count(*) AS total_orders FROM users ORDER BY t|")
+    #expect(result.first == "total_orders")
+    #expect(result.contains("tag"))
+  }
+
+  @Test("WITHIN GROUP and OVER items keep their aliases")
+  func orderByAliasesAfterWindowSyntax() {
+    let provider = cteProvider()
+    func aliases(_ sql: String) -> [String]? {
+      provider.statementScope(in: sql, cursor: utf16Length(sql), dialect: .postgresql)
+        .orderByAliases
+    }
+    #expect(
+      aliases(
+        "SELECT user_name AS x, percentile_cont(0.5) WITHIN GROUP (ORDER BY total) AS med, "
+          + "id AS z FROM orders ORDER BY ") == ["x", "med", "z"])
+    #expect(
+      aliases(
+        "SELECT count(*) OVER w AS n, count(*) OVER w, sum(total) OVER (PARTITION BY id) win_sum "
+          + "FROM orders WINDOW w AS (ORDER BY id) ORDER BY ") == ["n", "win_sum"])
+    #expect(
+      aliases(
+        "SELECT a IS DISTINCT FROM b AS changed, total IS NOT DISTINCT FROM 0 c FROM orders "
+          + "ORDER BY ") == ["changed", "c"])
+    let cte = provider.statementScope(
+      in: "WITH s AS (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total) AS med, id "
+        + "FROM orders) SELECT * FROM s", cursor: 0, dialect: .postgresql)
+    #expect(cte.ctes.first?.columns == ["med", "id"])
+  }
+
+  @Test("chained * expansion is capped per CTE")
+  func cteStarExpansionCapped() {
+    let provider = cteProvider()
+    var sql = "WITH c0 AS (SELECT * FROM users)"
+    for index in 1...40 { sql += ", c\(index) AS (SELECT *, * FROM c\(index - 1))" }
+    sql += " SELECT * FROM c40"
+    let scope = provider.statementScope(in: sql, cursor: 0, dialect: .postgresql)
+    #expect(scope.ctes.first?.columns == ["user_id", "user_name", "tag"])
+    #expect(scope.ctes.last?.columns.count == SQLAutocompleteProvider.maxCTEColumns)
+  }
+
+  @Test("CTE column lists, * over unknown sources and CTE column suggestions are capped")
+  func cteColumnListAndSuggestionsCapped() {
+    let provider = cteProvider()
+    let cap = SQLAutocompleteProvider.maxCTEColumns
+    let names = (0..<600).map { "a\($0)" }
+    let list = provider.statementScope(
+      in: "WITH c0 (\(names.joined(separator: ", "))) AS (SELECT 1) SELECT * FROM c0", cursor: 0,
+      dialect: .postgresql)
+    #expect(list.ctes.first?.columns == Array(names.prefix(cap)))
+
+    let unknown = provider.statementScope(
+      in: "WITH c AS (SELECT *, *, x.* FROM nope, nope, nope x) SELECT * FROM c", cursor: 0,
+      dialect: .postgresql)
+    #expect(unknown.ctes.first?.columns == [])
+
+    // c0 fills the total cap with long names: the shorter zq of a later CTE is not offered
+    let wide = "c0 (\((0..<cap).map { "zz\($0)" }.joined(separator: ","))) AS (SELECT 1)"
+    var chain = ""
+    for index in 1...5 { chain += ", c\(index) AS (SELECT * FROM c\(index - 1))" }
+    let capped = suggest(
+      provider, "WITH \(wide)\(chain), q (zq) AS (SELECT 1) SELECT z| FROM c5, q")
+    #expect(capped.count == 20)
+    #expect(Set(capped).count == capped.count)
+    #expect(!capped.contains("zq"))
+    // Defined first, zq is offered first
+    #expect(
+      suggest(provider, "WITH q (zq) AS (SELECT 1), \(wide)\(chain) SELECT z| FROM c5, q").first
+        == "zq")
+  }
+
+  @Test("after GROUP BY the select aliases come first")
+  func groupByAliasesFirst() {
+    let provider = cteProvider()
+    let result = suggest(
+      provider, "SELECT date_trunc('day', now()) day_bucket, tag FROM users GROUP BY da|")
+    #expect(result.first == "day_bucket")
+    #expect(result.contains("DATE"))
+  }
+
+  @Test("aliases come from the query level at the cursor, and only after ORDER BY or GROUP BY")
+  func aliasesOfSameLevel() {
+    let provider = cteProvider()
+    let inner = suggest(
+      provider,
+      "SELECT tag AS al_outer FROM (SELECT tag AS al_inner FROM users ORDER BY al|) s")
+    #expect(inner.first == "al_inner")
+    #expect(!inner.contains("al_outer"))
+    let outer = suggest(
+      provider,
+      "SELECT s.al_inner AS al_outer FROM (SELECT tag AS al_inner FROM users) s ORDER BY al|")
+    #expect(outer.first == "al_outer")
+    #expect(!outer.contains("al_inner"))
+    #expect(!suggest(provider, "SELECT tag AS al_tag FROM users WHERE al|").contains("al_tag"))
+  }
+
   // MARK: - extractTableReferences parity with the original implementation
 
   private func parityProvider() -> SQLAutocompleteProvider {

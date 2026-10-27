@@ -730,9 +730,10 @@ struct NotebookResultGridView: View {
       },
       valueFilter: valueFilter,
       onValueFilterChange: { valueFilter = $0 },
-      onShowCellDetails: { row, originalRow, column in
+      onShowCellDetails: { row, originalRow, column, format in
         viewModel.showGridCellInSidebar(
-          row: row, originalRow: originalRow, column: column, result: result, cellId: cellId)
+          row: row, originalRow: originalRow, column: column, result: result, cellId: cellId,
+          binaryFormat: format)
       },
       onShowRowDetails: { row, originalRow in
         viewModel.showRowDetail(
@@ -744,6 +745,8 @@ struct NotebookResultGridView: View {
       currentMatch: currentMatch,
       searchMatches: viewModel.searchState.matches,
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
+      binaryFormats: viewModel.binaryFormats,
+      onBinaryFormatChange: { viewModel.setBinaryFormat($1, column: $0) },
       relationSchema: relation?.schema,
       relationTable: relation?.table,
       baseColumnNames: relation?.baseColumns,

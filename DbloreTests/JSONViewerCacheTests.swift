@@ -52,19 +52,33 @@ struct JSONViewerCacheTests {
     JSONViewerContent.clearCaches()
   }
 
+  @Test("The viewer shows a JSON whose pretty form would explode as it is")
+  func viewerKeepsAmplifyingJSONRaw() {
+    JSONViewerContent.clearCaches()
+    // 61 KB nested 512 deep: pretty-printed it would be 30 MB of indentation
+    let json =
+      String(repeating: "[", count: 512)
+      + Array(repeating: "1", count: 30_000).joined(separator: ",")
+      + String(repeating: "]", count: 512)
+    #expect(JSONViewerContent.prettyPrinted(json) == json)
+    JSONViewerContent.clearCaches()
+  }
+
   @Test("The capped highlighter measures the string it highlights, not the raw cell")
   func cappedHighlighterMeasuresItsInput() {
     JSONViewerContent.clearCaches()
     // Compact form under the cap, pretty form over it
     let compact =
       #"{"a":""# + String(repeating: "a", count: HighlightedJSONText.maxCachedBytes - 10) + #""}"#
-    let pretty = JSONViewerContent.prettyPrinted(compact)
+    // Its pretty form, written out: the viewer does not format output this large
+    let pretty =
+      "{\n  \"a\" : \"" + String(repeating: "a", count: HighlightedJSONText.maxCachedBytes - 10)
+      + "\"\n}"
     #expect(compact.utf8.count <= HighlightedJSONText.maxCachedBytes)
     #expect(pretty.utf8.count > HighlightedJSONText.maxCachedBytes)
 
-    // The viewer caches both the pretty copy and its highlight
+    // The viewer caches the highlight of what it shows
     _ = HighlightedJSONText.attributedString(for: pretty, cachesAnySize: true)
-    #expect(JSONViewerContent.lastPrettyPrint?.json == compact)
     #expect(HighlightedJSONText.lastHighlight?.json == pretty)
 
     // The capped path (cell info) does not retain JSON above the cap

@@ -5,7 +5,8 @@
 //  Export of saved connections, and optionally the favorites of one open workspace, to a Dblore
 //  connections file. Rows keep only the allow-listed fields of `DbloreConnectionFile.Connection`,
 //  so no password or key read with the history ever reaches the model. File databases are left
-//  out. The file is encoded and written off the main actor.
+//  out, and so is a locked connection until it is unlocked (Welcome asks first). The file is
+//  encoded and written off the main actor.
 //
 
 import AppKit
@@ -25,6 +26,8 @@ final class ConnectionExportModel {
     let engine: String
     var isSelected = true
     fileprivate let connection: DbloreConnectionFile.Connection
+    /// Every lock the row reaches: a relock while the picker is open leaves it out of the file
+    fileprivate let lockIdentities: Set<LockIdentity>
   }
 
   /// An open workspace whose favorites can be exported.
@@ -46,22 +49,32 @@ final class ConnectionExportModel {
   var favoritesSourceID: UUID?
   private(set) var isExporting = false
   private(set) var errorMessage: String?
+  private let registry: LockRegistry
 
-  /// `workspaces`: open workspaces; those with favorites are offered.
-  init(connections: [ConnectionHistoryEntry], workspaces: [WorkspaceManager]) {
+  /// `workspaces`: open workspaces; those with favorites are offered. A connection whose lock
+  /// is not unlocked in this session is left out.
+  init(
+    connections: [ConnectionHistoryEntry], workspaces: [WorkspaceManager],
+    registry: LockRegistry = .shared
+  ) {
+    self.registry = registry
     var rows: [Row] = []
+    var skippedFileDatabases = 0
     for entry in connections {
       guard let connection = DbloreConnectionFile.Connection(config: entry.config) else {
+        skippedFileDatabases += 1
         continue
       }
+      guard registry.refusal(for: entry.config) == nil else { continue }
       rows.append(
         Row(
           id: entry.id, name: entry.shortDisplayName,
           address: "\(connection.host):\(connection.port)/\(connection.database)",
-          engine: entry.config.databaseType.displayName, connection: connection))
+          engine: entry.config.databaseType.displayName, connection: connection,
+          lockIdentities: LockIdentity.all(entry.config)))
     }
     self.rows = rows
-    skippedFileDatabases = connections.count - rows.count
+    self.skippedFileDatabases = skippedFileDatabases
     favoritesSources =
       workspaces
       .filter { !$0.workspace.favorites.items.isEmpty }
@@ -79,6 +92,12 @@ final class ConnectionExportModel {
   }
 
   var selectedCount: Int { rows.count { $0.isSelected } }
+
+  /// The selected connections whose locks are still unlocked
+  var exportedConnections: [DbloreConnectionFile.Connection] {
+    rows.filter { $0.isSelected && !$0.lockIdentities.contains(where: registry.isBlocked) }
+      .map(\.connection)
+  }
 
   private var selectedFavorites: [DbloreConnectionFile.Favorite] {
     favoritesSources.first { $0.id == favoritesSourceID }?.favorites ?? []
@@ -114,7 +133,7 @@ final class ConnectionExportModel {
     defer { isExporting = false }
     guard let url = await Self.showSavePanel() else { return nil }
     let file = DbloreConnectionFile(
-      connections: rows.filter(\.isSelected).map(\.connection), favorites: selectedFavorites)
+      connections: exportedConnections, favorites: selectedFavorites)
     let result = await Task.detached(priority: .userInitiated) {
       Result {
         try file.encoded().write(to: url, options: .atomic)

@@ -217,6 +217,100 @@ struct DataModelConnectionConfigTests {
     #expect(decoded == config)
   }
 
+  @Test(
+    "Attached databases round-trip with their bookmarks; none omits the key; old or wrong-type JSON decodes as none"
+  )
+  func attachedDatabasesCoding() throws {
+    let plain = ConnectionConfig(databaseType: .sqlite, host: "", database: "/tmp/main.sqlite")
+    #expect(try encodedObject(plain)["attachedDatabases"] == nil)
+
+    var config = plain
+    config.attachedDatabases = [
+      AttachedDatabase(name: "archive", path: "/tmp/archive.sqlite", bookmark: Data([1, 2, 3])),
+      AttachedDatabase(name: "logs", path: "/tmp/logs.sqlite", bookmark: nil),
+    ]
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+    #expect(decoded.attachedDatabases == config.attachedDatabases)
+    #expect(decoded == config)
+
+    // A row saved before attached databases has no key
+    var old = try encodedObject(plain)
+    #expect(
+      try JSONDecoder().decode(
+        ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: old)
+      ).attachedDatabases.isEmpty)
+    old["attachedDatabases"] = "archive"
+    #expect(
+      try JSONDecoder().decode(
+        ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: old)
+      ).attachedDatabases.isEmpty)
+  }
+
+  @Test("At most 10 attached databases are kept, on set and on decode")
+  func attachedDatabasesLimit() throws {
+    let eleven = (0..<11).map {
+      AttachedDatabase(name: "db\($0)", path: "/tmp/db\($0).sqlite", bookmark: nil)
+    }
+    var config = ConnectionConfig(databaseType: .sqlite, host: "", database: "/tmp/main.sqlite")
+    config.attachedDatabases = eleven
+    #expect(config.attachedDatabases == Array(eleven.prefix(10)))
+
+    var object = try encodedObject(config)
+    object["attachedDatabases"] = try JSONSerialization.jsonObject(
+      with: try JSONEncoder().encode(eleven))
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.attachedDatabases == Array(eleven.prefix(10)))
+  }
+
+  @Test(
+    "Attachments need an identifier name, not main or temp, unique case-insensitively, and an absolute path"
+  )
+  func attachedDatabasesValidation() {
+    func attachment(_ name: String, _ path: String) -> AttachedDatabase {
+      AttachedDatabase(name: name, path: path, bookmark: nil)
+    }
+    var config = ConnectionConfig(databaseType: .sqlite, host: "", database: "/tmp/main.sqlite")
+    config.attachedDatabases = [
+      attachment("archive", "/tmp/archive.sqlite"),
+      attachment("_logs2", "/tmp/logs.sqlite"),
+      attachment("2nd", "/tmp/second.sqlite"),
+      attachment("bad name", "/tmp/space.sqlite"),
+      attachment("café", "/tmp/accent.sqlite"),
+      attachment("", "/tmp/empty.sqlite"),
+      attachment("MAIN", "/tmp/main-clash.sqlite"),
+      attachment("Temp", "/tmp/temp-clash.sqlite"),
+      attachment("ARCHIVE", "/tmp/archive-copy.sqlite"),
+      attachment("relative", "notes.sqlite"),
+    ]
+    let result = config.validatedAttachedDatabases()
+    #expect(result.attachments.map(\.name) == ["archive", "_logs2"])
+    #expect(result.warnings.count == 8)
+    #expect(result.warnings.allSatisfy { !$0.contains("\n") })
+    #expect(
+      result.warnings.contains { $0.contains("\"space.sqlite\"") && $0.contains("identifier") })
+    #expect(result.warnings.contains { $0.contains("\"ARCHIVE\"") && $0.contains("already used") })
+    #expect(result.warnings.contains { $0.contains("\"relative\"") && $0.contains("absolute") })
+
+    config.attachedDatabases = []
+    #expect(config.validatedAttachedDatabases().attachments.isEmpty)
+    #expect(config.validatedAttachedDatabases().warnings.isEmpty)
+  }
+
+  @Test("Attached databases on a DuckDB or server connection are dropped with a warning")
+  func attachedDatabasesSQLiteOnly() {
+    for engine in [DatabaseType.duckdb, .postgresql] {
+      var config = ConnectionConfig(databaseType: engine, database: "/tmp/main.duckdb")
+      config.attachedDatabases = [
+        AttachedDatabase(name: "archive", path: "/tmp/archive.duckdb", bookmark: nil)
+      ]
+      let result = config.validatedAttachedDatabases()
+      #expect(result.attachments.isEmpty)
+      #expect(result.warnings == ["Attached databases work only on SQLite connections: 1 skipped."])
+    }
+  }
+
   @Test("Validation does not require a host or username for SQLite")
   func sqliteValidationDoesNotRequireHost() {
     let missingHost = ConnectionConfig(
@@ -424,6 +518,54 @@ struct DataModelConnectionConfigTests {
         history: [loaded],
         config: edited
       ) == loaded.id)
+  }
+
+  private func openingHistory() -> [ConnectionHistoryEntry] {
+    [
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .postgresql, host: "192.168.64.1", port: 15435, database: "qa",
+          username: "thi", name: "Recent")),
+      ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          databaseType: .postgresql, host: "192.168.64.1", port: 15499, database: "qa",
+          username: "thi", name: "Older")),
+    ]
+  }
+
+  @Test("A form opened fresh loads the most recent row")
+  func freshFormLoadsMostRecentRow() {
+    let history = openingHistory()
+    let opening = ConnectionFormContent.openingHistory(
+      history: history, draft: ConnectionFormContent.newFormDraft(), opensOnDraft: false)
+
+    #expect(opening.load?.id == history[0].id)
+    #expect(opening.selectedHistoryId == history[0].id)
+  }
+
+  @Test("A form opened on a draft without a matching row keeps the draft, no row selected")
+  func draftFormWithoutMatchKeepsDraft() {
+    let draft = ConnectionConfig(
+      databaseType: .postgresql, host: "192.168.64.1", port: 15500, database: "qa",
+      username: "thi")
+    let opening = ConnectionFormContent.openingHistory(
+      history: openingHistory(), draft: draft, opensOnDraft: true)
+
+    #expect(opening.load == nil)
+    #expect(opening.selectedHistoryId == nil)
+  }
+
+  @Test("A form opened on a draft selects the row of the same target without loading it")
+  func draftFormSelectsMatchingRow() {
+    let history = openingHistory()
+    var draft = history[1].config
+    draft.password = ""
+    draft.name = "From file"
+    let opening = ConnectionFormContent.openingHistory(
+      history: history, draft: draft, opensOnDraft: true)
+
+    #expect(opening.load == nil)
+    #expect(opening.selectedHistoryId == history[1].id)
   }
 
   // MARK: - Commit style storage

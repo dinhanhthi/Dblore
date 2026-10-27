@@ -267,6 +267,12 @@ extension Color {
     dark: Color(hex: "22c55e")  // Green 500
   )
 
+  /// Label on a `success` fill: white or near-black, whichever contrasts more
+  static let onSuccess = Color(
+    light: Color(hex: ColorContrast.labelHex(on: "15803d")),
+    dark: Color(hex: ColorContrast.labelHex(on: "22c55e"))
+  )
+
   static let warning = Color(
     light: Color(hex: "c2410c"),  // Orange 700
     dark: Color(hex: "f59e0b")  // Amber 500

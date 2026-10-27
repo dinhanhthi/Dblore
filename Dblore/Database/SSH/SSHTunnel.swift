@@ -34,8 +34,8 @@ nonisolated enum SSHTunnelError: Error, Equatable, LocalizedError {
   /// Maps the swift-nio-ssh errors that have a clearer meaning for the user.
   init?(sshErrorType: NIOSSHError.ErrorType) {
     switch sshErrorType {
-    // swift-nio-ssh reports no diagnostics here. With OpenSSH servers the usual cause is a
-    // host key type it does not implement (RSA), since ciphers and kex overlap.
+    // swift-nio-ssh does not say which list had no match (kex, host key, cipher or MAC). The
+    // usual cause is an RSA-only or SHA-1-only server.
     case .keyExchangeNegotiationFailure: self = .unsupportedHostKeyAlgorithm
     case .channelSetupRejected: self = .channelOpenRejected
     default: return nil
@@ -45,8 +45,10 @@ nonisolated enum SSHTunnelError: Error, Equatable, LocalizedError {
   var errorDescription: String? {
     switch self {
     case .unsupportedHostKeyAlgorithm:
-      "The SSH server offers no supported host key algorithm. RSA host keys are not supported; "
-        + "the server likely only has an RSA host key. Use an ed25519 or ECDSA host key."
+      "The SSH server and Dblore share no key-exchange, host-key, cipher or MAC algorithm. "
+        + "Dblore supports ed25519 and ECDSA host keys, curve25519 and ECDH key exchange, and "
+        + "AES-GCM encryption. The usual cause is a server that offers only RSA host keys or only "
+        + "SHA-1 algorithms."
     case .authenticationFailed:
       "SSH authentication failed. Check the SSH user name and password or key."
     case .hostKeyRejected:

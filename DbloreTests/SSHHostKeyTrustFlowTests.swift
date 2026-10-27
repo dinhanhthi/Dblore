@@ -264,7 +264,7 @@ struct SSHHostKeyTrustFlowTests {
     // The prompt stays open past the timeout; without the pause the deadline would fire and
     // fail with handshakeTimedOut. The timeout leaves room for key exchange under load.
     let error = try await closeServerDuringPrompt(
-      handshakeTimeout: .seconds(2), hold: .seconds(3))
+      handshakeTimeout: .seconds(5), hold: .seconds(6))
     #expect(error as? SSHTunnelError == .closedWhileConfirmingHostKey)
   }
 

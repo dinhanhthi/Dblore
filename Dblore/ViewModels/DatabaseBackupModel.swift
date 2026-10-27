@@ -173,7 +173,9 @@ final class DatabaseBackupModel {
     end(id)
   }
 
-  /// SQLite only: asks where to save, then copies the database file (`sqlite3_backup`)
+  /// SQLite only: asks where to save, then copies the database file (`sqlite3_backup`). A
+  /// relocked database (the manager's `lockSource`) is refused before the panel, after it and
+  /// just before the copy starts.
   func copyDatabaseFile() async {
     guard activity == nil else { return }
     clearMessages()
@@ -183,10 +185,19 @@ final class DatabaseBackupModel {
       errorMessage = "No SQLite database is open"
       return
     }
+    let lockSource = manager.lockSource
+    if let refusal = lockSource.refusal(for: config) {
+      errorMessage = refusal.localizedDescription
+      return
+    }
     guard
       let destination = await environment.chooseSaveURL(
         Self.baseName(config) + " copy.sqlite", "sqlite")
     else { return }
+    if let refusal = lockSource.refusal(for: config) {
+      errorMessage = refusal.localizedDescription
+      return
+    }
     if SQLDumpWriter.isConnectedDatabaseFile(destination, config: config) {
       errorMessage = SQLiteFileBackupError.destinationIsDatabase.localizedDescription
       return
@@ -196,7 +207,10 @@ final class DatabaseBackupModel {
     let source = URL(fileURLWithPath: config.database)
     let copy = environment.copyDatabase
     let report = reporter(id, .copying) { $0.copyProgress = $1 }
-    let work = Task { try await copy(source, destination, report) }
+    let work = Task {
+      if let refusal = lockSource.refusal(for: config) { throw refusal }
+      return try await copy(source, destination, report)
+    }
     cancelWork = { work.cancel() }
     do {
       copyProgress = try await work.value

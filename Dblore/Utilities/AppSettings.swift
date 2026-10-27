@@ -94,6 +94,24 @@ enum CopyRowsFormat: String, CaseIterable {
   }
 }
 
+/// How long the Mac stays without input before Dblore covers its unlocked items again
+enum LockIdleTimeout: Int, CaseIterable {
+  case minutes5 = 5
+  case minutes15 = 15
+  case minutes30 = 30
+  case minutes60 = 60
+  case never = 0
+
+  var title: String {
+    self == .never ? "Never" : "\(rawValue) minutes"
+  }
+
+  /// Nil for Never
+  var seconds: TimeInterval? {
+    self == .never ? nil : TimeInterval(rawValue * 60)
+  }
+}
+
 /// Where the AI assistant panel opens
 enum AIPanelMode: String, CaseIterable {
   case sidebar
@@ -103,6 +121,29 @@ enum AIPanelMode: String, CaseIterable {
     switch self {
     case .sidebar: return "Right sidebar"
     case .bubble: return "Bubble"
+    }
+  }
+}
+
+/// Indent of one nesting level when Format SQL runs
+enum FormatterIndent: String, CaseIterable {
+  case twoSpaces
+  case fourSpaces
+  case tab
+
+  var title: String {
+    switch self {
+    case .twoSpaces: return "2 spaces"
+    case .fourSpaces: return "4 spaces"
+    case .tab: return "Tab"
+    }
+  }
+
+  var indent: SQLFormatter.Options.Indent {
+    switch self {
+    case .twoSpaces: return .spaces(2)
+    case .fourSpaces: return .spaces(4)
+    case .tab: return .tab
     }
   }
 }
@@ -358,6 +399,7 @@ class AppSettings {
     static let defaultNewTabType = "app.settings.defaultNewTabType"
     static let launchBehavior = "app.settings.launchBehavior"
     static let confirmBeforeQuit = "app.settings.confirmBeforeQuit"
+    static let lockIdleTimeout = "app.settings.lockIdleTimeout"
     static let aiPanelOpenMode = "app.settings.aiPanelOpenMode"
     static let aiBubblePosition = "app.settings.aiBubblePosition"
     static let aiSidebarWidth = "app.settings.aiSidebarWidth"
@@ -394,6 +436,11 @@ class AppSettings {
     static let mcpWriteToolsEnabled = "app.settings.mcpWriteToolsEnabled"
     static let mcpWriteScopes = "app.settings.mcpWriteScopes"
     static let mongoPreviewDocumentCount = "app.settings.mongoPreviewDocumentCount"
+    static let formatterIndent = "app.settings.formatterIndent"
+    static let formatterKeywordCase = "app.settings.formatterKeywordCase"
+    static let formatterFunctionCase = "app.settings.formatterFunctionCase"
+    static let formatterCommaPosition = "app.settings.formatterCommaPosition"
+    static let formatterLineWidth = "app.settings.formatterLineWidth"
   }
 
   /// Seconds a query must run before it notifies, when none is stored.
@@ -418,6 +465,11 @@ class AppSettings {
   static func clampFontSize(_ size: CGFloat) -> CGFloat {
     let rounded = size.rounded()
     return CGFloat(min(max(Double(rounded), fontSizeRange.lowerBound), fontSizeRange.upperBound))
+  }
+
+  /// View > Zoom In (1) or Zoom Out (-1): one whole point per step, inside `fontSizeRange`
+  static func steppedFontSize(_ size: CGFloat, by steps: Int) -> CGFloat {
+    clampFontSize(size + CGFloat(steps))
   }
 
   /// Gutter digits sit one point under the editor face, and never below 9. At the default
@@ -583,6 +635,14 @@ class AppSettings {
   var confirmBeforeQuit: Bool = false {
     didSet {
       defaults.set(confirmBeforeQuit, forKey: Keys.confirmBeforeQuit)
+    }
+  }
+
+  /// Idle time after which Dblore relocks its locked items (`RelockMonitor`)
+  /// Default: 15 minutes
+  var lockIdleTimeout: LockIdleTimeout = .minutes15 {
+    didSet {
+      defaults.set(lockIdleTimeout.rawValue, forKey: Keys.lockIdleTimeout)
     }
   }
 
@@ -1034,6 +1094,62 @@ class AppSettings {
     }
   }
 
+  // MARK: - SQL Formatter
+
+  /// Line width choices of Format SQL; 0 turns wrapping off
+  static let formatterLineWidths = [0, 80, 100, 120]
+
+  /// Indent of one nesting level. Default: 2 spaces
+  var formatterIndent: FormatterIndent = .twoSpaces {
+    didSet {
+      defaults.set(formatterIndent.rawValue, forKey: Keys.formatterIndent)
+    }
+  }
+
+  /// Case of SQL keywords. Default: upper
+  var formatterKeywordCase: SQLFormatter.Options.WordCase = .upper {
+    didSet {
+      defaults.set(formatterKeywordCase.rawValue, forKey: Keys.formatterKeywordCase)
+    }
+  }
+
+  /// Case of function names. Default: preserve
+  var formatterFunctionCase: SQLFormatter.Options.WordCase = .preserve {
+    didSet {
+      defaults.set(formatterFunctionCase.rawValue, forKey: Keys.formatterFunctionCase)
+    }
+  }
+
+  /// Comma at the end of a line or at the start of the next. Default: trailing
+  var formatterCommaPosition: SQLFormatter.Options.CommaPosition = .trailing {
+    didSet {
+      defaults.set(formatterCommaPosition.rawValue, forKey: Keys.formatterCommaPosition)
+    }
+  }
+
+  /// Lines wider than this wrap, one of `formatterLineWidths` (any other value goes back to 0).
+  /// Default: 0 (off)
+  var formatterLineWidth: Int = 0 {
+    didSet {
+      guard Self.formatterLineWidths.contains(formatterLineWidth) else {
+        formatterLineWidth = 0
+        return  // Avoid triggering didSet again
+      }
+      defaults.set(formatterLineWidth, forKey: Keys.formatterLineWidth)
+    }
+  }
+
+  /// The options Format SQL uses. The defaults give `SQLFormatter.Options.default`.
+  var formatterOptions: SQLFormatter.Options {
+    var options = SQLFormatter.Options()
+    options.indent = formatterIndent.indent
+    options.keywordCase = formatterKeywordCase
+    options.functionCase = formatterFunctionCase
+    options.commaPosition = formatterCommaPosition
+    options.maxLineWidth = formatterLineWidth
+    return options
+  }
+
   // MARK: - Safe Mode Unlock (forwarded to SafeModeAuthenticator: Keychain + Touch ID)
 
   private var safeModeAuth: SafeModeAuthenticator { .shared }
@@ -1183,6 +1299,12 @@ class AppSettings {
 
     if defaults.object(forKey: Keys.confirmBeforeQuit) != nil {
       confirmBeforeQuit = defaults.bool(forKey: Keys.confirmBeforeQuit)
+    }
+
+    if defaults.object(forKey: Keys.lockIdleTimeout) != nil,
+      let timeout = LockIdleTimeout(rawValue: defaults.integer(forKey: Keys.lockIdleTimeout))
+    {
+      lockIdleTimeout = timeout
     }
 
     if let raw = defaults.string(forKey: Keys.defaultNewTabType),
@@ -1374,6 +1496,32 @@ class AppSettings {
         ? count : Self.defaultMongoPreviewDocumentCount
     }
 
+    if let raw = defaults.string(forKey: Keys.formatterIndent),
+      let indent = FormatterIndent(rawValue: raw)
+    {
+      formatterIndent = indent
+    }
+    if let raw = defaults.string(forKey: Keys.formatterKeywordCase),
+      let wordCase = SQLFormatter.Options.WordCase(rawValue: raw)
+    {
+      formatterKeywordCase = wordCase
+    }
+    if let raw = defaults.string(forKey: Keys.formatterFunctionCase),
+      let wordCase = SQLFormatter.Options.WordCase(rawValue: raw)
+    {
+      formatterFunctionCase = wordCase
+    }
+    if let raw = defaults.string(forKey: Keys.formatterCommaPosition),
+      let position = SQLFormatter.Options.CommaPosition(rawValue: raw)
+    {
+      formatterCommaPosition = position
+    }
+    if defaults.object(forKey: Keys.formatterLineWidth) != nil {
+      // An unknown stored value goes back to off
+      let width = defaults.integer(forKey: Keys.formatterLineWidth)
+      formatterLineWidth = Self.formatterLineWidths.contains(width) ? width : 0
+    }
+
     // Load Safe Mode setting
     let savedSafeMode = defaults.integer(forKey: Keys.safeMode)
     if defaults.object(forKey: Keys.safeMode) != nil,
@@ -1407,6 +1555,7 @@ class AppSettings {
     wordWrapEnabled = true
     openWindowsAsTabs = false
     confirmBeforeQuit = false
+    lockIdleTimeout = .minutes15
     defaultNewTabType = .notebook
     launchBehavior = .welcome
     // Same-value assignment may not run didSet, so remove the snapshot here too.
@@ -1449,6 +1598,11 @@ class AppSettings {
     mcpWriteToolsEnabled = false
     mcpWriteScopes = [:]
     mongoPreviewDocumentCount = Self.defaultMongoPreviewDocumentCount
+    formatterIndent = .twoSpaces
+    formatterKeywordCase = .upper
+    formatterFunctionCase = .preserve
+    formatterCommaPosition = .trailing
+    formatterLineWidth = 0
     // Leave no Safe Mode password material behind (incl. a not-yet-migrated legacy hash);
     // goes through the shared authenticator's store (in-memory under XCTest)
     clearSafeModePassword()

@@ -578,6 +578,44 @@ struct SQLDumpWriterTests {
     #expect(try Self.leftovers(in: directory).isEmpty)
   }
 
+  @Test func relockDuringTheDumpStopsItBeforeTheNextBatch() async throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("source.db")
+    // 1200 rows: three INSERT batches of at most 500
+    try Self.exec(
+      source.path,
+      """
+      CREATE TABLE t (id INTEGER PRIMARY KEY);
+      WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1200)
+      INSERT INTO t SELECT i FROM n;
+      """)
+    let config = Self.sqliteConfig(source.path)
+    let registry = LockRegistry()
+    registry.setLockedConnections(LockIdentity.all(config))
+    registry.grant(LockIdentity(config))
+    let dumps = directory.appendingPathComponent("tmp", isDirectory: true)
+    try FileManager.default.createDirectory(at: dumps, withIntermediateDirectories: true)
+    let writer = SQLDumpWriter(
+      config: config, material: nil, sshCredential: nil,
+      sessionFactory: SQLDumpSessionFactory(inner: AppDatabaseSessionFactory()),
+      temporaryDirectory: dumps, lockSource: registry)
+    let destination = directory.appendingPathComponent("dump.sql")
+    let reports = ProgressRecorder()
+
+    // The lock comes back once the first batch is written
+    do {
+      _ = try await writer.write(to: destination) { progress in
+        reports.append(progress)
+        registry.relockAll()
+      }
+      Issue.record("Expected the relocked dump to be refused")
+    } catch DatabaseError.connectionLocked {}
+    #expect(reports.values.map(\.rowsWritten) == [500])
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+    #expect(try Self.leftovers(in: dumps).isEmpty)
+  }
+
   // MARK: - SQLite end to end
 
   @Test func sqliteDumpRestoresIntoAFreshDatabase() async throws {

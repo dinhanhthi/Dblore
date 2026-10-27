@@ -111,8 +111,47 @@ final class FocusedActionRegistry: ObservableObject {
 
   /// The key window's value for `key`, or nil. Never another window's value.
   func value<Value>(for key: WritableKeyPath<FocusedValues, Value?>) -> Value? {
-    guard let window = keyWindow(),
-      let entry = entries[ObjectIdentifier(window)], entry.window === window,
+    keyWindow().flatMap { value(for: key, in: $0) }
+  }
+
+  /// Whether the key window, or a window its sheet (or a sheet on that sheet) belongs to, shows
+  /// a workspace covered by the unlock overlay (`LockCenter.coverage`): the menus get none of its
+  /// values. Every window records its workspace here, the first `WindowGroup` window too.
+  var isKeyWindowLocked: Bool {
+    var window = keyWindow()
+    while let current = window {
+      if value(for: \.activeWorkspace, in: current)?.lockCoverage != nil { return true }
+      window = current.sheetParent
+    }
+    return false
+  }
+
+  /// `workspace` (the active one, `WorkspaceWindowManager.activeWorkspaceManager`) for a menu
+  /// command that acts on it: nil while the key window is covered, or when that workspace is
+  /// covered itself, so the command does nothing and shows disabled
+  func commandWorkspace(_ workspace: WorkspaceManager?) -> WorkspaceManager? {
+    guard !isKeyWindowLocked, workspace?.lockCoverage == nil else { return nil }
+    return workspace
+  }
+
+  /// The active workspace for a command that creates one when none is open (New Tab, Open):
+  /// nil, and nothing created, while the key window or that workspace is covered
+  func commandWorkspace(
+    _ workspace: WorkspaceManager?, orNew makeWorkspace: () -> WorkspaceManager
+  ) -> WorkspaceManager? {
+    guard !isKeyWindowLocked, workspace?.lockCoverage == nil else { return nil }
+    return workspace ?? makeWorkspace()
+  }
+
+  /// Re-renders the menus: a lock state change (`LockCenter`) covers or uncovers windows
+  func refresh() {
+    scheduleRefresh()
+  }
+
+  private func value<Value>(
+    for key: WritableKeyPath<FocusedValues, Value?>, in window: NSWindow
+  ) -> Value? {
+    guard let entry = entries[ObjectIdentifier(window)], entry.window === window,
       let winner = entry.publications[key]?.max(by: { ($0.depth, $0.order) < ($1.depth, $1.order) })
     else { return nil }
     return winner.value as? Value
@@ -231,7 +270,9 @@ private struct BridgedFocusPublisher: NSViewRepresentable {
 
 /// `@FocusedValue` for menu commands, falling back to what the key window published with
 /// `bridgedFocusedSceneValue` (AppKit-hosted windows). Observes the registry, so the commands
-/// re-render when the key window changes or a window publishes a new value.
+/// re-render when the key window changes, a window publishes a new value or a lock state
+/// changes. Nil on both paths while the key window is covered by the unlock overlay, so every
+/// command reading it is cut off without a change of its own.
 @propertyWrapper
 struct BridgedFocusedValue<Value>: DynamicProperty {
   @FocusedValue private var focusedValue: Value?
@@ -244,6 +285,16 @@ struct BridgedFocusedValue<Value>: DynamicProperty {
   }
 
   var wrappedValue: Value? {
-    focusedValue ?? registry.value(for: keyPath)
+    Self.resolve(focusedValue, keyPath, in: registry)
+  }
+
+  /// The native focused value (the first `WindowGroup` window), else the key window's record
+  /// (AppKit-hosted windows); nil for both while the key window is relocked
+  static func resolve(
+    _ focused: Value?, _ keyPath: WritableKeyPath<FocusedValues, Value?>,
+    in registry: FocusedActionRegistry
+  ) -> Value? {
+    guard !registry.isKeyWindowLocked else { return nil }
+    return focused ?? registry.value(for: keyPath)
   }
 }

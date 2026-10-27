@@ -10,6 +10,10 @@ import SwiftUI
 /// Schema visualizer view for workspace level - used when no tabs are open
 struct WorkspaceSchemaVisualizerContent: View {
   @Bindable var workspaceManager: WorkspaceManager
+  /// Opens the join query builder with these tables picked (the selected one, or none)
+  let onBuildJoinQuery: ([DatabaseTable]) -> Void
+  /// The diagram's selected tables in selection order (Shift- or Command-click adds or removes one)
+  @State private var selectedNodeIds: [UUID] = []
 
   var body: some View {
     VStack(spacing: 0) {
@@ -20,8 +24,14 @@ struct WorkspaceSchemaVisualizerContent: View {
       graphContent
     }
     .background(Color.appBackground)
+    // A selection made elsewhere (schema search, a reload) replaces the multi-selection
+    .onChange(of: workspaceManager.selectedGraphNodeId, initial: true) { _, id in
+      guard id.map({ !selectedNodeIds.contains($0) }) ?? true else { return }
+      selectedNodeIds = id.map { [$0] } ?? []
+    }
     // Set focused values for Cmd+F, Cmd+G shortcuts in schema visualizer
     .bridgedFocusedSceneValue(\.isSchemaVisualizerActive, true)
+    .bridgedFocusedSceneValue(\.zoomTarget, .diagram)
     .bridgedFocusedSceneValue(\.openSearchAction) { [workspaceManager] in
       workspaceManager.openSchemaSearch()
     }
@@ -164,6 +174,15 @@ struct WorkspaceSchemaVisualizerContent: View {
       .help("Refresh Schema")
       .disabled(workspaceManager.isLoadingSchemaGraph)
 
+      // The join query builder, the selected tables picked in selection order
+      Button(action: { onBuildJoinQuery(selectedTables) }) {
+        Image(systemName: "arrow.triangle.merge")
+      }
+      .buttonStyle(GhostButtonStyle(iconOnly: true))
+      .help(buildJoinQueryTitle)
+      .accessibilityLabel(buildJoinQueryTitle)
+      .disabled(!workspaceManager.canBuildJoinQuery)
+
       Spacer()
 
       // Search button (floated to right, same style as notebook/editor)
@@ -185,6 +204,20 @@ struct WorkspaceSchemaVisualizerContent: View {
     .background(Color.cardHeaderBackground)
     .overlay(alignment: .bottom) {
       Divider()
+    }
+  }
+
+  /// The tables of the selected nodes, in selection order
+  private var selectedTables: [DatabaseTable] {
+    let nodes = workspaceManager.schemaGraph?.nodes ?? []
+    return selectedNodeIds.compactMap { id in nodes.first { $0.id == id }?.table }
+  }
+
+  private var buildJoinQueryTitle: String {
+    switch selectedTables.count {
+    case 0: "Build Join Query (Shift- or Command-click tables to pick them)"
+    case 1: "Build Join Query From Selected Table"
+    case let count: "Build Join Query From \(count) Selected Tables"
     }
   }
 
@@ -283,6 +316,7 @@ struct WorkspaceSchemaVisualizerContent: View {
           scale: $workspaceManager.visualizerScale,
           offset: $workspaceManager.visualizerOffset,
           selectedNodeId: $workspaceManager.selectedGraphNodeId,
+          selectedNodeIds: $selectedNodeIds,
           showTableConnections: $workspaceManager.showTableConnections,
           showColumnConnections: $workspaceManager.showColumnConnections,
           searchState: workspaceManager.schemaSearchState,
@@ -415,7 +449,7 @@ struct WorkspaceSchemaVisualizerContent: View {
 
 #Preview("Schema Visualizer Header") {
   WorkspaceSchemaVisualizerContent(
-    workspaceManager: WorkspaceManager.preview()
+    workspaceManager: WorkspaceManager.preview(), onBuildJoinQuery: { _ in }
   )
   .frame(width: 800, height: 500)
 }

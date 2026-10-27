@@ -47,13 +47,13 @@ struct TableFilterTests {
   }
 
   @Test(
-    "Every operator on SQLite (ilike maps to LIKE, no cast)",
+    "Every operator on SQLite (ilike lowers both sides, no cast)",
     arguments: [
       (FilterOperator.equals, #""c" = 'v'"#),
       (.notEquals, #""c" <> 'v'"#),
       (.like, #""c" LIKE 'v'"#),
       (.notLike, #""c" NOT LIKE 'v'"#),
-      (.ilike, #""c" LIKE 'v'"#),
+      (.ilike, #"LOWER("c") LIKE LOWER('v')"#),
       (.notIlike, #""c" NOT LIKE 'v'"#),
       (.lessThan, #""c" < 'v'"#),
       (.lessThanOrEqual, #""c" <= 'v'"#),
@@ -65,6 +65,14 @@ struct TableFilterTests {
     ])
   func sqliteOperators(op: FilterOperator, expected: String) {
     #expect(clause([condition("c", op, "v")], .sqlite) == expected)
+  }
+
+  /// The same form as Find a Value in Every Table, so opening a match finds the row whatever
+  /// the column's collation (a `_bin` collation makes MySQL's `LIKE` case-sensitive).
+  @Test("ilike on MySQL lowers both sides of LIKE")
+  func mysqlCaseInsensitiveLike() {
+    #expect(
+      clause([condition("c", .ilike, "v")], .mysql) == "LOWER(CAST(`c` AS CHAR)) LIKE LOWER('v')")
   }
 
   @Test("Quotes in the value and the column are escaped")
@@ -109,6 +117,29 @@ struct TableFilterTests {
   func firstCompleteRowConnector() {
     let rows = [condition("", .equals, "x"), condition("a", .equals, "1", .or)]
     #expect(clause(rows) == #""a" = '1'"#)
+  }
+
+  @Test("A qualifier prefixes every column with the quoted alias")
+  func qualifiedColumns() {
+    let rows = [condition("c", .equals, "v"), condition("d", .ilike, "w")]
+    #expect(
+      TableFilter(conditions: rows).whereClause(dialect: .postgresql, qualifier: #"o"x"#)
+        == #""o""x"."c" = 'v' AND "o""x"."d"::text ILIKE 'w'"#)
+    #expect(
+      TableFilter(conditions: rows).whereClause(dialect: .mysql, qualifier: "o")
+        == "`o`.`c` = 'v' AND LOWER(CAST(`o`.`d` AS CHAR)) LIKE LOWER('w')")
+  }
+
+  @Test("No qualifier keeps the unqualified clause", arguments: [DatabaseType.postgresql, .mysql])
+  func nilQualifierUnchanged(dialect: DatabaseType) {
+    let filter = TableFilter(conditions: [
+      condition("c", .equals, "v"), condition("d", .ilike, "w", .or),
+    ])
+    let expected =
+      dialect == .postgresql
+      ? #""c" = 'v' OR "d"::text ILIKE 'w'"#
+      : "`c` = 'v' OR LOWER(CAST(`d` AS CHAR)) LIKE LOWER('w')"
+    #expect(filter.whereClause(dialect: dialect.dialect, qualifier: nil) == expected)
   }
 
   @Test("Empty filter has no clause")

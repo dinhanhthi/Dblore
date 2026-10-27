@@ -16,6 +16,8 @@ struct EditorModeView: View {
   @Environment(\.colorScheme) private var colorScheme
   @State private var textViewRef: SQLTextView?
   @State private var isFocused: Bool = false
+  /// View > Zoom acts on the pane that last took the keyboard focus: the editor or the grid
+  @State private var zoomTarget: ZoomTarget = .editor
   @State private var dividerPosition: CGFloat = 0.5  // 50% initial split
   @State private var isErrorCopied: Bool = false
   /// Grid / Documents / Chart for the editor result. A new result (different timestamp) reads as
@@ -73,6 +75,20 @@ struct EditorModeView: View {
     )
   }
 
+  /// The editor result's chart spec, kept in the view model. A different result timestamp reads
+  /// as nil (the suggestion) until the user edits the chart of that result.
+  func editorChartSpecBinding(for result: CellResult) -> Binding<ChartSpec?> {
+    Binding(
+      get: {
+        viewModel.editorChartSpecStamp == result.timestamp ? viewModel.editorChartSpec : nil
+      },
+      set: { newValue in
+        viewModel.editorChartSpecStamp = result.timestamp
+        viewModel.editorChartSpec = newValue
+      }
+    )
+  }
+
   /// Binding shared by the result header and the plan view. A different result reads as Plan.
   func explainDisplayModeBinding(for result: CellResult) -> Binding<ExplainDisplayMode> {
     Binding(
@@ -91,11 +107,14 @@ struct EditorModeView: View {
   // MARK: - Body
 
   var body: some View {
-    if viewModel.isReadOnlySource {
-      readOnlySourceBody
-    } else {
-      editorAndResultBody
+    Group {
+      if viewModel.isReadOnlySource {
+        readOnlySourceBody
+      } else {
+        editorAndResultBody
+      }
     }
+    .bridgedFocusedSceneValue(\.zoomTarget, zoomTarget)
   }
 
   /// Object source tab: banner over a read-only editor. No result pane, nothing runs.
@@ -205,7 +224,10 @@ struct EditorModeView: View {
           content: $viewModel.editorContent,
           isSelected: true,
           isFocused: isFocused,
-          onFocus: { isFocused = true },
+          onFocus: {
+            isFocused = true
+            zoomTarget = .editor
+          },
           onTextChanged: { viewModel.onDocumentChanged?() },
           textViewRef: $textViewRef,
           autocompleteProvider: isReadOnly ? nil : viewModel.autocompleteProvider,
@@ -296,8 +318,10 @@ struct EditorModeView: View {
     result: CellResult, displayMode: Binding<ResultDisplayMode>
   ) -> some View {
     EditorResultGridView(
-      result: result, viewModel: viewModel, displayMode: displayMode, showsDisplayPicker: false,
-      explainMode: explainDisplayModeBinding(for: result), showsExplainPicker: false
+      result: result, viewModel: viewModel, chartSpec: editorChartSpecBinding(for: result),
+      displayMode: displayMode, showsDisplayPicker: false,
+      explainMode: explainDisplayModeBinding(for: result), showsExplainPicker: false,
+      onGridFocus: { zoomTarget = .grid }
     )
     .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
     .id(result.timestamp)  // New result: reset sort and search match
