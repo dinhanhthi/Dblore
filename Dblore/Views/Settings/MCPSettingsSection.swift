@@ -32,9 +32,14 @@ struct MCPSettingsSection: View {
 
       SettingsGroupCard(title: "Connections") {
         VStack(alignment: .leading, spacing: Spacing.md) {
-          Text("Agents can use only the connections turned on here.")
-            .font(.bodyText)
-            .foregroundColor(.foregroundSubtle)
+          VStack(alignment: .leading, spacing: Spacing.sm) {
+            Text("Agents can use only the connections turned on here.")
+              .font(.bodyText)
+              .foregroundColor(.foregroundSubtle)
+            warning(
+              "Use a least-privilege database user. An agent can read everything the connection's role can read, including other databases on the same server."
+            )
+          }
           if model.connections.isEmpty {
             Text("No saved connections yet.")
               .font(.bodyText)
@@ -44,10 +49,6 @@ struct MCPSettingsSection: View {
             Divider()
             connectionRow(entry)
           }
-          Divider()
-          warning(
-            "Use a least-privilege database user. An agent can read everything the connection's role can read, including other databases on the same server."
-          )
         }
       }
 
@@ -59,15 +60,15 @@ struct MCPSettingsSection: View {
               "Lets agents ask to run one change at a time on the connections given a write scope above. Every change waits for you to approve it in Dblore; it is denied 2 minutes after it is shown.",
             isOn: $appSettings.mcpWriteToolsEnabled
           )
+          warning(
+            "Approve only statements you have read. An agent can be steered by text stored in the database."
+          )
           Divider()
           note(
             "Changes run with the connection's protection and commit style. Connections that use Review or Password refuse agent changes: set Confirm or Immediate to allow them. A connection without its own commit style uses the default one, so a Review default refuses agent changes too."
           )
           note(
             "Schema changes cover tables, indexes, views, sequences, schemas, types, domains and MySQL databases, TRUNCATE, RENAME TABLE and COMMENT ON; on MongoDB, collections and indexes. Agents cannot create, change or drop functions, procedures or triggers, because what they run later cannot be checked and dropping one removes what it enforces: use the SQL editor. MongoDB system collections and pipelines that name another database are refused."
-          )
-          warning(
-            "Approve only statements you have read. An agent can be steered by text stored in the database."
           )
         }
       }
