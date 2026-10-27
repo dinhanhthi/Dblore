@@ -795,7 +795,7 @@ final class TableImportModel {
   ) async throws -> PreparedImport {
     let names = columns.map(\.name)
     if match.mode == .update || match.mode == .insertOrUpdate,
-      names.allSatisfy { match.key.columns.contains($0) }
+      names.allSatisfy({ match.key.columns.contains($0) })
     {
       throw TableImportError.nothingToUpdate
     }
