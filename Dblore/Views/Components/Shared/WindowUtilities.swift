@@ -534,7 +534,8 @@ enum DocumentWindowMode: Equatable {
 /// SwiftUI sizes the window from the content frame set by `documentWindowMode` (windows use
 /// `.contentSize` resizability). This moves the frame when the mode changes: compact centers the
 /// small size, regular goes back to the window's last regular frame (1200×800 the first time).
-/// Tabs share one frame, so a window in a tab group, or in full screen, is never resized.
+/// Tabs share one frame, so a window in a tab group, or in full screen, is never resized, except
+/// to grow a group of Welcome tabs when one of them opens a workspace.
 @MainActor
 enum DocumentWindowSizing {
   /// Content size below the title bar of a compact window.
@@ -559,7 +560,8 @@ enum DocumentWindowSizing {
     observeFramesOnce()
     let wasCompact = modes.object(forKey: window)?.boolValue
     modes.setObject(NSNumber(value: mode == .compact), forKey: window)
-    guard isLone(window, isTabbed: isTabbed) else {
+    let growsTabGroup = mode == .regular && wasCompact == true && isWelcomeTabGroup(window)
+    guard isLone(window, isTabbed: isTabbed) || growsTabGroup else {
       unlock(window)
       onSettled()
       return
@@ -586,6 +588,14 @@ enum DocumentWindowSizing {
           ?? centered(regularDefaultSize, on: window.frame)
       } else if isSmallerThanRegular(window) {
         target = centered(regularDefaultSize, on: window.frame)
+      }
+      // The other tabs share the frame: only grow it
+      if growsTabGroup {
+        target = centered(
+          NSSize(
+            width: max(window.frame.width, target.width),
+            height: max(window.frame.height, target.height)),
+          on: window.frame)
       }
       setFrame(target, of: window) {
         unlock(window)
@@ -616,6 +626,14 @@ enum DocumentWindowSizing {
   private static func isLone(_ window: NSWindow, isTabbed: Bool) -> Bool {
     !isTabbed && (window.tabbedWindows?.count ?? 1) <= 1
       && !window.styleMask.contains(.fullScreen)
+  }
+
+  /// A tab group whose other tabs all show a Welcome screen still has a Welcome-sized frame.
+  private static func isWelcomeTabGroup(_ window: NSWindow) -> Bool {
+    guard let tabs = window.tabbedWindows, !window.styleMask.contains(.fullScreen) else {
+      return false
+    }
+    return tabs.allSatisfy { $0 === window || modes.object(forKey: $0)?.boolValue != false }
   }
 
   private static func isSmallerThanRegular(_ window: NSWindow) -> Bool {
