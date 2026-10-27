@@ -109,6 +109,12 @@ class SQLAutocompleteProvider {
       )
     }
 
+    // CTEs of this statement are tables too
+    let scope = statementScope(in: text, cursor: cursorPosition, dialect: dialect)
+    suggestions += scope.ctes.filter { $0.name.lowercased().hasPrefix(token.lowercased()) }.map {
+      AutocompleteSuggestion(text: $0.name, type: .table, description: "CTE")
+    }
+
     // Add snippet suggestions (trigger prefix, any case)
     let snippetMatches = snippets().filter { snippet in
       snippet.trigger.lowercased().hasPrefix(token.lowercased())
@@ -127,8 +133,22 @@ class SQLAutocompleteProvider {
       // Extract table references from FROM/JOIN clauses
       let tableRefs = extractTableReferences(from: text)
 
-      if !tableRefs.isEmpty {
-        // We have table context - only show columns from referenced tables
+      if !tableRefs.isEmpty || !scope.referencedCTEs.isEmpty {
+        // We have table context - only show columns from referenced tables and CTEs
+        // (CTE columns deduped by name, at most maxCTEColumns in all)
+        let lowerToken = token.lowercased()
+        var cteColumnNames: Set<String> = []
+        cteLoop: for cte in scope.ctes where scope.referencedCTEs.contains(cte.name.lowercased()) {
+          for column in cte.columns {
+            guard cteColumnNames.count < Self.maxCTEColumns else { break cteLoop }
+            let lowerColumn = column.lowercased()
+            guard lowerColumn.hasPrefix(lowerToken), cteColumnNames.insert(lowerColumn).inserted
+            else { continue }
+            suggestions.append(
+              AutocompleteSuggestion(
+                text: column, type: .column(tableName: cte.name), description: "CTE (\(cte.name))"))
+          }
+        }
         for (_, tableKey) in tableRefs {
           if let columns = columnsByTable[tableKey] {
             let columnMatches = columns.filter { column in
@@ -175,6 +195,18 @@ class SQLAutocompleteProvider {
       }
 
       return lhs.text.lowercased() < rhs.text.lowercased()
+    }
+
+    // After ORDER BY / GROUP BY, the SELECT-list aliases of that query come first
+    let aliases = (scope.orderByAliases ?? []).filter {
+      $0.lowercased().hasPrefix(token.lowercased())
+    }
+    if !aliases.isEmpty {
+      let aliasSuggestions = aliases.sorted { $0.lowercased() < $1.lowercased() }.map {
+        AutocompleteSuggestion(text: $0, type: .column(tableName: ""), description: "Alias")
+      }
+      let aliasTexts = Set(aliases)
+      suggestions = aliasSuggestions + suggestions.filter { !aliasTexts.contains($0.text) }
     }
 
     // Limit to 20 suggestions to keep popup manageable

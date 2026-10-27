@@ -31,6 +31,7 @@ struct WorkspaceSchemaVisualizerContent: View {
     }
     // Set focused values for Cmd+F, Cmd+G shortcuts in schema visualizer
     .bridgedFocusedSceneValue(\.isSchemaVisualizerActive, true)
+    .bridgedFocusedSceneValue(\.zoomTarget, .diagram)
     .bridgedFocusedSceneValue(\.openSearchAction) { [workspaceManager] in
       workspaceManager.openSchemaSearch()
     }

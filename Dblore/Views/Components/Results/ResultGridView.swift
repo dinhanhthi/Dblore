@@ -108,6 +108,8 @@ struct ResultGridView: NSViewRepresentable {
   /// Receives, debounced, the summary of 2+ selected rows in the last clicked column; nil below
   /// two rows and when the grid goes away
   var onSelectionSummaryChange: ((ResultSelectionSummary?) -> Void)? = nil
+  /// Called when the grid takes the keyboard focus (a click or Tab): View > Zoom acts on it
+  var onFocus: (() -> Void)? = nil
 
   /// Row height at the default result font size. Larger and smaller faces scale from this
   /// so an untouched setting keeps the 26pt rows the notebook height math expects.
@@ -230,6 +232,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onLookupReferencedRow = onLookupReferencedRow
     coordinator.onJumpToReferencedRow = onJumpToReferencedRow
     coordinator.onSelectionSummaryChange = onSelectionSummaryChange
+    (tableView as? ResultGridTableView)?.onFocus = onFocus
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
@@ -586,6 +589,8 @@ final class ResultGridHeaderView: NSTableHeaderView {
 /// A single tracking area and a single reused button keep hovering cheap on large results.
 final class ResultGridTableView: NSTableView {
   weak var coordinator: ResultGridCoordinator?
+  /// `ResultGridView.onFocus`
+  var onFocus: (() -> Void)?
   private var lastClickedColumn = 0
 
   /// Side of the details button
@@ -658,6 +663,12 @@ final class ResultGridTableView: NSTableView {
       guard let cell = rowView.view(atColumn: 0) as? NSView else { return }
       cell.frame = rowView.convert(frameOfCell(atColumn: 0, row: row), from: self)
     }
+  }
+
+  override func becomeFirstResponder() -> Bool {
+    let result = super.becomeFirstResponder()
+    if result { onFocus?() }
+    return result
   }
 
   override func mouseDown(with event: NSEvent) {

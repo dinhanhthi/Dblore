@@ -19,7 +19,9 @@ extension SQLTextView {
   /// Replace the whole text with its formatted version (undoable)
   func formatDocument() {
     guard Self.canFormat(dialect: dialect), let textStorage = textStorage else { return }
-    replaceDocument(with: SQLFormatter.format(textStorage.string, dialect: dialect))
+    let options = AppSettings.shared.formatterOptions
+    replaceDocument(
+      with: SQLFormatter.format(textStorage.string, dialect: dialect, options: options))
   }
 
   /// Replace the whole text with `newText` (undoable), as a format does

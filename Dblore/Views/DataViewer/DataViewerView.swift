@@ -73,6 +73,8 @@ struct DataViewerView: View {
       }
     }
     .background(Color.appBackground)
+    // View > Zoom: the grid is the tab's only zoomable pane
+    .bridgedFocusedSceneValue(\.zoomTarget, .grid)
     // A MongoDB collection remembers its view mode (Chart excepted) and page size
     .onChange(of: viewModel.dataViewerDisplayMode) { viewModel.saveMongoViewPreference() }
     .sheet(item: documentEditorRequest, onDismiss: viewModel.documentEditorDismissed) { request in

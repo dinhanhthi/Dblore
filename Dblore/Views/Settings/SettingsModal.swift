@@ -401,6 +401,8 @@ struct SettingsModalEditorSection: View {
         }
       }
 
+      FormatterSettingsSection(appSettings: appSettings)
+
       SQLSnippetsCard()
     }
   }

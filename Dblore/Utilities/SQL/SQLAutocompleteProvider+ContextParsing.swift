@@ -337,3 +337,368 @@ extension SQLAutocompleteProvider {
     case unknown
   }
 }
+
+// MARK: - CTEs and SELECT aliases
+
+/// What one token pass over the statement finds for completion
+struct SQLStatementScope {
+  /// CTEs in definition order with their column names
+  var ctes: [(name: String, columns: [String])] = []
+  /// Lowercased names of the CTEs used as a FROM / JOIN source
+  var referencedCTEs: Set<String> = []
+  /// SELECT-list aliases of the query level at the cursor when the cursor is in its
+  /// ORDER BY or GROUP BY clause, else nil
+  var orderByAliases: [String]?
+}
+
+/// A token of `SQLAutocompleteProvider.statementScope` (whitespace and comments dropped)
+private struct ScopeToken {
+  enum Kind { case word, quotedIdentifier, literal, symbol }
+  let kind: Kind
+  /// Raw text (content for a quoted identifier, empty for a literal)
+  let text: String
+  /// ASCII-uppercased text of a word, else nil
+  let keyword: String?
+  /// UTF-16 offset of the token start
+  let offset: Int
+
+  var isIdentifier: Bool { kind == .word || kind == .quotedIdentifier }
+  func isSymbol(_ symbol: String) -> Bool { kind == .symbol && text == symbol }
+}
+
+/// Where a `WITH` clause is: `WITH [RECURSIVE] name [(columns)] AS [[NOT] MATERIALIZED] (body), ...`
+private enum WithStep: Equatable {
+  case none, name
+  case afterName(String)
+  case columns(String, [String])
+  case afterColumns(String, [String])
+  case body(String, [String]?)
+  case afterBody
+}
+
+/// One parenthesis level of the statement
+private struct ScopeFrame {
+  /// Last clause keyword at this level ("SELECT", "FROM", "ORDER", ...)
+  var clause = ""
+  var selects = 0
+  /// Items of the first SELECT list at this level (top-level tokens only: a nested group
+  /// shows as its `(` and `)`)
+  var items: [[ScopeToken]] = []
+  var item: [ScopeToken] = []
+  /// FROM / JOIN sources of the first SELECT at this level
+  var sources: [(name: String, alias: String?)] = []
+  var expectSource = false
+  var with = WithStep.none
+  /// Set when this level is a CTE body
+  var cte: (name: String, columns: [String]?)?
+
+  var collecting: Bool { clause == "SELECT" && selects == 1 }
+
+  mutating func commitItem() {
+    if !item.isEmpty { items.append(item) }
+    item = []
+  }
+}
+
+/// Output name of one SELECT-list item
+private enum SelectItem {
+  case named(String, isAlias: Bool)
+  case star(qualifier: String?)
+}
+
+extension SQLAutocompleteProvider {
+  /// Most columns kept for one CTE (column list or `*` items over repeated or chained sources),
+  /// and most CTE column suggestions in all
+  static let maxCTEColumns = 500
+  /// Most ORDER BY / GROUP BY aliases kept
+  static let maxOrderByAliases = 500
+
+  /// Words that end a SELECT list item or a FROM source: never an implicit alias
+  private static let nonAliasWords: Set<String> = [
+    "AND", "OR", "NOT", "IS", "IN", "LIKE", "ILIKE", "BETWEEN", "COLLATE", "ESCAPE", "CASE",
+    "WHEN", "THEN", "ELSE", "END", "NULL", "TRUE", "FALSE", "DISTINCT", "ALL", "ANY", "SOME",
+    "AS", "ON", "USING", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "NATURAL", "OUTER",
+    "LATERAL", "TABLESAMPLE", "SELECT", "FROM", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT",
+    "OFFSET", "UNION", "INTERSECT", "EXCEPT", "WINDOW", "INTO", "FETCH", "FOR", "RETURNING",
+    "SET", "VALUES", "WITH", "ASC", "DESC", "WITHIN", "OVER", "FILTER",
+  ]
+
+  /// Clause keywords that end a SELECT list at their level
+  private static let clauseWords: Set<String> = [
+    "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET", "UNION", "INTERSECT", "EXCEPT",
+    "WINDOW", "INTO", "FETCH", "RETURNING", "VALUES", "SET",
+  ]
+
+  /// CTE columns, CTE sources and the ORDER BY / GROUP BY aliases at `cursor` (UTF-16), in one
+  /// lex and one walk over the tokens with a stack of parenthesis levels: linear in the text.
+  /// A CTE's columns are its explicit column list, else its body's first SELECT list (aliases,
+  /// bare or qualified column names, `*` / `t.*` expanded from schema tables and CTEs defined
+  /// before it).
+  func statementScope(in text: String, cursor: Int, dialect: SQLDialect) -> SQLStatementScope {
+    let tokens = scopeTokens(text, dialect: dialect)
+    var scope = SQLStatementScope()
+    var cteColumns: [String: [String]] = [:]
+    var sourceNames: Set<String> = []
+    var stack = [ScopeFrame()]
+    var atCursor: ScopeFrame?
+    var i = 0
+    while i < tokens.count {
+      let token = tokens[i]
+      if atCursor == nil, token.offset >= cursor { atCursor = stack[stack.count - 1] }
+      let top = stack.count - 1
+      i += 1
+
+      switch stack[top].with {
+      case .none:
+        break
+      case .name:
+        if token.keyword == "RECURSIVE" { continue }
+        stack[top].with = token.isIdentifier ? .afterName(token.text) : .none
+        if token.isIdentifier { continue }
+      case .afterName(let name):
+        if token.isSymbol("(") {
+          stack[top].with = .columns(name, [])
+          continue
+        }
+        stack[top].with = token.keyword == "AS" ? .body(name, nil) : .none
+        if token.keyword == "AS" { continue }
+      case .columns(let name, var columns):
+        if token.isSymbol(")") {
+          stack[top].with = .afterColumns(name, columns)
+        } else if token.isIdentifier, columns.count < Self.maxCTEColumns {
+          columns.append(token.text)
+          stack[top].with = .columns(name, columns)
+        }
+        continue
+      case .afterColumns(let name, let columns):
+        stack[top].with = token.keyword == "AS" ? .body(name, columns) : .none
+        if token.keyword == "AS" { continue }
+      case .body(let name, let columns):
+        if token.keyword == "NOT" || token.keyword == "MATERIALIZED" { continue }
+        if token.isSymbol("(") {
+          stack[top].with = .afterBody
+          var body = ScopeFrame()
+          body.cte = (name, columns)
+          stack.append(body)
+          continue
+        }
+        stack[top].with = .none
+      case .afterBody:
+        stack[top].with = token.isSymbol(",") ? .name : .none
+        if token.isSymbol(",") { continue }
+      }
+
+      if token.isSymbol("(") {
+        if stack[top].collecting { stack[top].item.append(token) }
+        stack[top].expectSource = false
+        stack.append(ScopeFrame())
+        continue
+      }
+      if token.isSymbol(")") {
+        guard stack.count > 1 else { continue }
+        let frame = stack.removeLast()
+        if let cte = frame.cte {
+          let columns = cte.columns ?? outputColumns(of: frame, cteColumns: cteColumns)
+          scope.ctes.append((cte.name, columns))
+          cteColumns[cte.name.lowercased()] = columns
+        }
+        if stack[top - 1].collecting { stack[top - 1].item.append(token) }
+        continue
+      }
+
+      if stack[top].expectSource {
+        stack[top].expectSource = false
+        if token.isIdentifier, !Self.isNonAliasWord(token) {
+          // name(.name)* [AS] [alias]
+          var name = token.text
+          while i + 1 < tokens.count, tokens[i].isSymbol("."), tokens[i + 1].isIdentifier {
+            name += "." + tokens[i + 1].text
+            i += 2
+          }
+          if i < tokens.count, tokens[i].keyword == "AS" { i += 1 }
+          var alias: String?
+          if i < tokens.count, tokens[i].isIdentifier, !Self.isNonAliasWord(tokens[i]) {
+            alias = tokens[i].text
+            i += 1
+          }
+          sourceNames.insert(name.lowercased())
+          if stack[top].selects <= 1 { stack[top].sources.append((name, alias)) }
+          continue
+        }
+      }
+
+      if let keyword = token.keyword {
+        if keyword == "WITH" {
+          stack[top].with = .name
+          continue
+        }
+        // GROUP of `WITHIN GROUP (...)` and FROM of `IS [NOT] DISTINCT FROM` stay in the item
+        let isWithinGroup = keyword == "GROUP" && i >= 2 && tokens[i - 2].keyword == "WITHIN"
+        let isDistinctFrom =
+          keyword == "FROM" && i >= 3 && tokens[i - 2].keyword == "DISTINCT"
+          && (tokens[i - 3].keyword == "IS" || tokens[i - 3].keyword == "NOT")
+        if !isWithinGroup, !isDistinctFrom,
+          keyword == "SELECT" || keyword == "FROM" || Self.clauseWords.contains(keyword)
+        {
+          stack[top].commitItem()
+          stack[top].clause = keyword
+          if keyword == "SELECT" { stack[top].selects += 1 }
+          if keyword == "FROM" { stack[top].expectSource = true }
+          continue
+        }
+        if keyword == "JOIN" { stack[top].expectSource = true }
+      }
+
+      if token.isSymbol(",") {
+        if stack[top].collecting {
+          stack[top].commitItem()
+          continue
+        }
+        if stack[top].clause == "FROM" { stack[top].expectSource = true }
+      }
+      if stack[top].collecting { stack[top].item.append(token) }
+    }
+
+    scope.referencedCTEs = sourceNames.intersection(cteColumns.keys)
+    var frame = atCursor ?? stack[stack.count - 1]
+    if frame.clause == "ORDER" || frame.clause == "GROUP" {
+      frame.commitItem()
+      scope.orderByAliases = Array(
+        frame.items.lazy.compactMap { item in
+          if case .named(let name, isAlias: true) = Self.selectItem(item) { name } else { nil }
+        }.prefix(Self.maxOrderByAliases))
+    }
+    return scope
+  }
+
+  /// Column names a level's first SELECT list produces, at most `maxCTEColumns`
+  private func outputColumns(of frame: ScopeFrame, cteColumns: [String: [String]]) -> [String] {
+    var frame = frame
+    frame.commitItem()
+    var columns: [String] = []
+    var sources: StarSources?
+    for item in frame.items where columns.count < Self.maxCTEColumns {
+      switch Self.selectItem(item) {
+      case .named(let name, _):
+        columns.append(name)
+      case .star(let qualifier):
+        if sources == nil { sources = starSources(of: frame, cteColumns: cteColumns) }
+        guard let sources else { break }
+        let lists = qualifier.map { sources.byReference[$0.lowercased()] ?? [] } ?? sources.all
+        // Every list is non-empty, so this stops within `maxCTEColumns` appends
+        for list in lists where columns.count < Self.maxCTEColumns {
+          columns += list.prefix(Self.maxCTEColumns - columns.count)
+        }
+      case nil:
+        break
+      }
+    }
+    return columns
+  }
+
+  /// Most distinct FROM / JOIN sources of one level resolved for `*` items
+  private static let maxStarSources = 200
+
+  /// Column lists of a level's sources, in source order and by lowercased reference
+  private typealias StarSources = (all: [[String]], byReference: [String: [[String]]])
+
+  /// Each distinct source (name and reference) of a level resolved once, at most
+  /// `maxStarSources`; sources without columns are dropped
+  private func starSources(of frame: ScopeFrame, cteColumns: [String: [String]]) -> StarSources {
+    var sources: StarSources = ([], [:])
+    var seen: Set<[String]> = []
+    for source in frame.sources where seen.count < Self.maxStarSources {
+      let name = source.name.lowercased()
+      let reference =
+        (source.alias ?? String(source.name.split(separator: ".").last ?? "")).lowercased()
+      guard seen.insert([name, reference]).inserted else { continue }
+      let columns =
+        cteColumns[name]
+        ?? findMatchingTableKey(for: source.name).flatMap { columnsByTable[$0] }.map {
+          $0.prefix(Self.maxCTEColumns).map(\.name)
+        } ?? []
+      guard !columns.isEmpty else { continue }
+      sources.all.append(columns)
+      sources.byReference[reference, default: []].append(columns)
+    }
+    return sources
+  }
+
+  /// Name of a SELECT-list item: `expr AS name`, `expr name`, `col`, `t.col`, `*`, `t.*`;
+  /// nil for an unnamed expression
+  private static func selectItem(_ item: [ScopeToken]) -> SelectItem? {
+    var tokens = item[...]
+    while let first = tokens.first, first.keyword == "DISTINCT" || first.keyword == "ALL" {
+      tokens = tokens.dropFirst()
+    }
+    // DISTINCT ON (...) keeps only its parentheses at this level
+    if tokens.count > 3, tokens.first?.keyword == "ON",
+      tokens[tokens.startIndex + 1].isSymbol("("), tokens[tokens.startIndex + 2].isSymbol(")")
+    {
+      tokens = tokens.dropFirst(3)
+    }
+    guard let last = tokens.last else { return nil }
+    let parts = Array(tokens)
+    // name(.name)* or name(.name)*.*
+    let isPath =
+      parts.count % 2 == 1
+      && parts.indices.allSatisfy { index in
+        index % 2 == 1
+          ? parts[index].isSymbol(".")
+          : parts[index].isIdentifier || (index == parts.count - 1 && parts[index].isSymbol("*"))
+      }
+    if isPath {
+      if last.isSymbol("*") {
+        return .star(qualifier: parts.count > 1 ? parts[parts.count - 3].text : nil)
+      }
+      return .named(last.text, isAlias: false)
+    }
+    guard parts.count >= 2, last.isIdentifier, !isNonAliasWord(last) else { return nil }
+    let previous = parts[parts.count - 2]
+    if previous.keyword == "AS" { return .named(last.text, isAlias: true) }
+    // Implicit alias: after a value, not after an operator or a keyword
+    let endsValue =
+      previous.isSymbol(")") || previous.kind == .literal || previous.kind == .quotedIdentifier
+      || previous.keyword == "END" || (previous.kind == .word && !isNonAliasWord(previous))
+    return endsValue ? .named(last.text, isAlias: true) : nil
+  }
+
+  private static func isNonAliasWord(_ token: ScopeToken) -> Bool {
+    token.keyword.map(nonAliasWords.contains) ?? false
+  }
+
+  /// Tokens of `text` with UTF-16 offsets, per the `dialect` lexer
+  private func scopeTokens(_ text: String, dialect: SQLDialect) -> [ScopeToken] {
+    let scalars = Array(text.unicodeScalars)
+    let tokenizer = SQLTokenizer(dialect: dialect)
+    var tokens: [ScopeToken] = []
+    var unit = 0
+    var i = 0
+    while i < scalars.count {
+      let lexeme = tokenizer.lexeme(in: scalars, at: i)
+      let next = max(lexeme.range.upperBound, i + 1)
+      switch lexeme.kind {
+      case .whitespace, .comment:
+        break
+      case .word:
+        let word = SQLTokenizer.text(scalars, lexeme.range)
+        tokens.append(
+          ScopeToken(
+            kind: .word, text: word, keyword: SQLTokenizer.asciiUppercased(word), offset: unit))
+      case .quoted(.quotedIdentifier, let content):
+        tokens.append(
+          ScopeToken(kind: .quotedIdentifier, text: content, keyword: nil, offset: unit))
+      case .symbol:
+        tokens.append(
+          ScopeToken(
+            kind: .symbol, text: SQLTokenizer.text(scalars, lexeme.range), keyword: nil,
+            offset: unit))
+      case .number, .quoted, .dollarString, .executableComment:
+        tokens.append(ScopeToken(kind: .literal, text: "", keyword: nil, offset: unit))
+      }
+      for scalar in scalars[i..<next] { unit += scalar.utf16.count }
+      i = next
+    }
+    return tokens
+  }
+}

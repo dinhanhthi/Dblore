@@ -364,6 +364,8 @@ struct EditorResultGridView: View {
   /// and sets `showsExplainPicker` to false so the plan view does not draw a second slider.
   var explainMode: Binding<ExplainDisplayMode>? = nil
   var showsExplainPicker = true
+  /// Called when the grid takes the keyboard focus (`ResultGridView.onFocus`)
+  var onGridFocus: (() -> Void)? = nil
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
@@ -607,7 +609,8 @@ struct EditorResultGridView: View {
       lookupDialect: viewModel.sqlDialect,
       onLookupReferencedRow: referencedRow.lookup,
       onJumpToReferencedRow: referencedRow.jump,
-      onSelectionSummaryChange: { viewModel.editorSelectionSummary = $0 }
+      onSelectionSummaryChange: { viewModel.editorSelectionSummary = $0 },
+      onFocus: onGridFocus
     )
   }
 }

@@ -32,3 +32,22 @@ extension FocusedValues {
     set { self[NotebookViewModelKey.self] = newValue }
   }
 }
+
+// MARK: - Zoom Target Key
+
+/// What View > Zoom In, Zoom Out and Actual Size change in the key window: the result grid or
+/// SQL editor font (global settings) or the ER diagram's scale. Nil disables the commands.
+enum ZoomTarget {
+  case grid, editor, diagram
+}
+
+struct ZoomTargetKey: FocusedValueKey {
+  typealias Value = ZoomTarget
+}
+
+extension FocusedValues {
+  var zoomTarget: ZoomTargetKey.Value? {
+    get { self[ZoomTargetKey.self] }
+    set { self[ZoomTargetKey.self] = newValue }
+  }
+}
