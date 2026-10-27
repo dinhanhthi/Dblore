@@ -36,13 +36,22 @@ struct AppWelcomeView: View {
   @State private var exportModel: ConnectionExportModel?
   @State private var isExportPresented = false
   @State private var isNativeTabBarVisible = false
+  /// Height of the native window tab bar below the titlebar row (0 when hidden or in full screen)
+  @State private var nativeTabBarHeight: CGFloat = 0
+  @State private var isFullScreen = false
   @Environment(\.controlActiveState) private var controlActiveState
 
   @Environment(\.pixelLength) private var pixelLength
 
-  /// Clears the traffic lights when the native tab bar is hidden
+  /// Clears the traffic lights. In full screen the window tab bar is pinned above the content,
+  /// so a tabbed window needs no inset there.
   private var topInset: CGFloat {
-    isNativeTabBarVisible ? 0 : ComponentSize.tabBarHeight
+    isFullScreen && isNativeTabBarVisible ? 0 : ComponentSize.tabBarHeight
+  }
+
+  /// Keeps the recents below the native tab bar, which starts after the sidebar
+  private var recentsTopInset: CGFloat {
+    nativeTabBarHeight > 0 ? ComponentSize.tabBarHeight + nativeTabBarHeight : 0
   }
 
   var body: some View {
@@ -74,10 +83,30 @@ struct AppWelcomeView: View {
           onNewWorkspace: createNewWorkspace,
           onConnect: showConnectionForm
         )
+        .padding(.top, recentsTopInset)
+        .background(alignment: .top) {
+          WindowDragArea().frame(height: recentsTopInset)
+        }
+        // Fills the titlebar row above the native tab bar
+        .overlay(alignment: .top) {
+          if recentsTopInset > 0 {
+            Text("Welcome")
+              .font(.subheading)
+              .frame(height: ComponentSize.tabBarHeight)
+              .allowsHitTesting(false)
+          }
+        }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Color.appBackground)
+      // The native tab bar starts after the sidebar and its divider
+      .background(
+        NativeTabBarSidebarInset(
+          width: isFullScreen ? 0 : ComponentSize.welcomeSidebarWidth + pixelLength)
+      )
     }
+    // The content fills the titlebar row; the native tab bar is cleared by the insets above
+    .ignoresSafeArea(.all, edges: isFullScreen ? [] : .top)
     .overlay {
       ToastOverlay()
     }
@@ -114,13 +143,12 @@ struct AppWelcomeView: View {
         .id(entry.id)
       }
     }
+    // Modals and side panels stay below the native tab bar
     .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
     .background(
-      DocumentWindowConfigurator(tabTitle: "Welcome", isTabBarVisible: $isNativeTabBarVisible)
-    )
-    .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
+      DocumentWindowConfigurator(
+        tabTitle: "Welcome", isTabBarVisible: $isNativeTabBarVisible,
+        tabBarHeight: $nativeTabBarHeight, isFullScreen: $isFullScreen)
     )
     .background(
       HostWindowReader(reference: hostWindow) {
@@ -403,8 +431,6 @@ struct WelcomeRecents: View {
   @State private var tab: RecentsTab = .workspaces
   /// Row being opened; every row is disabled meanwhile
   @State private var loadingId: UUID?
-  /// Keeps rows readable on wide windows
-  private let contentMaxWidth: CGFloat = 680
 
   private var query: String { filter.trimmingCharacters(in: .whitespaces) }
 
@@ -475,9 +501,8 @@ struct WelcomeRecents: View {
             .strokeBorder(Color.border, lineWidth: pixelLength)
         )
       }
-      .frame(maxWidth: contentMaxWidth)
-      .padding(.horizontal, Spacing.xl)
-      .padding(.vertical, Spacing.xl)
+      // Same inset on all four sides, lined up with the native tab bar's edges
+      .padding(Spacing.md)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .onAppear {
         // Open on the list that has something in it

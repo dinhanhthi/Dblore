@@ -92,10 +92,6 @@ struct FileOpenChooserView: View {
     .background(
       DocumentWindowConfigurator(tabTitle: "Open Files", isTabBarVisible: $isNativeTabBarVisible)
     )
-    .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
-    )
     .onChange(of: controlActiveState) { _, newState in
       if newState == .key { WorkspaceWindowManager.shared.clearActiveWorkspace() }
     }

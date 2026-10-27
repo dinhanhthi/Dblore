@@ -13,6 +13,11 @@ struct WorkspaceContainerView: View {
   @State private var settingsSection: SettingsPage?
   @State private var settingsOpenToken = UUID()
   @State private var isNativeTabBarVisible = false
+  /// Native tab bar band below the titlebar row (0 while hidden), reported by the configurator
+  @State private var nativeTabBarHeight: CGFloat = 0
+  @State private var trafficLightsWidth = ComponentSize.trafficLightWidth
+  /// In full screen the window has no titlebar row (see `DocumentWindowConfigurator`)
+  @State private var isFullScreen = false
   @State private var hostWindow = HostWindowReference()
   @Environment(\.controlActiveState) private var controlActiveState
   @ReduceMotion private var reduceMotion
@@ -33,9 +38,9 @@ struct WorkspaceContainerView: View {
     return workspaceManager.viewModel(for: activeTabId)
   }
 
-  /// Whether the content area shows `WorkspaceWelcomeView` (no tab, no schema visualizer and no
-  /// MongoDB overview screen)
-  private var showsWorkspaceWelcome: Bool {
+  /// Whether the content area shows `WorkspaceEmptyStateView` (no tab, no schema visualizer and
+  /// no MongoDB overview screen)
+  private var showsEmptyState: Bool {
     !workspaceManager.isSchemaVisualizerActive && workspaceManager.mongoOverview == nil
       && activeViewModel == nil
   }
@@ -47,10 +52,8 @@ struct WorkspaceContainerView: View {
   }
 
   /// Whether the left sidebar beside the open right sidebars (AI assistant panel and the tab's
-  /// sidebar) leaves the tab content less than its minimum width. The compact workspace welcome
-  /// never has room for both sides.
+  /// sidebar) leaves the tab content less than its minimum width.
   private var sidebarsCrowdContent: Bool {
-    if showsWorkspaceWelcome { return true }
     guard let window = hostWindow.window else { return false }
     let windowWidth = window.contentLayoutRect.width
     let storedLeftWidth =
@@ -120,6 +123,16 @@ struct WorkspaceContainerView: View {
                 workspaceManager: workspaceManager,
                 hasLeftSidebar: workspaceManager.isLeftSidebarVisible
               )
+              // Above the views below it: the titlebar row is unsafe area, and a background or scroll
+              // view that starts at its edge extends up into the row
+              .zIndex(1)
+
+              // Room for the native tab bar, which AppKit draws below the titlebar row; its line
+              // continues the one under the left sidebar's tabs
+              Color.appBackground.frame(height: nativeTabBarHeight)
+              if nativeTabBarHeight > 0 {
+                Divider()
+              }
 
               // Pending Protected transaction (Commit / Rollback)
               if !workspaceManager.pendingTransaction.isIdle {
@@ -157,7 +170,7 @@ struct WorkspaceContainerView: View {
                   viewModel: viewModel
                 )
               } else {
-                WorkspaceWelcomeView(workspaceManager: workspaceManager)
+                WorkspaceEmptyStateView(workspaceManager: workspaceManager)
               }
             }
 
@@ -201,20 +214,13 @@ struct WorkspaceContainerView: View {
           HStack(spacing: 0) {
             Color.clear
               .frame(
-                width: ComponentSize.trafficLightAndToggleWidth
-                  - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
+                width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
                   + workspaceManager.connectionState.connectionButtonsWidth,
                 height: ComponentSize.tabBarHeight
               )
               .background {
                 if !workspaceManager.isLeftSidebarVisible {
                   Color.appBackground
-                    // Keep the tab bar's top border (native tab bar above) across this strip
-                    .overlay(alignment: .top) {
-                      if isNativeTabBarVisible {
-                        Rectangle().fill(Color.border).frame(height: 1)
-                      }
-                    }
                 }
               }
               .overlay(alignment: .trailing) {
@@ -264,6 +270,8 @@ struct WorkspaceContainerView: View {
               activeTab: activeViewModel,
               tables: workspaceManager.databaseTables
             )
+            // The card stays below the native tab bar
+            .padding(.top, nativeTabBarHeight)
             .transition(.opacity)
             .zIndex(2)
           }
@@ -277,23 +285,35 @@ struct WorkspaceContainerView: View {
           transport: workspaceManager.mysqlTransport
         )
       }
+      // The native tab bar starts after the left sidebar, at the width it renders with. In full
+      // screen the tab bar is pinned above the content at full width; the header row sits below it.
+      .background(
+        NativeTabBarSidebarInset(
+          width: !isFullScreen && workspaceManager.isLeftSidebarVisible
+            ? SidebarRoom.leftWidth(
+              workspaceManager.workspace.settings.leftSidebarWidth
+                ?? CGFloat(AppSettings.shared.leftSidebarWidth),
+              windowWidth: geometry.size.width) : 0)
+      )
     }
     // No min frame here: `documentWindowMode` sets the limits, and a fixed 600 overflowed the
     // 540 compact window (sidebars and the footer were cut off at the bottom)
     .background(Color.appBackground)
-    .ignoresSafeArea(.all, edges: isNativeTabBarVisible ? [] : .top)
-    .environment(\.isNativeTabBarVisible, isNativeTabBarVisible)
+    // The header fills the titlebar row; the native tab bar band below it gets spacers. Full
+    // screen has no titlebar row: the header sits below what AppKit pins at the top (the tab bar).
+    .ignoresSafeArea(.all, edges: isFullScreen ? [] : .top)
+    .environment(\.nativeTabBarHeight, nativeTabBarHeight)
+    .environment(\.trafficLightsWidth, trafficLightsWidth)
     .background(
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
         windowTitle: WorkspaceWindowTitle.window(
           fileName: workspaceManager.activeTab?.title,
           workspaceName: workspaceManager.workspace.name),
-        isTabBarVisible: $isNativeTabBarVisible)
-    )
-    .background(
-      TrafficLightPositioner(
-        tabBarHeight: ComponentSize.tabBarHeight, isTabBarVisible: isNativeTabBarVisible)
+        isTabBarVisible: $isNativeTabBarVisible,
+        tabBarHeight: $nativeTabBarHeight,
+        trafficLightsWidth: $trafficLightsWidth,
+        isFullScreen: $isFullScreen)
     )
     .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
     .pendingTransactionDialogs(workspaceManager: workspaceManager)
@@ -389,17 +409,13 @@ struct WorkspaceContainerView: View {
     .commandPaletteModal(workspaceManager: workspaceManager)
     .background(HostWindowReader(reference: hostWindow))
     .claimsConnectionImport(hostWindow: hostWindow, isPresented: $isConnectionImportPresented)
-    // The workspace welcome (no tab open) keeps the small Welcome size; tabs need room
-    .documentWindowMode(
-      showsWorkspaceWelcome ? .compact : .regular, isTabbed: isNativeTabBarVisible
-    )
+    // Full size even with no tab open: the left sidebar opens tables from there
+    .documentWindowMode(.regular, isTabbed: isNativeTabBarVisible)
     .environment(\.hostWindowReference, hostWindow)
     // Here rather than on the tabs, so the theme also applies while no tab is open
     .windowAppearance(AppSettings.shared.themePreference.colorScheme)
     // When the tab content would lose its minimum width, only one side stays open: opening a
     // right sidebar collapses the left one and opening the left one collapses the right ones.
-    // The compact workspace welcome never has room for both, and closing the last tab with both
-    // open keeps the left sidebar
     .onChange(of: workspaceManager.aiAssistant.showsSidebarPanel) { _, shows in
       if shows { collapseLeftSidebarIfCrowded() }
     }
@@ -421,8 +437,15 @@ struct WorkspaceContainerView: View {
           if workspaceManager.isLeftSidebarVisible { collapseRightSidebarsIfCrowded() }
         })
     )
-    .onChange(of: showsWorkspaceWelcome) { _, shows in
-      if shows && workspaceManager.isLeftSidebarVisible { hideAIAssistantSidebar() }
+    // With no tab open, the left sidebar is where a table opens: show it (animated once the
+    // window is up). Not saved in the workspace settings, so the workspace does not turn dirty.
+    .onChange(of: showsEmptyState, initial: true) { wasEmpty, isEmpty in
+      guard isEmpty, !workspaceManager.isLeftSidebarVisible else { return }
+      if wasEmpty == isEmpty {
+        workspaceManager.isLeftSidebarVisible = true
+      } else {
+        withSidebarAnimation { workspaceManager.isLeftSidebarVisible = true }
+      }
     }
     // Shrinking the window with both sides open collapses the left sidebar once they stop fitting
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) {
@@ -639,6 +662,8 @@ struct WorkspaceLeftSidebar: View {
       VStack(spacing: 0) {
         // Top area with workspace controls
         WorkspaceSidebarTopArea(workspaceManager: workspaceManager, height: tabBarHeight)
+          // Above the list, which can extend up into the titlebar row (unsafe area)
+          .zIndex(1)
 
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
@@ -1166,7 +1191,7 @@ extension View {
 struct WorkspaceTitleBarTabsView: View {
   @Bindable var workspaceManager: WorkspaceManager
   let hasLeftSidebar: Bool
-  @Environment(\.isNativeTabBarVisible) private var isNativeTabBarVisible
+  @Environment(\.trafficLightsWidth) private var trafficLightsWidth
   @Environment(\.colorScheme) private var colorScheme
 
   @State private var isHoveringNewTabButton = false
@@ -1192,8 +1217,7 @@ struct WorkspaceTitleBarTabsView: View {
       if !hasLeftSidebar {
         Color.clear
           .frame(
-            width: ComponentSize.trafficLightAndToggleWidth
-              - (isNativeTabBarVisible ? ComponentSize.trafficLightButtonsWidth : 0)
+            width: trafficLightsWidth + ComponentSize.sidebarToggleOffset
               + workspaceManager.connectionState.connectionButtonsWidth)
       } else {
         Color.clear.frame(width: 10)
@@ -1333,12 +1357,6 @@ struct WorkspaceTitleBarTabsView: View {
     .frame(height: ComponentSize.tabBarHeight)
     .background(Color.appBackground)
     .background(WindowDragArea())
-    // With the native tab bar above, match the sidebar's top edge
-    .overlay(alignment: .top) {
-      if isNativeTabBarVisible {
-        Rectangle().fill(Color.border).frame(height: 1)
-      }
-    }
   }
 
   private func goToPreviousTab() {

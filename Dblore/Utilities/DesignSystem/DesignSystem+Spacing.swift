@@ -47,15 +47,23 @@ enum ComponentSize {
   /// Cell parameter form: adaptive column bounds for one `ParameterInputBlock`.
   static let parameterBlockMinWidth: CGFloat = 220
   static let parameterBlockMaxWidth: CGFloat = 320
+  /// Left column of the Welcome screens
+  static let welcomeSidebarWidth: CGFloat = 220
 
   // Tab bar and title bar
-  static let tabBarHeight: CGFloat = 38
-  /// Width for traffic light buttons (close, minimize, zoom) + left padding:
-  /// horizontalPadding 13 + 3x12 buttons + 2x8 spacing + trailing gap 23
+  /// Equals the titlebar row of the compact toolbar every document window installs (40pt on
+  /// macOS 26+, 38pt before), so the Dblore header fills that row and the native tab bar sits
+  /// right below it.
+  static let tabBarHeight: CGFloat = {
+    if #available(macOS 26, *) { return 40 }
+    return 38
+  }()
+  /// Width the traffic lights (close, minimize, zoom) take at the leading edge of the titlebar
+  /// row: AppKit's zoom button maxX (72 on macOS 27) + 16. Fallback for the runtime
+  /// `trafficLightsWidth` environment value.
   static let trafficLightWidth: CGFloat = 88
-  /// Width actually covered by the traffic light buttons (13 + 3x12 + 2x8). The native tab bar
-  /// moves them out of the content row, so this is the part to give back, not the trailing gap.
-  static let trafficLightButtonsWidth: CGFloat = 65
+  /// Added to the traffic lights width to place the sidebar toggle button group
+  static let sidebarToggleOffset: CGFloat = 11
   /// Width for traffic light buttons + sidebar toggle button
-  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + 11
+  static let trafficLightAndToggleWidth: CGFloat = trafficLightWidth + sidebarToggleOffset
 }

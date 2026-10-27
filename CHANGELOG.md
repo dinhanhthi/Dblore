@@ -2,6 +2,13 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Improved
+
+- **No more workspace welcome screen.** A workspace with no tab open, including one that just connected, keeps its full window size: the left sidebar opens on the Public tab so a table can be opened right away, and the content area shows the Dblore icon, a hint and the New Notebook, New SQL File, New Markdown Note and Open File buttons. Save Workspace is in the File menu. [#4ab360a4](https://github.com/dinhanhthi/Dblore/commit/4ab360a4)
+- **Window tabs in two rows.** When Dblore windows are merged as macOS window tabs, the Dblore header (sidebar buttons, tabs and the buttons on the right) stays in the title bar beside the window buttons, and the window tab bar sits below it, starting after the left sidebar (full width when the sidebar is hidden). Each window tab keeps its own Dblore tabs. The tab bar is centered in its row, with a line below it that continues the line under the sidebar tabs, and the Welcome window lays it out the same way. In full screen, the window tab bar stays at the top with the header below it. [#6b03c347](https://github.com/dinhanhthi/Dblore/commit/6b03c347) [#0078afab](https://github.com/dinhanhthi/Dblore/commit/0078afab) [#3ed75e1e](https://github.com/dinhanhthi/Dblore/commit/3ed75e1e) [#0bf67342](https://github.com/dinhanhthi/Dblore/commit/0bf67342)
+
 ## v0.8.4 (2026-10-25)
 
 ### Improved
