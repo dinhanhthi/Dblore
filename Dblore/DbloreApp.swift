@@ -698,6 +698,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
   @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
   @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
+  @BridgedFocusedValue(\.openJoinBuilderAction) private var openJoinBuilderAction
   @BridgedFocusedValue(\.activeWorkspace) private var focusedWorkspace
 
   var body: some Commands {
@@ -820,6 +821,12 @@ struct TabCommands: Commands {
       if activeWorkspace?.supportsSchemaCompare != false {
         Button("Compare Schemas...") { openSchemaCompareAction?() }
           .disabled(openSchemaCompareAction == nil)
+      }
+
+      // SQL engines only: a join needs tables and foreign keys
+      if !isMongo {
+        Button("Build Join Query...") { openJoinBuilderAction?() }
+          .disabled(openJoinBuilderAction == nil)
       }
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }

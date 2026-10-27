@@ -20,6 +20,8 @@ struct WorkspaceLeftSidebarContent: View {
   let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
   /// Generate Rows into the table whose menu opened it
   let onGenerateRows: (DatabaseTable) -> Void
+  /// The join query builder, the table whose menu opened it picked first
+  let onBuildJoinQuery: (DatabaseTable) -> Void
   /// The collection or view change started here; the workspace container presents its form
   @Binding var mongoAdmin: SidebarMongoAdmin?
   @State private var selectedTab: SidebarTab = .public
@@ -848,8 +850,10 @@ struct WorkspaceLeftSidebarContent: View {
       menuActions: SidebarSectionModel.rowActions(
         for: .tables, name: table.source.name, language: queryLanguage,
         canChangeSchema: canChangeSchema,
-        canImportDocuments: workspaceManager.canImportDocuments),
+        canImportDocuments: workspaceManager.canImportDocuments,
+        canBuildJoinQuery: workspaceManager.canBuildJoinQuery),
       onMenuAction: { action in
+        guard action != .buildJoinQuery else { return onBuildJoinQuery(table.source) }
         perform(action, name: table.source.name, schema: table.source.schema) {
           openTable(table.source)
         }
@@ -954,6 +958,9 @@ struct WorkspaceLeftSidebarContent: View {
       if let view { startMongoAdmin(.duplicateView(view)) }
     case .editDefinition:
       if let view { startMongoAdmin(.editView(view)) }
+    case .buildJoinQuery:
+      // Run by the table row itself, with its table
+      break
     }
   }
 

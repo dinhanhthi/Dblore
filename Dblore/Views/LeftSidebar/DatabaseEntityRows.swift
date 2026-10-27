@@ -32,8 +32,8 @@ struct TableRowView: View {
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
-  /// Menu items of a MongoDB collection, or an SQL table's Rename and Drop Table (after the
-  /// structure item)
+  /// Menu items of a MongoDB collection, or an SQL table's Build Join Query From Here, Rename and
+  /// Drop Table (after the structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
   var onMenuAction: (SidebarSectionModel.RowAction) -> Void = { _ in }
   /// Move to Folder and Remove from Folder, and the drag onto a folder. Nil offers neither.

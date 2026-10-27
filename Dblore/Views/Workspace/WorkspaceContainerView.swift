@@ -33,6 +33,9 @@ struct WorkspaceContainerView: View {
   @State private var generateRows: GenerateRowsPanelRequest?
   @State private var isGenerateRowsPresented = false
   @State private var isGenerateRowsBusy = false
+  /// Build Join Query: its model (the sheet opens its query in a new tab)
+  @State private var joinBuilder: JoinBuilderModel?
+  @State private var isJoinBuilderPresented = false
   @State private var isConnectionImportPresented = false
   /// Export SQL Dump / Copy Database File / Restore SQL Dump panel, and the tab it runs for
   @State private var backupSheet: BackupSheet?
@@ -125,6 +128,7 @@ struct WorkspaceContainerView: View {
               onImportTable: { requestImport(for: $0) },
               onImportFiles: { requestMultiFileImport(schema: $0, table: $1) },
               onGenerateRows: { requestGenerateRows(for: $0) },
+              onBuildJoinQuery: { requestJoinBuilder(initialTables: [$0]) },
               mongoAdmin: $sidebarMongoAdmin
             )
 
@@ -171,7 +175,9 @@ struct WorkspaceContainerView: View {
               // Content area
               if workspaceManager.isSchemaVisualizerActive {
                 // Schema visualizer at workspace level (overlays everything)
-                WorkspaceSchemaVisualizerContent(workspaceManager: workspaceManager)
+                WorkspaceSchemaVisualizerContent(
+                  workspaceManager: workspaceManager,
+                  onBuildJoinQuery: { requestJoinBuilder(initialTables: $0) })
               } else if let screen = workspaceManager.mongoOverview {
                 // MongoDB Databases / Collections at workspace level (over the tabs)
                 switch screen {
@@ -443,6 +449,11 @@ struct WorkspaceContainerView: View {
       }
     }
     .modifier(
+      JoinBuilderPanel(
+        workspaceManager: workspaceManager, model: joinBuilder,
+        isPresented: $isJoinBuilderPresented, menuAction: joinBuilderAction)
+    )
+    .modifier(
       BackupPanel(workspaceManager: workspaceManager, sheet: $backupSheet, tabID: backupTabID)
     )
     .modifier(DataRewindPanel(workspaceManager: workspaceManager))
@@ -649,6 +660,11 @@ struct WorkspaceContainerView: View {
     return { [workspaceManager] in workspaceManager.openSchemaCompare() }
   }
 
+  private var joinBuilderAction: (() -> Void)? {
+    guard workspaceManager.canBuildJoinQuery else { return nil }
+    return { requestJoinBuilder() }
+  }
+
   private func requestImport(for table: DatabaseTable? = nil) {
     guard workspaceManager.canImportData else { return }
     let tabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
@@ -675,6 +691,13 @@ struct WorkspaceContainerView: View {
       model: GenerateRowsModel(schema: table.schema, table: table.name), tabID: tabID)
     isGenerateRowsPresented = true
   }
+
+  /// Build Join Query with `initialTables` picked in order (none from the File menu)
+  private func requestJoinBuilder(initialTables: [DatabaseTable] = []) {
+    guard workspaceManager.canBuildJoinQuery else { return }
+    joinBuilder = workspaceManager.makeJoinBuilderModel(initialTables: initialTables)
+    isJoinBuilderPresented = true
+  }
 }
 
 /// The Import Files panel's model, the tab it runs in and the table whose menu opened it
@@ -688,6 +711,31 @@ private struct MultiFileImportRequest {
 private struct GenerateRowsPanelRequest {
   let model: GenerateRowsModel
   let tabID: UUID
+}
+
+/// The Build Join Query panel, and its File menu item's action (published here rather than in
+/// the container's body, whose chain is at the type checker's limit)
+private struct JoinBuilderPanel: ViewModifier {
+  let workspaceManager: WorkspaceManager
+  let model: JoinBuilderModel?
+  @Binding var isPresented: Bool
+  let menuAction: (() -> Void)?
+
+  func body(content: Content) -> some View {
+    content
+      .bridgedFocusedSceneValue(\.openJoinBuilderAction, menuAction)
+      .sidePanelOverlay(
+        isPresented: $isPresented, width: TableImportSheet.panelWidth, maxWidthFraction: 0.8
+      ) {
+        if let model {
+          JoinBuilderSheet(
+            workspaceManager: workspaceManager, model: model, isPresented: $isPresented
+          )
+          // A new request starts a fresh sheet (no picks of the last one)
+          .id(ObjectIdentifier(model))
+        }
+      }
+  }
 }
 
 // MARK: - Sidebar Width Changes
@@ -811,6 +859,7 @@ struct WorkspaceLeftSidebar: View {
   let onImportTable: (DatabaseTable) -> Void
   let onImportFiles: (_ schema: String?, _ table: DatabaseTable?) -> Void
   let onGenerateRows: (DatabaseTable) -> Void
+  let onBuildJoinQuery: (DatabaseTable) -> Void
   @Binding var mongoAdmin: SidebarMongoAdmin?
 
   /// Effective sidebar width from workspace settings or app settings
@@ -833,7 +882,7 @@ struct WorkspaceLeftSidebar: View {
         WorkspaceLeftSidebarContent(
           workspaceManager: workspaceManager, onImportTable: onImportTable,
           onImportFiles: onImportFiles, onGenerateRows: onGenerateRows,
-          mongoAdmin: $mongoAdmin)
+          onBuildJoinQuery: onBuildJoinQuery, mongoAdmin: $mongoAdmin)
 
         if workspaceManager.isSchemaPaused {
           SchemaPausedFooter()

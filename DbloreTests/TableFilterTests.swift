@@ -119,6 +119,29 @@ struct TableFilterTests {
     #expect(clause(rows) == #""a" = '1'"#)
   }
 
+  @Test("A qualifier prefixes every column with the quoted alias")
+  func qualifiedColumns() {
+    let rows = [condition("c", .equals, "v"), condition("d", .ilike, "w")]
+    #expect(
+      TableFilter(conditions: rows).whereClause(dialect: .postgresql, qualifier: #"o"x"#)
+        == #""o""x"."c" = 'v' AND "o""x"."d"::text ILIKE 'w'"#)
+    #expect(
+      TableFilter(conditions: rows).whereClause(dialect: .mysql, qualifier: "o")
+        == "`o`.`c` = 'v' AND LOWER(CAST(`o`.`d` AS CHAR)) LIKE LOWER('w')")
+  }
+
+  @Test("No qualifier keeps the unqualified clause", arguments: [DatabaseType.postgresql, .mysql])
+  func nilQualifierUnchanged(dialect: DatabaseType) {
+    let filter = TableFilter(conditions: [
+      condition("c", .equals, "v"), condition("d", .ilike, "w", .or),
+    ])
+    let expected =
+      dialect == .postgresql
+      ? #""c" = 'v' OR "d"::text ILIKE 'w'"#
+      : "`c` = 'v' OR LOWER(CAST(`d` AS CHAR)) LIKE LOWER('w')"
+    #expect(filter.whereClause(dialect: dialect.dialect, qualifier: nil) == expected)
+  }
+
   @Test("Empty filter has no clause")
   func emptyFilter() {
     #expect(TableFilter(conditions: []).isEmpty)

@@ -116,6 +116,11 @@ struct OpenSchemaCompareActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Build Join Query (File menu): nil unless `WorkspaceManager.canBuildJoinQuery`
+struct OpenJoinBuilderActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -160,6 +165,11 @@ extension FocusedValues {
   var openSchemaCompareAction: (() -> Void)? {
     get { self[OpenSchemaCompareActionKey.self] }
     set { self[OpenSchemaCompareActionKey.self] = newValue }
+  }
+
+  var openJoinBuilderAction: (() -> Void)? {
+    get { self[OpenJoinBuilderActionKey.self] }
+    set { self[OpenJoinBuilderActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

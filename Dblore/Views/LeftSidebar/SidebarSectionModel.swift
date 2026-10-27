@@ -32,7 +32,7 @@ nonisolated enum SidebarSectionModel {
     let icon: String
   }
 
-  /// A row menu item added by this model. SQL tables get only Rename and Drop.
+  /// A row menu item added by this model. SQL tables get only Build Join Query, Rename and Drop.
   enum RowAction: Equatable, Sendable {
     /// Opens the relation in the data viewer, as a click on the row does.
     case open
@@ -51,6 +51,8 @@ nonisolated enum SidebarSectionModel {
     case duplicate
     /// Edits a view's definition.
     case editDefinition
+    /// Opens the join query builder with the SQL table picked first.
+    case buildJoinQuery
 
     var title: String {
       switch self {
@@ -64,6 +66,7 @@ nonisolated enum SidebarSectionModel {
       case .drop: "Drop…"
       case .duplicate: "Duplicate…"
       case .editDefinition: "Edit View…"
+      case .buildJoinQuery: "Build Join Query From Here..."
       }
     }
 
@@ -164,14 +167,17 @@ nonisolated enum SidebarSectionModel {
 
   /// Menu items of the table, collection or view row named `name`. Without `canChangeSchema`
   /// (the default, fail-closed) no item changes the schema, without `canImportDocuments` (the
-  /// default) no collection offers an import; destructive items come last. SQL tables get Rename
-  /// and Drop only; the caller passes `canChangeSchema` false where `supportsTableChanges` is.
+  /// default) no collection offers an import; destructive items come last. SQL tables get Build
+  /// Join Query (with `canBuildJoinQuery`), Rename and Drop only; the caller passes
+  /// `canChangeSchema` false where `supportsTableChanges` is.
   static func rowActions(
     for kind: Kind, name: String, language: QueryLanguage, canChangeSchema: Bool = false,
-    canImportDocuments: Bool = false
+    canImportDocuments: Bool = false, canBuildJoinQuery: Bool = false
   ) -> [RowAction] {
     if language == .sql {
-      return kind == .tables && canChangeSchema ? [.rename, .drop] : []
+      guard kind == .tables else { return [] }
+      let join: [RowAction] = canBuildJoinQuery ? [.buildJoinQuery] : []
+      return join + (canChangeSchema ? [.rename, .drop] : [])
     }
     guard kind == .tables || kind == .views else { return [] }
     let actions: [RowAction] = [.open, .copyName, .insert(findSnippet(collection: name))]

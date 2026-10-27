@@ -14,6 +14,9 @@ struct SchemaGraphView: NSViewRepresentable {
   @Binding var scale: CGFloat
   @Binding var offset: CGPoint
   @Binding var selectedNodeId: UUID?
+  /// The selected tables in selection order: the plain-clicked one, plus those Shift- or
+  /// Command-clicked in. `selectedNodeId` is the last one.
+  @Binding var selectedNodeIds: [UUID]
   @Binding var showTableConnections: Bool
   @Binding var showColumnConnections: Bool
   var searchState: SchemaSearchState
@@ -27,12 +30,26 @@ struct SchemaGraphView: NSViewRepresentable {
     view.scale = scale
     view.offset = offset
     view.selectedNodeId = selectedNodeId
+    view.selectedNodeIds = selectedNodeIds
     view.showTableConnections = showTableConnections
     view.showColumnConnections = showColumnConnections
     view.searchState = searchState
     view.onNodeSelected = { nodeId in
       DispatchQueue.main.async {
         selectedNodeId = nodeId
+        selectedNodeIds = nodeId.map { [$0] } ?? []
+      }
+    }
+    view.onNodeSelectionToggled = { nodeId in
+      DispatchQueue.main.async {
+        var ids = selectedNodeIds
+        if let index = ids.firstIndex(of: nodeId) {
+          ids.remove(at: index)
+        } else {
+          ids.append(nodeId)
+        }
+        selectedNodeIds = ids
+        selectedNodeId = ids.last
       }
     }
     view.onNodeMoved = { nodeId, newPosition in
@@ -73,6 +90,7 @@ struct SchemaGraphView: NSViewRepresentable {
     nsView.scale = scale
     nsView.offset = offset
     nsView.selectedNodeId = selectedNodeId
+    nsView.selectedNodeIds = selectedNodeIds
     nsView.showTableConnections = showTableConnections
     nsView.showColumnConnections = showColumnConnections
     nsView.searchState = searchState
@@ -213,6 +231,11 @@ class SchemaGraphNSView: NSView {
     didSet { needsDisplay = true }
   }
 
+  /// Every selected node, drawn as selected (`SchemaGraphView.selectedNodeIds`)
+  var selectedNodeIds: [UUID] = [] {
+    didSet { needsDisplay = true }
+  }
+
   var searchState: SchemaSearchState = SchemaSearchState() {
     didSet { needsDisplay = true }
   }
@@ -236,6 +259,8 @@ class SchemaGraphNSView: NSView {
   // MARK: - Callbacks
 
   var onNodeSelected: ((UUID?) -> Void)?
+  /// A Shift- or Command-click on a node: adds it to the selection or takes it out
+  var onNodeSelectionToggled: ((UUID) -> Void)?
   var onNodeMoved: ((UUID, CGPoint) -> Void)?
   var onNodeResized: ((UUID, CGFloat) -> Void)?
   var onNodeDragEnded: (() -> Void)?
@@ -498,6 +523,16 @@ class SchemaGraphNSView: NSView {
   // MARK: - Mouse Events (delegate to extension)
 
   override func mouseDown(with event: NSEvent) {
+    let point = convert(event.locationInWindow, from: nil)
+    // Shift/Cmd-click toggles a table, except on its expand button or resize handles
+    if !event.modifierFlags.intersection([.shift, .command]).isEmpty,
+      hitTestExpandButton(at: point) == nil, hitTestResizeHandle(at: point) == nil,
+      hitTestLeftResizeHandle(at: point) == nil,
+      let node = hitTestNode(at: point)
+    {
+      onNodeSelectionToggled?(node.id)
+      return
+    }
     handleMouseDown(with: event)
   }
 
