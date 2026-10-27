@@ -69,6 +69,8 @@ extension EnvironmentValues {
   @Entry var nativeTabBarHeight: CGFloat = 0
   /// Width the traffic lights take at the leading edge of the titlebar row, trailing gap included
   @Entry var trafficLightsWidth: CGFloat = ComponentSize.trafficLightWidth
+  /// Whether the window is in (or entering) full screen, where it has no titlebar row
+  @Entry var isWindowFullScreen = false
 }
 
 /// Window and tab labels for a workspace, VSCode style: "Name (Workspace)" on the native tab and
@@ -91,13 +93,16 @@ enum WorkspaceWindowTitle {
 /// titlebar row is as tall as the Dblore header that fills it, and reports the native tab bar:
 /// whether it is visible and the height of its band below the row. The title is never drawn (a
 /// visible title would also take the clicks meant for the header); `windowTitle` is still set for
-/// the Window menu and Mission Control. Optionally reports the width the traffic lights take.
+/// the Window menu and Mission Control. Optionally reports the width the traffic lights take and
+/// whether the window is in full screen. In full screen the window has no toolbar: AppKit would
+/// pin the empty row (and the tab bar) above the content, over the Dblore header.
 struct DocumentWindowConfigurator: NSViewRepresentable {
   let tabTitle: String
   var windowTitle: String? = nil
   @Binding var isTabBarVisible: Bool
   var tabBarHeight: Binding<CGFloat>? = nil
   var trafficLightsWidth: Binding<CGFloat>? = nil
+  var isFullScreen: Binding<Bool>? = nil
 
   func makeNSView(context: Context) -> NSView {
     let view = DocumentWindowConfiguratorView()
@@ -128,6 +133,9 @@ struct DocumentWindowConfigurator: NSViewRepresentable {
     view.onTrafficLightsWidthChange = trafficLightsWidth.map { binding in
       { width in if binding.wrappedValue != width { binding.wrappedValue = width } }
     }
+    view.onFullScreenChange = isFullScreen.map { binding in
+      { value in if binding.wrappedValue != value { binding.wrappedValue = value } }
+    }
   }
 }
 
@@ -138,9 +146,14 @@ class DocumentWindowConfiguratorView: NSView {
   var onTabBarVisibilityChange: ((Bool) -> Void)?
   var onTabBarHeightChange: ((CGFloat) -> Void)?
   var onTrafficLightsWidthChange: ((CGFloat) -> Void)?
+  var onFullScreenChange: ((Bool) -> Void)?
   private var lastReported: Bool?
   private var lastTabBarHeight: CGFloat?
   private var lastTrafficLightsWidth: CGFloat?
+  private var lastFullScreen: Bool?
+  /// Set from `willEnterFullScreen` until `didEnterFullScreen`, while the style mask may not
+  /// contain `.fullScreen` yet
+  private var isEnteringFullScreen = false
   private var observations: [NSKeyValueObservation] = []
   private var tabBarObservation: NSKeyValueObservation?
   private var toolbarObservation: NSKeyValueObservation?
@@ -192,15 +205,48 @@ class DocumentWindowConfiguratorView: NSView {
           }
         })
     }
+    observeFullScreen(of: window)
     observeTrafficLights(in: window)
     reportTabBar()
   }
 
+  /// In full screen, or on the way in
+  private var isFullScreen: Bool {
+    isEnteringFullScreen || window?.styleMask.contains(.fullScreen) == true
+  }
+
+  /// The toolbar goes at `willEnter`, before the transition starts, so the empty row never shows
+  /// pinned at the top of the screen; it comes back at `didExit`, once the style mask has lost
+  /// `.fullScreen`. Run synchronously on the posting (main) thread: a queued block would run after
+  /// the transition has started.
+  private func observeFullScreen(of window: NSWindow) {
+    for name in [
+      NSWindow.willEnterFullScreenNotification, NSWindow.didEnterFullScreenNotification,
+      NSWindow.didExitFullScreenNotification,
+    ] {
+      notificationObservers.append(
+        NotificationCenter.default.addObserver(forName: name, object: window, queue: nil) {
+          [weak self] _ in
+          MainActor.assumeIsolated {
+            guard let self else { return }
+            // After `didEnter` the style mask holds `.fullScreen`
+            self.isEnteringFullScreen = name == NSWindow.willEnterFullScreenNotification
+            self.installToolbar()
+            self.reportTabBar()
+          }
+        })
+    }
+  }
+
   /// An empty compact toolbar turns the titlebar into one row as tall as the Dblore header, with
   /// the native tab bar below it. Re-applied whenever something resets it; every setter is guarded
-  /// so the observers cannot loop.
+  /// so the observers cannot loop. In full screen the window has no toolbar, whatever resets it.
   private func installToolbar() {
     guard let window else { return }
+    if isFullScreen {
+      if window.toolbar != nil { window.toolbar = nil }
+      return
+    }
     if window.toolbar == nil {
       let toolbar = NSToolbar(identifier: "app.dblore.document")
       toolbar.allowsUserCustomization = false
@@ -253,9 +299,16 @@ class DocumentWindowConfiguratorView: NSView {
       onTabBarVisibilityChange?(isVisible)
     }
 
-    // The band below the titlebar row; full screen may lay the titlebar out differently
+    let isFullScreen = isFullScreen
+    if lastFullScreen != isFullScreen {
+      lastFullScreen = isFullScreen
+      onFullScreenChange?(isFullScreen)
+    }
+
+    // The band below the titlebar row. In full screen the tab bar is pinned above the content,
+    // which then needs no room for it.
     let topInset = window.frame.height - window.contentLayoutRect.maxY
-    let height = isVisible ? max(0, topInset - ComponentSize.tabBarHeight) : 0
+    let height = isVisible && !isFullScreen ? max(0, topInset - ComponentSize.tabBarHeight) : 0
     if lastTabBarHeight != height {
       lastTabBarHeight = height
       onTabBarHeightChange?(height)
@@ -281,6 +334,8 @@ class DocumentWindowConfiguratorView: NSView {
     lastReported = nil
     lastTabBarHeight = nil
     lastTrafficLightsWidth = nil
+    lastFullScreen = nil
+    isEnteringFullScreen = false
   }
 }
 

@@ -56,9 +56,9 @@ enum ComponentSize {
     if #available(macOS 26, *) { return 40 }
     return 38
   }()
-  /// Width for traffic light buttons (close, minimize, zoom) + left padding:
-  /// horizontalPadding 13 + 3x12 buttons + 2x8 spacing + trailing gap 23.
-  /// Fallback for the runtime `trafficLightsWidth` environment value.
+  /// Width the traffic lights (close, minimize, zoom) take at the leading edge of the titlebar
+  /// row: AppKit's zoom button maxX (72 on macOS 27) + 16. Fallback for the runtime
+  /// `trafficLightsWidth` environment value.
   static let trafficLightWidth: CGFloat = 88
   /// Added to the traffic lights width to place the sidebar toggle button group
   static let sidebarToggleOffset: CGFloat = 11

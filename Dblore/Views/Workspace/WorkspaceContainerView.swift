@@ -16,6 +16,8 @@ struct WorkspaceContainerView: View {
   /// Native tab bar band below the titlebar row (0 while hidden), reported by the configurator
   @State private var nativeTabBarHeight: CGFloat = 0
   @State private var trafficLightsWidth = ComponentSize.trafficLightWidth
+  /// In full screen the window has no titlebar row (see `DocumentWindowConfigurator`)
+  @State private var isFullScreen = false
   @State private var hostWindow = HostWindowReference()
   @Environment(\.controlActiveState) private var controlActiveState
   @ReduceMotion private var reduceMotion
@@ -281,14 +283,26 @@ struct WorkspaceContainerView: View {
           transport: workspaceManager.mysqlTransport
         )
       }
+      // The native tab bar starts after the left sidebar, at the width it renders with. In full
+      // screen the tab bar is pinned above the content at full width; the header row sits below it.
+      .background(
+        NativeTabBarSidebarInset(
+          width: !isFullScreen && workspaceManager.isLeftSidebarVisible
+            ? SidebarRoom.leftWidth(
+              workspaceManager.workspace.settings.leftSidebarWidth
+                ?? CGFloat(AppSettings.shared.leftSidebarWidth),
+              windowWidth: geometry.size.width) : 0)
+      )
     }
     // No min frame here: `documentWindowMode` sets the limits, and a fixed 600 overflowed the
     // 540 compact window (sidebars and the footer were cut off at the bottom)
     .background(Color.appBackground)
-    // The header fills the titlebar row; the native tab bar band below it gets spacers
-    .ignoresSafeArea(.all, edges: .top)
+    // The header fills the titlebar row; the native tab bar band below it gets spacers. Full
+    // screen has no titlebar row: the header sits below what AppKit pins at the top (the tab bar).
+    .ignoresSafeArea(.all, edges: isFullScreen ? [] : .top)
     .environment(\.nativeTabBarHeight, nativeTabBarHeight)
     .environment(\.trafficLightsWidth, trafficLightsWidth)
+    .environment(\.isWindowFullScreen, isFullScreen)
     .background(
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
@@ -297,7 +311,8 @@ struct WorkspaceContainerView: View {
           workspaceName: workspaceManager.workspace.name),
         isTabBarVisible: $isNativeTabBarVisible,
         tabBarHeight: $nativeTabBarHeight,
-        trafficLightsWidth: $trafficLightsWidth)
+        trafficLightsWidth: $trafficLightsWidth,
+        isFullScreen: $isFullScreen)
     )
     .background(WorkspaceWindowCloseGuard(workspaceManager: workspaceManager))
     .pendingTransactionDialogs(workspaceManager: workspaceManager)
@@ -629,7 +644,6 @@ struct WorkspaceLeftSidebar: View {
   let maxWidth: CGFloat
   let onImportTable: (DatabaseTable) -> Void
   @Binding var mongoAdmin: SidebarMongoAdmin?
-  @Environment(\.nativeTabBarHeight) private var nativeTabBarHeight
 
   /// Effective sidebar width from workspace settings or app settings
   private var effectiveSidebarWidth: CGFloat {
@@ -646,10 +660,6 @@ struct WorkspaceLeftSidebar: View {
         WorkspaceSidebarTopArea(workspaceManager: workspaceManager, height: tabBarHeight)
           // Above the list, which can extend up into the titlebar row (unsafe area)
           .zIndex(1)
-
-        // The full-width native tab bar runs across the sidebar: start the list below it.
-        // Phase 2 removes this once the bar starts after the sidebar.
-        Color.clear.frame(height: nativeTabBarHeight)
 
         // Main sidebar content - always use workspace schema
         WorkspaceLeftSidebarContent(
