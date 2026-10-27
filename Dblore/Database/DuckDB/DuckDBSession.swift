@@ -27,6 +27,12 @@
 //   SQLite rule) or the connection is Read-only protected. In-memory databases cannot open
 //   read-only; the actor's gate still applies to them;
 // - `lock_configuration=true` last, so later SQL cannot undo any of this.
+//
+// No attached databases (decision A2): `ConnectionConfig.validatedAttachedDatabases()` drops them
+// on DuckDB and typed ATTACH/DETACH stays refused. An attachment made before
+// `lock_configuration` can be DETACHed and re-ATTACHed READ_WRITE after it, and
+// `COPY ... TO '<attached path>' (USE_TMP_FILE false)` overwrites the file, so only the statement
+// gate would stop it (DuckDBAttachTests pins the engine behavior).
 
 import Foundation
 

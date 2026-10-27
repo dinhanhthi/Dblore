@@ -1,7 +1,8 @@
 // SQLiteFileAccess.swift
-// Sandbox access for one SQLite or DuckDB file. Resolves the security-scoped bookmark, registers
-// sidecar file presenters, then probes writability. `release()` drops presenters and stops
-// access. Bookmarks go through `SecurityScopedAccess`.
+// Sandbox access for one SQLite or DuckDB file (a main file, or each attached file with its own
+// grant). Resolves the security-scoped bookmark, registers sidecar file presenters, then probes
+// writability. `release()` drops presenters and stops access. Bookmarks go through
+// `SecurityScopedAccess`.
 
 import Foundation
 import SQLite3
@@ -24,6 +25,29 @@ nonisolated enum SQLiteFileAccess {
 
   /// The write probe could not open a sidecar (`-wal`, `-shm`, or `-journal`).
   struct SidecarDenied: Error, Equatable {}
+
+  /// The file database at `path`, for its lock (`LockRegistry.refusal(for:)`): an attached
+  /// file, or the file of a typed ATTACH
+  static func lockConfig(forFile path: String, engine: DatabaseType = .sqlite) -> ConnectionConfig {
+    ConnectionConfig(databaseType: engine, database: path)
+  }
+
+  /// Whether the file at `path` may not be attached or read: blocked (locked, not unlocked in
+  /// this app session), or for an MCP connection locked at all (MCP never serves a locked file,
+  /// even one the user unlocked in the app). Nothing locked: false without `stat`.
+  static func refusesAttaching(
+    _ path: String, engine: DatabaseType = .sqlite, lockSource: LockRegistry, servesMCP: Bool
+  ) -> Bool {
+    let config = lockConfig(forFile: path, engine: engine)
+    guard servesMCP else { return lockSource.refusal(for: config) != nil }
+    guard !lockSource.lockedIdentities.isEmpty else { return false }
+    return LockIdentity.all(config).contains(where: lockSource.isLocked)
+  }
+
+  /// The warning for an attached database left out on connect
+  static func attachmentSkipped(_ name: String, _ reason: String) -> String {
+    "Attached database \"\(name)\" skipped: \(reason)"
+  }
 
   enum Failure: Error, Equatable {
     case missingBookmark

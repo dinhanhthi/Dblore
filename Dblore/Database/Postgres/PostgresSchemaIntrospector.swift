@@ -23,6 +23,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       OR has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
     """
 
+  /// The session's own temp tables (pg_temp_N) are flagged; `pg_my_temp_schema()` is 0 until
+  /// the session creates one.
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     // Never analyzed (reltuples -1 on PG 14+, 0/0 before): fall back to the stats counter,
     // 0 there stays unknown (empty table, track_counts off or stats reset)
@@ -32,7 +34,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         c.relname::text,
         CASE WHEN c.reltuples < 0 OR (c.reltuples = 0 AND c.relpages = 0)
           THEN NULLIF(pg_stat_get_live_tuples(c.oid), 0)
-          ELSE c.reltuples::bigint END AS row_estimate
+          ELSE c.reltuples::bigint END AS row_estimate,
+        n.oid = pg_my_temp_schema() AS is_temporary
       FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE c.relkind IN ('r', 'p')
@@ -43,12 +46,14 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       """
     var tables: [DatabaseTable] = []
     for row in try await rows(in: session, sql: query) {
-      guard row.count >= 3,
+      guard row.count >= 4,
         let schema = CatalogValue.string(row[0]),
         let name = CatalogValue.string(row[1])
       else { continue }
       tables.append(
-        DatabaseTable(schema: schema, name: name, rowCount: CatalogValue.optionalInt(row[2])))
+        DatabaseTable(
+          schema: schema, name: name, rowCount: CatalogValue.optionalInt(row[2]),
+          isTemporary: CatalogValue.bool(row[3]) ?? false))
     }
     return tables
   }
@@ -135,6 +140,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
         AND p.prokind = 'f'
+        AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
       """
     var functions: [DatabaseFunction] = []
@@ -164,6 +170,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
         AND p.prokind = 'p'
+        AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
       """
     var procedures: [DatabaseProcedure] = []
@@ -196,6 +203,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE NOT t.tgisinternal
         AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, c.relname, t.tgname
       """
     var triggers: [DatabaseTrigger] = []

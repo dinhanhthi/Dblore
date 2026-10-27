@@ -11,11 +11,13 @@ extension DatabaseConnectionManager {
   // MARK: - Schema Introspection
 
   /// Fetch all tables from the database (row count is the planner estimate, or the live-tuple
-  /// stats counter if never analyzed; nil when unknown)
+  /// stats counter if never analyzed; nil when unknown). MySQL lists no temporary table: the
+  /// ones this session created follow (`mysqlTempTables`, `isTemporary`).
   func fetchTables() async throws -> [DatabaseTable] {
-    try await fetchCatalog("tables") { session in
+    let tables = try await fetchCatalog("tables") { session in
       try await self.introspector.tables(in: session)
     }
+    return tables + mysqlTempTables.tables
   }
 
   /// Fetch the columns of every table and view in one query, keyed by "schema.relation".

@@ -100,6 +100,7 @@ extension DatabaseConnectionManager {
       }
       if let classified = SQLStatementClassifier.classify(sql, dialect: dialect).first {
         noteSchemaChange(classified)
+        noteTemporaryTable(classified)
       }
       let rows = result.affectedRows
       if let expected = expectedRows?[index], rows != expected {

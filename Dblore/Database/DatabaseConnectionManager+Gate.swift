@@ -331,10 +331,20 @@ extension DatabaseConnectionManager {
   /// unlocked in this session (after a relock), before anything is sent. Checked by every
   /// user-initiated entry, every read that returns rows or documents (export and backup
   /// streams, the SQL dump snapshot, the Schema tab's sample) and Commit; only catalog and
-  /// introspection refreshes and this manager's internal resets are not checked.
+  /// introspection refreshes and this manager's internal resets are not checked. A SQLite
+  /// connection is refused too while any file it attached (configured, or by a typed ATTACH) is
+  /// refused (`SQLiteFileAccess.refusesAttaching`), until a reconnect leaves that file out.
   func refuseIfRelocked(_ config: ConnectionConfig?) throws {
-    guard let config, let refusal = lockSource.refusal(for: config) else { return }
-    throw refusal
+    guard let config else { return }
+    if let refusal = lockSource.refusal(for: config) { throw refusal }
+    guard config.databaseType == .sqlite else { return }
+    let attached = Set(config.attachedDatabases.map(\.path))
+      .union((session as? SQLiteSession)?.attachedFiles ?? [])
+    if attached.contains(where: {
+      SQLiteFileAccess.refusesAttaching($0, lockSource: lockSource, servesMCP: servesMCP)
+    }) {
+      throw DatabaseError.connectionLocked
+    }
   }
 
   /// Dialect of the connected database. No connection keeps today's PostgreSQL rules.

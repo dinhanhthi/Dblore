@@ -79,7 +79,8 @@ actor MCPConnectionPool {
     let inner =
       sessionFactory
       ?? AppDatabaseSessionFactory(
-        hostKeyValidator: SSHHostKeyPolicy(store: knownHosts, prompt: RejectingSSHHostKeyPrompt()))
+        hostKeyValidator: SSHHostKeyPolicy(store: knownHosts, prompt: RejectingSSHHostKeyPrompt()),
+        lockSource: lockSource)
     self.sessionFactory = MCPReadOnlySessionFactory(inner: inner)
     self.writableSessionFactory = inner
     self.certificates = certificates
@@ -219,7 +220,7 @@ actor MCPConnectionPool {
           // The writable manager reads no rows for the agent: the app's default limits
           let manager = DatabaseConnectionManager(
             sessionFactory: factory, readLimits: id.writable ? nil : Self.readLimits,
-            lockSource: lockSource)
+            lockSource: lockSource, servesMCP: true)
           try await manager.connect(config: config)
           return manager
         }, lastUsed: now())

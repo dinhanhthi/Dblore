@@ -137,6 +137,7 @@ extension DatabaseConnectionManager {
       }
       if let classified = SQLStatementClassifier.classify(sql, dialect: dialect).first {
         noteSchemaChange(classified)
+        noteTemporaryTable(classified)
       }
       await batchCheckpointHook?(index)
     }

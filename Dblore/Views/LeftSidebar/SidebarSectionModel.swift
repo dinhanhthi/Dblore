@@ -14,6 +14,10 @@
 //  when first expanded; their rows offer Show DDL and Copy Name.
 //  PostgreSQL, SQLite and DuckDB can hide schemas from the Public tab (`listedSchemas`); only the
 //  sidebar leaves them out.
+//  The session's temporary objects leave the schema groups and the filter menu for one Temporary
+//  section (`temporarySchemas`, `temporarySplit`); on MySQL a temporary table row offers no
+//  structure item, Rename, Drop, Generate Rows or Build Join Query (`rowReadsStructure`).
+//  Temporary rows name their schema once the temporary tables span two (`temporaryRowsShowSchema`).
 //
 
 import Foundation
@@ -133,6 +137,66 @@ nonisolated enum SidebarSectionModel {
   static func hiddenSchemasLabel(_ schemas: some Sequence<String>, hidden: Set<String>) -> String? {
     let count = Set(schemas).intersection(hidden).count
     return count == 0 ? nil : "\(count) hidden"
+  }
+
+  /// Of `schemas`, the session's temporary schemas, whose objects (tables, views, sequences,
+  /// triggers...) the Public tab lists in the Temporary section, never as a schema group or in
+  /// the filter menu: on PostgreSQL the schema of a temporary table and any `pg_temp_N` or
+  /// `pg_toast_temp_N`, on SQLite `temp`. MySQL has none: a temporary table sits in a real
+  /// database (`temporarySplit` moves the table alone).
+  static func temporarySchemas(
+    _ schemas: some Sequence<String>, tables: [DatabaseTable], databaseType: DatabaseType
+  ) -> Set<String> {
+    switch databaseType {
+    case .postgresql:
+      Set(tables.filter(\.isTemporary).map(\.schema))
+        .union(schemas.filter { $0.wholeMatch(of: /pg_(toast_)?temp_[0-9]+/) != nil })
+    case .sqlite:
+      Set(schemas).intersection(["temp"])
+    case .mysql, .duckdb, .mongodb:
+      []
+    }
+  }
+
+  /// The tables of the Temporary section (`isTemporary`, or in one of `temporarySchemas`) apart
+  /// from the rest, which alone pick the schema groups and the filter menu: PostgreSQL
+  /// `pg_temp_N`, SQLite `temp` and another MySQL database never show as a schema for them. A
+  /// temporary table named like a base table leaves the base table in its schema.
+  static func temporarySplit(
+    _ tables: [DatabaseTable], temporarySchemas: Set<String> = []
+  ) -> (temporary: [DatabaseTable], regular: [DatabaseTable]) {
+    var temporary: [DatabaseTable] = []
+    var regular: [DatabaseTable] = []
+    for table in tables {
+      if table.isTemporary || temporarySchemas.contains(table.schema) {
+        temporary.append(table)
+      } else {
+        regular.append(table)
+      }
+    }
+    return (temporary, regular)
+  }
+
+  /// The Public tab shows only "Every schema is hidden": no schema is listed, one with an object
+  /// is hidden, and no temporary object shows (temporary schemas are never hidden, so the
+  /// Temporary section stays, above the notice)
+  static func showsEverySchemaHiddenScreen(
+    listed: [String], schemas: Set<String>, hidden: Set<String>, hasTemporary: Bool
+  ) -> Bool {
+    listed.isEmpty && !schemas.isDisjoint(with: hidden) && !hasTemporary
+  }
+
+  /// Whether the row of `table` offers the items that read its structure or loaded columns
+  /// (structure editor, Rename, Drop, Generate Rows, Build Join Query). Not for a MySQL
+  /// temporary table: information_schema lists none.
+  static func rowReadsStructure(_ table: DatabaseTable, databaseType: DatabaseType) -> Bool {
+    !table.isTemporary || databaseType != .mysql
+  }
+
+  /// Whether temporary rows name their schema: only once `tables` span two schemas (a MySQL
+  /// `shop.t` and `other_db.t` would both read "t")
+  static func temporaryRowsShowSchema(_ tables: [DatabaseTable]) -> Bool {
+    Set(tables.map(\.schema)).count > 1
   }
 
   /// The Security tab (Users and Roles). MongoDB has none.

@@ -113,11 +113,11 @@ extension WorkspaceManager {
     return config
   }
 
-  /// `config` with the color, group, hidden schemas, scripts and lock of the saved row a save of
-  /// `config` overwrites, for saves that do not come from the connection form (an opened file, a
-  /// rename), so they never erase what the form or the sidebar set, and for an opened file's
-  /// config, so the form opens on the saved values. Unchanged without that row, and with
-  /// Remember off.
+  /// `config` with the color, group, hidden schemas, scripts, attached databases and lock of the
+  /// saved row a save of `config` overwrites, for saves that do not come from the connection form
+  /// (an opened file, a rename), so they never erase what the form or the sidebar set, and for an
+  /// opened file's config, so the form opens on the saved values. Unchanged without that row,
+  /// and with Remember off.
   static func keepingSavedAppearance(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -132,8 +132,9 @@ extension WorkspaceManager {
     return config.withScripts(of: saved)
   }
 
-  /// An opened file's `config` with the scripts of its saved row (Remember on), else none: a
-  /// file from elsewhere never picks which of the user's scripts run, nor against which host.
+  /// An opened file's `config` with the scripts and attached databases of its saved row
+  /// (Remember on), else none: a file from elsewhere never picks which of the user's scripts
+  /// run, nor against which host, nor which files are attached.
   static func keepingSavedScripts(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -427,6 +428,7 @@ extension WorkspaceManager {
     if !isAutoConnect, lockCenter.registry.refusal(for: config) != nil {
       config = try await unlockedForConnect(config)
     }
+    if !isAutoConnect { await unlockAttachedFiles(of: config) }
     guard
       await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
     else {
@@ -452,6 +454,28 @@ extension WorkspaceManager {
     try await connectWithoutUnlockCheck(
       config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited,
       fromForm: fromForm)
+    await showAttachWarnings()
+  }
+
+  /// Asks, on this workspace's window, to unlock each locked file `config` attaches. A cancel
+  /// leaves that file blocked: the connection actor then skips it with a warning, and `config`
+  /// (saved on connect) keeps it.
+  private func unlockAttachedFiles(of config: ConnectionConfig) async {
+    for attachment in config.validatedAttachedDatabases().attachments {
+      let file = SQLiteFileAccess.lockConfig(
+        forFile: attachment.path, engine: config.databaseType)
+      guard lockCenter.registry.refusal(for: file) != nil else { continue }
+      _ = await lockCenter.requestUnlock(
+        for: file, reason: "Unlock \(attachment.name.prefix(80)) to attach it",
+        anchor: NewWindowStore.shared.findWindow(for: id))
+    }
+  }
+
+  /// The attached databases the connect left out, in one warning toast
+  private func showAttachWarnings() async {
+    let warnings = await connectionManager.attachWarnings
+    guard !warnings.isEmpty else { return }
+    WorkspaceWindowManager.shared.showToast(warnings.joined(separator: "\n"), type: .warning)
   }
 
   /// `config` once its blocked lock is unlocked, with its saved password when it uses one, has
@@ -510,6 +534,7 @@ extension WorkspaceManager {
       throw error
     }
     pendingWeakeningConnect = nil
+    await showAttachWarnings()
   }
 
   /// The unlock sheet's connect. A failure closes the sheet; the form that started it stays
@@ -547,13 +572,15 @@ extension WorkspaceManager {
 }
 
 extension ConnectionConfig {
-  /// This config with the script names and timeout of `other` (none when nil).
+  /// This config with the script names, timeout and attached databases of `other` (none when
+  /// nil).
   fileprivate func withScripts(of other: ConnectionConfig?) -> ConnectionConfig {
     var config = self
     config.preConnectScript = other?.preConnectScript
     config.postDisconnectScript = other?.postDisconnectScript
     config.passwordCommandScript = other?.passwordCommandScript
     config.scriptTimeoutSeconds = other?.scriptTimeoutSeconds
+    config.attachedDatabases = other?.attachedDatabases ?? []
     return config
   }
 }

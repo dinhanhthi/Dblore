@@ -343,6 +343,16 @@ nonisolated struct SSHTunnelConfig: Codable, Equatable, Sendable {
   }
 }
 
+/// A database file attached to a SQLite connection on every connect, under `name` (its schema
+/// name in SQL). Kept on the saved row only: connection files never carry it.
+nonisolated struct AttachedDatabase: Codable, Equatable, Sendable {
+  var name: String
+  /// Absolute path of the file
+  var path: String
+  /// Security-scoped bookmark of the file
+  var bookmark: Data?
+}
+
 struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var databaseType: DatabaseType
   var host: String
@@ -418,11 +428,64 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   /// The saved row asks to unlock before use. Only the saved rows decide (`LockRegistry`), never
   /// a config's own value; a save keeps the saved row's flag, and no export writes it.
   var isLocked: Bool = false
+  /// Files attached on connect, at most `attachedDatabasesLimit`; carried from the saved row like
+  /// the scripts. A connect uses only `validatedAttachedDatabases()`.
+  var attachedDatabases: [AttachedDatabase] = [] {
+    didSet {
+      if attachedDatabases.count > Self.attachedDatabasesLimit {
+        attachedDatabases = Array(attachedDatabases.prefix(Self.attachedDatabasesLimit))
+      }
+    }
+  }
 
   nonisolated static let aiRulesLimit = 2_000
   nonisolated static let groupNameLimit = 64
   nonisolated static let hiddenSchemasLimit = 500
   nonisolated static let hiddenSchemaNameLimit = 255
+  nonisolated static let attachedDatabasesLimit = 10
+
+  /// The attachments a connect makes, and a one-line warning for each one left out. Only SQLite
+  /// attaches (decision A2: a DuckDB attachment could be re-attached read-write after the
+  /// file-access lock), so every other engine drops them all. A name must be an ASCII identifier
+  /// (letter or `_`, then letters, digits or `_`), not `main` or `temp`, and unique, all compared
+  /// case-insensitively as SQLite does; a path must be absolute (an empty one would attach a
+  /// temporary database, a `file:` one would be read as a URI).
+  nonisolated func validatedAttachedDatabases() -> (
+    attachments: [AttachedDatabase], warnings: [String]
+  ) {
+    guard !attachedDatabases.isEmpty else { return ([], []) }
+    guard databaseType == .sqlite else {
+      return (
+        [],
+        ["Attached databases work only on SQLite connections: \(attachedDatabases.count) skipped."]
+      )
+    }
+    var kept: [AttachedDatabase] = []
+    var warnings: [String] = []
+    var used: Set<String> = ["main", "temp"]
+    for attachment in attachedDatabases {
+      // The file name, not an unchecked name, labels a skipped entry
+      let file = "\"\((attachment.path as NSString).lastPathComponent)\""
+      let key = attachment.name.lowercased()
+      if !Self.isAttachmentIdentifier(attachment.name) {
+        warnings.append("Attached file \(file) skipped: its name is not a valid identifier.")
+      } else if used.contains(key) {
+        warnings.append(
+          "Attached file \(file) skipped: the name \"\(attachment.name)\" is already used.")
+      } else if !attachment.path.hasPrefix("/") {
+        warnings.append("Attached database \"\(attachment.name)\" skipped: no absolute path.")
+      } else {
+        used.insert(key)
+        kept.append(attachment)
+      }
+    }
+    return (kept, warnings)
+  }
+
+  private nonisolated static func isAttachmentIdentifier(_ name: String) -> Bool {
+    guard let first = name.first, !first.isNumber else { return false }
+    return name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }
+  }
 
   /// Sorted and unique, without blank or over-long names, at most `hiddenSchemasLimit`.
   nonisolated static func normalizedHiddenSchemas(_ names: [String]) -> [String] {
@@ -476,6 +539,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case preConnectScript, postDisconnectScript, passwordCommandScript, scriptTimeoutSeconds
     // Connection lock (absent unless locked)
     case isLocked
+    // Attached databases (absent unless set)
+    case attachedDatabases
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -553,6 +618,10 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       ((try? container.decodeIfPresent(Int.self, forKey: .scriptTimeoutSeconds))
       ?? nil).map(ConnectionScriptRunner.clampedTimeout)
     isLocked = try container.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
+    // A list of the wrong type attaches nothing; names and paths are checked on connect
+    attachedDatabases = Array(
+      (((try? container.decodeIfPresent([AttachedDatabase].self, forKey: .attachedDatabases))
+        ?? nil) ?? []).prefix(Self.attachedDatabasesLimit))
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -617,6 +686,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encodeIfPresent(scriptTimeoutSeconds, forKey: .scriptTimeoutSeconds)
     if isLocked {
       try container.encode(isLocked, forKey: .isLocked)
+    }
+    if !attachedDatabases.isEmpty {
+      try container.encode(attachedDatabases, forKey: .attachedDatabases)
     }
   }
 

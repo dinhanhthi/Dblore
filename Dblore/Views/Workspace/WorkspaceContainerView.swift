@@ -193,7 +193,9 @@ struct WorkspaceContainerView: View {
                   viewModel: viewModel
                 )
               } else {
+                // App-level toasts (connect warnings) need an overlay before a tab opens one
                 WorkspaceEmptyStateView(workspaceManager: workspaceManager)
+                  .overlay { ToastOverlay() }
               }
             }
 

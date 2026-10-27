@@ -1205,6 +1205,28 @@ extension LockGateTests {
     #expect(open.manager.lockCoverage == .workspace(open.session.workspaceId))
   }
 
+  @Test("A window whose connection attaches a relocked file is covered, named after that file")
+  func relockedAttachmentCoversItsWindows() async throws {
+    let open = try OpenLockedWorkspace()
+    defer { open.cleanUp() }
+    let folder = "/tmp/dblore-cover-\(UUID().uuidString)"
+    var config = ConnectionConfig(databaseType: .sqlite, database: folder + "/main.sqlite")
+    config.attachedDatabases = [AttachedDatabase(name: "aux", path: folder + "/aux.sqlite")]
+    var file = SQLiteFileAccess.lockConfig(forFile: folder + "/aux.sqlite")
+    file.name = "aux.sqlite"
+    open.registry.setLockedConnections([LockIdentity(file)])
+    open.registry.grant(LockIdentity(file))
+    let connected = open.makeManager(Workspace(name: "Attached", connectionConfig: config))
+    // As a connect sets it (an opened file keeps only its saved row's attachments)
+    connected.workspace.connectionConfig = config
+    #expect(connected.lockCoverage == nil)
+
+    try await Self.relock(open.registry, seenBy: open.center)
+    #expect(connected.lockCoverage == .connection(file))
+    #expect(await open.center.requestUnlock(for: file, reason: "unlock", anchor: nil))
+    #expect(connected.lockCoverage == nil)
+  }
+
   @Test("LockCenter re-renders the menus on relock and on unlock")
   func lockCenterRefreshesMenus() async throws {
     let open = try OpenLockedWorkspace()

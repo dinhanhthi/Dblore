@@ -87,8 +87,10 @@ final class LockCenter {
 
   /// What covers a workspace window (the unlock overlay; its menu commands are withheld): its
   /// own workspace `lockKeyId` when relocked, else the `connection` it works on when an identity
-  /// that connection reaches was relocked. Nil when nothing covers it: an unlocked or plain
-  /// window is untouched.
+  /// that connection reaches was relocked, else the first file that connection attaches
+  /// (`attachedDatabases`) that was relocked, named after the file, so its Unlock unlocks that
+  /// file. Nil when nothing covers it: an unlocked or plain window is untouched. A file attached
+  /// by a typed ATTACH is not seen here (the connection actor refuses its statements).
   func coverage(lockKeyId: UUID?, connection: ConnectionConfig?) -> LockCoverage? {
     // Nothing relocked: no `stat` or URI parsing for every menu read
     guard !relocked.isEmpty else { return nil }
@@ -96,11 +98,20 @@ final class LockCenter {
       return .workspace(id)
     }
     guard let connection else { return nil }
-    let reached = LockIdentity.all(connection)
-    guard !reached.isDisjoint(with: relocked), reached.contains(where: registry.isBlocked) else {
-      return nil
+    if isRelocked(connection) { return .connection(connection) }
+    for attachment in connection.validatedAttachedDatabases().attachments {
+      var file = SQLiteFileAccess.lockConfig(
+        forFile: attachment.path, engine: connection.databaseType)
+      file.name = (attachment.path as NSString).lastPathComponent
+      if isRelocked(file) { return .connection(file) }
     }
-    return .connection(connection)
+    return nil
+  }
+
+  /// An identity `config` reaches was relocked and is still blocked
+  private func isRelocked(_ config: ConnectionConfig) -> Bool {
+    let reached = LockIdentity.all(config)
+    return !reached.isDisjoint(with: relocked) && reached.contains(where: registry.isBlocked)
   }
 
   /// Unlocks `item` for this session. A blocked item asks the prompter on `anchor` and is

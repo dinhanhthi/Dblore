@@ -717,7 +717,7 @@ extension ConnectionFormContent {
     return try certificateInfo(from: certificatePEM, hasCA: material.caPEM != nil)
   }
 
-  /// Name plus Browse. The chosen path is shown under the button.
+  /// Name plus Browse, then the attached databases. The chosen path is shown under the button.
   @ViewBuilder
   func sqliteSimpleFields() -> some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -740,6 +740,8 @@ extension ConnectionFormContent {
             .textSelection(.enabled)
         }
       }
+
+      attachedDatabasesSection()
     }
   }
 
@@ -866,7 +868,7 @@ extension ConnectionFormContent {
 
   /// Runs `onPick` with the chosen path and its security-scoped bookmark (nil when the file
   /// does not exist yet, as for a new file).
-  private func presentFilePanel(
+  func presentFilePanel(
     _ panel: NSSavePanel,
     onPick: @escaping @MainActor (_ path: String, _ bookmark: Data?) -> Void
   ) {

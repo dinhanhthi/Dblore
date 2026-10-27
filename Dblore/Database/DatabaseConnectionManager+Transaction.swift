@@ -196,6 +196,7 @@ extension DatabaseConnectionManager {
         await confirmUserTransactionWithServer(after: statement, succeeded: true)
       }
       noteSchemaChange(statement)
+      noteTemporaryTable(statement)
       result = await resetSessionIfCapped(result, statement: statement)
       if result.sessionReset {
         // The rest would run outside the user's session state (temp tables, SET, BEGIN)
@@ -479,10 +480,33 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// MySQL: a successful CREATE TEMPORARY TABLE, DROP TABLE or USE updates `mysqlTempTables`
+  /// (an unqualified name is in the session's default database). Unknown statements are read
+  /// too: one opening with an executable comment may change that database. Recorded whatever
+  /// the transaction state: the server never rolls these back.
+  func noteTemporaryTable(_ statement: ClassifiedStatement) {
+    guard let config, config.databaseType == .mysql else { return }
+    switch statement.kind {
+    case .ddl, .sessionSet, .unknown:
+      mysqlTempTables.noteSucceeded(statement.text, connected: config.database)
+    default:
+      return
+    }
+  }
+
+  /// MySQL error 1146 (ER_NO_SUCH_TABLE): the tracked temporary table it names is gone (dropped
+  /// by another statement, or by a DROP spelled in another case), so it leaves `mysqlTempTables`
+  /// and the sidebar reloads (`takeSchemaRefresh`).
+  func forgetMissingTemporaryTable(_ error: Error) {
+    guard let error = error as? MySQLSessionError, error.code == 1146 else { return }
+    if mysqlTempTables.forgetMissing(serverMessage: error.message) { schemaRefreshPending = true }
+  }
+
   func noteSchemaSQL(_ statements: [BoundStatement]) {
     for statement in statements {
       guard let classified = classification(of: statement) else { continue }
       noteSchemaChange(classified)
+      noteTemporaryTable(classified)
     }
   }
 

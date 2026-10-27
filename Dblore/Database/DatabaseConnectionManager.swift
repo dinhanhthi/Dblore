@@ -46,6 +46,9 @@ actor DatabaseConnectionManager {
   /// Which identities are locked: connects and user-initiated statements of a blocked identity
   /// are refused (`DatabaseError.connectionLocked`). `LockRegistry.shared` in the app.
   nonisolated let lockSource: LockRegistry
+  /// An MCP pool manager: MCP never serves a locked file, so an attached file whose lock is set
+  /// is skipped (and refused by the gate) even when the user unlocked it in the app
+  nonisolated let servesMCP: Bool
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
@@ -108,6 +111,9 @@ actor DatabaseConnectionManager {
   /// information_schema once per table. Cleared with `editTableCache` and on schema reload; a
   /// clear also rejects catalog reads still in flight (`MySQLTableColumnsCache.generation`).
   var mysqlTableColumns = MySQLTableColumnsCache()
+  /// MySQL temporary tables this session created (no catalog lists them); cleared with the
+  /// session (`forgetConnection`)
+  var mysqlTempTables = MySQLTempTableTracker()
   /// The last server-closed session (cleared on connect / disconnect), see `markSessionLost`
   var lastSessionLoss: SessionLostEvent?
   /// Where Data Rewind entries go; nil records nothing. The app takes `RewindRecorder.shared`
@@ -123,6 +129,9 @@ actor DatabaseConnectionManager {
   /// Why a SQLite file was opened read-only by the app (a sidecar could not be written); nil
   /// otherwise. Set on connect, cleared when the connection is forgotten.
   private(set) var sqliteReadOnlyReason: String?
+  /// One warning per attached database the last connect left out (invalid, locked, missing,
+  /// unreadable). Set on connect, cleared when the connection is forgotten.
+  private(set) var attachWarnings: [String] = []
   /// MySQL or MariaDB and its version while a MySQL session is open, else nil.
   var mysqlServerInfo: MySQLServerInfo? {
     (session as? MySQLSession)?.serverInfo
@@ -155,15 +164,18 @@ actor DatabaseConnectionManager {
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
     readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true,
-    scripts: ConnectionScriptRunner = .app, lockSource: LockRegistry = .shared
+    scripts: ConnectionScriptRunner = .app, lockSource: LockRegistry = .shared,
+    servesMCP: Bool = false
   ) {
     self.scripts = scripts
     self.lockSource = lockSource
+    self.servesMCP = servesMCP
     self.readLimits = readLimits
     self.resetsSessionAfterCappedRead = resetsSessionAfterCappedRead
     let policy = SSHHostKeyPolicy(prompt: sshHostKeyPrompt)
     sshHostKeyPolicy = policy
-    self.sessionFactory = sessionFactory ?? AppDatabaseSessionFactory(hostKeyValidator: policy)
+    self.sessionFactory =
+      sessionFactory ?? AppDatabaseSessionFactory(hostKeyValidator: policy, lockSource: lockSource)
     (sessionEvents, sessionEventsContinuation) = AsyncStream.makeStream(
       of: SessionLostEvent.self, bufferingPolicy: .bufferingNewest(8))
     (sessionResets, sessionResetsContinuation) = AsyncStream.makeStream(
@@ -179,7 +191,7 @@ actor DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: MCPReadOnlySessionFactory(
         inner: SQLDumpSessionFactory(inner: sessionFactory)),
-      resetsSessionAfterCappedRead: false, lockSource: lockSource)
+      resetsSessionAfterCappedRead: false, lockSource: lockSource, servesMCP: servesMCP)
   }
 
   /// `makeReadOnlySideManager` without the read-only wrapper, for an app read that sends its own
@@ -189,7 +201,7 @@ actor DatabaseConnectionManager {
   nonisolated func makeSnapshotSideManager() -> DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: SQLDumpSessionFactory(inner: sessionFactory),
-      resetsSessionAfterCappedRead: false, lockSource: lockSource)
+      resetsSessionAfterCappedRead: false, lockSource: lockSource, servesMCP: servesMCP)
   }
 
   /// Connects the single-use `side` like this manager: `config` (this manager's when nil), its
@@ -317,6 +329,7 @@ actor DatabaseConnectionManager {
       prepared.release?()
       throw error
     }
+    if servesMCP { (opening as? SQLiteSession)?.refuseLockedFilesForMCP() }
     do {
       try await opening.open()
     } catch {
@@ -325,7 +338,7 @@ actor DatabaseConnectionManager {
       throw error
     }
     // A file picked with "New File…" exists only now: bookmark it so it reopens after relaunch
-    if prepared.config.fileBookmark == nil, prepared.release != nil {
+    if prepared.config.fileBookmark == nil, prepared.hasFileGrant {
       prepared.config.fileBookmark = SecurityScopedAccess.bookmarkIfPossible(
         for: URL(fileURLWithPath: prepared.config.database))
     }
@@ -359,6 +372,7 @@ actor DatabaseConnectionManager {
     }
     sqliteFileAccessRelease = prepared.release
     sqliteReadOnlyReason = prepared.readOnlyReason
+    attachWarnings = prepared.warnings + ((opening as? SQLiteSession)?.attachWarnings ?? [])
     connectionEpoch &+= 1
     lastSessionLoss = nil
     // The UI learns about a session the server closed even when no query is running.
@@ -488,14 +502,22 @@ actor DatabaseConnectionManager {
     }
   }
 
-  /// Bookmark present: sandbox grant, then the resolved path. No bookmark: the path as given
-  /// (a file the process can already open, including a temporary file in tests), except a
-  /// read-write DuckDB file, whose `.wal` still needs the grant. In-memory DuckDB needs no
-  /// file access.
+  /// The main file's grant (`prepareMainFile`), then one per attached file
+  /// (`prepareAttachments`), for SQLite and DuckDB.
   private func prepareSQLiteOpen(_ config: ConnectionConfig) async throws -> PreparedSQLiteOpen {
     guard config.databaseType == .sqlite || config.databaseType == .duckdb else {
       return PreparedSQLiteOpen(config: config, release: nil)
     }
+    var prepared = try await prepareMainFile(config)
+    await prepareAttachments(&prepared)
+    return prepared
+  }
+
+  /// Bookmark present: sandbox grant, then the resolved path. No bookmark: the path as given
+  /// (a file the process can already open, including a temporary file in tests), except a
+  /// read-write DuckDB file, whose `.wal` still needs the grant. In-memory DuckDB needs no
+  /// file access.
+  private func prepareMainFile(_ config: ConnectionConfig) async throws -> PreparedSQLiteOpen {
     let duckDBReadWrite = config.databaseType == .duckdb && !config.readOnlyFile
     guard config.fileBookmark != nil || duckDBReadWrite,
       config.database != DuckDBSession.inMemoryPath
@@ -508,7 +530,64 @@ actor DatabaseConnectionManager {
     if grant.readOnly { resolved.readOnlyFile = true }
     if let bookmark = grant.bookmark { resolved.fileBookmark = bookmark }
     return PreparedSQLiteOpen(
-      config: resolved, release: { grant.release() }, readOnlyReason: grant.bannerReason)
+      config: resolved, release: { grant.release() }, readOnlyReason: grant.bannerReason,
+      hasFileGrant: true)
+  }
+
+  /// Leaves in `prepared.config` only the attachments the session may attach
+  /// (`validatedAttachedDatabases`), each with its own grant like a main file
+  /// (`SQLiteFileAccess.open`: bookmark, sidecar presenters registered before the ATTACH, write
+  /// probe) at the path it resolves to, released with the main file's. Runs after the main file,
+  /// also for an in-memory DuckDB. A file this manager's `lockSource` blocks (its saved path, then
+  /// the file its bookmark resolves to; for MCP, any locked file), whose grant fails, or that
+  /// opens only read-only on a read-write connection is left out with a warning. No bookmark:
+  /// the path as given.
+  private func prepareAttachments(_ prepared: inout PreparedSQLiteOpen) async {
+    let main = prepared.config
+    let (attachments, warnings) = main.validatedAttachedDatabases()
+    prepared.warnings = warnings
+    var kept: [AttachedDatabase] = []
+    var grants: [SQLiteFileAccess.AccessGrant] = []
+    for var attachment in attachments {
+      var reason: String?
+      if isBlockedFile(attachment.path, engine: main.databaseType) {
+        reason = "its file is locked."
+      } else if let bookmark = attachment.bookmark {
+        let file = ConnectionConfig(
+          databaseType: main.databaseType, database: attachment.path, fileBookmark: bookmark,
+          readOnlyFile: main.readOnlyFile)
+        if let grant = try? await SQLiteFileAccess.open(config: file) {
+          attachment.path = grant.url.path
+          if isBlockedFile(attachment.path, engine: main.databaseType) {
+            reason = "its file is locked."
+          } else if grant.readOnly, !main.readOnlyFile {
+            reason = "allow its folder so Dblore can write its journal files."
+          } else {
+            grants.append(grant)
+          }
+          if reason != nil { grant.release() }
+        } else {
+          reason = "its file cannot be opened. Choose it again in the connection's settings."
+        }
+      }
+      if let reason {
+        prepared.warnings.append(SQLiteFileAccess.attachmentSkipped(attachment.name, reason))
+      } else {
+        kept.append(attachment)
+      }
+    }
+    prepared.config.attachedDatabases = kept
+    guard !grants.isEmpty else { return }
+    let releaseMain = prepared.release
+    prepared.release = { [grants] in
+      releaseMain?()
+      for grant in grants { grant.release() }
+    }
+  }
+
+  private func isBlockedFile(_ path: String, engine: DatabaseType) -> Bool {
+    SQLiteFileAccess.refusesAttaching(
+      path, engine: engine, lockSource: lockSource, servesMCP: servesMCP)
   }
 
   /// `SELECT 1` on a SQLite or DuckDB database, then close. The grant is released either way.
@@ -601,6 +680,7 @@ actor DatabaseConnectionManager {
     session = nil
     config = nil
     sqliteReadOnlyReason = nil
+    attachWarnings = []
     txState = .idle
     userTxOpen = false
     schemaRefreshPending = false
@@ -608,6 +688,7 @@ actor DatabaseConnectionManager {
     schemaDirtyInUserTx = false
     editTableCache.removeAll()
     mysqlTableColumns.removeAll()
+    mysqlTempTables.reset()
     return ForgottenSession(
       session: forgotten, connection: resources.connection, group: resources.group,
       tunnel: resources.tunnel, mysql: mysql)
@@ -705,13 +786,18 @@ private nonisolated struct PendingScript: Sendable {
   func run() { runner.runPostDisconnect(name, for: config) }
 }
 
-/// A SQLite open, plus the sandbox release `disconnect` calls. `release` is nil for PostgreSQL
-/// and for a SQLite path the process can already open.
+/// A SQLite open, plus the sandbox release `disconnect` calls (the main file's and the attached
+/// files' grants). `release` is nil for PostgreSQL and for SQLite paths the process can already
+/// open.
 private struct PreparedSQLiteOpen: Sendable {
   var config: ConnectionConfig
   var release: (@Sendable () -> Void)?
   /// `SQLiteFileAccess.AccessGrant.bannerReason`: set when the app itself opened the file read-only
   var readOnlyReason: String?
+  /// The main file has a grant (`release` may also hold only the attached files')
+  var hasFileGrant = false
+  /// The attached databases left out (`DatabaseConnectionManager.attachWarnings`)
+  var warnings: [String] = []
 }
 
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` and DuckDB `DuckDBSession`
@@ -724,6 +810,8 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
   typealias DuckDBLibraryLoader = @Sendable () async -> (@Sendable () throws -> DuckDBLibrary)?
 
   var hostKeyValidator: any SSHHostKeyValidating = SSHHostKeyPolicy()
+  /// What a SQLite session's authorizer checks a typed ATTACH against
+  var lockSource: LockRegistry = .shared
   var duckDBLibraryLoader: DuckDBLibraryLoader = { @MainActor in
     guard let manager = PluginRegistry.shared.manager(id: "duckdb"),
       await manager.isInstalledAfterLaunchCheck()
@@ -742,7 +830,7 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
     case .postgresql:
       return PostgresSession(config: config, hostKeyValidator: hostKeyValidator)
     case .sqlite:
-      return SQLiteSession(config: config)
+      return SQLiteSession(config: config, lockSource: lockSource)
     case .duckdb:
       guard let load = await duckDBLibraryLoader() else {
         throw DatabaseError.engineUnavailable(.duckdb)

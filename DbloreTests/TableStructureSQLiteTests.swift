@@ -137,8 +137,9 @@ struct TableStructureSQLiteTests {
     defer { removeDatabase(at: otherURL) }
     try await withDatabase { session in
       _ = try await session.command("CREATE TABLE item (only_main TEXT)", binds: [])
-      _ = try await session.command(
-        "ATTACH DATABASE ? AS \"other db\"", binds: [.text(otherURL.path)])
+      // A quoted path: the session refuses a bound ATTACH file name
+      let quoted = otherURL.path.replacingOccurrences(of: "'", with: "''")
+      _ = try await session.command("ATTACH DATABASE '\(quoted)' AS \"other db\"", binds: [])
       _ = try await session.command(
         "CREATE TABLE \"other db\".owner (id INTEGER PRIMARY KEY)", binds: [])
       _ = try await session.command(

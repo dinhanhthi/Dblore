@@ -81,6 +81,18 @@ struct SchemaSnapshotLoaderTests {
     }
   }
 
+  @Test func temporaryTablesAreLeftOut() async throws {
+    var state = StructureEditorConnectionState()
+    state.mysqlServerInfo = MySQLServerInfo(flavor: .mysql, major: 8, minor: 0, patch: 36)
+    let listed =
+      Self.tables("dev", ["orders"]) + [
+        DatabaseTable(schema: "dev", name: "tmp", isTemporary: true)
+      ]
+    let database = FakeDatabase(.mysql, state: state, tables: listed)
+    let snapshot = try await SchemaSnapshotLoader.load(schema: "dev", from: database)
+    #expect(snapshot.tables.map(\.name) == ["orders"])
+  }
+
   /// Once armed, cancels the task that sends the next matching statement
   private final class CancelSwitch: @unchecked Sendable {
     private let lock = NSLock()

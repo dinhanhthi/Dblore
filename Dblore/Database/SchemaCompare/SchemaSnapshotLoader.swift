@@ -48,7 +48,9 @@ nonisolated enum SchemaSnapshotLoader {
     let state = await database.structureEditorState()
     guard !state.transactionOpen else { throw SchemaCompareError.transactionOpen }
     let engine = try engine(await database.databaseType, server: state.mysqlServerInfo)
-    let names = try await database.fetchTables().filter { $0.schema == schema }.map(\.name)
+    // A session's temporary tables are no part of the schema
+    let names = try await database.fetchTables()
+      .filter { $0.schema == schema && !$0.isTemporary }.map(\.name)
     guard !names.isEmpty else { throw SchemaCompareError.schemaNotFound(schema) }
     guard names.count <= maxTables else { throw SchemaCompareError.tooManyTables(names.count) }
     let tables: [TableStructure]
