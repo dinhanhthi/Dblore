@@ -6,7 +6,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 ### Improved
 
-- **Window tabs in two rows.** When Dblore windows are merged as macOS window tabs, the Dblore header (sidebar buttons, tabs and the buttons on the right) stays in the title bar beside the window buttons, and the window tab bar sits below it, starting after the left sidebar (full width when the sidebar is hidden). Each window tab keeps its own Dblore tabs. In full screen, the window tab bar stays at the top with the header below it. [#6b03c347](https://github.com/dinhanhthi/Dblore/commit/6b03c347) [#0078afab](https://github.com/dinhanhthi/Dblore/commit/0078afab)
+- **Window tabs in two rows.** When Dblore windows are merged as macOS window tabs, the Dblore header (sidebar buttons, tabs and the buttons on the right) stays in the title bar beside the window buttons, and the window tab bar sits below it, starting after the left sidebar (full width when the sidebar is hidden). Each window tab keeps its own Dblore tabs. The tab bar is centered in its row, with a line below it that continues the line under the sidebar tabs, and the Welcome window lays it out the same way. In full screen, the window tab bar stays at the top with the header below it. [#6b03c347](https://github.com/dinhanhthi/Dblore/commit/6b03c347) [#0078afab](https://github.com/dinhanhthi/Dblore/commit/0078afab) [#3ed75e1e](https://github.com/dinhanhthi/Dblore/commit/3ed75e1e) [#0bf67342](https://github.com/dinhanhthi/Dblore/commit/0bf67342)
 
 ## v0.8.4 (2026-10-25)
 
