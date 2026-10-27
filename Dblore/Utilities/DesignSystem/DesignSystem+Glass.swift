@@ -2,12 +2,10 @@
 //  DesignSystem+Glass.swift
 //  Dblore
 //
-//  Surfaces for the navigation/chrome layer. They paint fixed design-system tokens, so the
-//  app looks the same on every macOS version: macOS defines how Liquid Glass looks and renders
-//  it differently between releases (macOS 27 draws `.regular` glass much lighter).
-//  The only exception (user decision 2026-10-26) is the floating header controls: the left and
-//  right header button groups and the selected tab chip use Liquid Glass on macOS 26 and later,
-//  and keep their token look before. Sidebars, panels, backgrounds and banners stay tokens.
+//  Surfaces for the navigation/chrome layer. The names are historic: these used Liquid
+//  Glass, whose look is defined by macOS and changed between releases (macOS 27 renders
+//  `.regular` glass much lighter). They now paint fixed design-system tokens only, so the
+//  app looks the same on every macOS version. Never use system materials or glass here.
 //
 
 import SwiftUI
@@ -36,36 +34,5 @@ extension View {
   func tintedChromeGlass(_ color: Color, opacity: Double = 0.25) -> some View {
     background(color.opacity(opacity), in: Rectangle())
       .background(Color.appBackground, in: Rectangle())
-  }
-}
-
-// MARK: - Header Controls (Liquid Glass on macOS 26+)
-
-extension View {
-  /// A floating header button group (the sidebar and connection buttons; the AI, theme,
-  /// settings and new-tab buttons). macOS 26 and later: a glass capsule framing the icons, 36pt
-  /// tall in the 40pt header row; the thin side padding keeps the left group clear of the
-  /// traffic lights. Earlier: unchanged, no background.
-  @ViewBuilder
-  func headerControlsGlass() -> some View {
-    if #available(macOS 26, *) {
-      padding(.horizontal, Spacing.xxs)
-        .padding(.vertical, Spacing.xs)
-        .glassEffect(.regular, in: Capsule())
-    } else {
-      self
-    }
-  }
-}
-
-/// The capsule behind the selected tab of the header tab strip. macOS 26 and later: a glass
-/// capsule. Earlier: a neutral tint of the foreground color.
-struct SelectedChipBackground: View {
-  var body: some View {
-    if #available(macOS 26, *) {
-      Color.clear.glassEffect(.regular, in: Capsule())
-    } else {
-      Capsule().fill(Color.foreground.opacity(0.12))
-    }
   }
 }

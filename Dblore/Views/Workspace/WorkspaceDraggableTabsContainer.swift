@@ -372,8 +372,9 @@ struct WorkspaceDraggableTabItem: View {
     .frame(height: 28)
     .background {
       if isActive {
-        // Capsule for the active tab - slides between tabs; the label stays above it
-        SelectedChipBackground()
+        // Neutral capsule for the active tab - slides between tabs; the label stays above it
+        Capsule()
+          .fill(Color.foreground.opacity(0.12))
           .matchedGeometryEffect(id: "activeTab", in: capsuleNamespace)
       } else if isHovering || isDragging {
         // Subtle hover state for inactive tabs

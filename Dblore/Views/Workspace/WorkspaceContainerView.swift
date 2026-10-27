@@ -249,7 +249,6 @@ struct WorkspaceContainerView: View {
 
                   WorkspaceInfoButton(workspaceManager: workspaceManager)
                 }
-                .headerControlsGlass()
                 .padding(.trailing, Spacing.xsm)
               }
 
@@ -1348,7 +1347,6 @@ struct WorkspaceTitleBarTabsView: View {
         .blockDoubleClickZoom()
         .help("New or open tab")
       }
-      .headerControlsGlass()
       .padding(.horizontal, Spacing.sm)
     }
     .frame(height: ComponentSize.tabBarHeight)
