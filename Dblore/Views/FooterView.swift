@@ -55,6 +55,15 @@ struct FooterView: View {
           .padding(.horizontal, Spacing.md)
           .padding(.vertical, Spacing.xs + 2)
           .background(Color.cardHeaderBackground)
+          // The connection's color tag as a thick border between the version and the status
+          .overlay(alignment: .trailing) {
+            if let color = connectionConfig?.colorTag {
+              Rectangle()
+                .fill(color.tagColor)
+                .frame(width: 3)
+                .accessibilityLabel("Connection color \(color.rawValue)")
+            }
+          }
 
         // Connection status
         connectionStatusIcon
@@ -89,15 +98,6 @@ struct FooterView: View {
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
       Divider()
-    }
-    // The connection's color tag as a thin stripe over the top edge
-    .overlay(alignment: .top) {
-      if let color = connectionConfig?.colorTag {
-        Rectangle()
-          .fill(color.tagColor)
-          .frame(height: 2)
-          .accessibilityLabel("Connection color \(color.rawValue)")
-      }
     }
   }
 
