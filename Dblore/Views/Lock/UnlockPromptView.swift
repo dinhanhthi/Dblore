@@ -169,15 +169,10 @@ struct UnlockPromptView: View {
         .disabled(model.isWorking)
 
       if model.showsPasswordPath {
-        HStack(spacing: Spacing.sm) {
-          SecureField("Lock Password", text: $model.password)
-            .textFieldStyle(.plain)
-            .inputStyle()
-            .onSubmit { model.unlockWithPassword() }
-          Button("Unlock") { model.unlockWithPassword() }
-            .buttonStyle(SecondaryButtonStyle())
-            .disabled(model.password.isEmpty || model.isWorking)
-        }
+        SecureField("Lock Password", text: $model.password)
+          .textFieldStyle(.plain)
+          .inputStyle()
+          .onSubmit { model.unlockWithPassword() }
       }
 
       if let message = model.message {
@@ -188,7 +183,19 @@ struct UnlockPromptView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
 
-      HStack(spacing: Spacing.md) {
+      // Cancel and Unlock centered on the bottom row; the spinner sits apart at the leading edge
+      HStack(spacing: Spacing.sm) {
+        Button("Cancel") { onCancel() }
+          .buttonStyle(SecondaryButtonStyle())
+          .keyboardShortcut(.cancelAction)
+        if model.showsPasswordPath {
+          Button("Unlock") { model.unlockWithPassword() }
+            .buttonStyle(SecondaryButtonStyle())
+            .disabled(model.password.isEmpty || model.isWorking)
+        }
+      }
+      .frame(maxWidth: .infinity)
+      .overlay(alignment: .leading) {
         ProgressView()
           .controlSize(.small)
           .tint(.accent)
@@ -196,10 +203,6 @@ struct UnlockPromptView: View {
           .animation(.easeIn(duration: 0.15), value: model.showsSpinner)
           // Opt out of the app-wide animation kill switch, only for the fade
           .transaction(value: model.showsSpinner) { $0.disablesAnimations = false }
-        Spacer()
-        Button("Cancel") { onCancel() }
-          .buttonStyle(SecondaryButtonStyle())
-          .keyboardShortcut(.cancelAction)
       }
     }
     .padding(Spacing.xl)
