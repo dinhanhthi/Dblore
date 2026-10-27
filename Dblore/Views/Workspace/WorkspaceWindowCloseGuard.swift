@@ -4,7 +4,8 @@
 //
 //  Routes the window's close button through `resolvePendingTransaction(action: .closeWindow)`
 //  while a Protected transaction is pending (Commit / Roll back / Cancel; Cancel keeps the
-//  window). Only the button is retargeted: SwiftUI keeps its own window delegate.
+//  window), and closes a locked workspace with its window. Only the button is retargeted:
+//  SwiftUI keeps its own window delegate.
 //
 
 import AppKit
@@ -46,6 +47,16 @@ struct WorkspaceWindowCloseGuard: NSViewRepresentable {
 
     @objc private func closeButtonClicked(_ sender: Any?) {
       guard let window else { return }
+      // A locked workspace closes with its window (transaction and unsaved prompts on it), so
+      // its next open asks again
+      if let manager = workspaceManager, manager.lockKeyId != nil {
+        Task { @MainActor in
+          if await WorkspaceWindowManager.shared.closeWorkspace(id: manager.id) {
+            closeWindow(window)
+          }
+        }
+        return
+      }
       guard let manager = workspaceManager,
         WorkspaceTransactionRules.requiresResolution(
           state: manager.pendingTransaction, action: .closeWindow, originTabId: nil)

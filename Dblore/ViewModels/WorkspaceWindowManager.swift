@@ -440,6 +440,8 @@ class WorkspaceWindowManager {
 
     workspaces.removeValue(forKey: id)
     manager.releaseFileAccess()
+    // A locked workspace asks again at its next open
+    if let lockKeyId = manager.lockKeyId { revokeUnusedGrant(of: lockKeyId) }
 
     if activeWorkspaceId == id {
       activeWorkspaceId = nil
