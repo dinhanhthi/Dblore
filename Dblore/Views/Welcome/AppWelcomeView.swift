@@ -467,10 +467,12 @@ struct WelcomeRecents: View {
         HStack(spacing: Spacing.sm) {
           WelcomeFilterField(prompt: "Filter recents", text: $filter)
           if tab == .connections && !connections.isEmpty {
+            // Same 30pt height as the filter and tabs, so the row keeps its height on either tab
             Button(action: onExportConnections) {
               Image(systemName: "square.and.arrow.up")
+                .frame(width: 30, height: 30)
             }
-            .buttonStyle(SecondaryButtonStyle(iconOnly: true))
+            .buttonStyle(SecondaryButtonStyle(iconOnly: true, hPadding: 0, vPadding: 0))
             .help("Export Connections...")
             .accessibilityLabel("Export Connections...")
           }
