@@ -119,7 +119,6 @@ struct QueryInsightsView: View {
     .menuIndicator(.hidden)
     .linkPointer()
     .fixedSize()
-    .frame(maxWidth: 220)
     .help("Connection")
     .accessibilityLabel("Connection: \(connectionTitle)")
   }
