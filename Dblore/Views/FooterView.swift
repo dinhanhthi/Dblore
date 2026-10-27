@@ -42,6 +42,8 @@ struct FooterView: View {
   var workspaceManager: WorkspaceManager?
   @Environment(\.pixelLength) private var pixelLength
 
+  private var showsLockButton: Bool { workspaceManager?.workspace.fileURL != nil }
+
   var body: some View {
     bar(viewModel: viewModel)
   }
@@ -95,11 +97,12 @@ struct FooterView: View {
         documentStats(viewModel: viewModel)
       }
 
-      if let workspaceManager, workspaceManager.workspace.fileURL != nil {
+      if let workspaceManager, showsLockButton {
         WorkspaceLockButton(workspaceManager: workspaceManager)
       }
     }
-    .padding(.trailing, Spacing.lg)
+    // The lock button's own hover padding already keeps it off the edge
+    .padding(.trailing, showsLockButton ? Spacing.sm : Spacing.lg)
     .frame(height: ComponentSize.footerHeight)
     .background(Color.cardBackground)
     .overlay(alignment: .top) {
@@ -339,8 +342,10 @@ struct WorkspaceLockButton: View {
     } label: {
       Image(systemName: isLocked ? "lock.fill" : "lock.open")
         .font(.small)
+        .foregroundColor(.foregroundMuted)
     }
-    .buttonStyle(GhostButtonStyle(isActive: isLocked, iconOnly: true))
+    // Background on hover only, like the header's icon buttons
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
     .controlSize(.small)
     .help(isLocked ? "Lock and Close Workspace" : "Lock Workspace...")
   }
