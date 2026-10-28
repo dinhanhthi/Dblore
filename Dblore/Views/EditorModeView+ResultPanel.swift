@@ -33,8 +33,9 @@ extension EditorModeView {
   /// - Returns: A view with query result metadata and action buttons
   func resultPanelHeader(result: CellResult) -> some View {
     VStack(spacing: 0) {
-      // Warning banner (row cap reached; session reset details when the cap closed it)
-      if result.error == nil, let notice = result.capNotice {
+      // Warning banner (row cap reached; session reset details when the cap closed it; an
+      // inline edit this result was not re-read for)
+      if result.error == nil, let notice = result.editorNotice {
         HStack(spacing: Spacing.xs) {
           Image(systemName: "exclamationmark.triangle.fill")
             .font(.system(size: 11))

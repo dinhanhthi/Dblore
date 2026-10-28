@@ -13,10 +13,19 @@ import SwiftUI
 /// This ensures that straight quotes `"` are not converted to curly quotes `"` or `"`.
 struct PlainTextEditor: NSViewRepresentable {
   @Binding var text: String
+  /// TextKit 1 with non-contiguous layout, for text that may hold a multi-MB line: TextKit 2
+  /// resolves rendering attributes across a whole paragraph on every draw, which pins the main
+  /// thread for minutes on a 3 MB single-line value. Read once, when the view is made.
+  var laysOutLazily = false
 
   func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
-    let textView = NSTextView()
+    let textView = laysOutLazily ? NSTextView(usingTextLayoutManager: false) : NSTextView()
+    if laysOutLazily {
+      textView.layoutManager?.allowsNonContiguousLayout = true
+      textView.maxSize = NSSize(
+        width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+    }
 
     textView.delegate = context.coordinator
     textView.isRichText = false

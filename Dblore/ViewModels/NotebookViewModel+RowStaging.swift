@@ -48,6 +48,9 @@ struct PendingStagedBatch: Sendable {
     var cellId: UUID?
     /// Edit target of the edited result: the editor refresh re-runs only that result
     var target: EditTarget
+    /// The Cell Value sidebar as the edit showed it and as it was before, put back when the
+    /// edit stores nothing (see `PendingInlineEdit.sidebarRestore`)
+    var sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
   }
 
   struct MongoStagedChanges: Sendable {
@@ -255,8 +258,10 @@ extension NotebookViewModel {
     dataViewer?.pendingDocumentEditor = nil
     undoManager.removeAllActions()
     let hadInlineEdit = pendingInlineEdit != nil
+    restoreSidebar(pendingInlineEdit?.sidebarRestore)
     pendingInlineEdit = nil
     guard pendingStagedBatch != nil || hadInlineEdit else { return }
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
     queryConfirmationState.clear()
   }
@@ -347,6 +352,7 @@ extension NotebookViewModel {
       pendingStagedBatch = batch
       return
     }
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
     await runConfirmedStagedBatch(batch)
   }
@@ -761,7 +767,9 @@ extension NotebookViewModel {
   /// otherwise send that captured SQL, then clear this undo.
   private func restoreStagedChangeSet(_ snapshot: RowChangeSet?, actionName: String) {
     if pendingStagedBatch != nil || pendingInlineEdit != nil {
+      restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
       pendingStagedBatch = nil
+      restoreSidebar(pendingInlineEdit?.sidebarRestore)
       pendingInlineEdit = nil
       queryConfirmationState.clear()
     }

@@ -44,8 +44,11 @@ extension NotebookViewModel {
     queryConfirmationState.alsoAffected = alsoAffected
     // A dialog dismissed without Cancel (Escape, click outside) leaves its pending action armed.
     // Drop it so Execute Query runs what this dialog shows; the caller re-arms its own after.
+    // A dropped cell edit was never sent: the sidebar shows the stored value again.
     pendingExplainSQL = nil
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
+    restoreSidebar(pendingInlineEdit?.sidebarRestore)
     pendingInlineEdit = nil
     queryConfirmationState.showDialog = true
     return true

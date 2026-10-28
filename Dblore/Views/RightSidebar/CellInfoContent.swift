@@ -26,12 +26,18 @@ struct CellInfoContent: View {
   @State private var validationError: String?
   @State private var isBeautified = false
   @State private var beautifiedJSON: String = ""
+  /// `beautifiedJSON` highlighted off the main actor, when it is small enough to highlight
+  @State private var beautifiedHighlight = AttributedString()
   /// Size of the whole Format JSON output; above `maxHighlightedPrettyBytes`, `beautifiedJSON` is
   /// its first `maxShownBytes`
   @State private var formattedTotalBytes = 0
   @State private var isWordWrapEnabled = true
   /// Off-main Format JSON of a large value; nil when idle
   @State private var formatTask: Task<Void, Never>?
+  /// Off-main build of the Edit Value text; nil when idle
+  @State private var editTask: Task<Void, Never>?
+  /// The header spinner of `editTask`, shown once it has run 150 ms
+  @State private var showsEditSpinner = false
   /// Copy of the whole value, built off main; only a newer copy cancels it
   @State private var copyTask: Task<Void, Never>?
   /// Viewer and text of a value, built off the main actor; the value area shows a loading card
@@ -57,6 +63,10 @@ struct CellInfoContent: View {
   /// A large value shows its first this many UTF-8 bytes. The text view lays out a whole
   /// paragraph at once on the main thread: about 15 ms for a 64 KB line, 1.8 s for 12 MB.
   nonisolated static let maxShownBytes = 64 * 1024
+
+  /// Edit Value refuses a value whose text is above this many UTF-8 bytes: the editor lays out
+  /// a whole line at once on the main thread (about 1.8 s for 12 MB). Copy still copies it.
+  nonisolated static let maxEditableBytes = 16 * 1024 * 1024
 
   @Environment(NotebookViewModel.self) private var viewModel
 
@@ -175,7 +185,26 @@ struct CellInfoContent: View {
               )
             }
 
-            if !isReadOnly && unloaded == nil {
+            if !isReadOnly && unloaded == nil && editTask != nil {
+              // Fades in after 150 ms, like the loading card's, so a fast build never flashes it
+              ProgressView()
+                .controlSize(.small)
+                .opacity(showsEditSpinner ? 1 : 0)
+                .animation(.easeIn(duration: 0.15), value: showsEditSpinner)
+                .transaction(value: showsEditSpinner) { $0.disablesAnimations = false }
+                .task {
+                  try? await Task.sleep(for: .milliseconds(150))
+                  showsEditSpinner = !Task.isCancelled
+                }
+                .onDisappear { showsEditSpinner = false }
+
+              FloatingPanelButton(
+                icon: "xmark",
+                helpText: "Cancel Edit Value",
+                useSymbolEffect: false,
+                action: cancelEditLoad
+              )
+            } else if !isReadOnly && unloaded == nil {
               FloatingPanelButton(
                 icon: "pencil",
                 helpText: "Edit Value",
@@ -217,7 +246,7 @@ struct CellInfoContent: View {
       } else if isEditing {
         // Text editor for other types (only in edit mode)
         VStack(alignment: .leading, spacing: Spacing.xs) {
-          PlainTextEditor(text: $editedValue)
+          PlainTextEditor(text: $editedValue, laysOutLazily: true)
             .background(Color.controlBackground)
             .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
             .overlay(
@@ -251,6 +280,8 @@ struct CellInfoContent: View {
         // geometry found by its header.
         if let unloaded {
           UnloadedValueCard(length: unloaded.length, error: lazyLoadError)
+        } else if editTask != nil {
+          CellValueLoadingCard()
         } else if let tree = ready?.tree {
           BinaryValueTreeView(root: tree)
         } else if let preview {
@@ -293,7 +324,7 @@ struct CellInfoContent: View {
           if isWordWrapEnabled {
             // With word wrap: only vertical scroll
             ScrollView(.vertical, showsIndicators: true) {
-              HighlightedJSONText(json: beautifiedJSON)
+              HighlightedJSONText(text: beautifiedHighlight)
                 .padding(Spacing.sm)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
@@ -304,7 +335,7 @@ struct CellInfoContent: View {
             // Without word wrap: both horizontal and vertical scroll
             ScrollView(.horizontal, showsIndicators: true) {
               ScrollView(.vertical, showsIndicators: true) {
-                HighlightedJSONText(json: beautifiedJSON)
+                HighlightedJSONText(text: beautifiedHighlight)
                   .padding(Spacing.sm)
               }
             }
@@ -358,7 +389,10 @@ struct CellInfoContent: View {
       }
     }
     // A Copy still building finishes: the user asked for that value
-    .onDisappear(perform: cancelFormat)
+    .onDisappear {
+      cancelFormat()
+      cancelEditLoad()
+    }
     .task(id: LazyRequest(cell: unloaded?.cell, generation: viewModel.lazyCells.generation)) {
       lazyLoadError = nil
       guard let unloaded = viewModel.unloadedSidebarCell else { return }
@@ -367,19 +401,20 @@ struct CellInfoContent: View {
     .task(id: ValueRequest(source: source, isUnloaded: unloaded != nil)) {
       // A cut value is never decoded: the full one comes as a new `value`
       guard viewModel.unloadedSidebarCell == nil else { return }
-      let built = await Self.load(source)
+      let built = await Self.load(source, palette: JSONSyntaxHighlighter.palette)
       guard !Task.isCancelled else { return }
       loaded = built
       // A JSON object or array shows formatted when its output is small enough to highlight
       if let formatted = built.formatted {
-        showFormatted(formatted, totalBytes: formatted.utf8.count)
+        showFormatted(
+          formatted, totalBytes: formatted.utf8.count, highlighted: built.formattedHighlight)
       }
     }
     .onChange(of: value) { _, newValue in
       // Reset beautified state when value changes
       cancelFormat()
-      isBeautified = false
-      beautifiedJSON = ""
+      cancelEditLoad()
+      showOriginal()
 
       // Update boolean values when value changes
       if case .bool(let boolValue) = newValue {
@@ -407,21 +442,23 @@ struct CellInfoContent: View {
 
   /// Viewer and display text of a value (base64 for binary), built together off the main actor.
   /// `text` is at most `maxShownBytes`; `totalBytes` is the size of the whole text. `formatted`
-  /// is the pretty form of a JSON object or array, when it can be highlighted. `tree` is a
-  /// binary value decoded by its Display As format (`decodedNode`); it needs no text.
+  /// is the pretty form of a JSON object or array, when it can be highlighted, and
+  /// `formattedHighlight` its highlight. `tree` is a binary value decoded by its Display As
+  /// format (`decodedNode`); it needs no text.
   nonisolated struct Loaded: Sendable {
     let source: CellValuePreview.Source
     let preview: CellValuePreview?
     let text: String
     let totalBytes: Int
     var formatted: String?
+    var formattedHighlight: AttributedString?
     var tree: BinaryValueNode?
   }
 
   /// `@concurrent` leaves the main actor: a geometry can hold a million points, and the base64 of
   /// a large blob is megabytes. A geometry viewer needs no text.
   @concurrent nonisolated private static func load(
-    _ source: CellValuePreview.Source
+    _ source: CellValuePreview.Source, palette: [JSONSyntaxHighlighter.TokenType: Color]
   ) async
     -> Loaded
   {
@@ -444,6 +481,7 @@ struct CellInfoContent: View {
           text, maxOutputBytes: maxHighlightedPrettyBytes)
       else { break }
       loaded.formatted = pretty
+      loaded.formattedHighlight = JSONSyntaxHighlighter.highlighted(pretty, palette: palette)
     default:
       break
     }
@@ -539,13 +577,18 @@ struct CellInfoContent: View {
 
   /// Sized from the value, without building its text (base64 of a whole blob for `.data`)
   private var isLargeValue: Bool {
+    fullTextBytes > Self.maxHighlightedBytes
+  }
+
+  /// UTF-8 bytes of the value's whole text, counted without building it; 0 for a short scalar
+  private var fullTextBytes: Int {
     switch value {
     case .string(let text), .json(let text):
-      text.utf8.count > Self.maxHighlightedBytes
+      text.utf8.count
     case .data(let data):
-      (data.count + 2) / 3 * 4 > Self.maxHighlightedBytes
+      (data.count + 2) / 3 * 4
     case .int, .double, .bool, .null, .date:
-      false
+      0
     }
   }
 
@@ -559,21 +602,67 @@ struct CellInfoContent: View {
   }
 
   private func setNull() {
+    cancelEditLoad()
     if isEditing { cancelEdit() }
     onSetNull()
   }
 
+  /// Builds the editor's text and checks it: at once for a value up to `maxShownBytes`, else off
+  /// the main actor (base64 of a large blob, JSON parse) behind a loading card
   private func startEdit() {
     cancelFormat()
-    editedValue = value.fullString
+    guard editTask == nil else { return }
+    let bytes = fullTextBytes
+    guard bytes <= Self.maxEditableBytes else {
+      viewModel.showToast(
+        "This value is \(Self.byteCount(bytes)), too large to edit here (limit \(Self.byteCount(Self.maxEditableBytes))). Copy still copies the whole value.",
+        type: .warning)
+      return
+    }
+    guard bytes > Self.maxShownBytes else {
+      let (text, error) = Self.editableText(value, columnType: columnType)
+      beginEdit(text: text, error: error)
+      return
+    }
+    let value = value
+    let columnType = columnType
+    editTask = Task {
+      let (text, error) = await Self.loadEditableText(value, columnType: columnType)
+      // A newer value or a cancel replaced this one
+      guard !Task.isCancelled else { return }
+      editTask = nil
+      beginEdit(text: text, error: error)
+    }
+  }
+
+  private func beginEdit(text: String, error: String?) {
+    editedValue = text
+    validationError = error
     isEditing = true
     isTextEditorFocused = true
-    validationError = nil  // Reset validation error
-
-    // Validate the initial value to catch any issues
-    validateInput(editedValue)
-
     NotificationCenter.default.post(name: .cellValueEditingStarted, object: nil)
+  }
+
+  private func cancelEditLoad() {
+    editTask?.cancel()
+    editTask = nil
+  }
+
+  /// Whole text of a value and why it does not validate
+  nonisolated private static func editableText(
+    _ value: CellValue, columnType: String
+  ) -> (text: String, error: String?) {
+    let text = value.fullString
+    return (
+      text, CellValueValidator.validate(text, for: value, columnType: columnType).errorMessage
+    )
+  }
+
+  /// `editableText` of a large value; `@concurrent` leaves the main actor
+  @concurrent nonisolated private static func loadEditableText(
+    _ value: CellValue, columnType: String
+  ) async -> (text: String, error: String?) {
+    editableText(value, columnType: columnType)
   }
 
   private func saveBooleanEdit() {
@@ -584,6 +673,7 @@ struct CellInfoContent: View {
   }
 
   private func cancelEdit() {
+    cancelEditLoad()
     isEditing = false
     isTextEditorFocused = false
     editedValue = ""
@@ -640,10 +730,13 @@ struct CellInfoContent: View {
   private func showOriginal() {
     isBeautified = false
     beautifiedJSON = ""
+    beautifiedHighlight = AttributedString()
   }
 
-  private func showFormatted(_ text: String, totalBytes: Int) {
+  /// `highlighted` is nil only for output too large to highlight (shown as plain text)
+  private func showFormatted(_ text: String, totalBytes: Int, highlighted: AttributedString?) {
     beautifiedJSON = text
+    beautifiedHighlight = highlighted ?? AttributedString()
     formattedTotalBytes = totalBytes
     isBeautified = true
   }
@@ -652,17 +745,19 @@ struct CellInfoContent: View {
   /// text, cut to `maxShownBytes`
   private func formatJSON() {
     guard let stringValue = jsonText, formatTask == nil else { return }
-    if let formatted = loaded?.source == source ? loaded?.formatted : nil {
-      showFormatted(formatted, totalBytes: formatted.utf8.count)
+    if let loaded, loaded.source == source, let formatted = loaded.formatted {
+      showFormatted(
+        formatted, totalBytes: formatted.utf8.count, highlighted: loaded.formattedHighlight)
       return
     }
+    let palette = JSONSyntaxHighlighter.palette
     formatTask = Task {
-      let pretty = await Self.formattedJSON(stringValue)
+      let (pretty, highlighted) = await Self.formattedJSON(stringValue, palette: palette)
       guard !Task.isCancelled else { return }
       formatTask = nil
       switch pretty {
       case .formatted(let text, let totalBytes):
-        showFormatted(text, totalBytes: totalBytes)
+        showFormatted(text, totalBytes: totalBytes, highlighted: highlighted)
       case .tooLarge:
         viewModel.showToast("The formatted JSON would be too large to show.", type: .warning)
       case .invalid:
@@ -743,9 +838,16 @@ struct CellInfoContent: View {
     return displayText(String(decoding: data.prefix(count), as: UTF8.self), maxBytes: maxBytes)
   }
 
-  /// Format JSON output; `@concurrent` leaves the main actor
-  @concurrent nonisolated private static func formattedJSON(_ json: String) async -> PrettyJSON {
-    prettyPrintedJSON(json, maxOutputBytes: maxFormattedBytes)
+  /// Format JSON output, highlighted when small enough to highlight; `@concurrent` leaves the
+  /// main actor
+  @concurrent nonisolated private static func formattedJSON(
+    _ json: String, palette: [JSONSyntaxHighlighter.TokenType: Color]
+  ) async -> (PrettyJSON, AttributedString?) {
+    let pretty = prettyPrintedJSON(json, maxOutputBytes: maxFormattedBytes)
+    guard case .formatted(let text, let totalBytes) = pretty,
+      totalBytes <= maxHighlightedPrettyBytes
+    else { return (pretty, nil) }
+    return (pretty, JSONSyntaxHighlighter.highlighted(text, palette: palette))
   }
 }
 
@@ -787,9 +889,9 @@ private struct UnloadedValueCard: View {
   }
 }
 
-/// Card in the value's place while it loads. Its spinner fades in after 150 ms, so a fast load
-/// never flashes it.
-private struct CellValueLoadingCard: View {
+/// Card in the value's place while it loads (also the JSON viewer's). Its spinner fades in after
+/// 150 ms, so a fast load never flashes it.
+struct CellValueLoadingCard: View {
   @State private var showsSpinner = false
 
   var body: some View {

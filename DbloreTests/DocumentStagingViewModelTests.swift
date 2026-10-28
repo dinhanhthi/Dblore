@@ -596,6 +596,44 @@ struct DocumentStagingViewModelTests {
     await fixture.manager.disconnect()
   }
 
+  @Test("A sidebar edit cancelled, refused or matching no document shows the stored value again")
+  func unsentSidebarEditRestoresSidebar() async throws {
+    let fixture = try await Self.dataViewer(commandRows: { _ in 0 })
+    let viewModel = fixture.viewModel
+    let result = try #require(viewModel.editorResult)
+    let rowData = CellResult.rowData(columns: result.columns, row: result.rows[0])
+    let shown = SidebarContent.cellInfo(
+      columnName: "name", columnType: "string", value: .string("ann"), tableName: "users",
+      rowData: rowData, primaryKeyColumns: ["_id"], cellId: nil)
+    func edit(_ column: String, _ type: String, _ text: String) {
+      viewModel.cellDetailEditTarget = result.editTarget
+      viewModel.handleCellValueEdit(
+        columnName: column, columnType: type, newValue: text,
+        originalValue: rowData[column] ?? .null,
+        tableName: "users", rowData: rowData, primaryKeyColumns: ["_id"], cellId: nil,
+        connectionManager: fixture.manager)
+    }
+    viewModel.rightSidebarContent = shown
+
+    edit("name", "string", "zoe")
+    #expect(viewModel.pendingStagedBatch != nil)
+    #expect(viewModel.rightSidebarContent != shown)
+    viewModel.cancelPendingQuery()
+    #expect(viewModel.rightSidebarContent == shown)
+
+    // Refused before anything is armed
+    edit("owner", "objectId", "not hex")
+    #expect(viewModel.pendingStagedBatch == nil)
+    #expect(viewModel.rightSidebarContent == shown)
+
+    // Sent, but no document matched: nothing is stored
+    edit("name", "string", "zoe")
+    await viewModel.executePendingQuery()
+    #expect(!fixture.toasts.messages.isEmpty)
+    #expect(viewModel.rightSidebarContent == shown)
+    await fixture.manager.disconnect()
+  }
+
   @Test("An edit while changes are staged refreshes the page with mongoQueries(), keeping them")
   func editRefreshKeepsStagedSet() async throws {
     let fixture = try await Self.dataViewer()

@@ -129,6 +129,16 @@ struct CellValueValidatorTests {
     }
   }
 
+  @Test("A NULL DATE cell accepts a plain date and still refuses invalid text")
+  func nullDateCellTakesPlainDate() {
+    #expect(CellValueValidator.validate("2026-10-28", for: .null, columnType: "DATE").isValid)
+    for input in ["2026-13-01", "2026-02-30", "28/10/2026", "2026-10-28 extra"] {
+      let result = CellValueValidator.validate(input, for: .null, columnType: "DATE")
+      #expect(!result.isValid, "'\(input)' should be refused")
+    }
+    #expect(!CellValueValidator.validate("", for: .date(Date())).isValid)
+  }
+
   // MARK: - JSON Validation Tests
 
   @Test("JSON validation with valid JSON")
@@ -235,7 +245,9 @@ struct CellValueValidatorTests {
     for input in invalidDates {
       let result = CellValueValidator.validate(input, for: .date(Date()))
       #expect(!result.isValid, "'\(input)' should be invalid due to extra characters")
-      #expect(result.errorMessage == "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)")
+      #expect(
+        result.errorMessage
+          == "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
     }
   }
 
@@ -243,18 +255,29 @@ struct CellValueValidatorTests {
   func dateInvalidFormats() {
     let invalidDates = [
       ("", "Date cannot be empty"),
-      ("2024-02-20", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Missing time
-      ("14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),  // Only time
+      ("14:15:00", "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"),  // Only time
       // Wrong separator
-      ("2024/02/20 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
+      (
+        "2024/02/20 14:15:00",
+        "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"
+      ),
       // Wrong order
-      ("20-02-2024 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
-      ("Feb 20, 2024", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
+      (
+        "20-02-2024 14:15:00",
+        "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"
+      ),
+      ("Feb 20, 2024", "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"),
       // Invalid month
-      ("2024-13-01 00:00:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
+      (
+        "2024-13-01 00:00:00",
+        "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"
+      ),
       // Invalid day
-      ("2024-02-30 14:15:00", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
-      ("abc", "Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)"),
+      (
+        "2024-02-30 14:15:00",
+        "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"
+      ),
+      ("abc", "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"),
     ]
 
     for (input, expectedError) in invalidDates {
@@ -331,6 +354,8 @@ struct CellValueValidatorTests {
     let result = CellValueValidator.validate("", for: .data(Data()))
     #expect(!result.isValid, "Empty string should be invalid binary data")
     #expect(result.errorMessage == "Binary data cannot be empty")
+    #expect(!CellValueValidator.validate("not base64!", for: .data(Data())).isValid)
+    #expect(CellValueValidator.validate("3q2+7w==", for: .data(Data())).isValid)
   }
 
   // MARK: - String Validation Tests

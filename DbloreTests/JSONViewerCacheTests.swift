@@ -40,12 +40,21 @@ struct JSONViewerCacheTests {
   }
 
   @Test("The viewer passes its large JSON through the uncapped cache")
-  func viewerRenderCachesLargeJSON() {
+  func viewerRenderCachesLargeJSON() async {
     JSONViewerContent.clearCaches()
     let host = NSHostingView(
       rootView: JSONViewerContent(json: Self.largeJSON, path: "p", onSave: nil))
-    host.frame = NSRect(x: 0, y: 0, width: 400, height: 600)
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: 400, height: 600), styleMask: [.borderless],
+      backing: .buffered, defer: false)
+    window.contentView = host
     host.layoutSubtreeIfNeeded()
+    // The viewer builds its text off the main actor, then caches it
+    let deadline = ContinuousClock.now + .seconds(10)
+    while HighlightedJSONText.lastHighlight == nil, ContinuousClock.now < deadline {
+      try? await Task.sleep(for: .milliseconds(10))
+      host.layoutSubtreeIfNeeded()
+    }
     #expect(JSONViewerContent.lastPrettyPrint?.json == Self.largeJSON)
     #expect(
       HighlightedJSONText.lastHighlight?.json == JSONViewerContent.prettyPrinted(Self.largeJSON))

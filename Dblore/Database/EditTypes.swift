@@ -22,7 +22,8 @@ nonisolated struct RowExistenceCheck: Sendable, Equatable {
 /// MySQL: backticks and `?`. Identifiers are quoted; values never appear in the SQL text.
 nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
-  /// New values in SET order, then the primary-key values in key order; nil binds NULL
+  /// New values in SET order (bytes as `inputText`), then the primary-key values in key order;
+  /// nil binds NULL
   let values: [String?]
   /// MySQL: checks a 0-affected UPDATE against the row (see `RowExistenceCheck`)
   var rowCheck: RowExistenceCheck? = nil
@@ -49,11 +50,13 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   ///   - qualifiedName: the server's `format('%I.%I', schema, table)` of the edit target
   ///     (MySQL: two backtick-quoted names), inserted verbatim (never user text; see
   ///     `isServerQualifiedName`)
-  ///   - assignments: columns and new values as input text, in SET order; a nil value sets NULL
+  ///   - assignments: columns and new values as input text, in SET order; a nil value sets NULL.
+  ///     A column whose `rowData` value is bytes takes base64 text, bound as the decoded bytes
+  ///     (`inputText` + `bindPlaceholder`)
   ///   - updateOnly: emit `UPDATE ONLY` (plain tables: never touch inheritance children); only
   ///     where `dialect.supportsUpdateOnly`
-  /// - Throws: `DatabaseError.notEditable` when there is no assignment or the row cannot be
-  ///   targeted by its primary key
+  /// - Throws: `DatabaseError.notEditable` when there is no assignment, the row cannot be
+  ///   targeted by its primary key, or a binary column's text is not valid base64
   static func make(
     qualifiedName: String, assignments: [(column: String, value: String?)],
     primaryKeyColumns: [String], rowData: [String: CellValue], updateOnly: Bool = false,
@@ -84,14 +87,26 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     }
     let only = updateOnly && dialect.supportsUpdateOnly ? "ONLY " : ""
     let condition = conditions.joined(separator: " AND ")
-    let setList = assignments.enumerated().map { index, assignment in
-      "\(quoteIdentifier(assignment.column, dialect: dialect)) = \(dialect.placeholder(index + 1))"
+    var setList: [String] = []
+    var setValues: [String?] = []
+    for (index, assignment) in assignments.enumerated() {
+      var placeholder = dialect.placeholder(index + 1)
+      var value = assignment.value
+      // A binary cell is edited as its base64 text: bind the decoded bytes, never that text
+      if case .data = rowData[assignment.column], let text = assignment.value {
+        guard let bytes = Data(base64Encoded: text) else {
+          throw DatabaseError.notEditable("'\(assignment.column)' is not valid base64")
+        }
+        placeholder = bindPlaceholder(placeholder, .data(bytes), dialect: dialect)
+        value = inputText(.data(bytes), dialect: dialect)
+      }
+      setList.append("\(quoteIdentifier(assignment.column, dialect: dialect)) = \(placeholder)")
+      setValues.append(value)
     }
     let sql =
       "UPDATE \(only)\(qualifiedName) SET \(setList.joined(separator: ", "))"
       + " WHERE \(condition)"
-    var statement = CellUpdateStatement(
-      sql: sql, values: assignments.map(\.value) + keyValues)
+    var statement = CellUpdateStatement(sql: sql, values: setValues + keyValues)
     if dialect == .mysql {
       statement.rowCheck = RowExistenceCheck(
         sql: "SELECT 1 FROM \(qualifiedName) WHERE \(condition) FOR UPDATE", values: keyValues)

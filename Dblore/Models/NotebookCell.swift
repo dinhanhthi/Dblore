@@ -198,6 +198,9 @@ struct CellResult: Codable, Sendable {
   /// Session-only: the binary values of a lazy data-viewer page that hold only their first
   /// bytes. Carried by the result, so a copy of it never takes a prefix for the whole value.
   var truncation: DataViewerState.Truncation? = nil
+  /// Session-only: an inline edit changed stored rows and this editor result was not re-read
+  /// (not a single read the app may re-run), so it shows "Run again to refresh".
+  var staleAfterEdit = false
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
