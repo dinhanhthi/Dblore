@@ -301,19 +301,25 @@ struct SSHHostKeyTrustFlowTests {
         }, group: group, handshakeTimeout: handshakeTimeout)
     }
     // The validator sets the flag after the deadline is paused.
-    await prompting.wait()
-    try await Task.sleep(for: hold)
-    accepted.closeAll()
-
-    var thrown: (any Error)?
-    do {
-      _ = try await connect.value
-    } catch {
-      thrown = error
+    var result: Result<SSHTunnel, any Error>?
+    if await boundedWait("The host-key validator call", { await prompting.wait() }) != nil {
+      try await Task.sleep(for: hold)
+      accepted.closeAll()
+      // Shorter than the default so a stall is reported before the test's time limit.
+      result = await boundedWait("Connect returning after the server closed", timeout: .seconds(20))
+      {
+        await connect.result
+      }
+    }
+    if result == nil {
+      // Cleanup only: the timeout is already recorded. What connect threw shows in the expect.
+      connect.cancel()
+      result = await connect.result
     }
     try await server.close()
     try await group.shutdownGracefully()
-    return thrown
+    guard case .failure(let error) = result else { return nil }
+    return error
   }
 
   @Test("The handshake deadline does not run while paused")
@@ -494,34 +500,6 @@ extension SSHHostKeyTrustFlowTests {
       #expect(await manager.connectionManager.isConnected)
       #expect(presenter.presented.count == 2)
       await manager.disconnect()
-    }
-  }
-}
-
-private final class FiredFlag: @unchecked Sendable {
-  private let lock = NSLock()
-  private var fired = false
-  private var waiters: [CheckedContinuation<Void, Never>] = []
-
-  var isSet: Bool { lock.withLock { fired } }
-
-  func set() {
-    let waiting = lock.withLock {
-      fired = true
-      defer { waiters.removeAll() }
-      return waiters
-    }
-    for waiter in waiting { waiter.resume() }
-  }
-
-  /// Returns once `set()` was called.
-  func wait() async {
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      let done = lock.withLock {
-        if !fired { waiters.append(continuation) }
-        return fired
-      }
-      if done { continuation.resume() }
     }
   }
 }

@@ -128,8 +128,13 @@ struct SSHRememberOffLifecycleTests {
     try await Self.connect(manager, Self.config())
     let session = try #require(fake.sessions.first)
 
+    // The actor drops the secret in the turn that publishes the loss event
     session.emit(.connectionLost)
-    try await waitUntil { await !manager.isConnected }
+    let lost = await boundedWait("session-lost event") {
+      await manager.sessionEvents.first { _ in true }
+    }
+    #expect(lost != nil)
+    #expect(await !manager.isConnected)
     #expect(await manager.activeUnrememberedSSHCredential == nil)
   }
 
@@ -177,7 +182,9 @@ struct SSHRememberOffLifecycleTests {
     try await Self.connect(manager, config)
 
     try #require(fake.sessions.last).emit(.connectionLost)
-    try await waitUntil { manager.connectionLostMessage != nil }
+    _ = await boundedWait("connection-lost banner") { @MainActor in
+      await observed { manager.connectionLostMessage != nil }
+    }
     #expect(manager.activeUnrememberedSSHCredential == Self.held(config))
 
     await manager.reconnectAfterConnectionLoss()
@@ -186,7 +193,9 @@ struct SSHRememberOffLifecycleTests {
     #expect(manager.activeUnrememberedSSHCredential == Self.held(config))
 
     try #require(fake.sessions.last).emit(.connectionLost)
-    try await waitUntil { manager.connectionLostMessage != nil }
+    _ = await boundedWait("connection-lost banner") { @MainActor in
+      await observed { manager.connectionLostMessage != nil }
+    }
     manager.dismissConnectionLost()
     #expect(manager.activeUnrememberedSSHCredential == nil)
     #expect(Self.stored(config) == nil)
@@ -260,15 +269,19 @@ private final class SSHCredentialRecordingFactory: DatabaseSessionFactory, @unch
   var credentials: [SSHStoredCredential?] { lock.withLock { loaded } }
 }
 
-/// Polls until `condition` holds (fails after 5 s).
+/// Returns once `condition` holds, re-checked on each observed change (no polling), or once
+/// cancelled. Await it through `boundedWait`, which bounds the wait and cancels on a timeout.
 @MainActor
-private func waitUntil(_ condition: () async -> Bool) async throws {
-  let end = ContinuousClock.now + .seconds(5)
-  while await !condition() {
-    guard ContinuousClock.now < end else {
-      Issue.record("condition not met in time")
-      return
+private func observed(_ condition: () -> Bool) async {
+  while !Task.isCancelled {
+    // Reading inside the tracking subscribes before the check, so no change is missed
+    let (changes, continuation) = AsyncStream<Void>.makeStream()
+    let satisfied = withObservationTracking {
+      condition()
+    } onChange: {
+      continuation.finish()
     }
-    try await Task.sleep(for: .milliseconds(10))
+    if satisfied { return }
+    for await _ in changes {}
   }
 }

@@ -1,11 +1,13 @@
 // MCPHTTPListenerTests.swift
 // The MCP HTTP listener over a real loopback socket on an ephemeral port: request-head refusals,
 // the streamed body limit, the handler hand-off, keep-alive, a client disconnect cancelling its
-// handler, the connection and in-flight caps (503), and start/stop lifecycle. Requests are
-// written raw so the Host header is exactly what the test sends.
+// handler, the connection and in-flight caps (503), the idle timers (and their pause while a
+// handler runs), and start/stop lifecycle. Requests are written raw so the Host header is exactly
+// what the test sends.
 
 import Darwin
 import Foundation
+import NIOCore
 import Testing
 import os
 
@@ -26,8 +28,17 @@ struct MCPHTTPListenerTests {
     }
   }
 
-  private func configuration(port: Int = 0, bodyLimit: Int = 64) -> MCPHTTPServer.Configuration {
-    MCPHTTPServer.Configuration(port: port, token: token, bodyLimit: bodyLimit)
+  /// `timeout` replaces all three connection timeouts.
+  private func configuration(
+    port: Int = 0, bodyLimit: Int = 64, timeout: TimeAmount? = nil
+  ) -> MCPHTTPServer.Configuration {
+    var configuration = MCPHTTPServer.Configuration(port: port, token: token, bodyLimit: bodyLimit)
+    if let timeout {
+      configuration.firstRequestTimeout = timeout
+      configuration.readTimeout = timeout
+      configuration.keepAliveTimeout = timeout
+    }
+    return configuration
   }
 
   private func request(
@@ -162,30 +173,204 @@ struct MCPHTTPListenerTests {
     #expect(await server.port == nil)
   }
 
-  @Test("A client that disconnects while its handler runs cancels the handler")
+  @Test("A client that disconnects after its handler started cancels the handler")
   func disconnectCancelsHandler() async throws {
-    let cancelled = OSAllocatedUnfairLock(initialState: false)
-    let started = OSAllocatedUnfairLock(initialState: false)
+    let started = FiredFlag()
+    let cancelled = FiredFlag()
     let server = MCPHTTPServer { _ in
-      started.withLock { $0 = true }
-      try? await Task.sleep(for: .seconds(30))
-      cancelled.withLock { $0 = Task.isCancelled }
+      started.set()
+      // Sleeping (not a flag) so a cancel ends the handler and stop() never waits on it.
+      await withTaskCancellationHandler {
+        try? await Task.sleep(for: .seconds(30))
+      } onCancel: {
+        cancelled.set()
+      }
       return .text(200, "")
     }
     let port = try await server.start(configuration())
     let raw = request(port)
-    try await withCheckedThrowingContinuation {
-      (continuation: CheckedContinuation<Void, any Error>) in
-      DispatchQueue.global().async {
-        continuation.resume(with: Result { _ = try rawExchange(port, raw, read: false) })
+    let fd = try await offPool {
+      let fd = try openConnection(port)
+      sendAll(fd, raw)
+      return fd
+    }
+    // Closed only once the request is in flight, when the server holds HTTP reads back.
+    await boundedWait("handler starts") { await started.wait() }
+    close(fd)
+    await boundedWait("handler is cancelled") { await cancelled.wait() }
+    #expect(cancelled.isSet)
+    await server.stop()
+  }
+
+  @Test(
+    "A client that keeps sending past the in-flight read limit while its handler runs is closed")
+  func inFlightReadLimitCloses() async throws {
+    let started = FiredFlag()
+    let cancelled = FiredFlag()
+    let server = MCPHTTPServer { _ in
+      started.set()
+      await withTaskCancellationHandler {
+        try? await Task.sleep(for: .seconds(30))
+      } onCancel: {
+        cancelled.set()
+      }
+      return .text(200, "")
+    }
+    var configuration = self.configuration()
+    configuration.inFlightReadLimit = 64
+    let port = try await server.start(configuration)
+    let raw = request(port)
+    let fd = try await offPool {
+      let fd = try openConnection(port)
+      sendAll(fd, raw)
+      return fd
+    }
+    defer { close(fd) }
+    await boundedWait("handler starts") { await started.wait() }
+    let closed = try await offPool {
+      sendAll(fd, String(repeating: "x", count: 256))
+      return waitForClose(fd)
+    }
+    #expect(closed)
+    await boundedWait("handler is cancelled") { await cancelled.wait() }
+    await server.stop()
+  }
+
+  @Test("A socket that never sends a request is closed by the server")
+  func silentSocketClosed() async throws {
+    let server = makeServer()
+    let port = try await server.start(configuration(timeout: .milliseconds(200)))
+    let closed = try await offPool {
+      let fd = try openConnection(port)
+      defer { close(fd) }
+      return waitForClose(fd)
+    }
+    #expect(closed)
+    await server.stop()
+  }
+
+  @Test("A client that keeps pipelining requests faster than they are answered is closed")
+  func pipeliningPastReadLimitCloses() async throws {
+    let rounds = 12
+    let starts = (0...rounds).map { _ in FiredFlag() }
+    let releases = (0...rounds).map { _ in FiredFlag() }
+    let closed = FiredFlag()
+    let done = FiredFlag()
+    let count = OSAllocatedUnfairLock(initialState: 0)
+    let server = MCPHTTPServer { _ in
+      let index = count.withLock { count in
+        defer { count += 1 }
+        return count
+      }
+      guard index < starts.count else { return .text(200, "") }
+      starts[index].set()
+      await withTaskCancellationHandler {
+        await releases[index].wait()
+      } onCancel: {
+        releases[index].set()
+      }
+      return .text(200, "")
+    }
+    // Sized with the longest port: the two requests sent per answer stay under the limit within
+    // one handler run, but the buffer grows by one request per answer, so the total passes it.
+    let longest = request(65535).replacingOccurrences(of: "Connection: close\r\n", with: "")
+    var configuration = self.configuration()
+    configuration.inFlightReadLimit = longest.utf8.count * 5
+    let port = try await server.start(configuration)
+    let keepAlive = request(port).replacingOccurrences(of: "Connection: close\r\n", with: "")
+    let fd = try await offPool {
+      let fd = try openConnection(port)
+      sendAll(fd, keepAlive)
+      return fd
+    }
+    defer { close(fd) }
+    // Drains the answers and reports the server's close, which also ends the waits below.
+    async let watching: Void = offPool {
+      while !done.isSet {
+        guard waitForClose(fd) else { continue }
+        closed.set()
+        for start in starts { start.set() }
+        return
       }
     }
-    let deadline = ContinuousClock.now + .seconds(5)
-    while !cancelled.withLock({ $0 }), ContinuousClock.now < deadline {
-      try await Task.sleep(for: .milliseconds(10))
+    for round in 0..<rounds {
+      await boundedWait("request \(round) starts") { await starts[round].wait() }
+      if closed.isSet { break }
+      try await offPool { sendAll(fd, keepAlive + keepAlive) }
+      // Paces the client so the server reads this round's requests while the handler runs.
+      try await Task.sleep(for: .milliseconds(50))
+      releases[round].set()
     }
-    #expect(started.withLock { $0 })
-    #expect(cancelled.withLock { $0 })
+    await boundedWait("the connection closes") { await closed.wait() }
+    #expect(closed.isSet)
+    done.set()
+    for release in releases { release.set() }
+    try await watching
+    await server.stop()
+  }
+
+  @Test("A validated request whose body never ends is closed by the read timeout")
+  func stalledBodyClosed() async throws {
+    let server = makeServer()
+    var configuration = self.configuration()
+    configuration.readTimeout = .milliseconds(200)
+    let port = try await server.start(configuration)
+    let raw = request(port, body: String(repeating: "x", count: 40))
+    let closed = try await offPool {
+      let fd = try openConnection(port)
+      defer { close(fd) }
+      sendAll(fd, String(raw.dropLast(20)))
+      return waitForClose(fd)
+    }
+    #expect(closed)
+    await server.stop()
+  }
+
+  @Test(
+    "A kept-alive connection that goes silent after its answer is closed by the keep-alive timer")
+  func silentKeepAliveClosed() async throws {
+    let server = makeServer()
+    var configuration = self.configuration()
+    configuration.keepAliveTimeout = .milliseconds(200)
+    let port = try await server.start(configuration)
+    let keepAlive = request(port).replacingOccurrences(of: "Connection: close\r\n", with: "")
+    let (status, closed) = try await offPool {
+      let fd = try openConnection(port)
+      defer { close(fd) }
+      sendAll(fd, keepAlive)
+      return (try readResponse(fd).status, waitForClose(fd))
+    }
+    #expect(status == 200)
+    #expect(closed)
+    await server.stop()
+  }
+
+  @Test("A request whose handler runs past every timeout keeps its connection and gets its answer")
+  func runningHandlerOutlivesTimeouts() async throws {
+    let timeout = TimeAmount.seconds(1)
+    let started = FiredFlag()
+    let release = FiredFlag()
+    let cancelled = FiredFlag()
+    let server = MCPHTTPServer { _ in
+      started.set()
+      // Stands in for an execute_write waiting for approval.
+      await withTaskCancellationHandler {
+        await release.wait()
+      } onCancel: {
+        cancelled.set()
+        release.set()
+      }
+      return .text(200, "approved")
+    }
+    let port = try await server.start(configuration(timeout: timeout))
+    async let reply = exchange(port, request(port))
+    await boundedWait("handler starts") { await started.wait() }
+    try await Task.sleep(for: .nanoseconds(timeout.nanoseconds * 3))
+    #expect(!cancelled.isSet)
+    release.set()
+    let response = try await reply
+    #expect(response.status == 200)
+    #expect(response.body == "approved")
     await server.stop()
   }
 
@@ -286,17 +471,15 @@ private struct RawResponse {
   var body: String { raw.components(separatedBy: "\r\n\r\n").dropFirst().joined() }
 }
 
-/// Writes `raw` to `address:port`, then reads until the server closes or 5 s pass (without
-/// `read`, closes once written).
+/// Writes `raw` to `address:port`, then reads until the server closes or 5 s pass.
 private func rawExchange(
-  _ port: Int, _ raw: String, address: String = "127.0.0.1", read: Bool = true
+  _ port: Int, _ raw: String, address: String = "127.0.0.1"
 ) throws
   -> RawResponse
 {
   let fd = try openConnection(port, address: address)
   defer { close(fd) }
   sendAll(fd, raw)
-  guard read else { return RawResponse(raw: "") }
   var received = [UInt8]()
   var buffer = [UInt8](repeating: 0, count: 4096)
   while true {
@@ -306,6 +489,16 @@ private func rawExchange(
   }
   guard !received.isEmpty else { throw POSIXError(.ECONNRESET) }
   return RawResponse(raw: String(decoding: received, as: UTF8.self))
+}
+
+/// Reads (and drops) until the server closes `fd` (true) or its 5 s read timeout passes (false).
+private func waitForClose(_ fd: Int32) -> Bool {
+  var buffer = [UInt8](repeating: 0, count: 64)
+  while true {
+    let count = recv(fd, &buffer, buffer.count, 0)
+    if count == 0 { return true }
+    if count < 0 { return errno == ECONNRESET }
+  }
 }
 
 /// Opens `count` connections one after another; with `raw`, each sends it and reads its one

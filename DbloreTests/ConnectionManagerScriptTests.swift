@@ -37,9 +37,15 @@ struct ConnectionManagerScriptTests {
       completionHandler handler: NSUserUnixTask.CompletionHandler?
     ) {
       started.append(name)
-      let (out, name) = (standardOutput, name)
+      // Its own copy of the write end, as a script process has: the runner closing its end never
+      // reaches it, and the read end stays open until it closes
+      let out = standardOutput.map {
+        FileHandle(fileDescriptor: dup($0.fileDescriptor), closeOnDealloc: true)
+      }
+      let name = name
       DispatchQueue.global().async {
         if name == "pw.sh" { try? out?.write(contentsOf: Data("from-command\n".utf8)) }
+        try? out?.close()
         handler?(
           name == "fail.sh"
             ? NSError(
