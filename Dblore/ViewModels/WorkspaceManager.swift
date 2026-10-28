@@ -174,6 +174,9 @@ class WorkspaceManager: Identifiable {
   private(set) var viewModels: [UUID: NotebookViewModel] = [:]
   private var notebookDocuments: [UUID: DbloreDocument] = [:]
   private var editorDocuments: [UUID: SQLEditorDocument] = [:]
+  /// Edits per tab (`markDirty` calls), so Load External never replaces an edit made during its
+  /// read
+  @ObservationIgnored private var editCounts: [UUID: Int] = [:]
 
   // MARK: - Security-Scoped Bookmarks
 
@@ -699,6 +702,84 @@ class WorkspaceManager: Identifiable {
     editorDocuments[tabId]
   }
 
+  /// Keeps a tab's document; Load External of its file conflict alert refreshes the tab's cells
+  private func store(_ document: DbloreDocument, for tabId: UUID) {
+    document.onExternalReload = { [weak self, weak document] in
+      guard let document, let viewModel = self?.viewModels[tabId] else { return }
+      viewModel.notebook.cells = document.notebook.cells
+    }
+    notebookDocuments[tabId] = document
+  }
+
+  /// Keeps a tab's document; Load External of its file conflict alert refreshes the tab's text
+  private func store(_ document: SQLEditorDocument, for tabId: UUID) {
+    document.onExternalReload = { [weak self, weak document] in
+      guard let document, let viewModel = self?.viewModels[tabId] else { return }
+      viewModel.editorContent = document.content
+    }
+    editorDocuments[tabId] = document
+  }
+
+  /// Whether the tab asks about changes to its file on disk: notebooks and scripts only. A
+  /// markdown note's preview keeps its own copy of the text, so a reload would not stick.
+  func watchesFileConflicts(tabId: UUID) -> Bool {
+    switch tabs.first(where: { $0.id == tabId })?.documentType {
+    case .notebook, .sqlFile: true
+    default: false
+    }
+  }
+
+  /// Load External of the file conflict alert: rereads the tab's file into its document (asking
+  /// to unlock a sealed file as opening it does), which refreshes the tab, now clean
+  func loadExternalVersion(tabId: UUID) async throws {
+    guard watchesFileConflicts(tabId: tabId) else { return }
+    // An edit during the read (an unlock prompt) is kept: the alert asks again instead
+    let edits = editCounts[tabId]
+    let stillApplies = { [weak self] in self?.editCounts[tabId] == edits }
+    let reloaded: Bool
+    if let document = notebookDocuments[tabId] {
+      reloaded = try await document.reloadFromDisk(
+        holder: id, io: lockedIO, unlock: unlockLockedFile, stillApplies: stillApplies)
+    } else if let document = editorDocuments[tabId] {
+      reloaded = try await document.reloadFromDisk(
+        holder: id, io: lockedIO, unlock: unlockLockedFile, stillApplies: stillApplies)
+    } else {
+      return
+    }
+    if reloaded { markClean(tabId: tabId) }
+  }
+
+  /// Keep My Version of the file conflict alert: the tab keeps its edits, and only a change
+  /// newer than the one the alert showed asks again
+  func keepMyVersion(tabId: UUID) {
+    guard watchesFileConflicts(tabId: tabId) else { return }
+    notebookDocuments[tabId]?.keepVersionOverShownChange()
+    editorDocuments[tabId]?.keepVersionOverShownChange()
+  }
+
+  /// The tab's notebook, script or note document
+  private func fileDocument(for tabId: UUID) -> (any FileConflictPresenting)? {
+    if let document = notebookDocuments[tabId] { return document }
+    return editorDocuments[tabId]
+  }
+
+  /// Save of a notebook or script whose file changed on disk since the tab last read or wrote
+  /// it, or whose "modified" alert is still up: nothing is written over that change, and the
+  /// tab's conflict alert asks which version to keep
+  private func refuseSaveOverExternalChange(tabId: UUID) throws {
+    guard watchesFileConflicts(tabId: tabId), let document = fileDocument(for: tabId) else {
+      return
+    }
+    let state = document.fileConflictState
+    let isAsking = state.showDialog && state.conflictType == .modified
+    let changeDate = document.unseenChangeDate()
+    guard isAsking || changeDate != nil else { return }
+    if !isAsking { document.fileConflictState.show(type: .modified, modificationDate: changeDate) }
+    // Only the selected tab shows its alert
+    selectTab(id: tabId)
+    throw FileConflictError.changedOnDisk
+  }
+
   // MARK: - Connection Operations
 
   /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)`,
@@ -1002,7 +1083,7 @@ class WorkspaceManager: Identifiable {
     let tab = TabItem.newNotebook()
     tabs.append(tab)
     viewModels[tab.id] = viewModel
-    notebookDocuments[tab.id] = document
+    store(document, for: tab.id)
     markDirtyAndScheduleAutoSave()
 
     selectTab(id: tab.id)
@@ -1025,7 +1106,7 @@ class WorkspaceManager: Identifiable {
       fileExtension: TabDocumentType.scriptExtension(for: workspace.connectionConfig?.databaseType))
     tabs.append(tab)
     viewModels[tab.id] = viewModel
-    editorDocuments[tab.id] = document
+    store(document, for: tab.id)
     markDirtyAndScheduleAutoSave()
     if !content.isEmpty { markDirty(tabId: tab.id) }
 
@@ -1103,7 +1184,7 @@ class WorkspaceManager: Identifiable {
     let tab = TabItem.newMarkdownFile()
     tabs.append(tab)
     viewModels[tab.id] = viewModel
-    editorDocuments[tab.id] = document
+    store(document, for: tab.id)
     markDirtyAndScheduleAutoSave()
 
     selectTab(id: tab.id)
@@ -1303,7 +1384,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      notebookDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .sqlFile, .markdown:
       guard let content = String(data: data, encoding: .utf8) else {
@@ -1322,7 +1403,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      editorDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .dataViewer:
       return false  // File-less: restored by restoreDataViewer
@@ -1434,7 +1515,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      notebookDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .sqlFile, .markdown:
       guard let content = String(data: data, encoding: .utf8) else {
@@ -1453,7 +1534,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      editorDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .dataViewer:
       return  // Never detected from a file URL
@@ -1563,6 +1644,30 @@ class WorkspaceManager: Identifiable {
     }
   }
 
+  /// Close Document (or OK) of the file conflict alert after the tab's file was deleted on disk.
+  /// The user already chose to drop the edits, so no save prompt; a pending transaction the tab
+  /// opened (then staged rows) is still resolved first, and Cancel keeps the tab and its edits.
+  func closeTabForDeletedFile(id: UUID) {
+    guard tabs.contains(where: { $0.id == id }), canCloseDeletedFileTab(id: id) else { return }
+    let close: @MainActor () -> Void = { [weak self] in
+      guard let self, tabs.contains(where: { $0.id == id }), canCloseDeletedFileTab(id: id)
+      else { return }
+      guard !deferCloseTabForStagedChanges(id: id) else { return }
+      closeTabImmediately(id: id)
+    }
+    guard !deferCloseTabForPendingTransaction(id: id, onResolved: close) else { return }
+    close()
+  }
+
+  /// A pinned tab stays open; the alert already went away, so say why nothing closed
+  private func canCloseDeletedFileTab(id: UUID) -> Bool {
+    guard canClose(tabId: id) else {
+      WorkspaceWindowManager.shared.showToast("Unpin the tab to close it")
+      return false
+    }
+    return true
+  }
+
   func closeTabWithoutSaving() {
     guard let id = tabToClose else { return }
     closeTabImmediately(id: id)
@@ -1639,8 +1744,10 @@ class WorkspaceManager: Identifiable {
     viewModels[id]?.resolveStagedBlockerPrompt(commitAnyway: false)
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
-    notebookDocuments.removeValue(forKey: id)
-    editorDocuments.removeValue(forKey: id)
+    // Unregister the file presenter: the file coordinator keeps a registered document alive
+    notebookDocuments.removeValue(forKey: id)?.setFileURL(nil)
+    editorDocuments.removeValue(forKey: id)?.setFileURL(nil)
+    editCounts.removeValue(forKey: id)
     tabBookmarks.removeValue(forKey: id)
     tabAccess.removeValue(forKey: id)?.release()
     objectSourceLoads.removeValue(forKey: id)?.cancel()
@@ -1676,6 +1783,9 @@ class WorkspaceManager: Identifiable {
     workspaceAccess = nil
     folderAccess?.release()
     folderAccess = nil
+    // Every caller drops this manager: its documents stop presenting their files
+    for document in notebookDocuments.values { document.setFileURL(nil) }
+    for document in editorDocuments.values { document.setFileURL(nil) }
     releaseDuckDBFileAccess()
     if !keepsSessions { lockedIO.sessions.release(holder: id) }
   }
@@ -1861,9 +1971,9 @@ class WorkspaceManager: Identifiable {
       if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
         document.setFileURL(url)
       }
-      notebookDocuments[tabId] = document
+      store(document, for: tabId)
     }
-    editorDocuments.removeValue(forKey: tabId)
+    editorDocuments.removeValue(forKey: tabId)?.setFileURL(nil)
 
     let viewModel = createViewModel(for: document.notebook)
     viewModel.viewMode = .notebook
@@ -1885,9 +1995,9 @@ class WorkspaceManager: Identifiable {
       if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
         document.setFileURL(url)
       }
-      editorDocuments[tabId] = document
+      store(document, for: tabId)
     }
-    notebookDocuments.removeValue(forKey: tabId)
+    notebookDocuments.removeValue(forKey: tabId)?.setFileURL(nil)
 
     let notebook = DbloreNotebook(
       cells: [NotebookCell(cellType: .sql, content: script)], documentType: .script)
@@ -1926,6 +2036,7 @@ class WorkspaceManager: Identifiable {
   }
 
   func markDirty(tabId: UUID) {
+    editCounts[tabId, default: 0] += 1
     // Data viewer and object source tabs have no document to save. Called per keystroke: an
     // already dirty tab is not written again, so `tabs` readers are not re-evaluated
     guard let index = tabs.firstIndex(where: { $0.id == tabId }),
@@ -1974,6 +2085,7 @@ class WorkspaceManager: Identifiable {
     await viewModels[id]?.flushMarkdownPreview?()
 
     if let url = tab.fileURL {
+      try refuseSaveOverExternalChange(tabId: id)
       try await saveToURL(tabId: id, url: url)
     } else {
       try await saveWithPanel(tabId: id)
@@ -2028,6 +2140,9 @@ class WorkspaceManager: Identifiable {
       markDirty(tabId: tabId)
       throw error
     }
+    // Not an external change: the file conflict alert only asks about a newer one
+    notebookDocuments[tabId]?.updateLastKnownModificationDate()
+    editorDocuments[tabId]?.updateLastKnownModificationDate()
   }
 
   private func saveWithPanel(tabId: UUID) async throws {
@@ -2542,7 +2657,7 @@ extension WorkspaceManager {
     var written: [(url: URL, kind: LockEnvelope.Kind)] = []
     for (index, file) in files.enumerated() {
       do {
-        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: nil)
+        try await rewriteTabFile(file, sealingWith: nil)
         written.append(file)
       } catch {
         failures.append(.init(url: file.url, reason: error.localizedDescription))
@@ -2592,6 +2707,26 @@ extension WorkspaceManager {
     return files
   }
 
+  /// Rewrites a tab file in one atomic write (sealed with `session`, plaintext when nil). Its open
+  /// documents take the new date, as after a save, unless the file had a change they had not
+  /// seen yet: that one still raises the conflict alert, and its Keep My Version takes the
+  /// rewrite as seen too.
+  private func rewriteTabFile(
+    _ file: (url: URL, kind: LockEnvelope.Kind), sealingWith session: WorkspaceLockSession?
+  ) async throws {
+    let documents = tabs.filter { $0.fileURL == file.url }
+      .compactMap { fileDocument(for: $0.id) }
+    let upToDate = documents.map { $0.unseenChangeDate() == nil }
+    try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+    for (document, upToDate) in zip(documents, upToDate) {
+      if upToDate {
+        document.updateLastKnownModificationDate()
+      } else {
+        document.noteOwnRewrite()
+      }
+    }
+  }
+
   /// Saves the .sqlws when `workspaceURL` is set (sealed: the workspace carries the key), then
   /// rewrites each tab file as `session`'s envelope, with `progress(done, total)`; returns the
   /// files left as they were
@@ -2613,7 +2748,7 @@ extension WorkspaceManager {
     }
     for file in files {
       do {
-        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+        try await rewriteTabFile(file, sealingWith: session)
       } catch {
         failures.append(.init(url: file.url, reason: error.localizedDescription))
       }
@@ -2633,7 +2768,7 @@ extension WorkspaceManager {
     for file in files {
       do {
         guard let session else { throw LockedFileIOError.sessionMissing(id) }
-        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+        try await rewriteTabFile(file, sealingWith: session)
       } catch {
         failures.append(
           .init(

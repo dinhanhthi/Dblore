@@ -379,15 +379,19 @@ extension WorkspaceManager {
 
   /// Closing the tab that opened the pending transaction: resolve first, then close again.
   /// While a resolve prompt is open the close is dropped (no second prompt).
+  /// - Parameter onResolved: runs once resolved instead of closing again (Cancel runs nothing).
   /// - Returns: true if the close is deferred to the resolution.
-  func deferCloseTabForPendingTransaction(id: UUID) -> Bool {
+  func deferCloseTabForPendingTransaction(
+    id: UUID, onResolved: (@MainActor () -> Void)? = nil
+  ) -> Bool {
     guard !isResolvingPendingTransaction else { return true }
     guard
       WorkspaceTransactionRules.requiresResolution(
         state: pendingTransaction, action: .closeTab(id), originTabId: transactionOriginTabId)
     else { return false }
     Task {
-      if await resolvePendingTransaction(action: .closeTab(id)) { requestCloseTab(id: id) }
+      guard await resolvePendingTransaction(action: .closeTab(id)) else { return }
+      if let onResolved { onResolved() } else { requestCloseTab(id: id) }
     }
     return true
   }

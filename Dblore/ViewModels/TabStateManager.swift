@@ -264,8 +264,9 @@ class TabStateManager {
     // Remove tab and clean up
     tabs.remove(at: index)
     viewModels.removeValue(forKey: id)
-    notebookDocuments.removeValue(forKey: id)
-    editorDocuments.removeValue(forKey: id)
+    // Unregister the file presenter: the file coordinator keeps a registered document alive
+    notebookDocuments.removeValue(forKey: id)?.setFileURL(nil)
+    editorDocuments.removeValue(forKey: id)?.setFileURL(nil)
   }
 
   /// Mark tab as dirty

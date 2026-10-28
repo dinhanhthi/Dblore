@@ -44,6 +44,10 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
   /// Last known modification date of the file
   private var lastKnownModificationDate: Date?
 
+  /// This app's last rewrite of the file over a change not shown yet (Lock Workspace, Remove
+  /// Lock): Keep My Version over that change takes it as seen too
+  private var ownRewriteDate: Date?
+
   /// Debounce timer for rapid file changes
   private var changeDebounceTask: Task<Void, Never>?
 
@@ -114,15 +118,45 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
     }
   }
 
-  /// Update the last known modification date from the file
-  private func updateLastKnownModificationDate() {
+  /// Update the last known modification date from the file (also after this app writes it: the
+  /// file conflict alert only asks about a newer change)
+  func updateLastKnownModificationDate() {
     guard let url = _presentedItemURL else { return }
     do {
       let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
       lastKnownModificationDate = attributes[.modificationDate] as? Date
+      ownRewriteDate = nil
     } catch {
       // Ignore errors - file might not exist yet
     }
+  }
+
+  /// Keep My Version of the file conflict alert: only a change newer than the one the alert
+  /// showed, or than this app's own rewrite since, asks again (a change made while it was up
+  /// still does)
+  func keepVersionOverShownChange() {
+    let shown = fileConflictState.externalModificationDate ?? lastKnownModificationDate
+    lastKnownModificationDate = [shown, ownRewriteDate].compactMap { $0 }.max()
+    ownRewriteDate = nil
+  }
+
+  func noteOwnRewrite() {
+    ownRewriteDate = modificationDateOnDisk()
+  }
+
+  /// The file's date on disk when it changed since this document last read or wrote it (nil: no
+  /// newer change, or no file)
+  func unseenChangeDate() -> Date? {
+    guard let date = modificationDateOnDisk() else { return nil }
+    guard let lastDate = lastKnownModificationDate else { return date }
+    return date > lastDate ? date : nil
+  }
+
+  /// The file's modification date on disk (nil: no file, or it cannot be read)
+  private func modificationDateOnDisk() -> Date? {
+    guard let url = _presentedItemURL else { return nil }
+    let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+    return attributes?[.modificationDate] as? Date
   }
 
   // MARK: - NSFilePresenter Callbacks
@@ -190,26 +224,38 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
 
   /// Reload the document content from disk. A sealed file is read and opened off the main
   /// actor (asking `unlock` when its workspace is not open); `holder` (the window's workspace
-  /// id) holds the session that opened it.
+  /// id) holds the session that opened it. When `stillApplies` turns false during the read (the
+  /// tab was edited meanwhile), nothing is replaced and the conflict alert asks again.
+  /// - Returns: whether the document now holds the file's content.
+  @MainActor @discardableResult
   func reloadFromDisk(
-    holder: UUID, io: LockedFileIO = .shared, unlock: LockedFileIO.Unlock
-  ) async throws {
+    holder: UUID, io: LockedFileIO = .shared, unlock: LockedFileIO.Unlock,
+    stillApplies: () -> Bool = { true }
+  ) async throws -> Bool {
     guard let url = _presentedItemURL else {
       throw CocoaError(.fileReadNoSuchFile)
     }
 
+    // Dated before the read: a change landing during it is newer, so it still asks
+    let dateBeforeRead = modificationDateOnDisk()
     let read = try await io.read(from: url, unlock: unlock)
     var reloadedNotebook = try DocumentCoder.decode(from: read.plaintext)
     reloadedNotebook.documentType = .notebook
     if let session = read.session { io.sessions.hold(session, by: holder) }
+    guard stillApplies() else {
+      fileConflictState.show(type: .modified, modificationDate: dateBeforeRead)
+      return false
+    }
 
     notebook = reloadedNotebook
     // A plaintext replacement of a sealed file keeps the key: the next save seals it again
     lockKeyId = read.session?.workspaceId ?? lockKeyId
-    updateLastKnownModificationDate()
+    lastKnownModificationDate = dateBeforeRead ?? lastKnownModificationDate
+    ownRewriteDate = nil
 
     // Notify view to update its state
     onExternalReload?()
+    return true
   }
 
   // MARK: - Cleanup
@@ -265,3 +311,6 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
     return FileWrapper(regularFileWithContents: data)
   }
 }
+
+// The tab's file conflict alert observes `fileConflictState`
+extension DbloreDocument: FileConflictPresenting {}

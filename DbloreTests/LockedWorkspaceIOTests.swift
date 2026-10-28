@@ -829,6 +829,144 @@ struct LockedWorkspaceIOTests {
     manager.releaseFileAccess()
   }
 
+  @Test("Lock Workspace and Remove Lock rewriting open tab files raise no file conflict alert")
+  @MainActor
+  func lockRewritesAreNotFileConflicts() async throws {
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let suiteName = "LockedWorkspaceIOTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let (manager, files) = try await plainWorkspace(LockRegistry(), defaults: defaults)
+    let (store, _) = keyStore(defaults)
+    // Each tab presents its file, dated a minute ago so any rewrite now is newer
+    var documents: [any FileConflictPresenting] = []
+    for tab in manager.tabs {
+      let url = try #require(tab.fileURL)
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: url.path)
+      if let document = manager.notebookDocument(for: tab.id) {
+        document.setFileURL(url)
+        documents.append(document)
+      } else if let document = manager.editorDocument(for: tab.id) {
+        document.setFileURL(url)
+        documents.append(document)
+      }
+    }
+    #expect(documents.count == files.count - 1)
+    #expect(SQLiteFileAccess.onPresenterQueue {})
+    /// Each document told its file changed, as the file coordinator does after a write
+    func reportChanges() async throws {
+      for document in documents { (document as? any NSFilePresenter)?.presentedItemDidChange?() }
+      // No signal ends the 500 ms debounce: wait 4x
+      try await Task.sleep(for: .seconds(2))
+    }
+
+    _ = try await manager.lockWorkspace(
+      password: Self.lockPassword, keyStore: store, iterations: 100_000)
+    try await reportChanges()
+    #expect(documents.allSatisfy { !$0.fileConflictState.showDialog })
+
+    let confirmation = try await ownerConfirmation(manager)
+    #expect(await manager.removeLock(authorization: confirmation, keyStore: store).isEmpty)
+    try await reportChanges()
+    #expect(documents.allSatisfy { !$0.fileConflictState.showDialog })
+
+    // Another writer's change still asks
+    let script = try #require(manager.tabs.first { $0.documentType == .sqlFile })
+    let scriptURL = try #require(script.fileURL)
+    try Data("db.other.find()".utf8).write(to: scriptURL)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: scriptURL.path)
+    try await reportChanges()
+    #expect(manager.editorDocument(for: script.id)?.fileConflictState.showDialog == true)
+    manager.releaseFileAccess()
+  }
+
+  @Test(
+    "Keep My Version over a change Lock Workspace rewrote lets Save write; a later change asks",
+    arguments: [false, true])
+  @MainActor
+  func keepMyVersionOverLockRewrite(laterChange: Bool) async throws {
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let suiteName = "LockedWorkspaceIOTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let (manager, _) = try await plainWorkspace(LockRegistry(), defaults: defaults)
+    let (store, _) = keyStore(defaults)
+    let script = try #require(manager.tabs.first { $0.documentType == .sqlFile })
+    let url = try #require(script.fileURL)
+    let document = try #require(manager.editorDocument(for: script.id))
+    // Seen two minutes ago; another writer's change a minute ago, before the rewrite below
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(-120)], ofItemAtPath: url.path)
+    document.setFileURL(url)
+    defer { document.setFileURL(nil) }
+    try #require(manager.viewModel(for: script.id)).editorContent = "db.mine.find()"
+    manager.markDirty(tabId: script.id)
+    try Data("db.other.find()".utf8).write(to: url)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: url.path)
+    await #expect(throws: FileConflictError.self) { try await manager.saveTab(id: script.id) }
+    #expect(document.fileConflictState.showDialog)
+
+    // Lock Workspace rewrites the file (newer than the shown change) while the alert is up
+    _ = try await manager.lockWorkspace(
+      password: Self.lockPassword, keyStore: store, iterations: 100_000)
+    if laterChange {
+      try Data("db.later.find()".utf8).write(to: url)
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: url.path)
+    }
+    document.fileConflictState.dismiss()
+    manager.keepMyVersion(tabId: script.id)
+
+    if laterChange {
+      await #expect(throws: FileConflictError.self) { try await manager.saveTab(id: script.id) }
+      #expect(try String(contentsOf: url, encoding: .utf8) == "db.later.find()")
+      #expect(document.fileConflictState.showDialog)
+    } else {
+      try await manager.saveTab(id: script.id)
+      let key = try #require(sessions.session(for: manager.workspace.id)).contentKey
+      #expect(
+        try opened(Data(contentsOf: url), kind: .script, key: key) == Data("db.mine.find()".utf8))
+      #expect(manager.tabs.first { $0.id == script.id }?.isDirty == false)
+    }
+    manager.releaseFileAccess()
+  }
+
+  @Test("An edit while Load External asks to unlock keeps the tab's text, and the alert asks again")
+  @MainActor
+  func loadExternalKeepsEditDuringUnlock() async throws {
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let suiteName = "LockedWorkspaceIOTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let manager = writingManager(Workspace(), defaults: defaults)
+    let tabId = manager.newSQLFile()
+    let viewModel = try #require(manager.viewModel(for: tabId))
+    viewModel.editorContent = "SELECT mine;"
+    let url = directory.appendingPathComponent("query.sql")
+    try sealed(Data("SELECT theirs;".utf8), .script).write(to: url)
+    try pointTab(manager, tabId, to: url)
+    let document = try #require(manager.editorDocument(for: tabId))
+    document.setFileURL(url)
+    defer { document.setFileURL(nil) }
+    // The user types while the unlock prompt is up (the slow read)
+    manager.unlockLockedFile = { [session] _ in
+      await manager.markDirty(tabId: tabId)
+      return session
+    }
+
+    try await manager.loadExternalVersion(tabId: tabId)
+
+    #expect(viewModel.editorContent == "SELECT mine;")
+    #expect(document.content == "")
+    #expect(manager.tabs.first { $0.id == tabId }?.isDirty == true)
+    #expect(document.fileConflictState.showDialog)
+    #expect(document.fileConflictState.conflictType == .modified)
+    manager.releaseFileAccess()
+  }
+
   @Test("A tab file Remove Lock cannot seal again is reported as unencrypted")
   @MainActor
   func removeLockReportsFailedReseal() async throws {

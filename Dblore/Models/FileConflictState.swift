@@ -62,3 +62,13 @@ struct FileConflictState: Equatable, Sendable {
     }
   }
 }
+
+/// A save refused because the file changed on disk since the tab last read or wrote it: the
+/// tab's file conflict alert asks which version to keep first
+nonisolated enum FileConflictError: Error, LocalizedError, Sendable {
+  case changedOnDisk
+
+  var errorDescription: String? {
+    "The file changed on disk. Choose which version to keep before saving."
+  }
+}

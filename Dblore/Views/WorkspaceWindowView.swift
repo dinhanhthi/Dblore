@@ -131,6 +131,9 @@ struct AppWindowView: View {
   /// Capture reads `NewWindowStore`, not this view's state.
   private func registerHostWindow() {
     guard let window = hostWindow.window else { return }
+    // Session restore owns what windows reopen; a natively restored WindowGroup window would
+    // only come back as a second Welcome. Same as `openWelcomeWindow`.
+    window.isRestorable = false
     NewWindowStore.shared.register(window, workspaceId: workspaceId)
     claimLaunchWindowIfNeeded(window)
   }

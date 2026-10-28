@@ -932,7 +932,7 @@ struct WorkspaceTabContentView: View {
   @State private var keyEventMonitor: Any?
 
   var body: some View {
-    contentView
+    fileConflictAlert(on: contentView)
       .bridgedFocusedSceneValue(\.documentMode, documentMode)
       .focusedSceneValue(\.activeTabId, tabId)
       .bridgedFocusedSceneValue(\.activeViewModel, viewModel)
@@ -981,6 +981,44 @@ struct WorkspaceTabContentView: View {
     } else {
       editorContent
     }
+  }
+
+  /// Asks what to do when the tab's file changes or is deleted on disk (notebook or script only,
+  /// see `watchesFileConflicts`)
+  @ViewBuilder
+  private func fileConflictAlert(on content: some View) -> some View {
+    if !workspaceManager.watchesFileConflicts(tabId: tabId) {
+      content
+    } else if let document = workspaceManager.notebookDocument(for: tabId) {
+      content.modifier(fileConflictAlert(for: document))
+    } else if let document = workspaceManager.editorDocument(for: tabId) {
+      content.modifier(fileConflictAlert(for: document))
+    } else {
+      content
+    }
+  }
+
+  private func fileConflictAlert<Document: FileConflictPresenting>(
+    for document: Document
+  ) -> DocumentFileConflictAlertModifier<Document> {
+    DocumentFileConflictAlertModifier(
+      document: document,
+      hasUnsavedChanges: workspaceManager.tabs.first { $0.id == tabId }?.isDirty ?? false,
+      onKeepMyVersion: { [workspaceManager, tabId] in
+        workspaceManager.keepMyVersion(tabId: tabId)
+      },
+      onLoadExternal: { [workspaceManager, tabId, viewModel] in
+        Task {
+          do {
+            try await workspaceManager.loadExternalVersion(tabId: tabId)
+          } catch {
+            viewModel.showToast(
+              "Could not load the external version: \(error.localizedDescription)", type: .error)
+          }
+        }
+      },
+      onClose: { [workspaceManager, tabId] in workspaceManager.closeTabForDeletedFile(id: tabId) }
+    )
   }
 
   private var documentMode: DocumentMode {
