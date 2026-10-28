@@ -709,10 +709,17 @@ class WorkspaceManager: Identifiable {
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
   /// unless `aiFieldsEdited`, its color and group unless `fromForm`, and its hidden schemas.
+  /// A save onto the Keychain key of another saved connection throws
+  /// `SessionManagerError.keychainKeyInUse` before anything changes.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
     aiFieldsEdited: Bool = false, fromForm: Bool = false
   ) async throws {
+    if savesConnection, config.rememberConnection, config.mongoHomeDatabase == nil,
+      SessionManager.keyUsedByAnotherIdentity(config, defaults: defaults)
+    {
+      throw SessionManagerError.keychainKeyInUse
+    }
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     activeUnrememberedCertificate = nil

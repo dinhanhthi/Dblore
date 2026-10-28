@@ -332,6 +332,58 @@ struct ConnectionFormSSHDraftTests {
     #expect(SSHFormDraft.storedMethod(for: ConnectionConfig(), store: store) == nil)
   }
 
+  /// Counts reads of the stored SSH secret.
+  private final class LoadCountingSSHStore: SSHCredentialStore, @unchecked Sendable {
+    let base = InMemorySSHCredentialStore()
+    private(set) var loads = 0
+
+    func load(account: String) -> SSHStoredCredential? {
+      loads += 1
+      return base.load(account: account)
+    }
+
+    func save(_ credential: SSHStoredCredential, account: String) -> Bool {
+      base.save(credential, account: account)
+    }
+
+    func delete(account: String) { base.delete(account: account) }
+  }
+
+  @Test("A blocked row reads no stored SSH secret; after the unlock it does")
+  func storedMethodWaitsForUnlock() {
+    let store = LoadCountingSSHStore()
+    let config = Self.tunneledConfig()
+    store.save(.password("pw"), account: SSHCredentialStoreFactory.account(for: config)!)
+    let registry = LockRegistry()
+    registry.setLockedConnections([LockIdentity(config)])
+    #expect(SSHFormDraft.storedMethod(for: config, store: store, registry: registry) == nil)
+    #expect(store.loads == 0)
+    #expect(registry.grant(LockIdentity.all(config), ifGeneration: registry.generation))
+    #expect(SSHFormDraft.storedMethod(for: config, store: store, registry: registry) == .password)
+    #expect(store.loads == 1)
+  }
+
+  @Test("A blocked row's stored SSH secret does not move to an edited account until the unlock")
+  func movedCredentialWaitsForUnlock() {
+    let store = LoadCountingSSHStore()
+    let original = Self.tunneledConfig()
+    store.save(.password("pw"), account: SSHCredentialStoreFactory.account(for: original)!)
+    let draft = SSHFormDraft(from: original)
+    var edited = Self.tunneledConfig(host: "db2.internal")
+    edited.sshTunnel = draft.preparedConfig
+    let registry = LockRegistry()
+    registry.setLockedConnections([LockIdentity(original)])
+    #expect(
+      draft.preparedCredential(original: original, new: edited, store: store, registry: registry)
+        == nil)
+    #expect(store.loads == 0)
+    #expect(registry.grant(LockIdentity.all(original), ifGeneration: registry.generation))
+    #expect(
+      draft.preparedCredential(original: original, new: edited, store: store, registry: registry)
+        == .password("pw"))
+    #expect(store.loads == 1)
+  }
+
   @Test("Editing the DB host keeps the SSH credential after the old account is pruned")
   func replaceMovesCredential() throws {
     let suiteName = "ace.thi.Dblore.tests.ssh-draft.\(UUID().uuidString)"
@@ -360,6 +412,92 @@ struct ConnectionFormSSHDraftTests {
       credentials.load(account: SSHCredentialStoreFactory.account(for: edited)!)
         == .password("ssh-secret"))
     #expect(credentials.load(account: SSHCredentialStoreFactory.account(for: original)!) == nil)
+  }
+
+  enum SSHEdit: String, CaseIterable, Sendable {
+    case bastionHost, bastionPort, bastionUser, authMethod
+  }
+
+  @Test(
+    "A changed bastion or a no-longer-matching auth method never moves the stored SSH secret",
+    arguments: SSHEdit.allCases)
+  func replaceDoesNotMoveCredential(edit: SSHEdit) throws {
+    let suiteName = "ace.thi.Dblore.tests.ssh-draft.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let passwords = RecordingConnectionPasswordStore()
+    let credentials = InMemorySSHCredentialStore()
+    let original = Self.tunneledConfig()
+    #expect(
+      SessionManager.saveConnection(
+        original, defaults: defaults, passwords: passwords, sshCredentials: credentials,
+        sshCredential: .password("ssh-secret")))
+    let id = try #require(
+      SessionManager.loadHistory(defaults: defaults, passwords: passwords).first?.id)
+    let oldAccount = try #require(SSHCredentialStoreFactory.account(for: original))
+
+    let edited =
+      switch edit {
+      case .bastionHost: Self.tunneledConfig(bastionHost: "other-bastion.example")
+      case .bastionPort: Self.tunneledConfig(bastionPort: 2222)
+      case .bastionUser: Self.tunneledConfig(bastionUser: "other-jump")
+      case .authMethod: Self.tunneledConfig(host: "db2.internal", authMethod: .privateKey)
+      }
+    let newAccount = try #require(SSHCredentialStoreFactory.account(for: edited))
+    #expect(newAccount != oldAccount)
+    #expect(
+      SessionManager.replaceConnection(
+        id: id, with: edited, defaults: defaults, passwords: passwords,
+        sshCredentials: credentials))
+    #expect(credentials.load(account: newAccount) == nil)
+    #expect(credentials.load(account: oldAccount) == nil)
+  }
+
+  @Test("A row blocked at the click moves its SSH credential to the edited account on unlock")
+  func replaceMovesCredentialAfterUnlock() throws {
+    let suiteName = "ace.thi.Dblore.tests.ssh-draft.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let passwords = RecordingConnectionPasswordStore()
+    let credentials = LoadCountingSSHStore()
+    let registry = LockRegistry()
+    var original = Self.tunneledConfig()
+    original.isLocked = true
+    #expect(
+      SessionManager.saveConnection(
+        original, defaults: defaults, passwords: passwords, sshCredentials: credentials,
+        sshCredential: .password("ssh-secret"), registry: registry))
+    let id = try #require(
+      SessionManager.loadHistory(defaults: defaults, passwords: passwords).first?.id)
+    // Locked in an earlier session: the first save's grant ends with a relock
+    registry.relockAll()
+    let oldAccount = try #require(SSHCredentialStoreFactory.account(for: original))
+
+    // Blocked at the click: the form brings no credential
+    var edited = Self.tunneledConfig(host: "db2.internal")
+    let draft = SSHFormDraft(from: edited)
+    edited.sshTunnel = draft.preparedConfig
+    #expect(
+      draft.preparedCredential(
+        original: original, new: edited, store: credentials, registry: registry) == nil)
+    let loads = credentials.loads
+    // Unlock cancelled: refused, nothing read or moved
+    #expect(
+      !SessionManager.replaceConnection(
+        id: id, with: edited, defaults: defaults, passwords: passwords,
+        sshCredentials: credentials, registry: registry))
+    #expect(credentials.loads == loads)
+    #expect(credentials.base.load(account: oldAccount) == .password("ssh-secret"))
+
+    #expect(registry.grant(LockIdentity.all(original), ifGeneration: registry.generation))
+    #expect(
+      SessionManager.replaceConnection(
+        id: id, with: edited, defaults: defaults, passwords: passwords,
+        sshCredentials: credentials, registry: registry))
+    #expect(
+      credentials.base.load(account: SSHCredentialStoreFactory.account(for: edited)!)
+        == .password("ssh-secret"))
+    #expect(credentials.base.load(account: oldAccount) == nil)
   }
 
   @Test("Loading a Recent row, changing the engine or blanking the form reloads the SSH draft")

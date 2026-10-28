@@ -12,11 +12,15 @@ import SwiftUI
 extension ConnectionFormContent {
 
   func generateConnectionString() -> String {
-    let config = connectionConfig
+    Self.generateConnectionString(connectionConfig)
+  }
+
+  /// The `postgresql://` URL shown in the Connection String tab. It never carries the password:
+  /// a saved one stays in the Password field, behind the owner check of its eye toggle.
+  nonisolated static func generateConnectionString(_ config: ConnectionConfig) -> String {
     var components = URLComponents()
     components.scheme = "postgresql"
     components.user = config.username
-    components.password = config.password.isEmpty ? nil : config.password
     components.host = config.host
     components.port = config.port
     components.path = "/\(config.database)"
@@ -30,14 +34,35 @@ extension ConnectionFormContent {
       parseMongoConnectionString(connectionStr)
       return
     }
-    guard let url = Self.postgresURL(from: connectionStr) else {
-      setParseError("Invalid connection string format")
-      return
+    do {
+      connectionConfig = try Self.parsed(
+        connectionStr, into: connectionConfig, generatedFrom: connectionStringSource)
+      // Sync the state for the SSL mode picker
+      updateConnectionStringSSLMode(connectionConfig.sslMode)
+      clearParseError()
+    } catch {
+      setParseError(error.message)
+    }
+  }
+
+  nonisolated struct ConnectionStringError: Error, Equatable {
+    let message: String
+  }
+
+  /// `config` with the target of a PostgreSQL connection string. A password in the URL is
+  /// used (the user typed it). A URL without one gets `source`'s password (the config the shown
+  /// URL was generated from) when it names `source`'s host, port, database and user, so an edit
+  /// typed back restores it; any other target clears it.
+  nonisolated static func parsed(
+    _ connectionStr: String, into config: ConnectionConfig,
+    generatedFrom source: ConnectionConfig?
+  ) throws(ConnectionStringError) -> ConnectionConfig {
+    guard let url = postgresURL(from: connectionStr) else {
+      throw ConnectionStringError(message: "Invalid connection string format")
     }
 
     guard let host = url.host else {
-      setParseError("Missing host in connection string")
-      return
+      throw ConnectionStringError(message: "Missing host in connection string")
     }
 
     let port = url.port ?? 5432
@@ -70,27 +95,27 @@ extension ConnectionFormContent {
     }
 
     if database.isEmpty {
-      setParseError("Missing database name in connection string")
-      return
+      throw ConnectionStringError(message: "Missing database name in connection string")
     }
 
     if username.isEmpty {
-      setParseError("Missing username in connection string")
-      return
+      throw ConnectionStringError(message: "Missing username in connection string")
+    }
+
+    let sourcePassword = source.flatMap {
+      host == $0.host && port == $0.port && database == $0.database && username == $0.username
+        ? $0.password : nil
     }
 
     // Update the config
-    connectionConfig.host = host
-    connectionConfig.port = port
-    connectionConfig.database = database
-    connectionConfig.username = username
-    connectionConfig.password = password
-    connectionConfig.sslMode = sslMode
-
-    // Sync the state for the SSL mode picker
-    updateConnectionStringSSLMode(sslMode)
-
-    clearParseError()
+    var config = config
+    config.password = password.isEmpty ? sourcePassword ?? "" : password
+    config.host = host
+    config.port = port
+    config.database = database
+    config.username = username
+    config.sslMode = sslMode
+    return config
   }
 
   /// A `postgresql://` or `postgres://` URL whose user and password may hold unencoded reserved

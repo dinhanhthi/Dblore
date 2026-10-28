@@ -928,7 +928,8 @@ extension ConnectionFormContent {
     connectionConfig.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
   }
 
-  /// Writes the chosen style onto this draft. Not a live connection, so there is no unlock.
+  /// Writes the chosen style onto this draft. Not a live connection, so there is no unlock here:
+  /// a save or connect that weakens a saved row asks it then.
   func applyFormCommitStyle(_ style: CommitStyle) {
     var updated = connectionConfig
     updated.applyCommitStyle(style)

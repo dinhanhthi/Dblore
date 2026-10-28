@@ -197,8 +197,9 @@ extension ConnectionFormContent {
 
   /// The selection and the fields switch at once. A row whose lock is not unlocked in this
   /// session fills no password (a cached one may predate a relock) and no client certificate
-  /// draft: it asks on this form's window and loads both only after the unlock; cancel keeps
-  /// the row selected with an empty password and the saved certificate untouched.
+  /// draft, and reads no stored SSH secret: it asks on this form's window and loads them only
+  /// after the unlock; cancel keeps the row selected with an empty password and the saved
+  /// certificate untouched.
   func loadConnection(_ entry: ConnectionHistoryEntry) {
     let blocked = LockCenter.shared.registry.refusal(for: entry.config) != nil
     setSelectedHistoryId(entry.id)
@@ -210,7 +211,7 @@ extension ConnectionFormContent {
     resetCertificateDraft()
 
     if getInputMode() == .connectionString {
-      setConnectionString(generateConnectionString())
+      setGeneratedConnectionString()
     }
     updateConnectionStringSSLMode(entry.config.sslMode)
     clearTestResult()
@@ -231,11 +232,12 @@ extension ConnectionFormContent {
         ConnectionKeychainKey.password(for: connectionConfig) == entry.keychainKey
       else { return }
       if certificateDraftPending { restoreCertificateDraft() }
+      refreshSSHStoredMethod()
       // Nor over a password typed while the prompt was open
       guard connectionConfig.password.isEmpty else { return }
       connectionConfig = RecentManager.shared.withSavedPassword(connectionConfig)
       if getInputMode() == .connectionString {
-        setConnectionString(generateConnectionString())
+        setGeneratedConnectionString()
       }
     }
   }

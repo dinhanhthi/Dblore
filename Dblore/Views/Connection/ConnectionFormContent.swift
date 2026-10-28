@@ -67,6 +67,9 @@ struct ConnectionFormContent: View {
   @State private var isConnecting = false
   @State private var inputMode: ConnectionInputMode = .form
   @State private var connectionString: String = ""
+  /// The config the shown PostgreSQL URL was generated from (memory only): an edited URL typed
+  /// back to its target gets its password again (the URL never carries it)
+  @State var connectionStringSource: ConnectionConfig?
   @State private var parseError: String?
   @State private var connectionStringSSLMode: SSLMode = .prefer
 
@@ -219,17 +222,7 @@ struct ConnectionFormContent: View {
                   .onChange(of: inputMode) { _, newMode in
                     parseError = nil
                     testResult = nil
-                    if newMode == .connectionString {
-                      let config = connectionConfig
-                      if config.databaseType == .mongodb {
-                        connectionString = MongoConnectionDraft.connectionString(for: config)
-                      } else if !config.username.isEmpty && !config.database.isEmpty {
-                        connectionString = generateConnectionString()
-                      } else {
-                        connectionString = ""
-                      }
-                      connectionStringSSLMode = connectionConfig.sslMode
-                    }
+                    if newMode == .connectionString { showDraftConnectionString() }
                   }
               }
               if inputMode == .form || !Self.supportsConnectionString(connectionConfig.databaseType)
@@ -295,6 +288,7 @@ struct ConnectionFormContent: View {
         // A string typed for the previous engine is not parsed as the new one's.
         inputMode = .form
         connectionString = ""
+        connectionStringSource = nil
         // Loading a history row sets `fieldsEngine` before `databaseType`, so this
         // only runs for the header picker. A PostgreSQL database name would otherwise
         // stay in `database` and show up under Browse.
@@ -653,7 +647,25 @@ struct ConnectionFormContent: View {
     seenDraftGeneration = draftGeneration
     fieldsEngine = connectionConfig.databaseType
     selectedHistoryId = nil
+    // The previous draft's string and source (its password) never parse into this one
+    connectionString = ""
+    connectionStringSource = nil
+    if inputMode == .connectionString { showDraftConnectionString() }
     seedAIFields()
+  }
+
+  /// The Connection String tab's text for the form's draft
+  private func showDraftConnectionString() {
+    let config = connectionConfig
+    if config.databaseType == .mongodb {
+      connectionString = MongoConnectionDraft.connectionString(for: config)
+    } else if !config.username.isEmpty && !config.database.isEmpty {
+      setGeneratedConnectionString()
+    } else {
+      connectionString = ""
+      connectionStringSource = nil
+    }
+    connectionStringSSLMode = connectionConfig.sslMode
   }
 
   func setFieldsEngine(_ type: DatabaseType) {
@@ -689,8 +701,10 @@ struct ConnectionFormContent: View {
     inputMode
   }
 
-  func setConnectionString(_ value: String) {
-    connectionString = value
+  /// Shows the form's PostgreSQL URL and keeps the config it came from (`connectionStringSource`)
+  func setGeneratedConnectionString() {
+    connectionString = generateConnectionString()
+    connectionStringSource = connectionConfig
   }
 
   func updateConnectionStringSSLMode(_ mode: SSLMode) {
@@ -834,7 +848,8 @@ struct ConnectionFormContent: View {
   var preparedSSHCredential: SSHStoredCredential? {
     sshDraft.preparedCredential(
       original: sshOriginalConfig, new: withSSHConfig(connectionConfig),
-      store: SSHCredentialStoreFactory.shared, held: unrememberedSSHCredential?())
+      store: SSHCredentialStoreFactory.shared, held: unrememberedSSHCredential?(),
+      registry: LockCenter.shared.registry)
   }
 
   /// The stored or held secret's method while it still serves the bastion in the form.
@@ -856,9 +871,17 @@ struct ConnectionFormContent: View {
     sshDraft = SSHFormDraft(from: connectionConfig)
     let original = connectionConfig.sshTunnel == nil ? nil : connectionConfig
     sshOriginalConfig = original
+    refreshSSHStoredMethod()
+  }
+
+  /// Rereads the method of the held or stored secret of `sshOriginalConfig`, keeping the draft
+  /// (after an unlock: a blocked row reads no stored secret).
+  func refreshSSHStoredMethod() {
     sshStoredMethod =
-      heldSSHCredential(for: original).map(SSHFormDraft.method(of:))
-      ?? SSHFormDraft.storedMethod(for: original, store: SSHCredentialStoreFactory.shared)
+      heldSSHCredential(for: sshOriginalConfig).map(SSHFormDraft.method(of:))
+      ?? SSHFormDraft.storedMethod(
+        for: sshOriginalConfig, store: SSHCredentialStoreFactory.shared,
+        registry: LockCenter.shared.registry)
   }
 
   /// Parses the key off the main actor, keeps only the decrypted key for the store, and
@@ -1258,10 +1281,12 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
   /// The secret to use and save with `new`. A typed or imported secret wins. Otherwise, while
   /// the bastion is unchanged: the `held` secret of a live unremembered connection (not in the
   /// store), else, when the account changed (DB fields or engine), the credential stored under
-  /// the original account so it moves to the new account. Nil keeps the store as is.
+  /// the original account so it moves to the new account (not read while any lock `original`
+  /// reaches is blocked: an edit save then moves it after the unlock,
+  /// `SessionManager.replaceConnection`). Nil keeps the store as is otherwise.
   func preparedCredential(
     original: ConnectionConfig?, new: ConnectionConfig, store: any SSHCredentialStore,
-    held: SSHCredentialStoreFactory.ConnectionCredential? = nil
+    held: SSHCredentialStoreFactory.ConnectionCredential? = nil, registry: LockRegistry = .shared
   ) -> SSHStoredCredential? {
     guard enabled, let newAccount = SSHCredentialStoreFactory.account(for: new) else {
       return nil
@@ -1275,19 +1300,21 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
     {
       return held.credential
     }
-    guard oldAccount != newAccount, let stored = store.load(account: oldAccount),
+    guard oldAccount != newAccount, registry.refusal(for: original) == nil,
+      let stored = store.load(account: oldAccount),
       canUseStoredCredential(Self.method(of: stored))
     else { return nil }
     return stored
   }
 
-  /// Auth method of the credential stored for `config` (nil when there is none).
+  /// Auth method of the credential stored for `config` (nil when there is none). Nil without
+  /// reading the store while any lock `config` reaches is blocked.
   static func storedMethod(
-    for config: ConnectionConfig?, store: any SSHCredentialStore
+    for config: ConnectionConfig?, store: any SSHCredentialStore, registry: LockRegistry = .shared
   ) -> SSHTunnelConfig.AuthMethod? {
-    guard let config, let account = SSHCredentialStoreFactory.account(for: config) else {
-      return nil
-    }
+    guard let config, registry.refusal(for: config) == nil,
+      let account = SSHCredentialStoreFactory.account(for: config)
+    else { return nil }
     return store.load(account: account).map(method(of:))
   }
 

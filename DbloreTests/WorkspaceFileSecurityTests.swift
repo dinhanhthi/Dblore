@@ -222,7 +222,7 @@ struct WorkspaceFileSecurityTests {
     }
     await manager.performDisconnect()
 
-    // A protection picker writes only the workspace: a stricter file is the user's own change
+    // A stricter file is the user's own change
     var stricter = saved
     stricter.protectionLevel = .readOnly
     let kept = Self.manager(
@@ -418,6 +418,109 @@ struct WorkspaceFileSecurityTests {
     #expect(await manager.connectionManager.config?.password == "secret")
     #expect(!manager.isConnectionFormModalVisible)
     await manager.performDisconnect()
+  }
+
+  /// A saved PostgreSQL row with `style` and a manager whose workspace is that row (`workspace`
+  /// tweaks it before the manager opens it).
+  private static func savedProtectionManager(
+    _ style: CommitStyle, defaults: UserDefaults, store: RecordingConnectionPasswordStore,
+    workspace: (inout ConnectionConfig) -> Void = { _ in }
+  ) -> WorkspaceManager {
+    var saved = config(host: "db.example")
+    saved.applyCommitStyle(style)
+    #expect(SessionManager.saveConnection(saved, defaults: defaults, passwords: store))
+    workspace(&saved)
+    return manager(
+      Workspace(connectionConfig: saved), type: .postgresql, defaults: defaults, store: store)
+  }
+
+  private static func savedRows(_ defaults: UserDefaults) -> [ConnectionConfig] {
+    SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore()).map(\.config)
+  }
+
+  @Test("A runtime protection change reaches the saved row without a reconnect")
+  func protectionChangeWritesThrough() throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let manager = Self.savedProtectionManager(
+      .confirm, defaults: defaults, store: RecordingConnectionPasswordStore())
+    var changed = try #require(manager.workspace.connectionConfig)
+    changed.protectionLevel = .readOnly
+    changed.applyCommitStyle(.review)
+    manager.updateConnectionProtection(
+      from: changed, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+
+    let row = try #require(Self.savedRows(defaults).first)
+    #expect(Self.savedRows(defaults).count == 1)
+    #expect(row.protectionLevel == .readOnly)
+    #expect(row.commitStyle == .review)
+    #expect(row.safeMode == changed.safeMode)
+    #expect(row.protectedMode == changed.protectedMode)
+  }
+
+  @Test("A Remember-off workspace's protection change writes no saved row")
+  func rememberOffProtectionChangeNotSaved() throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let manager = Self.savedProtectionManager(
+      .confirm, defaults: defaults, store: RecordingConnectionPasswordStore()
+    ) { $0.rememberConnection = false }
+    var changed = try #require(manager.workspace.connectionConfig)
+    changed.protectionLevel = .readOnly
+    manager.updateConnectionProtection(
+      from: changed, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+
+    #expect(manager.workspace.connectionConfig?.protectionLevel == .readOnly)
+    let row = try #require(Self.savedRows(defaults).first)
+    #expect(Self.savedRows(defaults).count == 1)
+    #expect(row.protectionLevel == .none)
+    #expect(row.commitStyle == .confirm)
+  }
+
+  @Test("After a runtime weakening that went through its unlock, the reconnect asks none")
+  func unlockedWeakeningReconnectsWithoutUnlock() async throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let manager = Self.savedProtectionManager(
+      .review, defaults: defaults, store: RecordingConnectionPasswordStore())
+    // The tab asked the unlock for Review → Immediate, then applied it
+    var weaker = try #require(manager.workspace.connectionConfig)
+    weaker.applyCommitStyle(.immediate)
+    manager.updateConnectionProtection(
+      from: weaker, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+    #expect(Self.savedRows(defaults).first?.commitStyle == .immediate)
+
+    let live = try #require(manager.workspace.connectionConfig)
+    try await manager.connect(
+      config: live, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+    #expect(manager.pendingWeakeningConnect == nil)
+    #expect(manager.connectionState == .connected)
+    await manager.performDisconnect()
+  }
+
+  @Test("A saved row raised since the workspace opened is not weakened by an ungated change")
+  func staleWorkspaceNeverWeakensRow() throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = RecordingConnectionPasswordStore()
+    let manager = Self.savedProtectionManager(.confirm, defaults: defaults, store: store)
+    // Another window raises the saved row to Password (a tightening needs no unlock)
+    var raised = try #require(Self.savedRows(defaults).first)
+    raised.applyCommitStyle(.password)
+    #expect(SessionManager.saveConnection(raised, defaults: defaults, passwords: store))
+
+    // Confirm → Immediate needs no unlock on this workspace, but would weaken the row
+    var weaker = try #require(manager.workspace.connectionConfig)
+    weaker.applyCommitStyle(.immediate)
+    manager.updateConnectionProtection(
+      from: weaker, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+
+    #expect(manager.workspace.connectionConfig?.commitStyle == .immediate)
+    #expect(Self.savedRows(defaults).first?.commitStyle == .password)
   }
 
   @Test("The key is always derived from the config, whatever key the file stores")
