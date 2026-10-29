@@ -21,8 +21,8 @@ extension View {
         model: model,
         databasePassword: workspaceManager.workspace.connectionConfig?.password,
         isConnected: workspaceManager.connectionState == .connected,
-        isShown: { [weak workspaceManager, weak model] in
-          model != nil && workspaceManager?.schemaCompare === model
+        isShown: { [weak model] in
+          model != nil && workspaceManager.schemaCompare === model
         },
         onClose: { workspaceManager.closeSchemaCompare() })
     }
