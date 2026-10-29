@@ -271,11 +271,11 @@ struct QueryHistoryStoreTests {
       #expect(empty.userVersion == 0)
     }
     let store = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
     #expect(try await store.fileSize() > 0)
     #expect(try await store.count() == 0)
     let reopened = try QueryHistoryStore(url: url)
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
     #expect(try await reopened.count() == 0)
   }
 
@@ -306,7 +306,7 @@ struct QueryHistoryStoreTests {
 
     let store = try QueryHistoryStore(url: url)
     let loaded = try await store.search(text: "", scope: .all, limit: 50, offset: 0)
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
     let info = try SQLiteHandle(url: url)
     let tables = try info.prepare(
       "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'history'")
@@ -356,7 +356,7 @@ struct QueryHistoryStoreTests {
     let store = try QueryHistoryStore(url: url)
     let found = try await store.search(text: "AI Assistant", scope: .all, limit: 10, offset: 0)
     #expect(found.map(\.sql) == ["SELECT 1"])
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
   }
 
   @Test(
@@ -388,7 +388,7 @@ struct QueryHistoryStoreTests {
 
     let store = try QueryHistoryStore(url: url)
     let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
     #expect(
       try tags(SQLiteHandle(url: url)) == [
         "Dump Read", "Restore Schema", "Editor Write", "Rewind Write",
@@ -420,7 +420,60 @@ struct QueryHistoryStoreTests {
     #expect(try await found("Dump").sorted() == ["another copy", "nightly backup of shop"])
     let reopened = try QueryHistoryStore(url: url)
     #expect(try await reopened.count() == 5)
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
+  }
+
+  @Test("A v5 file rebuilds its tags, so Shortcuts and command-line rows get their badges")
+  func version5MigratesTagsToVersion6() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let key = "SQLite|/tmp/app.sqlite|0|app|user"
+    try seedVersion5(
+      at: url,
+      rows: [
+        (sql: "SELECT 1", key: key, source: "cli", kind: "read"),
+        (sql: "INSERT INTO t VALUES (1)", key: key, source: "shortcuts", kind: "write"),
+        (sql: "UPDATE t SET a = 0", key: key, source: "rewind", kind: "write"),
+      ])
+    func tags(_ database: SQLiteHandle) throws -> [String?] {
+      let statement = try database.prepare("SELECT tags FROM history ORDER BY id")
+      var found: [String?] = []
+      while try statement.step() { found.append(statement.columnText(0)) }
+      return found
+    }
+    // The v5 mapping frozen in the file has no shortcuts or cli case
+    #expect(try tags(SQLiteHandle(url: url)) == ["Editor Read", "Editor Write", "Rewind Write"])
+
+    let store = try QueryHistoryStore(url: url)
+    let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
+    #expect(
+      try tags(SQLiteHandle(url: url)) == [
+        "Command line Read", "Shortcuts Write", "Rewind Write",
+      ])
+    #expect(rows.map(\.source) == [.rewind, .shortcuts, .cli])
+    func found(_ text: String) async throws -> [String] {
+      try await store.search(text: text, scope: .all, limit: 10, offset: 0).map(\.sql)
+    }
+    #expect(try await found("Command line") == ["SELECT 1"])
+    #expect(try await found("Shortcuts") == ["INSERT INTO t VALUES (1)"])
+  }
+
+  @Test("Shortcuts and cli sources round-trip through the store with their raw values")
+  func shortcutsAndCLISourcesRoundTrip() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    let store = try QueryHistoryStore(url: url)
+    let start = Date(timeIntervalSince1970: 1_700_000_000)
+    try await store.record(Self.entry(sql: "SELECT 1", at: start, source: .shortcuts, kind: .read))
+    try await store.record(
+      Self.entry(sql: "SELECT 2", at: start.addingTimeInterval(10), source: .cli, kind: .read))
+    let rows = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(
+      rows.map { "\($0.sql)|\($0.source.rawValue)" } == ["SELECT 2|cli", "SELECT 1|shortcuts"])
+    let reopened = try QueryHistoryStore(url: url)
+    let again = try await reopened.search(text: "", scope: .all, limit: 10, offset: 0)
+    #expect(again == rows)
   }
 
   @Test("A v1 backfill classifies MySQL and DuckDB keys with their own dialect")
@@ -504,7 +557,7 @@ struct QueryHistoryStoreTests {
 
     let entries = try await store.search(text: "", scope: .all, limit: 10, offset: 0)
     #expect(entries.map(\.kind) == [.write])
-    #expect(try SQLiteHandle(url: url).userVersion == 5)
+    #expect(try SQLiteHandle(url: url).userVersion == 6)
   }
 
   @Test("writesOnly keeps kind write in search and count, and NULL is not a write")
@@ -959,9 +1012,27 @@ struct QueryHistoryStoreTests {
     }
   }
 
+  /// Frozen version-5 schema: the version-3 layout with the dump, restore and rewind sources in
+  /// `tags`, before shortcuts and cli.
+  private func seedVersion5(
+    at url: URL, rows: [(sql: String, key: String, source: String, kind: String?)]
+  ) throws {
+    try seedVersion3(
+      at: url, rows: rows,
+      sourceCases: Self.version3SourceCases
+        + " WHEN 'dump' THEN 'Dump' WHEN 'restore' THEN 'Restore' WHEN 'rewind' THEN 'Rewind'",
+      version: 5)
+  }
+
+  private static let version3SourceCases =
+    "WHEN 'cell' THEN 'Cell' WHEN 'editor' THEN 'Editor' "
+    + "WHEN 'dataViewerEdit' THEN 'Data Viewer Edit' WHEN 'dataImport' THEN 'Data Import' "
+    + "WHEN 'mcp' THEN 'MCP' WHEN 'structure' THEN 'Structure' WHEN 'ai' THEN 'AI Assistant'"
+
   /// Frozen version-3 schema: `kind`, and `tags` with the source mapping before dump and restore.
   private func seedVersion3(
-    at url: URL, rows: [(sql: String, key: String, source: String, kind: String?)]
+    at url: URL, rows: [(sql: String, key: String, source: String, kind: String?)],
+    sourceCases: String = QueryHistoryStoreTests.version3SourceCases, version: Int = 3
   ) throws {
     try seedVersion1(at: url, rows: [])
     let database = try SQLiteHandle(url: url)
@@ -970,10 +1041,7 @@ struct QueryHistoryStoreTests {
       try database.execute(
         """
         ALTER TABLE history ADD COLUMN tags TEXT GENERATED ALWAYS AS ((CASE source \
-        WHEN 'cell' THEN 'Cell' WHEN 'editor' THEN 'Editor' \
-        WHEN 'dataViewerEdit' THEN 'Data Viewer Edit' WHEN 'dataImport' THEN 'Data Import' \
-        WHEN 'mcp' THEN 'MCP' WHEN 'structure' THEN 'Structure' WHEN 'ai' THEN 'AI Assistant' \
-        ELSE 'Editor' END) || COALESCE(' ' || (CASE kind WHEN 'read' THEN 'Read' \
+        \(sourceCases) ELSE 'Editor' END) || COALESCE(' ' || (CASE kind WHEN 'read' THEN 'Read' \
         WHEN 'write' THEN 'Write' WHEN 'schema' THEN 'Schema' \
         WHEN 'transaction' THEN 'Transaction' WHEN 'other' THEN 'Other' END), '')) VIRTUAL
         """
@@ -1028,7 +1096,7 @@ struct QueryHistoryStoreTests {
         END
         """
       )
-      try database.execute("PRAGMA user_version = 3")
+      try database.execute("PRAGMA user_version = \(version)")
     }
     for (offset, row) in rows.enumerated() {
       let statement = try database.prepare(

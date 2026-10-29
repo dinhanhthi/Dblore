@@ -457,13 +457,27 @@ nonisolated struct MCPToolService: Sendable {
 
   /// Whether any identity `entry` reaches is locked, unlocked in the app or not
   private func isLocked(_ entry: ConnectionHistoryEntry) -> Bool {
+    Self.isLocked(entry, lockSource: lockSource)
+  }
+
+  /// Whether any identity `entry` reaches is locked in `lockSource`, unlocked in the app or not
+  /// (also `HeadlessAccessRule`)
+  static func isLocked(_ entry: ConnectionHistoryEntry, lockSource: LockRegistry) -> Bool {
     LockIdentity.all(entry.config).contains(where: lockSource.isLocked)
   }
 
-  /// The gate's decision on `entry` with the policy of every saved row of its identity, so no
-  /// looser row (allowlisted or not) opens a connection another row keeps private.
   private func decision(
     for entry: ConnectionHistoryEntry, saved: [ConnectionHistoryEntry], settings: AIConfiguration
+  ) -> AIAccessGate.Decision {
+    Self.decision(for: entry, saved: saved, settings: settings, gate: gate)
+  }
+
+  /// The gate's decision on `entry` with the policy of every saved row of its identity, so no
+  /// looser row (allowlisted or not) opens a connection another row keeps private (also
+  /// `HeadlessAccessRule`).
+  static func decision(
+    for entry: ConnectionHistoryEntry, saved: [ConnectionHistoryEntry], settings: AIConfiguration,
+    gate: AIAccessGate
   ) -> AIAccessGate.Decision {
     let key = AIAccessGate.sessionKey(for: entry.config)
     let policies = saved.filter { AIAccessGate.sessionKey(for: $0.config) == key }
@@ -471,11 +485,13 @@ nonisolated struct MCPToolService: Sendable {
     return gate.decision(for: entry.config, settings: settings, savedPolicies: policies)
   }
 
+  /// What unreadable AI settings read as: a default that asks (fail closed)
+  static let unreadableAISettings = AIConfiguration(
+    activeProvider: nil, configs: [:], defaultConnectionAccess: .askOncePerSession)
+
   /// The AI settings, or when unreadable a default that asks (fail closed).
   private func readAISettings() async -> AIConfiguration {
-    await aiSettings()
-      ?? AIConfiguration(
-        activeProvider: nil, configs: [:], defaultConnectionAccess: .askOncePerSession)
+    await aiSettings() ?? Self.unreadableAISettings
   }
 
   private func runQuery(
@@ -1179,8 +1195,9 @@ nonisolated struct MCPToolService: Sendable {
         kind: Self.historyKind(statements)))
   }
 
-  /// The kind the editor's History stores: a write wins over schema, transaction, other, read.
-  private static func historyKind(_ statements: [ClassifiedStatement]) -> QueryHistoryEntry.Kind? {
+  /// The kind the editor's History stores: a write wins over schema, transaction, other, read
+  /// (also `ShortcutsRunner`).
+  static func historyKind(_ statements: [ClassifiedStatement]) -> QueryHistoryEntry.Kind? {
     let order: [QueryHistoryEntry.Kind] = [.read, .other, .transaction, .schema, .write]
     return
       statements
@@ -1263,8 +1280,9 @@ nonisolated struct MCPToolService: Sendable {
     return result
   }
 
-  /// Name, else the database's last path component (a file path for SQLite).
-  private static func label(of config: ConnectionConfig) -> String {
+  /// Name, else the database's last path component (a file path for SQLite). Also the name
+  /// `HeadlessAccessRule` resolves.
+  static func label(of config: ConnectionConfig) -> String {
     let name = config.name.trimmingCharacters(in: .whitespacesAndNewlines)
     return name.isEmpty ? (config.database as NSString).lastPathComponent : name
   }

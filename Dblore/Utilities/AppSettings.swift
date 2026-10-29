@@ -435,6 +435,8 @@ class AppSettings {
     static let mcpRowCap = "app.settings.mcpRowCap"
     static let mcpWriteToolsEnabled = "app.settings.mcpWriteToolsEnabled"
     static let mcpWriteScopes = "app.settings.mcpWriteScopes"
+    static let shortcutsEnabled = "app.settings.shortcutsEnabled"
+    static let shortcutsAllowedConnectionIDs = "app.settings.shortcutsAllowedConnectionIDs"
     static let mongoPreviewDocumentCount = "app.settings.mongoPreviewDocumentCount"
     static let formatterIndent = "app.settings.formatterIndent"
     static let formatterKeywordCase = "app.settings.formatterKeywordCase"
@@ -1050,6 +1052,25 @@ class AppSettings {
     }
   }
 
+  /// Let Shortcuts actions use the connections in `shortcutsAllowedConnectionIDs`
+  /// (`HeadlessAccessRule`).
+  /// Default: false
+  var shortcutsEnabled: Bool = false {
+    didSet {
+      defaults.set(shortcutsEnabled, forKey: Keys.shortcutsEnabled)
+    }
+  }
+
+  /// Ids (`ConnectionHistoryEntry.id`) of the saved connections Shortcuts may use.
+  /// Default: none
+  var shortcutsAllowedConnectionIDs: Set<UUID> = [] {
+    didSet {
+      defaults.set(
+        shortcutsAllowedConnectionIDs.map(\.uuidString).sorted(),
+        forKey: Keys.shortcutsAllowedConnectionIDs)
+    }
+  }
+
   /// Write scopes of allowlisted connections, by id. A missing id is `.read`.
   /// Default: none (every connection Read)
   var mcpWriteScopes: [UUID: MCPWriteScope] = [:] {
@@ -1488,6 +1509,14 @@ class AppSettings {
 
     mcpWriteScopes = Self.decodeMCPWriteScopes(defaults.object(forKey: Keys.mcpWriteScopes))
 
+    if defaults.object(forKey: Keys.shortcutsEnabled) != nil {
+      shortcutsEnabled = defaults.bool(forKey: Keys.shortcutsEnabled)
+    }
+
+    if let ids = defaults.stringArray(forKey: Keys.shortcutsAllowedConnectionIDs) {
+      shortcutsAllowedConnectionIDs = Set(ids.compactMap(UUID.init(uuidString:)))
+    }
+
     if defaults.object(forKey: Keys.mongoPreviewDocumentCount) != nil {
       // didSet does not run in init: an unknown stored value goes back to the default here
       let count = defaults.integer(forKey: Keys.mongoPreviewDocumentCount)
@@ -1597,6 +1626,8 @@ class AppSettings {
     mcpRowCap = Self.defaultMCPRowCap
     mcpWriteToolsEnabled = false
     mcpWriteScopes = [:]
+    shortcutsEnabled = false
+    shortcutsAllowedConnectionIDs = []
     mongoPreviewDocumentCount = Self.defaultMongoPreviewDocumentCount
     formatterIndent = .twoSpaces
     formatterKeywordCase = .upper

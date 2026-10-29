@@ -381,11 +381,27 @@ extension SettingsModal.SettingsTab {
       let groups =
         SettingsModalKeyboardShortcutsSection.appGroups
         + SettingsModalKeyboardShortcutsSection.editorGroups
-      return groups.flatMap { group in
-        group.rows.map {
-          SettingsSearchEntry(card: group.title, title: $0.action, detail: $0.shortcut)
+      let app: [SettingsSearchEntry] = [
+        .init(
+          card: "Shortcuts app", title: "Allow Shortcuts",
+          detail:
+            "Lets the Shortcuts app open, query and add rows to the connections you allow: Open Connection, Run Query and Add Row."
+        ),
+        .init(
+          card: "Shortcuts connections", title: "Shortcuts connections",
+          detail: "Shortcuts can use only the connections turned on here."),
+        .init(
+          card: "What Shortcuts refuses", title: "What Shortcuts refuses",
+          detail:
+            "Locked connections, password commands and connection scripts, untrusted SSH host keys; Run Query reads only; Add Row needs commit style Immediate with Protected mode off."
+        ),
+      ]
+      return app
+        + groups.flatMap { group in
+          group.rows.map {
+            SettingsSearchEntry(card: group.title, title: $0.action, detail: $0.shortcut)
+          }
         }
-      }
     }
   }
 }

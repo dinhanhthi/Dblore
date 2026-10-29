@@ -242,6 +242,7 @@ struct SettingsModal: View {
     case .developer:
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
+      ShortcutsSettingsSection()
       SettingsModalKeyboardShortcutsSection()
     }
   }

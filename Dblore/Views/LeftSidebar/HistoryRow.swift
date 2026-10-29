@@ -222,6 +222,8 @@ nonisolated enum HistoryRowLabels: Sendable {
     case .dump: "Dump"
     case .restore: "Restore"
     case .rewind: "Rewind"
+    case .shortcuts: "Shortcuts"
+    case .cli: "Command line"
     }
   }
 
@@ -229,6 +231,8 @@ nonisolated enum HistoryRowLabels: Sendable {
   static func sourceIcon(_ source: QueryHistoryEntry.Source) -> String? {
     switch source {
     case .rewind: "clock.arrow.circlepath"
+    case .shortcuts: "square.2.layers.3d"
+    case .cli: "terminal"
     case .cell, .editor, .dataViewerEdit, .dataImport, .mcp, .structure, .ai, .dump, .restore:
       nil
     }
