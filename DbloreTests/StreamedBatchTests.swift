@@ -1,8 +1,11 @@
 // StreamedBatchTests.swift
-// The streamed batch of a Generate Rows run (`executeGatedBatch(streamed:)`): chunks made one at
-// a time inside one transaction. A cancel, a failing chunk, a read-only connection and a relock
-// leave the table as it was; progress counts chunks. Real SQLite file in the temporary folder,
-// no server. The cancel waits on a handshake from the chunk source, never on a timer.
+// The streamed batch of a Generate Rows run (`executeGatedBatch(streamed:)`): chunks made one at a
+// time inside one transaction. A cancel, a failing chunk, a read-only connection and a relock leave
+// the table as it was; progress counts chunks. A prelude (CREATE TABLE) and a postlude run in the
+// same transaction: a failing postlude, a relock before it or a cancel leaves no table, and MySQL
+// refuses DDL there before anything is sent, as is a prelude the policy forbids or with two
+// statements. Real SQLite file in the temporary folder, no server (MySQL: a fake session). The
+// cancel waits on a handshake from the chunk source, never on a timer.
 
 import Foundation
 import Testing
@@ -118,6 +121,38 @@ struct StreamedBatchTests {
     await manager.disconnect()
   }
 
+  @Test("A relock before the postlude stops the run and leaves no table from the prelude")
+  func relockBeforePostlude() async throws {
+    let registry = LockRegistry()
+    let (manager, url) = try await connectedManager(lockSource: registry)
+    defer { removeDatabase(url) }
+    let epoch = await manager.connectionEpoch
+    let identity = LockIdentity(try #require(await manager.config))
+    let feed = ChunkFeed(try chunks([["a"]], table: "u"))
+    // The source relocks the connection once it has no chunk left
+    let relocking = StreamedBatch(
+      relation: try SQLDialect.sqlite.qualified(schema: nil, name: "u"),
+      nextChunk: {
+        let chunk = try await feed.next()
+        if case .none = chunk { registry.setLockedConnections([identity]) }
+        return chunk
+      })
+    do {
+      _ = try await manager.executeGatedBatch(
+        streamed: relocking, policy: open, connectionEpoch: epoch,
+        prelude: [ddl("CREATE TABLE u (v TEXT)")],
+        postlude: [ddl("CREATE INDEX u_v ON u (v)")])
+      Issue.record("Expected connectionLocked")
+    } catch DatabaseError.connectionLocked {
+      // Refused before the postlude was sent
+    }
+    #expect(await feed.calls == 2)
+    registry.setLockedConnections([])
+    #expect(try await tableExists("u", manager) == false)
+    #expect(await manager.transactionSnapshot().isIdle)
+    await manager.disconnect()
+  }
+
   @Test("Progress counts each chunk once, in order, and Protected mode keeps one summary")
   func progressIsMonotonic() async throws {
     let (manager, url) = try await connectedManager()
@@ -142,7 +177,135 @@ struct StreamedBatchTests {
     await manager.disconnect()
   }
 
+  @Test("A failing postlude rolls back the prelude's CREATE TABLE and every chunk")
+  func failingPostludeRollsBackPrelude() async throws {
+    let (manager, url) = try await connectedManager()
+    defer { removeDatabase(url) }
+    let epoch = await manager.connectionEpoch
+    let feed = ChunkFeed(try chunks([["a", "b"], ["c"]], table: "u"))
+    do {
+      _ = try await manager.executeGatedBatch(
+        streamed: try source(feed, table: "u"), policy: open, connectionEpoch: epoch,
+        prelude: [ddl("CREATE TABLE u (v TEXT)")],
+        postlude: [ddl("CREATE INDEX u_missing ON u (missing)")])
+      Issue.record("Expected the postlude to fail the run")
+    } catch DatabaseError.batchStatementFailed(_, let sqlPrefix, _, let rolledBack) {
+      #expect(sqlPrefix.hasPrefix("CREATE INDEX"))
+      #expect(rolledBack)
+    }
+    #expect(await feed.calls == 3)
+    #expect(try await tableExists("u", manager) == false)
+    #expect(await manager.transactionSnapshot().isIdle)
+    await manager.disconnect()
+  }
+
+  @Test("A cancel mid-run leaves no table from the prelude", .timeLimit(.minutes(1)))
+  func cancelLeavesNoPreludeTable() async throws {
+    let (manager, url) = try await connectedManager()
+    defer { removeDatabase(url) }
+    let pause = BatchPause()
+    let feed = ChunkFeed(try chunks([["a"], ["b"]], table: "u"), pauseBefore: 1, pause: pause)
+    let epoch = await manager.connectionEpoch
+    let run = Task {
+      try await manager.executeGatedBatch(
+        streamed: try source(feed, table: "u"), policy: open, connectionEpoch: epoch,
+        prelude: [ddl("CREATE TABLE u (v TEXT)")])
+    }
+    await pause.waitUntilArrived()
+    let status = await manager.runningStatementStatus()
+    let outcome = await manager.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    await pause.resume()
+    await #expect(throws: DatabaseError.self) { _ = try await run.value }
+    #expect(try await tableExists("u", manager) == false)
+    #expect(await manager.transactionSnapshot().isIdle)
+    await manager.disconnect()
+  }
+
+  @Test(
+    "A prelude the policy forbids, or with two statements, is refused before anything is sent")
+  func framingRefused() async throws {
+    let (manager, url) = try await connectedManager()
+    defer { removeDatabase(url) }
+    let epoch = await manager.connectionEpoch
+    let cases: [(ProtectionPolicy, String, String)] = [
+      (ProtectionPolicy(protectionLevel: .schemaOnly), "CREATE TABLE u (v TEXT)", "Schema"),
+      (open, "CREATE TABLE u (v TEXT); CREATE TABLE w (v TEXT)", "alone"),
+    ]
+    for (policy, prelude, expected) in cases {
+      let feed = ChunkFeed(try chunks([["a"]], table: "u"))
+      do {
+        _ = try await manager.executeGatedBatch(
+          streamed: try source(feed, table: "u"), policy: policy, connectionEpoch: epoch,
+          prelude: [ddl(prelude)])
+        Issue.record("Expected blockedByProtection")
+      } catch DatabaseError.blockedByProtection(let index, _, let reason) {
+        #expect(index == 0)
+        #expect(reason.contains(expected), "\(reason)")
+      }
+      #expect(await feed.calls == 0)
+      #expect(try await tableExists("u", manager) == false)
+    }
+    // The read-only refusal names the run's operation
+    let feed = ChunkFeed(try chunks([["a"]]))
+    var copy = try source(feed)
+    copy.operation = "Copying rows"
+    do {
+      _ = try await manager.executeGatedBatch(
+        streamed: copy, policy: ProtectionPolicy(protectionLevel: .readOnly),
+        connectionEpoch: epoch)
+      Issue.record("Expected blockedByProtection")
+    } catch DatabaseError.blockedByProtection(_, _, let reason) {
+      #expect(reason == "Copying rows is not allowed on a read-only connection")
+    }
+    #expect(await manager.transactionSnapshot().isIdle)
+    await manager.disconnect()
+  }
+
+  @Test("MySQL refuses DDL in the prelude before anything is sent")
+  func mysqlPreludeDDLRefused() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.mysql.capabilities)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(
+      config: ConnectionConfig(
+        databaseType: .mysql, host: "fake", port: 3306, database: "db", username: "u",
+        sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false))
+    let sentBefore = factory.statements
+    let feed = ChunkFeed([])
+    let epoch = await manager.connectionEpoch
+    do {
+      _ = try await manager.executeGatedBatch(
+        streamed: StreamedBatch(
+          relation: try SQLDialect.mysql.qualified(schema: nil, name: "u"),
+          nextChunk: { try await feed.next() }),
+        policy: open, connectionEpoch: epoch, prelude: [ddl("CREATE TABLE u (v TEXT)")])
+      Issue.record("Expected blockedByProtection")
+    } catch DatabaseError.blockedByProtection(let index, let kind, let reason) {
+      #expect(index == 0)
+      #expect(kind == .ddl)
+      #expect(reason.contains("commits implicitly"))
+    }
+    #expect(await feed.calls == 0)
+    #expect(factory.statements == sentBefore)
+    await manager.disconnect()
+  }
+
   // MARK: - Helpers
+
+  private func ddl(_ sql: String) -> BoundStatement {
+    BoundStatement(sql: sql, values: [], expectedRows: nil)
+  }
+
+  private func tableExists(
+    _ name: String, _ manager: DatabaseConnectionManager
+  ) async throws -> Bool {
+    let result = try await manager.executeInternal(
+      "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = '\(name)'")
+    guard case .int(let count) = result.rows.first?.first else { return true }
+    return count > 0
+  }
 
   private func connectedManager(
     lockSource: LockRegistry = LockRegistry()
@@ -165,16 +328,16 @@ struct StreamedBatchTests {
     }
   }
 
-  private func chunks(_ values: [[String]]) throws -> [[BoundStatement]] {
+  private func chunks(_ values: [[String]], table: String = "t") throws -> [[BoundStatement]] {
     try values.map { chunk in
       try ImportSQLBuilder.insertStatements(
-        schema: nil, table: "t", columns: ["v"], rows: chunk.map { [$0] }, dialect: .sqlite)
+        schema: nil, table: table, columns: ["v"], rows: chunk.map { [$0] }, dialect: .sqlite)
     }
   }
 
-  private func source(_ feed: ChunkFeed) throws -> StreamedBatch {
+  private func source(_ feed: ChunkFeed, table: String = "t") throws -> StreamedBatch {
     StreamedBatch(
-      relation: try SQLDialect.sqlite.qualified(schema: nil, name: "t"),
+      relation: try SQLDialect.sqlite.qualified(schema: nil, name: table),
       nextChunk: { try await feed.next() })
   }
 

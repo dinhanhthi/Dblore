@@ -4,13 +4,13 @@
 //
 // Columns render as ADD COLUMN does (`StructureDDLBuilder.columnDefinition`); primary key columns
 // are always NOT NULL. Then, inside the parentheses: one table-level PRIMARY KEY (in column
-// order), then the UNIQUE and FOREIGN KEY constraints in the order given. Identifiers go through
-// `dialect.quoteIdentifier`; type text and DEFAULT expressions are the tested user-text exception
-// (`StructureDDLBuilder.checkedText`). A blank comment adds nothing; otherwise it is a string
-// literal: PostgreSQL runs a second statement, `COMMENT ON TABLE`; MySQL takes the table option
-// `COMMENT = '...'`; SQLite has no table comments and refuses one. SQLite foreign keys name their
-// target table bare (its grammar takes no schema there), so it must sit in the same database.
-// DuckDB is view-only and refused.
+// order), then the UNIQUE, FOREIGN KEY and CHECK constraints in the order given. Identifiers go
+// through `dialect.quoteIdentifier`; type text, DEFAULT and CHECK expressions are the tested
+// user-text exception (`StructureDDLBuilder.checkedText`). A blank comment adds nothing;
+// otherwise it is a string literal: PostgreSQL runs a second statement, `COMMENT ON TABLE`; MySQL
+// takes the table option `COMMENT = '...'`; SQLite has no table comments and refuses one. SQLite
+// foreign keys name their target table bare (its grammar takes no schema there), so it must sit
+// in the same database. DuckDB is view-only and refused.
 
 import Foundation
 
@@ -30,7 +30,7 @@ nonisolated struct CreateTableDraft: Sendable, Equatable {
   var schema: String
   var name: String
   var columns: [Column]
-  /// UNIQUE and FOREIGN KEY constraints; the primary key comes from `Column.isPrimaryKey`
+  /// UNIQUE, FOREIGN KEY and CHECK constraints; the primary key comes from `Column.isPrimaryKey`
   var constraints: [TableStructure.Constraint] = []
   /// Nil or blank for none
   var comment: String?
@@ -116,14 +116,17 @@ nonisolated enum CreateTableDDLBuilder {
     let names = Set(draft.columns.map(\.name))
     for constraint in draft.constraints {
       if let name = constraint.name { try checkedName(name, "constraint") }
-      guard !constraint.columns.isEmpty else {
+      if case .check(let expression) = constraint.kind {
+        // A table-level check may list no columns (MySQL reports none for any check)
+        try StructureDDLBuilder.checkedText(expression, "check", dialect: dialect)
+      } else if constraint.columns.isEmpty {
         throw StructureDDLError.invalidText("A constraint needs at least one column.")
       }
       if let unknown = constraint.columns.first(where: { !names.contains($0) }) {
         throw StructureDDLError.unknownColumn(unknown)
       }
       switch constraint.kind {
-      case .unique:
+      case .unique, .check:
         break
       case .foreignKey(let reference):
         try checkedName(reference.table, "referenced table")
@@ -136,9 +139,9 @@ nonisolated enum CreateTableDDLBuilder {
           throw StructureDDLError.unsupported(
             "SQLite foreign keys must reference a table in the same database.")
         }
-      case .primaryKey, .check:
+      case .primaryKey:
         throw StructureDDLError.unsupported(
-          "Only unique and foreign key constraints can be added to a new table.")
+          "Only unique, foreign key and check constraints can be added to a new table.")
       }
     }
     if let text = draft.comment, text.contains("\0") {

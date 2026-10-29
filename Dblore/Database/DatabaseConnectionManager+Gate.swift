@@ -20,13 +20,17 @@ nonisolated enum GateDecision: Sendable, Equatable {
   case blocked(statementIndex: Int, kind: StatementKind, reason: String)
 }
 
-/// The INSERTs of a Generate Rows run, made one chunk at a time inside the run's transaction
-/// (`executeGatedBatch(streamed:)`), so the whole run is never in memory.
+/// The INSERTs of a Generate Rows or Copy Objects run, made one chunk at a time inside the run's
+/// transaction (`executeGatedBatch(streamed:)`), so the whole run is never in memory.
 nonisolated struct StreamedBatch: Sendable {
   /// The quoted table the rows go into: the run's one pending summary names it
   let relation: String
   /// The next chunk's INSERT statements (each with its `expectedRows`); nil once the run is done
   let nextChunk: @Sendable () async throws -> [BoundStatement]?
+  /// What the run does, as the read-only refusal names it
+  var operation = "Generating rows"
+  /// The rows, as the pending summary names them ("INSERT INTO <relation>: N <rowsLabel>")
+  var rowsLabel = "generated rows"
 }
 
 extension DatabaseConnectionManager {
@@ -235,16 +239,22 @@ extension DatabaseConnectionManager {
       cancellationGeneration: cancellationGeneration, rewind: rewind, rewinding: rewinding)
   }
 
-  /// Send a streamed batch (Generate Rows) in one transaction, under the same rules as the
-  /// staged batch above. A run always writes, so a read-only connection is refused before any
-  /// chunk is made; every other check runs before anything is sent, and each chunk is classified
-  /// and checked against the policy as it is made (it must be DML), before it is sent.
-  /// `progress` gets the number of chunks done after each one. A cancel, a chunk the source
-  /// fails to make or the server refuses, or a relock rolls back the whole run.
+  /// Send a streamed batch (Generate Rows, Copy Objects) in one transaction, under the same
+  /// rules as the staged batch above. A run always writes, so a read-only connection is refused
+  /// before any chunk is made; every other check runs before anything is sent, and each chunk is
+  /// classified and checked against the policy as it is made (it must be DML), before it is
+  /// sent. `prelude` runs before the first chunk and `postlude` after the last, in the same
+  /// transaction: each must be one statement, and all are classified and checked against the
+  /// policy before anything is sent (`statementIndex` counts the prelude, then the postlude). On
+  /// MySQL / MariaDB a schema change or other implicit-commit statement there is refused: it
+  /// would commit the run halfway. `progress` gets the number of chunks done after each one. A
+  /// cancel, a chunk the source fails to make, a statement the server refuses, or a relock rolls
+  /// back the whole run, prelude and postlude included.
   /// - Returns: the rows inserted.
   func executeGatedBatch(
     streamed source: StreamedBatch, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil, progress: (@Sendable (Int) -> Void)? = nil
+    caller: UUID? = nil, prelude: [BoundStatement] = [], postlude: [BoundStatement] = [],
+    progress: (@Sendable (Int) -> Void)? = nil
   ) async throws -> Int {
     try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
@@ -255,8 +265,9 @@ extension DatabaseConnectionManager {
     if effective.protectionLevel == .readOnly {
       throw DatabaseError.blockedByProtection(
         statementIndex: 0, kind: .dml,
-        reason: "Generating rows is not allowed on a read-only connection")
+        reason: "\(source.operation) is not allowed on a read-only connection")
     }
+    try Self.refuseFraming(prelude + postlude, policy: effective, dialect: Self.dialect(of: config))
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     try refuseIfAborted()
@@ -268,7 +279,36 @@ extension DatabaseConnectionManager {
     let cancellationGeneration = batchCancellationGeneration
     return try await runStreamedBatch(
       source, caller: caller, policy: effective, cancellationGeneration: cancellationGeneration,
-      progress: progress)
+      prelude: prelude, postlude: postlude, progress: progress)
+  }
+
+  /// The streamed batch's prelude and postlude: one statement each that `policy` allows and,
+  /// on MySQL / MariaDB, that does not commit implicitly (DDL included)
+  private nonisolated static func refuseFraming(
+    _ statements: [BoundStatement], policy: ProtectionPolicy, dialect: SQLDialect
+  ) throws {
+    for (index, statement) in statements.enumerated() {
+      let classified = SQLStatementClassifier.classify(statement.sql, dialect: dialect)
+      guard classified.count == 1 else {
+        throw DatabaseError.blockedByProtection(
+          statementIndex: index, kind: classified.first?.kind ?? .unknown,
+          reason: "Each statement before or after the rows must be sent alone")
+      }
+      let kind = classified[0].kind
+      if dialect == .mysql,
+        SQLStatementClassifier.effectiveKind(kind) == .ddl || classified[0].nonTransactional
+      {
+        throw DatabaseError.blockedByProtection(
+          statementIndex: index, kind: kind,
+          reason: "This statement commits implicitly on MySQL, which would end the run's "
+            + "transaction; run schema changes one by one instead")
+      }
+      if case .blocked(_, let kind, let reason) = evaluate(
+        classified, policy: policy, dialect: dialect)
+      {
+        throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
+      }
+    }
   }
 
   /// Throws `DatabaseError.notEditable` when the connected engine has no grid edits

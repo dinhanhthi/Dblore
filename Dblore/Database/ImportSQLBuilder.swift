@@ -8,6 +8,8 @@ nonisolated enum ImportSQLBuilder {
     case invalidBoolean
     /// An UPDATE row whose key has a NULL part or a value its column can't match
     case invalidKey
+    /// Copy Objects: bytes that are not UTF-8 text, for a text column on PostgreSQL or MySQL
+    case bytesNotText
   }
 
   /// What a keyed import does with its file rows (`TableImportModel`)
@@ -21,6 +23,26 @@ nonisolated enum ImportSQLBuilder {
   struct Column: Sendable, Equatable {
     var name: String
     var kind: ImportTypeInference.Kind
+  }
+
+  /// A Copy Objects column: its bytes are written through `bindForm`
+  struct BoundColumn: Sendable, Equatable {
+    var name: String
+    var bindForm: CopyObjectsTypeMapping.BindForm
+  }
+
+  /// A Copy Objects value, already in the target's form: NULL stays NULL and blank text stays
+  /// blank text (no import normalization)
+  enum Value: Sendable, Equatable {
+    case null
+    case text(String)
+    case bytes(Data)
+  }
+
+  /// One VALUES entry: a bind behind its column's marker, or SQL text that takes no bind
+  private enum Entry {
+    case bind(String?)
+    case inline(String)
   }
 
   static func createTable(
@@ -50,48 +72,115 @@ nonisolated enum ImportSQLBuilder {
     dialect: SQLDialect, bindLimit: Int? = nil, maxChunkBytes: Int? = nil
   ) throws -> [BoundStatement] {
     guard !columns.isEmpty else { throw Error.invalidColumns }
+    let timestamps = dialect == .mysql ? ImportTypeInference.TimestampParser() : nil
+    let markers = columns.map { column in
+      { (marker: String) in
+        dialect == .sqlite && column.kind == .boolean ? "CAST(\(marker) AS INTEGER)" : marker
+      }
+    }
+    return try chunkedInserts(
+      schema: schema, table: table, names: columns.map(\.name), markers: markers, rows: rows,
+      dialect: dialect, bindLimit: bindLimit, maxChunkBytes: maxChunkBytes
+    ) { row in
+      try zip(row, columns).map { value, column in
+        .bind(try bindValue(value, kind: column.kind, dialect: dialect, timestamps: timestamps))
+      }
+    }
+  }
+
+  /// Copy Objects: the same chunked INSERTs (bind limit, `maxChunkBytes`) for values already in
+  /// the target's form. Bytes go through the column's bind form: PostgreSQL `decode($n, 'hex')`
+  /// and MySQL `UNHEX(?)` bind them as hex text; on SQLite they are written as an `X'..'`
+  /// literal made from the bytes, with no bind (the only source value that becomes SQL text).
+  /// Text in a binary column is written as its UTF-8 bytes, except on SQLite (kept as text);
+  /// bytes in a text column are a SQLite literal, else UTF-8 text (`Error.bytesNotText`).
+  static func insertStatements(
+    schema: String?, table: String, columns: [BoundColumn], values rows: [[Value]],
+    dialect: SQLDialect, bindLimit: Int? = nil, maxChunkBytes: Int? = nil
+  ) throws -> [BoundStatement] {
+    guard !columns.isEmpty else { throw Error.invalidColumns }
+    let markers = columns.map { column in
+      { (marker: String) in column.bindForm.fragment(placeholder: marker) ?? marker }
+    }
+    return try chunkedInserts(
+      schema: schema, table: table, names: columns.map(\.name), markers: markers, rows: rows,
+      dialect: dialect, bindLimit: bindLimit, maxChunkBytes: maxChunkBytes
+    ) { row in
+      try zip(row, columns).map { value, column in try entry(value, bindForm: column.bindForm) }
+    }
+  }
+
+  private static func entry(
+    _ value: Value, bindForm: CopyObjectsTypeMapping.BindForm
+  ) throws -> Entry {
+    switch (value, bindForm) {
+    case (.null, _):
+      return .bind(nil)
+    case (.text(let text), .postgresHexDecode), (.text(let text), .mysqlUnhex):
+      return .bind(Data(text.utf8).hexDigits())
+    case (.text(let text), _):
+      return .bind(text)
+    case (.bytes(let bytes), .postgresHexDecode), (.bytes(let bytes), .mysqlUnhex):
+      return .bind(bytes.hexDigits())
+    case (.bytes(let bytes), .sqliteHexLiteral):
+      return .inline(CopyObjectsTypeMapping.sqliteHexLiteral(bytes))
+    case (.bytes(let bytes), .plain):
+      guard let text = String(data: bytes, encoding: .utf8) else { throw Error.bytesNotText }
+      return .bind(text)
+    }
+  }
+
+  /// INSERT statements of at most 1,000 rows, within the bind limit and `maxChunkBytes`. Each
+  /// `.bind` entry takes the next placeholder through its column's marker; `.inline` takes none.
+  private static func chunkedInserts<Row>(
+    schema: String?, table: String, names: [String], markers: [(String) -> String],
+    rows: [Row], dialect: SQLDialect, bindLimit: Int?, maxChunkBytes: Int?,
+    entries: (Row) throws -> [Entry]
+  ) throws -> [BoundStatement] where Row: Collection {
     let maximumBinds = bindLimit ?? defaultBindLimit(dialect)
-    let chunkSize = min(1_000, maximumBinds / columns.count)
+    let chunkSize = min(1_000, maximumBinds / names.count)
     guard chunkSize > 0 else { throw Error.bindLimitExceeded }
     let relation = try dialect.qualified(schema: schema, name: table)
-    let names = try columns.map { try dialect.quoteIdentifier($0.name) }.joined(separator: ", ")
-    let prefix = "INSERT INTO \(relation) (\(names)) VALUES "
-    let timestamps = dialect == .mysql ? ImportTypeInference.TimestampParser() : nil
+    let quoted = try names.map { try dialect.quoteIdentifier($0) }.joined(separator: ", ")
+    let prefix = "INSERT INTO \(relation) (\(quoted)) VALUES "
     var statements: [BoundStatement] = []
-    var chunk: [[String?]] = []
+    var chunk: [[Entry]] = []
     var chunkBytes = 0
     func flush() {
       guard !chunk.isEmpty else { return }
       var placeholder = 1
-      let tuples = chunk.map { _ in
-        let markers = columns.map { column in
-          defer { placeholder += 1 }
-          let marker = dialect.placeholder(placeholder)
-          return dialect == .sqlite && column.kind == .boolean
-            ? "CAST(\(marker) AS INTEGER)" : marker
+      var values: [String?] = []
+      let tuples = chunk.map { row in
+        let items = zip(row, markers).map { entry, marker in
+          switch entry {
+          case .bind(let value):
+            defer { placeholder += 1 }
+            values.append(value)
+            return marker(dialect.placeholder(placeholder))
+          case .inline(let sql):
+            return sql
+          }
         }
-        return "(" + markers.joined(separator: ", ") + ")"
+        return "(" + items.joined(separator: ", ") + ")"
       }
       statements.append(
         BoundStatement(
-          sql: prefix + tuples.joined(separator: ", "),
-          values: chunk.flatMap { $0 }, expectedRows: chunk.count))
+          sql: prefix + tuples.joined(separator: ", "), values: values,
+          expectedRows: chunk.count))
       chunk = []
       chunkBytes = 0
     }
     for (offset, row) in rows.enumerated() {
       if offset.isMultiple(of: 256) { try Task.checkCancellation() }
-      guard row.count == columns.count else { throw Error.invalidRowWidth }
-      let values = try zip(row, columns).map { value, column in
-        try bindValue(value, kind: column.kind, dialect: dialect, timestamps: timestamps)
-      }
-      let rowBytes = maxChunkBytes == nil ? 0 : Self.boundBytes(values)
+      guard row.count == names.count else { throw Error.invalidRowWidth }
+      let entries = try entries(row)
+      let rowBytes = maxChunkBytes == nil ? 0 : Self.boundBytes(entries)
       if chunk.count == chunkSize
         || (maxChunkBytes.map { chunkBytes + rowBytes > $0 } == true && !chunk.isEmpty)
       {
         flush()
       }
-      chunk.append(values)
+      chunk.append(entries)
       chunkBytes += rowBytes
     }
     flush()
@@ -184,10 +273,15 @@ nonisolated enum ImportSQLBuilder {
     return min(maxAllowedPacket ?? mysqlNIOPacketLimit, mysqlNIOPacketLimit) / 2
   }
 
-  /// Bytes a row's binds add to a COM_STMT_EXECUTE payload: the text plus the type, length and
-  /// NULL-bitmap overhead (at most 12 bytes per bind).
-  private static func boundBytes(_ values: [String?]) -> Int {
-    values.reduce(0) { $0 + ($1?.utf8.count ?? 0) + 12 }
+  /// Bytes a row adds to a COM_STMT_EXECUTE payload: each bind's text plus the type, length
+  /// and NULL-bitmap overhead (at most 12 bytes per bind), and inline SQL text.
+  private static func boundBytes(_ entries: [Entry]) -> Int {
+    entries.reduce(0) { total, entry in
+      switch entry {
+      case .bind(let value): total + (value?.utf8.count ?? 0) + 12
+      case .inline(let sql): total + sql.utf8.count
+      }
+    }
   }
 
   /// PostgreSQL and MySQL prepared statements take 65535 placeholders; SQLite and DuckDB 999.
