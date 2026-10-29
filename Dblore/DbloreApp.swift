@@ -699,6 +699,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
   @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
   @BridgedFocusedValue(\.openJoinBuilderAction) private var openJoinBuilderAction
+  @BridgedFocusedValue(\.openCopyObjectsAction) private var openCopyObjectsAction
   @BridgedFocusedValue(\.activeWorkspace) private var focusedWorkspace
 
   var body: some Commands {
@@ -828,6 +829,10 @@ struct TabCommands: Commands {
         Button("Build Join Query...") { openJoinBuilderAction?() }
           .disabled(openJoinBuilderAction == nil)
       }
+
+      // PostgreSQL, MySQL / MariaDB, SQLite and DuckDB sources (disabled on MongoDB)
+      Button("Copy Objects...") { openCopyObjectsAction?() }
+        .disabled(openCopyObjectsAction == nil)
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }
         .disabled(openDatabaseFileCopyAction == nil)

@@ -32,6 +32,10 @@ struct TableRowView: View {
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
+  /// Nil hides "Copy to Another Connection..." (the engine is no Copy Objects source)
+  var onCopyToConnection: (() -> Void)? = nil
+  /// Disables "Copy to Another Connection..." (not connected, or the catalog is paused)
+  var canCopyToConnection = true
   /// Menu items of a MongoDB collection, or an SQL table's Build Join Query From Here, Rename and
   /// Drop Table (after the structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
@@ -134,6 +138,10 @@ struct TableRowView: View {
         }
         if let structureMenuTitle {
           Button(structureMenuTitle, action: onEditStructure)
+        }
+        if let onCopyToConnection {
+          Button("Copy to Another Connection...", action: onCopyToConnection)
+            .disabled(!canCopyToConnection)
         }
         if language == .sql, !menuActions.isEmpty {
           Divider()

@@ -302,6 +302,11 @@ class WorkspaceManager: Identifiable {
   /// Compare Schemas sheet. Nil hides it.
   var schemaCompare: SchemaCompareModel?
 
+  // MARK: - Copy Objects
+
+  /// Copy Objects sheet. Nil hides it.
+  var copyObjects: CopyObjectsModel?
+
   // MARK: - Find a Value in Every Table
 
   /// The last search, kept while its sheet is hidden so its results come back. Nil until opened.

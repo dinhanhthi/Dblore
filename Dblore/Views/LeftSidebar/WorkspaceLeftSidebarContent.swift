@@ -683,6 +683,10 @@ struct WorkspaceLeftSidebarContent: View {
       Button("Compare Schemas...") { workspaceManager.openSchemaCompare() }
         .disabled(!workspaceManager.canCompareSchemas)
     }
+    if workspaceManager.supportsCopyObjects {
+      Button("Copy to Another Connection...") { workspaceManager.openCopyObjects(schema: schema) }
+        .disabled(!workspaceManager.canCopyObjects)
+    }
   }
 
   /// `folders`, then the language's sections (`SidebarSectionModel`) of the ungrouped
@@ -911,6 +915,14 @@ struct WorkspaceLeftSidebarContent: View {
         workspaceManager.openStructureEditor(
           schema: table.source.schema, table: table.source.name)
       },
+      // A temporary table lives in this session only: the copy reads on its own connection
+      onCopyToConnection: workspaceManager.supportsCopyObjects && !table.source.isTemporary
+        ? {
+          workspaceManager.openCopyObjects(ticking: [
+            .init(schema: table.source.schema, name: table.source.name)
+          ])
+        } : nil,
+      canCopyToConnection: workspaceManager.canCopyObjects,
       menuActions: SidebarSectionModel.rowActions(
         for: .tables, name: table.source.name, language: queryLanguage,
         canChangeSchema: canChangeSchema && readsStructure,

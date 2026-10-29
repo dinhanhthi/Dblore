@@ -332,6 +332,8 @@ extension WorkspaceManager {
     // export already cancelled (silent, no "Export Failed" alert)
     dataDictionaryExport?.cancel()
     schemaCompare?.close()
+    // A copy running stops, and its connections close once it ends
+    copyObjects?.close()
     dropCrossTableSearch()
     await connectionManager.disconnect()
     // After the session closed: the picked files belong to that connection
@@ -369,6 +371,7 @@ extension WorkspaceManager {
     dataRewind = nil
     dataDictionaryExport = nil
     schemaCompare = nil
+    copyObjects = nil
 
     // Clear autocomplete cache
     autocompleteProvider.clearCache()

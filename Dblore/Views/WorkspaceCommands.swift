@@ -171,6 +171,12 @@ struct OpenJoinBuilderActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Copy Objects (File menu): nil unless `WorkspaceManager.canCopyObjects` (PostgreSQL, MySQL /
+/// MariaDB, SQLite and DuckDB sources)
+struct OpenCopyObjectsActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 extension FocusedValues {
   var toggleAIAssistantAction: (() -> Void)? {
     get { self[ToggleAIAssistantActionKey.self] }
@@ -220,6 +226,11 @@ extension FocusedValues {
   var openJoinBuilderAction: (() -> Void)? {
     get { self[OpenJoinBuilderActionKey.self] }
     set { self[OpenJoinBuilderActionKey.self] = newValue }
+  }
+
+  var openCopyObjectsAction: (() -> Void)? {
+    get { self[OpenCopyObjectsActionKey.self] }
+    set { self[OpenCopyObjectsActionKey.self] = newValue }
   }
 
   var activeWorkspace: WorkspaceManager? {

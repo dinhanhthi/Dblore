@@ -590,14 +590,15 @@ struct WorkspaceContainerView: View {
       }
       .dataDictionaryExportSheet(workspaceManager: workspaceManager)
       .schemaCompareSheet(workspaceManager: workspaceManager)
+      .copyObjectsSheet(workspaceManager: workspaceManager)
       .lockWorkspaceSheet(workspaceManager: workspaceManager)
       .crossTableSearchSheet(workspaceManager: workspaceManager)
   }
 
   /// The window was just covered: its sheets, dialogs and panels close (a running Lock
-  /// Workspace or schema compare keeps its sheet state and shows again after the unlock). Then,
-  /// once SwiftUI dismissed its own, any AppKit sheet still on the window (alerts, save panels)
-  /// ends as cancelled; an unlock prompt stays.
+  /// Workspace, schema compare or copy keeps its sheet state and shows again after the unlock).
+  /// Then, once SwiftUI dismissed its own, any AppKit sheet still on the window (alerts, save
+  /// panels) ends as cancelled; an unlock prompt stays.
   private func dismissPresentationsForCover() {
     let manager = workspaceManager
     if manager.showingCloseConfirmation { manager.cancelClose() }
@@ -608,6 +609,7 @@ struct WorkspaceContainerView: View {
     if manager.isCommitUnlockVisible { manager.cancelCommitUnlock() }
     manager.dataDictionaryExport?.cancel()
     manager.closeSchemaCompare()
+    manager.closeCopyObjects()
     manager.lockSheet?.close()
     if manager.isCrossTableSearchPresented { manager.crossTableSearch?.hide() }
     if manager.pendingWeakeningConnect != nil { manager.cancelPendingWeakeningConnect() }
