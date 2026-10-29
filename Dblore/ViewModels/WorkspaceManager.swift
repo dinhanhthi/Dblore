@@ -38,6 +38,8 @@ class WorkspaceManager: Identifiable {
   /// Background schema load started by connect (and by a Commit / Rollback that retries a
   /// load discarded during the transaction)
   var schemaLoadTask: Task<Void, Never>?
+  /// Page loads of the restored data viewers started by the last connect
+  @ObservationIgnored var dataViewerLoadTasks: [Task<Void, Never>] = []
   /// Bumped by every load start and cancel: a load that is no longer the latest is superseded
   var schemaLoadGeneration = 0
   /// The connection epoch the sidebar schema was read with; nil until a load since the last
@@ -866,10 +868,9 @@ class WorkspaceManager: Identifiable {
       syncConnectionStateToTabs()
 
       // Restored data viewers load once connected (before the schema, they are what the user sees)
-      for viewModel in viewModels.values
-      where viewModel.dataViewer != nil && viewModel.editorResult == nil {
-        Task { await viewModel.loadDataViewerPage() }
-      }
+      dataViewerLoadTasks = viewModels.values
+        .filter { $0.dataViewer != nil && $0.editorResult == nil }
+        .map { viewModel in Task { await viewModel.loadDataViewerPage() } }
 
       // The schema loads in the background; tabs get it when the load finishes
       startSchemaLoad()

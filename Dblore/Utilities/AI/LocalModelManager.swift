@@ -57,6 +57,7 @@ final class LocalModelManager {
   private var appliedScanSequence = 0
   private var task: Task<Void, Never>?
   private var activeID: LocalModel.ID?
+  @ObservationIgnored private let localDataChanges = LocalDataChangeObserver()
 
   init(
     root: URL,
@@ -73,6 +74,14 @@ final class LocalModelManager {
     self.scanner = scanner
     self.remover = remover
     Task { [weak self] in await self?.refreshInstalled() }
+    // A backup import or a delete in Data settings rewrites the models folder
+    localDataChanges.start { [weak self] note in
+      guard LocalDataCategory.notification(note, includes: .localModels) else { return }
+      Task { @MainActor [weak self] in
+        await self?.refreshInstalled()
+        await self?.refreshUnused()
+      }
+    }
   }
 
   // MARK: - Queries

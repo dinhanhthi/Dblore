@@ -30,7 +30,8 @@ class SQLTextView: NSTextView {
         return
       }
       guard inlineCompletion !== oldValue else { return }
-      inlineCompletion?.onSuggestionChange = { [weak self] in self?.needsDisplay = true }
+      inlineCompletion?.onSuggestionChange = { [weak self] in self?.ghostTextSuggestionDidChange() }
+      ghostTextScrollOrigins = [:]
       needsDisplay = true
     }
   }
@@ -39,6 +40,9 @@ class SQLTextView: NSTextView {
 
   /// Observers of the clip views around the editor (see `observeGhostTextScrolling`)
   var ghostTextScrollObservers: [NSObjectProtocol] = []
+  /// Scroll origin of each of those clip views when the suggestion showed; empty while none
+  /// shows. Plain state: the observers read it inside layout passes (see `ghostTextDidScroll`).
+  var ghostTextScrollOrigins: [ObjectIdentifier: NSPoint] = [:]
   /// Tab stops of the snippet being filled in (see SQLTextView+Snippets.swift); nil when none
   var snippetSession: SnippetSession?
   /// Text storage observer that moves the stops with the edits, while a session lasts

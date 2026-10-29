@@ -335,9 +335,34 @@ struct DuckDBSessionTests {
       #expect(rows.first?.first == String(describing: CellValue.string("1000-01-01")))
       for row in rows {
         #expect(row[0] == row[1])
-        // Nested text never quotes an element; DuckDB quotes one with parentheses:
-        // `['0044-03-15 (BC)']`
-        if !row[1].contains("(BC)") { #expect(row[2] == row[3]) }
+        #expect(row[2] == row[3])
+      }
+    }
+  }
+
+  /// Nested text is the cell's value too, so its element quoting must be DuckDB's own: quoted
+  /// when empty, `NULL`, edge-spaced or holding a delimiter; ARRAY and UNION text never quoted.
+  @Test("Nested string text matches DuckDB's ::VARCHAR quoting")
+  func nestedStringTextMatchesDuckDB() async throws {
+    try await withSession { session in
+      let result = try await collect(
+        session,
+        #"""
+        SELECT l, l::VARCHAR, s, s::VARCHAR, m, m::VARCHAR, a, a::VARCHAR, n, n::VARCHAR,
+          e, e::VARCHAR, u, u::VARCHAR FROM (SELECT
+          ['a,b', 'it''s', ' lead', 'trail ', '', 'NULL', 'null', 'a b', 'a\b', 'a''b\c',
+            'a"b', '(x)', 'k:v', 'k=v', 'é', NULL] AS l,
+          {'k': 'x,y', 'it''s': 'a b', 'a\b': '', 'n': NULL::VARCHAR} AS s,
+          MAP {'a,b': 'c=d', 'k': '', 'n': 'null', 'x': NULL, ' ': 'v'} AS m,
+          ['a,b', '']::VARCHAR[2] AS a, [['a,b'], [''], []] AS n,
+          ['a,b'::ENUM('a,b', 'plain'), 'plain'] AS e, [union_value(s := 'a,b')] AS u)
+        """#)
+      let row = try #require(result.rows.first)
+      #expect(row.count == 14)
+      // String(describing:) keeps the case and payload exact.
+      let texts = row.map { String(describing: $0) }
+      for index in stride(from: 0, to: texts.count, by: 2) {
+        #expect(texts[index] == texts[index + 1], "column \(index)")
       }
     }
   }

@@ -50,24 +50,58 @@ extension SQLTextView {
     for observer in ghostTextScrollObservers { center.removeObserver(observer) }
     ghostTextScrollObservers = []
     guard window != nil else { return }
-    var view = superview
-    while let current = view {
-      if let clipView = current as? NSClipView {
-        clipView.postsBoundsChangedNotifications = true
-        ghostTextScrollObservers.append(
-          center.addObserver(
-            forName: NSView.boundsDidChangeNotification, object: clipView, queue: nil
-          ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.ghostTextDidScroll() }
-          })
-      }
-      view = current.superview
+    for clipView in ghostTextClipViews() {
+      clipView.postsBoundsChangedNotifications = true
+      ghostTextScrollObservers.append(
+        center.addObserver(
+          forName: NSView.boundsDidChangeNotification, object: clipView, queue: nil
+        ) { [weak self, weak clipView] _ in
+          MainActor.assumeIsolated {
+            guard let clipView else { return }
+            self?.ghostTextDidScroll(clipView)
+          }
+        })
     }
   }
 
-  private func ghostTextDidScroll() {
-    guard let inlineCompletion, inlineCompletion.suggestion != nil else { return }
-    inlineCompletion.dismiss()
+  /// The suggestion changed: redraws it, and notes where each clip view is scrolled while one
+  /// shows
+  func ghostTextSuggestionDidChange() {
+    needsDisplay = true
+    ghostTextScrollOrigins = [:]
+    guard inlineCompletion?.suggestion != nil else { return }
+    for clipView in ghostTextClipViews() {
+      ghostTextScrollOrigins[ObjectIdentifier(clipView)] = Self.ghostScrollOrigin(clipView)
+    }
+  }
+
+  /// A layout pass posts bounds changes that end where they began: only a moved origin is a
+  /// scroll. Reads no observed state, which a layout pass would track: the next suggestion would
+  /// lay the scroll view out again.
+  private func ghostTextDidScroll(_ clipView: NSClipView) {
+    guard let origin = ghostTextScrollOrigins[ObjectIdentifier(clipView)],
+      origin != Self.ghostScrollOrigin(clipView)
+    else { return }
+    inlineCompletion?.dismiss()
+  }
+
+  /// The clip view's origin net of its content insets: a re-tile that changes the insets (the
+  /// window's safe area) moves the origin by as much without a scroll
+  private static func ghostScrollOrigin(_ clipView: NSClipView) -> NSPoint {
+    let origin = clipView.bounds.origin
+    let insets = clipView.contentInsets
+    return NSPoint(
+      x: origin.x + insets.left, y: origin.y + (clipView.isFlipped ? insets.top : insets.bottom))
+  }
+
+  private func ghostTextClipViews() -> [NSClipView] {
+    var clipViews: [NSClipView] = []
+    var view = superview
+    while let current = view {
+      if let clipView = current as? NSClipView { clipViews.append(clipView) }
+      view = current.superview
+    }
+    return clipViews
   }
 
   /// Inserts the suggestion at the caret through the typing path, as one undo step. False when

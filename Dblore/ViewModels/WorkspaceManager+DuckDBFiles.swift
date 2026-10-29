@@ -183,7 +183,28 @@ extension WorkspaceManager {
       WorkspaceWindowManager.shared.showToast(
         "DuckDB reconnected to read \(url.lastPathComponent): temporary tables were discarded")
     }
+    await settleReconnectLoads()
     return true
+  }
+
+  /// Waits for the connect's schema load and restored data-viewer pages: a query the user runs
+  /// meanwhile on the one DuckDB connection would interrupt them, or be interrupted by them. A
+  /// load still running after `limit` keeps running and the caller proceeds.
+  private func settleReconnectLoads(limit: Duration = .seconds(30)) async {
+    let loads = [schemaLoadTask].compactMap { $0 } + dataViewerLoadTasks
+    guard !loads.isEmpty else { return }
+    // Unstructured, so the deadline is not held up by a load (awaiting `value` ignores cancel)
+    let (settled, signal) = AsyncStream.makeStream(of: Void.self)
+    Task {
+      for load in loads { await load.value }
+      signal.finish()
+    }
+    let deadline = Task {
+      try? await Task.sleep(for: limit)
+      signal.finish()
+    }
+    for await _ in settled {}
+    deadline.cancel()
   }
 
   private func confirmInMemoryDuckDBReconnect() async -> Bool {
