@@ -33,8 +33,77 @@ extension WorkspaceManager {
     viewModel.isTransactionPendingElsewhere = !pendingTransaction.isIdle
     viewModel.onStatementsExecuted = { [weak self] in
       await self?.refreshPendingTransaction()
+      await self?.resolveHeldWrittenRelationsIfTransactionClosed()
       await self?.refreshSchemaAfterStatements()
     }
+    viewModel.onRelationsWritten = { [weak self] statements, writer, epoch in
+      await self?.relationsWritten(statements: statements, writer: writer, epoch: epoch)
+    }
+  }
+
+  /// `statements` ran in the tab whose `id` is `writer`, on connection `epoch` (read before the
+  /// run): the other data viewer tabs of the tables they wrote are marked stale once those
+  /// writes are committed. Writes inside the open Protected mode or user transaction wait in
+  /// `heldWrittenRelations` (see `WrittenRelations.outcome`); a COMMIT or ROLLBACK among the
+  /// statements resolves the ones held before. MongoDB writes no SQL relation.
+  func relationsWritten(statements: [String], writer: UUID, epoch: UInt64) async {
+    guard let config = workspace.connectionConfig, config.databaseType != .mongodb else {
+      return
+    }
+    let dialect = config.databaseType.dialect
+    // The mirror is refreshed after this hook (`onStatementsExecuted`): it shows the state
+    // before the run
+    let transactionOpenBefore = !heldWrittenRelations.isEmpty || !pendingTransaction.isIdle
+    // Off the main actor; a page read (the data viewers' own) needs no transaction state
+    let steps = await WrittenRelations.steps(
+      of: statements, dialect: dialect,
+      defaultSchema: config.databaseType == .mysql ? config.database : dialect.defaultSchema)
+    guard !steps.isEmpty else { return }
+    // One actor turn: a Commit, Rollback or reconnect landing between separate reads would mix
+    // two states
+    let status = await connectionManager.runningStatementStatus()
+    guard connectionState.isConnected else { return }
+    // The connection changed during or after the run (a capped read or a cancel reset it, even
+    // to an equal config): its transaction went with the old connection, and the held tables
+    // are the reset's to resolve. What ran outside a transaction was committed: marked.
+    guard status.epoch == epoch else {
+      let outcome = WrittenRelations.outcome(
+        of: steps, transactionOpenBefore: transactionOpenBefore, transactionOpenAfter: false)
+      markDataViewerTabsStale(
+        Dictionary(uniqueKeysWithValues: outcome.committed.map { ($0, writer) }))
+      return
+    }
+    let outcome = WrittenRelations.outcome(
+      of: steps, transactionOpenBefore: transactionOpenBefore,
+      transactionOpenAfter: !status.state.isIdle || status.userTxOpen)
+    var committed: [WrittenRelations.Relation: UUID] = [:]
+    if outcome.earlier != .pending {
+      if outcome.earlier == .committed { committed = heldWrittenRelations }
+      heldWrittenRelations = [:]
+    }
+    // This tab wrote them last
+    for relation in outcome.committed { committed[relation] = writer }
+    for relation in outcome.pending { heldWrittenRelations[relation] = writer }
+    markDataViewerTabsStale(committed)
+  }
+
+  /// After every run: held tables whose transaction ended with no step to say how (a failed
+  /// COMMIT / END, a MySQL CALL whose body committed) are marked once neither the app nor a user
+  /// transaction is open. Committed is the safe guess: a banner too many, never one missed. An
+  /// app transaction's end is the mirror's (`applyTransactionState`), so it waits for that.
+  func resolveHeldWrittenRelationsIfTransactionClosed() async {
+    guard !heldWrittenRelations.isEmpty, pendingTransaction.isIdle else { return }
+    let status = await connectionManager.runningStatementStatus()
+    guard pendingTransaction.isIdle, status.state.isIdle, !status.userTxOpen else { return }
+    resolveHeldWrittenRelations(committed: true)
+  }
+
+  /// Commit marks the tabs of the held tables stale (not the tab that wrote each last); any
+  /// other end drops them
+  func resolveHeldWrittenRelations(committed: Bool) {
+    let held = heldWrittenRelations
+    heldWrittenRelations = [:]
+    if committed { markDataViewerTabsStale(held) }
   }
 
   /// Reload the Public sidebar after a committed schema command (CREATE, ALTER, DROP, …).
@@ -86,6 +155,7 @@ extension WorkspaceManager {
     // A Commit resolves the pending table changes itself once it succeeded
     if endedTransaction, pendingTransaction.endingKind != .commit {
       resolvePendingTableChanges(committed: false)
+      resolveHeldWrittenRelations(committed: false)
     }
     defer {
       if endedTransaction, connectionState == .connected, databaseTables.isEmpty {
@@ -185,6 +255,7 @@ extension WorkspaceManager {
       await refreshPendingTransaction()
       // Before the editor's reload runs: it reads a renamed table under its new name
       resolvePendingTableChanges(committed: true)
+      resolveHeldWrittenRelations(committed: true)
       await refreshSchemaAfterStatements()
       showTransactionToast(
         "Committed \(Self.statements(summary.statementCount))", type: .success)
@@ -195,7 +266,10 @@ extension WorkspaceManager {
     } catch {
       await refreshPendingTransaction()
       // A failed Commit that ended the transaction rolled the changes back
-      if pendingTransaction.isIdle { resolvePendingTableChanges(committed: false) }
+      if pendingTransaction.isIdle {
+        resolvePendingTableChanges(committed: false)
+        resolveHeldWrittenRelations(committed: false)
+      }
       showTransactionToast(error.localizedDescription, type: .error)
       return false
     }
@@ -341,6 +415,7 @@ extension WorkspaceManager {
     await refreshPendingTransaction()
     // A rename or drop queued before the transaction mirror caught up never commits now
     pendingTableChanges = []
+    heldWrittenRelations = [:]
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry
     invalidateEditTargetsInTabs()

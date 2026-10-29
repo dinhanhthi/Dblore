@@ -403,6 +403,8 @@ extension NotebookViewModel {
     }
     let started = Date()
     var failure: String?
+    // The batch runs whole or not at all: the tables it wrote once it ran
+    var ranStatements: [String] = []
     do {
       let rowCount: Int
       if let streamed = batch.streamed {
@@ -410,11 +412,14 @@ extension NotebookViewModel {
         rowCount = try await connectionManager.executeGatedBatch(
           streamed: streamed, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
           caller: id, progress: batch.streamedProgress)
+        // Its INSERTs are made chunk by chunk; they all go into this one table
+        ranStatements = ["INSERT INTO \(streamed.relation)"]
       } else {
         rowCount = try await connectionManager.executeGatedBatch(
           batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
           caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil
         ).reduce(0, +)
+        ranStatements = batch.statements.map(\.sql)
       }
       if batch.historySource == .dataViewerEdit { dataViewer?.changeSet = nil }
       // The page reloads with the same key, so a redo would target rows this batch changed
@@ -438,6 +443,9 @@ extension NotebookViewModel {
         importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
       showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
       failure = message
+    }
+    if !ranStatements.isEmpty {
+      await onRelationsWritten?(ranStatements, id, batch.connectionEpoch)
     }
     await onStatementsExecuted?()
     return failure

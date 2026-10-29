@@ -627,6 +627,7 @@ extension NotebookViewModel {
       showToast(
         "Failed to update '\(columnList)': \(error.localizedDescription)", type: .error)
     }
+    if updated { await onRelationsWritten?([edit.statement.sql], id, target.connectionEpoch) }
     await onStatementsExecuted?()
   }
 

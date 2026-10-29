@@ -291,6 +291,10 @@ class WorkspaceManager: Identifiable {
   /// Renames and drops waiting in the Protected mode transaction: applied to the open tabs on
   /// Commit, dropped on any other end
   @ObservationIgnored var pendingTableChanges: [StructureEditorModel.TableChange] = []
+  /// Tables written inside the open Protected mode or user transaction, each with the `id` of
+  /// the tab that wrote it last (its page already shows the write): their other data viewer tabs
+  /// are marked stale on Commit; dropped on Rollback and with the connection
+  @ObservationIgnored var heldWrittenRelations: [WrittenRelations.Relation: UUID] = [:]
 
   // MARK: - Data Dictionary
 
@@ -845,6 +849,8 @@ class WorkspaceManager: Identifiable {
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()
+    // Their transaction ends with the previous connection
+    heldWrittenRelations = [:]
 
     // Picked DuckDB files stay readable only when reconnecting the same database
     let keepsDuckDBFiles = keepsDuckDBFileAccess(for: config)

@@ -11,6 +11,8 @@ import Foundation
 extension NotebookViewModel {
   /// Load the current page (and the row count while unknown). A request made while a run is in
   /// flight is dropped by the guard, so the page is loaded again when the state changed meanwhile.
+  /// The page read now shows what other tabs wrote (`isStale` cleared before it is read, so a
+  /// write landing meanwhile marks it again).
   func loadDataViewerPage() async {
     while let current = dataViewer, let connectionManager, !isEditorQueryRunning {
       let lazyColumns = dataViewerLazyColumns(current)
@@ -18,6 +20,7 @@ extension NotebookViewModel {
       guard let state = dataViewer else { return }
       let key = state.loadKey
       guard let query = dataViewerQuery(state) else { return }
+      if state.isStale { dataViewer?.isStale = false }
       // maxRows >= pageSize never truncates a LIMIT pageSize page (no cap notice); MongoDB's
       // `limit(min(limit, maxRows + 1))` rewrite keeps limit(pageSize)
       if let page = query.page {
@@ -241,6 +244,16 @@ extension NotebookViewModel {
     dataViewer?.pageSize = size
     dataViewer?.page = 1
     saveMongoViewPreference()
+    await loadDataViewerPage()
+  }
+
+  /// Banner Reload after another tab wrote the table: the page and the count are read again
+  /// with the staged change set kept on top (no Commit / Discard prompt). A page of a state the
+  /// viewer has left meanwhile is dropped by its load key. `isStale` stays set until the read
+  /// starts: while a run is in flight nothing is read and the banner stays.
+  func reloadStaleDataViewer() async {
+    guard dataViewer != nil, connectionManager != nil, !isEditorQueryRunning else { return }
+    dataViewer?.totalRows = nil
     await loadDataViewerPage()
   }
 

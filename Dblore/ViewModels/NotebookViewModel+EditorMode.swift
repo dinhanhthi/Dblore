@@ -99,6 +99,12 @@ extension NotebookViewModel {
     let notifyStart = ContinuousClock.now
     // Long-query notification of a user run; nil after a cancel
     var completion: QueryCompletionOutcome?
+    // The statements that ran (or may have, for a script that threw): their tables are written
+    var ranStatements: [String] = []
+    // A script that threw: which of its statements may have run is read after the run
+    var scriptError: (any Error)?
+    // The connection the statements were sent on (nil: nothing was sent)
+    var runEpoch: UInt64?
 
     do {
       // A lazy page always comes with its state, and as the state's own SQL; anything else
@@ -112,12 +118,14 @@ extension NotebookViewModel {
         if pageState?.lazyColumns != nil { throw LazyPageError.unexpectedShape }
         // Connection identity before the query: edit targets must resolve on the same one
         let epoch = await connectionManager.connectionEpoch
+        runEpoch = epoch
         // Execute all statements and get detailed results
         let (statementResults, totalTime) =
           try await connectionManager
           .executeDetailed(
             userSQL: query, parameters: parameters, policy: protectionPolicy,
             maxRows: maxRows ?? effectiveRowCap, caller: id)
+        ranStatements = statementResults.map(\.queryText)
 
         totalExecutionTime = totalTime
 
@@ -174,9 +182,11 @@ extension NotebookViewModel {
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         let epoch = await connectionManager.connectionEpoch
+        runEpoch = epoch
         var result = try await connectionManager.execute(
           userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
           caller: id)
+        ranStatements = [query]
         var truncation: DataViewerState.Truncation?
         if let pageState {
           (result, truncation) = try await strippedDataViewerPage(
@@ -244,12 +254,20 @@ extension NotebookViewModel {
       )
       recordFailure(error, sql: query, duration: executionTime, source: source)
       completion = Self.isCancellation(error) ? nil : .failed
+      scriptError = error
     }
     if source == .editor, let completion {
       notifyCompletion(elapsed: notifyStart.duration(to: .now), outcome: completion)
     }
     // A re-run keeps the pin; compare against the new result
     refreshEditorComparison()
+    if let scriptError {
+      ranStatements = await WrittenRelations.statementsMaybeRun(
+        failedScript: query, error: scriptError, dialect: sqlDialect)
+    }
+    if let runEpoch, !ranStatements.isEmpty {
+      await onRelationsWritten?(ranStatements, id, runEpoch)
+    }
     await onStatementsExecuted?()
   }
 

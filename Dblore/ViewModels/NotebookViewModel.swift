@@ -97,6 +97,12 @@ class NotebookViewModel {
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
+  /// Workspace mode: awaited after the SQL paths ran statements (cell and editor runs, staged
+  /// commit, inline edit) with the statements that ran, this tab's `id` as the writer and the
+  /// `connectionEpoch` read before the run, so the workspace marks the other data viewer tabs
+  /// of the tables they wrote stale. Set by `WorkspaceManager`.
+  @ObservationIgnored var onRelationsWritten:
+    (@MainActor (_ statements: [String], _ writer: UUID, _ epoch: UInt64) async -> Void)?
   /// Test hook: awaited where the commit's integer key lookup suspends, so a test can change the
   /// page at that exact point. Nil in production.
   @ObservationIgnored var keyLookupCheckpointForTesting: (@MainActor () async -> Void)?

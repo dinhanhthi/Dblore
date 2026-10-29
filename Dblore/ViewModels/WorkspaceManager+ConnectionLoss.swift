@@ -34,6 +34,15 @@ extension WorkspaceManager {
   /// A capped read or a cancel closed and reopened the shared session (still connected): every tab lost
   /// its temp tables and SET values. The result itself shows the details.
   func sessionWasReset(_ event: SessionResetEvent) {
+    // The closed session took its transaction along: the tables written in it were rolled back.
+    // When the reset ended none, a held table had no transaction to roll back with (the mirror
+    // lagged): its write was committed, so its tabs are marked rather than missed.
+    let endedTransaction: Bool
+    switch event.reason {
+    case .rowCap: endedTransaction = event.userTxRolledBack
+    case .cancelled(let pendingCount): endedTransaction = event.userTxRolledBack || pendingCount > 0
+    }
+    resolveHeldWrittenRelations(committed: !endedTransaction)
     switch event.reason {
     case .rowCap:
       WorkspaceWindowManager.shared.showToast(

@@ -244,6 +244,17 @@ extension NotebookViewModel {
     var result: CellResult?
     let policy = protectionPolicy
     let caller = id
+    // The statements that ran (or may have, for a script that threw): their tables are written
+    var ranStatements: [String] = []
+    // A script that threw: which of its statements may have run is read after the run
+    var scriptError: (any Error)?
+    // The connection the statements are sent on: what they wrote belongs to it
+    let runEpoch: UInt64
+    if let expectedEpoch {
+      runEpoch = expectedEpoch
+    } else {
+      runEpoch = await connectionManager.connectionEpoch
+    }
 
     // The statements run on their own task, not cancelled with the queue: only Cancel (close +
     // reconnect, `cancelRunningStatement`) stops the server work, and the server
@@ -295,6 +306,7 @@ extension NotebookViewModel {
         notebook.cells[index].executionCount = executionCounter
         recordResults(
           convertedStatements.map { (sql: $0.queryText, result: $0.result) }, source: .cell)
+        ranStatements = statementResults.map(\.queryText)
       } else {
         // Single statement - use original logic
         // Connection identity before the query: the edit target must resolve on the same one
@@ -304,6 +316,7 @@ extension NotebookViewModel {
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
             caller: caller, expectedEpoch: expectedEpoch)
         }.value
+        ranStatements = [task.query]
 
         executionCounter += 1
 
@@ -358,6 +371,7 @@ extension NotebookViewModel {
       notebook.cells[index].totalExecutionTime = nil
       recordFailure(
         error, sql: task.query, duration: error.executionTime ?? 0, source: .cell)
+      scriptError = error
     } catch {
       // Handle general errors
       executionCounter += 1
@@ -370,11 +384,17 @@ extension NotebookViewModel {
       notebook.cells[index].selectedStatementIndex = 0
       notebook.cells[index].totalExecutionTime = nil
       recordFailure(error, sql: task.query, duration: 0, source: .cell)
+      scriptError = error
     }
 
     // A capped read reset the session: the queued cells must not run on the new one
     stopQueueIfSessionReset(cellId: task.cellId)
     notebook.cells[index].isRunning = false
+    if let scriptError {
+      ranStatements = await WrittenRelations.statementsMaybeRun(
+        failedScript: task.query, error: scriptError, dialect: sqlDialect)
+    }
+    if !ranStatements.isEmpty { await onRelationsWritten?(ranStatements, id, runEpoch) }
     await onStatementsExecuted?()
 
     // Notify document changed to trigger save
