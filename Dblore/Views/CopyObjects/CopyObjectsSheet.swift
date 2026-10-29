@@ -1,11 +1,12 @@
 // CopyObjectsSheet.swift
-// The Copy Objects sheet: the source tables as a filterable checklist (rows built as they scroll
-// into view; Select All and Select None act on the filtered list), the target saved connection,
-// the preview (the plan's warnings and the DDL Copy runs, editable, with Reset), then Copy with
-// progress, Cancel and a summary. Picking a target or ticking a table shows at once; the plan
-// loads behind a placeholder of the same shape (its spinner after 150 ms). A refused edit shows
-// the refused statement and why. The target's Safe Mode step shows inside the sheet before
-// anything is sent. The sheet stays open while a copy runs.
+// The Copy Objects sheet: the source tables as a filterable checklist (read and filtered off the
+// main actor, rows built as they scroll into view; Select All and Select None act on the filtered
+// list once it matches the filter text), the target saved connection, the preview (the plan's
+// warnings and the DDL Copy runs, editable, with Reset), then Copy with progress, Cancel and a
+// summary. Picking a target or ticking a table shows at once; the plan loads behind a placeholder
+// of the same shape (its spinner after 150 ms). A refused edit shows the refused statement and
+// why. The target's Safe Mode step shows inside the sheet before anything is sent. The sheet stays
+// open while a copy runs.
 
 import SwiftUI
 
@@ -39,20 +40,18 @@ struct CopyObjectsSheet: View {
   let onClose: () -> Void
 
   @State private var filter = ""
+  /// The last filter result (read off the main actor) and the text it was computed for
+  @State private var filtered: (text: String, tables: [CopyObjectsModel.TableRef])?
   @State private var showsSQL = false
   @State private var textViewRef: SQLTextView?
   @State private var isDDLEmpty = false
 
-  /// The tables span several schemas: rows are named with theirs
-  private let showsSchema: Bool
-
   private static let editorHeight: CGFloat = 240
 
-  init(model: CopyObjectsModel, isShown: @escaping () -> Bool, onClose: @escaping () -> Void) {
-    self.model = model
-    self.isShown = isShown
-    self.onClose = onClose
-    showsSchema = Set(model.tables.map(\.schema)).count > 1
+  /// What a filter result is computed for: a keystroke or the table list landing runs it again
+  private struct FilterKey: Equatable {
+    let text: String
+    let isLoadingTables: Bool
   }
 
   var body: some View {
@@ -96,20 +95,30 @@ struct CopyObjectsSheet: View {
 
   // MARK: - Tables
 
-  /// The tables matching the filter (schema-qualified name, case-insensitive)
+  private var filterText: String { filter.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+  /// The tables matching the filter (schema-qualified name, case-insensitive): the last result
+  /// until the one for the current text lands
   private var filteredTables: [CopyObjectsModel.TableRef] {
-    let text = filter.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return model.tables }
-    return model.tables.filter { label($0).localizedCaseInsensitiveContains(text) }
+    filterText.isEmpty ? model.tables : filtered?.tables ?? model.tables
+  }
+
+  /// The list shows the current filter's result (Select All and Select None act on it)
+  private var isFilterCurrent: Bool {
+    filterText.isEmpty || filtered?.text == filterText
   }
 
   private var tablesColumn: some View {
     let tables = filteredTables
     return VStack(alignment: .leading, spacing: Spacing.sm) {
-      Text("\(model.selectedTables.count) of \(model.tables.count) tables ticked")
-        .font(.small)
-        .foregroundColor(.foregroundMuted)
-        .monospacedDigit()
+      if model.isLoadingTables {
+        ImportLoadingRow(text: "Reading the tables…")
+      } else {
+        Text("\(model.selectedTables.count) of \(model.tables.count) tables ticked")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .monospacedDigit()
+      }
       TextField("Filter tables", text: $filter)
         .textFieldStyle(.plain)
         .font(.structureField)
@@ -121,9 +130,12 @@ struct CopyObjectsSheet: View {
         Button("Select None") { model.setSelected(tables, false) }
           .buttonStyle(GhostButtonStyle())
       }
-      .disabled(tables.isEmpty)
+      .disabled(tables.isEmpty || !isFilterCurrent)
       Divider()
-      if tables.isEmpty {
+      if model.isLoadingTables {
+        Color.clear
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if tables.isEmpty {
         Text(model.tables.isEmpty ? "This connection has no tables." : "No table matches.")
           .font(.small)
           .foregroundColor(.foregroundMuted)
@@ -142,6 +154,17 @@ struct CopyObjectsSheet: View {
     }
     .padding(Spacing.md)
     .disabled(model.isRunning)
+    // Off the main actor; a newer keystroke cancels the run (its result is dropped)
+    .task(id: FilterKey(text: filterText, isLoadingTables: model.isLoadingTables)) {
+      let text = filterText
+      guard !text.isEmpty, !model.isLoadingTables else { return }
+      guard
+        let tables = await CopyObjectsModel.filtered(
+          model.tables, text: text, showsSchema: model.showsSchema),
+        !Task.isCancelled
+      else { return }
+      filtered = (text, tables)
+    }
   }
 
   private func tableRow(_ table: CopyObjectsModel.TableRef) -> some View {
@@ -160,7 +183,7 @@ struct CopyObjectsSheet: View {
   }
 
   private func label(_ table: CopyObjectsModel.TableRef) -> String {
-    showsSchema ? "\(table.schema).\(table.name)" : table.name
+    CopyObjectsModel.label(table, showsSchema: model.showsSchema)
   }
 
   // MARK: - Target

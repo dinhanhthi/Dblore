@@ -360,6 +360,9 @@ extension WorkspaceManager {
     databaseSequences.reset()
     databaseUserTypes.reset()
     schemaConnectionEpoch = nil
+    // The diagram and its picked tables belong to the closed connection
+    cancelSchemaLayout()
+    clearSchemaGraph()
     mongoOverview = nil
     // The Export, Import and backup forms belong to the closed connection: stop them and close
     // them

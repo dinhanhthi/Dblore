@@ -68,12 +68,12 @@ struct ForeignKey: Identifiable, Sendable {
   }
 
   /// Full qualified name of source table: schema.table
-  var sourceQualifiedName: String {
+  nonisolated var sourceQualifiedName: String {
     "\(sourceSchema).\(sourceTable)"
   }
 
   /// Full qualified name of target table: schema.table
-  var targetQualifiedName: String {
+  nonisolated var targetQualifiedName: String {
     "\(targetSchema).\(targetTable)"
   }
 

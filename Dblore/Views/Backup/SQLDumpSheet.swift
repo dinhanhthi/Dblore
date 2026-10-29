@@ -16,8 +16,13 @@ struct SQLDumpSheet: View {
   @Binding var isBusy: Bool
 
   @State private var model: DatabaseBackupModel
-  /// Every listed table's flags; Drop is only ever on with Structure
-  @State private var flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+  /// The "All tables" flags: those of every listed table without an override
+  @State private var baseline = SQLDumpOptions.TableOptions()
+  /// The listed tables whose flags differ from `baseline`. Drop is only ever on with Structure.
+  /// Sparse, so opening and redrawing the sheet never walks a large catalog's tables.
+  @State private var overrides: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions] = [:]
+  /// PostgreSQL tables live in several schemas: rows are named with theirs
+  private let showsSchema: Bool
 
   /// Width of a Structure, Data or Drop checkbox column
   private static let flagColumnWidth: CGFloat = 64
@@ -34,10 +39,8 @@ struct SQLDumpSheet: View {
     _isPresented = isPresented
     _isBusy = isBusy
     _model = State(initialValue: DatabaseBackupModel(viewModel: viewModel))
-    _flags = State(
-      initialValue: Dictionary(
-        tables.map { (Self.objectName($0), SQLDumpOptions.TableOptions()) },
-        uniquingKeysWith: { first, _ in first }))
+    let schema = tables.first?.schema
+    showsSchema = tables.contains { $0.schema != schema }
   }
 
   var body: some View {
@@ -83,7 +86,7 @@ struct SQLDumpSheet: View {
           }
         }
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(model.isBusy || (kind == .sqlDump && !tables.isEmpty && chosenCount == 0))
+        .disabled(model.isBusy || (kind == .sqlDump && !tables.isEmpty && counts.chosen == 0))
       }
     }
     .background(Color.cardBackground)
@@ -100,7 +103,7 @@ struct SQLDumpSheet: View {
   private var tablesSection: some View {
     SettingsGroupCard(title: "Tables") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        Text("\(chosenCount) of \(tables.count) tables in the dump")
+        Text("\(counts.chosen) of \(tables.count) tables in the dump")
           .font(.small)
           .foregroundColor(.foregroundMuted)
         databaseRow
@@ -128,17 +131,18 @@ struct SQLDumpSheet: View {
 
   /// "All tables" with a tri-state checkbox per flag: a click sets the flag on every table
   private var databaseRow: some View {
-    let structured = flags.filter { $0.value.structure }
+    let counts = counts
     return HStack(spacing: 0) {
       Text("All tables")
         .font(.labelText.weight(.semibold))
         .foregroundColor(.foreground)
       Spacer(minLength: Spacing.sm)
       databaseToggle(
-        "Structure", \.structure, state: DatabaseBackupModel.databaseRow(\.structure, of: flags))
-      databaseToggle("Data", \.data, state: DatabaseBackupModel.databaseRow(\.data, of: flags))
-      databaseToggle("Drop", \.drop, state: DatabaseBackupModel.databaseRow(\.drop, of: structured))
-        .disabled(structured.isEmpty)
+        "Structure", \.structure, state: Self.triState(counts.structure, of: tables.count))
+      databaseToggle("Data", \.data, state: Self.triState(counts.data, of: tables.count))
+      // Over the tables with Structure on (Drop is only ever on with it)
+      databaseToggle("Drop", \.drop, state: Self.triState(counts.drop, of: counts.structure))
+        .disabled(counts.structure == 0)
     }
     .disabled(model.isBusy)
   }
@@ -150,8 +154,13 @@ struct SQLDumpSheet: View {
     state: SQLDumpTriState
   ) -> some View {
     let set: (Bool) -> Void = { on in
-      flags = Self.dropNeedsStructure(
-        DatabaseBackupModel.settingDatabaseRow(flag, to: on, in: flags))
+      var all = baseline
+      all[keyPath: flag] = on
+      if !all.structure { all.drop = false }
+      baseline = all
+      overrides = Self.dropNeedsStructure(
+        DatabaseBackupModel.settingDatabaseRow(flag, to: on, in: overrides)
+      ).filter { $0.value != all }
     }
     let sources = [
       Binding(get: { state != .none }, set: set), Binding(get: { state == .all }, set: set),
@@ -169,7 +178,7 @@ struct SQLDumpSheet: View {
 
   private func tableRow(_ table: DatabaseTable) -> some View {
     let name = Self.objectName(table)
-    let structure = flags[name]?.structure ?? true
+    let structure = (overrides[name] ?? baseline).structure
     return HStack(spacing: 0) {
       Text(verbatim: showsSchema ? "\(table.schema).\(table.name)" : table.name)
         .font(.monoMedium)
@@ -191,12 +200,12 @@ struct SQLDumpSheet: View {
     Toggle(
       title,
       isOn: Binding(
-        get: { flags[name]?[keyPath: flag] ?? false },
+        get: { (overrides[name] ?? baseline)[keyPath: flag] },
         set: { on in
-          var table = flags[name] ?? SQLDumpOptions.TableOptions()
+          var table = overrides[name] ?? baseline
           table[keyPath: flag] = on
           if !table.structure { table.drop = false }
-          flags[name] = table
+          overrides[name] = table == baseline ? nil : table
         })
     )
     .toggleStyle(.checkbox)
@@ -349,18 +358,31 @@ struct SQLDumpSheet: View {
     model.viewModel.notebook.connectionConfig?.databaseType
   }
 
-  /// PostgreSQL tables live in several schemas; the others in one
-  private var showsSchema: Bool {
-    Set(tables.map(\.schema)).count > 1
-  }
-
-  private static func objectName(_ table: DatabaseTable) -> SQLDumpDDL.ObjectName {
+  private nonisolated static func objectName(_ table: DatabaseTable) -> SQLDumpDDL.ObjectName {
     SQLDumpDDL.ObjectName(schema: table.schema, name: table.name)
   }
 
-  /// Listed tables with Structure or Data on
-  private var chosenCount: Int {
-    flags.values.filter { $0.structure || $0.data }.count
+  /// Listed tables with each flag on, and with Structure or Data on (chosen for the dump)
+  private var counts: (structure: Int, data: Int, drop: Int, chosen: Int) {
+    // Only the overrides of listed tables: a reload may have dropped one while the sheet is open
+    var listed = overrides
+    if !overrides.isEmpty {
+      let names = Set(tables.lazy.map(Self.objectName))
+      listed = overrides.filter { names.contains($0.key) }
+    }
+    let plain = tables.count - listed.count
+    func count(_ isOn: (SQLDumpOptions.TableOptions) -> Bool) -> Int {
+      (isOn(baseline) ? plain : 0) + listed.values.filter(isOn).count
+    }
+    return (
+      count(\.structure), count(\.data), count(\.drop), count { $0.structure || $0.data }
+    )
+  }
+
+  /// The database row's checkbox for a flag that is on in `on` of `total` tables
+  private static func triState(_ on: Int, of total: Int) -> SQLDumpTriState {
+    if on == 0 { return .none }
+    return on == total ? .all : .mixed
   }
 
   /// `flags` with Drop off on every table whose Structure is off
@@ -377,9 +399,14 @@ struct SQLDumpSheet: View {
   private func start() {
     switch kind {
     case .sqlDump:
-      let options =
-        tables.isEmpty ? SQLDumpOptions() : DatabaseBackupModel.dumpOptions(flags, from: tables)
-      Task { await model.exportDump(options: options) }
+      let tables = tables
+      let baseline = baseline
+      let overrides = overrides
+      Task {
+        let options = await DatabaseBackupModel.dumpOptions(
+          tables, baseline: baseline, overrides: overrides)
+        await model.exportDump(options: options)
+      }
     case .fileCopy:
       Task { await model.copyDatabaseFile() }
     }

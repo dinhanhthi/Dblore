@@ -33,16 +33,24 @@ extension WorkspaceManager {
   /// Copy to Another Connection... on a schema (its tables ticked) or the database (`schema`
   /// nil: every table ticked)
   func openCopyObjects(schema: String?) {
-    openCopyObjects(ticking: copyObjectsTables.filter { schema == nil || $0.schema == schema })
+    openCopyObjects(ticks: { schema == nil || $0.schema == schema })
   }
 
   /// Opens the sheet with `ticking` ticked (those the sidebar lists)
   func openCopyObjects(ticking: [CopyObjectsModel.TableRef]) {
+    let ticked = Set(ticking)
+    openCopyObjects(ticks: { ticked.contains($0) })
+  }
+
+  /// Opens the sheet at once; the sidebar's tables and those `ticks` are read off the main
+  /// actor behind it
+  private func openCopyObjects(
+    ticks: @escaping @Sendable (CopyObjectsModel.TableRef) -> Bool
+  ) {
     guard canCopyObjects, copyObjects == nil, let config = workspace.connectionConfig else {
       return
     }
-    let tables = copyObjectsTables
-    let listed = Set(tables)
+    let tables = databaseTables
     // A locked target asks over the sheet, on this workspace's window
     let windowID = id
     let context = CopyObjectsContext(
@@ -55,8 +63,8 @@ extension WorkspaceManager {
     let saved = SessionManager.loadHistory(passwords: NoPasswordStore())
       .filter { !$0.isSavedRow(of: config) }
     let model = CopyObjectsModel(
-      context: context, tables: tables, selected: ticking.filter(listed.contains),
-      savedConnections: saved)
+      context: context, tables: [], selected: [], savedConnections: saved)
+    model.loadTables { await Self.copyObjectsTables(tables, ticks: ticks) }
     model.onCopied = { target in
       await WorkspaceManager.refreshSchema(ofWorkspacesOn: target)
     }
@@ -70,9 +78,15 @@ extension WorkspaceManager {
     copyObjects = nil
   }
 
-  /// The sidebar's tables without the temporary ones
-  private var copyObjectsTables: [CopyObjectsModel.TableRef] {
-    databaseTables.filter { !$0.isTemporary }.map { .init(schema: $0.schema, name: $0.name) }
+  /// The sidebar's tables without the temporary ones, those `ticks` and whether they span
+  /// several schemas. Off the main actor: a large catalog has tens of thousands of tables.
+  @concurrent private nonisolated static func copyObjectsTables(
+    _ tables: [DatabaseTable], ticks: @Sendable (CopyObjectsModel.TableRef) -> Bool
+  ) async -> CopyObjectsModel.TableSource {
+    let listed = tables.filter { !$0.isTemporary }.map {
+      CopyObjectsModel.TableRef(schema: $0.schema, name: $0.name)
+    }
+    return (listed, Set(listed.filter(ticks)), CopyObjectsModel.spansSchemas(listed))
   }
 
   /// Every open workspace connected to `target` (its engine and Keychain identity) reloads its

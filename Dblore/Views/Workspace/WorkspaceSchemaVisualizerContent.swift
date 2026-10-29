@@ -106,7 +106,22 @@ struct WorkspaceSchemaVisualizerContent: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .help("Reset Layout to Default")
-      .disabled(workspaceManager.isLoadingSchemaGraph)
+      // Nothing laid out (the table picker shows): nothing to reset
+      .disabled(workspaceManager.isLoadingSchemaGraph || workspaceManager.schemaGraph == nil)
+
+      // Back to the table picker of a catalog above the diagram's cap (once a connect's schema
+      // landed: until then the tables are the previous database's)
+      if workspaceManager.schemaConnectionEpoch != nil,
+        workspaceManager.databaseTables.count > SchemaLayoutEngine.maxTables
+      {
+        Button(action: { workspaceManager.pickSchemaDiagramTables() }) {
+          Image(systemName: "checklist")
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .help("Pick Tables")
+        .accessibilityLabel("Pick Tables")
+        .disabled(workspaceManager.schemaGraph == nil)
+      }
 
       // Toggle table connection lines (ER diagram lines)
       Button(action: { workspaceManager.showTableConnections.toggle() }) {
@@ -242,7 +257,7 @@ struct WorkspaceSchemaVisualizerContent: View {
       // Show disconnected state first - this takes priority
       emptyStateView(message: "Connect to a database to visualize schema")
     } else if workspaceManager.isLoadingSchemaGraph {
-      loadingView
+      SchemaGraphLoadingView()
     } else if let graph = workspaceManager.schemaGraph {
       if graph.isEmpty {
         emptyStateView(message: "No tables found in database")
@@ -251,20 +266,14 @@ struct WorkspaceSchemaVisualizerContent: View {
       } else {
         graphView(graph: graph)
       }
+    } else if workspaceManager.schemaConnectionEpoch != nil,
+      workspaceManager.databaseTables.count > SchemaLayoutEngine.maxTables
+    {
+      // Only once a connect's schema landed: until then the tables are the previous database's
+      SchemaDiagramTablePicker(workspaceManager: workspaceManager)
     } else {
       emptyStateView(message: "Loading schema...")
     }
-  }
-
-  private var loadingView: some View {
-    VStack(spacing: Spacing.md) {
-      ProgressView()
-        .scaleEffect(1.0)
-      Text("Loading schema...")
-        .font(.body)
-        .foregroundColor(.foregroundMuted)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private func emptyStateView(message: String) -> some View {
@@ -442,6 +451,187 @@ struct WorkspaceSchemaVisualizerContent: View {
         workspaceManager.databaseTables[tableIndex].isExpanded = true
       }
     }
+  }
+}
+
+// MARK: - Loading
+
+/// In the diagram's place while it lays out. Its spinner fades in after 150 ms, so a fast
+/// layout never flashes it.
+private struct SchemaGraphLoadingView: View {
+  @State private var showsSpinner = false
+
+  var body: some View {
+    VStack(spacing: Spacing.md) {
+      ProgressView()
+        .opacity(showsSpinner ? 1 : 0)
+        .animation(.easeIn(duration: 0.15), value: showsSpinner)
+        // Opt out of the app-wide animation kill switch, only for the fade
+        .transaction(value: showsSpinner) { $0.disablesAnimations = false }
+      Text("Loading schema...")
+        .font(.body)
+        .foregroundColor(.foregroundMuted)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .task {
+      try? await Task.sleep(for: .milliseconds(150))
+      showsSpinner = !Task.isCancelled
+    }
+  }
+}
+
+// MARK: - Table Picker
+
+/// In the diagram's place when the catalog has more tables than one diagram lays out: a schema
+/// (only those within the cap) or up to `SchemaLayoutEngine.maxTables` checked tables
+private struct SchemaDiagramTablePicker: View {
+  @Bindable var workspaceManager: WorkspaceManager
+  /// Qualified names of the checked tables
+  @State private var checked: Set<String> = []
+  /// The schema whose tables were checked from the dropdown; nil once a row changes them
+  @State private var pickedSchema: String?
+  @State private var filter = ""
+  /// Positions in `databaseTables` the filter keeps, in array order; nil until the first result
+  @State private var shown: [Int]?
+  /// Each schema with its table count, in name order
+  @State private var schemas: [SchemaCount] = []
+
+  private static let cap = SchemaLayoutEngine.maxTables
+
+  struct SchemaCount: Hashable, Sendable {
+    let name: String
+    let tables: Int
+  }
+
+  /// The filter's input: a schema reload (new index) or a keystroke runs it again
+  private struct FilterKey: Equatable {
+    let index: UUID
+    let text: String
+  }
+
+  var body: some View {
+    let tables = workspaceManager.databaseTables
+    VStack(alignment: .leading, spacing: Spacing.md) {
+      Text(
+        "This schema has \(tables.count.formatted()) tables. The diagram shows up to \(Self.cap): pick a "
+          + "schema or tables."
+      )
+      .font(.body)
+      .foregroundColor(.foreground)
+
+      HStack(spacing: Spacing.sm) {
+        schemaDropdown
+        Spacer()
+        Text("\(checked.count) of \(Self.cap) tables checked")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .monospacedDigit()
+        Button("Uncheck All") {
+          checked = []
+          pickedSchema = nil
+        }
+        .buttonStyle(GhostButtonStyle())
+        .disabled(checked.isEmpty)
+        Button("Show Diagram") { workspaceManager.showSchemaDiagram(tables: checked) }
+          .buttonStyle(PrimaryButtonStyle())
+          .disabled(checked.isEmpty)
+      }
+
+      TextField("Filter tables", text: $filter)
+        .textFieldStyle(.plain)
+        .font(.structureField)
+        .autocorrectionDisabled()
+        .structureInputStyle()
+
+      Divider()
+
+      if let shown, shown.isEmpty {
+        Text("No table matches.")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        ScrollView {
+          // Rows are built as they scroll into view, never one per table up front
+          LazyVStack(alignment: .leading, spacing: Spacing.xs) {
+            ForEach(shown ?? [], id: \.self) { position in
+              if tables.indices.contains(position) {
+                tableRow(tables[position])
+              }
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+    }
+    .padding(Spacing.xl)
+    .frame(maxWidth: 640, maxHeight: .infinity)
+    .frame(maxWidth: .infinity)
+    .onAppear { checked = workspaceManager.schemaDiagramTables ?? [] }
+    .task(id: workspaceManager.sidebarEntityIndex.id) {
+      let counts = await Self.schemaCounts(workspaceManager.databaseTables)
+      if !Task.isCancelled { schemas = counts }
+    }
+    // Off the main actor; a newer keystroke cancels the run (its result is dropped)
+    .task(id: FilterKey(index: workspaceManager.sidebarEntityIndex.id, text: filter)) {
+      let result = await workspaceManager.sidebarEntityIndex.filterInBackground(
+        keywords: SidebarEntityFilter.keywords(in: filter), hidden: [], temporarySchemas: [])
+      guard !Task.isCancelled else { return }
+      shown = (result.listed.tables + result.temporary.tables).map(\.position).sorted()
+    }
+  }
+
+  private var schemaDropdown: some View {
+    CapsulePickerMenu(title: pickedSchema ?? "Pick a Schema") {
+      ForEach(schemas, id: \.self) { schema in
+        Toggle(
+          "\(schema.name) (\(schema.tables) tables)",
+          isOn: Binding(
+            get: { pickedSchema == schema.name },
+            set: { _ in pick(schema: schema.name) })
+        )
+        .disabled(schema.tables > Self.cap)
+      }
+    }
+    .accessibilityLabel("Schema")
+    .disabled(schemas.isEmpty)
+  }
+
+  private func tableRow(_ table: DatabaseTable) -> some View {
+    let name = table.qualifiedName
+    let isChecked = checked.contains(name)
+    return Toggle(
+      isOn: Binding(
+        get: { isChecked },
+        set: { on in
+          if on { checked.insert(name) } else { checked.remove(name) }
+          pickedSchema = nil
+        })
+    ) {
+      Text(verbatim: name)
+        .font(.monoMedium)
+        .foregroundColor(.foreground)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+    .toggleStyle(.checkbox)
+    // At the cap, only checked rows change
+    .disabled(!isChecked && checked.count >= Self.cap)
+  }
+
+  /// Checks every table of the schema (within the cap: larger schemas are disabled)
+  private func pick(schema: String) {
+    checked = Set(
+      workspaceManager.databaseTables.lazy.filter { $0.schema == schema }.map(\.qualifiedName))
+    pickedSchema = schema
+  }
+
+  @concurrent private nonisolated static func schemaCounts(
+    _ tables: [DatabaseTable]
+  ) async -> [SchemaCount] {
+    var counts: [String: Int] = [:]
+    for table in tables { counts[table.schema, default: 0] += 1 }
+    return counts.map { SchemaCount(name: $0.key, tables: $0.value) }.sorted { $0.name < $1.name }
   }
 }
 

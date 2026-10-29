@@ -420,10 +420,20 @@ extension WorkspaceManager {
         databaseRoles = roles
         databaseForeignKeys = foreignKeys
         schemaConnectionEpoch = epoch
+        // A diagram still here belongs to this connection (a connect or disconnect clears it):
+        // a reload of the same connection carries it forward
+        if schemaGraphEpoch != nil { schemaGraphEpoch = epoch }
 
         // Sync to tab ViewModels
         syncConnectionStateToTabs()
         reloadLoadedCatalogs()
+        // A connect cleared the diagram: an open visualizer lays out the new schema (above the
+        // diagram's cap it shows the table picker, nothing to lay out)
+        if isSchemaVisualizerActive, schemaGraph == nil, schemaDiagramTables == nil,
+          !isLoadingSchemaGraph, databaseTables.count <= SchemaLayoutEngine.maxTables
+        {
+          Task { await loadSchemaGraph() }
+        }
       } catch is CancellationError {
         // Cancelled (refresh, Cancel, disconnect): an expected end, not a failure
       } catch {

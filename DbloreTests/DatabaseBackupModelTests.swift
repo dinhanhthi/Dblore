@@ -297,6 +297,40 @@ struct DatabaseBackupModelTests {
       DatabaseBackupModel.dumpOptions(flags, from: tables).tables == Set(names.prefix(2)))
   }
 
+  /// The sheet keeps the "All tables" flags and the tables that differ: each listed table gets
+  /// its override, else the baseline
+  @Test func baselineAndOverridesMapToPerTableFlags() async {
+    typealias Name = SQLDumpDDL.ObjectName
+    typealias Flags = SQLDumpOptions.TableOptions
+    let tables = ["a", "b", "c"].map { DatabaseTable(schema: "public", name: $0) }
+    let names = tables.map { Name(schema: $0.schema, name: $0.name) }
+
+    // Baseline on, one table without Data
+    #expect(
+      await DatabaseBackupModel.dumpOptions(
+        tables, baseline: Flags(), overrides: [names[1]: Flags(data: false)])
+        == SQLDumpOptions(perTable: [names[1]: Flags(data: false)]))
+
+    // Baseline off, one table on: only that one is dumped
+    let off = Flags(structure: false, data: false)
+    #expect(
+      await DatabaseBackupModel.dumpOptions(tables, baseline: off, overrides: [names[0]: Flags()])
+        .tables == [names[0]])
+
+    // Drop is forced off where Structure is off, in the baseline and in an override
+    let dropOnly = Flags(structure: false, drop: true)
+    let noStructure = await DatabaseBackupModel.dumpOptions(
+      tables, baseline: dropOnly, overrides: [names[2]: dropOnly])
+    #expect(names.allSatisfy { noStructure.table($0) == Flags(structure: false) })
+
+    // A table listed after the sheet opened (no override) takes the baseline
+    let added = tables + [DatabaseTable(schema: "public", name: "d")]
+    let withAdded = await DatabaseBackupModel.dumpOptions(
+      added, baseline: Flags(data: false), overrides: [names[0]: Flags()])
+    #expect(withAdded.table(Name(schema: "public", name: "d")) == Flags(data: false))
+    #expect(withAdded.table(names[0]) == Flags())
+  }
+
   // MARK: - SQLite file copy
 
   @Test func fileCopyRefusesTheOpenDatabaseAndCopiesElsewhere() async throws {

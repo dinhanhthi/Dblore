@@ -649,7 +649,10 @@ struct WorkspaceContainerView: View {
     }
     guard workspaceManager.connectionState.isConnected,
       let type = workspaceManager.workspace.connectionConfig?.databaseType,
-      type.capabilities.supportsSQLDump, sheet != .fileCopy || type == .sqlite
+      type.capabilities.supportsSQLDump, sheet != .fileCopy || type == .sqlite,
+      // The dump lists the loaded tables: none until a connect's schema landed (they are still
+      // the previous database's)
+      sheet != .dump || workspaceManager.schemaConnectionEpoch != nil
     else { return nil }
     return {
       guard backupSheet == nil else { return }

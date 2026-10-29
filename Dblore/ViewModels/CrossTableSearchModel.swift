@@ -25,7 +25,7 @@ final class CrossTableSearchModel: Identifiable {
   nonisolated static let serverTimeoutSeconds = 15
 
   /// One table to search, as the loaded schema lists it
-  struct Target: Sendable {
+  nonisolated struct Target: Sendable {
     var schema: String
     var name: String
     var columns: [CrossTableSearchQueryBuilder.Column]
@@ -85,9 +85,11 @@ final class CrossTableSearchModel: Identifiable {
   private(set) var searchedMode: Mode = .contains
 
   /// The tables the next search covers (the first `maxTables`), read again at every start
-  private(set) var targets: [Target]
+  private(set) var targets: [Target] = []
   /// Tables in the schema before the `maxTables` cap
-  private(set) var totalTableCount: Int
+  private(set) var totalTableCount = 0
+  /// The sheet shows at once; the tables are read off the main actor behind it
+  private(set) var isLoadingTargets = true
   /// The schema read the targets come from (`WorkspaceManager.schemaConnectionEpoch`)
   let schemaEpoch: UInt64
 
@@ -96,8 +98,8 @@ final class CrossTableSearchModel: Identifiable {
   /// Opens `schema.table` filtered on `column`; a running search goes on
   @ObservationIgnored var onOpen: (_ result: TableResult, _ filter: TableFilter) -> Void = { _, _ in
   }
-  /// The loaded schema's tables, before the cap
-  @ObservationIgnored private let loadTargets: () -> [Target]
+  /// The loaded schema's tables, before the cap (built off the main actor)
+  @ObservationIgnored private let loadTargets: () async -> [Target]
   @ObservationIgnored private let dialect: SQLDialect
   @ObservationIgnored private let connectionManager: DatabaseConnectionManager
   @ObservationIgnored private var task: Task<Void, Never>?
@@ -106,21 +108,30 @@ final class CrossTableSearchModel: Identifiable {
 
   init(
     schemaEpoch: UInt64, dialect: SQLDialect, connectionManager: DatabaseConnectionManager,
-    loadTargets: @escaping () -> [Target]
+    loadTargets: @escaping () async -> [Target]
   ) {
-    let all = loadTargets()
-    targets = Array(all.prefix(Self.maxTables))
-    totalTableCount = all.count
     self.schemaEpoch = schemaEpoch
     self.dialect = dialect
     self.connectionManager = connectionManager
     self.loadTargets = loadTargets
+    Task { [weak self] in
+      let all = await loadTargets()
+      guard let self else { return }
+      self.setTargets(all)
+      self.isLoadingTargets = false
+    }
   }
 
   var isSearching: Bool { phase == .searching }
 
   var canStart: Bool {
-    !isSearching && !value.isEmpty && !targets.isEmpty
+    !isSearching && !isLoadingTargets && !value.isEmpty && !targets.isEmpty
+  }
+
+  /// The first `maxTables` of `all`, and their count before the cap
+  private func setTargets(_ all: [Target]) {
+    targets = Array(all.prefix(Self.maxTables))
+    totalTableCount = all.count
   }
 
   /// Cancels any search; the sheet's results stay for the next time it opens
@@ -134,11 +145,8 @@ final class CrossTableSearchModel: Identifiable {
     guard canStart else { return }
     task?.cancel()
     run += 1
-    let all = loadTargets()
-    targets = Array(all.prefix(Self.maxTables))
-    totalTableCount = all.count
     let current = run
-    let targets = targets
+    let loadTargets = loadTargets
     let value = value
     let mode = mode
     let dialect = dialect
@@ -149,6 +157,9 @@ final class CrossTableSearchModel: Identifiable {
     completed = 0
     phase = .searching
     task = Task { [weak self] in
+      // The schema may have been read again since the sheet opened
+      let all = await loadTargets()
+      guard let targets = self?.searchTargets(all, run: current) else { return }
       // Read once: every reconnect of this run opens the same server, even after a switch
       guard let config = await Self.sideConfig(like: manager) else {
         self?.fail("The search's read-only connection could not be opened.", run: current)
@@ -274,6 +285,13 @@ final class CrossTableSearchModel: Identifiable {
       TableResult(
         schema: target.schema, name: target.name, primaryKeys: target.primaryKeys,
         displayColumns: statement?.displayColumns ?? [], matches: matches, status: status))
+  }
+
+  /// The targets of `all` this run searches; nil when a newer start or a cancel superseded it
+  private func searchTargets(_ all: [Target], run current: Int) -> [Target]? {
+    guard current == run else { return nil }
+    setTargets(all)
+    return targets
   }
 
   private func finish(run current: Int) {

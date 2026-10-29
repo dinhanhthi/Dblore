@@ -31,7 +31,7 @@ struct SchemaNode: Identifiable, Sendable, Equatable {
   }
 
   /// Table qualified name for lookups
-  var qualifiedName: String {
+  nonisolated var qualifiedName: String {
     table.qualifiedName
   }
 
@@ -201,7 +201,7 @@ struct SchemaGraph: Sendable, Equatable {
 
 extension SchemaGraph {
   /// Build a schema graph from tables and foreign keys
-  static func build(
+  nonisolated static func build(
     from tables: [DatabaseTable],
     foreignKeys: [ForeignKey]
   ) -> SchemaGraph {

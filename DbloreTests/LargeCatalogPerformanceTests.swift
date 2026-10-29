@@ -1,13 +1,15 @@
 // LargeCatalogPerformanceTests.swift
 // Baseline at LargeCatalogFixture's 50,000 tables: schema load, one sidebar filter keystroke,
-// command palette open, autocomplete, AI table selection and the ER layout at 300 tables, each
-// recorded in a PERF line with the longest main-actor gap a ticker saw meanwhile. The sidebar's
-// first listing and filter keystroke, the palette, autocomplete and AI table selection have
-// budgets.
+// command palette open, autocomplete, AI table selection, the ER layout at 300 tables and the
+// sheets that list every table (Find a Value, Copy Objects, Export SQL Dump, Compare Schemas),
+// each recorded in a PERF line with the longest main-actor gap a ticker saw meanwhile. Every
+// stage but the empty sidebar filter and S-SQL below has a budget.
 // S-SQL compares today's per-table catalog read with one bulk statement per catalog part.
 // Opt-in (requiresLargeCatalog). Results land in the runner's temp perf-results.txt.
 
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import Dblore
@@ -18,8 +20,10 @@ struct LargeCatalogPerformanceTests {
   private static var tables: Int { LargeCatalogFixture.tableCount }
 
   /// Budgets: 1.25x this Mac's post-fix medians (Debug, 2026-10-29, three LARGE_CATALOG runs).
-  /// First listing: 14,935.9 / 14,258.8 / 14,138.4 ms, median 14,258.8 (main gap 7.8-13.0 ms).
-  private static let firstListingBudgetMs = 17_824.0
+  /// First listing: 13,709.1 / 14,430.5 / 13,744.3 ms, median 13,744.3 (main gap 5.8-6.8 ms),
+  /// re-measured with the diagram cap and the sheet fixes in. Replaces 17,824 (phase 12's median
+  /// 14,258.8), set from one session's runs and seen up to 16,003 ms since.
+  private static let firstListingBudgetMs = 17_180.0
   /// Filter keystroke: 844.1 / 846.9 / 837.0 ms, median 844.1 (main gap 2.1-3.9 ms).
   private static let filterKeystrokeBudgetMs = 1_055.0
   /// Palette open: 14.0 / 16.2 / 15.6 ms, median 15.6 (main gap 2.1 ms). Stages under 20 ms
@@ -33,6 +37,32 @@ struct LargeCatalogPerformanceTests {
   private static let autocompleteNoContextBudgetMs = 25.0
   /// AI relevant tables: 499.7 / 494.2 / 488.4 ms, median 494.2 (main gap 2.1-2.5 ms).
   private static let aiRelevantTablesBudgetMs = 618.0
+  /// ER layout at 300 tables: 5,705.4 / 5,788.8 / 5,743.5 ms, median 5,743.5 (main gap
+  /// 2.1-2.6 ms).
+  private static let erLayout300BudgetMs = 7_179.0
+  /// Find a Value open: 0.04 / 0.04 / 0.03 ms, median 0.04 (main gap 2.0-2.1 ms; 25 ms floor).
+  private static let findAValueOpenBudgetMs = 25.0
+  /// Find a Value tables ready: 68.7 / 69.4 / 69.9 ms, median 69.4 (main gap 2.1-3.7 ms).
+  private static let findAValueReadyBudgetMs = 87.0
+  /// Copy Objects open: 34.2 / 30.4 / 29.2 ms, median 30.4 (main gap 30.8-35.6 ms; 60 ms floor:
+  /// the hosted sheet layout includes ~25 ms of one-time SwiftUI setup and ran 39.5 ms on a busy
+  /// Mac; 60 still fails the pre-fix 88 ms).
+  private static let copyObjectsOpenBudgetMs = 60.0
+  /// Copy Objects tables ready: 28.8 / 29.0 / 28.9 ms, median 28.9 (main gap 20.8-23.7 ms; 60 ms
+  /// floor, as for open: 33.6 ms on a busy Mac).
+  private static let copyObjectsReadyBudgetMs = 60.0
+  /// Copy Objects filter keystroke: 36.9 / 36.4 / 36.6 ms, median 36.6 (main gap 2.1 ms).
+  private static let copyObjectsFilterKeystrokeBudgetMs = 46.0
+  /// Export SQL Dump open: 37.6 / 35.9 / 34.5 ms, median 35.9 (main gap 36.0-38.7 ms; 60 ms
+  /// floor for the hosted sheet layout, as for Copy Objects; 60 still fails the pre-fix 206 ms).
+  private static let dumpSheetOpenBudgetMs = 60.0
+  /// Export SQL Dump parent redraw: 12.5 / 11.7 / 11.7 ms, median 11.7 (main gap 11.7-12.6 ms;
+  /// 25 ms floor).
+  private static let dumpSheetParentRedrawBudgetMs = 25.0
+  /// Compare Schemas open: 7.5 / 7.7 / 7.2 ms, median 7.5 (main gap 7.4-7.8 ms; 25 ms floor).
+  private static let schemaCompareOpenBudgetMs = 25.0
+  /// Compare Schemas refusal: 418.9 / 425.6 / 419.2 ms, median 419.2 (main gap 2.1 ms).
+  private static let schemaCompareRefusalBudgetMs = 524.0
   /// The longest main-actor gap any budgeted stage may cause
   private static let maxMainGapMs = 100.0
 
@@ -257,22 +287,159 @@ struct LargeCatalogPerformanceTests {
     #expect(request.maxMainGapMs <= Self.maxMainGapMs)
   }
 
-  /// The layout engine on the first 300 tables (loadSchemaGraph would lay out every table)
+  /// The diagram of the first 300 tables picked, as the picker's Show Diagram lays it out (off
+  /// the main actor)
   @Test("ER layout at 300 tables")
   func erLayout300() async throws {
     let workspace = try await loadedWorkspace()
-    let tables = Array(workspace.databaseTables.prefix(300))
-    let names = Set(tables.map(\.qualifiedName))
-    let keys = workspace.databaseForeignKeys.filter {
-      names.contains($0.sourceQualifiedName) && names.contains($0.targetQualifiedName)
+    let names = Set(
+      workspace.databaseTables.prefix(SchemaLayoutEngine.maxTables).map(\.qualifiedName))
+    workspace.schemaDiagramTables = names
+    defer { workspace.schemaDiagramTables = nil }
+    let layout = try await measure("erLayout300") { await workspace.loadSchemaGraph() }
+    #expect(workspace.schemaGraph?.nodes.count == names.count)
+    #expect(layout.ms <= Self.erLayout300BudgetMs)
+    #expect(layout.maxMainGapMs <= Self.maxMainGapMs)
+  }
+
+  // MARK: - Sheets that list every table
+
+  /// `view` in an offscreen window of the sheet's size, laid out once: the SwiftUI side of
+  /// opening it (its body and the lazy list's first rows)
+  private static func host<Content: View>(
+    _ view: Content, width: CGFloat, height: CGFloat
+  ) -> NSHostingView<Content> {
+    let host = NSHostingView(rootView: view)
+    let window = NSWindow(
+      contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.borderless],
+      backing: .buffered, defer: false)
+    window.contentView = host
+    host.layoutSubtreeIfNeeded()
+    return host
+  }
+
+  /// Find a Value in Every Table: the Cmd+K action (the sheet's model), then until its table
+  /// count is read (off the main actor)
+  @Test("Find a Value open")
+  func findAValueOpen() async throws {
+    let workspace = try await loadedWorkspace()
+    workspace.dropCrossTableSearch()
+    let open = try await measure("findAValueOpen") {
+      workspace.openCrossTableSearch()
+      return try #require(workspace.crossTableSearch)
     }
-    // Canvas size as in WorkspaceManager.loadSchemaGraph
-    let canvas = CGSize(
-      width: max(800, CGFloat(tables.count) * 100), height: max(600, CGFloat(tables.count) * 80))
-    let graph = try await measure("erLayout300") {
-      SchemaLayoutEngine().calculateLayout(tables: tables, foreignKeys: keys, canvasSize: canvas)
-    }.value
-    #expect(graph.nodes.count == tables.count)
+    let model = open.value
+    let ready = try await measure("findAValueReady") {
+      while model.isLoadingTargets { try await Task.sleep(for: .milliseconds(1)) }
+      return model.totalTableCount
+    }
+    #expect(ready.value == Self.tables)
+    #expect(open.ms <= Self.findAValueOpenBudgetMs)
+    #expect(open.maxMainGapMs <= Self.maxMainGapMs)
+    #expect(ready.ms <= Self.findAValueReadyBudgetMs)
+    #expect(ready.maxMainGapMs <= Self.maxMainGapMs)
+    workspace.dropCrossTableSearch()
+  }
+
+  /// File > Copy Objects: the model and the sheet's first layout, then until its table list is
+  /// read (off the main actor) and laid out
+  @Test("Copy Objects open")
+  func copyObjectsOpen() async throws {
+    let workspace = try await loadedWorkspace()
+    workspace.closeCopyObjects()
+    let open = try await measure("copyObjectsOpen") {
+      workspace.openCopyObjects(ticking: [])
+      let model = try #require(workspace.copyObjects)
+      let host = Self.host(
+        CopyObjectsSheet(model: model, isShown: { true }, onClose: {}), width: 920, height: 680)
+      return (model, host)
+    }
+    let (model, host) = open.value
+    let ready = try await measure("copyObjectsReady") {
+      while model.isLoadingTables { try await Task.sleep(for: .milliseconds(1)) }
+      host.layoutSubtreeIfNeeded()
+      return model.tables.count
+    }
+    #expect(ready.value == Self.tables)
+    #expect(open.ms <= Self.copyObjectsOpenBudgetMs)
+    #expect(open.maxMainGapMs <= Self.maxMainGapMs)
+    #expect(ready.ms <= Self.copyObjectsReadyBudgetMs)
+    #expect(ready.maxMainGapMs <= Self.maxMainGapMs)
+    workspace.closeCopyObjects()
+  }
+
+  /// One keystroke in the Copy Objects table filter, as the sheet filters its list (off the
+  /// main actor)
+  @Test("Copy Objects filter keystroke")
+  func copyObjectsFilterKeystroke() async throws {
+    let workspace = try await loadedWorkspace()
+    workspace.closeCopyObjects()
+    workspace.openCopyObjects(ticking: [])
+    let model = try #require(workspace.copyObjects)
+    while model.isLoadingTables { try await Task.sleep(for: .milliseconds(1)) }
+    let keystroke = try await measure("copyObjectsFilterKeystroke") {
+      await CopyObjectsModel.filtered(model.tables, text: "t4999", showsSchema: model.showsSchema)
+    }
+    #expect(keystroke.value?.count == 10)
+    #expect(keystroke.ms <= Self.copyObjectsFilterKeystrokeBudgetMs)
+    #expect(keystroke.maxMainGapMs <= Self.maxMainGapMs)
+    workspace.closeCopyObjects()
+  }
+
+  /// File > Export SQL Dump: the sheet's first layout, then one more as its parent redraws
+  @Test("Export SQL Dump open")
+  func dumpSheetOpen() async throws {
+    let workspace = try await loadedWorkspace()
+    let viewModel = try #require(workspace.activeViewModel)
+    func sheet() -> SQLDumpSheet {
+      SQLDumpSheet(
+        kind: .sqlDump, viewModel: viewModel, tables: workspace.databaseTables,
+        isPresented: .constant(true), isBusy: .constant(false))
+    }
+    let open = try await measure("dumpSheetOpen") {
+      Self.host(sheet(), width: SQLDumpSheet.panelWidth, height: 800)
+    }
+    let host = open.value
+    let redraw = try await measure("dumpSheetParentRedraw") {
+      host.rootView = sheet()
+      host.layoutSubtreeIfNeeded()
+    }
+    #expect(open.ms <= Self.dumpSheetOpenBudgetMs)
+    #expect(open.maxMainGapMs <= Self.maxMainGapMs)
+    #expect(redraw.ms <= Self.dumpSheetParentRedrawBudgetMs)
+    #expect(redraw.maxMainGapMs <= Self.maxMainGapMs)
+  }
+
+  /// File > Compare Schemas: the model the sheet opens on
+  @Test("Compare Schemas open")
+  func schemaCompareOpen() async throws {
+    let workspace = try await loadedWorkspace()
+    workspace.closeSchemaCompare()
+    let open = try await measure("schemaCompareOpen") {
+      workspace.openSchemaCompare()
+      return try #require(workspace.schemaCompare).targetSchemas
+    }
+    #expect(open.value == ["main"])
+    #expect(open.ms <= Self.schemaCompareOpenBudgetMs)
+    #expect(open.maxMainGapMs <= Self.maxMainGapMs)
+    workspace.closeSchemaCompare()
+  }
+
+  /// Compare's target read, refused for its table count before any structure is read
+  @Test("Compare Schemas refusal")
+  func schemaCompareRefusal() async throws {
+    let workspace = try await loadedWorkspace()
+    let refusal = try await measure("schemaCompareRefusal") {
+      do {
+        _ = try await SchemaSnapshotLoader.load(schema: "main", from: workspace.connectionManager)
+        return SchemaCompareError?.none
+      } catch let error as SchemaCompareError {
+        return error
+      }
+    }
+    #expect(refusal.value == .tooManyTables(Self.tables))
+    #expect(refusal.ms <= Self.schemaCompareRefusalBudgetMs)
+    #expect(refusal.maxMainGapMs <= Self.maxMainGapMs)
   }
 
   /// S-SQL: today's per-table reads (allColumns + foreignKeys) against BulkCatalogRead on the

@@ -40,8 +40,9 @@ nonisolated enum SchemaSnapshotLoader {
   /// Structure reads in flight at once
   static let concurrency = 4
 
-  /// `progress` gets (structures read, tables) after each read
-  static func load(
+  /// `progress` gets (structures read, tables) after each read. Off the caller's actor: the
+  /// table list of a large catalog is filtered and counted before the refusal.
+  @concurrent static func load(
     schema: String, from database: any SchemaSnapshotDatabase,
     progress: (@Sendable (Int, Int) -> Void)? = nil
   ) async throws -> SchemaSnapshot {

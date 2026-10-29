@@ -240,7 +240,7 @@ final class DatabaseBackupModel {
   /// Data off, is left out; nil tables when none is, so the dump also keeps tables the sidebar
   /// does not list. Those (and partitions the dump adds) get Structure and Data unless no chosen
   /// table has it, Drop only when every chosen table has it (no chosen table: the defaults).
-  static func dumpOptions(
+  nonisolated static func dumpOptions(
     _ flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions], from tables: [DatabaseTable]
   ) -> SQLDumpOptions {
     let chosen = flags.filter { $0.value.structure || $0.value.data }
@@ -257,8 +257,25 @@ final class DatabaseBackupModel {
       perTable: chosen.filter { $0.value != other }, otherTables: other)
   }
 
+  /// Every listed table's flags (its override, else the "All tables" `baseline`; Drop only with
+  /// Structure) as dump options, off the main actor. No listed table: the defaults.
+  @concurrent nonisolated static func dumpOptions(
+    _ tables: [DatabaseTable], baseline: SQLDumpOptions.TableOptions,
+    overrides: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+  ) async -> SQLDumpOptions {
+    guard !tables.isEmpty else { return SQLDumpOptions() }
+    let flags = Dictionary(
+      tables.map { table in
+        let name = SQLDumpDDL.ObjectName(schema: table.schema, name: table.name)
+        var options = overrides[name] ?? baseline
+        if !options.structure { options.drop = false }
+        return (name, options)
+      }, uniquingKeysWith: { first, _ in first })
+    return dumpOptions(flags, from: tables)
+  }
+
   /// The database row's checkbox for `flag` (Structure, Data or Drop) over the tables' flags
-  static func databaseRow(
+  nonisolated static func databaseRow(
     _ flag: KeyPath<SQLDumpOptions.TableOptions, Bool>,
     of flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
   ) -> SQLDumpTriState {

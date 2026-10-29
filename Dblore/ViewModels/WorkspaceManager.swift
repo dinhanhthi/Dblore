@@ -335,6 +335,17 @@ class WorkspaceManager: Identifiable {
   var visualizerOffset: CGPoint = .zero
   var selectedGraphNodeId: UUID?
   var isLoadingSchemaGraph: Bool = false
+  /// Qualified names of the tables the diagram shows, picked when the catalog has more than
+  /// `SchemaLayoutEngine.maxTables`; nil: every table. Kept by refresh and reset, forgotten by
+  /// a connect and a disconnect.
+  var schemaDiagramTables: Set<String>?
+  /// The running diagram layout: a newer one, a connect or a disconnect cancels it
+  @ObservationIgnored var schemaLayoutTask: Task<SchemaLayoutResult, Never>?
+  /// Bumped by every layout start and cancel: a superseded layout assigns nothing
+  @ObservationIgnored var schemaLayoutGeneration = 0
+  /// The `schemaConnectionEpoch` the diagram was laid out from (a reload of the same connection
+  /// carries it forward): its positions are saved only while that schema is the loaded one
+  @ObservationIgnored var schemaGraphEpoch: UInt64?
   weak var schemaGraphNSView: SchemaGraphNSView?
   var showTableConnections: Bool = true
   var showColumnConnections: Bool = false
@@ -824,6 +835,9 @@ class WorkspaceManager: Identifiable {
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
+    // The diagram and its picked tables belong to the previous database
+    cancelSchemaLayout()
+    clearSchemaGraph()
     if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
     // A search running with its sheet hidden must not reach the new server
     dropCrossTableSearch()
@@ -2306,91 +2320,152 @@ class WorkspaceManager: Identifiable {
     isSchemaVisualizerActive = false
   }
 
-  /// Load and calculate the schema graph layout
+  /// Load and calculate the schema graph layout, off the main actor. Above
+  /// `SchemaLayoutEngine.maxTables` with no table picked nothing is laid out: the graph stays
+  /// nil and the visualizer shows the table picker.
   func loadSchemaGraph() async {
     guard connectionState.isConnected else {
       schemaGraph = nil
+      isLoadingSchemaGraph = false
       return
     }
 
-    isLoadingSchemaGraph = true
-
-    // Build graph from existing data
-    let layoutEngine = SchemaLayoutEngine()
-
-    // Calculate canvas size based on number of tables
-    let tableCount = databaseTables.count
-    let canvasWidth = max(800, CGFloat(tableCount) * 100)
-    let canvasHeight = max(600, CGFloat(tableCount) * 80)
-    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
-
-    // Calculate layout
-    var graph = layoutEngine.calculateLayout(
-      tables: databaseTables,
-      foreignKeys: databaseForeignKeys,
-      canvasSize: canvasSize
-    )
-
-    // Restore saved positions if available from local storage
-    if let config = workspace.connectionConfig {
-      let key = SchemaPositionsStore.connectionKey(from: config)
-      let savedPositions = SchemaPositionsStore.loadPositions(forConnection: key)
-      if !savedPositions.isEmpty {
-        graph.applyPositions(savedPositions)
-      }
-    }
-
-    schemaGraph = graph
+    guard await layOutSchemaGraph() else { return }
 
     // Reset view state
     visualizerScale = 1.0
     visualizerOffset = .zero
     selectedGraphNodeId = nil
+  }
 
+  /// The picker's Show Diagram: lays out these tables (the placeholder shows at once)
+  func showSchemaDiagram(tables: Set<String>) {
+    guard schemaConnectionEpoch != nil else { return }  // The tables of the previous database
+    schemaDiagramTables = tables
+    isLoadingSchemaGraph = true
+    Task { await loadSchemaGraph() }
+  }
+
+  /// Back to the table picker: the graph goes, the picked tables stay checked
+  func pickSchemaDiagramTables() {
+    cancelSchemaLayout()
+    schemaGraph = nil
+  }
+
+  /// Forgets the diagram, its picked tables and what points into it (a connect or disconnect:
+  /// they belong to the previous database). An open visualizer lays out again once the new
+  /// schema lands.
+  func clearSchemaGraph() {
+    schemaGraph = nil
+    schemaGraphEpoch = nil
+    schemaDiagramTables = nil
+    selectedGraphNodeId = nil
+    schemaSearchState = SchemaSearchState()
+  }
+
+  /// Cancels the running layout: it assigns nothing
+  func cancelSchemaLayout() {
+    schemaLayoutTask?.cancel()
+    schemaLayoutTask = nil
+    schemaLayoutGeneration += 1
     isLoadingSchemaGraph = false
+  }
+
+  /// Lays out the picked tables (every table when none is picked) off the main actor, replacing
+  /// a running layout, and assigns the graph with its saved positions (nil: too many tables).
+  /// False when superseded by a newer layout, a connect or a disconnect, or before a connect's
+  /// schema landed (the tables are still the previous database's): nothing assigned.
+  private func layOutSchemaGraph() async -> Bool {
+    guard schemaConnectionEpoch != nil else {
+      isLoadingSchemaGraph = false
+      return false
+    }
+    schemaLayoutTask?.cancel()
+    schemaLayoutGeneration += 1
+    let generation = schemaLayoutGeneration
+    isLoadingSchemaGraph = true
+
+    let tables = databaseTables
+    let foreignKeys = databaseForeignKeys
+    let picked = schemaDiagramTables
+    let task = Task {
+      await Self.layOut(tables: tables, picked: picked, foreignKeys: foreignKeys)
+    }
+    schemaLayoutTask = task
+    let result = await task.value
+    guard generation == schemaLayoutGeneration, connectionState.isConnected else { return false }
+    schemaLayoutTask = nil
+    isLoadingSchemaGraph = false
+
+    switch result {
+    case .graph(var graph):
+      // Restore saved positions if available from local storage
+      if let config = workspace.connectionConfig {
+        let key = SchemaPositionsStore.connectionKey(from: config)
+        let savedPositions = SchemaPositionsStore.loadPositions(forConnection: key)
+        if !savedPositions.isEmpty {
+          graph.applyPositions(savedPositions)
+        }
+      }
+      schemaGraph = graph
+      schemaGraphEpoch = schemaConnectionEpoch
+    case .tooManyTables:
+      schemaGraph = nil
+    case .cancelled:
+      return false
+    }
+    return true
+  }
+
+  /// The picked tables (all when nil) laid out on a canvas sized to them, off the main actor
+  @concurrent private nonisolated static func layOut(
+    tables: [DatabaseTable], picked: Set<String>?, foreignKeys: [ForeignKey]
+  ) async -> SchemaLayoutResult {
+    let shown = picked.map { names in tables.filter { names.contains($0.qualifiedName) } } ?? tables
+    let canvasWidth = max(800, CGFloat(shown.count) * 100)
+    let canvasHeight = max(600, CGFloat(shown.count) * 80)
+    return SchemaLayoutEngine().calculateLayout(
+      tables: shown, foreignKeys: foreignKeys,
+      canvasSize: CGSize(width: canvasWidth, height: canvasHeight))
   }
 
   /// Save current schema node positions to local storage
   func saveSchemaNodePositions() {
-    guard let graph = schemaGraph,
+    // Never a graph laid out from another schema read: its tables may be another database's
+    guard let graph = schemaGraph, schemaGraphEpoch != nil,
+      schemaGraphEpoch == schemaConnectionEpoch,
       let config = workspace.connectionConfig
     else { return }
 
     let key = SchemaPositionsStore.connectionKey(from: config)
     let positions = graph.exportPositions()
-    SchemaPositionsStore.savePositions(positions, forConnection: key)
+    // Some tables shown: the others keep their saved positions
+    SchemaPositionsStore.savePositions(
+      positions, forConnection: key, keepingOthers: schemaDiagramTables != nil)
   }
 
   /// Reset schema layout to default (recalculate positions)
   func resetSchemaLayout() async {
-    guard connectionState.isConnected else { return }
+    // Before a connect's schema landed the picked tables are the previous database's
+    guard connectionState.isConnected, schemaConnectionEpoch != nil else { return }
 
-    isLoadingSchemaGraph = true
-
-    // Clear saved positions from local storage
+    // Clear saved positions from local storage: of the picked tables only, so the tables not
+    // shown keep theirs
     if let config = workspace.connectionConfig {
       let key = SchemaPositionsStore.connectionKey(from: config)
-      SchemaPositionsStore.clearPositions(forConnection: key)
+      if let picked = schemaDiagramTables {
+        SchemaPositionsStore.removePositions(forTables: picked, forConnection: key)
+      } else {
+        SchemaPositionsStore.clearPositions(forConnection: key)
+      }
     }
 
     // Recalculate layout
-    let layoutEngine = SchemaLayoutEngine()
-    let tableCount = databaseTables.count
-    let canvasWidth = max(800, CGFloat(tableCount) * 100)
-    let canvasHeight = max(600, CGFloat(tableCount) * 80)
-    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
-
-    schemaGraph = layoutEngine.calculateLayout(
-      tables: databaseTables,
-      foreignKeys: databaseForeignKeys,
-      canvasSize: canvasSize
-    )
+    guard await layOutSchemaGraph() else { return }
 
     // Reset view state but keep current zoom level
     visualizerOffset = .zero
     selectedGraphNodeId = nil
-
-    isLoadingSchemaGraph = false
   }
 
   /// Refresh the schema graph

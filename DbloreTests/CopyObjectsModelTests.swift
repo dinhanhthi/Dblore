@@ -283,6 +283,37 @@ struct CopyObjectsModelTests {
     }
   }
 
+  /// Copy to Another Connection... on a schema: the sheet opens at once, and that schema's
+  /// tables are ticked once the list is read off the main actor
+  @Test("A schema's Copy to Another Connection ticks its tables once they are read")
+  func schemaOpenTicksItsTables() async throws {
+    let config = Self.postgres(level: .none)
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(
+        sessionFactory: FakeDatabaseSessionFactory(capabilities: .contract())))
+    try await manager.connectWithoutUnlockCheck(config: config, savesConnection: false)
+    manager.cancelSchemaLoad()
+    manager.databaseTables = [
+      DatabaseTable(schema: "public", name: "a"), DatabaseTable(schema: "sales", name: "b"),
+      DatabaseTable(schema: "sales", name: "c"),
+    ]
+    manager.schemaConnectionEpoch = 1
+
+    manager.openCopyObjects(schema: "sales")
+    let model = try #require(manager.copyObjects)
+    for _ in 0..<500 where model.isLoadingTables {
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(model.tables.count == 3)
+    #expect(
+      model.selectedTables == [
+        TableRef(schema: "sales", name: "b"), TableRef(schema: "sales", name: "c"),
+      ])
+    manager.closeCopyObjects()
+    await manager.performDisconnect()
+  }
+
   // MARK: - Helpers
 
   private static let items = TableRef(schema: "main", name: "items")

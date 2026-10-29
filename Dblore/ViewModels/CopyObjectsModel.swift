@@ -53,7 +53,7 @@ struct CopyObjectsContext {
 @MainActor
 @Observable
 final class CopyObjectsModel: Identifiable {
-  struct TableRef: Hashable, Sendable {
+  nonisolated struct TableRef: Hashable, Sendable {
     var schema: String
     var name: String
   }
@@ -81,8 +81,12 @@ final class CopyObjectsModel: Identifiable {
   let id = UUID()
   /// The source as History and the sheet name it
   let sourceName: String
-  /// The source tables the checklist offers
-  let tables: [TableRef]
+  /// The source tables the checklist offers (empty while `isLoadingTables`)
+  private(set) var tables: [TableRef]
+  /// The tables span several schemas: rows are named with theirs
+  private(set) var showsSchema: Bool
+  /// The sheet shows at once; a large catalog's tables land once read off the main actor
+  private(set) var isLoadingTables = false
   /// The saved PostgreSQL, MySQL / MariaDB and SQLite connections
   let targets: [SavedTarget]
 
@@ -150,6 +154,7 @@ final class CopyObjectsModel: Identifiable {
   ) {
     self.context = context
     self.tables = tables
+    showsSchema = Self.spansSchemas(tables)
     selectedTables = Set(selected)
     entries = savedConnections.filter {
       switch $0.config.databaseType {
@@ -174,6 +179,49 @@ final class CopyObjectsModel: Identifiable {
     } else {
       sourceName = config.displayString
     }
+  }
+
+  /// The tables offered, those ticked, and whether they span several schemas
+  typealias TableSource = (tables: [TableRef], selected: Set<TableRef>, showsSchema: Bool)
+
+  /// Offers and ticks the tables `read` returns (read off the main actor), behind the open sheet
+  func loadTables(_ read: @escaping () async -> TableSource) {
+    isLoadingTables = true
+    Task { [weak self] in
+      let source = await read()
+      guard let self, !self.isClosed else { return }
+      self.tables = source.tables
+      self.showsSchema = source.showsSchema
+      self.selectedTables = source.selected
+      self.isLoadingTables = false
+      // Nothing could be ticked before the list landed: a target picked meanwhile plans now
+      if !source.selected.isEmpty { self.loadPlan() }
+    }
+  }
+
+  /// The checklist's row text
+  nonisolated static func label(_ table: TableRef, showsSchema: Bool) -> String {
+    showsSchema ? "\(table.schema).\(table.name)" : table.name
+  }
+
+  /// The tables whose row text contains `text` (case-insensitive), in order; nil when cancelled
+  /// by a newer keystroke. Off the main actor.
+  @concurrent nonisolated static func filtered(
+    _ tables: [TableRef], text: String, showsSchema: Bool
+  ) async -> [TableRef]? {
+    var kept: [TableRef] = []
+    for (offset, table) in tables.enumerated() {
+      if offset % 512 == 511, Task.isCancelled { return nil }
+      if label(table, showsSchema: showsSchema).localizedCaseInsensitiveContains(text) {
+        kept.append(table)
+      }
+    }
+    return kept
+  }
+
+  nonisolated static func spansSchemas(_ tables: [TableRef]) -> Bool {
+    guard let first = tables.first?.schema else { return false }
+    return tables.contains { $0.schema != first }
   }
 
   /// MySQL / MariaDB targets: what happens to the tables when the copy stops
