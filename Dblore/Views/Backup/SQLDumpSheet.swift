@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// Export SQL Dump (tables and data on or off, then a save panel) and, for SQLite, Copy
+/// Export SQL Dump (Structure, Data and Drop per table, then a save panel) and, for SQLite, Copy
 /// Database File. Both run off the main actor with progress and Cancel.
 struct SQLDumpSheet: View {
   enum Kind {
@@ -10,14 +10,17 @@ struct SQLDumpSheet: View {
   }
 
   let kind: Kind
-  /// Loaded schema tables, offered in the table list (all chosen by default)
+  /// Loaded schema tables, offered in the table list (Structure and Data on by default)
   let tables: [DatabaseTable]
   @Binding var isPresented: Bool
   @Binding var isBusy: Bool
 
   @State private var model: DatabaseBackupModel
-  @State private var selected: Set<SQLDumpDDL.ObjectName>
-  @State private var includeData = true
+  /// Every listed table's flags; Drop is only ever on with Structure
+  @State private var flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+
+  /// Width of a Structure, Data or Drop checkbox column
+  private static let flagColumnWidth: CGFloat = 64
 
   /// Width of the right sidebar the sheet opens in
   static let panelWidth: CGFloat = 520
@@ -31,7 +34,10 @@ struct SQLDumpSheet: View {
     _isPresented = isPresented
     _isBusy = isBusy
     _model = State(initialValue: DatabaseBackupModel(viewModel: viewModel))
-    _selected = State(initialValue: Set(tables.map(Self.objectName)))
+    _flags = State(
+      initialValue: Dictionary(
+        tables.map { (Self.objectName($0), SQLDumpOptions.TableOptions()) },
+        uniquingKeysWith: { first, _ in first }))
   }
 
   var body: some View {
@@ -77,7 +83,7 @@ struct SQLDumpSheet: View {
           }
         }
         .buttonStyle(PrimaryButtonStyle())
-        .disabled(model.isBusy || (kind == .sqlDump && !tables.isEmpty && selected.isEmpty))
+        .disabled(model.isBusy || (kind == .sqlDump && !tables.isEmpty && chosenCount == 0))
       }
     }
     .background(Color.cardBackground)
@@ -94,51 +100,148 @@ struct SQLDumpSheet: View {
   private var tablesSection: some View {
     SettingsGroupCard(title: "Tables") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        HStack(spacing: Spacing.sm) {
-          Text("\(selected.count) of \(tables.count) selected")
-            .font(.small)
-            .foregroundColor(.foregroundMuted)
-          Spacer()
-          Button("Select All") { selected = Set(tables.map(Self.objectName)) }
-            .buttonStyle(GhostButtonStyle())
-          Button("Select None") { selected = [] }
-            .buttonStyle(GhostButtonStyle())
-        }
+        Text("\(chosenCount) of \(tables.count) tables in the dump")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+        databaseRow
+        Divider()
         ScrollView {
+          // Rows are built as they scroll into view, never one per table up front
           LazyVStack(alignment: .leading, spacing: Spacing.xs) {
             ForEach(tables) { table in
-              Toggle(isOn: binding(for: table)) {
-                Text(verbatim: showsSchema ? "\(table.schema).\(table.name)" : table.name)
-                  .font(.monoMedium)
-                  .foregroundColor(.foreground)
-                  .lineLimit(1)
-                  .truncationMode(.middle)
-              }
-              .toggleStyle(.checkbox)
+              tableRow(table)
             }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: 220)
         .disabled(model.isBusy)
-        Text(
-          "Views on tables left out are left out too. A table whose foreign key points to a "
-            + "table left out does not restore on its own."
-        )
-        .font(.small)
-        .foregroundColor(.foregroundMuted)
-        .fixedSize(horizontal: false, vertical: true)
+        note(
+          "A table with Structure and Data off is left out, and views on tables left out are "
+            + "left out too. A table whose foreign key points to a table left out does not "
+            + "restore on its own. Structure off keeps only the rows, to restore them into "
+            + "the database they came from.")
+        note(dropNote)
       }
     }
+  }
+
+  /// "All tables" with a tri-state checkbox per flag: a click sets the flag on every table
+  private var databaseRow: some View {
+    let structured = flags.filter { $0.value.structure }
+    return HStack(spacing: 0) {
+      Text("All tables")
+        .font(.labelText.weight(.semibold))
+        .foregroundColor(.foreground)
+      Spacer(minLength: Spacing.sm)
+      databaseToggle(
+        "Structure", \.structure, state: DatabaseBackupModel.databaseRow(\.structure, of: flags))
+      databaseToggle("Data", \.data, state: DatabaseBackupModel.databaseRow(\.data, of: flags))
+      databaseToggle("Drop", \.drop, state: DatabaseBackupModel.databaseRow(\.drop, of: structured))
+        .disabled(structured.isEmpty)
+    }
+    .disabled(model.isBusy)
+  }
+
+  /// A checkbox that shows a dash when `state` is mixed (two sources that disagree) and sets
+  /// `flag` on every table when clicked
+  private func databaseToggle(
+    _ title: String, _ flag: WritableKeyPath<SQLDumpOptions.TableOptions, Bool>,
+    state: SQLDumpTriState
+  ) -> some View {
+    let set: (Bool) -> Void = { on in
+      flags = Self.dropNeedsStructure(
+        DatabaseBackupModel.settingDatabaseRow(flag, to: on, in: flags))
+    }
+    let sources = [
+      Binding(get: { state != .none }, set: set), Binding(get: { state == .all }, set: set),
+    ]
+    return VStack(spacing: 2) {
+      Text(title)
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+      Toggle(title, sources: sources, isOn: \.self)
+        .toggleStyle(.checkbox)
+        .labelsHidden()
+    }
+    .frame(width: Self.flagColumnWidth)
+  }
+
+  private func tableRow(_ table: DatabaseTable) -> some View {
+    let name = Self.objectName(table)
+    let structure = flags[name]?.structure ?? true
+    return HStack(spacing: 0) {
+      Text(verbatim: showsSchema ? "\(table.schema).\(table.name)" : table.name)
+        .font(.monoMedium)
+        .foregroundColor(.foreground)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Spacer(minLength: Spacing.sm)
+      tableToggle("Structure", \.structure, of: name)
+      tableToggle("Data", \.data, of: name)
+      tableToggle("Drop", \.drop, of: name)
+        .disabled(!structure)
+    }
+  }
+
+  private func tableToggle(
+    _ title: String, _ flag: WritableKeyPath<SQLDumpOptions.TableOptions, Bool>,
+    of name: SQLDumpDDL.ObjectName
+  ) -> some View {
+    Toggle(
+      title,
+      isOn: Binding(
+        get: { flags[name]?[keyPath: flag] ?? false },
+        set: { on in
+          var table = flags[name] ?? SQLDumpOptions.TableOptions()
+          table[keyPath: flag] = on
+          if !table.structure { table.drop = false }
+          flags[name] = table
+        })
+    )
+    .toggleStyle(.checkbox)
+    .labelsHidden()
+    .frame(width: Self.flagColumnWidth)
+  }
+
+  /// What Drop does on this connection's engine
+  private var dropNote: String {
+    let lead =
+      "Drop: the dump first drops each table with Drop on and the views, sequences and types "
+      + "it recreates, so a restore replaces them with the dump's rows. "
+    switch engine {
+    case .postgresql:
+      return lead
+        + "PostgreSQL never cascades: an object outside the dump that depends on a dropped "
+        + "table makes the restore fail and roll back. Drop on a partitioned table also drops "
+        + "its partitions."
+    case .mysql:
+      return lead
+        + "MySQL commits each DROP at once: if a later statement fails, what it dropped stays "
+        + "gone."
+    case .sqlite:
+      return lead
+        + "SQLite refuses the restore when a table outside the dump has a foreign key with ON "
+        + "DELETE CASCADE, SET NULL or SET DEFAULT to a dropped table. Virtual tables are never "
+        + "dropped (their rows are not in the dump): an existing one keeps its rows, a missing "
+        + "one is created empty."
+    default:
+      return lead
+        + "Never with CASCADE: an object outside the dump that depends on a dropped one makes "
+        + "the restore fail."
+    }
+  }
+
+  private func note(_ text: String) -> some View {
+    Text(text)
+      .font(.small)
+      .foregroundColor(.foregroundMuted)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   private var optionsSection: some View {
     SettingsGroupCard(title: "Options") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        Toggle("Include data (INSERT statements)", isOn: $includeData)
-          .toggleStyle(.checkbox)
-          .font(.bodyText)
-          .disabled(model.isBusy)
         Text(
           (engine == .duckdb
             ? "The dump reads everything in one snapshot on this tab's connection. "
@@ -255,18 +358,27 @@ struct SQLDumpSheet: View {
     SQLDumpDDL.ObjectName(schema: table.schema, name: table.name)
   }
 
-  private func binding(for table: DatabaseTable) -> Binding<Bool> {
-    let name = Self.objectName(table)
-    return Binding(
-      get: { selected.contains(name) },
-      set: { if $0 { selected.insert(name) } else { selected.remove(name) } })
+  /// Listed tables with Structure or Data on
+  private var chosenCount: Int {
+    flags.values.filter { $0.structure || $0.data }.count
+  }
+
+  /// `flags` with Drop off on every table whose Structure is off
+  private static func dropNeedsStructure(
+    _ flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+  ) -> [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions] {
+    flags.mapValues {
+      var table = $0
+      if !table.structure { table.drop = false }
+      return table
+    }
   }
 
   private func start() {
     switch kind {
     case .sqlDump:
-      let options = DatabaseBackupModel.dumpOptions(
-        selected: selected, from: tables, includeData: includeData)
+      let options =
+        tables.isEmpty ? SQLDumpOptions() : DatabaseBackupModel.dumpOptions(flags, from: tables)
       Task { await model.exportDump(options: options) }
     case .fileCopy:
       Task { await model.copyDatabaseFile() }

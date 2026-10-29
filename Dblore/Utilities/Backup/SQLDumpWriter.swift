@@ -12,6 +12,7 @@
 //
 // Dump format (restore reads it):
 //   -- Dblore SQL dump 1 engine=<DatabaseType.rawValue> created=<ISO 8601, UTC>
+//                                            (2 instead of 1 when the dump holds a DROP)
 //   SET time_zone = '+00:00';               (MySQL)
 //   SET NAMES utf8mb4;                       (MySQL)
 //   SET SESSION sql_mode = ...;              (MySQL: no NO_BACKSLASH_ESCAPES, adds
@@ -19,7 +20,9 @@
 //   -- comment lines                         (what the dump leaves out; line breaks in them
 //                                             become spaces)
 //   SET FOREIGN_KEY_CHECKS=0;                (MySQL, before the first CREATE TABLE)
-//   pre-data DDL                             (SQLite: `PRAGMA defer_foreign_keys = ON;` first)
+//   pre-data DDL                             (SQLite: `PRAGMA defer_foreign_keys = ON;` first;
+//                                             with Drop, the DROPs after the CREATE SCHEMA lines
+//                                             or that PRAGMA)
 //   INSERT INTO <table> (<columns>) [OVERRIDING SYSTEM VALUE] VALUES
 //   (...),
 //   (...);                                   (at most 500 rows and 4 MiB of SQL per INSERT)
@@ -34,15 +37,54 @@ nonisolated struct SQLDumpProgress: Sendable, Equatable {
   var tablesDone: Int
   var tableCount: Int
   var rowsWritten: Int
+  /// `SQLDumpDDL.Script.foreignKeyCycle`: the INSERTs keep catalog order, so a restore into a
+  /// database that has the tables may fail on foreign keys
+  var foreignKeyCycle = false
 }
 
-/// What a dump holds. The default dumps every table with its rows.
+/// What a dump holds. The default dumps every table with its structure and rows, without DROP.
 nonisolated struct SQLDumpOptions: Sendable, Equatable {
+  /// What the dump writes for one table
+  struct TableOptions: Sendable, Equatable {
+    /// CREATE TABLE with the table's indexes, constraints, triggers and sequence ownership.
+    /// Off: the table adds no DDL (its INSERTs, `setval` and `sqlite_sequence` rows stay), so
+    /// its rows restore into the database it came from.
+    var structure = true
+    /// INSERT statements
+    var data = true
+    /// DROP TABLE IF EXISTS before the table is created (with `structure` only)
+    var drop = false
+  }
+
   /// Tables to dump, by the catalog's schema (SQLite `main`, MySQL the database) and name; nil
   /// dumps every table. `SQLDumpSelection` adds what a chosen table cannot restore without.
   var tables: Set<SQLDumpDDL.ObjectName>? = nil
-  /// False: schema only (no INSERT statements)
-  var includeData = true
+  /// Flags by table; a table without an entry has `otherTables`
+  var perTable: [SQLDumpDDL.ObjectName: TableOptions] = [:]
+  var otherTables = TableOptions()
+
+  init(
+    tables: Set<SQLDumpDDL.ObjectName>? = nil,
+    perTable: [SQLDumpDDL.ObjectName: TableOptions] = [:],
+    otherTables: TableOptions = TableOptions()
+  ) {
+    self.tables = tables
+    self.perTable = perTable
+    self.otherTables = otherTables
+  }
+
+  /// Every table with its structure, `includeData` as its Data flag, without DROP
+  init(tables: Set<SQLDumpDDL.ObjectName>? = nil, includeData: Bool) {
+    self.init(tables: tables, otherTables: TableOptions(data: includeData))
+  }
+
+  func table(_ name: SQLDumpDDL.ObjectName) -> TableOptions {
+    perTable[name] ?? otherTables
+  }
+
+  func table(_ insert: SQLDumpDDL.TableInsert) -> TableOptions {
+    table(SQLDumpDDL.ObjectName(schema: insert.schema, name: insert.name))
+  }
 }
 
 /// Narrows a catalog read to the chosen tables, so the dump restores on its own: a partition
@@ -183,9 +225,10 @@ nonisolated struct SQLDumpAssembler {
     self.maxBytes = maxBytes
   }
 
-  /// `-- Dblore SQL dump 1 engine=PostgreSQL created=2026-10-15T12:00:00Z`
-  static func header(engine: DatabaseType, created: Date) -> String {
-    "-- Dblore SQL dump 1 engine=\(engine.rawValue) created="
+  /// `-- Dblore SQL dump 1 engine=PostgreSQL created=2026-10-15T12:00:00Z`; version 2 when the
+  /// dump holds a DROP (a reader that knows only 1 refuses it at the header)
+  static func header(engine: DatabaseType, created: Date, version: Int = 1) -> String {
+    "-- Dblore SQL dump \(version) engine=\(engine.rawValue) created="
       + created.formatted(.iso8601)
   }
 
@@ -200,7 +243,9 @@ nonisolated struct SQLDumpAssembler {
 
   /// Header, session settings, comment lines and pre-data
   func opening(_ script: SQLDumpDDL.Script, created: Date) -> String {
-    var lines = [Self.header(engine: engine, created: created)]
+    var lines = [
+      Self.header(engine: engine, created: created, version: script.containsDrop ? 2 : 1)
+    ]
     if engine == .mysql { lines += Self.mysqlSessionSettings }
     lines += script.comment.map(Self.commentLine)
     if engine == .mysql { lines.append("SET FOREIGN_KEY_CHECKS=0;") }
@@ -429,7 +474,7 @@ actor SQLDumpWriter {
   }
 
   /// Dumps the database to `destination` (an existing file is replaced) and returns the final
-  /// progress. `options` picks tables and schema only. `progress` is called on this actor after
+  /// progress. `options` picks tables and their Structure, Data and Drop. `progress` is called on this actor after
   /// each INSERT statement and table.
   /// - Throws: `SQLDumpError` (refused destination or engine), connection and read errors,
   ///   `DatabaseError.connectionLocked` after a relock, `CancellationError` when the task is
@@ -510,26 +555,28 @@ actor SQLDumpWriter {
     case .postgresql:
       let input = try await SQLDumpCatalog.postgresInput(reader)
       script = try SQLDumpDDL.postgres(
-        chosen.map { SQLDumpSelection.postgres(input, keeping: $0) } ?? input)
+        chosen.map { SQLDumpSelection.postgres(input, keeping: $0) } ?? input, options: options)
     case .mysql:
       let input = try await SQLDumpCatalog.mysqlInput(reader)
       script = try SQLDumpDDL.mysql(
-        chosen.map { SQLDumpSelection.mysql(input, keeping: $0) } ?? input)
+        chosen.map { SQLDumpSelection.mysql(input, keeping: $0) } ?? input, options: options)
     case .sqlite:
       let input = try await SQLDumpCatalog.sqliteInput(reader)
       script = try SQLDumpDDL.sqlite(
-        chosen.map { SQLDumpSelection.sqlite(input, keeping: $0) } ?? input)
+        chosen.map { SQLDumpSelection.sqlite(input, keeping: $0) } ?? input, options: options)
     case .duckdb:
       let input = try await SQLDumpCatalog.duckdbInput(reader)
       script = try SQLDumpDDL.duckdb(
-        chosen.map { SQLDumpSelection.duckdb(input, keeping: $0) } ?? input)
+        chosen.map { SQLDumpSelection.duckdb(input, keeping: $0) } ?? input, options: options)
     case .mongodb:
       throw SQLDumpError.unsupportedEngine(engine)
     }
     var assembler = SQLDumpAssembler(engine: engine)
     let dataTables = script.tables.filter(\.hasData)
-    let tables = options.includeData ? dataTables : []
-    var state = SQLDumpProgress(tablesDone: 0, tableCount: tables.count, rowsWritten: 0)
+    let tables = dataTables.filter { options.table($0).data }
+    var state = SQLDumpProgress(
+      tablesDone: 0, tableCount: tables.count, rowsWritten: 0,
+      foreignKeyCycle: script.foreignKeyCycle)
     try emit(assembler.opening(script, created: Date()))
     for table in tables {
       try Task.checkCancellation()
@@ -563,9 +610,10 @@ actor SQLDumpWriter {
     }
     try emit(assembler.closing(script))
     // Schema only: every table was written without rows (the result reads "n tables, 0 rows")
-    if !options.includeData {
+    if tables.isEmpty {
       state = SQLDumpProgress(
-        tablesDone: dataTables.count, tableCount: dataTables.count, rowsWritten: 0)
+        tablesDone: dataTables.count, tableCount: dataTables.count, rowsWritten: 0,
+        foreignKeyCycle: script.foreignKeyCycle)
     }
     return state
   }

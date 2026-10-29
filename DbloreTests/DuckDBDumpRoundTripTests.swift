@@ -8,7 +8,10 @@
 // restore. A view that reads a file outside the session's grants by its path fails at the
 // sandbox and rolls the whole restore back; a statement a dump never writes (or a view that runs
 // SQL from a string) is refused before anything is sent; a statement that fails rolls the
-// restore back and nothing after it runs; DuckDB has no SAVEPOINT.
+// restore back and nothing after it runs; DuckDB has no SAVEPOINT. A dump with Drop restored
+// over a database with the same names (a sequence default and an ENUM column) replaces them; one
+// that drops in a schema named like an attached database, or into a session moved off `main`,
+// is refused before anything is sent.
 
 import Foundation
 import Testing
@@ -101,6 +104,101 @@ struct DuckDBDumpRoundTripTests {
     let next = "SELECT nextval('seq1'), nextval('s2.never'), nextval('down')"
     #expect(try await rows(restored, next) == rows(original, next))
     #expect(try await rows(restored, next) == [[.int(15), .int(2), .int(-3)]])
+  }
+
+  @Test("A dump with Drop restored over the same table, sequence and type replaces them")
+  func dropRoundTrip() async throws {
+    let directory = try temporaryFolder()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let original = try await connect(config(DuckDBSession.inMemoryPath))
+    defer { Task { await original.disconnect() } }
+    _ = try await original.execute(
+      userSQL: """
+        CREATE TYPE mood AS ENUM ('sad', 'ok');
+        CREATE SEQUENCE ids START 10;
+        CREATE TABLE pets(id INTEGER PRIMARY KEY DEFAULT nextval('ids'), name VARCHAR, m mood);
+        INSERT INTO pets (name, m) VALUES ('a', 'sad'), ('b', 'ok');
+        CREATE VIEW pet_moods AS SELECT name, m FROM pets;
+        """, policy: open)
+    // The target has the same names with other labels, start, columns and rows
+    let restored = try await connect(config(DuckDBSession.inMemoryPath))
+    defer { Task { await restored.disconnect() } }
+    _ = try await restored.execute(
+      userSQL: """
+        CREATE TYPE mood AS ENUM ('old');
+        CREATE SEQUENCE ids START 900;
+        CREATE TABLE pets(id INTEGER DEFAULT nextval('ids'), name VARCHAR, m mood, extra INTEGER);
+        INSERT INTO pets (name, m, extra) VALUES ('old', 'old', 1);
+        CREATE VIEW pet_moods AS SELECT name FROM pets;
+        """, policy: open)
+
+    let options = SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true))
+    let script = try await dump(
+      original, config(DuckDBSession.inMemoryPath), in: directory, options: options)
+    #expect(script.hasPrefix("-- Dblore SQL dump 2 engine=DuckDB created="))
+    let summary = try await restored.executeGatedRestore(
+      script: script, policy: open, connectionEpoch: await restored.connectionEpoch)
+    // The view, the table, the sequence and the type
+    #expect(summary.count(.drop) == 4)
+    #expect(summary.statementsRun == summary.statementCount)
+
+    for sql in [
+      "SELECT id, name, CAST(m AS VARCHAR) FROM pets ORDER BY id",
+      "SELECT name, CAST(m AS VARCHAR) FROM pet_moods ORDER BY name",
+      """
+      SELECT type_name, to_json(labels)::VARCHAR FROM duckdb_types()
+      WHERE database_name = current_database() AND NOT internal ORDER BY ALL
+      """,
+      """
+      SELECT table_name, sql FROM duckdb_tables()
+      WHERE database_name = current_database() AND NOT internal ORDER BY ALL
+      """,
+      "SELECT nextval('ids')",
+    ] {
+      let expected = try await rows(original, sql)
+      #expect(!expected.isEmpty, "\(sql)")
+      #expect(try await rows(restored, sql) == expected, "\(sql)")
+    }
+  }
+
+  @Test("A Drop restore is refused in a schema named like an attached database or a moved session")
+  func dropTargetsChecked() async throws {
+    let restored = try await connect(config(DuckDBSession.inMemoryPath))
+    defer { Task { await restored.disconnect() } }
+    _ = try await restored.executeInternal("ATTACH ':memory:' AS foo")
+    _ = try await restored.executeInternal("CREATE TABLE foo.main.orders(x INTEGER)")
+    _ = try await restored.executeInternal("INSERT INTO foo.main.orders VALUES (1)")
+    func script(_ statements: [String]) -> String {
+      ([SQLDumpAssembler.header(engine: .duckdb, created: Date(), version: 2)] + statements)
+        .map { $0 + "\n" }.joined()
+    }
+    // `foo.orders` would drop foo.main.orders, then create the table in a new schema foo
+    let crafted = script([
+      "DROP TABLE IF EXISTS \"foo\".\"orders\";", "CREATE SCHEMA IF NOT EXISTS \"foo\";",
+      "CREATE TABLE foo.orders(x INTEGER);",
+    ])
+    let error = await #expect(throws: SQLRestoreError.self) {
+      _ = try await restored.executeGatedRestore(
+        script: crafted, policy: open, connectionEpoch: await restored.connectionEpoch)
+    }
+    #expect(error == .dropNamesDuckDBDatabase(name: "foo"))
+    #expect(try await rows(restored, "SELECT count(*) FROM foo.main.orders") == [[.int(1)]])
+    #expect(
+      try await rows(restored, "SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'foo'")
+        == [[.int(0)]])
+
+    // A one-part CREATE would land in s2, not in main
+    _ = try await restored.executeInternal("CREATE SCHEMA s2")
+    _ = try await restored.executeInternal("SET schema = 's2'")
+    let moved = await #expect(throws: SQLRestoreError.self) {
+      _ = try await restored.executeGatedRestore(
+        script: script(["DROP TABLE IF EXISTS \"main\".\"t\";", "CREATE TABLE t(x INTEGER);"]),
+        policy: open, connectionEpoch: await restored.connectionEpoch)
+    }
+    #expect(moved == .duckdbSessionNotAtMain(schema: "s2", searchPath: "s2"))
+    #expect(
+      try await rows(restored, "SELECT count(*) FROM duckdb_tables() WHERE table_name = 't'")
+        == [[.int(0)]])
   }
 
   @Test("A file opened read-only dumps on its own session and refuses a restore")
@@ -291,11 +389,12 @@ struct DuckDBDumpRoundTripTests {
 
   /// The dump of `manager`'s own session, as text
   private func dump(
-    _ manager: DatabaseConnectionManager, _ config: ConnectionConfig, in directory: URL
+    _ manager: DatabaseConnectionManager, _ config: ConnectionConfig, in directory: URL,
+    options: SQLDumpOptions = SQLDumpOptions()
   ) async throws -> String {
     let destination = directory.appendingPathComponent("dump-\(UUID().uuidString).sql")
     let writer = SQLDumpWriter(tabManager: manager, config: config)
-    _ = try await writer.write(to: destination)
+    _ = try await writer.write(to: destination, options: options)
     return try String(contentsOf: destination, encoding: .utf8)
   }
 

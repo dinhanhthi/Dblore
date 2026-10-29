@@ -240,11 +240,15 @@ struct DatabaseBackupModelTests {
     #expect(tables.map(\.name).sorted() == ["notes", "tags"])
 
     let all = Set(tables.map { SQLDumpDDL.ObjectName(schema: $0.schema, name: $0.name) })
+    let schemaOnly = Dictionary(
+      uniqueKeysWithValues: all.map { ($0, SQLDumpOptions.TableOptions(data: false)) })
     #expect(
-      DatabaseBackupModel.dumpOptions(selected: all, from: tables, includeData: false)
+      DatabaseBackupModel.dumpOptions(schemaOnly, from: tables)
         == SQLDumpOptions(tables: nil, includeData: false))
     let notes = Set(all.filter { $0.name == "notes" })
-    let options = DatabaseBackupModel.dumpOptions(selected: notes, from: tables, includeData: true)
+    let options = DatabaseBackupModel.dumpOptions(
+      Dictionary(uniqueKeysWithValues: notes.map { ($0, SQLDumpOptions.TableOptions()) }),
+      from: tables)
     #expect(options.tables == notes)
 
     let destination = fixture.directory.appendingPathComponent("notes.sql")
@@ -254,6 +258,43 @@ struct DatabaseBackupModelTests {
     #expect(model.dumpProgress == SQLDumpProgress(tablesDone: 1, tableCount: 1, rowsWritten: 2))
     let text = try String(contentsOf: destination, encoding: .utf8)
     #expect(text.contains("CREATE TABLE notes") && !text.contains("tags"))
+  }
+
+  @Test func databaseRowTriStateMapsToPerTableFlagsAndBack() {
+    typealias Name = SQLDumpDDL.ObjectName
+    typealias Flags = SQLDumpOptions.TableOptions
+    let tables = ["a", "b", "c"].map {
+      DatabaseTable(schema: "public", name: $0)
+    }
+    let names = tables.map { Name(schema: $0.schema, name: $0.name) }
+    var flags = Dictionary(uniqueKeysWithValues: names.map { ($0, Flags()) })
+    #expect(DatabaseBackupModel.databaseRow(\.structure, of: flags) == .all)
+    #expect(DatabaseBackupModel.databaseRow(\.drop, of: flags) == .none)
+    #expect(DatabaseBackupModel.dumpOptions(flags, from: tables) == SQLDumpOptions())
+
+    // One table without Data: the row is mixed (a dash), the table keeps its own flag
+    flags[names[1]]?.data = false
+    #expect(DatabaseBackupModel.databaseRow(\.data, of: flags) == .mixed)
+    #expect(
+      DatabaseBackupModel.dumpOptions(flags, from: tables)
+        == SQLDumpOptions(perTable: [names[1]: Flags(data: false)]))
+
+    // The row sets every table beneath it, then reads back as all or none
+    let dropAll = DatabaseBackupModel.settingDatabaseRow(\.drop, to: true, in: flags)
+    #expect(dropAll.values.allSatisfy { $0.drop })
+    #expect(DatabaseBackupModel.databaseRow(\.drop, of: dropAll) == .all)
+    #expect(dropAll[names[1]] == Flags(data: false, drop: true))
+    let noData = DatabaseBackupModel.settingDatabaseRow(\.data, to: false, in: flags)
+    #expect(DatabaseBackupModel.databaseRow(\.data, of: noData) == .none)
+    let noStructure = DatabaseBackupModel.settingDatabaseRow(\.structure, to: false, in: flags)
+    #expect(
+      DatabaseBackupModel.dumpOptions(noStructure, from: tables).table(names[0])
+        == Flags(structure: false))
+
+    // A table with neither Structure nor Data is left out
+    flags[names[2]] = Flags(structure: false, data: false)
+    #expect(
+      DatabaseBackupModel.dumpOptions(flags, from: tables).tables == Set(names.prefix(2)))
   }
 
   // MARK: - SQLite file copy

@@ -285,6 +285,46 @@ struct SQLDumpWriterTests {
       text.hasSuffix("PRAGMA defer_foreign_keys = ON;\nCREATE VIRTUAL TABLE v USING fts5(a);\n"))
   }
 
+  @Test func sqliteDropNeverDropsAVirtualTableAndCreatesItOnlyWhenMissing() throws {
+    // Their rows are not dumped: a DROP would empty a filled one
+    let rows: [SQLDumpDDL.SQLiteMasterRow] = [
+      .init(
+        type: "table", name: "docs", tableName: "docs",
+        sql: "CREATE VIRTUAL TABLE docs USING fts5(body)"),
+      .init(
+        type: "table", name: "my docs", tableName: "my docs",
+        sql: "CREATE VIRTUAL TABLE \"my docs\" USING fts5(body)"),
+      // Text SQLite never stores (it strips IF NOT EXISTS) stays as is
+      .init(
+        type: "table", name: "r", tableName: "r",
+        sql: "CREATE VIRTUAL TABLE IF NOT EXISTS r USING rtree(id, a, b)"),
+      // Still dropped: the restore's CREATE VIEW would fail on the source's view
+      .init(
+        type: "view", name: "dv", tableName: "dv", sql: "CREATE VIEW dv AS SELECT body FROM docs"),
+    ]
+    let input = SQLDumpDDL.SQLiteInput(masterRows: rows, structures: [])
+    let dropping = try SQLDumpDDL.sqlite(
+      input, options: SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true)))
+    #expect(dropping.containsDrop)
+    #expect(
+      dropping.preData == [
+        "PRAGMA defer_foreign_keys = ON;",
+        "DROP VIEW IF EXISTS \"dv\";",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(body);",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS \"my docs\" USING fts5(body);",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS r USING rtree(id, a, b);",
+      ])
+    #expect(dropping.postData == ["CREATE VIEW dv AS SELECT body FROM docs;"])
+    #expect(dropping.comment.joined().contains("Drop keeps an existing one with its rows"))
+    let text = try Self.assemble(.sqlite, dropping, rows: [[], [], []])
+    #expect(text.hasPrefix(SQLRestorePlan.dropHeaderPrefix))
+    #expect(try SQLRestorePlan(script: text, engine: .sqlite).summary.count(.drop) == 1)
+    // Without Drop the catalog text is kept
+    let plain = try SQLDumpDDL.sqlite(input)
+    #expect(plain.preData[1] == "CREATE VIRTUAL TABLE docs USING fts5(body);")
+    #expect(!plain.comment.joined().contains("Drop keeps"))
+  }
+
   @Test func insertBatchesHoldAtMost500Rows() throws {
     let script = SQLDumpDDL.Script(
       comment: [], preData: [], tables: [Self.insert("t", ["a"])], postData: [])
@@ -889,6 +929,450 @@ struct SQLDumpWriterTests {
     #expect(
       allText.components(separatedBy: "\n").dropFirst()
         == plainText.components(separatedBy: "\n").dropFirst())
+  }
+
+  // MARK: - Structure, Data and Drop per table
+
+  private typealias Flags = SQLDumpOptions.TableOptions
+
+  /// app.items -> app.orders -> app.customers (catalog order: children first), a serial-style
+  /// sequence of customers, an identity sequence of orders, a free sequence, an enum, two
+  /// domains (one over the other) and two views
+  private static let postgresInput = SQLDumpDDL.PostgresInput(
+    tables: [
+      SQLDumpDDL.PostgresTable(
+        structure: table("app", "items", references: Name(schema: "app", name: "orders"))),
+      SQLDumpDDL.PostgresTable(
+        structure: table("app", "orders", references: Name(schema: "app", name: "customers"))),
+      SQLDumpDDL.PostgresTable(structure: table("app", "customers")),
+    ],
+    sequences: [
+      sequence("customers_id_seq", owner: Name(schema: "app", name: "customers")),
+      sequence("orders_id_seq", owner: Name(schema: "app", name: "orders"), identity: true),
+      sequence("free_seq", owner: nil),
+    ],
+    enums: [SQLDumpDDL.PostgresEnum(schema: "app", name: "mood", labels: ["ok"])],
+    domains: [
+      SQLDumpDDL.PostgresDomain(
+        schema: "app", name: "positive", baseType: "integer", defaultExpression: nil,
+        notNull: false, constraints: []),
+      SQLDumpDDL.PostgresDomain(
+        schema: "app", name: "small", baseType: "app.positive", defaultExpression: nil,
+        notNull: false, constraints: []),
+    ],
+    views: [
+      SQLDumpDDL.View(
+        schema: "app", name: "v_on_v_orders", sql: "SELECT 1",
+        dependsOn: [Name(schema: "app", name: "v_orders")]),
+      SQLDumpDDL.View(
+        schema: "app", name: "v_orders", sql: "SELECT 1",
+        dependsOn: [Name(schema: "app", name: "orders")]),
+    ])
+
+  private static let orders = Name(schema: "app", name: "orders")
+  private static let items = Name(schema: "app", name: "items")
+  private static let customers = Name(schema: "app", name: "customers")
+
+  @Test func postgresWithoutDropIsUnchangedAndHeaderStaysOne() throws {
+    let plain = try SQLDumpDDL.postgres(Self.postgresInput)
+    let flagged = try SQLDumpDDL.postgres(
+      Self.postgresInput,
+      options: SQLDumpOptions(perTable: [Self.orders: Flags(), Self.items: Flags(data: false)]))
+    #expect(flagged == plain)
+    #expect(!plain.containsDrop && !plain.foreignKeyCycle)
+    #expect(!(plain.preData + plain.postData).contains { $0.hasPrefix("DROP") })
+    let text = try Self.assemble(.postgresql, plain, rows: [[], [], []])
+    #expect(text.hasPrefix("-- Dblore SQL dump 1 engine=PostgreSQL created="))
+  }
+
+  @Test func postgresDropsOnlyWhatTheDumpCreatesRightAfterTheSchemas() throws {
+    let script = try SQLDumpDDL.postgres(
+      Self.postgresInput, options: SQLDumpOptions(perTable: [Self.orders: Flags(drop: true)]))
+    #expect(script.containsDrop)
+    #expect(
+      Array(script.preData.prefix(9)) == [
+        "CREATE SCHEMA IF NOT EXISTS \"app\";",
+        "DROP VIEW IF EXISTS \"app\".\"v_on_v_orders\";",
+        "DROP VIEW IF EXISTS \"app\".\"v_orders\";",
+        "DROP TABLE IF EXISTS \"app\".\"orders\";",
+        // The identity sequence goes with its table
+        "DROP SEQUENCE IF EXISTS \"app\".\"customers_id_seq\";",
+        "DROP SEQUENCE IF EXISTS \"app\".\"free_seq\";",
+        "DROP DOMAIN IF EXISTS \"app\".\"small\";",
+        "DROP DOMAIN IF EXISTS \"app\".\"positive\";",
+        "DROP TYPE IF EXISTS \"app\".\"mood\";",
+      ])
+    #expect(script.preData[9].hasPrefix("CREATE TYPE"))
+    #expect(script.preData.filter { $0.hasPrefix("DROP") }.count == 8)
+    #expect(!(script.preData + script.postData).contains { $0.contains("CASCADE") })
+    let text = try Self.assemble(.postgresql, script, rows: [[], [], []])
+    #expect(text.hasPrefix("-- Dblore SQL dump 2 engine=PostgreSQL created="))
+    // The restore gate accepts every DROP: each names an object the dump creates after it
+    #expect(try SQLRestorePlan(script: text, engine: .postgresql).summary.count(.drop) == 8)
+
+    // Every table: one DROP TABLE statement; a table without Structure is never dropped
+    let all = try SQLDumpDDL.postgres(
+      Self.postgresInput,
+      options: SQLDumpOptions(
+        perTable: [Self.items: Flags(structure: false, drop: true)],
+        otherTables: Flags(drop: true)))
+    #expect(all.preData.contains("DROP TABLE IF EXISTS \"app\".\"orders\", \"app\".\"customers\";"))
+    #expect(!all.preData.contains { $0.contains("DROP") && $0.contains("\"items\"") })
+  }
+
+  @Test func postgresStructureOffWritesNoDDLAndInsertsParentsFirst() throws {
+    let mixed = try SQLDumpDDL.postgres(
+      Self.postgresInput,
+      options: SQLDumpOptions(perTable: [Self.customers: Flags(structure: false)]))
+    let statements = mixed.preData + mixed.postData
+    #expect(
+      !statements.contains {
+        $0.hasPrefix("CREATE TABLE \"app\".\"customers\"")
+          || $0.hasPrefix("ALTER TABLE \"app\".\"customers\"") || $0.contains("OWNED BY")
+      })
+    // Types, views and other sequences stay while one dumped table keeps its structure; the
+    // sequence customers owns stays in the target with it (its setval is kept)
+    #expect(!statements.contains { $0.contains("SEQUENCE \"app\".\"customers_id_seq\"") })
+    #expect(
+      statements.contains("SELECT pg_catalog.setval('\"app\".\"customers_id_seq\"', 3, true);"))
+    #expect(statements.contains { $0.hasPrefix("CREATE SEQUENCE \"app\".\"free_seq\"") })
+    #expect(statements.contains { $0.hasPrefix("CREATE TYPE \"app\".\"mood\"") })
+    #expect(statements.contains { $0.hasPrefix("CREATE VIEW") })
+    #expect(statements.contains { $0.hasPrefix("ALTER TABLE \"app\".\"orders\" ADD") })
+    #expect(mixed.tables.map(\.name) == ["customers", "orders", "items"])
+    #expect(!mixed.foreignKeyCycle && !mixed.containsDrop)
+
+    let dataOnly = try SQLDumpDDL.postgres(
+      Self.postgresInput, options: SQLDumpOptions(otherTables: Flags(structure: false)))
+    #expect(dataOnly.preData == ["CREATE SCHEMA IF NOT EXISTS \"app\";"])
+    #expect(
+      dataOnly.postData == [
+        "SELECT pg_catalog.setval('\"app\".\"customers_id_seq\"', 3, true);",
+        "SELECT pg_catalog.setval('\"app\".\"orders_id_seq\"', 3, true);",
+        "SELECT pg_catalog.setval('\"app\".\"free_seq\"', 3, true);",
+      ])
+    #expect(dataOnly.tables.map(\.name) == ["customers", "orders", "items"])
+
+    // A cycle keeps catalog order and says so
+    var cyclic = Self.postgresInput
+    cyclic.tables[2] = SQLDumpDDL.PostgresTable(
+      structure: Self.table("app", "customers", references: Self.items))
+    let cycle = try SQLDumpDDL.postgres(
+      cyclic, options: SQLDumpOptions(otherTables: Flags(structure: false)))
+    #expect(cycle.foreignKeyCycle)
+    #expect(cycle.tables.map(\.name) == ["items", "orders", "customers"])
+  }
+
+  @Test func postgresStructureOffTableKeepsItsSequencesAndTypesOutOfCreateAndDrop() throws {
+    func column(_ name: String, _ type: String, default value: String? = nil) -> Column {
+      var column = Self.column(1, name, type)
+      column.defaultExpression = value
+      return column
+    }
+    let off = Name(schema: "app", name: "off")
+    let kept = Name(schema: "app", name: "kept")
+    var offTable = Self.table("app", "off")
+    offTable.columns = [
+      column("id", "integer", default: "nextval('app.off_id_seq'::regclass)"),
+      column("other", "bigint", default: "nextval('\"app\".\"Shared\"'::regclass)"),
+      column("m", "app.mood[]"), column("d", "app.small"),
+    ]
+    var keptTable = Self.table("app", "kept")
+    keptTable.columns = [
+      column("id", "integer", default: "nextval('app.kept_id_seq'::regclass)"),
+      column("m", "app.mood"), column("c", "app.color"),
+    ]
+    let input = SQLDumpDDL.PostgresInput(
+      tables: [
+        SQLDumpDDL.PostgresTable(structure: offTable),
+        SQLDumpDDL.PostgresTable(structure: keptTable),
+      ],
+      sequences: [
+        Self.sequence("off_id_seq", owner: off), Self.sequence("Shared", owner: nil),
+        Self.sequence("kept_id_seq", owner: kept),
+      ],
+      enums: [
+        SQLDumpDDL.PostgresEnum(schema: "app", name: "mood", labels: ["ok"]),
+        SQLDumpDDL.PostgresEnum(schema: "app", name: "color", labels: ["red"]),
+      ],
+      domains: [
+        SQLDumpDDL.PostgresDomain(
+          schema: "app", name: "positive", baseType: "integer", defaultExpression: nil,
+          notNull: false, constraints: []),
+        SQLDumpDDL.PostgresDomain(
+          schema: "app", name: "small", baseType: "app.positive", defaultExpression: nil,
+          notNull: false, constraints: []),
+      ],
+      views: [])
+    let script = try SQLDumpDDL.postgres(
+      input,
+      options: SQLDumpOptions(
+        perTable: [off: Flags(structure: false), kept: Flags(structure: true, drop: true)]))
+    let statements = script.preData + script.postData
+    // Only what the Structure-off table does not use is dropped and created
+    #expect(
+      script.preData.filter { $0.hasPrefix("DROP") } == [
+        "DROP TABLE IF EXISTS \"app\".\"kept\";",
+        "DROP SEQUENCE IF EXISTS \"app\".\"kept_id_seq\";",
+        "DROP TYPE IF EXISTS \"app\".\"color\";",
+      ])
+    #expect(
+      script.preData.filter { $0.hasPrefix("CREATE") && !$0.hasPrefix("CREATE TABLE") } == [
+        "CREATE SCHEMA IF NOT EXISTS \"app\";",
+        "CREATE TYPE \"app\".\"color\" AS ENUM ('red');",
+        "CREATE SEQUENCE \"app\".\"kept_id_seq\" AS integer START WITH 1 INCREMENT BY 1"
+          + " MINVALUE 1 MAXVALUE 100 NO CYCLE;",
+      ])
+    for name in ["off_id_seq", "Shared", "mood", "small", "positive"] {
+      #expect(
+        !statements.contains {
+          ($0.hasPrefix("CREATE") || $0.hasPrefix("DROP")) && $0.contains("\"\(name)\"")
+        }, "\(name)")
+    }
+    // Every sequence keeps its value
+    #expect(statements.filter { $0.hasPrefix("SELECT pg_catalog.setval") }.count == 3)
+    // The default options stay as they were
+    #expect(
+      try SQLDumpDDL.postgres(input, options: SQLDumpOptions()) == SQLDumpDDL.postgres(input))
+    #expect(try SQLDumpDDL.postgres(input).preData.contains { $0.contains("\"off_id_seq\"") })
+    // The restore gate reads the dump as written
+    let text = try Self.assemble(.postgresql, script, rows: [[], []])
+    #expect(try SQLRestorePlan(script: text, engine: .postgresql).summary.count(.drop) == 3)
+  }
+
+  @Test func duckdbStructureOffTableKeepsItsNextvalSequencesOutOfCreateAndDrop() throws {
+    func table(_ name: String, default value: String) -> SQLDumpDDL.DuckDBTable {
+      var structure = Self.table("s", name)
+      structure.columns[0].defaultExpression = value
+      return SQLDumpDDL.DuckDBTable(
+        structure: structure,
+        sql: "CREATE TABLE s.\(name)(id INTEGER DEFAULT(\(value)));")
+    }
+    func sequence(_ schema: String, _ name: String) -> SQLDumpDDL.DuckDBSequence {
+      SQLDumpDDL.DuckDBSequence(
+        schema: schema, name: name, start: 1, increment: 1, minValue: 1, maxValue: 9,
+        cycle: false, lastValue: nil)
+    }
+    let input = SQLDumpDDL.DuckDBInput(
+      schemas: ["s"], enums: [],
+      sequences: [
+        sequence("s", "off_seq"), sequence("main", "off_seq"), sequence("s", "other"),
+        sequence("s", "kept_seq"),
+      ],
+      tables: [
+        table("off", default: "nextval('off_seq')"),
+        table("off2", default: "nextval('S.\"Other\"')"),
+        table("kept", default: "nextval('s.kept_seq')"),
+      ],
+      indexes: [], views: [])
+    let script = try SQLDumpDDL.duckdb(
+      input,
+      options: SQLDumpOptions(
+        perTable: [
+          Name(schema: "s", name: "off"): Flags(structure: false),
+          Name(schema: "s", name: "off2"): Flags(structure: false),
+        ],
+        otherTables: Flags(drop: true)))
+    #expect(
+      script.preData == [
+        "CREATE SCHEMA IF NOT EXISTS \"s\";",
+        "DROP TABLE IF EXISTS \"s\".\"kept\";",
+        "DROP SEQUENCE IF EXISTS \"s\".\"kept_seq\";",
+        "CREATE SEQUENCE \"s\".\"kept_seq\" START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9"
+          + " NO CYCLE;",
+        "CREATE TABLE s.kept(id INTEGER DEFAULT(nextval('s.kept_seq')));",
+      ])
+    #expect(try SQLDumpDDL.duckdb(input, options: SQLDumpOptions()) == SQLDumpDDL.duckdb(input))
+    let text = try Self.assemble(.duckdb, script, rows: [[], [], []])
+    #expect(try SQLRestorePlan(script: text, engine: .duckdb).summary.count(.drop) == 2)
+  }
+
+  @Test func mysqlDropsGoInsideForeignKeyChecksOff() throws {
+    let input = SQLDumpDDL.MySQLInput(
+      tables: [
+        SQLDumpDDL.MySQLTable(
+          structure: Self.table("shop", "customers"),
+          createStatement: "CREATE TABLE `customers` (id int)"),
+        SQLDumpDDL.MySQLTable(
+          structure: Self.table("shop", "orders"), createStatement: "CREATE TABLE `orders` (id int)"
+        ),
+      ],
+      views: [
+        SQLDumpDDL.View(
+          schema: "shop", name: "v_plain", sql: "CREATE VIEW `v_plain` AS select 1", dependsOn: [])
+      ])
+    let script = try SQLDumpDDL.mysql(
+      input,
+      options: SQLDumpOptions(perTable: [Name(schema: "shop", name: "orders"): Flags(drop: true)]))
+    let text = try Self.assemble(.mysql, script, rows: [[["1"]], [["2"]]])
+    #expect(
+      text == """
+        -- Dblore SQL dump 2 engine=MySQL created=2025-10-09T08:53:20Z
+        SET time_zone = '+00:00';
+        SET NAMES utf8mb4;
+        SET SESSION sql_mode = TRIM(BOTH ',' FROM CONCAT(REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',NO_BACKSLASH_ESCAPES,', ','), 'NO_AUTO_VALUE_ON_ZERO'));
+        -- Not included: stored procedures, functions, triggers, events, users and grants.
+        SET FOREIGN_KEY_CHECKS=0;
+        DROP VIEW IF EXISTS `v_plain`;
+        DROP TABLE IF EXISTS `orders`;
+        CREATE TABLE `customers` (id int);
+        CREATE TABLE `orders` (id int);
+        INSERT INTO `customers` (`id`) VALUES
+        (1);
+        INSERT INTO `orders` (`id`) VALUES
+        (2);
+        SET FOREIGN_KEY_CHECKS=1;
+        CREATE VIEW `v_plain` AS select 1;
+
+        """)
+    // The restore gate accepts both DROPs (the rows here are unquoted fixtures, so none)
+    let schema = try Self.assemble(.mysql, script, rows: [[], []])
+    #expect(try SQLRestorePlan(script: schema, engine: .mysql).summary.count(.drop) == 2)
+    #expect(try SQLDumpDDL.mysql(input, options: SQLDumpOptions()) == SQLDumpDDL.mysql(input))
+    let dataOnly = try SQLDumpDDL.mysql(
+      input, options: SQLDumpOptions(otherTables: Flags(structure: false, drop: true)))
+    #expect(dataOnly.preData.isEmpty && dataOnly.postData.isEmpty && !dataOnly.containsDrop)
+    #expect(dataOnly.tables.count == 2)
+  }
+
+  @Test func duckdbDropsInReverseCreationOrder() throws {
+    func duckTable(_ name: String) -> SQLDumpDDL.DuckDBTable {
+      SQLDumpDDL.DuckDBTable(
+        structure: Self.table("s", name), sql: "CREATE TABLE s.\(name)(id INTEGER);")
+    }
+    func sequence(_ name: String) -> SQLDumpDDL.DuckDBSequence {
+      SQLDumpDDL.DuckDBSequence(
+        schema: "s", name: name, start: 1, increment: 1, minValue: 1, maxValue: 9, cycle: false,
+        lastValue: nil)
+    }
+    let input = SQLDumpDDL.DuckDBInput(
+      schemas: ["s"], enums: [SQLDumpDDL.DuckDBEnum(schema: "s", name: "mood", labels: ["ok"])],
+      sequences: [sequence("seq1"), sequence("seq2")], tables: [duckTable("a"), duckTable("b")],
+      indexes: [
+        SQLDumpDDL.DuckDBIndex(
+          schema: "s", table: "b", name: "b_idx", sql: "CREATE INDEX b_idx ON s.b(id);")
+      ],
+      views: [
+        SQLDumpDDL.View(
+          schema: "main", name: "v1", sql: "CREATE VIEW v1 AS SELECT 1;", dependsOn: [])
+      ])
+    let script = try SQLDumpDDL.duckdb(
+      input, options: SQLDumpOptions(otherTables: Flags(drop: true)))
+    #expect(script.containsDrop)
+    #expect(
+      Array(script.preData.prefix(7)) == [
+        "CREATE SCHEMA IF NOT EXISTS \"s\";",
+        "DROP VIEW IF EXISTS \"main\".\"v1\";",
+        "DROP TABLE IF EXISTS \"s\".\"b\";",
+        "DROP TABLE IF EXISTS \"s\".\"a\";",
+        "DROP SEQUENCE IF EXISTS \"s\".\"seq2\";",
+        "DROP SEQUENCE IF EXISTS \"s\".\"seq1\";",
+        "DROP TYPE IF EXISTS \"s\".\"mood\";",
+      ])
+    #expect(script.preData[7].hasPrefix("CREATE TYPE"))
+    let text = try Self.assemble(.duckdb, script, rows: [[], []])
+    #expect(try SQLRestorePlan(script: text, engine: .duckdb).summary.count(.drop) == 6)
+    #expect(try SQLDumpDDL.duckdb(input, options: SQLDumpOptions()) == SQLDumpDDL.duckdb(input))
+
+    // Structure off on b: no CREATE TABLE and no index for it, and no DROP
+    let mixed = try SQLDumpDDL.duckdb(
+      input,
+      options: SQLDumpOptions(perTable: [
+        Name(schema: "s", name: "b"): Flags(structure: false, drop: true)
+      ]))
+    #expect(!mixed.containsDrop)
+    #expect(!(mixed.preData + mixed.postData).contains { $0.contains("s.b") })
+    #expect(mixed.preData.contains("CREATE TABLE s.a(id INTEGER);"))
+  }
+
+  @Test func sqliteDropAndDataOnlyDumpsRestoreOverTheirTables() async throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("source.db")
+    try Self.exec(
+      source.path,
+      """
+      CREATE TABLE parent (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));
+      CREATE TABLE keep (id INTEGER PRIMARY KEY);
+      CREATE INDEX idx_child ON child (parent_id);
+      CREATE TRIGGER child_touch AFTER INSERT ON child BEGIN SELECT 1; END;
+      CREATE VIEW v_child AS SELECT * FROM child;
+      INSERT INTO parent VALUES (1, 'a'), (5, 'b');
+      INSERT INTO child VALUES (1, 1), (2, 5);
+      INSERT INTO keep VALUES (1);
+      """)
+    func dump(_ options: SQLDumpOptions) async throws -> (SQLDumpProgress, String) {
+      let destination = directory.appendingPathComponent("dump-\(UUID().uuidString).sql")
+      let writer = SQLDumpWriter(
+        config: Self.sqliteConfig(source.path), material: nil, sshCredential: nil,
+        sessionFactory: SQLDumpSessionFactory(inner: AppDatabaseSessionFactory()),
+        temporaryDirectory: directory)
+      let progress = try await writer.write(to: destination, options: options)
+      return (progress, try String(contentsOf: destination, encoding: .utf8))
+    }
+    func statements(_ text: String) -> [String] {
+      text.components(separatedBy: "\n").filter { !$0.isEmpty && !$0.hasPrefix("--") }
+    }
+    let parent = Name(schema: "main", name: "parent")
+    let child = Name(schema: "main", name: "child")
+    let compare = [
+      "SELECT * FROM parent ORDER BY id", "SELECT * FROM child ORDER BY id",
+      "SELECT * FROM keep", "SELECT name, seq FROM sqlite_sequence",
+      "SELECT type, name FROM sqlite_master ORDER BY name",
+    ]
+    let before = try compare.map { try Self.query(source.path, $0) }
+
+    // Per-table flags without Drop: today's dump, header 1
+    let (_, plainText) = try await dump(SQLDumpOptions())
+    let (_, flaggedText) = try await dump(SQLDumpOptions(perTable: [parent: Flags()]))
+    #expect(flaggedText.hasPrefix("-- Dblore SQL dump 1 engine=SQLite created="))
+    #expect(
+      flaggedText.components(separatedBy: "\n").dropFirst()
+        == plainText.components(separatedBy: "\n").dropFirst())
+
+    // Drop on parent and child (child without data); keep is written but not dropped
+    let (dropProgress, dropText) = try await dump(
+      SQLDumpOptions(
+        perTable: [parent: Flags(drop: true), child: Flags(data: false, drop: true)]))
+    #expect(dropText.hasPrefix("-- Dblore SQL dump 2 engine=SQLite created="))
+    #expect(
+      Array(statements(dropText).prefix(5)) == [
+        "PRAGMA defer_foreign_keys = ON;", "DROP VIEW IF EXISTS \"v_child\";",
+        "DROP TABLE IF EXISTS \"parent\";", "DROP TABLE IF EXISTS \"child\";",
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT);",
+      ])
+    #expect(statements(dropText).filter { $0.hasPrefix("DROP") }.count == 3)
+    #expect(!dropText.contains("INSERT INTO \"child\""))
+    #expect(dropProgress == SQLDumpProgress(tablesDone: 2, tableCount: 2, rowsWritten: 3))
+    // Restored over a database that already has those objects: they are replaced
+    let target = directory.appendingPathComponent("target.db")
+    try Self.exec(
+      target.path,
+      """
+      CREATE TABLE parent (id INTEGER PRIMARY KEY AUTOINCREMENT, old TEXT);
+      CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER);
+      CREATE VIEW v_child AS SELECT id FROM child;
+      INSERT INTO parent VALUES (9, 'old'); INSERT INTO child VALUES (9, 9);
+      """)
+    try Self.exec(target.path, "BEGIN;\n" + dropText + "\nCOMMIT;")
+    #expect(try Self.query(target.path, compare[0]) == before[0])
+    #expect(try Self.query(target.path, compare[1]).isEmpty)
+    #expect(try Self.query(target.path, compare[4]) == before[4])
+
+    // Structure off everywhere: rows and counters only, back into the emptied source
+    let (dataProgress, dataText) = try await dump(
+      SQLDumpOptions(otherTables: Flags(structure: false, drop: true)))
+    #expect(dataText.hasPrefix("-- Dblore SQL dump 1 engine=SQLite created="))
+    #expect(dataProgress == SQLDumpProgress(tablesDone: 3, tableCount: 3, rowsWritten: 5))
+    #expect(
+      statements(dataText).allSatisfy {
+        $0 == "PRAGMA defer_foreign_keys = ON;" || $0.hasPrefix("INSERT INTO ")
+          || $0.hasPrefix("(") || $0.hasPrefix("DELETE FROM sqlite_sequence ")
+      })
+    try Self.exec(source.path, "DELETE FROM child; DELETE FROM parent; DELETE FROM keep;")
+    try Self.exec(source.path, "BEGIN;\n" + dataText + "\nCOMMIT;")
+    #expect(try compare.map { try Self.query(source.path, $0) } == before)
   }
 
   // MARK: - Helpers

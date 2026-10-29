@@ -36,7 +36,7 @@ struct SQLRestoreSheet: View {
           fileSection
           if let plan = model.restorePlan {
             contentsSection(plan.summary)
-            notesSection(plan.engine)
+            notesSection(plan.engine, drops: plan.summary.count(.drop) > 0)
           }
           if let reason = model.restoreBlockedReason {
             BackupMessageBox(text: reason, isError: true)
@@ -187,19 +187,26 @@ struct SQLRestoreSheet: View {
     }
   }
 
-  private func notesSection(_ engine: DatabaseType) -> some View {
+  private func notesSection(_ engine: DatabaseType, drops: Bool) -> some View {
     SettingsGroupCard(title: "Before You Restore") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
         switch engine {
         case .mysql:
           note(
-            "MySQL commits each schema change at once, so the dump runs one statement at a "
-              + "time and cannot be rolled back. Turn Protected mode off for this connection to "
-              + "restore it, and commit or roll back any open transaction first.")
+            "MySQL commits each schema change at once, each DROP too, so the dump runs one "
+              + "statement at a time and cannot be rolled back: if a later statement fails, what "
+              + "it dropped stays gone. Turn Protected mode off for this connection to restore "
+              + "it, and commit or roll back any open transaction first.")
         case .postgresql:
           note(
             "The restore runs as one transaction. Under Protected mode it waits for Commit; a "
               + "Roll Back then undoes it, except sequence changes (setval), which stay.")
+          if drops {
+            note(
+              "DROP TABLE of a partitioned table also removes its partitions, and of any table "
+                + "the sequences it owns: the restore is refused when this database has "
+                + "partitions or owned sequences the dump does not recreate.")
+          }
         case .duckdb:
           note(
             "The restore runs as one transaction with Protected mode off: DuckDB has no "
@@ -211,7 +218,14 @@ struct SQLRestoreSheet: View {
             "A Schema-only connection refuses SQLite restores: the dump starts with "
               + "PRAGMA defer_foreign_keys = ON, which counts as a schema statement.")
         }
-        note("Restore into an empty database: existing tables with the same names make it fail.")
+        if drops {
+          note(
+            "This dump first drops the tables, views, sequences and types it recreates (never "
+              + "with CASCADE), so their current rows are replaced.")
+        } else {
+          note(
+            "Restore into an empty database: existing tables with the same names make it fail.")
+        }
       }
     }
   }
@@ -264,6 +278,7 @@ struct SQLRestoreSheet: View {
 
   private static func kindLabel(_ kind: SQLRestoreStatementKind) -> String {
     switch kind {
+    case .drop: "Drop statements"
     case .schema: "Schema statements"
     case .trigger: "Triggers"
     case .data: "Data statements"
@@ -281,6 +296,7 @@ struct SQLRestoreSheet: View {
   /// Singular, for `counted` ("1 trigger", "2 triggers")
   private static func kindNoun(_ kind: SQLRestoreStatementKind) -> String {
     switch kind {
+    case .drop: "drop statement"
     case .schema: "schema statement"
     case .trigger: "trigger"
     case .data: "data statement"
