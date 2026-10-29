@@ -346,6 +346,8 @@ struct WorkspaceContainerView: View {
     .ignoresSafeArea(.all, edges: isFullScreen ? [] : .top)
     .environment(\.nativeTabBarHeight, nativeTabBarHeight)
     .environment(\.trafficLightsWidth, trafficLightsWidth)
+    // The types editor sheet shows the toasts in its own overlay: this window's would repeat them
+    .environment(\.hidesToastOverlay, workspaceManager.userTypeEditor != nil)
     .background(
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
@@ -590,6 +592,7 @@ struct WorkspaceContainerView: View {
       }
       .dataDictionaryExportSheet(workspaceManager: workspaceManager)
       .schemaCompareSheet(workspaceManager: workspaceManager)
+      .userTypeEditorSheet(workspaceManager: workspaceManager)
       .copyObjectsSheet(workspaceManager: workspaceManager)
       .lockWorkspaceSheet(workspaceManager: workspaceManager)
       .crossTableSearchSheet(workspaceManager: workspaceManager)
@@ -609,6 +612,7 @@ struct WorkspaceContainerView: View {
     if manager.isCommitUnlockVisible { manager.cancelCommitUnlock() }
     manager.dataDictionaryExport?.cancel()
     manager.closeSchemaCompare()
+    manager.closeUserTypeEditor()
     manager.closeCopyObjects()
     manager.lockSheet?.close()
     if manager.isCrossTableSearchPresented { manager.crossTableSearch?.hide() }

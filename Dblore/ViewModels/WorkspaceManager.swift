@@ -296,6 +296,11 @@ class WorkspaceManager: Identifiable {
   /// are marked stale on Commit; dropped on Rollback and with the connection
   @ObservationIgnored var heldWrittenRelations: [WrittenRelations.Relation: UUID] = [:]
 
+  // MARK: - Types Editor
+
+  /// PostgreSQL type shown in the types editor sheet (or a new one). Nil hides it.
+  var userTypeEditor: UserTypeEditorModel?
+
   // MARK: - Data Dictionary
 
   /// Export Data Dictionary sheet. Nil hides it.
@@ -839,6 +844,8 @@ class WorkspaceManager: Identifiable {
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
+    // The types editor belongs to the previous connection
+    dropUserTypeEditor()
     // The diagram and its picked tables belong to the previous database
     cancelSchemaLayout()
     clearSchemaGraph()

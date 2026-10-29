@@ -5,7 +5,10 @@
 // table's data viewer tabs and the editor; a drop closes them. Under Protected mode both wait
 // for Commit (after a Rollback the tabs stay as they are). The sidebar's Rename... and Drop
 // Table... open the editor on the Name field or on the drop step. New Table... builds a
-// `CreateTableModel` on the same tab, connection and reload.
+// `CreateTableModel` on the same tab, connection and reload. The PostgreSQL types editor sheet
+// (New Type... and Edit Type...) works the same way, one per window; it reads the server version
+// and connection epoch when it opens and goes with the connection (disconnect, connection switch)
+// and, once its change went pending, with the transaction (Commit or Rollback).
 
 import Foundation
 
@@ -70,6 +73,86 @@ extension WorkspaceManager {
     model.toastPresenter = { [weak tab] in tab?.showToast($0, type: $1) }
     Task { await model.load() }
     return model
+  }
+
+  /// New Type... and Edit Type...: a connected PostgreSQL connection that allows schema changes,
+  /// a schema read since the last connect, and no pending transaction (the catalog is paused)
+  var canChangeUserTypes: Bool {
+    guard connectionState.isConnected, schemaConnectionEpoch != nil, !isSchemaPaused,
+      let config = workspace.connectionConfig
+    else { return false }
+    return config.databaseType == .postgresql && !config.protectionLevel.blocksSchemaChanges
+  }
+
+  /// The types editor on `type`
+  func openUserTypeEditor(type: DatabaseUserType) {
+    openUserTypeEditor { context, version, epoch in
+      UserTypeEditorModel(
+        type: type, context: context, serverVersion: version, connectionEpoch: epoch)
+    }
+  }
+
+  /// The types editor on a new type in `schema` (`schemas` are the picker's choices)
+  func openNewUserType(schema: String, schemas: [String]) {
+    openUserTypeEditor { context, version, epoch in
+      let model = UserTypeEditorModel(
+        newIn: schema, context: context, serverVersion: version, connectionEpoch: epoch)
+      model.schemaChoices = schemas.contains(schema) ? schemas : [schema] + schemas
+      return model
+    }
+  }
+
+  /// Builds the model on the active tab (a new SQL tab when none is open) once the server
+  /// version and connection epoch are read (actor reads, no query), unless the connection
+  /// changed or another editor opened meanwhile. The tab is picked (or made) only then, so a
+  /// bail leaves no empty tab behind.
+  private func openUserTypeEditor(
+    _ make: @escaping (SchemaChangeContext, Int?, UInt64) -> UserTypeEditorModel
+  ) {
+    guard userTypeEditor == nil, canChangeUserTypes, let epoch = schemaConnectionEpoch else {
+      return
+    }
+    let manager = connectionManager
+    Task { [weak self] in
+      let version = await manager.serverVersionNum()
+      let connectionEpoch = await manager.connectionEpoch
+      guard let self, self.userTypeEditor == nil, connectionEpoch == epoch,
+        self.schemaConnectionEpoch == epoch, self.canChangeUserTypes
+      else { return }
+      let tabID = self.activeTabId ?? self.newSQLFile()
+      guard let tab = self.viewModel(for: tabID), let context = SchemaChangeContext(tab: tab)
+      else { return }
+      let model = make(context, version, connectionEpoch)
+      model.onApplied = { [weak self, weak model] pending in
+        guard let self, let model, self.userTypeEditor === model else { return }
+        await self.refreshPendingTransaction()
+        if !pending, self.connectionState == .connected, !self.isSchemaPaused {
+          self.startSchemaLoad()
+        }
+      }
+      model.toastPresenter = { [weak tab] in tab?.showToast($0, type: $1) }
+      self.userTypeEditor = model
+    }
+  }
+
+  /// Hides the types editor (its staged changes go). Kept open while a change is being sent; a
+  /// Safe Mode step still open is cancelled, so a late Touch ID answer sends nothing.
+  func closeUserTypeEditor() {
+    guard userTypeEditor?.isApplying != true else { return }
+    dropUserTypeEditor()
+  }
+
+  /// Closes the types editor even mid-apply: its connection is going
+  func dropUserTypeEditor() {
+    userTypeEditor?.cancelConfirmation()
+    userTypeEditor = nil
+  }
+
+  /// The app transaction ended (Commit / Rollback): an editor whose change went pending shows
+  /// the type as it was before, so it closes (the sidebar reloads the types)
+  func userTypeEditorTransactionEnded() {
+    guard userTypeEditor?.disabledReason == UserTypeEditorModel.pausedMessage else { return }
+    closeUserTypeEditor()
   }
 
   /// Hides the editor (its staged changes go). Kept open while a change is being sent. A Safe

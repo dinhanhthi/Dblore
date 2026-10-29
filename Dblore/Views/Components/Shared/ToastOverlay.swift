@@ -10,11 +10,12 @@ import SwiftUI
 struct ToastOverlay: View {
   @Bindable var windowManager = WorkspaceWindowManager.shared
   @ReduceMotion private var reduceMotion
+  @Environment(\.hidesToastOverlay) private var isHidden
 
   var body: some View {
     // Always present, so the toast's insertion and removal can animate
     ZStack {
-      if let toast = windowManager.toastState.currentToast {
+      if !isHidden, let toast = windowManager.toastState.currentToast {
         VStack {
           Spacer()
           HStack {
@@ -33,4 +34,10 @@ struct ToastOverlay: View {
     // Opt out of the app-wide animation kill switch, only for the show/dismiss change
     .transaction(value: windowManager.toastState.currentToast) { $0.disablesAnimations = false }
   }
+}
+
+extension EnvironmentValues {
+  /// True while a sheet over this window shows the toasts in its own overlay, so each toast
+  /// shows once
+  @Entry var hidesToastOverlay = false
 }

@@ -237,6 +237,13 @@ struct WorkspaceLeftSidebarContent: View {
     createTable = workspaceManager.makeCreateTableModel(schema: target, schemas: schemas)
   }
 
+  /// The types editor on a new type in `schema` (nil: flat list), the New Table choices
+  private func openNewType(schema: String?) {
+    let schemas = createTableSchemas
+    guard let target = schema ?? schemas.first else { return }
+    workspaceManager.openNewUserType(schema: target, schemas: schemas)
+  }
+
   /// Closes the sheet unless a CREATE is being sent; a Safe Mode step still open is cancelled,
   /// so a late Touch ID answer sends nothing
   private func closeCreateTable() {
@@ -1068,7 +1075,12 @@ struct WorkspaceLeftSidebarContent: View {
           icon: section.icon,
           // Unread ones stay shut: drawing the section open reads it
           forceExpanded: isFilteringPublic && entities.userTypes != nil,
-          expanded: sectionExpansion(idPrefix + "types", default: false)
+          expanded: sectionExpansion(idPrefix + "types", default: false),
+          createTitle: offersCreate && workspaceManager.canChangeUserTypes
+            ? SidebarSectionModel.createActionTitle(
+              for: .types, databaseType: connectionDatabaseType) : nil,
+          onCreate: offersCreate && workspaceManager.canChangeUserTypes
+            ? { openNewType(schema: schema) } : nil
         ) {
           catalogStatus(workspaceManager.databaseUserTypes, isEmpty: entities.userTypes?.isEmpty) {
             await workspaceManager.loadUserTypesIfNeeded()
@@ -1077,7 +1089,9 @@ struct WorkspaceLeftSidebarContent: View {
             UserTypeRowView(
               type: type,
               onShowDDL: { workspaceManager.openObjectSource(.userType(type)) },
-              onCopyName: { copyName(type.name, schema: type.schema) }
+              onCopyName: { copyName(type.name, schema: type.schema) },
+              onEdit: workspaceManager.canChangeUserTypes
+                ? { workspaceManager.openUserTypeEditor(type: type) } : nil
             )
           }
         }

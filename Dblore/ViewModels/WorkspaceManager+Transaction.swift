@@ -161,7 +161,10 @@ extension WorkspaceManager {
       if endedTransaction, connectionState == .connected, databaseTables.isEmpty {
         startSchemaLoad()
       }
-      if endedTransaction { structureEditorTransactionEnded() }
+      if endedTransaction {
+        structureEditorTransactionEnded()
+        userTypeEditorTransactionEnded()
+      }
     }
     if state.isIdle {
       transactionOpenedAt = nil
@@ -406,6 +409,8 @@ extension WorkspaceManager {
     // export already cancelled (silent, no "Export Failed" alert)
     dataDictionaryExport?.cancel()
     schemaCompare?.close()
+    // The types editor belongs to the closing connection, even mid-apply
+    dropUserTypeEditor()
     // A copy running stops, and its connections close once it ends
     copyObjects?.close()
     dropCrossTableSearch()

@@ -44,8 +44,7 @@ extension DatabaseConnectionManager {
       throw DatabaseError.sequentialBatchRefused(Self.sequentialTransactionOpenRefusal)
     }
     if effective.protectedMode {
-      throw DatabaseError.sequentialBatchRefused(
-        "Turn Protected mode off for this connection to run these changes one by one.")
+      throw DatabaseError.sequentialBatchRefused(Self.sequentialProtectedModeRefusal)
     }
     guard session != nil else { throw DatabaseError.notConnected }
     try refuseIfConnectionClosed()
@@ -71,6 +70,8 @@ extension DatabaseConnectionManager {
 
   static let sequentialTransactionOpenRefusal =
     "Commit or roll back the open transaction first, then run these changes."
+  static let sequentialProtectedModeRefusal =
+    "Turn Protected mode off for this connection to run these changes one by one."
 
   /// Send each statement on its own. Stops at the first failure, once the connection changed
   /// or was cancelled, or once a transaction was opened meanwhile (the rest would run in it).
