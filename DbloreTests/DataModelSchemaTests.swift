@@ -12,6 +12,33 @@ struct DataModelSchemaTests {
 
   // MARK: - DatabaseTable Tests
 
+  @Test("Table and view ids are the same across loads (RFC 9562 version 8)")
+  func relationIdsAreStableAcrossLoads() {
+    let table = DatabaseTable(schema: "public", name: "users")
+    let reloadedTable = DatabaseTable(schema: "public", name: "users", rowCount: 3)
+    let view = DatabaseView(schema: "public", name: "active_users")
+    let reloadedView = DatabaseView(schema: "public", name: "active_users", definition: "SELECT 1")
+
+    #expect(table.id == reloadedTable.id)
+    #expect(view.id == reloadedView.id)
+    let bytes = table.id.uuid
+    #expect(bytes.6 >> 4 == 0b1000)
+    #expect(bytes.8 >> 6 == 0b10)
+  }
+
+  @Test("Table and view ids differ by schema, name, kind and temporary flag")
+  func relationIdsDifferByIdentity() {
+    let table = DatabaseTable(schema: "public", name: "users")
+
+    #expect(table.id != DatabaseTable(schema: "audit", name: "users").id)
+    #expect(table.id != DatabaseTable(schema: "public", name: "orders").id)
+    #expect(table.id != DatabaseView(schema: "public", name: "users").id)
+    #expect(
+      DatabaseView(schema: "public", name: "users").id
+        != DatabaseView(schema: "audit", name: "users").id)
+    #expect(table.id != DatabaseTable(schema: "public", name: "users", isTemporary: true).id)
+  }
+
   // MARK: - DatabaseColumn Type Icon Tests
 
   // MARK: - DatabaseView Tests

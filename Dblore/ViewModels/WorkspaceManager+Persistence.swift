@@ -288,6 +288,25 @@ extension WorkspaceManager {
     schemaLoadTask = nil
     schemaLoadGeneration += 1
     isLoadingSchema = false
+    isSchemaLoadCancelledByUser = false
+  }
+
+  /// The sidebar's Cancel: also leaves a hint until the next load starts
+  func userCancelledSchemaLoad() {
+    cancelSchemaLoad()
+    isSchemaLoadCancelledByUser = true
+  }
+
+  /// Refresh: replaces the running load with a tracked one (so Cancel stops it) and waits for it
+  func reloadSchemaThroughTask() async {
+    cancelSchemaLoad()
+    let generation = schemaLoadGeneration
+    startSchemaLoad()
+    // The new task sets the flag only once it runs: keep the spinner up meanwhile
+    if connectionState == .connected && !isSchemaPaused { isLoadingSchema = true }
+    await awaitSchemaLoad()
+    // The task stopped at its guard (disconnected meanwhile) and no other load started
+    if generation == schemaLoadGeneration { isLoadingSchema = false }
   }
 
   func awaitSchemaLoad() async {
@@ -343,6 +362,7 @@ extension WorkspaceManager {
     schemaLoadGeneration += 1
     let generation = schemaLoadGeneration
     isLoadingSchema = true
+    isSchemaLoadCancelledByUser = false
     defer {
       if generation == schemaLoadGeneration { isLoadingSchema = false }
     }
@@ -365,8 +385,8 @@ extension WorkspaceManager {
 
         async let columnsTask = connectionManager.fetchAllColumns()
 
-        var (
-          tables, views, functions, procedures, triggers, users, roles, foreignKeys,
+        let (
+          fetchedTables, fetchedViews, functions, procedures, triggers, users, roles, foreignKeys,
           columnsByRelation
         ) =
           try await (
@@ -374,13 +394,8 @@ extension WorkspaceManager {
             rolesTask, foreignKeysTask, columnsTask
           )
 
-        // Keys of `columnsByRelation` are "schema.relation" = `qualifiedName`
-        for index in tables.indices {
-          tables[index].columns = columnsByRelation[tables[index].qualifiedName] ?? []
-        }
-        for index in views.indices {
-          views[index].columns = columnsByRelation[views[index].qualifiedName] ?? []
-        }
+        let joined = await Self.joinColumns(
+          tables: fetchedTables, views: fetchedViews, columnsByRelation: columnsByRelation)
 
         // The transaction opened meanwhile: later lookups were refused, keep the cache
         if await connectionManager.isMetadataPaused {
@@ -392,9 +407,9 @@ extension WorkspaceManager {
           connectionState == .connected
         else { return }
 
-        databaseTables = tables
-        autocompleteProvider.update(tables: tables)
-        databaseViews = views
+        databaseTables = joined.tables
+        autocompleteProvider.update(tables: joined.tables, columnsByTable: joined.columnsByTable)
+        databaseViews = joined.views
         databaseFunctions = functions
         databaseProcedures = procedures
         databaseTriggers = triggers
@@ -406,10 +421,31 @@ extension WorkspaceManager {
         // Sync to tab ViewModels
         syncConnectionStateToTabs()
         reloadLoadedCatalogs()
+      } catch is CancellationError {
+        // Cancelled (refresh, Cancel, disconnect): an expected end, not a failure
       } catch {
         await AppLogger.shared.error("Failed to load schema: \(error)", category: "Schema")
       }
     }
+  }
+
+  /// Tables and views joined with their columns, plus the autocomplete index. Off the main
+  /// actor: a large catalog has tens of thousands of relations.
+  @concurrent nonisolated private static func joinColumns(
+    tables: [DatabaseTable], views: [DatabaseView], columnsByRelation: [String: [DatabaseColumn]]
+  ) async -> (
+    tables: [DatabaseTable], views: [DatabaseView], columnsByTable: [String: [DatabaseColumn]]
+  ) {
+    var tables = tables
+    var views = views
+    // Keys of `columnsByRelation` are "schema.relation" = `qualifiedName`
+    for index in tables.indices {
+      tables[index].columns = columnsByRelation[tables[index].qualifiedName] ?? []
+    }
+    for index in views.indices {
+      views[index].columns = columnsByRelation[views[index].qualifiedName] ?? []
+    }
+    return (tables, views, SQLAutocompleteProvider.columnIndex(of: tables))
   }
 
   /// Read the sequences when their sidebar section is first expanded (and again after a failure)
@@ -501,8 +537,7 @@ extension WorkspaceManager {
 
   /// Refresh database schema
   func refreshDatabaseSchema() async {
-    cancelSchemaLoad()
-    await loadDatabaseSchema()
+    await reloadSchemaThroughTask()
   }
 
   /// Toggle left sidebar visibility

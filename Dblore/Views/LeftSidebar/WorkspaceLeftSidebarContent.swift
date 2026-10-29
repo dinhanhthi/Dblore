@@ -597,6 +597,18 @@ struct WorkspaceLeftSidebarContent: View {
         SidebarFilterField(text: $publicFilter)
       }
 
+      // Cancel on a first load: the empty sections below are not an empty database
+      if workspaceManager.isSchemaLoadCancelledByUser
+        && workspaceManager.schemaConnectionEpoch == nil
+      {
+        Text("Schema load cancelled. Refresh to load it.")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, Spacing.md)
+          .padding(.vertical, Spacing.xs)
+      }
+
       if SidebarSectionModel.showsEverySchemaHiddenScreen(
         listed: schemas, schemas: schemaState.all, hidden: schemaState.hidden,
         hasTemporary: !temporary.isEmpty)
@@ -1147,6 +1159,11 @@ struct WorkspaceLeftSidebarContent: View {
       Text("Loading schema...")
         .font(.caption)
         .foregroundColor(.foregroundMuted)
+
+      // A large catalog reads for a while; the read stops at its next chunk, Refresh reloads it
+      Button("Cancel") { workspaceManager.userCancelledSchemaLoad() }
+        .buttonStyle(SecondaryButtonStyle())
+        .controlSize(.small)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }

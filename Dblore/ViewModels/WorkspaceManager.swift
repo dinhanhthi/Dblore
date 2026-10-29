@@ -35,8 +35,8 @@ class WorkspaceManager: Identifiable {
   var workspace: Workspace
   var isDirty: Bool = false
   var autoSaveTask: Task<Void, Never>?
-  /// Background schema load started by connect (and by a Commit / Rollback that retries a
-  /// load discarded during the transaction)
+  /// Background schema load started by connect, by Refresh, and by a Commit / Rollback that
+  /// retries a load discarded during the transaction
   var schemaLoadTask: Task<Void, Never>?
   /// Page loads of the restored data viewers started by the last connect
   @ObservationIgnored var dataViewerLoadTasks: [Task<Void, Never>] = []
@@ -400,6 +400,8 @@ class WorkspaceManager: Identifiable {
   /// Read when the sidebar's Types section is first expanded
   var databaseUserTypes = LazyCatalog<DatabaseUserType>()
   var isLoadingSchema: Bool = false
+  /// The user stopped the last schema load (sidebar Cancel); cleared when a load starts
+  var isSchemaLoadCancelledByUser = false
   var areAllEntitiesExpanded: Bool = false
 
   // MARK: - Autocomplete
@@ -2386,10 +2388,8 @@ class WorkspaceManager: Identifiable {
 
   /// Refresh the schema graph
   func refreshSchemaGraph() async {
-    // Reload schema data first (a cancelled load still finishes its queries but is superseded:
-    // it assigns nothing and leaves `isLoadingSchema` to this load)
-    cancelSchemaLoad()
-    await loadDatabaseSchema()
+    // Reload schema data first, through the tracked load so Cancel stops it
+    await reloadSchemaThroughTask()
     // Then rebuild graph
     await loadSchemaGraph()
   }

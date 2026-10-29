@@ -46,13 +46,23 @@ class SQLAutocompleteProvider {
 
   /// Feed the provider from the already loaded schema (tables with their columns)
   func update(tables: [DatabaseTable]) {
+    update(tables: tables, columnsByTable: Self.columnIndex(of: tables))
+  }
+
+  /// Feed the provider with an index already built by `columnIndex(of:)` (off the main actor)
+  func update(tables: [DatabaseTable], columnsByTable: [String: [DatabaseColumn]]) {
     self.tables = tables
+    self.columnsByTable = columnsByTable
+  }
+
+  /// Columns of each table keyed "schema.table"
+  nonisolated static func columnIndex(of tables: [DatabaseTable]) -> [String: [DatabaseColumn]] {
     var index: [String: [DatabaseColumn]] = [:]
     index.reserveCapacity(tables.count)
     for table in tables {
       index["\(table.schema).\(table.name)"] = table.columns
     }
-    columnsByTable = index
+    return index
   }
 
   /// Clear the schema cache (10.1.4 & 10.1.8 optimization)

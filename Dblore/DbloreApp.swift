@@ -54,6 +54,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Set before launch finishes, so a click that launches the app is delivered too
   func applicationWillFinishLaunching(_ notification: Notification) {
+    // Debug builds, or Release with -DbloreStallMonitor YES: logs main-thread stalls
+    MainThreadStallMonitor.installIfEnabled()
     // Before the first window, so every scroll view gets the soft scroll bar
     NSScrollView.installSoftScrollers()
     // Long-query notification clicks open their tab
