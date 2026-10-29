@@ -1501,6 +1501,7 @@ struct WorkspaceTitleBarTabsView: View {
           .controlSize(.small)
           .blockDoubleClickZoom()
           .help("Update to Dblore \(version)")
+          .padding(.trailing, Spacing.sm)
         }
 
         // AI assistant button
