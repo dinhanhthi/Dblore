@@ -355,6 +355,16 @@ class WorkspaceManager: Identifiable {
   /// The `schemaConnectionEpoch` the diagram was laid out from (a reload of the same connection
   /// carries it forward): its positions are saved only while that schema is the loaded one
   @ObservationIgnored var schemaGraphEpoch: UInt64?
+  /// The diagram's staged schema edits, made on the first edit (it may open a SQL tab). Goes
+  /// with the diagram (connect, disconnect).
+  var schemaDiagramEditor: SchemaDiagramEditModel?
+  /// A diagram change was applied (or waits for Commit) while the sidebar index had this id:
+  /// the diagram lays out again, keeping its positions, once a schema load replaced it. Nil:
+  /// nothing owed.
+  @ObservationIgnored var schemaDiagramRelayoutIndexID: UUID?
+  /// A table rename moved its saved position under the shown diagram: the diagram's positions
+  /// are not saved until it is laid out again (they would write the old name back)
+  @ObservationIgnored var schemaDiagramPositionsStale = false
   weak var schemaGraphNSView: SchemaGraphNSView?
   var showTableConnections: Bool = true
   var showColumnConnections: Bool = false
@@ -2325,6 +2335,9 @@ class WorkspaceManager: Identifiable {
       Task {
         await loadSchemaGraph()
       }
+    } else {
+      // A change applied while the diagram was hidden
+      Task { await relayoutSchemaDiagramIfOwed() }
     }
   }
 
@@ -2374,6 +2387,11 @@ class WorkspaceManager: Identifiable {
     schemaDiagramTables = nil
     selectedGraphNodeId = nil
     schemaSearchState = SchemaSearchState()
+    // Its staged edits name the previous database's tables (a late Touch ID answer sends nothing)
+    schemaDiagramEditor?.cancelConfirmation()
+    schemaDiagramEditor = nil
+    schemaDiagramRelayoutIndexID = nil
+    schemaDiagramPositionsStale = false
   }
 
   /// Cancels the running layout: it assigns nothing
@@ -2401,6 +2419,7 @@ class WorkspaceManager: Identifiable {
     let tables = databaseTables
     let foreignKeys = databaseForeignKeys
     let picked = schemaDiagramTables
+    let index = sidebarEntityIndex.id
     let task = Task {
       await Self.layOut(tables: tables, picked: picked, foreignKeys: foreignKeys)
     }
@@ -2422,6 +2441,11 @@ class WorkspaceManager: Identifiable {
       }
       schemaGraph = graph
       schemaGraphEpoch = schemaConnectionEpoch
+      // Laid out from a schema loaded after the last diagram change: nothing owed any more
+      if let owed = schemaDiagramRelayoutIndexID, owed != index {
+        schemaDiagramRelayoutIndexID = nil
+        schemaDiagramPositionsStale = false
+      }
     case .tooManyTables:
       schemaGraph = nil
     case .cancelled:
@@ -2444,9 +2468,10 @@ class WorkspaceManager: Identifiable {
 
   /// Save current schema node positions to local storage
   func saveSchemaNodePositions() {
-    // Never a graph laid out from another schema read: its tables may be another database's
+    // Never a graph laid out from another schema read: its tables may be another database's.
+    // Nor one shown before a rename moved a saved position: it would write the old name back.
     guard let graph = schemaGraph, schemaGraphEpoch != nil,
-      schemaGraphEpoch == schemaConnectionEpoch,
+      schemaGraphEpoch == schemaConnectionEpoch, !schemaDiagramPositionsStale,
       let config = workspace.connectionConfig
     else { return }
 
@@ -2487,6 +2512,121 @@ class WorkspaceManager: Identifiable {
     await reloadSchemaThroughTask()
     // Then rebuild graph
     await loadSchemaGraph()
+  }
+
+  // MARK: - Schema Diagram Editing
+
+  /// Why the diagram cannot change tables now (its edit menu items are disabled with it, the
+  /// foreign-key grips hidden), or nil. Before the first edit made the model, read from the
+  /// connection and the active tab's rules.
+  var schemaDiagramEditDisabledReason: String? {
+    if let reason = schemaDiagramEditor?.disabledReason { return reason }
+    guard let config = workspace.connectionConfig else {
+      return SchemaDiagramEditModel.unsupportedMessage
+    }
+    if let reason = SchemaDiagramEditModel.disabledReason(
+      databaseType: config.databaseType,
+      policy: activeViewModel?.protectionPolicy ?? ProtectionPolicy(config: config))
+    {
+      return reason
+    }
+    // The catalog is paused until Commit / Rollback: no table structure can be read
+    if isSchemaPaused { return SchemaDiagramEditModel.pausedMessage }
+    return canChangeTableSchema ? nil : SchemaDiagramEditModel.unsupportedMessage
+  }
+
+  /// Why the diagram cannot add or drop foreign keys (SQLite), or nil
+  var schemaDiagramForeignKeyDisabledReason: String? {
+    workspace.connectionConfig?.databaseType == .sqlite
+      ? SchemaDiagramEditModel.sqliteForeignKeyMessage : nil
+  }
+
+  /// The diagram's edit model, made on the first edit (on the active tab, or a new SQL tab when
+  /// none is open). Nil when this connection's tables do not change here. An applied change
+  /// lays the diagram out again once the schema reloaded (on Commit when pending).
+  func schemaDiagramEditModel() -> SchemaDiagramEditModel? {
+    if let schemaDiagramEditor { return schemaDiagramEditor }
+    guard let model = makeSchemaDiagramEditModel() else { return nil }
+    let applied = model.onApplied
+    model.onApplied = { [weak self, weak model] pending in
+      guard let self, let model, self.schemaDiagramEditor === model else { return }
+      self.oweSchemaDiagramRelayout()
+      await applied?(pending)
+      // The reload started above (pending: it waits for Commit)
+      if !pending { await self.relayoutSchemaDiagramIfOwed() }
+    }
+    schemaDiagramEditor = model
+    return model
+  }
+
+  /// Stages `edit` on the diagram's edit model (made now when needed); the click returns at
+  /// once and the table shows loading while its structure is read
+  func stageSchemaDiagramEdit(_ edit: @escaping (SchemaDiagramEditModel) async -> Void) {
+    guard let model = schemaDiagramEditModel() else {
+      showSchemaDiagramEditRefusal()
+      return
+    }
+    if let reason = model.disabledReason {
+      model.toastPresenter(reason, .warning)
+      return
+    }
+    Task { await edit(model) }
+  }
+
+  /// Apply on the diagram, from the active tab (the tab of the first edit may have closed: its
+  /// caller token, commit style and History follow). The shown positions are saved first: a
+  /// table rename moves the saved entry, so it must hold where the table is now.
+  func applySchemaDiagramChanges() {
+    guard let model = schemaDiagramEditor, model.canApply else { return }
+    guard let context = schemaDiagramEditContext() else {
+      showSchemaDiagramEditRefusal()
+      return
+    }
+    model.retarget(context)
+    saveSchemaNodePositions()
+    Task { await model.apply() }
+  }
+
+  /// No edit model could be made or re-targeted: says why instead of dropping the click
+  private func showSchemaDiagramEditRefusal() {
+    WorkspaceWindowManager.shared.showToast(
+      schemaDiagramEditDisabledReason ?? SchemaDiagramEditModel.notConnectedMessage,
+      type: .warning)
+  }
+
+  /// The app transaction ended (Commit / Rollback): a diagram edit model paused by its pending
+  /// change, or by the paused catalog, stages again
+  func schemaDiagramEditorTransactionEnded() {
+    schemaDiagramEditor?.transactionEnded()
+  }
+
+  /// A change reached (or waits for) the server: the diagram lays out again once the schema
+  /// load after it landed
+  func oweSchemaDiagramRelayout() {
+    schemaDiagramRelayoutIndexID = sidebarEntityIndex.id
+  }
+
+  /// A table rename moved a saved diagram position: the shown diagram's positions are not saved
+  /// until it is laid out again from the reloaded schema
+  func schemaDiagramPositionsMoved() {
+    schemaDiagramPositionsStale = true
+    oweSchemaDiagramRelayout()
+  }
+
+  /// Lays the diagram out again from the reloaded schema, keeping zoom, pan and the saved
+  /// positions (a renamed table keeps its own), when a change asked for it and a schema load
+  /// landed since. Waits for a running load; the table picker (no graph) stays as it is.
+  func relayoutSchemaDiagramIfOwed() async {
+    guard schemaDiagramRelayoutIndexID != nil else { return }
+    await awaitSchemaLoad()
+    guard let owed = schemaDiagramRelayoutIndexID, owed != sidebarEntityIndex.id,
+      schemaGraph != nil, !isLoadingSchema
+    else { return }
+    schemaDiagramRelayoutIndexID = nil
+    schemaDiagramPositionsStale = false
+    guard await layOutSchemaGraph() else { return }
+    // The new nodes have new ids
+    selectedGraphNodeId = nil
   }
 
   // MARK: - Schema Visualizer Controls

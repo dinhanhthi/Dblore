@@ -64,6 +64,29 @@ enum SchemaPositionsStore {
     UserDefaults.standard.set(allPositions, forKey: storageKey)
   }
 
+  /// A renamed table keeps its saved position: the entry of `oldName` takes `newName`. An entry
+  /// already saved under `newName` goes (the table it belonged to no longer has that name).
+  /// Nothing changes when `oldName` has no entry.
+  static func movePosition(from oldName: String, to newName: String, forConnection key: String) {
+    var allPositions = loadAllPositions()
+    guard oldName != newName, let saved = allPositions[key] as? [[String: Any]],
+      saved.contains(where: { $0["tableQualifiedName"] as? String == oldName })
+    else { return }
+    allPositions[key] = saved.compactMap { entry -> [String: Any]? in
+      switch entry["tableQualifiedName"] as? String {
+      case oldName:
+        var moved = entry
+        moved["tableQualifiedName"] = newName
+        return moved
+      case newName:
+        return nil
+      default:
+        return entry
+      }
+    }
+    UserDefaults.standard.set(allPositions, forKey: storageKey)
+  }
+
   /// Load positions for a specific database connection
   static func loadPositions(forConnection key: String) -> [SavedNodePosition] {
     let allPositions = loadAllPositions()

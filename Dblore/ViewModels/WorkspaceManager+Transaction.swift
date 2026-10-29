@@ -164,6 +164,7 @@ extension WorkspaceManager {
       if endedTransaction {
         structureEditorTransactionEnded()
         userTypeEditorTransactionEnded()
+        schemaDiagramEditorTransactionEnded()
       }
     }
     if state.isIdle {

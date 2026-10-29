@@ -23,6 +23,16 @@ struct SchemaGraphView: NSViewRepresentable {
   var onNodeDoubleClick: ((SchemaNode) -> Void)?
   var onNodeDragEnded: (() -> Void)?
   var onViewCreated: ((SchemaGraphNSView) -> Void)?
+  /// Edits picked on the diagram (menus, foreign-key drag); nil: no edit menus
+  var onEditAction: ((SchemaDiagramEditAction) -> Void)?
+  /// Why the edit menu items are disabled (and the grips hidden), or nil
+  var editDisabledReason: String?
+  /// Why foreign keys cannot change here (SQLite), or nil
+  var foreignKeyDisabledReason: String?
+  /// `qualifiedName` of the tables with staged changes
+  var stagedTables: Set<String> = []
+  /// `qualifiedName` of the tables read before a change is staged
+  var loadingTables: Set<String> = []
 
   func makeNSView(context: Context) -> SchemaGraphNSView {
     let view = SchemaGraphNSView()
@@ -68,6 +78,7 @@ struct SchemaGraphView: NSViewRepresentable {
     }
     view.onNodeDragEnded = onNodeDragEnded
     view.onNodeDoubleClick = onNodeDoubleClick
+    updateEditing(view)
     view.onOffsetChanged = { newOffset in
       DispatchQueue.main.async {
         offset = newOffset
@@ -95,7 +106,16 @@ struct SchemaGraphView: NSViewRepresentable {
     nsView.showColumnConnections = showColumnConnections
     nsView.searchState = searchState
     nsView.onNodeDragEnded = onNodeDragEnded
+    updateEditing(nsView)
     nsView.needsDisplay = true
+  }
+
+  private func updateEditing(_ view: SchemaGraphNSView) {
+    view.onEditAction = onEditAction
+    view.editDisabledReason = editDisabledReason
+    view.foreignKeyDisabledReason = foreignKeyDisabledReason
+    view.stagedTables = stagedTables
+    view.loadingTables = loadingTables
   }
 }
 
@@ -268,6 +288,16 @@ class SchemaGraphNSView: NSView {
   var onOffsetChanged: ((CGPoint) -> Void)?
   var onScaleChanged: ((CGFloat) -> Void)?
 
+  // MARK: - Editing (internal for extensions)
+
+  /// Edits picked on the diagram; nil: no edit menus and no grips
+  var onEditAction: ((SchemaDiagramEditAction) -> Void)?
+  var editDisabledReason: String?
+  var foreignKeyDisabledReason: String?
+  /// Tables drawn as staged (accent outline) or loading (dashed accent outline)
+  var stagedTables: Set<String> = []
+  var loadingTables: Set<String> = []
+
   // MARK: - Node Size Constants (internal for extensions)
 
   let nodeMinWidth: CGFloat = 150
@@ -280,6 +310,7 @@ class SchemaGraphNSView: NSView {
   let expandButtonSize: CGFloat = 16
   let resizeHandleWidth: CGFloat = 8
   let columnTypeGap: CGFloat = 12  // Gap between column name and type
+  let columnGripWidth: CGFloat = 12  // Foreign-key grip band at a column row's right end
 
   // MARK: - Colors (internal for extensions)
 
@@ -328,6 +359,19 @@ class SchemaGraphNSView: NSView {
   var isResizingFromLeft: Bool = false  // Track if resizing from left edge
   var hoveredResizeHandleNodeId: UUID?
   var hoveredLeftResizeHandleNodeId: UUID?
+
+  // MARK: - Foreign-Key Drag State (internal for extensions)
+
+  /// The column row under the pointer (its grip shows)
+  var hoveredColumn: SchemaColumnRef?
+  /// The column whose grip is under the pointer (crosshair cursor)
+  var hoveredGripColumn: SchemaColumnRef?
+  /// The column a foreign-key drag started from; nil when no drag runs
+  var foreignKeyDragSource: SchemaColumnRef?
+  /// The column of another table under a running drag
+  var foreignKeyDropTarget: SchemaColumnRef?
+  /// Where the drag line ends, in canvas coordinates
+  var foreignKeyDragPoint: CGPoint = .zero
 
   // MARK: - Edge Router
 
@@ -517,6 +561,9 @@ class SchemaGraphNSView: NSView {
     // Draw nodes
     drawNodes(context)
 
+    // A foreign-key drag's line, over the nodes
+    drawForeignKeyDrag(context)
+
     context.restoreGState()
   }
 
@@ -534,6 +581,10 @@ class SchemaGraphNSView: NSView {
       return
     }
     handleMouseDown(with: event)
+  }
+
+  override func menu(for event: NSEvent) -> NSMenu? {
+    editMenu(for: event)
   }
 
   override func mouseDragged(with event: NSEvent) {

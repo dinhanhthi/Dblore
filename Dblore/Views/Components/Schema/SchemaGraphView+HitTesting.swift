@@ -57,6 +57,35 @@ extension SchemaGraphNSView {
     return nil
   }
 
+  // MARK: - Column Hit Testing
+
+  /// The index of `node`'s column whose row is under `point` (rows as `drawColumns` lays them
+  /// out: header + 4 + index x row height), or nil on the header or below the last row
+  func hitTestColumnIndex(in node: SchemaNode, at point: CGPoint) -> Int? {
+    let canvasPoint = screenToCanvas(point)
+    let rect = nodeRect(for: node)
+    guard rect.contains(canvasPoint) else { return nil }
+    let rowY = canvasPoint.y - rect.minY - nodeHeaderHeight - 4
+    guard rowY >= 0 else { return nil }
+    let index = Int(rowY / nodeColumnHeight)
+    return node.table.columns.indices.contains(index) ? index : nil
+  }
+
+  /// The topmost node and its column under `point`
+  func hitTestColumn(at point: CGPoint) -> (node: SchemaNode, index: Int)? {
+    guard let node = hitTestNode(at: point),
+      let index = hitTestColumnIndex(in: node, at: point)
+    else { return nil }
+    return (node, index)
+  }
+
+  /// `point` is on `node`'s header band
+  func isOnHeader(of node: SchemaNode, at point: CGPoint) -> Bool {
+    let canvasPoint = screenToCanvas(point)
+    let rect = nodeRect(for: node)
+    return rect.contains(canvasPoint) && canvasPoint.y < rect.minY + nodeHeaderHeight
+  }
+
   // MARK: - Edge Hit Testing
 
   /// Hit test for edges
@@ -102,7 +131,8 @@ extension SchemaGraphNSView {
     // Calculate max width needed for columns
     var maxColumnWidth: CGFloat = 0
     let iconAreaWidth: CGFloat = 46  // Space for icons (4 icons * 10 spacing + 6 padding)
-    let rightPadding: CGFloat = 8
+    // The foreign-key grip's band too, when the rows keep one
+    let rightPadding: CGFloat = 8 + (reservesColumnGrips ? columnGripWidth : 0)
 
     for column in node.table.columns {
       let nameWidth = (column.name as NSString).size(withAttributes: [.font: columnFont]).width
@@ -136,6 +166,26 @@ extension SchemaGraphNSView {
       width: resizeHandleWidth,
       height: nodeR.height
     )
+  }
+
+  /// The foreign-key grip of `node`'s column at `index`: a band at the row's right end, clear of
+  /// the right resize handle (`resizeHandleWidth` from the edge)
+  func columnGripRect(for node: SchemaNode, index: Int) -> CGRect {
+    let nodeR = nodeRect(for: node)
+    return CGRect(
+      x: nodeR.maxX - resizeHandleWidth - columnGripWidth,
+      y: nodeR.minY + nodeHeaderHeight + 4 + CGFloat(index) * nodeColumnHeight,
+      width: columnGripWidth,
+      height: nodeColumnHeight
+    )
+  }
+
+  /// The node and column whose grip is under `point`, when the grips show
+  func hitTestColumnGrip(at point: CGPoint) -> (node: SchemaNode, index: Int)? {
+    guard showsColumnGrips, let (node, index) = hitTestColumn(at: point),
+      columnGripRect(for: node, index: index).contains(screenToCanvas(point))
+    else { return nil }
+    return (node, index)
   }
 
   /// Calculate left resize handle rect for a node (left edge)
