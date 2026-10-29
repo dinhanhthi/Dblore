@@ -95,7 +95,8 @@ nonisolated enum LockIdentity: Hashable, Sendable {
     if bytes[0..<15].allSatisfy({ $0 == 0 }), bytes[15] <= 1 { return loopback }
     var text = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
     return inet_ntop(AF_INET6, &v6, &text, socklen_t(text.count)) == nil
-      ? name : String(cString: text)
+      ? name
+      : String(decoding: text.prefix { $0 != 0 }.map(UInt8.init(bitPattern:)), as: UTF8.self)
   }
 
   /// The four bytes of an IPv4 address dotted, or `localhost` for 127.0.0.0/8 and 0.0.0.0/8

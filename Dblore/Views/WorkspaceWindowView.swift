@@ -346,6 +346,7 @@ class NewWindowStore {
     let number = window.windowNumber
     guard number > 0 else { return }
     registrations[number] = workspaceId.map { .workspace($0) } ?? .welcome
+    NewTabResponder.install(in: window)
   }
 
   func registration(for window: NSWindow) -> Registration? {
@@ -444,11 +445,12 @@ class NewWindowStore {
     windowControllers.compactMap { $0.controller.window }
   }
 
-  /// New window tab: joins the key document window's tab group, or opens standalone.
+  /// New window tab: joins the key document window's tab group as its last tab, or opens
+  /// standalone.
   func openWelcomeWindowTab() {
     let key = NSApp.keyWindow
-    openWelcomeWindow(
-      frame: key?.frame ?? .zero, parent: key?.isDbloreDocumentWindow == true ? key : nil)
+    let parent = key?.isDbloreDocumentWindow == true ? key?.tabbedWindows?.last ?? key : nil
+    openWelcomeWindow(frame: key?.frame ?? .zero, parent: parent)
   }
 
   /// A fresh document window showing the welcome screen, kept alive until it closes.
@@ -526,6 +528,26 @@ struct WelcomeWindowMarker: NSViewRepresentable {
       markedWindow = window
       if let window { WelcomeWindowMarker.windows.add(window) }
     }
+  }
+}
+
+/// Answers the tab bar's "+" (`newWindowForTab:`) right after the window, before its window
+/// controller: SwiftUI's controller answers it in the `WindowGroup` window with a separate window.
+/// The new Welcome window joins the tab group instead.
+final class NewTabResponder: NSResponder {
+  /// `nextResponder` does not retain: each window keeps its responder here.
+  private static let responders = NSMapTable<NSWindow, NewTabResponder>.weakToStrongObjects()
+
+  static func install(in window: NSWindow) {
+    guard responders.object(forKey: window) == nil else { return }
+    let responder = NewTabResponder()
+    responder.nextResponder = window.nextResponder
+    window.nextResponder = responder
+    responders.setObject(responder, forKey: window)
+  }
+
+  override func newWindowForTab(_ sender: Any?) {
+    NewWindowStore.shared.openWelcomeWindowTab()
   }
 }
 

@@ -9,7 +9,7 @@ import SwiftUI
 /// Makes the native window tab bar start after the left sidebar (full width at 0).
 ///
 /// AppKit insets the window tab bar to the sidebar split item of the window's content, so this
-/// adds a hidden `NSSplitViewController` beside the window's hosting view and moves its divider
+/// adds a hidden `NSSplitViewController` inside this view's anchor and moves its divider
 /// to `width`. The split view stays hidden, so every click still reaches SwiftUI (a visible one
 /// would take them). `width` is animatable: SwiftUI interpolates it in the same transaction as
 /// the sidebar, so the bar follows the sidebar while it slides.
@@ -131,12 +131,11 @@ private final class SidebarInsetProbe {
     attachIfNeeded()
   }
 
-  /// Puts the split view under the window's hosting view, sized to it (a zero-size split view
-  /// clamps the divider to 0). It stays hidden: the tab bar follows its sidebar item anyway.
+  /// Puts the split view in the owner anchor, sized to it (a zero-size split view clamps the
+  /// divider to 0); SwiftUI does not support a subview of the hosting view itself. It stays
+  /// hidden: the tab bar follows its sidebar item anyway.
   private func attachIfNeeded() {
-    guard let window,
-      let container = window.contentViewController?.view ?? window.contentView
-    else { return }
+    guard let window, let container = owner else { return }
     if split.view.superview === container { return }
     split.view.removeFromSuperview()
     split.removeFromParent()
