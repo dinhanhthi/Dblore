@@ -352,6 +352,7 @@ extension WorkspaceManager {
     databaseFunctions = []
     databaseProcedures = []
     databaseTriggers = []
+    sidebarEntityIndex = .empty
     databaseUsers = []
     databaseRoles = []
     databaseForeignKeys = []

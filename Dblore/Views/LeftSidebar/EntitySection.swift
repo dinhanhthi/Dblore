@@ -10,7 +10,14 @@ struct EntitySection<Content: View>: View {
   /// Nil (not read yet) hides the count
   let count: Int?
   let icon: String
+  /// The start state; unused when `expanded` is given
   let isExpanded: Bool
+  /// Draws the section open (an active filter) without touching what the user toggled, so the
+  /// section is back to that once it ends; the header does not toggle meanwhile
+  let forceExpanded: Bool
+  /// The open state when the caller keeps it (it outlives the section: one the filter takes out
+  /// comes back as it was); nil keeps it here, starting at `isExpanded`
+  let expanded: Binding<Bool>?
   /// The header's "+" button, its title as tooltip; nil shows none
   let createTitle: String?
   /// Nil disables "+"
@@ -24,6 +31,8 @@ struct EntitySection<Content: View>: View {
     count: Int?,
     icon: String,
     isExpanded: Bool = true,
+    forceExpanded: Bool = false,
+    expanded: Binding<Bool>? = nil,
     createTitle: String? = nil,
     onCreate: (() -> Void)? = nil,
     @ViewBuilder content: @escaping () -> Content
@@ -32,6 +41,8 @@ struct EntitySection<Content: View>: View {
     self.count = count
     self.icon = icon
     self.isExpanded = isExpanded
+    self.forceExpanded = forceExpanded
+    self.expanded = expanded
     self.createTitle = createTitle
     self.onCreate = onCreate
     self.content = content
@@ -60,7 +71,7 @@ struct EntitySection<Content: View>: View {
       }
 
       // Section content (lazy: only visible rows are built when the sidebar is shown)
-      if sectionExpanded {
+      if isOpen {
         LazyVStack(alignment: .leading, spacing: 0) {
           content()
         }
@@ -77,10 +88,19 @@ struct EntitySection<Content: View>: View {
     .clipped()
   }
 
+  private var isOpen: Bool {
+    forceExpanded || (expanded?.wrappedValue ?? sectionExpanded)
+  }
+
   private var header: some View {
     Button(action: {
+      guard !forceExpanded else { return }
       withAnimation(.snappy(duration: 0.2)) {
-        sectionExpanded.toggle()
+        if let expanded {
+          expanded.wrappedValue.toggle()
+        } else {
+          sectionExpanded.toggle()
+        }
       }
     }) {
       HStack(spacing: Spacing.xs) {
@@ -88,7 +108,7 @@ struct EntitySection<Content: View>: View {
           .font(.system(size: 10, weight: .semibold))
           .foregroundColor(.foregroundMuted)
           .frame(width: 12, height: 12)
-          .rotationEffect(.degrees(sectionExpanded ? 90 : 0))
+          .rotationEffect(.degrees(isOpen ? 90 : 0))
 
         Image(systemName: icon)
           .font(.system(size: 12))

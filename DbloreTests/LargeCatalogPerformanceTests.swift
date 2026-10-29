@@ -1,7 +1,8 @@
 // LargeCatalogPerformanceTests.swift
 // Baseline at LargeCatalogFixture's 50,000 tables: schema load, one sidebar filter keystroke,
 // command palette open, autocomplete, AI table selection and the ER layout at 300 tables, each
-// recorded in a PERF line with the longest main-actor gap a ticker saw meanwhile. No budget yet.
+// recorded in a PERF line with the longest main-actor gap a ticker saw meanwhile. The sidebar's
+// first listing and filter keystroke have budgets.
 // S-SQL compares today's per-table catalog read with one bulk statement per catalog part.
 // Opt-in (requiresLargeCatalog). Results land in the runner's temp perf-results.txt.
 
@@ -14,6 +15,21 @@ import Testing
 @MainActor
 struct LargeCatalogPerformanceTests {
   private static var tables: Int { LargeCatalogFixture.tableCount }
+
+  /// Budgets: 1.25x this Mac's post-fix medians (Debug, 2026-10-29, three LARGE_CATALOG runs).
+  /// First listing: 14,935.9 / 14,258.8 / 14,138.4 ms, median 14,258.8 (main gap 7.8-13.0 ms).
+  private static let firstListingBudgetMs = 17_824.0
+  /// Filter keystroke: 844.1 / 846.9 / 837.0 ms, median 844.1 (main gap 2.1-3.9 ms).
+  private static let filterKeystrokeBudgetMs = 1_055.0
+  /// The longest main-actor gap first listing and a filter keystroke may cause
+  private static let maxMainGapMs = 100.0
+
+  /// A measured stage: its result, duration and the ticker's longest main-actor gap
+  private struct Measured<T> {
+    let value: T
+    let ms: Double
+    let maxMainGapMs: Double
+  }
 
   /// The connected workspace the stages after the schema load share (connected once per run)
   private static var shared: WorkspaceManager?
@@ -37,7 +53,9 @@ struct LargeCatalogPerformanceTests {
 
   /// Times `body` and records it with the ticker's longest main-actor gap meanwhile
   @discardableResult
-  private func measure<T>(_ name: String, _ body: () async throws -> T) async throws -> T {
+  private func measure<T>(
+    _ name: String, _ body: () async throws -> T
+  ) async throws -> Measured<T> {
     let ticker = Self.startTicker()
     await Task.yield()
     let start = ContinuousClock.now
@@ -52,9 +70,11 @@ struct LargeCatalogPerformanceTests {
     // A synchronous body held the main actor: let the ticker wake and see that gap
     try? await Task.sleep(for: .milliseconds(5))
     ticker.cancel()
-    PerfReport.record("largeCatalog.\(name)", ms: Self.ms(elapsed))
-    PerfReport.record("largeCatalog.\(name).maxMainGap", ms: Self.ms(await ticker.value))
-    return value
+    let measured = Measured(
+      value: value, ms: Self.ms(elapsed), maxMainGapMs: Self.ms(await ticker.value))
+    PerfReport.record("largeCatalog.\(name)", ms: measured.ms)
+    PerfReport.record("largeCatalog.\(name).maxMainGap", ms: measured.maxMainGapMs)
+    return measured
   }
 
   private static func config(_ url: URL) -> ConnectionConfig {
@@ -89,17 +109,25 @@ struct LargeCatalogPerformanceTests {
     return workspace
   }
 
-  @Test("Schema load")
+  /// The sidebar's first listing: connect, schema load and its sidebar index, published with
+  /// the arrays
+  @Test("First listing (schema load to sidebar index)")
   func schemaLoad() async throws {
     let url = try LargeCatalogFixture.url(tables: Self.tables)
     let workspace = Self.newWorkspace()
-    try await measure("schemaLoad") {
+    let load = try await measure("schemaLoad") {
       try await workspace.connect(config: Self.config(url), defaultCommitStyle: .immediate)
       await workspace.awaitSchemaLoad()
     }
     #expect(workspace.databaseTables.count == Self.tables)
     #expect(workspace.databaseViews.count == (Self.tables + 49) / 50)
     #expect(workspace.databaseForeignKeys.count == Self.tables / 10)
+    #expect(
+      Array(workspace.sidebarEntityIndex.counts.prefix(2)) == [
+        Self.tables, (Self.tables + 49) / 50,
+      ])
+    #expect(load.ms <= Self.firstListingBudgetMs)
+    #expect(load.maxMainGapMs <= Self.maxMainGapMs)
     if Self.shared == nil {
       Self.shared = workspace
     } else {
@@ -107,32 +135,31 @@ struct LargeCatalogPerformanceTests {
     }
   }
 
-  /// The sidebar's Public tab filter (WorkspaceLeftSidebarContent.publicEntities is view code):
-  /// its keyword split, temporary split and column match over every table and view
+  /// The sidebar's Public tab filter: the keyword split and the off-main
+  /// SidebarEntityIndex.filterInBackground over every table and view, as the view awaits it
   @Test("Sidebar filter keystroke")
   func sidebarFilterKeystroke() async throws {
     let workspace = try await loadedWorkspace()
-    let shown = try await measure("sidebarFilterKeystroke") {
-      let keywords = SidebarEntityFilter.keywords(in: "t1234")
-      let split = SidebarSectionModel.temporarySplit(
-        workspace.databaseTables, temporarySchemas: ["temp"])
-      let tables = split.regular.compactMap { table -> String? in
-        guard
-          SidebarEntityFilter.matchColumns(
-            name: table.name, columns: table.columns, keywords: keywords) != nil
-        else { return nil }
-        return SidebarFolder.member(schema: table.schema, name: table.name)
-      }
-      let views = workspace.databaseViews.compactMap { view -> String? in
-        guard
-          SidebarEntityFilter.matchColumns(
-            name: view.name, columns: view.columns, keywords: keywords) != nil
-        else { return nil }
-        return SidebarFolder.member(schema: view.schema, name: view.name)
-      }
-      return tables.count + views.count
+    let keystroke = try await measure("sidebarFilterKeystroke") {
+      let result = await workspace.sidebarEntityIndex.filterInBackground(
+        keywords: SidebarEntityFilter.keywords(in: "t1234"), hidden: [],
+        temporarySchemas: ["temp"])
+      return result.listed.tables.count + result.listed.views.count
     }
-    #expect(shown > 0)
+    #expect(keystroke.value > 0)
+    #expect(keystroke.ms <= Self.filterKeystrokeBudgetMs)
+    #expect(keystroke.maxMainGapMs <= Self.maxMainGapMs)
+  }
+
+  /// No filter, as the view draws it on the main actor until the background result lands
+  @Test("Sidebar empty filter")
+  func sidebarEmptyFilter() async throws {
+    let workspace = try await loadedWorkspace()
+    let listed = try await measure("sidebarEmptyFilter") {
+      workspace.sidebarEntityIndex.filter(keywords: [], hidden: [], temporarySchemas: ["temp"])
+        .listed.tables.count
+    }.value
+    #expect(listed == Self.tables)
   }
 
   @Test("Command palette open")
@@ -145,7 +172,7 @@ struct LargeCatalogPerformanceTests {
       let palette = try #require(workspace.commandPalette)
       while !palette.isRankFresh { try await Task.sleep(for: .milliseconds(1)) }
       return palette
-    }
+    }.value
     #expect(!palette.ranked.isEmpty)
     workspace.commandPalette = nil
   }
@@ -157,7 +184,7 @@ struct LargeCatalogPerformanceTests {
     let suggestions = try await measure("autocompleteAfterFrom") {
       workspace.autocompleteProvider.getSuggestions(
         for: text, at: (text as NSString).length, dialect: .sqlite)
-    }
+    }.value
     #expect(!suggestions.isEmpty)
   }
 
@@ -168,7 +195,7 @@ struct LargeCatalogPerformanceTests {
     let suggestions = try await measure("autocompleteNoContext") {
       workspace.autocompleteProvider.getSuggestions(
         for: text, at: (text as NSString).length, dialect: .sqlite)
-    }
+    }.value
     #expect(!suggestions.isEmpty)
   }
 
@@ -181,7 +208,7 @@ struct LargeCatalogPerformanceTests {
       return await AIAssistantViewModel.buildRequest(
         model: "large-catalog", question: "Total amount of t00019 rows per t00018 row",
         explicit: [], snapshot: snapshot, history: [], runsQueries: false, compactPrompt: false)
-    }
+    }.value
     #expect(request.system.contains("t00019"))
   }
 
@@ -199,7 +226,7 @@ struct LargeCatalogPerformanceTests {
       width: max(800, CGFloat(tables.count) * 100), height: max(600, CGFloat(tables.count) * 80))
     let graph = try await measure("erLayout300") {
       SchemaLayoutEngine().calculateLayout(tables: tables, foreignKeys: keys, canvasSize: canvas)
-    }
+    }.value
     #expect(graph.nodes.count == tables.count)
   }
 

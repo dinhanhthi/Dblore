@@ -395,7 +395,8 @@ extension WorkspaceManager {
           )
 
         let joined = await Self.joinColumns(
-          tables: fetchedTables, views: fetchedViews, columnsByRelation: columnsByRelation)
+          tables: fetchedTables, views: fetchedViews, functions: functions,
+          procedures: procedures, triggers: triggers, columnsByRelation: columnsByRelation)
 
         // The transaction opened meanwhile: later lookups were refused, keep the cache
         if await connectionManager.isMetadataPaused {
@@ -413,6 +414,7 @@ extension WorkspaceManager {
         databaseFunctions = functions
         databaseProcedures = procedures
         databaseTriggers = triggers
+        sidebarEntityIndex = joined.sidebarIndex
         databaseUsers = users
         databaseRoles = roles
         databaseForeignKeys = foreignKeys
@@ -429,12 +431,15 @@ extension WorkspaceManager {
     }
   }
 
-  /// Tables and views joined with their columns, plus the autocomplete index. Off the main
-  /// actor: a large catalog has tens of thousands of relations.
+  /// Tables and views joined with their columns, plus the autocomplete index and the sidebar
+  /// filter's index. Off the main actor: a large catalog has tens of thousands of relations.
   @concurrent nonisolated private static func joinColumns(
-    tables: [DatabaseTable], views: [DatabaseView], columnsByRelation: [String: [DatabaseColumn]]
+    tables: [DatabaseTable], views: [DatabaseView], functions: [DatabaseFunction],
+    procedures: [DatabaseProcedure], triggers: [DatabaseTrigger],
+    columnsByRelation: [String: [DatabaseColumn]]
   ) async -> (
-    tables: [DatabaseTable], views: [DatabaseView], columnsByTable: [String: [DatabaseColumn]]
+    tables: [DatabaseTable], views: [DatabaseView], columnsByTable: [String: [DatabaseColumn]],
+    sidebarIndex: SidebarEntityIndex
   ) {
     var tables = tables
     var views = views
@@ -445,7 +450,10 @@ extension WorkspaceManager {
     for index in views.indices {
       views[index].columns = columnsByRelation[views[index].qualifiedName] ?? []
     }
-    return (tables, views, SQLAutocompleteProvider.columnIndex(of: tables))
+    let sidebarIndex = SidebarEntityIndex(
+      tables: tables, views: views, functions: functions, procedures: procedures,
+      triggers: triggers)
+    return (tables, views, SQLAutocompleteProvider.columnIndex(of: tables), sidebarIndex)
   }
 
   /// Read the sequences when their sidebar section is first expanded (and again after a failure)

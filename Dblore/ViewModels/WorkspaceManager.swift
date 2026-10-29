@@ -390,6 +390,9 @@ class WorkspaceManager: Identifiable {
   var databaseFunctions: [DatabaseFunction] = []
   var databaseProcedures: [DatabaseProcedure] = []
   var databaseTriggers: [DatabaseTrigger] = []
+  /// The sidebar filter's index of the five arrays above, built with them off the main actor
+  /// and assigned with them
+  var sidebarEntityIndex = SidebarEntityIndex.empty
   /// In-flight definition reads of object source tabs, cancelled when the tab closes
   @ObservationIgnored var objectSourceLoads: [UUID: Task<Void, Never>] = [:]
   var databaseUsers: [DatabaseUser] = []

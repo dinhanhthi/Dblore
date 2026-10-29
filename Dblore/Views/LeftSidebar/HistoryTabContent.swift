@@ -20,7 +20,8 @@ struct HistoryTabContent: View {
     @Bindable var historyList = workspaceManager.historyList
 
     VStack(spacing: 0) {
-      SidebarFilterField(text: $historyList.query, placeholder: "search") {
+      // The history list waits on its own before it searches
+      SidebarFilterField(text: $historyList.query, placeholder: "search", applyDelay: nil) {
         HStack(spacing: Spacing.sm) {
           writesFilter
           filterMenu

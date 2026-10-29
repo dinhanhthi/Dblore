@@ -38,6 +38,11 @@ struct WorkspaceLeftSidebarContent: View {
   @State private var collapsedFolders: Set<UUID> = []
   /// The New Folder or Rename Folder sheet
   @State private var folderPrompt: SidebarFolderPrompt?
+  /// The Public tab filter's last result (`refilterPublic`)
+  @State private var publicFilterResult: PublicFilterResult?
+  /// Public sections the user opened or closed, by id (`sectionExpansion`): kept here, so a
+  /// section the filter takes out, or the list drops far off screen, comes back as it was
+  @State private var expandedSections: [String: Bool] = [:]
 
   enum SidebarTab: String, CaseIterable {
     case `public` = "Public"
@@ -62,15 +67,39 @@ struct WorkspaceLeftSidebarContent: View {
         HistoryTabContent(workspaceManager: workspaceManager)
       } else if !workspaceManager.connectionState.isConnected {
         emptyState
-      } else if workspaceManager.isLoadingSchema {
+      } else if workspaceManager.isLoadingSchema && workspaceManager.schemaConnectionEpoch == nil {
+        // A first load; a refresh keeps the rows, its progress in the row above them
         loadingState
       } else {
+        if workspaceManager.isLoadingSchema {
+          SchemaRefreshRow(onCancel: { workspaceManager.userCancelledSchemaLoad() })
+        }
         contentForSelectedTab
       }
     }
     // The last tab closed: back to Public, where a table opens
     .onChange(of: workspaceManager.activeTabId) { _, tabId in
       if tabId == nil { selectedTab = .public }
+    }
+    // A disconnect or a connection switch: the filter result (and the arrays it keeps) and the
+    // sections' open state go with the connection; a refresh keeps them
+    .onChange(of: workspaceManager.schemaConnectionEpoch) { _, epoch in
+      if epoch == nil {
+        publicFilterResult = nil
+        expandedSections = [:]
+      }
+    }
+    // A refresh while the result is not drawn: its arrays go now, not when the Public tab's
+    // filter runs again (one drawn while filtering on the tab stays until the new one lands)
+    .onChange(of: workspaceManager.sidebarEntityIndex.id) {
+      if shownTab != .public || publicKeywords.isEmpty { publicFilterResult = nil }
+    }
+    // A disconnect with no schema read (its epoch already nil)
+    .onChange(of: workspaceManager.connectionState.isConnected) { _, isConnected in
+      if !isConnected {
+        publicFilterResult = nil
+        expandedSections = [:]
+      }
     }
     .sheet(item: $aggregationBuilder) { model in
       AggregationBuilderSheet(
@@ -234,9 +263,10 @@ struct WorkspaceLeftSidebarContent: View {
     let source: DatabaseTable
     let columns: [DatabaseColumn]
     let expandForMatch: Bool
-    let folderMember: String
     var id: UUID { source.id }
     var folderSchema: String { source.schema }
+    /// Built when read: a large catalog maps every matching row per render
+    var folderMember: String { SidebarFolder.member(schema: source.schema, name: source.name) }
 
     var display: DatabaseTable {
       var copy = source
@@ -249,9 +279,10 @@ struct WorkspaceLeftSidebarContent: View {
     let source: DatabaseView
     let columns: [DatabaseColumn]
     let expandForMatch: Bool
-    let folderMember: String
     var id: UUID { source.id }
     var folderSchema: String { source.schema }
+    /// Built when read: a large catalog maps every matching row per render
+    var folderMember: String { SidebarFolder.member(schema: source.schema, name: source.name) }
 
     var display: DatabaseView {
       var copy = source
@@ -270,60 +301,200 @@ struct WorkspaceLeftSidebarContent: View {
     !hiddenSchemas.contains(schema)
   }
 
-  /// The Public tab's objects that match the filter: those of the listed schemas (hidden ones
-  /// left out), and apart, the session's temporary ones (`schemas.temporary`, `temporarySplit`),
-  /// never hidden
-  private func publicEntities(
-    _ schemas: PublicSchemas
-  ) -> (listed: PublicEntities, temporary: PublicEntities) {
+  /// The workspace's sidebar index, or one built here when the arrays were set without it
+  /// (previews)
+  private var entityIndex: SidebarEntityIndex {
+    let index = workspaceManager.sidebarEntityIndex
+    let counts = [
+      workspaceManager.databaseTables.count, workspaceManager.databaseViews.count,
+      workspaceManager.databaseFunctions.count, workspaceManager.databaseProcedures.count,
+      workspaceManager.databaseTriggers.count,
+    ]
+    guard index.counts != counts else { return index }
+    return SidebarEntityIndex(
+      tables: workspaceManager.databaseTables, views: workspaceManager.databaseViews,
+      functions: workspaceManager.databaseFunctions,
+      procedures: workspaceManager.databaseProcedures,
+      triggers: workspaceManager.databaseTriggers)
+  }
+
+  /// The arrays a filter result's positions point into
+  private struct PublicCatalog {
+    let tables: [DatabaseTable]
+    let views: [DatabaseView]
+    let functions: [DatabaseFunction]
+    let procedures: [DatabaseProcedure]
+    let triggers: [DatabaseTrigger]
+  }
+
+  private var liveCatalog: PublicCatalog {
+    PublicCatalog(
+      tables: workspaceManager.databaseTables, views: workspaceManager.databaseViews,
+      functions: workspaceManager.databaseFunctions,
+      procedures: workspaceManager.databaseProcedures,
+      triggers: workspaceManager.databaseTriggers)
+  }
+
+  /// The workspace's index, the arrays' counts and the connection epoch the schema was read
+  /// with: a result of another index points into other arrays (an index built here for
+  /// previews has no id of its own, its counts tell it apart), one of another epoch into
+  /// another connection's
+  private struct IndexIdentity: Equatable {
+    let id: UUID
+    let counts: [Int]
+    let epoch: UInt64?
+  }
+
+  private var indexIdentity: IndexIdentity {
+    IndexIdentity(
+      id: workspaceManager.sidebarEntityIndex.id,
+      counts: [
+        workspaceManager.databaseTables.count, workspaceManager.databaseViews.count,
+        workspaceManager.databaseFunctions.count, workspaceManager.databaseProcedures.count,
+        workspaceManager.databaseTriggers.count,
+      ],
+      epoch: workspaceManager.schemaConnectionEpoch)
+  }
+
+  /// What a Public tab filter result was computed for
+  private struct PublicFilterKey: Equatable {
+    let keywords: [String]
+    let hidden: Set<String>
+    let temporary: Set<String>
+    let index: IndexIdentity
+  }
+
+  private func publicFilterKey(_ schemas: PublicSchemas) -> PublicFilterKey {
+    PublicFilterKey(
+      keywords: publicKeywords, hidden: schemas.hidden, temporary: schemas.temporary,
+      index: indexIdentity)
+  }
+
+  /// A filter result with the arrays it was computed on
+  private struct PublicFilterResult {
+    let key: PublicFilterKey
+    let result: SidebarEntityIndex.Result
+    let catalog: PublicCatalog
+  }
+
+  /// Runs the filter for `key` off the main actor and keeps its result; a newer key cancels it,
+  /// and a key of an index replaced meanwhile is left to the next one
+  private func refilterPublic(_ key: PublicFilterKey) async {
+    // No filter: the body lists everything itself
+    guard !key.keywords.isEmpty else { return }
+    guard publicFilterResult?.key != key, key.index == indexIdentity else { return }
+    let index = entityIndex
+    let catalog = liveCatalog
+    let result = await index.filterInBackground(
+      keywords: key.keywords, hidden: key.hidden, temporarySchemas: key.temporary)
+    guard !Task.isCancelled, key.index == indexIdentity else { return }
+    publicFilterResult = PublicFilterResult(key: key, result: result, catalog: catalog)
+  }
+
+  /// The Public tab's objects that match the filter (`SidebarEntityIndex.filter`): those of the
+  /// listed schemas (hidden ones left out), and apart, the session's temporary ones
+  /// (`schemas.temporary`, `temporarySplit`), never hidden. The filter runs off the main actor
+  /// (`refilterPublic`); until its result for `key` lands the previous one of the same
+  /// connection stays (less the schemas hidden since), so typing never blanks the list. No
+  /// filter, or no result of this connection yet, lists everything at once. Sequences and types
+  /// are filtered from their arrays here.
+  private func publicEntities(_ schemas: PublicSchemas, key: PublicFilterKey) -> PublicMatches {
     let keywords = publicKeywords
     let hidden = schemas.hidden
     let temporarySchemas = schemas.temporary
-    func shown(_ schema: String) -> Bool {
-      !hidden.contains(schema) || temporarySchemas.contains(schema)
-    }
     func matches(_ schema: String, _ text: String) -> Bool {
-      shown(schema) && SidebarEntityFilter.matchesAll(text, keywords: keywords)
+      (!hidden.contains(schema) || temporarySchemas.contains(schema))
+        && SidebarEntityFilter.matchesAll(text, keywords: keywords)
     }
-    func filtered(_ table: DatabaseTable) -> FilteredTable? {
-      guard
-        let match = SidebarEntityFilter.matchColumns(
-          name: table.name, columns: table.columns, keywords: keywords)
-      else { return nil }
-      return FilteredTable(
-        source: table, columns: match.columns, expandForMatch: match.expandForMatch,
-        folderMember: SidebarFolder.member(schema: table.schema, name: table.name))
+    // Nil until the Sequences or Types section has read them
+    let sequences = workspaceManager.databaseSequences.items?.filter {
+      matches($0.schema, $0.name)
     }
-    let split = SidebarSectionModel.temporarySplit(
-      workspaceManager.databaseTables, temporarySchemas: temporarySchemas)
-    let views = workspaceManager.databaseViews.compactMap { view -> FilteredView? in
-      guard shown(view.schema),
-        let match = SidebarEntityFilter.matchColumns(
-          name: view.name, columns: view.columns, keywords: keywords)
-      else { return nil }
-      return FilteredView(
-        source: view, columns: match.columns, expandForMatch: match.expandForMatch,
-        folderMember: SidebarFolder.member(schema: view.schema, name: view.name))
+    let userTypes = workspaceManager.databaseUserTypes.items?.filter {
+      matches($0.schema, $0.name)
     }
-    let all = PublicEntities(
-      tables: [], views: views,
-      functions: workspaceManager.databaseFunctions.filter { matches($0.schema, $0.name) },
-      procedures: workspaceManager.databaseProcedures.filter { matches($0.schema, $0.name) },
-      // A keyword may hit the trigger name or its table
-      triggers: workspaceManager.databaseTriggers.filter {
-        matches($0.schema, "\($0.name) \($0.table)")
-      },
-      // Nil until the Sequences or Types section has read them
-      sequences: workspaceManager.databaseSequences.items?.filter { matches($0.schema, $0.name) },
-      userTypes: workspaceManager.databaseUserTypes.items?.filter { matches($0.schema, $0.name) })
-    var listed = all.filtered { !temporarySchemas.contains($0) }
-    listed.tables = split.regular.filter { !hidden.contains($0.schema) }.compactMap(filtered)
-    var temporary = all.filtered { temporarySchemas.contains($0) }
-    temporary.tables = split.temporary.compactMap(filtered)
+    var result: SidebarEntityIndex.Result
+    let catalog: PublicCatalog
+    if let stored = publicFilterResult,
+      stored.key == key
+        // Never rows of another connection, nor of one with no schema read
+        || (!keywords.isEmpty && key.index.epoch != nil
+          && stored.key.index.epoch == key.index.epoch)
+    {
+      result = stored.result
+      // Positions of a replaced index point into the arrays it was built from
+      catalog = stored.key.index == key.index ? liveCatalog : stored.catalog
+      if stored.key.hidden != hidden || stored.key.temporary != temporarySchemas {
+        // A schema hidden since leaves now, not when the new result lands
+        result = result.hiding(
+          hidden, temporarySchemas: temporarySchemas, tables: catalog.tables,
+          views: catalog.views, functions: catalog.functions, procedures: catalog.procedures,
+          triggers: catalog.triggers)
+      }
+    } else {
+      // Everything (no filter yet: what the first result replaces)
+      result = entityIndex.filter(keywords: [], hidden: hidden, temporarySchemas: temporarySchemas)
+      catalog = liveCatalog
+    }
     // Read by a schema group's section: the Temporary section shows no unread one
-    temporary.sequences = temporary.sequences ?? []
-    temporary.userTypes = temporary.userTypes ?? []
-    return (listed, temporary)
+    let temporary = entities(
+      result.temporary, in: catalog,
+      sequences: (sequences ?? []).filter { temporarySchemas.contains($0.schema) },
+      userTypes: (userTypes ?? []).filter { temporarySchemas.contains($0.schema) })
+    return PublicMatches(
+      temporary: temporary, filtered: result, catalog: catalog,
+      sequences: sequences?.filter { !temporarySchemas.contains($0.schema) },
+      userTypes: userTypes?.filter { !temporarySchemas.contains($0.schema) })
+  }
+
+  /// The listed objects of every schema (the flat layout)
+  private func listedEntities(of found: PublicMatches) -> PublicEntities {
+    entities(
+      found.filtered.listed, in: found.catalog, sequences: found.sequences,
+      userTypes: found.userTypes)
+  }
+
+  /// The listed objects of one schema group, from the index's bucket
+  private func entities(in schema: String, of found: PublicMatches) -> PublicEntities {
+    entities(
+      found.filtered.inSchema(schema), in: found.catalog,
+      sequences: found.sequences?.filter { $0.schema == schema },
+      userTypes: found.userTypes?.filter { $0.schema == schema })
+  }
+
+  /// `matches` resolved against `catalog`, with the sequences and types kept. A position or
+  /// column offset out of range (arrays changed in place since) is skipped.
+  private func entities(
+    _ matches: SidebarEntityIndex.Matches, in catalog: PublicCatalog,
+    sequences: [DatabaseSequence]?, userTypes: [DatabaseUserType]?
+  ) -> PublicEntities {
+    let tables = catalog.tables
+    let views = catalog.views
+    func columns(_ offsets: [Int]?, of all: [DatabaseColumn]) -> [DatabaseColumn] {
+      offsets.map { $0.filter(all.indices.contains).map { all[$0] } } ?? all
+    }
+    func items<Item>(_ positions: [Int], of all: [Item]) -> [Item] {
+      positions.filter(all.indices.contains).map { all[$0] }
+    }
+    return PublicEntities(
+      tables: matches.tables.compactMap { match in
+        guard tables.indices.contains(match.position) else { return nil }
+        let table = tables[match.position]
+        return FilteredTable(
+          source: table, columns: columns(match.columns, of: table.columns),
+          expandForMatch: match.expandForMatch)
+      },
+      views: matches.views.compactMap { match in
+        guard views.indices.contains(match.position) else { return nil }
+        let view = views[match.position]
+        return FilteredView(
+          source: view, columns: columns(match.columns, of: view.columns),
+          expandForMatch: match.expandForMatch)
+      },
+      functions: items(matches.functions, of: catalog.functions),
+      procedures: items(matches.procedures, of: catalog.procedures),
+      triggers: items(matches.triggers, of: catalog.triggers),
+      sequences: sequences, userTypes: userTypes)
   }
 
   private var filteredUsers: [DatabaseUser] {
@@ -358,21 +529,24 @@ struct WorkspaceLeftSidebarContent: View {
       tables.count + views.count + functions.count + procedures.count + triggers.count
         + (sequences?.count ?? 0) + (userTypes?.count ?? 0)
     }
+  }
 
-    func inSchema(_ schema: String) -> PublicEntities {
-      filtered { $0 == schema }
-    }
+  /// The filter's Public tab objects: the temporary ones, and the listed schemas' left to the
+  /// layout to resolve (`listedEntities` for the flat list, `entities(in:of:)` per schema group),
+  /// so a render resolves only the rows it draws
+  private struct PublicMatches {
+    let temporary: PublicEntities
+    /// The index's result `temporary` was resolved from
+    let filtered: SidebarEntityIndex.Result
+    /// The arrays `filtered` points into
+    let catalog: PublicCatalog
+    /// The listed schemas' sequences and types, nil until read
+    let sequences: [DatabaseSequence]?
+    let userTypes: [DatabaseUserType]?
 
-    /// The objects of the schemas `keeps` takes
-    func filtered(_ keeps: (String) -> Bool) -> PublicEntities {
-      PublicEntities(
-        tables: tables.filter { keeps($0.source.schema) },
-        views: views.filter { keeps($0.source.schema) },
-        functions: functions.filter { keeps($0.schema) },
-        procedures: procedures.filter { keeps($0.schema) },
-        triggers: triggers.filter { keeps($0.schema) },
-        sequences: sequences?.filter { keeps($0.schema) },
-        userTypes: userTypes?.filter { keeps($0.schema) })
+    /// No object of a listed schema matches
+    var isListedEmpty: Bool {
+      filtered.listed.isEmpty && (sequences ?? []).isEmpty && (userTypes ?? []).isEmpty
     }
   }
 
@@ -409,6 +583,8 @@ struct WorkspaceLeftSidebarContent: View {
   private func foldered(
     _ entities: PublicEntities, folders: [SidebarFolder]
   ) -> (folders: [FolderContent], rest: PublicEntities) {
+    // No folder: every row is ungrouped (spares a pass over a large catalog per render)
+    guard !folders.isEmpty else { return ([], entities) }
     let layout = SidebarFolderLayout.build(
       folders: folders, tables: entities.tables, views: entities.views,
       isFiltering: !publicKeywords.isEmpty)
@@ -568,7 +744,9 @@ struct WorkspaceLeftSidebarContent: View {
 
   private var publicTabContent: some View {
     let schemaState = publicSchemas
-    let (entities, temporary) = publicEntities(schemaState)
+    let filterKey = publicFilterKey(schemaState)
+    let found = publicEntities(schemaState, key: filterKey)
+    let temporary = found.temporary
     let schemas = schemaState.listed
     let index = folderIndex
     let showsFilterMenu = showsSchemaFilter(schemaState)
@@ -614,11 +792,11 @@ struct WorkspaceLeftSidebarContent: View {
         hasTemporary: !temporary.isEmpty)
       {
         everySchemaHiddenState
-      } else if !publicKeywords.isEmpty && entities.isEmpty && temporary.isEmpty {
+      } else if !publicKeywords.isEmpty && found.isListedEmpty && temporary.isEmpty {
         noMatchesState
       } else {
         ScrollView {
-          VStack(alignment: .leading, spacing: Spacing.sm) {
+          LazyVStack(alignment: .leading, spacing: Spacing.sm) {
             if !temporary.isEmpty {
               temporarySection(temporary)
             }
@@ -630,11 +808,15 @@ struct WorkspaceLeftSidebarContent: View {
               && SidebarSectionModel.groupsBySchema(queryLanguage)
             {
               ForEach(schemas, id: \.self) { schema in
-                let inSchema = entities.inSchema(schema)
+                let inSchema = self.entities(in: schema, of: found)
                 if !inSchema.isEmpty {
                   let grouped = foldered(
                     inSchema, folders: index?.bySchema[schema] ?? [])
-                  EntitySection(title: schema, count: inSchema.count, icon: "folder") {
+                  EntitySection(
+                    title: schema, count: inSchema.count, icon: "folder",
+                    forceExpanded: isFilteringPublic,
+                    expanded: sectionExpansion("schema-group:" + schema, default: true)
+                  ) {
                     VStack(alignment: .leading, spacing: Spacing.xs) {
                       entitySections(
                         grouped.rest, folders: grouped.folders, folderIndex: index,
@@ -644,12 +826,11 @@ struct WorkspaceLeftSidebarContent: View {
                   }
                   // The schema's menu: the database's, with Import Files into this schema
                   .contextMenu { databaseMenuItems(schema: schema) }
-                  .id(publicKeywords.isEmpty ? schema : "\(schema)-filtered")
                 }
               }
             } else {
               let flat = foldered(
-                entities, folders: index?.folders(in: Set(schemas)) ?? [])
+                listedEntities(of: found), folders: index?.folders(in: Set(schemas)) ?? [])
               entitySections(
                 flat.rest, folders: flat.folders, folderIndex: index, idPrefix: "",
                 showsEmptySections: publicKeywords.isEmpty,
@@ -663,20 +844,37 @@ struct WorkspaceLeftSidebarContent: View {
         .contextMenu { databaseMenuItems(schema: nil) }
       }
     }
+    .task(id: filterKey) { await refilterPublic(filterKey) }
+  }
+
+  /// Every Public section draws open while a filter is applied (`EntitySection.forceExpanded`)
+  private var isFilteringPublic: Bool {
+    !publicKeywords.isEmpty
+  }
+
+  /// Whether the Public section `id` is open: what the user last chose, else `isExpanded`. The
+  /// ids are a section's `.id` (kind and schema), a schema group's "schema-group:<schema>".
+  private func sectionExpansion(_ id: String, default isExpanded: Bool) -> Binding<Bool> {
+    Binding(
+      get: { expandedSections[id] ?? isExpanded },
+      set: { expandedSections[id] = $0 })
   }
 
   /// The session's temporary objects above the schema groups, in a schema group's sections
   /// (no folder, no New Table), rows named with their schema once the tables span two
   private func temporarySection(_ entities: PublicEntities) -> some View {
     let showsSchema = SidebarSectionModel.temporaryRowsShowSchema(entities.tables.map(\.source))
-    return EntitySection(title: "Temporary", count: entities.count, icon: "clock") {
+    return EntitySection(
+      title: "Temporary", count: entities.count, icon: "clock", forceExpanded: isFilteringPublic,
+      expanded: sectionExpansion("temporary-section", default: true)
+    ) {
       VStack(alignment: .leading, spacing: Spacing.xs) {
         entitySections(
           entities, folders: [], folderIndex: nil, idPrefix: "temporary-section.",
           showsEmptySections: false, showsSchema: showsSchema, schema: nil, offersCreate: false)
       }
     }
-    .id(publicKeywords.isEmpty ? "temporary-section" : "temporary-section-filtered")
+    .id("temporary-section")
   }
 
   /// The database's menu items; `schema` is the schema group they open on (nil: the database,
@@ -741,7 +939,8 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.tables.count,
           icon: section.icon,
-          isExpanded: true,
+          forceExpanded: isFilteringPublic,
+          expanded: sectionExpansion(idPrefix + "tables", default: true),
           createTitle: offersCreate ? tablesCreateTitle : nil,
           onCreate: offersCreate ? tablesCreateAction(schema: schema) : nil
         ) {
@@ -749,7 +948,7 @@ struct WorkspaceLeftSidebarContent: View {
             tableRow(table, showsSchema: showsSchema, folderIndex: folderIndex)
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "tables" : "tables-filtered"))
+        .id(idPrefix + "tables")
       }
 
     case .views:
@@ -758,7 +957,8 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.views.count,
           icon: section.icon,
-          isExpanded: true,
+          forceExpanded: isFilteringPublic,
+          expanded: sectionExpansion(idPrefix + "views", default: true),
           createTitle: SidebarSectionModel.createActionTitle(
             for: .views, databaseType: connectionDatabaseType),
           onCreate: createAction(.createView)
@@ -767,7 +967,7 @@ struct WorkspaceLeftSidebarContent: View {
             viewRow(view, showsSchema: showsSchema, folderIndex: folderIndex)
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "views" : "views-filtered"))
+        .id(idPrefix + "views")
       }
 
     case .functions:
@@ -776,7 +976,8 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.functions.count,
           icon: section.icon,
-          isExpanded: true
+          forceExpanded: isFilteringPublic,
+          expanded: sectionExpansion(idPrefix + "functions", default: true)
         ) {
           ForEach(entities.functions) { function in
             FunctionRowView(
@@ -789,7 +990,7 @@ struct WorkspaceLeftSidebarContent: View {
             )
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "functions" : "functions-filtered"))
+        .id(idPrefix + "functions")
       }
 
     case .procedures:
@@ -798,7 +999,8 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.procedures.count,
           icon: section.icon,
-          isExpanded: true
+          forceExpanded: isFilteringPublic,
+          expanded: sectionExpansion(idPrefix + "procedures", default: true)
         ) {
           ForEach(entities.procedures) { procedure in
             ProcedureRowView(
@@ -811,7 +1013,7 @@ struct WorkspaceLeftSidebarContent: View {
             )
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "procedures" : "procedures-filtered"))
+        .id(idPrefix + "procedures")
       }
 
     case .triggers:
@@ -820,7 +1022,8 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.triggers.count,
           icon: section.icon,
-          isExpanded: true
+          forceExpanded: isFilteringPublic,
+          expanded: sectionExpansion(idPrefix + "triggers", default: true)
         ) {
           ForEach(entities.triggers) { trigger in
             TriggerRowView(
@@ -829,7 +1032,7 @@ struct WorkspaceLeftSidebarContent: View {
             )
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "triggers" : "triggers-filtered"))
+        .id(idPrefix + "triggers")
       }
 
     case .sequences:
@@ -839,7 +1042,9 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.sequences?.count,
           icon: section.icon,
-          isExpanded: !publicKeywords.isEmpty && entities.sequences != nil
+          // Unread ones stay shut: drawing the section open reads it
+          forceExpanded: isFilteringPublic && entities.sequences != nil,
+          expanded: sectionExpansion(idPrefix + "sequences", default: false)
         ) {
           catalogStatus(workspaceManager.databaseSequences, isEmpty: entities.sequences?.isEmpty) {
             await workspaceManager.loadSequencesIfNeeded()
@@ -852,7 +1057,7 @@ struct WorkspaceLeftSidebarContent: View {
             )
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "sequences" : "sequences-filtered"))
+        .id(idPrefix + "sequences")
       }
 
     case .types:
@@ -861,7 +1066,9 @@ struct WorkspaceLeftSidebarContent: View {
           title: section.title,
           count: entities.userTypes?.count,
           icon: section.icon,
-          isExpanded: !publicKeywords.isEmpty && entities.userTypes != nil
+          // Unread ones stay shut: drawing the section open reads it
+          forceExpanded: isFilteringPublic && entities.userTypes != nil,
+          expanded: sectionExpansion(idPrefix + "types", default: false)
         ) {
           catalogStatus(workspaceManager.databaseUserTypes, isEmpty: entities.userTypes?.isEmpty) {
             await workspaceManager.loadUserTypesIfNeeded()
@@ -874,7 +1081,7 @@ struct WorkspaceLeftSidebarContent: View {
             )
           }
         }
-        .id(idPrefix + (publicKeywords.isEmpty ? "types" : "types-filtered"))
+        .id(idPrefix + "types")
       }
     }
   }
@@ -1166,6 +1373,52 @@ struct WorkspaceLeftSidebarContent: View {
         .controlSize(.small)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+}
+
+/// A refresh's progress above the rows it keeps, with Cancel (the rows stay as they were).
+/// Shown ~150 ms after the refresh starts, so a quick one does not flash it or move the rows.
+private struct SchemaRefreshRow: View {
+  let onCancel: () -> Void
+  @State private var isShown = false
+
+  var body: some View {
+    VStack(spacing: 0) {
+      // Keeps the row on screen (and its task running) before it shows
+      Color.clear.frame(height: 0)
+      if isShown {
+        refreshing
+          .transition(.opacity)
+      }
+    }
+    .animation(.easeIn(duration: 0.15), value: isShown)
+    // Opt out of the app-wide animation kill switch, only for the fade
+    .transaction(value: isShown) { $0.disablesAnimations = false }
+    .task {
+      // A cancelled sleep must not show the row after it disappeared
+      guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
+      isShown = true
+    }
+  }
+
+  private var refreshing: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: Spacing.sm) {
+        ProgressView()
+          .controlSize(.small)
+          .tint(.accent)
+        Text("Refreshing schema...")
+          .font(.caption)
+          .foregroundColor(.foregroundMuted)
+        Spacer()
+        Button("Cancel", action: onCancel)
+          .buttonStyle(SecondaryButtonStyle())
+          .controlSize(.small)
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.xs)
+      Divider()
+    }
   }
 }
 
