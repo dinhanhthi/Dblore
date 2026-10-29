@@ -365,9 +365,11 @@ struct WorkspaceTriggerLoadTests {
     #expect(workspace.databaseTriggers.first?.table == "items")
     // tables, views, triggers, foreign keys, columns: no definition read during the load
     #expect(await workspace.connectionManager.catalogQueryCount == 5)
+    #expect(workspace.paletteCatalog != nil)
 
     await workspace.performDisconnect()
     #expect(workspace.databaseTriggers.isEmpty)
+    #expect(workspace.paletteCatalog == nil)
   }
 
   @Test("a tab opened after the schema load gets the triggers")

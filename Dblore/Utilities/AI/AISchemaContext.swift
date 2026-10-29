@@ -29,17 +29,22 @@ nonisolated enum AISchemaContext {
     let tokens = tokenize(question)
     var scores = tables.map { score($0, tokens: tokens) }
 
-    let matched = Set(zip(tables, scores).filter { $0.1 > 0 }.map { qualified($0.0) })
+    let names = tables.map(qualified)
+    let matched = Set(zip(names, scores).filter { $0.1 > 0 }.map(\.0))
     if matched.isEmpty { return Array(tables.prefix(fallbackCount)) }
 
-    for (index, table) in tables.enumerated() {
-      let name = qualified(table)
-      for fk in foreignKeys where !isSelfReferencing(fk) {
-        if source(fk) == name && matched.contains(target(fk)) {
-          scores[index] += 3
-        } else if target(fk) == name && matched.contains(source(fk)) {
-          scores[index] += 3
-        }
+    // Each foreign key once (O(T + F)): +3 to its source when the target matched and to its
+    // target when the source matched, for every table with that name
+    var bonus: [String: Int] = [:]
+    for fk in foreignKeys where !isSelfReferencing(fk) {
+      let from = source(fk)
+      let to = target(fk)
+      if matched.contains(to) { bonus[from, default: 0] += 3 }
+      if matched.contains(from) { bonus[to, default: 0] += 3 }
+    }
+    if !bonus.isEmpty {
+      for index in tables.indices {
+        scores[index] += bonus[names[index]] ?? 0
       }
     }
 

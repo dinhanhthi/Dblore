@@ -2,7 +2,8 @@
 // Baseline at LargeCatalogFixture's 50,000 tables: schema load, one sidebar filter keystroke,
 // command palette open, autocomplete, AI table selection and the ER layout at 300 tables, each
 // recorded in a PERF line with the longest main-actor gap a ticker saw meanwhile. The sidebar's
-// first listing and filter keystroke have budgets.
+// first listing and filter keystroke, the palette, autocomplete and AI table selection have
+// budgets.
 // S-SQL compares today's per-table catalog read with one bulk statement per catalog part.
 // Opt-in (requiresLargeCatalog). Results land in the runner's temp perf-results.txt.
 
@@ -21,7 +22,18 @@ struct LargeCatalogPerformanceTests {
   private static let firstListingBudgetMs = 17_824.0
   /// Filter keystroke: 844.1 / 846.9 / 837.0 ms, median 844.1 (main gap 2.1-3.9 ms).
   private static let filterKeystrokeBudgetMs = 1_055.0
-  /// The longest main-actor gap first listing and a filter keystroke may cause
+  /// Palette open: 14.0 / 16.2 / 15.6 ms, median 15.6 (main gap 2.1 ms). Stages under 20 ms
+  /// get a 25 ms floor: 1.25x leaves them a few ms, within scheduler noise.
+  private static let paletteOpenBudgetMs = 25.0
+  /// Palette query "t04999": 602.1 / 615.1 / 603.1 ms, median 603.1 (main gap 2.1-3.1 ms).
+  private static let paletteQueryBudgetMs = 754.0
+  /// Autocomplete after FROM: 7.4 / 8.2 / 7.3 ms, median 7.4 (on main; 25 ms floor).
+  private static let autocompleteAfterFromBudgetMs = 25.0
+  /// Autocomplete with no context: 5.1 / 5.6 / 5.1 ms, median 5.1 (on main; 25 ms floor).
+  private static let autocompleteNoContextBudgetMs = 25.0
+  /// AI relevant tables: 499.7 / 494.2 / 488.4 ms, median 494.2 (main gap 2.1-2.5 ms).
+  private static let aiRelevantTablesBudgetMs = 618.0
+  /// The longest main-actor gap any budgeted stage may cause
   private static let maxMainGapMs = 100.0
 
   /// A measured stage: its result, duration and the ticker's longest main-actor gap
@@ -162,18 +174,45 @@ struct LargeCatalogPerformanceTests {
     #expect(listed == Self.tables)
   }
 
+  /// Open on the cached catalog the schema load built, until the first results of the empty
+  /// query (ranking runs detached)
   @Test("Command palette open")
   func paletteOpen() async throws {
     let workspace = try await loadedWorkspace()
     workspace.commandPalette = nil
-    // Open until the first results of the empty query (ranking runs detached)
-    let palette = try await measure("paletteOpen") {
+    #expect(workspace.paletteCatalog != nil)
+    let open = try await measure("paletteOpen") {
       workspace.openCommandPalette()
       let palette = try #require(workspace.commandPalette)
       while !palette.isRankFresh { try await Task.sleep(for: .milliseconds(1)) }
       return palette
-    }.value
-    #expect(!palette.ranked.isEmpty)
+    }
+    #expect(!open.value.ranked.isEmpty)
+    #expect(open.ms <= Self.paletteOpenBudgetMs)
+    #expect(open.maxMainGapMs <= Self.maxMainGapMs)
+    workspace.commandPalette = nil
+  }
+
+  /// A typed query through CommandPaletteModel, ranked on the catalog's stored lowercase keys
+  @Test("Command palette query")
+  func paletteQuery() async throws {
+    let workspace = try await loadedWorkspace()
+    workspace.commandPalette = nil
+    #expect(workspace.paletteCatalog != nil)
+    workspace.openCommandPalette()
+    let palette = try #require(workspace.commandPalette)
+    while !palette.isRankFresh { try await Task.sleep(for: .milliseconds(1)) }
+    let query = try await measure("paletteQuery") {
+      palette.query = "t04999"
+      while !palette.isRankFresh { try await Task.sleep(for: .milliseconds(1)) }
+    }
+    #expect(query.ms <= Self.paletteQueryBudgetMs)
+    #expect(query.maxMainGapMs <= Self.maxMainGapMs)
+    if case .table(_, let name) = palette.ranked.first {
+      #expect(name == "t04999")
+    } else {
+      Issue.record("No table ranked first: \(String(describing: palette.ranked.first))")
+    }
     workspace.commandPalette = nil
   }
 
@@ -184,8 +223,10 @@ struct LargeCatalogPerformanceTests {
     let suggestions = try await measure("autocompleteAfterFrom") {
       workspace.autocompleteProvider.getSuggestions(
         for: text, at: (text as NSString).length, dialect: .sqlite)
-    }.value
-    #expect(!suggestions.isEmpty)
+    }
+    #expect(!suggestions.value.isEmpty)
+    #expect(suggestions.ms <= Self.autocompleteAfterFromBudgetMs)
+    #expect(suggestions.maxMainGapMs <= Self.maxMainGapMs)
   }
 
   @Test("Autocomplete with no context")
@@ -195,8 +236,10 @@ struct LargeCatalogPerformanceTests {
     let suggestions = try await measure("autocompleteNoContext") {
       workspace.autocompleteProvider.getSuggestions(
         for: text, at: (text as NSString).length, dialect: .sqlite)
-    }.value
-    #expect(!suggestions.isEmpty)
+    }
+    #expect(!suggestions.value.isEmpty)
+    #expect(suggestions.ms <= Self.autocompleteNoContextBudgetMs)
+    #expect(suggestions.maxMainGapMs <= Self.maxMainGapMs)
   }
 
   /// A question that names tables, so the foreign-key pass runs (no match takes the first 20)
@@ -208,8 +251,10 @@ struct LargeCatalogPerformanceTests {
       return await AIAssistantViewModel.buildRequest(
         model: "large-catalog", question: "Total amount of t00019 rows per t00018 row",
         explicit: [], snapshot: snapshot, history: [], runsQueries: false, compactPrompt: false)
-    }.value
-    #expect(request.system.contains("t00019"))
+    }
+    #expect(request.value.system.contains("t00019"))
+    #expect(request.ms <= Self.aiRelevantTablesBudgetMs)
+    #expect(request.maxMainGapMs <= Self.maxMainGapMs)
   }
 
   /// The layout engine on the first 300 tables (loadSchemaGraph would lay out every table)

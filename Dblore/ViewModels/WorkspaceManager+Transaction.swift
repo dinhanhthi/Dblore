@@ -353,6 +353,7 @@ extension WorkspaceManager {
     databaseProcedures = []
     databaseTriggers = []
     sidebarEntityIndex = .empty
+    paletteCatalog = nil
     databaseUsers = []
     databaseRoles = []
     databaseForeignKeys = []

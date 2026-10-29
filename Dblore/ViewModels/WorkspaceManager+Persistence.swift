@@ -409,9 +409,10 @@ extension WorkspaceManager {
         else { return }
 
         databaseTables = joined.tables
-        autocompleteProvider.update(tables: joined.tables, columnsByTable: joined.columnsByTable)
+        autocompleteProvider.update(tables: joined.tables, index: joined.autocompleteIndex)
         databaseViews = joined.views
         databaseFunctions = functions
+        paletteCatalog = joined.paletteCatalog
         databaseProcedures = procedures
         databaseTriggers = triggers
         sidebarEntityIndex = joined.sidebarIndex
@@ -431,15 +432,16 @@ extension WorkspaceManager {
     }
   }
 
-  /// Tables and views joined with their columns, plus the autocomplete index and the sidebar
-  /// filter's index. Off the main actor: a large catalog has tens of thousands of relations.
+  /// Tables and views joined with their columns, plus the autocomplete index, the sidebar
+  /// filter's index and the palette's rows. Off the main actor: a large catalog has tens of
+  /// thousands of relations.
   @concurrent nonisolated private static func joinColumns(
     tables: [DatabaseTable], views: [DatabaseView], functions: [DatabaseFunction],
     procedures: [DatabaseProcedure], triggers: [DatabaseTrigger],
     columnsByRelation: [String: [DatabaseColumn]]
   ) async -> (
-    tables: [DatabaseTable], views: [DatabaseView], columnsByTable: [String: [DatabaseColumn]],
-    sidebarIndex: SidebarEntityIndex
+    tables: [DatabaseTable], views: [DatabaseView], autocompleteIndex: SQLAutocompleteIndex,
+    sidebarIndex: SidebarEntityIndex, paletteCatalog: CommandPaletteCatalog
   ) {
     var tables = tables
     var views = views
@@ -453,7 +455,10 @@ extension WorkspaceManager {
     let sidebarIndex = SidebarEntityIndex(
       tables: tables, views: views, functions: functions, procedures: procedures,
       triggers: triggers)
-    return (tables, views, SQLAutocompleteProvider.columnIndex(of: tables), sidebarIndex)
+    let paletteCatalog = CommandPaletteCatalog(tables: tables, views: views, functions: functions)
+    return (
+      tables, views, SQLAutocompleteIndex(tables: tables), sidebarIndex, paletteCatalog
+    )
   }
 
   /// Read the sequences when their sidebar section is first expanded (and again after a failure)

@@ -393,6 +393,10 @@ class WorkspaceManager: Identifiable {
   /// The sidebar filter's index of the five arrays above, built with them off the main actor
   /// and assigned with them
   var sidebarEntityIndex = SidebarEntityIndex.empty
+  /// The command palette's table, view and function rows with their search keys, built with
+  /// the arrays above off the main actor and assigned and cleared with them. Nil until a schema
+  /// load lands: the palette then reads the live arrays.
+  @ObservationIgnored var paletteCatalog: CommandPaletteCatalog?
   /// In-flight definition reads of object source tabs, cancelled when the tab closes
   @ObservationIgnored var objectSourceLoads: [UUID: Task<Void, Never>] = [:]
   var databaseUsers: [DatabaseUser] = []

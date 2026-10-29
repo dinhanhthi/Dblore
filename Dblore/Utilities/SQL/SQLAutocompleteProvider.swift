@@ -36,23 +36,29 @@ struct AutocompleteSuggestion: Identifiable, Equatable {
 
 @MainActor
 class SQLAutocompleteProvider {
-  // Schema cache (tables and columns)
-  var tables: [DatabaseTable] = []
-  var columnsByTable: [String: [DatabaseColumn]] = [:]  // key: "schema.table"
+  // Schema cache (tables and their index)
+  private(set) var tables: [DatabaseTable] = []
+  private(set) var index = SQLAutocompleteIndex.empty
+  /// Columns of each table keyed "schema.table"
+  var columnsByTable: [String: [DatabaseColumn]] { index.columnsByTable }
   /// Snippets offered by trigger prefix in SQL; tests swap in their own
   var snippets: @MainActor () -> [SQLSnippet] = { SQLSnippetStore.shared.snippets }
+
+  /// Suggestions a popup shows
+  static let suggestionLimit = 20
 
   // MARK: - Schema
 
   /// Feed the provider from the already loaded schema (tables with their columns)
   func update(tables: [DatabaseTable]) {
-    update(tables: tables, columnsByTable: Self.columnIndex(of: tables))
+    update(tables: tables, index: SQLAutocompleteIndex(tables: tables))
   }
 
-  /// Feed the provider with an index already built by `columnIndex(of:)` (off the main actor)
-  func update(tables: [DatabaseTable], columnsByTable: [String: [DatabaseColumn]]) {
+  /// Feed the provider with the index of `tables` built off the main actor
+  func update(tables: [DatabaseTable], index: SQLAutocompleteIndex) {
+    assert(index.tableNames.count == tables.count, "the index must be built from these tables")
     self.tables = tables
-    self.columnsByTable = columnsByTable
+    self.index = index
   }
 
   /// Columns of each table keyed "schema.table"
@@ -68,7 +74,7 @@ class SQLAutocompleteProvider {
   /// Clear the schema cache (10.1.4 & 10.1.8 optimization)
   func clearCache() {
     tables = []
-    columnsByTable = [:]
+    index = .empty
   }
 
   // MARK: - Autocomplete Suggestions
@@ -97,41 +103,64 @@ class SQLAutocompleteProvider {
     // If token is empty or too short, don't show suggestions
     guard !token.isEmpty else { return [] }
 
-    var suggestions: [AutocompleteSuggestion] = []
+    let lowerToken = token.lowercased()
+    let scope = statementScope(in: text, cursor: cursorPosition, dialect: dialect)
+
+    // After ORDER BY / GROUP BY, the SELECT-list aliases of that query come first and replace
+    // the suggestions with their text, so those are left out of the selection
+    let aliases = (scope.orderByAliases ?? []).filter {
+      $0.lowercased().hasPrefix(lowerToken)
+    }
+    // Only the first 20 by relevance are shown: select them instead of sorting every match
+    var selection = SuggestionSelection(
+      limit: Self.suggestionLimit, lowerToken: lowerToken, excluded: Set(aliases))
+    // Offer order breaks ties, as the stable sort over the appended list did
+    var order = 0
 
     // Add keyword suggestions
-    let keywordMatches = Self.sqlKeywords.filter { keyword in
-      keyword.lowercased().hasPrefix(token.lowercased())
-    }
-    suggestions += keywordMatches.map { keyword in
-      AutocompleteSuggestion(text: keyword, type: .keyword, description: "SQL Keyword")
+    for keyword in Self.sqlKeywords {
+      let lower = keyword.lowercased()
+      guard lower.hasPrefix(lowerToken) else { continue }
+      selection.offer(text: keyword, lower: lower, length: keyword.count, order: order) {
+        AutocompleteSuggestion(text: keyword, type: .keyword, description: "SQL Keyword")
+      }
+      order += 1
     }
 
-    // Add table suggestions
-    let tableMatches = tables.filter { table in
-      table.name.lowercased().hasPrefix(token.lowercased())
-    }
-    suggestions += tableMatches.map { table in
-      AutocompleteSuggestion(
-        text: table.name,
-        type: .table,
-        description: "Table (\(table.schema))"
-      )
+    // Add table suggestions (lowercased names from the index)
+    for (position, name) in index.tableNames.enumerated() where name.lower.hasPrefix(lowerToken) {
+      let table = tables[position]
+      selection.offer(text: table.name, lower: name.lower, length: name.length, order: order) {
+        AutocompleteSuggestion(
+          text: table.name,
+          type: .table,
+          description: "Table (\(table.schema))"
+        )
+      }
+      order += 1
     }
 
     // CTEs of this statement are tables too
-    let scope = statementScope(in: text, cursor: cursorPosition, dialect: dialect)
-    suggestions += scope.ctes.filter { $0.name.lowercased().hasPrefix(token.lowercased()) }.map {
-      AutocompleteSuggestion(text: $0.name, type: .table, description: "CTE")
+    for cte in scope.ctes {
+      let lower = cte.name.lowercased()
+      guard lower.hasPrefix(lowerToken) else { continue }
+      selection.offer(text: cte.name, lower: lower, length: cte.name.count, order: order) {
+        AutocompleteSuggestion(text: cte.name, type: .table, description: "CTE")
+      }
+      order += 1
     }
 
     // Add snippet suggestions (trigger prefix, any case)
-    let snippetMatches = snippets().filter { snippet in
-      snippet.trigger.lowercased().hasPrefix(token.lowercased())
-    }
-    suggestions += snippetMatches.map { snippet in
-      AutocompleteSuggestion(
-        text: snippet.trigger, type: .snippet(snippet), description: snippet.name)
+    for snippet in snippets() {
+      let lower = snippet.trigger.lowercased()
+      guard lower.hasPrefix(lowerToken) else { continue }
+      selection.offer(
+        text: snippet.trigger, lower: lower, length: snippet.trigger.count, order: order
+      ) {
+        AutocompleteSuggestion(
+          text: snippet.trigger, type: .snippet(snippet), description: snippet.name)
+      }
+      order += 1
     }
 
     // Add column suggestions (context-aware)
@@ -146,7 +175,6 @@ class SQLAutocompleteProvider {
       if !tableRefs.isEmpty || !scope.referencedCTEs.isEmpty {
         // We have table context - only show columns from referenced tables and CTEs
         // (CTE columns deduped by name, at most maxCTEColumns in all)
-        let lowerToken = token.lowercased()
         var cteColumnNames: Set<String> = []
         cteLoop: for cte in scope.ctes where scope.referencedCTEs.contains(cte.name.lowercased()) {
           for column in cte.columns {
@@ -154,72 +182,180 @@ class SQLAutocompleteProvider {
             let lowerColumn = column.lowercased()
             guard lowerColumn.hasPrefix(lowerToken), cteColumnNames.insert(lowerColumn).inserted
             else { continue }
-            suggestions.append(
+            selection.offer(text: column, lower: lowerColumn, length: column.count, order: order) {
               AutocompleteSuggestion(
-                text: column, type: .column(tableName: cte.name), description: "CTE (\(cte.name))"))
+                text: column, type: .column(tableName: cte.name), description: "CTE (\(cte.name))")
+            }
+            order += 1
           }
         }
         for (_, tableKey) in tableRefs {
-          if let columns = columnsByTable[tableKey] {
-            let columnMatches = columns.filter { column in
-              column.name.lowercased().hasPrefix(token.lowercased())
-            }
-            suggestions += columnMatches.map { column in
+          for column in columnsByTable[tableKey] ?? [] {
+            let lower = column.name.lowercased()
+            guard lower.hasPrefix(lowerToken) else { continue }
+            selection.offer(
+              text: column.name, lower: lower, length: column.name.count, order: order
+            ) {
               AutocompleteSuggestion(
                 text: column.name,
                 type: .column(tableName: tableKey),
                 description: "\(column.type) (\(tableKey))"
               )
             }
+            order += 1
           }
         }
       } else {
-        // No table context - show columns from all tables (fallback)
-        for (tableKey, columns) in columnsByTable {
-          let columnMatches = columns.filter { column in
-            column.name.lowercased().hasPrefix(token.lowercased())
-          }
-          suggestions += columnMatches.map { column in
-            AutocompleteSuggestion(
-              text: column.name,
-              type: .column(tableName: tableKey),
-              description: "\(column.type) (\(tableKey))"
-            )
+        // No table context - show columns from all tables (fallback), one index group per
+        // column name, so a name shared by thousands of tables is compared once
+        for group in index.columnGroups where group.name.lower.hasPrefix(lowerToken) {
+          // Entries are in table order: once one is not kept, the later ones are not either
+          for entry in group.entries {
+            let kept = selection.offer(
+              text: group.text, lower: group.name.lower, length: group.name.length,
+              order: order + Int(entry.order)
+            ) {
+              let tableKey = index.tableKeys[Int(entry.table)]
+              let column = index.columnsByTable[tableKey]?[Int(entry.column)]
+              return AutocompleteSuggestion(
+                text: group.text,
+                type: .column(tableName: tableKey),
+                description: "\(column?.type ?? "") (\(tableKey))"
+              )
+            }
+            if !kept { break }
           }
         }
       }
     }
 
-    // Sort by relevance: exact matches first, then alphabetically
-    suggestions.sort { lhs, rhs in
-      let lhsExact = lhs.text.lowercased() == token.lowercased()
-      let rhsExact = rhs.text.lowercased() == token.lowercased()
-
-      if lhsExact != rhsExact {
-        return lhsExact
-      }
-
-      // Prioritize shorter matches (more specific)
-      if lhs.text.count != rhs.text.count {
-        return lhs.text.count < rhs.text.count
-      }
-
-      return lhs.text.lowercased() < rhs.text.lowercased()
+    if aliases.isEmpty { return selection.suggestions }
+    let aliasSuggestions = aliases.sorted { $0.lowercased() < $1.lowercased() }.map {
+      AutocompleteSuggestion(text: $0, type: .column(tableName: ""), description: "Alias")
     }
+    return Array((aliasSuggestions + selection.suggestions).prefix(Self.suggestionLimit))
+  }
+}
 
-    // After ORDER BY / GROUP BY, the SELECT-list aliases of that query come first
-    let aliases = (scope.orderByAliases ?? []).filter {
-      $0.lowercased().hasPrefix(token.lowercased())
-    }
-    if !aliases.isEmpty {
-      let aliasSuggestions = aliases.sorted { $0.lowercased() < $1.lowercased() }.map {
-        AutocompleteSuggestion(text: $0, type: .column(tableName: ""), description: "Alias")
+// MARK: - Index
+
+/// Lowercased names of a loaded schema, built once per schema load (off the main actor for a
+/// large catalog), so a keystroke compares stored keys instead of lowercasing every name
+nonisolated struct SQLAutocompleteIndex: Sendable {
+  /// Columns of each table keyed "schema.table"
+  var columnsByTable: [String: [DatabaseColumn]] = [:]
+  /// Lowercased name of each table, in `tables` order
+  var tableNames: [Name] = []
+  /// "schema.table" keys of `columnsByTable`, in table order (the fallback's entries point here)
+  var tableKeys: [String] = []
+  /// Every column of `columnsByTable`, one group per exact name, for the no-FROM fallback
+  var columnGroups: [ColumnGroup] = []
+
+  static let empty = SQLAutocompleteIndex()
+
+  nonisolated struct Name: Sendable {
+    /// Lowercased text
+    let lower: String
+    /// Character count of the original text
+    let length: Int
+  }
+
+  /// The columns named `text`, in table order
+  nonisolated struct ColumnGroup: Sendable {
+    let text: String
+    let name: Name
+    var entries: [ColumnEntry] = []
+  }
+
+  nonisolated struct ColumnEntry: Sendable {
+    /// Position among all columns in table order (breaks ties between equal names)
+    let order: Int32
+    /// Index in `tableKeys`
+    let table: Int32
+    /// Index in that table's `columnsByTable` list
+    let column: Int32
+  }
+
+  init() {}
+
+  init(tables: [DatabaseTable]) {
+    columnsByTable = SQLAutocompleteProvider.columnIndex(of: tables)
+    tableNames = tables.map { Name(lower: $0.name.lowercased(), length: $0.name.count) }
+    var seenKeys: Set<String> = []
+    var groupByText: [String: Int] = [:]
+    var order: Int32 = 0
+    for table in tables {
+      let key = "\(table.schema).\(table.name)"
+      // A repeated key lists the columns `columnsByTable` kept, once
+      guard seenKeys.insert(key).inserted, let columns = columnsByTable[key] else { continue }
+      let tableIndex = Int32(tableKeys.count)
+      tableKeys.append(key)
+      for (columnIndex, column) in columns.enumerated() {
+        let entry = ColumnEntry(order: order, table: tableIndex, column: Int32(columnIndex))
+        order += 1
+        if let group = groupByText[column.name] {
+          columnGroups[group].entries.append(entry)
+        } else {
+          groupByText[column.name] = columnGroups.count
+          columnGroups.append(
+            ColumnGroup(
+              text: column.name,
+              name: Name(lower: column.name.lowercased(), length: column.name.count),
+              entries: [entry]))
+        }
       }
-      let aliasTexts = Set(aliases)
-      suggestions = aliasSuggestions + suggestions.filter { !aliasTexts.contains($0.text) }
     }
+  }
+}
 
-    // Limit to 20 suggestions to keep popup manageable
-    return Array(suggestions.prefix(20))
+// MARK: - Selection
+
+/// The first `limit` suggestions in relevance order (exact match first, then shorter, then
+/// alphabetical, then offer order, as the stable sort of every match gave) kept while matches
+/// are offered, so a large catalog is never sorted whole
+private struct SuggestionSelection {
+  private struct Key {
+    let exact: Bool
+    let length: Int
+    let lower: String
+    let order: Int
+  }
+
+  let limit: Int
+  let lowerToken: String
+  /// Texts left out (the ORDER BY aliases that replace them)
+  let excluded: Set<String>
+  private var kept: [(key: Key, suggestion: AutocompleteSuggestion)] = []
+
+  init(limit: Int, lowerToken: String, excluded: Set<String>) {
+    self.limit = limit
+    self.lowerToken = lowerToken
+    self.excluded = excluded
+  }
+
+  var suggestions: [AutocompleteSuggestion] { kept.map(\.suggestion) }
+
+  /// Keeps the suggestion `make` builds when it ranks among the first `limit`. False when it
+  /// does not (then a later offer with the same text and a higher order is not kept either).
+  @discardableResult
+  mutating func offer(
+    text: String, lower: String, length: Int, order: Int, _ make: () -> AutocompleteSuggestion
+  ) -> Bool {
+    guard excluded.isEmpty || !excluded.contains(text) else { return false }
+    let key = Key(exact: lower == lowerToken, length: length, lower: lower, order: order)
+    if kept.count >= limit {
+      guard let last = kept.last, Self.precedes(key, last.key) else { return false }
+      kept.removeLast()
+    }
+    let position = kept.firstIndex { Self.precedes(key, $0.key) } ?? kept.count
+    kept.insert((key, make()), at: position)
+    return true
+  }
+
+  private static func precedes(_ lhs: Key, _ rhs: Key) -> Bool {
+    if lhs.exact != rhs.exact { return lhs.exact }
+    if lhs.length != rhs.length { return lhs.length < rhs.length }
+    if lhs.lower != rhs.lower { return lhs.lower < rhs.lower }
+    return lhs.order < rhs.order
   }
 }
