@@ -2,6 +2,17 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.8.7 (2026-10-29)
+
+### Improved
+
+- **Query Insights header.** The time tabs, connection menu and close button are evenly spaced. [#55d5feeb](https://github.com/dinhanhthi/Dblore/commit/55d5feeb)
+
+### Fixed
+
+- **Tab bar "+" button.** It opens a new tab at the end of the window's tab stack instead of a separate window. [#6bd55f12](https://github.com/dinhanhthi/Dblore/commit/6bd55f12) [#1adc9e71](https://github.com/dinhanhthi/Dblore/commit/1adc9e71) [#fbc89a12](https://github.com/dinhanhthi/Dblore/commit/fbc89a12)
+- **Menu commands in the right window.** Menu actions now act on the key window's workspace rather than a stale previously focused one. [#b6ab30c8](https://github.com/dinhanhthi/Dblore/commit/b6ab30c8)
+
 ## v0.8.6 (2026-10-27)
 
 ### Added
