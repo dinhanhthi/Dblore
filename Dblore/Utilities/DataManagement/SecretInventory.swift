@@ -52,7 +52,7 @@ nonisolated struct SecretItem: Identifiable, Equatable, Sendable {
       return .sshHostKey
     case KeychainOutsideMCPTokenStore.serviceName:
       return .outsideMCPToken
-    case KeychainMCPTokenStore.serviceName:
+    case KeychainMCPTokenStore.serviceName, KeychainMCPCLITokenStore.serviceName:
       return .mcpServerToken
     case LockPasswordStore.serviceName:
       return .lockPassword
@@ -105,7 +105,7 @@ nonisolated final class InMemorySecretInventory: SecretInventory, @unchecked Sen
 
 /// Keychain store for the app. Queries attributes for each service the app already uses.
 nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
-  private static let services = [
+  static let services = [
     SessionManager.keychainService,
     KeychainAIKeyStore.serviceName,
     KeychainPasswordStore.serviceName,
@@ -114,6 +114,7 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
     KeychainSSHKnownHostStore.serviceName,
     KeychainOutsideMCPTokenStore.serviceName,
     KeychainMCPTokenStore.serviceName,
+    KeychainMCPCLITokenStore.serviceName,
     LockPasswordStore.serviceName,
     LockKeyStore.serviceName,
   ]

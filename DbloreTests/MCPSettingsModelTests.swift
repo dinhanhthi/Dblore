@@ -5,6 +5,7 @@
 // buttons put the client snippets with the token on the pasteboard without logging the token.
 // The server denies the waiting write approvals of a connection whose scope narrows to Read,
 // and all of them when write tools are turned off, the token is regenerated or MCP is disabled.
+// The command-line tool lines: the pairing countdown, the pair line and the install line.
 
 import Foundation
 import Testing
@@ -199,6 +200,23 @@ struct MCPSettingsModelTests {
     #expect(fresh != token)
     let logs = await AppLogger.shared.getAllLogs()
     #expect(!logs.contains { $0.message.contains(token) || $0.message.contains(fresh) })
+  }
+
+  @Test("The countdown rounds up, the pair line names the port, the install line escapes")
+  func commandLineToolLines() {
+    #expect(MCPSettingsModel.countdown(.seconds(300)) == "05:00")
+    #expect(MCPSettingsModel.countdown(.milliseconds(59_001)) == "01:00")
+    #expect(MCPSettingsModel.countdown(.milliseconds(1)) == "00:01")
+    #expect(MCPSettingsModel.countdown(.seconds(-3)) == "00:00")
+    let code = MCPCLIPairingCode(code: "0123ABCD", port: 41730, expires: .now)
+    #expect(MCPSettingsModel.pairCommand(code) == "dblore pair 0123ABCD --port 41730")
+    #expect(
+      MCPSettingsModel.installCommand(appPath: "/Applications/Dblore.app")
+        == "sudo mkdir -p /usr/local/bin && sudo ln -sf "
+        + "\"/Applications/Dblore.app/Contents/Helpers/dblore\" /usr/local/bin/dblore")
+    #expect(
+      MCPSettingsModel.installCommand(appPath: #"/A/$(x)`y`"z\.app"#)
+        .contains(#""/A/\$(x)\`y\`\"z\\.app/Contents/Helpers/dblore""#))
   }
 
   private func waitFor(

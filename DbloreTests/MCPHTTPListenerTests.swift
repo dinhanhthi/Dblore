@@ -2,9 +2,11 @@
 // The MCP HTTP listener over a real loopback socket on an ephemeral port: request-head refusals,
 // the streamed body limit, the handler hand-off, keep-alive, a client disconnect cancelling its
 // handler, the connection and in-flight caps (503), the idle timers (and their pause while a
-// handler runs), and start/stop lifecycle. Requests are written raw so the Host header is exactly
-// what the test sends.
+// handler runs), start/stop lifecycle, and the command-line tool's routes (pair, the port-bound
+// hello proof, CLI tokens on /mcp, revoke without a restart, no connection slot). Requests are
+// written raw so the Host header is exactly what the test sends.
 
+import CryptoKit
 import Darwin
 import Foundation
 import NIOCore
@@ -28,11 +30,21 @@ struct MCPHTTPListenerTests {
     }
   }
 
+  /// `/cli/*` answered by `pairing`; `/mcp` answers 200 with the caller's name.
+  private func makeCLIServer(_ pairing: MCPCLIPairingService) -> MCPHTTPServer {
+    MCPHTTPServer(
+      handler: pairing.handler { request in
+        .text(200, request.caller.map { "\($0)" } ?? "none")
+      })
+  }
+
   /// `timeout` replaces all three connection timeouts.
   private func configuration(
-    port: Int = 0, bodyLimit: Int = 64, timeout: TimeAmount? = nil
+    port: Int = 0, bodyLimit: Int = 64, timeout: TimeAmount? = nil,
+    cliTokens: MCPCLITokenRegistry = MCPCLITokenRegistry()
   ) -> MCPHTTPServer.Configuration {
-    var configuration = MCPHTTPServer.Configuration(port: port, token: token, bodyLimit: bodyLimit)
+    var configuration = MCPHTTPServer.Configuration(
+      port: port, token: token, bodyLimit: bodyLimit, cliTokens: cliTokens)
     if let timeout {
       configuration.firstRequestTimeout = timeout
       configuration.readTimeout = timeout
@@ -448,6 +460,161 @@ struct MCPHTTPListenerTests {
     open.withLock { $0 = true }
     #expect(try await replies == Array(repeating: 200, count: cap))
     #expect(try await exchange(port, raw).status == 200)
+    await server.stop()
+  }
+
+  // MARK: - Command-line tool routes
+
+  @Test("A paired token on /mcp is caller cli and a revoke refuses it at once, with no restart")
+  func pairThenRevoke() async throws {
+    let pairing = MCPCLIPairingService(store: InMemoryMCPCLITokenStore())
+    let server = makeCLIServer(pairing)
+    let port = try await server.start(configuration(cliTokens: pairing.registry))
+    let code = pairing.start(port: port).code
+    let pairBody = #"{"code":"\#(code)","name":"laptop"}"#
+    let paired = try await exchange(
+      port, request(port, path: "/cli/pair", body: pairBody, auth: false))
+    #expect(paired.status == 200)
+    #expect(paired.raw.contains("Connection: close"))
+    let result = try JSONDecoder().decode(MCPCLIPairResult.self, from: Data(paired.body.utf8))
+    #expect(result.port == port)
+    let asCLI = request(port, headers: ["Authorization: Bearer \(result.token)"], auth: false)
+    let used = try await exchange(port, asCLI)
+    #expect(used.status == 200)
+    #expect(used.body == "cli")
+    #expect(try await exchange(port, request(port)).body == "mcp")
+    pairing.revoke(id: result.id)
+    #expect(try await exchange(port, asCLI).status == 401)
+    #expect(try await exchange(port, request(port)).status == 200)
+    await server.stop()
+  }
+
+  @Test("Every failed /cli/pair counts, an unreadable one too: the 5th burns the code")
+  func failedPairsBurnTheCode() async throws {
+    let pairing = MCPCLIPairingService(store: InMemoryMCPCLITokenStore())
+    let server = makeCLIServer(pairing)
+    let port = try await server.start(configuration(cliTokens: pairing.registry))
+    let code = pairing.start(port: port).code
+    let wrong = code.first == "0" ? "11111111" : "00000000"
+    for body in [
+      #"{"code":"\#(wrong)"}"#, "{}", "not json", #"{"code":5}"#, #"{"code":"\#(wrong)"}"#,
+    ] {
+      let refused = try await exchange(
+        port, request(port, path: "/cli/pair", body: body, auth: false))
+      #expect(refused.status == 401, "\(body)")
+      #expect(!refused.body.contains("token"))
+    }
+    let late = try await exchange(
+      port, request(port, path: "/cli/pair", body: #"{"code":"\#(code)"}"#, auth: false))
+    #expect(late.status == 401)
+    #expect(pairing.list().isEmpty)
+    await server.stop()
+  }
+
+  @Test("The hello proof is the HMAC of the label, the nonce and the bound port")
+  func helloProofBindsThePort() async throws {
+    let pairing = MCPCLIPairingService(store: InMemoryMCPCLITokenStore())
+    let keyBytes = MCPTokenStoreFactory.randomBytes(count: 32)
+    pairing.registry.add(
+      MCPCLICredential(
+        id: "paired-1", token: MCPTokenStoreFactory.generate(),
+        proofKey: MCPTokenStoreFactory.base64URL(keyBytes), name: "laptop", date: Date()))
+    let first = makeCLIServer(pairing)
+    let second = makeCLIServer(pairing)
+    let firstPort = try await first.start(configuration(cliTokens: pairing.registry))
+    let secondPort = try await second.start(configuration(cliTokens: pairing.registry))
+    let nonce = MCPTokenStoreFactory.randomBytes(count: 32)
+    let encodedNonce = MCPTokenStoreFactory.base64URL(nonce)
+    let body = #"{"id":"paired-1","nonce":"\#(encodedNonce)"}"#
+
+    var proofs: [Data] = []
+    for port in [firstPort, secondPort] {
+      let answer = try await exchange(
+        port, request(port, path: "/cli/hello", body: body, auth: false))
+      #expect(answer.status == 200)
+      #expect(answer.raw.contains("Connection: close"))
+      let object = try #require(
+        JSONSerialization.jsonObject(with: Data(answer.body.utf8)) as? [String: String])
+      let proof = try #require(
+        object["proof"].flatMap { MCPTokenStoreFactory.data(base64URL: $0) })
+      var message = Data("dblore-cli-hello-v1".utf8)
+      message.append(contentsOf: nonce)
+      message.append(contentsOf: [UInt8(port >> 8), UInt8(port & 0xFF)])
+      #expect(
+        HMAC<SHA256>.isValidAuthenticationCode(
+          proof, authenticating: message, using: SymmetricKey(data: keyBytes)))
+      proofs.append(proof)
+    }
+    #expect(proofs[0] != proofs[1])
+
+    let short = MCPTokenStoreFactory.base64URL(Array(nonce.prefix(31)))
+    for refused in [
+      #"{"id":"unknown","nonce":"\#(encodedNonce)"}"#, #"{"id":"paired-1","nonce":"\#(short)"}"#,
+      #"{"id":"paired-1"}"#, "not json",
+    ] {
+      let answer = try await exchange(
+        firstPort, request(firstPort, path: "/cli/hello", body: refused, auth: false))
+      #expect(answer.status == 401, "\(refused)")
+      #expect(!answer.body.contains("proof"))
+    }
+    await first.stop()
+    await second.stop()
+  }
+
+  @Test("/cli/pair and /cli/hello refuse GET, a non-JSON body and more than 4 KB, also chunked")
+  func cliRouteRefusals() async throws {
+    let pairing = MCPCLIPairingService(store: InMemoryMCPCLITokenStore())
+    let server = makeCLIServer(pairing)
+    let port = try await server.start(configuration(cliTokens: pairing.registry))
+    for path in ["/cli/pair", "/cli/hello"] {
+      let oversized = #"{"id":""# + String(repeating: "x", count: 4_100) + #""}"#
+      let chunk = String(repeating: "x", count: 4_200)
+      let chunked = [
+        "POST \(path) HTTP/1.1", "Host: localhost:\(port)", "Content-Type: application/json",
+        "Transfer-Encoding: chunked", "", String(chunk.utf8.count, radix: 16), chunk, "",
+      ].joined(separator: "\r\n")
+      let cases: [(String, Int)] = [
+        (request(port, method: "GET", path: path, body: "", auth: false), 405),
+        (request(port, path: path, auth: false, contentType: "text/plain"), 415),
+        (request(port, path: path, body: oversized, auth: false), 413),
+        (chunked, 413),
+      ]
+      for (raw, expected) in cases {
+        #expect(try await exchange(port, raw).status == expected, "\(raw.prefix(40))")
+      }
+    }
+    await server.stop()
+  }
+
+  @Test("Open /cli/hello connections hold no slot, so an agent still gets 200")
+  func cliConnectionsHoldNoSlot() async throws {
+    let pairing = MCPCLIPairingService(store: InMemoryMCPCLITokenStore())
+    let server = makeCLIServer(pairing)
+    let port = try await server.start(configuration(cliTokens: pairing.registry))
+    // Each head passes validation, then its body stalls, so the connection stays open.
+    let partial = String(
+      request(port, path: "/cli/hello", body: String(repeating: "x", count: 40), auth: false)
+        .dropLast(20))
+    let fds = try await offPool {
+      var fds: [Int32] = []
+      do {
+        for _ in 0..<MCPHTTPServer.maxConnections {
+          let fd = try openConnection(port)
+          fds.append(fd)
+          sendAll(fd, partial)
+        }
+      } catch {
+        for fd in fds { close(fd) }
+        throw error
+      }
+      return fds
+    }
+    defer { for fd in fds { close(fd) } }
+    // The heads are read before the agent's request arrives.
+    try await Task.sleep(for: .milliseconds(100))
+    let answer = try await exchange(port, request(port))
+    #expect(answer.status == 200)
+    #expect(answer.body == "mcp")
     await server.stop()
   }
 

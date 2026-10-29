@@ -50,6 +50,11 @@
 // generic message, server text is scrubbed (`scrub`).
 // Connections are reached only through `MCPReadSource` and `MCPWriteSource` (one SQL
 // implementation each, the pool).
+// A paired command-line tool (caller cli, `MCPToolService.caller`, set per request from the
+// bearer the listener accepted) gets the read tools only: execute_write is neither listed nor
+// run. Its connections follow `HeadlessAccessRule` (by id or label: the allowlist, the lock, and
+// the strictest AI policy minus Never; Ask once per session runs with no prompt, since the user
+// paired the tool), and its run_query is recorded in History as `.cli`.
 
 import Foundation
 
@@ -151,6 +156,7 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
   case writeTooManyWaiting
   case writeConnectionChanged
   case writeOutcomeUnknown
+  case cliReadOnly
 
   var errorDescription: String? {
     switch self {
@@ -231,6 +237,9 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .writeOutcomeUnknown:
       "The change was interrupted while it ran, so Dblore cannot tell whether it was applied. "
         + "Check the data before trying again."
+    case .cliReadOnly:
+      "The command-line tool only reads: execute_write is not available to it. Nothing was "
+        + "sent to the database."
     }
   }
 }
@@ -339,6 +348,9 @@ nonisolated struct MCPToolService: Sendable {
   /// What the client calls itself (its User-Agent, set per request by the JSON-RPC layer)
   @TaskLocal static var clientName = "MCP client"
 
+  /// Whose bearer the listener accepted (set per request by the JSON-RPC layer)
+  @TaskLocal static var caller = MCPCallerKind.mcp
+
   /// Longest execute_write statement (UTF-8 bytes), so the approval shows all of it
   static let maxWriteBytes = 16 * 1_024
   /// Most lines of an execute_write statement
@@ -380,7 +392,7 @@ nonisolated struct MCPToolService: Sendable {
   /// The tools to list now: the read tools, plus execute_write while write tools are on and an
   /// allowlisted connection has a write scope.
   func listedTools() async -> [MCPToolDefinition] {
-    guard let writes, await writes.enabled() else { return Self.tools }
+    guard Self.caller == .mcp, let writes, await writes.enabled() else { return Self.tools }
     let allowed = await allowlist()
     let writable = await writes.scopes().contains { allowed.contains($0.key) && $0.value != .read }
     return writable ? Self.tools + [Self.executeWriteTool] : Self.tools
@@ -411,6 +423,7 @@ nonisolated struct MCPToolService: Sendable {
       case "run_query":
         return try await runQuery(entry: allowedEntry(arguments), arguments: arguments)
       case "execute_write":
+        guard Self.caller == .mcp else { throw MCPToolError.cliReadOnly }
         return try await executeWrite(arguments)
       default:
         throw MCPToolError.unknownTool
@@ -435,7 +448,7 @@ nonisolated struct MCPToolService: Sendable {
 
   /// The allowlist, lock and AI access checks every connection-scoped tool starts with. Only an
   /// allowlisted, unlocked entry is returned; every saved row of its identity tightens the
-  /// decision.
+  /// decision. The command-line tool's go through `HeadlessAccessRule` instead.
   private func allowedEntry(
     _ arguments: [String: JSONValue]
   ) async throws
@@ -445,6 +458,12 @@ nonisolated struct MCPToolService: Sendable {
       throw MCPToolError.missingArgument("connection_id")
     }
     let saved = await connections()
+    if Self.caller == .cli {
+      let caller = HeadlessAccessRule.Caller.cli(
+        mcpAllowlist: await allowlist(), aiSettings: await aiSettings())
+      return try HeadlessAccessRule(gate: gate, lockSource: lockSource)
+        .resolve(raw, saved: saved, caller: caller)
+    }
     guard let id = UUID(uuidString: raw), await allowlist().contains(id),
       let entry = saved.first(where: { $0.id == id }), !isLocked(entry)
     else { throw MCPToolError.connectionNotAvailable }
@@ -1191,7 +1210,7 @@ nonisolated struct MCPToolService: Sendable {
         rowCount: rowCount, status: status, errorMessage: redacted ? nil : error,
         connectionKey: QueryHistoryIdentity.connectionKey(for: config),
         connectionLabel: name.isEmpty ? "\(config.host)/\(config.database)" : name,
-        workspaceID: nil, workspaceName: nil, source: .mcp,
+        workspaceID: nil, workspaceName: nil, source: Self.caller == .cli ? .cli : .mcp,
         kind: Self.historyKind(statements)))
   }
 
@@ -1247,7 +1266,7 @@ nonisolated struct MCPToolService: Sendable {
     if case MCPConnectionError.unknownConnection = error {
       return MCPToolError.connectionNotAvailable.localizedDescription
     }
-    if error is MCPToolError || error is MCPConnectionError {
+    if error is MCPToolError || error is MCPConnectionError || error is HeadlessAccessRule.Refusal {
       return error.localizedDescription
     }
     let text = config.map { scrub(error.localizedDescription, config: $0) }

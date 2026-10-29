@@ -349,6 +349,11 @@ extension SettingsModal.SettingsTab {
           card: "Clients", title: "Regenerate token",
           detail: "Clients that use the old token stop working until you copy the setup again."),
         .init(
+          card: "Command-line tool", title: "Pair Command-Line Tool",
+          detail:
+            "Pairs the dblore command-line tool with a code: dblore pair, paired tools, revoke, install in /usr/local/bin."
+        ),
+        .init(
           card: "Outside MCP servers", title: "Outside MCP servers",
           detail:
             "MCP servers whose tools the AI chat may call: test a server, tick the tools to allow, turn it on."

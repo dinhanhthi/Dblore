@@ -1,6 +1,7 @@
 // MCPToolServiceTests.swift
 // MCP tools: allowlist first, then the AI access gate, read-only run_query refused before sending,
-// row and cell caps, History audit as `.mcp`, and the deterministic result encoding.
+// row and cell caps, History audit as `.mcp`, and the deterministic result encoding. A paired
+// command-line tool (caller cli): the headless access rule, read tools only, History as `.cli`.
 
 import Foundation
 import Testing
@@ -644,5 +645,136 @@ struct MCPToolServiceTests {
       }
     }
     #expect(writes.statements == ["DELETE FROM t WHERE id = 1"])
+  }
+
+  // MARK: - Command-line tool (caller cli)
+
+  /// A service whose only connection may be changed (data scope, Confirm), approvals granted.
+  private func writableService(
+    _ entry: ConnectionHistoryEntry, writes: RecordingWriteSource
+  ) -> MCPToolService {
+    let id = entry.id
+    return MCPToolService(
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty }, source: source,
+      recorder: history, historyEnabled: { true }, gate: gate,
+      writes: MCPWriteAccess(
+        enabled: { true }, scopes: { [id: .data] }, defaultCommitStyle: { .confirm },
+        approver: ApprovingApprover(), source: writes))
+  }
+
+  private static func writableEntry() -> ConnectionHistoryEntry {
+    var entry = entry()
+    entry.config.protectedMode = false
+    entry.config.commitStyle = .confirm
+    return entry
+  }
+
+  @Test("As cli, an allowlisted Ask-once connection runs without a prompt; AI Never is refused")
+  func cliFollowsHeadlessRule() async {
+    var ask = Self.entry(name: "Ask")
+    ask.config.aiAccess = .askOncePerSession
+    var never = Self.entry(.mysql, name: "Never")
+    never.config.host = "other.internal"
+    never.config.aiAccess = .never
+    let service = service([ask, never], allowed: [ask.id, never.id])
+
+    // The MCP path is unchanged: Ask once still needs the app's approval
+    let asMCP = await connectionTools(service, ask.id)
+    #expect(
+      asMCP.map(\.text)
+        == Array(repeating: MCPToolError.aiAccessNotApproved.localizedDescription, count: 3))
+    #expect(source.calls == 0)
+
+    let allowed = await MCPToolService.$caller.withValue(.cli) {
+      await connectionTools(service, ask.id)
+    }
+    #expect(allowed.map(\.isError) == [false, false, false], "\(allowed.map(\.text))")
+    #expect(source.calls == 3)
+    let byName = await MCPToolService.$caller.withValue(.cli) {
+      await service.call(
+        "run_query", arguments: ["connection_id": .string("Ask"), "sql": .string("SELECT 1")])
+    }
+    #expect(!byName.isError, "\(byName.text)")
+    #expect(source.calls == 4)
+
+    let refused = await MCPToolService.$caller.withValue(.cli) {
+      await connectionTools(service, never.id)
+    }
+    #expect(refused.map(\.isError) == [true, true, true])
+    #expect(source.calls == 4)
+    let listed = await MCPToolService.$caller.withValue(.cli) {
+      await service.call("list_connections", arguments: [:])
+    }
+    #expect(listed.text.contains(ask.id.uuidString))
+    #expect(!listed.text.contains(never.id.uuidString))
+  }
+
+  @Test("As cli, execute_write is refused before anything is asked or sent, and not listed")
+  func cliCannotWrite() async {
+    let writes = RecordingWriteSource()
+    let entry = Self.writableEntry()
+    let service = writableService(entry, writes: writes)
+    let arguments: [String: JSONValue] = [
+      "connection_id": .string(entry.id.uuidString), "sql": .string("DELETE FROM t WHERE id = 1"),
+    ]
+
+    let refused = await MCPToolService.$caller.withValue(.cli) {
+      await service.call("execute_write", arguments: arguments)
+    }
+    #expect(refused.isError)
+    #expect(refused.text == MCPToolError.cliReadOnly.localizedDescription)
+    #expect(writes.statements.isEmpty)
+    #expect(await history.entries.isEmpty)
+    let cliTools = await MCPToolService.$caller.withValue(.cli) { await service.listedTools() }
+    #expect(cliTools.map(\.name) == MCPToolService.tools.map(\.name))
+
+    // An MCP client still writes
+    #expect(await service.listedTools().map(\.name).contains("execute_write"))
+    let written = await service.call("execute_write", arguments: arguments)
+    #expect(!written.isError, "\(written.text)")
+    #expect(writes.statements == ["DELETE FROM t WHERE id = 1"])
+  }
+
+  @Test("A cli run_query is recorded in History as cli, an MCP one as mcp")
+  func cliHistorySource() async {
+    let entry = Self.entry()
+    let service = service([entry], allowed: [entry.id])
+    _ = await MCPToolService.$caller.withValue(.cli) {
+      await runQuery(service, entry.id, "SELECT 1")
+    }
+    _ = await runQuery(service, entry.id, "SELECT 2")
+    #expect(await history.entries.map(\.source) == [.cli, .mcp])
+  }
+
+  @Test("Through JSON-RPC the request's caller reaches tools/list and tools/call; none is 401")
+  func callerThroughJSONRPC() async throws {
+    let writes = RecordingWriteSource()
+    let entry = Self.writableEntry()
+    let handler = MCPJSONRPC.handler(tools: writableService(entry, writes: writes))
+    let post = { (body: String, caller: MCPCallerKind?) in
+      MCPHTTPRequest(
+        method: "POST", path: "/mcp",
+        headers: [
+          "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+          "Host": "127.0.0.1:41730",
+        ], body: Data(body.utf8), caller: caller, port: 41730)
+    }
+    let list = #"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#
+    func names(_ response: MCPHTTPResponse) throws -> [String] {
+      let object = try #require(
+        JSONSerialization.jsonObject(with: response.body) as? [String: Any])
+      let tools = try #require((object["result"] as? [String: Any])?["tools"] as? [[String: Any]])
+      return tools.compactMap { $0["name"] as? String }
+    }
+    #expect(try names(await handler(post(list, .cli))) == MCPToolService.tools.map(\.name))
+    #expect(try names(await handler(post(list, .mcp))).contains("execute_write"))
+
+    let call =
+      #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute_write","#
+      + #""arguments":{"connection_id":"\#(entry.id.uuidString)","sql":"DELETE FROM t"}}}"#
+    let refused = await handler(post(call, .cli))
+    #expect(String(decoding: refused.body, as: UTF8.self).contains("command-line tool only reads"))
+    #expect(writes.statements.isEmpty)
+    #expect(await handler(post(list, nil)).status == 401)
   }
 }
