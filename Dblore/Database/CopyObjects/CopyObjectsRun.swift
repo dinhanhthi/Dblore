@@ -522,19 +522,31 @@ actor CopyObjectsRun {
     } else {
       rows = try await manager.executeGatedBatch(
         streamed: batch, policy: target.policy, connectionEpoch: epoch,
-        prelude: transactionalPrelude().map(Self.bound),
+        prelude: Self.transactionalPrelude(target: plan.target, checked: checked).map(Self.bound),
         postlude: (checked.postRows + plan.identityRestartStatements()).map(Self.bound),
         progress: reporting)
     }
     return CopyObjectsRunResult(tables: plan.tables.count, rows: rows, warnings: warnings)
   }
 
-  /// PostgreSQL and SQLite: the checked CREATE TABLEs, after SQLite's deferred foreign-key
-  /// checks (always first, whether or not the edited DDL kept the PRAGMA)
-  private func transactionalPrelude() -> [String] {
+  /// Pins name lookup for the run's transaction on PostgreSQL: the allowed functions, operators
+  /// and types of copied CHECKs, indexes and defaults resolve in pg_catalog, never in a schema
+  /// of the target's search_path, and temporary objects come last. LOCAL ends with the
+  /// transaction. Every copied table and reference is already schema-qualified.
+  static let postgresPinnedSearchPath = "SET LOCAL search_path = pg_catalog, pg_temp"
+
+  /// PostgreSQL and SQLite: the checked CREATE TABLEs, after the pinned search_path
+  /// (PostgreSQL) or SQLite's deferred foreign-key checks (always first, whether or not the
+  /// edited DDL kept the PRAGMA)
+  static func transactionalPrelude(
+    target: StructureDDLBuilder.Engine, checked: CopyObjectsDDLCheck.Checked
+  ) -> [String] {
     let creates = checked.prelude.filter { $0.createsTable != nil }.map(\.sql)
-    guard case .sqlite = plan.target else { return creates }
-    return [CopyObjectsPlan.sqliteDeferForeignKeys] + creates
+    switch target {
+    case .sqlite: return [CopyObjectsPlan.sqliteDeferForeignKeys] + creates
+    case .postgresql: return [postgresPinnedSearchPath] + creates
+    default: return creates
+    }
   }
 
   /// MySQL / MariaDB: each CREATE TABLE alone, the rows in one transaction, then each index and

@@ -417,6 +417,23 @@ struct CopyObjectsPlannerTests {
         + #"WHERE `c"``;'` > CAST(? AS DECIMAL(65,0)) ORDER BY `c"``;'` LIMIT 500"#)
   }
 
+  @Test("PostgreSQL: the run's prelude pins search_path first, as one session statement")
+  func postgresPreludePinsSearchPath() throws {
+    let plan = try Self.usersPlan(target: .postgresql)
+    let checked = try CopyObjectsDDLCheck.check(plan.editableDDL, plan: plan)
+    let prelude = CopyObjectsRun.transactionalPrelude(target: .postgresql, checked: checked)
+    #expect(prelude.first == "SET LOCAL search_path = pg_catalog, pg_temp")
+    #expect(prelude.count == 2)
+    let classified = SQLStatementClassifier.classify(prelude[0], dialect: .postgresql)
+    #expect(classified.count == 1)
+    // SQLite keeps its PRAGMA first; MySQL gets no framing statement
+    let sqlitePlan = try Self.usersPlan(target: Self.sqlite)
+    let sqliteChecked = try CopyObjectsDDLCheck.check(sqlitePlan.editableDDL, plan: sqlitePlan)
+    #expect(
+      CopyObjectsRun.transactionalPrelude(target: Self.sqlite, checked: sqliteChecked).first
+        == CopyObjectsPlan.sqliteDeferForeignKeys)
+  }
+
   // MARK: - DDL check refusals
 
   /// users (with an index on name), on `target`
