@@ -717,7 +717,8 @@ extension NotebookViewModel {
 
   /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits).
   /// Nil is NULL, whatever the original type. A NULL original takes `columnType`'s type.
-  static func editedCellValue(
+  /// Nonisolated: Paste Rows types its values off the main actor.
+  nonisolated static func editedCellValue(
     _ newValue: String?, original: CellValue, columnType: String = ""
   ) -> CellValue {
     guard let newValue else { return .null }

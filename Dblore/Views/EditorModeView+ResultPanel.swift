@@ -377,6 +377,8 @@ struct EditorResultGridView: View {
   @State private var currentMatch: SearchMatch?
   /// MongoDB: the staged documents drawn as a row overlay, rebuilt only when they change
   @State private var documentOverlay = StagedDocumentOverlay()
+  /// A Paste Rows is being read; another paste is ignored until it ends
+  @State private var isPastingRows = false
 
   var body: some View {
     ExplainableResult(
@@ -399,6 +401,7 @@ struct EditorResultGridView: View {
       }
     }
     .overlay(alignment: .bottom) { LazyCellLoadingBar(loader: viewModel.lazyCells) }
+    .overlay(alignment: .bottom) { PastingRowsBar(isPasting: isPastingRows) }
     .onChange(of: result.timestamp) { valueFilter = ColumnValueFilter() }
     .onChange(of: valueFilter) {
       currentMatch = gridSearchMatchOnScreen(
@@ -538,6 +541,17 @@ struct EditorResultGridView: View {
       onStageInsert: {
         Task { await viewModel.openAddRowForm() }
       },
+      onPasteRows: viewModel.unavailableFeatureMessage("Pasting rows", \.supportsRowStaging) == nil
+        ? { columnOrder in
+          guard !isPastingRows else { return }
+          isPastingRows = true
+          Task {
+            if let message = await viewModel.pasteRows(columnOrder: columnOrder) {
+              viewModel.showToast(message, type: .error)
+            }
+            isPastingRows = false
+          }
+        } : nil,
       onStageDuplicate: { rows in
         Task {
           if let message = await viewModel.stageDuplicate(rows: rows) {
@@ -653,6 +667,41 @@ final class StagedDocumentOverlay {
   }
 }
 
+/// "Pasting rows" while a Paste Rows is read and checked. Shown ~150 ms after the paste starts,
+/// so a quick paste does not flash it.
+private struct PastingRowsBar: View {
+  let isPasting: Bool
+  @State private var isShown = false
+
+  var body: some View {
+    if isPasting {
+      HStack(spacing: Spacing.sm) {
+        ProgressView()
+          .controlSize(.small)
+        Text("Pasting rows...")
+          .font(.system(size: 11))
+          .foregroundColor(.foregroundMuted)
+      }
+      .padding(.horizontal, Spacing.md)
+      .padding(.vertical, Spacing.sm)
+      .background(Capsule().fill(Color.controlBackground))
+      .overlay(HairlineBorder(shape: Capsule()))
+      .padding(.bottom, Spacing.md)
+      .opacity(isShown ? 1 : 0)
+      .allowsHitTesting(false)
+      .animation(.easeIn(duration: 0.15), value: isShown)
+      // Opt out of the app-wide animation kill switch, only for the fade
+      .transaction(value: isShown) { $0.disablesAnimations = false }
+      .task {
+        // A cancelled sleep must not show the bar after it disappeared
+        guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
+        isShown = true
+      }
+      .onDisappear { isShown = false }
+    }
+  }
+}
+
 /// Progress of a copy or export loading the full values of cut cells, with Cancel (nothing is
 /// copied then). Shown ~150 ms after the load starts, so a quick load does not flash it.
 private struct LazyCellLoadingBar: View {
@@ -684,7 +733,8 @@ private struct LazyCellLoadingBar: View {
       // Opt out of the app-wide animation kill switch, only for the fade
       .transaction(value: isShown) { $0.disablesAnimations = false }
       .task {
-        try? await Task.sleep(for: .milliseconds(150))
+        // A cancelled sleep must not show the bar after it disappeared
+        guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
         isShown = true
       }
       .onDisappear { isShown = false }

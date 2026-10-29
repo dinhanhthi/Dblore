@@ -678,7 +678,7 @@ extension NotebookViewModel {
   /// Applies `body` to the current set, creating one for `stagedEditTarget` when needed.
   /// An empty set is stored as nil. A thrown error leaves the previous set unchanged.
   /// `actionName` registers a snapshot on `undoManager` (nil skips that: the key fill before commit).
-  private func changeSet(
+  func changeSet(
     _ actionName: String? = nil, _ body: (inout RowChangeSet) throws -> Void
   ) rethrows -> String? {
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
