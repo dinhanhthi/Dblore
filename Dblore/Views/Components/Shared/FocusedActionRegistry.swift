@@ -5,7 +5,7 @@
 //  Menu commands for workspace windows hosted by AppKit (`NSHostingController`). Those windows
 //  are not part of the `WindowGroup` scene, so `focusedSceneValue` never reaches `@FocusedValue`
 //  in the commands. Publishers also record their value per hosting window here, and the
-//  commands fall back to the key window's record.
+//  commands read the key window's record first.
 
 import AppKit
 import Combine
@@ -268,8 +268,8 @@ private struct BridgedFocusPublisher: NSViewRepresentable {
 
 // MARK: - Reading
 
-/// `@FocusedValue` for menu commands, falling back to what the key window published with
-/// `bridgedFocusedSceneValue` (AppKit-hosted windows). Observes the registry, so the commands
+/// `@FocusedValue` for menu commands, preferring what the key window published with
+/// `bridgedFocusedSceneValue` (every window records it). Observes the registry, so the commands
 /// re-render when the key window changes, a window publishes a new value or a lock state
 /// changes. Nil on both paths while the key window is covered by the unlock overlay, so every
 /// command reading it is cut off without a change of its own.
@@ -288,13 +288,14 @@ struct BridgedFocusedValue<Value>: DynamicProperty {
     Self.resolve(focusedValue, keyPath, in: registry)
   }
 
-  /// The native focused value (the first `WindowGroup` window), else the key window's record
-  /// (AppKit-hosted windows); nil for both while the key window is relocked
+  /// The key window's record, else the native focused value (keys only published natively);
+  /// nil for both while the key window is relocked. The record goes first: in an AppKit-hosted
+  /// window the native value keeps the previous tab's until the window becomes key again.
   static func resolve(
     _ focused: Value?, _ keyPath: WritableKeyPath<FocusedValues, Value?>,
     in registry: FocusedActionRegistry
   ) -> Value? {
     guard !registry.isKeyWindowLocked else { return nil }
-    return focused ?? registry.value(for: keyPath)
+    return registry.value(for: keyPath) ?? focused
   }
 }

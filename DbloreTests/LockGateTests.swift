@@ -1145,9 +1145,12 @@ extension LockGateTests {
     open.focus.publish(DocumentMode.editor, for: \.documentMode, owner: owner, in: window)
     open.focus.publish(DocumentMode.notebook, for: \.documentMode, owner: owner, in: other)
     typealias Mode = BridgedFocusedValue<DocumentMode>
-    // Unlocked: the native value (first window), else the window's record (AppKit-hosted)
-    #expect(Mode.resolve(.markdown, \.documentMode, in: open.focus) == .markdown)
+    // Unlocked: the key window's record, even over a native value (a hosted window's native
+    // value lags behind a tab switch), else the native value
+    #expect(Mode.resolve(.markdown, \.documentMode, in: open.focus) == .editor)
     #expect(Mode.resolve(nil, \.documentMode, in: open.focus) == .editor)
+    #expect(
+      BridgedFocusedValue<Bool>.resolve(true, \.isSchemaVisualizerActive, in: open.focus) == true)
 
     try await Self.relock(open.registry, seenBy: open.center)
     #expect(open.manager.lockCoverage == .workspace(open.session.workspaceId))
@@ -1172,7 +1175,7 @@ extension LockGateTests {
       return
     }
     #expect(open.manager.lockCoverage == nil)
-    #expect(Mode.resolve(.markdown, \.documentMode, in: open.focus) == .markdown)
+    #expect(Mode.resolve(.markdown, \.documentMode, in: open.focus) == .editor)
     #expect(Mode.resolve(nil, \.documentMode, in: open.focus) == .editor)
   }
 
