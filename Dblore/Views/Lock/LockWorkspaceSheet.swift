@@ -117,9 +117,9 @@ final class LockWorkspaceModel: Identifiable {
     total = failures.count
     stage = .working
     Task {
-      failures = await manager.retryLockWrites(failures) { [weak self] done, total in
-        self?.done = done
-        self?.total = total
+      failures = await manager.retryLockWrites(failures) { done, total in
+        self.done = done
+        self.total = total
       }
       stage = .finished
       end()
