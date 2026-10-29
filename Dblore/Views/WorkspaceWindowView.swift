@@ -445,11 +445,12 @@ class NewWindowStore {
     windowControllers.compactMap { $0.controller.window }
   }
 
-  /// New window tab: joins the key document window's tab group, or opens standalone.
+  /// New window tab: joins the key document window's tab group as its last tab, or opens
+  /// standalone.
   func openWelcomeWindowTab() {
     let key = NSApp.keyWindow
-    openWelcomeWindow(
-      frame: key?.frame ?? .zero, parent: key?.isDbloreDocumentWindow == true ? key : nil)
+    let parent = key?.isDbloreDocumentWindow == true ? key?.tabbedWindows?.last ?? key : nil
+    openWelcomeWindow(frame: key?.frame ?? .zero, parent: parent)
   }
 
   /// A fresh document window showing the welcome screen, kept alive until it closes.
