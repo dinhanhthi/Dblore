@@ -42,6 +42,9 @@ nonisolated struct SecretItem: Identifiable, Equatable, Sendable {
     switch service {
     case SessionManager.keychainService:
       return .dbPassword
+    // A Vault token or AppRole secret stands in for the connection's password
+    case KeychainVaultSecretStore.serviceName:
+      return .dbPassword
     case KeychainPasswordStore.serviceName:
       return .safeModePassword
     case KeychainClientCertificateStore.serviceName:
@@ -115,6 +118,7 @@ nonisolated final class KeychainSecretInventory: SecretInventory, Sendable {
     KeychainOutsideMCPTokenStore.serviceName,
     KeychainMCPTokenStore.serviceName,
     KeychainMCPCLITokenStore.serviceName,
+    KeychainVaultSecretStore.serviceName,
     LockPasswordStore.serviceName,
     LockKeyStore.serviceName,
   ]
