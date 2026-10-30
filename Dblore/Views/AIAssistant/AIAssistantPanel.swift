@@ -259,8 +259,15 @@ struct AIAssistantPanel: View {
     assistant.activeProvider == .localMLX && !assistant.settings.localRuntimeInstalled()
   }
 
+  /// Why Apple Intelligence, the provider in use, cannot run; nil for other providers
+  private var appleIntelligenceReason: String? {
+    guard assistant.activeProvider == .appleIntelligence else { return nil }
+    return assistant.settings.appleIntelligenceAvailability().message
+  }
+
   private var setupState: some View {
     let pluginMissing = isOnDevicePluginMissing
+    let appleIntelligenceReason = appleIntelligenceReason
     return VStack(spacing: Spacing.md) {
       Image(systemName: "sparkles")
         .font(.heading)
@@ -279,6 +286,17 @@ struct AIAssistantPanel: View {
         Button("Install…", action: ConnectionErrorAction.postOpenPluginSettings)
           .buttonStyle(PrimaryButtonStyle())
       } else {
+        if let appleIntelligenceReason {
+          Text("Apple Intelligence unavailable")
+            .font(.labelText)
+            .fontWeight(.medium)
+            .foregroundColor(.foreground)
+            .multilineTextAlignment(.center)
+          Text(appleIntelligenceReason)
+            .font(.labelText)
+            .foregroundColor(.foregroundMuted)
+            .multilineTextAlignment(.center)
+        }
         Text("Set up an AI provider to ask questions about your database.")
           .font(.labelText)
           .foregroundColor(.foregroundMuted)

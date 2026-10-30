@@ -247,6 +247,8 @@ struct CapsuleDropdown<Option: Hashable>: View {
   let title: String
   var width: CGFloat? = nil
   var accessibilityLabel: String? = nil
+  /// Why an option cannot be chosen: drawn dimmed with the reason as its help; nil selectable
+  var disabledReason: (Option) -> String? = { _ in nil }
   let options: [Option]
   let optionTitle: (Option) -> String
   let isSelected: (Option) -> Bool
@@ -255,9 +257,13 @@ struct CapsuleDropdown<Option: Hashable>: View {
   var body: some View {
     CapsulePickerMenu(title: title, width: width) {
       ForEach(options, id: \.self) { option in
+        let reason = disabledReason(option)
         Toggle(
           optionTitle(option),
-          isOn: Binding(get: { isSelected(option) }, set: { _ in onSelect(option) }))
+          isOn: Binding(get: { isSelected(option) }, set: { _ in onSelect(option) })
+        )
+        .disabled(reason != nil)
+        .help(reason ?? "")
       }
     }
     .accessibilityLabel(accessibilityLabel ?? title)

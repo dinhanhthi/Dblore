@@ -169,6 +169,11 @@ extension SettingsModal.SettingsTab {
           card: "Provider", title: "Provider",
           detail: "Set as active: "
             + AIProviderKind.allCases.map(\.displayName).joined(separator: ", ")),
+        .init(
+          card: "Provider", title: "Apple Intelligence",
+          detail:
+            "Runs on this Mac. Nothing leaves it. Needs macOS 26 or later and Apple Intelligence turned on in System Settings."
+        ),
         .init(card: "Connection", title: "Base URL"),
         .init(card: "Connection", title: "API key"),
         .init(card: "Account", title: "Sign in with ChatGPT"),

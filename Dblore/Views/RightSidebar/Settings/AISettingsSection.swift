@@ -30,6 +30,9 @@ struct AISettingsSection: View {
   @State private var signInError: String?
   @State private var signInTask: Task<Void, Never>?
   @State private var signInServer: OAuthLoopbackServer?
+  /// Read when the section appears, when the provider changes and when the app becomes active,
+  /// not on every render; nil until the first read
+  @State private var appleIntelligence: AppleIntelligenceAvailability?
 
   private enum Status: Equatable {
     case idle
@@ -60,6 +63,9 @@ struct AISettingsSection: View {
       SettingsGroupCard(title: "Provider") {
         VStack(alignment: .leading, spacing: Spacing.md) {
           providerControls
+          if kind == .appleIntelligence, let appleIntelligence {
+            helpText(appleIntelligence.message ?? "Runs on this Mac. Nothing leaves it.")
+          }
           if ollamaDetected && kind == .ollama && !isActive {
             helpText("Ollama detected on this Mac. Click Set as active to use it.")
           }
@@ -70,12 +76,13 @@ struct AISettingsSection: View {
         AIUnusedModelFilesCard()
       }
 
-      if kind != .localMLX {
+      // On-device providers have no base URL or API key
+      if !kind.isOnDevice {
         connectionCard
       }
 
       modelsCard
-      AIInlineCard(settings: settings)
+      AIInlineCard(settings: settings, appleIntelligence: appleIntelligence)
       AISlashCommandsCard(settings: settings)
       privacyCard
     }
@@ -87,7 +94,13 @@ struct AISettingsSection: View {
       runningTask?.cancel()
       cancelSignIn()
     }
+    // Apple Intelligence turned on or off in System Settings while this section is open
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification))
+    { _ in
+      appleIntelligence = settings.appleIntelligenceAvailability()
+    }
     .onChange(of: kind) { _, _ in
+      appleIntelligence = settings.appleIntelligenceAvailability()
       runningTask?.cancel()
       cancelSignIn()
       status = .idle
@@ -119,6 +132,7 @@ struct AISettingsSection: View {
       title: kind.displayName,
       width: 300,
       accessibilityLabel: "Provider",
+      disabledReason: { $0 == .appleIntelligence ? appleIntelligence?.message : nil },
       options: Array(AIProviderKind.allCases),
       optionTitle: \.displayName,
       isSelected: { $0 == kind },
@@ -179,6 +193,12 @@ struct AISettingsSection: View {
             )
           }
         }
+      } else if kind == .appleIntelligence {
+        // One fixed model: Test sends it a short request
+        VStack(alignment: .leading, spacing: Spacing.md) {
+          helpText("Uses the system model of Apple Intelligence.")
+          testRow
+        }
       } else {
         VStack(alignment: .leading, spacing: Spacing.md) {
           modelEditor
@@ -226,7 +246,8 @@ struct AISettingsSection: View {
     case .openRouter:
       return
         "Requests go through OpenRouter's router to the model vendor; both their data policies apply."
-    case .openAI, .gemini, .xAI, .ollama, .lmStudio, .mlxServer, .custom, .localMLX:
+    case .openAI, .gemini, .xAI, .ollama, .lmStudio, .mlxServer, .custom, .localMLX,
+      .appleIntelligence:
       return nil
     }
   }
@@ -342,7 +363,7 @@ struct AISettingsSection: View {
 
   private var testRow: some View {
     HStack(spacing: Spacing.md) {
-      Button("Test connection") { run(reportSuccess: true) }
+      Button(kind == .appleIntelligence ? "Test" : "Test connection") { run(reportSuccess: true) }
         .buttonStyle(PrimaryButtonStyle())
         .disabled(isRunning || !canRun)
         .linkPointer()
@@ -390,6 +411,7 @@ struct AISettingsSection: View {
   }
 
   private func loadInitial() {
+    appleIntelligence = settings.appleIntelligenceAvailability()
     guard !didLoad else { return }
     didLoad = true
     kind = settings.configuration.activeProvider ?? .anthropic
@@ -399,11 +421,13 @@ struct AISettingsSection: View {
   private func loadFields() {
     let config = settings.config(for: kind)
     baseURL = config.baseURL
-    model = config.model
+    // Apple Intelligence has one model: selecting the provider writes it
+    model = kind == .appleIntelligence ? AIProviderKind.appleIntelligenceModel : config.model
     keyInput = ""
     keyError = nil
     hasSavedKey = !(settings.apiKey(for: kind) ?? "").isEmpty
     refreshSignInState()
+    if kind == .appleIntelligence { commit() }
   }
 
   private func refreshSignInState() {
@@ -448,6 +472,12 @@ struct AISettingsSection: View {
     runningTask = Task {
       do {
         let client = try AIClientFactory.make(kind: kind, config: config, apiKey: key)
+        if kind == .appleIntelligence {
+          try await Self.testAnswer(from: client, model: config.model)
+          guard !Task.isCancelled else { return }
+          status = .success("Apple Intelligence answered.")
+          return
+        }
         let result = try await client.listModelsResult()
         let models = result.models
         guard !Task.isCancelled else { return }
@@ -473,6 +503,14 @@ struct AISettingsSection: View {
         }
       }
     }
+  }
+
+  /// A one-word answer: proves the model runs, which listing its one model would not
+  private static func testAnswer(from client: any AIChatClient, model: String) async throws {
+    let request = AIChatRequest(
+      model: model, system: "Answer with one word.",
+      messages: [AIChatMessage(role: .user, text: "Reply with the word OK.")], maxTokens: 8)
+    for try await _ in client.stream(request) {}
   }
 
   // MARK: - ChatGPT sign in
@@ -668,6 +706,8 @@ struct AIPrivacyCard: View {
 /// Ghost text in SQL editors: the switch (off by default), its provider and model
 struct AIInlineCard: View {
   @Bindable var settings: AISettings
+  /// Read by the Settings section; nil until it is
+  var appleIntelligence: AppleIntelligenceAvailability?
 
   private var configuration: AIConfiguration { settings.configuration }
   /// The inline provider, else the chat provider
@@ -703,6 +743,7 @@ struct AIInlineCard: View {
         title: title(configuration.inlineProvider),
         width: 300,
         accessibilityLabel: "Inline suggestion provider",
+        disabledReason: { $0 == .appleIntelligence ? appleIntelligence?.message : nil },
         options: [nil] + AIProviderKind.allCases.map(Optional.some),
         optionTitle: title,
         isSelected: { $0 == configuration.inlineProvider },
@@ -715,12 +756,9 @@ struct AIInlineCard: View {
           settings.configuration = updated
         }
       )
-      helpText("Recommended: On-device keeps your SQL on this Mac.")
+      helpText("Recommended: On-device or Apple Intelligence keeps your SQL on this Mac.")
       if let provider, !settings.isConfigured(provider) {
-        helpText(
-          provider == .localMLX && !settings.localRuntimeInstalled()
-            ? "Install the On-device AI plugin in Settings > Plugins first."
-            : "Set up \(provider.displayName) in Provider above first.")
+        helpText(setupHint(provider))
       }
     }
   }
@@ -733,15 +771,17 @@ struct AIInlineCard: View {
           .font(.bodyText)
           .foregroundColor(.foregroundMuted)
         let chatModel = settings.config(for: provider).model
-        if provider == .localMLX || configuration.inlineProvider == nil {
-          // On-device keeps one model loaded: suggestions use the chat model
+        if provider.isOnDevice || configuration.inlineProvider == nil {
+          // On-device keeps one model loaded and Apple Intelligence has one: suggestions use
+          // the chat model
           Text(verbatim: chatModel.isEmpty ? "No model chosen" : chatModel)
             .font(.bodyText)
             .foregroundColor(.foreground)
           helpText(
             provider == .localMLX
               ? "On-device uses the chat model: one model stays loaded."
-              : "Uses the chat model.")
+              : provider == .appleIntelligence
+                ? "Apple Intelligence has one model." : "Uses the chat model.")
         } else {
           ModelNameComboBox(
             text: Binding(
@@ -758,6 +798,14 @@ struct AIInlineCard: View {
 
   private func title(_ kind: AIProviderKind?) -> String {
     kind?.displayName ?? "Same as chat"
+  }
+
+  private func setupHint(_ provider: AIProviderKind) -> String {
+    if provider == .localMLX && !settings.localRuntimeInstalled() {
+      return "Install the On-device AI plugin in Settings > Plugins first."
+    }
+    if provider == .appleIntelligence, let reason = appleIntelligence?.message { return reason }
+    return "Set up \(provider.displayName) in Provider above first."
   }
 
   private func helpText(_ text: String) -> some View {

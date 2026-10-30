@@ -17,6 +17,8 @@ extension AIAssistantViewModel {
     let runsQueries: Bool
     /// The shorter system prompt, for the on-device model
     let compactPrompt: Bool
+    /// The request is fitted into Apple Intelligence's context
+    var fitsAppleIntelligence = false
     /// Dialect at send time; a query runs only while the connection still has it
     let dialect: SQLDialect
     /// MongoDB collection screen shown at send time
@@ -117,16 +119,32 @@ extension AIAssistantViewModel {
       ? context.snapshot
       : AISchemaSnapshot(
         tables: [], foreignKeys: [], databaseName: nil, dialect: context.snapshot.dialect)
-    var request = await Self.buildRequest(
-      model: context.model, question: context.question,
-      explicit: allowed ? context.explicit : [], snapshot: snapshot,
-      // Earlier turns may hold table names, SQL or filters from when the connection was allowed
-      history: allowed
-        ? Self.attaching(mentions, to: history)
-        : [AIChatMessage(role: .user, text: context.question)],
-      runsQueries: allowed && runsQueries, compactPrompt: context.compactPrompt,
-      screen: allowed ? context.screen : nil, review: review,
-      rules: allowed ? context.access?.config.aiRules ?? "" : "", tools: !tools.isEmpty)
+    // Earlier turns may hold table names, SQL or filters from when the connection was allowed
+    let sent =
+      allowed
+      ? Self.attaching(mentions, to: history)
+      : [AIChatMessage(role: .user, text: context.question)]
+    let explicit = allowed ? context.explicit : []
+    let screen = allowed ? context.screen : nil
+    let rules = allowed ? context.access?.config.aiRules ?? "" : ""
+    var request: AIChatRequest
+    if context.fitsAppleIntelligence {
+      do {
+        request = try await Self.buildAppleIntelligenceRequest(
+          model: context.model, question: context.question, explicit: explicit,
+          snapshot: snapshot, history: sent, runsQueries: allowed && runsQueries,
+          screen: screen, review: review, rules: rules)
+      } catch {
+        if !Task.isCancelled { markError(entryId, error) }
+        return
+      }
+    } else {
+      request = await Self.buildRequest(
+        model: context.model, question: context.question, explicit: explicit,
+        snapshot: snapshot, history: sent, runsQueries: allowed && runsQueries,
+        compactPrompt: context.compactPrompt, screen: screen, review: review, rules: rules,
+        tools: !tools.isEmpty)
+    }
     guard tools.isEmpty else {
       if outside != nil { request.system += "\n\n" + AIPrompts.outsideToolRules }
       await runToolLoop(

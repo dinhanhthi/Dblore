@@ -494,12 +494,13 @@ final class AIAssistantViewModel {
     let context = TurnContext(
       client: client, model: model, question: question, explicit: selectedTableNames,
       snapshot: schemaSource(), runsQueries: settings.configuration.runsQueries,
-      compactPrompt: provider == .localMLX, dialect: sqlDialect, screen: mongoScreenSource(),
+      compactPrompt: provider.isOnDevice, fitsAppleIntelligence: provider == .appleIntelligence,
+      dialect: sqlDialect, screen: mongoScreenSource(),
       access: access.context, sessionKey: sessionKey,
       mongoDatabase: sqlDialect == .mongodb ? access.context?.config.database : nil,
       review: review,
       // On-device models get no tools; without a connection there is nothing to read
-      offersTools: provider != .localMLX && toolRunner != nil && access.context != nil,
+      offersTools: !provider.isOnDevice && toolRunner != nil && access.context != nil,
       toolEndpoint: Self.toolEndpoint(provider, settings.config(for: provider)),
       mentions: mentions, mentionTab: mentionTab(for: mentions, sessionKey: sessionKey))
     let history = makeHistory()
@@ -619,12 +620,27 @@ final class AIAssistantViewModel {
     let tables = snapshot.tables.filter {
       $0.name == collection && (database == nil || $0.schema == database)
     }
-    let request = AIChatRequest(
+    let databaseName = database ?? snapshot.databaseName
+    var request = AIChatRequest(
       model: model,
       system: AIPrompts.mongoAssistSystem(
-        target, databaseName: database ?? snapshot.databaseName, collection: collection,
+        target, databaseName: databaseName, collection: collection,
         schema: AISchemaContext.render(tables: tables, foreignKeys: []), current: current),
       messages: [AIChatMessage(role: .user, text: prompt)])
+    if provider == .appleIntelligence {
+      let fitted = try await AppleIntelligencePromptBudget.fitSystemModel(
+        reserve: AppleIntelligencePromptBudget.chatReserve, history: request.messages,
+        system: { schema in
+          AIPrompts.mongoAssistSystem(
+            target, databaseName: databaseName, collection: collection, schema: schema,
+            current: current)
+        },
+        renderSchema: { chars in
+          AppleIntelligencePromptBudget.renderSchema(tables: tables, foreignKeys: [], chars: chars)
+        })
+      request.system = fitted.system
+      request.messages = fitted.messages
+    }
 
     var reply = ""
     for try await event in client.stream(request) {
@@ -705,6 +721,32 @@ final class AIAssistantViewModel {
           rules: rules, tools: tools),
         messages: history)
     }.value
+  }
+
+  /// `buildRequest` for Apple Intelligence, off the main actor: the compact prompt without
+  /// tools, fitted into the system model's context (`AppleIntelligencePromptBudget`), so the
+  /// schema shrinks and the oldest history goes first. Throws `BudgetError.tooLong` when the
+  /// question alone leaves no room for the answer.
+  @concurrent nonisolated static func buildAppleIntelligenceRequest(
+    model: String, question: String, explicit: Set<String>, snapshot: AISchemaSnapshot,
+    history: [AIChatMessage], runsQueries: Bool, screen: AIMongoAssist.Screen? = nil,
+    review: String? = nil, rules: String = ""
+  ) async throws -> AIChatRequest {
+    let selected = AISchemaContext.selectTables(
+      explicit: explicit, question: question, tables: snapshot.tables,
+      foreignKeys: snapshot.foreignKeys)
+    let fitted = try await AppleIntelligencePromptBudget.fitSystemModel(
+      reserve: AppleIntelligencePromptBudget.chatReserve, history: history,
+      system: { schema in
+        AIPrompts.system(
+          databaseName: snapshot.databaseName, schema: schema, dialect: snapshot.dialect,
+          runsQueries: runsQueries, compact: true, screen: screen, review: review, rules: rules)
+      },
+      renderSchema: { chars in
+        AppleIntelligencePromptBudget.renderSchema(
+          tables: selected, foreignKeys: snapshot.foreignKeys, chars: chars)
+      })
+    return AIChatRequest(model: model, system: fitted.system, messages: fitted.messages)
   }
 
   func append(_ delta: String, to id: UUID) {

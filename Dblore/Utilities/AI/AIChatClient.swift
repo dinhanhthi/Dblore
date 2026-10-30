@@ -77,12 +77,15 @@ nonisolated enum AIClientError: LocalizedError, Equatable, Sendable {
   case transport(String)
   /// The On-device AI plugin is not installed, or cannot be used in this process
   case pluginMissing
+  /// Apple Intelligence cannot run requests here; the text says why
+  case appleIntelligenceUnavailable(String)
 
   var errorDescription: String? {
     switch self {
     case .missingAPIKey: return "Add an API key in Settings > AI."
     case .missingModel: return "Choose a model in Settings > AI."
     case .pluginMissing: return "Install the On-device AI plugin in Settings > Plugins."
+    case .appleIntelligenceUnavailable(let message): return message
     case .invalidEndpoint(let message): return message
     case .http(let status, let message):
       return message.isEmpty ? "The provider returned HTTP \(status)." : message
@@ -118,7 +121,8 @@ nonisolated extension AIChatClient {
 nonisolated enum AIClientFactory {
   static func make(
     kind: AIProviderKind, config: AIProviderConfig, apiKey: String?,
-    session: URLSession = .shared, tokenProvider: ChatGPTTokenProvider = .shared
+    session: URLSession = .shared, tokenProvider: ChatGPTTokenProvider = .shared,
+    appleIntelligence: @autoclosure () -> AppleIntelligenceAvailability = .current
   ) throws -> any AIChatClient {
     // The ChatGPT endpoint is fixed: the configured base URL is ignored so the bearer token can
     // only ever go to chatgpt.com
@@ -127,6 +131,18 @@ nonisolated enum AIClientFactory {
     }
     // On-device: fully local, the base URL is ignored and nothing touches the network
     if kind == .localMLX { return LocalAIChatClient() }
+    // Apple Intelligence: fully local, routed before the base URL (it has none). Unavailable,
+    // below macOS 26 or without FoundationModels: an error that says why, never a crash.
+    if kind == .appleIntelligence {
+      let availability = appleIntelligence()
+      #if canImport(FoundationModels)
+        if availability.isAvailable, #available(macOS 26, *) {
+          return AppleIntelligenceChatClient()
+        }
+      #endif
+      throw AIClientError.appleIntelligenceUnavailable(
+        availability.message ?? AppleIntelligenceAvailability.osTooOld.message ?? "")
+    }
     let base: URL
     do {
       base = try AIEndpoint.normalize(config.baseURL)
