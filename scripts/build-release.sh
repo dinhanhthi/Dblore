@@ -126,7 +126,30 @@ codesign -d --entitlements - "$APP" 2>/dev/null | grep keychain-access-groups >/
   fail "exported app lacks the keychain-access-groups entitlement"
 
 echo "==> Verifying app signature"
-codesign --verify --deep --strict --verbose=2 "$APP"
+codesign --verify --deep --strict --verbose=2 "$APP" ||
+  fail "$APP does not pass codesign --verify --deep --strict"
+
+# The export re-signs the dblore helper; check it got Developer ID, hardened runtime and a
+# secure timestamp, which notarization needs for every nested executable.
+verify_helper_signature() {
+  local helper="$1/Contents/Helpers/dblore" info missing=()
+  [[ -x "$helper" ]] || fail "command-line tool not found at $helper"
+  info=$(codesign -dv --verbose=4 "$helper" 2>&1) || fail "cannot read the signature of $helper"
+  grep -q '^Authority=Developer ID Application: ' <<<"$info" ||
+    missing+=("Authority=Developer ID Application")
+  grep -qx "TeamIdentifier=$TEAM_ID" <<<"$info" || missing+=("TeamIdentifier=$TEAM_ID")
+  grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' <<<"$info" ||
+    missing+=("the runtime flag")
+  grep -q '^Timestamp=' <<<"$info" || missing+=("a secure Timestamp")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    local list
+    printf -v list '%s, ' "${missing[@]}"
+    fail "$helper is not signed for release; missing: ${list%, }"
+  fi
+}
+
+echo "==> Verifying the command-line tool's signature"
+verify_helper_signature "$APP"
 
 # Submit $1 to Apple and wait. notarytool can exit 0 for a rejected submission;
 # trust only the JSON status.

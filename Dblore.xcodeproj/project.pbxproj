@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		D3C11A0A2F10000000000001 /* dblore in Copy Helpers */ = {isa = PBXBuildFile; fileRef = D3C11A012F10000000000001 /* dblore */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		D3E0FC002EF71234009A0E5A /* PostgresNIO in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC002EF71234009A0E5B /* PostgresNIO */; };
 		D3E0FC202EF71234009A0E5A /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC222EF71234009A0E5A /* Sparkle */; };
 		D3E0FC402EF71234009A0E5A /* NIOSSH in Frameworks */ = {isa = PBXBuildFile; productRef = D3E0FC422EF71234009A0E5A /* NIOSSH */; };
@@ -19,6 +20,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		D3C11A0B2F10000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D3E0FB8B2EF70DBB009A0E5A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D3C11A032F10000000000001;
+			remoteInfo = DbloreCLI;
+		};
 		D30425792F0310D3008916E0 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = D3E0FB8B2EF70DBB009A0E5A /* Project object */;
@@ -28,7 +36,22 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		D3C11A092F10000000000001 /* Copy Helpers */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				D3C11A0A2F10000000000001 /* dblore in Copy Helpers */,
+			);
+			name = "Copy Helpers";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		D3C11A012F10000000000001 /* dblore */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = dblore; sourceTree = BUILT_PRODUCTS_DIR; };
 		D30425752F0310D3008916E0 /* DbloreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D30425822F031148008916E0 /* DbloreUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D304258D2F0314CC008916E0 /* Dblore.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Dblore.xctestplan; sourceTree = "<group>"; };
@@ -36,6 +59,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D3C11A0D2F10000000000001 /* Exceptions for "DbloreCLI" folder in "DbloreTests" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				main.swift,
+			);
+			target = D30425742F0310D3008916E0 /* DbloreTests */;
+		};
 		D3E0FC102EF71234009A0E5C /* Exceptions for "Dblore" folder in "Dblore" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -46,6 +76,14 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		D3C11A022F10000000000001 /* DbloreCLI */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D3C11A0D2F10000000000001 /* Exceptions for "DbloreCLI" folder in "DbloreTests" target */,
+			);
+			path = DbloreCLI;
+			sourceTree = "<group>";
+		};
 		D30425762F0310D3008916E0 /* DbloreTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = DbloreTests;
@@ -62,6 +100,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		D3C11A052F10000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D30425722F0310D3008916E0 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -102,6 +147,7 @@
 				D3E0FB952EF70DBB009A0E5A /* Dblore */,
 				D30425762F0310D3008916E0 /* DbloreTests */,
 				D304258E2F033777008916E0 /* Frameworks */,
+				D3C11A022F10000000000001 /* DbloreCLI */,
 				D3E0FB942EF70DBB009A0E5A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -112,6 +158,7 @@
 				D3E0FB932EF70DBB009A0E5A /* Dblore.app */,
 				D30425752F0310D3008916E0 /* DbloreTests.xctest */,
 				D30425822F031148008916E0 /* DbloreUITests.xctest */,
+				D3C11A012F10000000000001 /* dblore */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -119,6 +166,27 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		D3C11A032F10000000000001 /* DbloreCLI */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D3C11A062F10000000000001 /* Build configuration list for PBXNativeTarget "DbloreCLI" */;
+			buildPhases = (
+				D3C11A042F10000000000001 /* Sources */,
+				D3C11A052F10000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				D3C11A022F10000000000001 /* DbloreCLI */,
+			);
+			name = DbloreCLI;
+			packageProductDependencies = (
+			);
+			productName = dblore;
+			productReference = D3C11A012F10000000000001 /* dblore */;
+			productType = "com.apple.product-type.tool";
+		};
 		D30425742F0310D3008916E0 /* DbloreTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D304257D2F0310D3008916E0 /* Build configuration list for PBXNativeTarget "DbloreTests" */;
@@ -134,6 +202,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				D30425762F0310D3008916E0 /* DbloreTests */,
+				D3C11A022F10000000000001 /* DbloreCLI */,
 			);
 			name = DbloreTests;
 			packageProductDependencies = (
@@ -149,10 +218,12 @@
 				D3E0FB8F2EF70DBB009A0E5A /* Sources */,
 				D3E0FB902EF70DBB009A0E5A /* Frameworks */,
 				D3E0FB912EF70DBB009A0E5A /* Resources */,
+				D3C11A092F10000000000001 /* Copy Helpers */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D3C11A0C2F10000000000001 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				D3E0FB952EF70DBB009A0E5A /* Dblore */,
@@ -217,6 +288,7 @@
 			targets = (
 				D3E0FB922EF70DBB009A0E5A /* Dblore */,
 				D30425742F0310D3008916E0 /* DbloreTests */,
+				D3C11A032F10000000000001 /* DbloreCLI */,
 			);
 		};
 /* End PBXProject section */
@@ -239,6 +311,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		D3C11A042F10000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D30425712F0310D3008916E0 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -256,6 +335,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		D3C11A0C2F10000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D3C11A032F10000000000001 /* DbloreCLI */;
+			targetProxy = D3C11A0B2F10000000000001 /* PBXContainerItemProxy */;
+		};
 		D304257A2F0310D3008916E0 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D3E0FB922EF70DBB009A0E5A /* Dblore */;
@@ -264,6 +348,48 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		D3C11A072F10000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 86H6CNLN4C;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_MODULE_NAME = DbloreCLI;
+				PRODUCT_NAME = dblore;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		D3C11A082F10000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_IDENTITY = "Developer ID Application";
+				CODE_SIGN_STYLE = Manual;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 86H6CNLN4C;
+				ENABLE_HARDENED_RUNTIME = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				OTHER_CODE_SIGN_FLAGS = "--timestamp";
+				PRODUCT_MODULE_NAME = DbloreCLI;
+				PRODUCT_NAME = dblore;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 		D304257B2F0310D3008916E0 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -542,6 +668,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		D3C11A062F10000000000001 /* Build configuration list for PBXNativeTarget "DbloreCLI" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D3C11A072F10000000000001 /* Debug */,
+				D3C11A082F10000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		D304257D2F0310D3008916E0 /* Build configuration list for PBXNativeTarget "DbloreTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

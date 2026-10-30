@@ -208,8 +208,7 @@ struct MCPSettingsModelTests {
     #expect(MCPSettingsModel.countdown(.milliseconds(59_001)) == "01:00")
     #expect(MCPSettingsModel.countdown(.milliseconds(1)) == "00:01")
     #expect(MCPSettingsModel.countdown(.seconds(-3)) == "00:00")
-    let code = MCPCLIPairingCode(code: "0123ABCD", port: 41730, expires: .now)
-    #expect(MCPSettingsModel.pairCommand(code) == "dblore pair 0123ABCD --port 41730")
+    #expect(MCPSettingsModel.pairCommand(port: 41730) == "dblore pair --port 41730")
     #expect(
       MCPSettingsModel.installCommand(appPath: "/Applications/Dblore.app")
         == "sudo mkdir -p /usr/local/bin && sudo ln -sf "

@@ -194,6 +194,9 @@ struct MCPSettingsSection: View {
 
   private func pairingCodeView(_ code: MCPCLIPairingCode) -> some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
+      note("Run this in a terminal:")
+      commandLine(MCPSettingsModel.pairCommand(port: code.port), copy: .pairCommand)
+      note("Then type this code when it asks (it works once):")
       HStack(alignment: .firstTextBaseline, spacing: Spacing.md) {
         Text(code.code)
           .font(.monoLarge)
@@ -205,8 +208,6 @@ struct MCPSettingsSection: View {
           .monospacedDigit()
           .foregroundColor(.foregroundSubtle)
       }
-      note("Run this in a terminal. The code works once.")
-      commandLine(MCPSettingsModel.pairCommand(code), copy: .pairCommand)
     }
   }
 

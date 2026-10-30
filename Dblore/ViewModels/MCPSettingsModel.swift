@@ -136,7 +136,7 @@ final class MCPSettingsModel {
           : MCPClientConfigSnippet.cursorJSON(port: port, token: token))
     case .pairCommand:
       guard let pairingCode else { return }
-      copyToPasteboard(Self.pairCommand(pairingCode))
+      copyToPasteboard(Self.pairCommand(port: pairingCode.port))
     case .installCommand:
       copyToPasteboard(Self.installCommand(appPath: Bundle.main.bundlePath))
     }
@@ -210,8 +210,10 @@ final class MCPSettingsModel {
     return String(format: "%02d:%02d", total / 60, total % 60)
   }
 
-  nonisolated static func pairCommand(_ code: MCPCLIPairingCode) -> String {
-    "dblore pair \(code.code) --port \(code.port)"
+  /// The code is typed at the tool's prompt, not put on the command line, where other users
+  /// could read it in the process list
+  nonisolated static func pairCommand(port: Int) -> String {
+    "dblore pair --port \(port)"
   }
 
   /// Links the tool in the app bundle into /usr/local/bin. The path sits in double quotes, so
