@@ -186,6 +186,8 @@ actor VaultLeaseManager {
   nonisolated let leaseID: String
   nonisolated let username: String
   nonisolated let password: String
+  /// Seconds the lease was created for (0: no TTL)
+  nonisolated let createdDuration: Int
 
   private let client: any VaultClient
   private let clock: any VaultLeaseClock
@@ -211,6 +213,7 @@ actor VaultLeaseManager {
     leaseID = credentials.lease.id
     username = credentials.username
     password = credentials.password
+    createdDuration = credentials.lease.duration
     self.client = client
     self.clock = clock
     self.token = token
@@ -253,20 +256,31 @@ actor VaultLeaseManager {
     await renewal.withLock { $0 }?.value
   }
 
-  /// Cancels the renewal, then revokes the lease, then an AppRole login token. A failure is
-  /// only logged: the lease then ends at its TTL. Sent from a task of its own, so a cancelled
-  /// caller still revokes.
-  func revoke() async {
+  /// Cancels the renewal, then revokes the lease, then an AppRole login token. Returns why the
+  /// lease could not be revoked (nil: revoked, or, its own revoke refused, with its login
+  /// token); the failure is logged too, and the lease then ends at its TTL. Disconnects ignore
+  /// the result. Sent from a task of its own, so a cancelled caller still revokes.
+  @discardableResult
+  func revoke() async -> (any Error)? {
     cancelRenewal()
     let (client, leaseID, token, ownsToken) = (client, leaseID, token, ownsToken)
-    await Task.detached {
+    return await Task.detached { () -> (any Error)? in
+      var failure: (any Error)?
       do {
         try await client.revokeLease(id: leaseID, token: token)
       } catch {
+        failure = error
         await AppLogger.shared.warning(
           "Vault lease revoke failed: \(error.localizedDescription)", category: "Database")
       }
-      if ownsToken { await Self.revokeToken(token, client: client) }
+      // A refused revoke (403): Vault revokes a token's leases with the token. Not for another
+      // failure: the token's revoke would meet it again, after answering
+      if ownsToken, await Self.revokeToken(token, client: client),
+        (failure as? VaultClientError)?.isForbidden == true
+      {
+        failure = nil
+      }
+      return failure
     }.value
   }
 
@@ -275,14 +289,17 @@ actor VaultLeaseManager {
     if ownsToken { await Self.revokeToken(token, client: client) }
   }
 
-  /// revoke-self of a login token, best effort, from a task of its own
-  nonisolated static func revokeToken(_ token: String, client: any VaultClient) async {
+  /// revoke-self of a login token, best effort, from a task of its own. True when revoked.
+  @discardableResult
+  nonisolated static func revokeToken(_ token: String, client: any VaultClient) async -> Bool {
     await Task.detached {
       do {
         try await client.revokeSelf(token: token)
+        return true
       } catch {
         await AppLogger.shared.warning(
           "Vault token revoke failed: \(error.localizedDescription)", category: "Database")
+        return false
       }
     }.value
   }

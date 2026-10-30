@@ -108,6 +108,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningConnect: ConnectionConfig?
   var pendingWeakeningCertificate: ClientCertificateMaterial?
   var pendingWeakeningSSHCredential: SSHStoredCredential?
+  /// The form's Vault secret for the held connect (a first connect has no stored one yet)
+  var pendingWeakeningVaultSecret: VaultCredentialStore.ConnectionSecret?
   /// The held connect's `aiFieldsEdited` (see `connect(config:…, aiFieldsEdited:)`)
   var pendingWeakeningAIFieldsEdited = false
   /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
@@ -462,9 +464,9 @@ class WorkspaceManager: Identifiable {
     // A config read from a file (`sanitizesFileConfig`; off for the app's in-memory config, see
     // `createNew(connection:)`): its AI policy never weakens the saved one, the form opens on the
     // saved color and group (a form connect writes what the form shows), its scripts and
-    // transport (TLS mode, SSH tunnel, client certificate, connection string) are the saved
-    // row's only, and it never weakens the saved row's protection. Its own password is never
-    // used (a connect reads the Keychain or the form), so it is dropped
+    // transport (TLS mode, SSH tunnel, client certificate, connection string, Vault source) are
+    // the saved row's only, and it never weakens the saved row's protection. Its own password is
+    // never used (a connect reads the Keychain or the form), so it is dropped
     var workspace = workspace
     if sanitizesFileConfig {
       workspace.connectionConfig = Self.sanitizedFileAIPolicy(
@@ -989,9 +991,12 @@ class WorkspaceManager: Identifiable {
 
     var configWithPassword = config
     // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
-    // unless a password command prints it on connect. Only the key of this config is read
-    // (`Workspace.keychainKey`), never one a file names for another connection.
-    if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil {
+    // unless a password command prints it or a Vault lease brings it on connect. Only the key
+    // of this config is read (`Workspace.keychainKey`), never one a file names for another
+    // connection.
+    if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
+      config.vault == nil
+    {
       guard let keychainKey = workspace.keychainKey,
         let password = passwords.loadPassword(forKey: keychainKey)
       else {
@@ -1829,6 +1834,7 @@ class WorkspaceManager: Identifiable {
     pendingWeakeningCertificate = nil
     activeUnrememberedSSHCredential = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     for token in tabAccess.values { token.release() }
     tabAccess = [:]
     workspaceAccess?.release()

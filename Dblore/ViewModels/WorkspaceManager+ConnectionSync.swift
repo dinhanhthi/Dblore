@@ -174,12 +174,13 @@ extension WorkspaceManager {
   }
 
   /// An opened file's `config` with the TLS mode, SSH tunnel, client certificate (which also
-  /// decides whether the saved custom CA is used) and connection string of its saved row
-  /// (`hasSavedTransport`), even where the file's are stronger: the saved row is the user's
-  /// choice, and a file never picks how a saved password travels. Remember off in the file
-  /// changes nothing. Without that row they stay the file's (auto-connect then reads no
-  /// password), but a connection string that reaches another host, port or TLS mode than the
-  /// config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
+  /// decides whether the saved custom CA is used), connection string and Vault source (address,
+  /// CA, mount, role, auth method) of its saved row (`hasSavedTransport`), even where the file's
+  /// are stronger: the saved row is the user's choice, and a file never picks how a saved
+  /// password travels nor where a Vault secret goes. Remember off in the file changes nothing.
+  /// Without that row they stay the file's (auto-connect then reads no password), but its Vault
+  /// source is dropped and a connection string that reaches another host, port or TLS mode than
+  /// the config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
   static func keepingSavedTransport(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -189,11 +190,15 @@ extension WorkspaceManager {
       config.sshTunnel = saved.sshTunnel
       config.clientCertificate = saved.clientCertificate
       config.mongoURI = saved.mongoURI
-    } else if let uri = config.mongoURI {
-      config.mongoURI = try? MongoURIParser.checkedMongoURI(
-        uri, host: config.host, port: config.port, engine: config.databaseType,
-        sslMode: config.sslMode
-      ).get()
+      config.vault = saved.vault
+    } else {
+      config.vault = nil
+      if let uri = config.mongoURI {
+        config.mongoURI = try? MongoURIParser.checkedMongoURI(
+          uri, host: config.host, port: config.port, engine: config.databaseType,
+          sslMode: config.sslMode
+        ).get()
+      }
     }
     return config
   }
@@ -530,6 +535,7 @@ extension WorkspaceManager {
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningFromForm = false
     try await connectWithoutUnlockCheck(
@@ -568,8 +574,8 @@ extension WorkspaceManager {
     try await completePendingWeakeningConnect()
   }
 
-  /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate and SSH
-  /// secret of the running operation (the form's), which end with it.
+  /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate, SSH
+  /// secret and Vault secret of the running operation (the form's), which end with it.
   private func holdWeakeningConnect(
     _ config: ConnectionConfig, aiFieldsEdited: Bool, fromForm: Bool
   ) {
@@ -577,6 +583,7 @@ extension WorkspaceManager {
     pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
     let pendingSSH = SSHCredentialStoreFactory.currentCredential(for: config)
     pendingWeakeningSSHCredential = pendingSSH?.credential
+    pendingWeakeningVaultSecret = VaultCredentialStore.currentSecret(for: config)
     pendingWeakeningAIFieldsEdited = aiFieldsEdited
     pendingWeakeningFromForm = fromForm
   }
@@ -603,8 +610,8 @@ extension WorkspaceManager {
   }
 
   /// `config` once its blocked lock is unlocked, with its saved password when it uses one, has
-  /// no password command and none typed (a locked row loads without it). Nothing is read before
-  /// the grant.
+  /// no password command nor Vault source and none typed (a locked row loads without it).
+  /// Nothing is read before the grant.
   /// - Parameter action: what the prompt says the unlock is for ("connect", "test it")
   /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
   ///   changed, no error to show)
@@ -618,7 +625,8 @@ extension WorkspaceManager {
         anchor: NewWindowStore.shared.findWindow(for: id))
     else { throw WorkspaceConnectError.unlockRequired }
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.password.isEmpty, lockCenter.registry.refusal(for: config) == nil,
+      config.vault == nil, config.password.isEmpty,
+      lockCenter.registry.refusal(for: config) == nil,
       let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
     else { return config }
     var config = config
@@ -636,21 +644,26 @@ extension WorkspaceManager {
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
     let scopedSSH = SSHCredentialStoreFactory.scoped(pendingWeakeningSSHCredential, for: config)
+    let scopedVault = pendingWeakeningVaultSecret.map(VaultCredentialStore.ScopedSecret.init)
     let aiFieldsEdited = pendingWeakeningAIFieldsEdited
     let fromForm = pendingWeakeningFromForm
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningFromForm = false
     defer {
       scopedMaterial?.clear()
       scopedSSH?.clear()
+      scopedVault?.clear()
     }
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-          try await connectWithoutUnlockCheck(
-            config: config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+          try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+            try await connectWithoutUnlockCheck(
+              config: config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+          }
         }
       }
     } catch {
@@ -682,6 +695,7 @@ extension WorkspaceManager {
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningFromForm = false
   }

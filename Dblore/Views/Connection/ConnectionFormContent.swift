@@ -98,6 +98,20 @@ struct ConnectionFormContent: View {
   /// Auth method of the credential stored under `sshOriginalConfig`'s account (nil = none).
   @State var sshStoredMethod: SSHTunnelConfig.AuthMethod?
 
+  // Vault draft. The token or AppRole secret stays in memory until a remembered save.
+  @State var vaultDraft = VaultFormDraft()
+  /// Password command chosen as the source before a script is picked
+  @State var choosesPasswordCommand = false
+  @State var vaultTest: VaultTestStatus?
+  /// The Keychain refused the saved Vault secret: it lasts this session only
+  @State var vaultSessionOnly = false
+  @State var vaultCAError: String?
+  /// The Vault CA row's subject and fingerprints (`VaultCADescription`)
+  @State var vaultCADescription: VaultCADescription?
+  /// The password choosing Vault cleared, brought back when the source switches back; dropped
+  /// with the draft (row load, form close)
+  @State var passwordBeforeVault: String?
+
   /// AI policy and rules the form was seeded with (`seedAIFields`).
   @State var aiSeed = ConnectionAIDraft()
   /// Files of the Application Scripts folder the Scripts section offers
@@ -132,12 +146,14 @@ struct ConnectionFormContent: View {
     var privateKeyPEM: String?
     var caPEM: String?
     var certificatePassphrase: String
+    var vaultDraft: VaultFormDraft
   }
 
   var formInputs: FormInputs {
     FormInputs(
       config: connectionConfig, sshDraft: sshDraft, certificatePEM: certificatePEM,
-      privateKeyPEM: privateKeyPEM, caPEM: caPEM, certificatePassphrase: certificatePassphrase)
+      privateKeyPEM: privateKeyPEM, caPEM: caPEM, certificatePassphrase: certificatePassphrase,
+      vaultDraft: vaultDraft)
   }
 
   enum ConnectionInputMode: String, CaseIterable {
@@ -275,6 +291,7 @@ struct ConnectionFormContent: View {
         if showsRecentHistory { loadConnectionHistory() }
         restoreCertificateDraft()
         restoreSSHDraft()
+        restoreVaultDraft()
         refreshSQLiteFileBookmark()
         // After the Recent row load above, which replaces the form's values
         seedAIFields()
@@ -329,6 +346,7 @@ struct ConnectionFormContent: View {
           isBlankForm: Self.isBlankForm(connectionConfig))
         {
           restoreSSHDraft()
+          restoreVaultDraft()
           seedAIFields()
         }
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
@@ -355,12 +373,18 @@ struct ConnectionFormContent: View {
       .onChange(of: formInputs) { _, _ in
         testResult = nil
       }
+      // Test Vault's status too (a run still going is dropped)
+      .onChange(of: VaultTestInputs(config: connectionConfig.vault, draft: vaultDraft)) { _, _ in
+        vaultTest = nil
+      }
 
       footerView()
     }
     .onDisappear {
       clearCertificateDraft()
       sshDraft.clearSecrets()
+      vaultDraft.clearSecrets()
+      passwordBeforeVault = nil
       unlockConnectError?.wrappedValue = nil
     }
     .background(HostWindowReader(reference: hostWindow))
@@ -651,6 +675,7 @@ struct ConnectionFormContent: View {
     connectionString = ""
     connectionStringSource = nil
     if inputMode == .connectionString { showDraftConnectionString() }
+    restoreVaultDraft()
     seedAIFields()
   }
 
@@ -806,10 +831,14 @@ struct ConnectionFormContent: View {
     guard let unchangedFrom else { return false }
     return withSSHConfig(connectionConfig) == unchangedFrom && !certificateDraftChanged
       && sshDraft.enteredCredential == nil
+      && vaultDraft.enteredSecret(for: connectionConfig.vault?.authMethod ?? .token) == nil
   }
 
   private var isFormValid: Bool {
-    guard sshDraftIsValid else { return false }
+    guard sshDraftIsValid,
+      connectionConfig.vault == nil
+        || vaultDraft.isValid(for: Self.withVaultRules(withSSHConfig(connectionConfig)))
+    else { return false }
     if inputMode == .connectionString
       && Self.supportsConnectionString(connectionConfig.databaseType)
     {
@@ -993,7 +1022,8 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig()))
+      config = Self.withVaultRules(
+        withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig())))
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -1007,18 +1037,23 @@ struct ConnectionFormContent: View {
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
     let scopedSSH = SSHCredentialStoreFactory.scoped(preparedSSHCredential, for: config)
+    // The draft's Vault secret: the test's lease reads it before the store; nothing is saved
+    let scopedVault = scopedVaultSecret(for: config)
 
     Task { @MainActor in
       defer {
         scopedMaterial?.clear()
         scopedSSH?.clear()
+        scopedVault?.clear()
       }
       do {
         let success = try await ClientCertificateStoreFactory.$operationMaterial.withValue(
           scopedMaterial
         ) {
           try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-            try await onTest(config)
+            try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+              try await onTest(config)
+            }
           }
         }
         isTesting = false
@@ -1058,7 +1093,8 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig()))
+      config = Self.withVaultRules(
+        withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig())))
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -1073,16 +1109,22 @@ struct ConnectionFormContent: View {
     // The typed, imported or moved SSH secret: the session reads it before the store, and a
     // remembered save persists it (`SessionManager`). Remember off keeps it only here.
     let scopedSSH = SSHCredentialStoreFactory.scoped(preparedSSHCredential, for: config)
+    // The typed or stored Vault secret, bound to the submitted Vault settings: the lease reads
+    // it, and only an accepted, remembered save writes it (`SessionManager`).
+    let scopedVault = scopedVaultSecret(for: config)
 
     Task { @MainActor in
       defer {
         scopedMaterial?.clear()
         scopedSSH?.clear()
+        scopedVault?.clear()
       }
       do {
         try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
           try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-            try await onConnectCallback(config, aiFieldsEdited)
+            try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+              try await onConnectCallback(config, aiFieldsEdited)
+            }
           }
         }
         connectionConfig.clientCertificate = config.clientCertificate
@@ -1091,6 +1133,12 @@ struct ConnectionFormContent: View {
         // Restores the draft from the submitted tunnel (and drops the typed secret).
         connectionConfig.sshTunnel = config.sshTunnel
         restoreSSHDraft()
+        // Rereads the Vault secret as saved (and drops the typed one)
+        connectionConfig.vault = config.vault
+        connectionConfig.rememberConnection = config.rememberConnection
+        connectionConfig.password = config.password
+        connectionConfig.passwordCommandScript = config.passwordCommandScript
+        restoreVaultDraft()
         aiSeed = ConnectionAIDraft(config: config)
         isConnecting = false
         onConnectionSuccess?()

@@ -197,9 +197,9 @@ extension ConnectionFormContent {
 
   /// The selection and the fields switch at once. A row whose lock is not unlocked in this
   /// session fills no password (a cached one may predate a relock) and no client certificate
-  /// draft, and reads no stored SSH secret: it asks on this form's window and loads them only
-  /// after the unlock; cancel keeps the row selected with an empty password and the saved
-  /// certificate untouched.
+  /// draft, and reads no stored SSH or Vault secret: it asks on this form's window and loads
+  /// them only after the unlock; cancel keeps the row selected with an empty password and the
+  /// saved certificate untouched.
   func loadConnection(_ entry: ConnectionHistoryEntry) {
     let blocked = LockCenter.shared.registry.refusal(for: entry.config) != nil
     setSelectedHistoryId(entry.id)
@@ -209,6 +209,8 @@ extension ConnectionFormContent {
       connectionConfig.password = ""
     }
     resetCertificateDraft()
+    // A reload of the same target fires no target change: restored here
+    restoreVaultDraft()
 
     if getInputMode() == .connectionString {
       setGeneratedConnectionString()
@@ -233,6 +235,14 @@ extension ConnectionFormContent {
       else { return }
       if certificateDraftPending { restoreCertificateDraft() }
       refreshSSHStoredMethod()
+      if vaultDraft.pending {
+        // Nor drop a secret typed while the prompt was open
+        let typed = vaultDraft
+        restoreVaultDraft()
+        vaultDraft.token = typed.token
+        vaultDraft.roleID = typed.roleID
+        vaultDraft.secretID = typed.secretID
+      }
       // Nor over a password typed while the prompt was open
       guard connectionConfig.password.isEmpty else { return }
       connectionConfig = RecentManager.shared.withSavedPassword(connectionConfig)

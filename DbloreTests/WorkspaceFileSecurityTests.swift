@@ -3,7 +3,7 @@
 // key comes from the file's own connection config, never from a stored key. Nor how it travels:
 // the TLS mode, SSH tunnel, client certificate and connection string come from the saved row of
 // that key and engine, and without one nothing is read and the connect form opens. Nor does it
-// weaken the saved row's protection.
+// weaken the saved row's protection, or pick where a Vault secret goes.
 
 import Foundation
 import Testing
@@ -539,5 +539,136 @@ struct WorkspaceFileSecurityTests {
     #expect(
       Workspace(connectionConfig: config, connectionKeychainKey: other).keychainKey == derived)
     #expect(Workspace(connectionKeychainKey: other).keychainKey == nil)
+  }
+
+  // MARK: - Vault
+
+  /// The Vault sources the connects made a client for.
+  private final class VaultSourceLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [VaultSource] = []
+
+    var sources: [VaultSource] { lock.withLock { recorded } }
+
+    func append(_ source: VaultSource) { lock.withLock { recorded.append(source) } }
+  }
+
+  /// A manager whose connects lease through `client`, with stored Vault secrets from `vaults`.
+  private static func vaultManager(
+    _ workspace: Workspace, defaults: UserDefaults, store: RecordingConnectionPasswordStore,
+    client: VaultFormFakeClient, vaults: InMemoryVaultSecretStore, log: VaultSourceLog,
+    sanitizesFileConfig: Bool = true
+  ) -> WorkspaceManager {
+    let leasing = VaultLeasing(
+      makeClient: { source in
+        log.append(source)
+        return client
+      }, store: vaults)
+    return WorkspaceManager(
+      workspace: workspace, restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(
+        sessionFactory: FakeDatabaseSessionFactory(
+          capabilities: DatabaseType.postgresql.capabilities),
+        vaultLeasing: leasing),
+      defaults: defaults, passwords: store, sanitizesFileConfig: sanitizesFileConfig)
+  }
+
+  @Test("A file's Vault settings never pick where the saved row's Vault secret goes")
+  func savedVaultSourceWins() async throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = RecordingConnectionPasswordStore()
+    let vaults = InMemoryVaultSecretStore()
+    let client = VaultFormFakeClient()
+    let log = VaultSourceLog()
+    let saved = ConnectionFormVaultDraftTests.vaultConfig(host: "vault-saved.example")
+    #expect(
+      SessionManager.saveConnection(
+        saved, defaults: defaults, passwords: store, vaultSecrets: vaults))
+    #expect(VaultCredentialStore.save(.token("saved-token"), for: saved, to: vaults) == .keychain)
+    // A stale password item is never read for a Vault row
+    let key = ConnectionKeychainKey.password(for: saved)
+    store.savePassword("planted-password", forKey: key)
+
+    var file = saved
+    file.vault = VaultSource(
+      address: "https://vault.attacker.example:8200", mount: "other", role: "admin",
+      authMethod: .appRole, caPEM: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+    let manager = Self.vaultManager(
+      Workspace(connectionConfig: file, connectionKeychainKey: key), defaults: defaults,
+      store: store, client: client, vaults: vaults, log: log)
+    #expect(manager.workspace.connectionConfig?.vault == saved.vault)
+    await manager.autoConnectIfNeeded()
+
+    #expect(manager.connectionState == .connected)
+    // The connect's own save reloads the recent list, so the read itself is not counted here
+    #expect(manager.editingConnectionConfig.password.isEmpty)
+    #expect(log.sources == [try #require(saved.vault)])
+    #expect(client.calls.first == .read(token: "saved-token"))
+    #expect(await manager.connectionManager.config?.vault == saved.vault)
+    await manager.performDisconnect()
+  }
+
+  @Test("A file with a Vault source and no saved row connects nothing and drops it")
+  func unsavedVaultSourceConnectsNothing() async throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = RecordingConnectionPasswordStore()
+    let client = VaultFormFakeClient()
+    let log = VaultSourceLog()
+    var file = ConnectionFormVaultDraftTests.vaultConfig(host: "vault-unsaved.example")
+    file.vault?.address = "https://vault.attacker.example:8200"
+    let manager = Self.vaultManager(
+      Workspace(connectionConfig: file), defaults: defaults, store: store, client: client,
+      vaults: InMemoryVaultSecretStore(), log: log)
+    #expect(manager.workspace.connectionConfig?.vault == nil)
+    await manager.autoConnectIfNeeded()
+
+    #expect(manager.isConnectionFormModalVisible)
+    #expect(manager.connectionFormOpensOnDraft)
+    #expect(manager.editingConnectionConfig.host == "vault-unsaved.example")
+    #expect(manager.editingConnectionConfig.vault == nil)
+    #expect(manager.connectionState == .disconnected)
+    #expect(store.loadedKeys.isEmpty)
+    #expect(log.sources.isEmpty)
+    #expect(client.calls.isEmpty)
+  }
+
+  @Test("A connect held for the Safe Mode unlock keeps the form's Vault secret")
+  func weakeningHoldKeepsVaultSecret() async throws {
+    let suiteName = "WorkspaceFileSecurityTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let client = VaultFormFakeClient()
+    let log = VaultSourceLog()
+    var current = ConnectionFormVaultDraftTests.vaultConfig(host: "vault-weakening.example")
+    current.applyCommitStyle(.password)
+    // A typed config: no saved row yet, so the Vault source is kept
+    let manager = Self.vaultManager(
+      Workspace.newUntitled(connection: current), defaults: defaults,
+      store: RecordingConnectionPasswordStore(), client: client,
+      vaults: InMemoryVaultSecretStore(), log: log, sanitizesFileConfig: false)
+
+    var weaker = current
+    weaker.applyCommitStyle(.immediate)
+    // The form scopes its typed secret around Connect and clears it once Connect returns
+    let scoped = VaultCredentialStore.scoped(.token("typed"), for: weaker)
+    await #expect(throws: WorkspaceConnectError.unlockRequired) {
+      try await VaultCredentialStore.$operationSecret.withValue(scoped) {
+        try await manager.connect(
+          config: weaker, defaultCommitStyle: .immediate, hasPassword: true, hasTouchID: false)
+      }
+    }
+    scoped?.clear()
+    #expect(manager.pendingWeakeningConnect != nil)
+    #expect(client.calls.isEmpty)
+
+    try await manager.completePendingWeakeningConnect()
+    #expect(manager.connectionState == .connected)
+    #expect(client.calls == [.read(token: "typed")])
+    #expect(manager.pendingWeakeningVaultSecret == nil)
+    await manager.performDisconnect()
   }
 }

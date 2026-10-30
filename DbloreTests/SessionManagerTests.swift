@@ -258,6 +258,213 @@ struct SessionManagerTests {
         == [valid.id])
   }
 
+  // MARK: - Vault secrets
+
+  private static func vaultConfig(host: String = "db.internal") -> ConnectionConfig {
+    ConnectionFormVaultDraftTests.vaultConfig(host: host)
+  }
+
+  /// Runs `body` with `secret` as the operation's scoped Vault secret for `config` (the form's
+  /// draft on Connect or Save).
+  private static func withDraft<T>(
+    _ secret: VaultSecret, for config: ConnectionConfig, _ body: () throws -> T
+  ) rethrows -> T {
+    let scoped = VaultCredentialStore.scoped(secret, for: config)
+    defer { scoped?.clear() }
+    return try VaultCredentialStore.$operationSecret.withValue(scoped, operation: body)
+  }
+
+  @Test("A Vault save writes no password Keychain item and deletes a stale one")
+  func vaultSaveWritesNoPassword() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    var plain = Self.vaultConfig()
+    plain.vault = nil
+    plain.password = "old-password"
+    #expect(
+      SessionManager.saveConnection(
+        plain, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults))
+    let key = ConnectionKeychainKey.password(for: plain)
+    #expect(harness.store.savedKeys == [key])
+
+    var vault = Self.vaultConfig()
+    vault.password = "leased-or-stale"
+    #expect(
+      Self.withDraft(.token("t"), for: vault) {
+        SessionManager.saveConnection(
+          vault, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+      })
+    #expect(harness.store.savedKeys == [key])
+    #expect(harness.store.deletedKeys == [key])
+    #expect(harness.store.loadPassword(forKey: key) == nil)
+    #expect(VaultCredentialStore.lookup(for: vault, from: vaults) == .found(.token("t")))
+  }
+
+  @Test("A refused colliding save writes no Vault secret")
+  func refusedSaveWritesNoVaultSecret() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    #expect(
+      SessionManager.saveConnection(
+        Self.collidingA, defaults: harness.defaults, passwords: harness.store,
+        vaultSecrets: vaults))
+    var colliding = Self.collidingB
+    colliding.password = ""
+    colliding.vault = Self.vaultConfig().vault
+    let saved = Self.withDraft(.token("t"), for: colliding) {
+      SessionManager.saveConnection(
+        colliding, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+    }
+    #expect(!saved)
+    #expect(VaultCredentialStore.lookup(for: colliding, from: vaults) == .missing)
+    #expect(harness.store.deletedKeys.isEmpty)
+  }
+
+  @Test("A replaced row with a new key and no other user deletes its Vault secret")
+  func replacedRowDeletesVaultSecret() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    let original = Self.vaultConfig()
+    #expect(
+      Self.withDraft(.token("t"), for: original) {
+        SessionManager.saveConnection(
+          original, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+      })
+    let oldAccount = try #require(VaultCredentialStore.account(for: original))
+    let id = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?.id)
+
+    // New key, other Vault settings, no draft: the old secret is not re-bound, and goes
+    var edited = Self.vaultConfig(host: "db2.internal")
+    edited.vault?.role = "app-rw"
+    #expect(
+      SessionManager.replaceConnection(
+        id: id, with: edited, defaults: harness.defaults, passwords: harness.store,
+        vaultSecrets: vaults))
+    #expect(vaults.load(account: oldAccount) == nil)
+    #expect(VaultCredentialStore.lookup(for: edited, from: vaults) == .missing)
+
+    // Switching the source away on the same key deletes it too
+    #expect(
+      Self.withDraft(.token("t2"), for: edited) {
+        SessionManager.replaceConnection(
+          id: id, with: edited, defaults: harness.defaults, passwords: harness.store,
+          vaultSecrets: vaults)
+      })
+    let newAccount = try #require(VaultCredentialStore.account(for: edited))
+    #expect(vaults.load(account: newAccount) != nil)
+    var plain = edited
+    plain.vault = nil
+    #expect(
+      SessionManager.replaceConnection(
+        id: id, with: plain, defaults: harness.defaults, passwords: harness.store,
+        vaultSecrets: vaults))
+    #expect(vaults.load(account: newAccount) == nil)
+  }
+
+  @Test("A retargeted row with unchanged Vault settings keeps its secret under the new key")
+  func retargetMovesVaultSecret() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    let original = Self.vaultConfig()
+    #expect(
+      Self.withDraft(.token("t"), for: original) {
+        SessionManager.saveConnection(
+          original, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+      })
+    let id = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?.id)
+    let edited = Self.vaultConfig(host: "db2.internal")
+    #expect(
+      SessionManager.replaceConnection(
+        id: id, with: edited, defaults: harness.defaults, passwords: harness.store,
+        vaultSecrets: vaults))
+    #expect(VaultCredentialStore.lookup(for: edited, from: vaults) == .found(.token("t")))
+    #expect(VaultCredentialStore.lookup(for: original, from: vaults) == .missing)
+  }
+
+  @Test("An edited Vault role re-saves the draft's secret under the new settings")
+  func editedVaultSettingResavesSecret() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    let original = Self.vaultConfig()
+    #expect(
+      Self.withDraft(.token("t"), for: original) {
+        SessionManager.saveConnection(
+          original, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+      })
+    let id = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?.id)
+
+    // The form restored the stored secret into its draft; the edit binds it to the new role
+    // (an edited address or CA asks for it again: ConnectionFormVaultDraftTests)
+    var restored = VaultFormDraft(restoringFor: original, blocked: false)
+    restored.apply(VaultCredentialStore.lookup(for: original, from: vaults))
+    var edited = original
+    edited.vault?.role = "app-rw"
+    #expect(VaultCredentialStore.lookup(for: edited, from: vaults) == .destinationChanged)
+    let secret = try #require(restored.preparedSecret(for: edited))
+    #expect(
+      Self.withDraft(secret, for: edited) {
+        SessionManager.replaceConnection(
+          id: id, with: edited, defaults: harness.defaults, passwords: harness.store,
+          vaultSecrets: vaults)
+      })
+    #expect(VaultCredentialStore.lookup(for: edited, from: vaults) == .found(.token("t")))
+  }
+
+  @Test("Removing the last row of a Vault secret deletes it")
+  func removeDeletesVaultSecret() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    let config = Self.vaultConfig()
+    #expect(
+      Self.withDraft(.token("t"), for: config) {
+        SessionManager.saveConnection(
+          config, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+      })
+    let id = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?.id)
+    #expect(
+      SessionManager.removeConnection(
+        id: id, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults))
+    #expect(VaultCredentialStore.lookup(for: config, from: vaults) == .missing)
+  }
+
+  @Test("A connect with only the form's scoped secret leases, and the remembered save keeps it")
+  func connectWithScopedSecretLeases() async throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = InMemoryVaultSecretStore()
+    let client = VaultFormFakeClient()
+    let manager = DatabaseConnectionManager(
+      sessionFactory: FakeDatabaseSessionFactory(capabilities: .contract()),
+      vaultLeasing: VaultLeasing(makeClient: { _ in client }, store: vaults))
+    var config = Self.vaultConfig()
+    config.sslMode = .disable
+    config.protectionLevel = .none
+    config.protectedMode = false
+    let scoped = VaultCredentialStore.scoped(.token("typed"), for: config)
+    defer { scoped?.clear() }
+    let saved = try await VaultCredentialStore.$operationSecret.withValue(scoped) {
+      try await manager.connect(config: config)
+      return SessionManager.saveConnection(
+        config, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+    }
+    #expect(saved)
+    #expect(client.calls == [.read(token: "typed")])
+    #expect(manager.holdsLease)
+    #expect(VaultCredentialStore.lookup(for: config, from: vaults) == .found(.token("typed")))
+    await manager.disconnect()
+    #expect(client.calls.last == .revoke(id: "lease-1"))
+  }
+
   /// A saved entry from a newer build whose engine this build does not know.
   private static func unknownEntry() throws -> [String: Any] {
     let entry = ConnectionHistoryEntry(

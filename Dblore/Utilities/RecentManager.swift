@@ -302,12 +302,13 @@ class RecentManager {
     connectionsRevision += 1
   }
 
-  /// `config` with its saved password when it uses one, has no password command and none
-  /// typed, and no lock it reaches is blocked: a locked row comes without its password, and
-  /// an edit or connect after the unlock needs it (a save with an empty password deletes it).
+  /// `config` with its saved password when it uses one, has no password command or Vault
+  /// source and none typed, and no lock it reaches is blocked: a locked row comes without its
+  /// password, and an edit or connect after the unlock needs it (a save with an empty
+  /// password deletes it).
   func withSavedPassword(_ config: ConnectionConfig) -> ConnectionConfig {
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.password.isEmpty, registry.refusal(for: config) == nil,
+      config.vault == nil, config.password.isEmpty, registry.refusal(for: config) == nil,
       let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
     else { return config }
     var config = config

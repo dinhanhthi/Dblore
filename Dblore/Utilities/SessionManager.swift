@@ -74,10 +74,12 @@ class SessionManager {
     var entries = storedEntries(defaults: defaults).known
     publishLocks(entries, defaults: defaults, registry: registry)
 
-    // Load passwords for engines that store one. Others are not queried, nor is a row whose
-    // lock is not unlocked in this session: it loads without its password until then.
+    // Load passwords for engines that store one. Others are not queried, nor is a Vault row
+    // (it leases its password), nor a row whose lock is not unlocked in this session: it loads
+    // without its password until then.
     for i in 0..<entries.count
     where entries[i].config.databaseType.capabilities.usesPassword
+      && entries[i].config.vault == nil
       && registry.refusal(for: entries[i].config) == nil
     {
       let key = entries[i].keychainKey
@@ -157,6 +159,7 @@ class SessionManager {
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
     sshCredential: SSHStoredCredential? = nil,
+    vaultSecrets: any VaultSecretStore = VaultCredentialStore.shared,
     registry: LockRegistry = .shared
   ) -> Bool {
     var config = singleLineName(config)
@@ -206,8 +209,20 @@ class SessionManager {
       ClientCertificateStoreFactory.persistOperationMaterial(for: config, to: certificates),
       saveSSHCredential(sshCredential, for: config, to: sshCredentials)
     else { return false }
-    if config.databaseType.capabilities.usesPassword, !config.password.isEmpty {
-      passwords.savePassword(config.password, forKey: newEntry.keychainKey)
+    // The form's typed or moved Vault secret, only on this accepted, remembered save
+    VaultCredentialStore.persistOperationSecret(for: config, to: vaultSecrets)
+    if config.databaseType.capabilities.usesPassword {
+      if config.vault != nil {
+        // A Vault row's password is a lease's: none is kept under its key, unless another
+        // row on that key still uses a saved password
+        if !history.contains(where: {
+          $0.id != newEntry.id && $0.keychainKey == newEntry.keychainKey && $0.config.vault == nil
+        }) {
+          passwords.deletePassword(forKey: newEntry.keychainKey)
+        }
+      } else if !config.password.isEmpty {
+        passwords.savePassword(config.password, forKey: newEntry.keychainKey)
+      }
     }
     defaults.set(encoded, forKey: historyKey)
     publishLocks(history, defaults: defaults, registry: registry)
@@ -220,6 +235,7 @@ class SessionManager {
     }
     pruneCertificates(previous: previous, current: history, certificates: certificates)
     pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
+    pruneVaultSecrets(previous: previous, current: history, vaultSecrets: vaultSecrets)
     return true
   }
 
@@ -364,6 +380,7 @@ class SessionManager {
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
     sshCredential: SSHStoredCredential? = nil,
+    vaultSecrets: any VaultSecretStore = VaultCredentialStore.shared,
     registry: LockRegistry = .shared
   ) -> Bool {
     var config = singleLineName(config)
@@ -372,7 +389,8 @@ class SessionManager {
     guard let index = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
         config, defaults: defaults, passwords: passwords, certificates: certificates,
-        sshCredentials: sshCredentials, sshCredential: sshCredential, registry: registry)
+        sshCredentials: sshCredentials, sshCredential: sshCredential,
+        vaultSecrets: vaultSecrets, registry: registry)
     }
 
     let previous = history[index]
@@ -387,6 +405,7 @@ class SessionManager {
       publishLocks(history, defaults: defaults, registry: registry)
       pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
       pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
+      pruneVaultSecrets(previous: oldHistory, current: history, vaultSecrets: vaultSecrets)
       return true
     }
 
@@ -419,7 +438,8 @@ class SessionManager {
     guard let kept = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
         config, defaults: defaults, passwords: passwords, certificates: certificates,
-        sshCredentials: sshCredentials, sshCredential: sshCredential, registry: registry)
+        sshCredentials: sshCredentials, sshCredential: sshCredential,
+        vaultSecrets: vaultSecrets, registry: registry)
     }
     history[kept] = updated
     guard let encoded = encodedHistory(history, defaults: defaults),
@@ -429,13 +449,19 @@ class SessionManager {
           ?? movedSSHCredential(from: previous.config, to: config, sshCredentials: sshCredentials),
         for: config, to: sshCredentials)
     else { return false }
+    if VaultCredentialStore.persistOperationSecret(for: config, to: vaultSecrets) == nil,
+      let moved = movedVaultSecret(from: previous.config, to: config, vaultSecrets: vaultSecrets)
+    {
+      VaultCredentialStore.save(moved, for: config, to: vaultSecrets)
+    }
     if previous.keychainKey != newKey,
       !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey })
     {
       deleteStoredPassword(for: previous, passwords: passwords)
     }
     if config.databaseType.capabilities.usesPassword {
-      if config.password.isEmpty {
+      // A Vault row keeps no saved password: its password is a lease's
+      if config.password.isEmpty || config.vault != nil {
         passwords.deletePassword(forKey: newKey)
       } else {
         passwords.savePassword(config.password, forKey: newKey)
@@ -449,6 +475,7 @@ class SessionManager {
     }
     pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
     pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
+    pruneVaultSecrets(previous: oldHistory, current: history, vaultSecrets: vaultSecrets)
     return true
   }
 
@@ -465,6 +492,7 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    vaultSecrets: any VaultSecretStore = VaultCredentialStore.shared,
     registry: LockRegistry = .shared
   ) -> Bool {
     let history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
@@ -477,6 +505,7 @@ class SessionManager {
     }
     pruneCertificates(previous: history, current: [], certificates: certificates)
     pruneSSHCredentials(previous: history, current: [], sshCredentials: sshCredentials)
+    pruneVaultSecrets(previous: history, current: [], vaultSecrets: vaultSecrets)
 
     defaults.removeObject(forKey: historyKey)
     publishLocks([], defaults: defaults, registry: registry)
@@ -492,6 +521,7 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     certificates: any ClientCertificateStore = ClientCertificateStoreFactory.shared,
     sshCredentials: any SSHCredentialStore = SSHCredentialStoreFactory.shared,
+    vaultSecrets: any VaultSecretStore = VaultCredentialStore.shared,
     registry: LockRegistry = .shared
   ) -> Bool {
     var history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
@@ -507,6 +537,7 @@ class SessionManager {
       publishLocks(history, defaults: defaults, registry: registry)
       pruneCertificates(previous: previous, current: history, certificates: certificates)
       pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
+      pruneVaultSecrets(previous: previous, current: history, vaultSecrets: vaultSecrets)
     }
     return true
   }
@@ -685,6 +716,37 @@ class SessionManager {
         !retained.contains(account)
       else { continue }
       sshCredentials.delete(account: account)
+    }
+  }
+
+  /// The Vault secret stored for `previous`, to save under the edited `config`'s account when
+  /// the operation brings none (the form had not read it). Only while the destination is
+  /// unchanged: a secret is never re-bound to other Vault settings without the user's draft.
+  /// Called only after the row's unlock.
+  private static func movedVaultSecret(
+    from previous: ConnectionConfig, to config: ConnectionConfig,
+    vaultSecrets: any VaultSecretStore
+  ) -> VaultSecret? {
+    guard let oldAccount = VaultCredentialStore.account(for: previous),
+      let newAccount = VaultCredentialStore.account(for: config), oldAccount != newAccount,
+      let destination = VaultCredentialStore.destination(for: config),
+      let stored = vaultSecrets.load(account: oldAccount), stored.destination == destination
+    else { return nil }
+    return stored.secret
+  }
+
+  /// Deletes Vault secrets no remaining entry uses: a row switched away from Vault, retargeted
+  /// or removed. A secret another row on the same Keychain key still uses is kept.
+  private static func pruneVaultSecrets(
+    previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry],
+    vaultSecrets: any VaultSecretStore
+  ) {
+    let retained = Set(current.compactMap { VaultCredentialStore.account(for: $0.config) })
+    for entry in previous {
+      guard let account = VaultCredentialStore.account(for: entry.config),
+        !retained.contains(account)
+      else { continue }
+      vaultSecrets.delete(account: account)
     }
   }
 

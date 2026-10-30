@@ -2,9 +2,9 @@
 //  ConnectionFormContent+Scripts.swift
 //  Dblore
 //
-//  Scripts section of the connection form: pre-connect, password command and post-disconnect
-//  scripts picked from the Application Scripts folder (see ConnectionScriptRunner), their
-//  timeout, and a button that opens the folder.
+//  Scripts section of the connection form: pre-connect, password command (for the Password
+//  command source) and post-disconnect scripts picked from the Application Scripts folder (see
+//  ConnectionScriptRunner), their timeout, and a button that opens the folder.
 //
 
 import AppKit
@@ -16,7 +16,8 @@ extension ConnectionFormContent {
       scriptPicker(
         "Before connecting", summary: "Runs first; a failure stops the connect",
         selection: $connectionConfig.preConnectScript)
-      if connectionConfig.databaseType.capabilities.usesPassword {
+      // Only for the Password command source (Connection > Password source)
+      if connectionConfig.databaseType.capabilities.usesPassword, passwordSource == .command {
         scriptPicker(
           "Password command", summary: "Its first line is the password, never saved",
           selection: $connectionConfig.passwordCommandScript)
