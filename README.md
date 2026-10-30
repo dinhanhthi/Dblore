@@ -30,7 +30,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   lines that you can copy or save as Mermaid or Graphviz DOT. Group tables and views into
   sidebar folders, hide schemas you do not use, and find a value in the text of every table.
   A Temporary section lists the session's temp tables. PostgreSQL also lists sequences, enums,
-  domains and composite types
+  domains and composite types. At 50,000 tables the load can be cancelled, the filter runs in
+  the background and the canvas draws up to 300 tables you pick
 - **Join query builder**: pick tables (also by multi-select on the canvas) and get the join
   along their foreign keys, with columns, filters and a live SQL preview
 - **Compare Schemas**: compare two schemas of the same engine (PostgreSQL, MySQL/MariaDB,
@@ -38,7 +39,13 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Data Dictionary**: export the columns, indexes and foreign keys of every table as Markdown
   or standalone HTML
 - **Structure editor**: add, change and drop columns, indexes and keys, create, rename,
-  comment and drop tables, with a preview of the exact SQL that runs
+  comment and drop tables, with a preview of the exact SQL that runs. Rename tables and edit
+  columns and foreign keys on the schema canvas too (drag a column onto another table for a
+  foreign key), and create or change PostgreSQL enums, domains and composite types
+- **Copy Objects**: copy tables and their rows from a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB
+  connection to another saved PostgreSQL, MySQL/MariaDB or SQLite connection, with type warnings
+  and an editable DDL preview. A failed or cancelled copy leaves nothing behind on PostgreSQL
+  and SQLite; on MySQL/MariaDB Dblore drops the tables it created and names any it could not
 - **Results grid**: sort, search, filter, freeze leading columns (table tabs), edit values
   inline, add rows from a form, follow foreign keys, inspect cells as JSON, pin a result to
   compare re-runs, see Count, Sum and Avg of a selection, and highlight cells or rows with
@@ -47,7 +54,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   it, and a change to a table without a primary key is refused instead of dropped. Set a value,
   NULL, DEFAULT or a fresh UUID on several cells in one change, choose what Cmd+C copies (TSV,
   CSV, JSON or Markdown, with formulas neutralized for spreadsheets), and see invisible
-  characters as marks
+  characters as marks. Paste rows from the clipboard as staged inserts, and a Reload banner shows
+  when another tab changed the table
 - **Binary values**: show a binary column as hex, UUID, MessagePack or Protobuf with Display
   As. Table tabs read binary cells up to 64 KB; a longer value shows as "not loaded" and is
   loaded by its key when you open or copy it, and never written back unloaded
@@ -66,7 +74,7 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   rows of seeded sample data that follow its types, foreign keys and unique keys, in one
   transaction you can cancel
 - **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB database to a
-  `.sql` file and restore it
+  `.sql` file, choosing Structure, Data and Drop per table, and restore it
 - **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
   transactions, Touch ID to unlock
 - **Lock**: lock a saved connection, a SQLite or DuckDB file or a whole workspace behind Touch
@@ -74,8 +82,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   locked items relock on sleep, screen lock, idle time or quit. Changing the Lock password keeps
   each workspace's key, so older copies still open with the old one
 - **AI assistant**: write, explain, fix, review and optimize queries with your own key
-  (including Google Gemini, xAI and Requesty) or a local model (on-device models need the
-  On-device AI plugin). Slash commands and `@` mentions attach
+  (including Google Gemini, xAI and Requesty), Apple Intelligence (macOS 26+) or a local model
+  (on-device models need the On-device AI plugin). Slash commands and `@` mentions attach
   context, and each connection sets whether AI may see it (default, Always, Ask once per
   session or Never). Tools read table structure, and run read-only queries only when you allow it,
   and proposed SQL waits as a card for you to run. Row values are sent only if you turn on
@@ -86,12 +94,19 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   Mac only, with capped connections and requests. Off by default. An opt-in write tool runs one
   change at a time on connections you give a write scope, and only after you approve the exact
   statement in Dblore
+- **Command-line tool**: `dblore connections` and `dblore query` read the connections the MCP
+  server shares (read-only), as CSV, TSV, JSON, JSON Lines or a table. Pair once with
+  `dblore pair --port N` from Settings > MCP and type the code it shows; Settings also gives the
+  line that installs `dblore` in `/usr/local/bin`
+- **Shortcuts**: Open Connection, Run Query and Add Row actions for the Shortcuts app, off by
+  default and only on the connections you allow
 - **Query Insights**: group the queries in History by shape and see runs, average, p95 and
   slowest time and error rate over 24 hours, 7 or 30 days
 - **SQL snippets**: trigger words that expand to templates with tab stops
 - **Connections**: export chosen connections (and favorites) to a file and import it back
-  without passwords. Optional scripts run before connecting and after disconnecting, and a
-  password command supplies the password for one connect
+  without passwords. Optional scripts run before connecting and after disconnecting, a
+  password command supplies the password for one connect, and a HashiCorp Vault source leases a
+  login on every connect, renewed while connected and revoked on disconnect
 - **Connection colors and groups**: tell connections apart at a glance and group them on the
   welcome screen
 - **Keyboard-first**: run cells and queries without leaving the keys, find and replace in

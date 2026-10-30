@@ -87,6 +87,7 @@
               <li><a href="#install">Install</a></li>
               <li><a href="#connect">Connect</a></li>
               <li><a href="#connection-scripts">Connection scripts</a></li>
+              <li><a href="#vault">Vault credentials</a></li>
               <li><a href="#workspaces">Workspaces &amp; tabs</a></li>
               <li><a href="#notebooks">Notebooks</a></li>
               <li><a href="#editor">SQL editor</a></li>
@@ -96,6 +97,7 @@
               <li><a href="#mongodb">MongoDB</a></li>
               <li><a href="#structure">Structure editor</a></li>
               <li><a href="#schema-compare">Compare Schemas</a></li>
+              <li><a href="#copy-objects">Copy Objects</a></li>
               <li><a href="#charts">Charts</a></li>
               <li><a href="#export">Export</a></li>
               <li><a href="#import">Import data</a></li>
@@ -104,6 +106,8 @@
               <li><a href="#ai">AI assistant</a></li>
               <li><a href="#mcp">MCP server</a></li>
               <li><a href="#mcp-write">MCP write tools</a></li>
+              <li><a href="#cli">Command-line tool</a></li>
+              <li><a href="#shortcuts">Shortcuts</a></li>
               <li><a href="#outside-mcp">Outside MCP servers</a></li>
               <li><a href="#plugins">Plugins</a></li>
               <li><a href="#settings">Settings &amp; data</a></li>
@@ -138,6 +142,7 @@
             <li><strong>Import Connections…</strong> (welcome screen or File menu) reads <code>.pgpass</code>, a PostgreSQL, <code>mysql://</code> or <code>mariadb://</code> URI, DBeaver (with saved passwords), TablePlus and DataGrip, and a Dblore connections file. Preview and pick before importing; duplicates are flagged.</li>
             <li><strong>Export connections:</strong> the welcome screen's Connections tab exports chosen connections, and optionally an open workspace's favorites, to a Dblore file. Passwords, SSH secrets, keys, certificates and file databases are never exported. On import, connections already saved are skipped, a connection string pointing at other hosts is dropped, SSH tunnels and weaker settings are flagged, and favorites go into one folder without duplicates.</li>
             <li><strong>Scripts:</strong> a connection can run your own scripts and get its password from a command. See <a href="#connection-scripts">Connection scripts</a>.</li>
+            <li><strong>Vault:</strong> a connection can get its login from HashiCorp Vault on every connect. See <a href="#vault">Vault credentials</a>.</li>
             <li>The welcome screen lists saved and recent connections (up to 50). Hover a card to remove it.</li>
             <li>The footer shows the connection name, the Safe Mode cues and a <strong>No SSL</strong> badge when the connection is not encrypted. A MySQL connection encrypted without a checked certificate shows <strong>Unverified SSL</strong>.</li>
             <li><strong>Attached databases</strong> (SQLite): the connection form attaches up to 10 other SQLite files, each under its own name, on every connect. Read-only connections attach them read-only, a missing file is skipped with a warning, and a locked file asks to unlock first. Their schemas show in the sidebar and autocomplete. Connection exports never include them.</li>
@@ -153,6 +158,21 @@
             <li><strong>Script timeout</strong>: 1 to 300 seconds, 30 by default. A script that times out keeps running: macOS gives Dblore no way to stop it.</li>
             <li>Scripts run with your own environment, outside the app sandbox. Their output is never logged or stored, since a password command prints a secret. Only a before-connect failure shows the start of its error output, in the message to you; logs see the script name and exit status only.</li>
             <li>Imported connections never bring scripts with them: choose them in the connection form.</li>
+</ul>
+          </section>
+
+          <section id="vault" class="doc">
+            <h2>Vault credentials</h2>
+<ul class="list">
+            <li><strong>Password source</strong> in the connection form (engines that use a password): Saved password, Password command or <strong>Vault</strong>. Vault hides the password field and asks for the Vault address, the database secrets mount and role, and Token or AppRole (role id and secret id). Vault connections are always remembered.</li>
+            <li>The address must be <code>https</code>, or plain <code>http</code> to <code>127.0.0.1</code>, <code>::1</code> or <code>localhost</code>. Redirects are refused. An optional CA certificate (PEM) makes it the only trusted authority for Vault.</li>
+            <li>The token, role id and secret id stay in the Keychain, bound to that Vault address, mount, role and database target: change one and Dblore asks for the secret again instead of sending it elsewhere. They are never in the connection, an export, a workspace file or the logs, and are listed in <strong>Settings &gt; Data</strong>.</li>
+            <li><strong>Test Vault</strong> takes a lease, shows its user and lifetime and revokes it at once. The token's policy needs <code>update</code> on <code>sys/leases/revoke</code> (besides Vault's default policy), or Dblore cannot end leases.</li>
+            <li>Every connect takes its own lease; the leased user and password serve that session only, and the saved user name stays. Dblore renews the lease at two thirds of its lifetime and retries a failed renewal until the lease really expires. When it ends, the connection closes and shows <strong>Vault lease ended</strong> with Reconnect, which takes a new lease; Dblore never reconnects on its own.</li>
+            <li>Disconnect and quit close the session, then revoke the lease. Side connections (Find a Value, dumps, Copy Objects) take and revoke their own.</li>
+            <li>The MCP server, the command-line tool and Shortcuts refuse Vault connections.</li>
+            <li>A connections file keeps the address, mount, role, auth method and CA, never a secret. On import the address is shown in full and the CA by its SHA-256 fingerprint: pick the CA file and type the secret in the form. A workspace file never picks the Vault address; the saved connection's settings win.</li>
+            <li>Older Dblore versions connect a Vault connection without a password, so it fails to authenticate.</li>
 </ul>
           </section>
 
@@ -218,12 +238,13 @@
             <li>Type in the filter field of a tab for a loose fuzzy match.</li>
             <li>Favorites: save SQL snippets in folders, double-click to insert.</li>
             <li>History: every query is recorded locally. Filter by status, or show only writes. Search also matches the source or kind badge, such as "AI Assistant".</li>
-            <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle. It can copy or save the tables shown as Mermaid or Graphviz DOT.</li>
+            <li>The schema visualizer is a canvas of tables with foreign-key lines you can toggle. It can copy or save the tables shown as Mermaid or Graphviz DOT. It draws up to 300 tables: above that, pick a schema or tick up to 300 tables, then <strong>Show Diagram</strong>; saved positions of the other tables are kept. Edit the schema from the canvas: see <a href="#structure">Structure editor</a>.</li>
             <li><strong>Build Join Query…</strong> (File menu, a table's <strong>Build Join Query From Here…</strong>, or tables Shift- or Command-clicked in the schema visualizer): pick tables and Dblore joins them along the shortest foreign-key path, adding junction tables. Choose Inner or Left per table, the columns and filters, watch the SQL, then <strong>Open in Query Tab</strong>. SQL engines only.</li>
             <li><strong>Temporary</strong> section: the temporary tables of this session, on PostgreSQL and SQLite from the server, on MySQL/MariaDB the ones created in this session (forgotten on reconnect). Temp schemas no longer show as schema groups.</li>
-            <li>PostgreSQL: <strong>Sequences</strong> and <strong>Types</strong> sections (enums, domains and composite types), loaded when opened, with Show DDL and Copy Name.</li>
+            <li>PostgreSQL: <strong>Sequences</strong> and <strong>Types</strong> sections (enums, domains and composite types), loaded when opened, with Show DDL and Copy Name, plus <strong>New Type…</strong> and <strong>Edit Type…</strong> (see <a href="#structure">Structure editor</a>).</li>
+            <li><strong>Large catalogs:</strong> a schema load shows <strong>Cancel</strong>, and Refresh loads it again; a later refresh keeps the rows on screen. The filter applies 150 ms after you stop typing and runs in the background, so 50,000 tables stay responsive.</li>
             <li>Folders: group tables and views into folders per connection with <strong>Move to Folder</strong> or a drag; rename or delete a folder from its menu. The eye menu hides schemas you do not use from the sidebar; SQL, autocomplete and search still see them.</li>
-            <li><strong>Find a value in every table</strong>: the button next to the schema filter (or the command palette) searches the text of every column in up to 500 tables, one at a time on a separate read-only connection, with Contains or Equals, 50 rows and 10 seconds per table, and Cancel. Click a match to open the table filtered to it. PostgreSQL, MySQL/MariaDB and SQLite.</li>
+            <li><strong>Find a value in every table</strong>: the button next to the schema filter (or the command palette) searches the text of every column in up to 500 tables, one at a time on a separate read-only connection, with Contains or Equals, 50 rows and 10 seconds per table, and Cancel; with more tables it says only the first 500 are searched. Click a match to open the table filtered to it. PostgreSQL, MySQL/MariaDB and SQLite.</li>
             <li><strong>Query Insights</strong>: the History tab's chart button groups the queries you ran by shape (values replaced by <code>?</code>, <code>IN</code> lists folded) over 24 hours, 7 or 30 days, per connection: runs, average, p95 and slowest time, error rate and last run, sortable, with Open in Editor.</li>
             <li>Right sidebar (<kbd>Cmd+Shift+B</kbd>) shows cell details, column filters and highlights.</li>
 </ul>
@@ -250,6 +271,8 @@
             <li>Updates and deletes need a primary key: a change to a table without one is refused and names the table.</li>
             <li><strong>Freeze Up to This Column</strong> (column header menu of a table tab) keeps the leading columns in place while you scroll sideways; <strong>Unfreeze</strong> releases them. Kept per table, by column name.</li>
             <li><strong>Display As</strong> (header or cell menu of a binary column): size, hex, UUID, UUID with swapped time (MySQL <code>UUID_TO_BIN(u, 1)</code>), MessagePack or Protobuf without a schema. Kept per table in table tabs, for the session in query results; Cell Value shows the decoded tree. Copy Value stays raw, <strong>Copy as Displayed</strong> copies the shown text, and editing opens the raw value.</li>
+            <li><strong>Paste rows</strong> (table tabs; not DuckDB, MongoDB or read-only connections): <kbd>Cmd+V</kbd>, Edit &gt; Paste or <strong>Paste Rows</strong> in the cell menu stages the clipboard's rows as inserts, one Undo for all, at most 10,000 rows. Fields split on tabs when the text has one, else on commas. A first row that names columns maps by name; otherwise columns follow the grid's on-screen order. An unquoted <code>NULL</code> is SQL NULL; an empty field is <code>''</code> on text columns and NULL elsewhere. A value that does not fit its column stages nothing and names its row and column. While a cell is being edited, <kbd>Cmd+V</kbd> pastes into the cell. Known limits: a text cell holding the word NULL, copied with Copy Rows, pastes back as SQL NULL, and with copied formulas neutralized the leading apostrophe pastes back too.</li>
+            <li><strong>Reload banner:</strong> when a SQL tab, a commit or an inline edit writes to a table open in another tab, that tab shows "This table changed in another tab." with <strong>Reload</strong>, which keeps its staged changes. Writes in a pending Protected-mode or your own transaction mark tabs at Commit and are dropped at Rollback. Writes from MCP, Shortcuts, Copy Objects, Data Rewind and dump restores do not mark tabs.</li>
             <li><strong>Large binary cells:</strong> a table tab of a PostgreSQL, MySQL/MariaDB or SQLite table with a primary key reads binary values up to 64 KB. A longer one shows <code>&lt;N bytes, not loaded&gt;</code> and is loaded by its key when you open it in Cell Value or copy it. A value that was not loaded is never written: Duplicate Row and Copy as INSERT load it first or refuse.</li>
 </ul>
           </section>
@@ -290,6 +313,8 @@
             <li>Changes are staged first. The preview shows exactly the SQL that runs, and Safe Mode confirms it like other schema changes. Each Apply is recorded in History.</li>
             <li>On PostgreSQL and SQLite the changes run together and join the pending transaction in Protected mode. On MySQL each statement commits on its own, so the editor is disabled in Protected (Review) mode, with pending changes or with your own transaction open; if a statement fails, it reports how many were applied.</li>
             <li>Closing the editor drops staged changes that were not applied.</li>
+            <li><strong>On the schema diagram:</strong> right-click a table header (<strong>Rename Table…</strong>, <strong>Add Column…</strong>, <strong>New Table…</strong>), a column (<strong>Rename Column…</strong>, <strong>Drop Column</strong>) or a foreign-key line (<strong>Drop Foreign Key</strong>). On PostgreSQL and MySQL/MariaDB, drag a column's grip onto a column of another table to add a foreign key; SQLite cannot add or drop a foreign key on an existing table. Changes collect in a bar with Preview SQL, Apply and Discard, and a renamed table keeps its place on the canvas. MySQL runs them one by one: a failure leaves the earlier ones applied.</li>
+            <li><strong>PostgreSQL types:</strong> <strong>New Type…</strong> in the Types section or <strong>Edit Type…</strong> on a type: add and rename enum labels (never drop), set a domain's default and NOT NULL and add or drop its CHECK constraints, add, drop, rename or retype composite attributes. Preview SQL and Safe Mode work as above. Before PostgreSQL 12 new enum labels are added on their own, outside a transaction, so they are refused while one is open or with the Review commit style.</li>
 </ul>
           </section>
 
@@ -301,6 +326,20 @@
             <li>Tick the items to include. The script pane shows the exact SQL that Run sends, with <strong>Copy Script</strong> and <strong>Save Script…</strong>.</li>
             <li>Drops of tables, columns, indexes and foreign keys are unticked by default; ticked drops ask first (<strong>Run with Drops</strong>), since their data cannot be recovered. Lossy type changes are flagged, and changes that cannot be scripted are listed to make by hand instead of run.</li>
             <li>Run goes through Safe Mode like the <a href="#structure">structure editor</a>: on PostgreSQL and SQLite the script runs as one and joins the pending transaction in Protected mode; on MySQL each statement commits on its own, stopping at the first failure, with a report of what ran. A connection that changed since the compare is refused before anything is sent. Compare again after a run.</li>
+            <li>A schema with more than 1,000 tables is refused, with its table count.</li>
+</ul>
+          </section>
+
+          <section id="copy-objects" class="doc">
+            <h2>Copy Objects</h2>
+<ul class="list">
+            <li><strong>File &gt; Copy Objects…</strong>, or <strong>Copy to Another Connection…</strong> on a table (ticked for you) or a schema. The source is this workspace's PostgreSQL, MySQL/MariaDB, SQLite or DuckDB connection; the target a saved PostgreSQL, MySQL/MariaDB or SQLite connection. Read-only and Schema-only targets are refused, and a locked target asks to unlock first.</li>
+            <li>Tables only: columns, primary key, NOT NULL, literal defaults, unique constraints, plain indexes and foreign keys between the copied tables; CHECK constraints only between the same engine. Triggers are listed, never copied. A table name that already exists on the target refuses the copy.</li>
+            <li>Types are mapped for the target, with a warning for each lossy one: PostgreSQL enums and arrays and DuckDB lists become text or JSON text, <code>timestamptz</code> becomes <code>DATETIME(6)</code> in UTC on MySQL, and unbounded text in a MySQL key becomes <code>VARCHAR(255)</code>.</li>
+            <li><strong>Preview SQL</strong> shows the planned statements, which you can edit (types, constraints, CHECK text). Renaming a planned table or column, or any other statement, refuses the copy.</li>
+            <li>The target's Safe Mode asks before anything is sent (Review asks like Confirm). The copy commits on its own, outside the target's pending Protected-mode transaction, with progress and Cancel, and is recorded in the target's History.</li>
+            <li><strong>Rollback:</strong> on PostgreSQL and SQLite the whole copy is one transaction, so Cancel or a failure leaves nothing. MySQL/MariaDB commit each <code>CREATE TABLE</code> at once: Dblore rolls back the rows, then drops only the tables this run created and names any it could not drop. A <code>CREATE TABLE</code> the server committed just as Cancel cut off its reply is neither dropped nor named, so check the target after a cancelled MySQL/MariaDB copy.</li>
+            <li>Rows are read in chunks of at most 500 rows, so a copy is not a snapshot across tables.</li>
 </ul>
           </section>
 
@@ -319,7 +358,8 @@
             <li>Formats: Excel, CSV, TSV, JSON, Markdown, PDF and SQL <code>INSERT</code>.</li>
             <li>Copy results as SQL <code>INSERT</code> or an <code>IN</code> list.</li>
             <li>Per-format options with reset, redaction, wrapping and a size check.</li>
-            <li><strong>File &gt; Export SQL Dump…</strong> writes a PostgreSQL, MySQL/MariaDB or SQLite database to a <code>.sql</code> file (all tables or a few, with or without data). <strong>File &gt; Restore SQL Dump…</strong> checks every statement of a Dblore dump before running it. <strong>File &gt; Copy Database File…</strong> saves an open SQLite database as one file. A dump holds your data in clear text.</li>
+            <li><strong>File &gt; Export SQL Dump…</strong> writes a PostgreSQL, MySQL/MariaDB or SQLite database to a <code>.sql</code> file. Each table has <strong>Structure</strong>, <strong>Data</strong> and <strong>Drop</strong>; the database row sets them all (a dash when mixed). Drop writes <code>DROP … IF EXISTS</code> for the tables, views, sequences, domains and types the dump creates, never CASCADE; on MySQL each drop commits at once. With Structure off for every table the dump holds only rows and restores into the database it came from, whose triggers then fire.</li>
+            <li><strong>File &gt; Restore SQL Dump…</strong> checks every statement of a Dblore dump before running it. It accepts drops only from a dump that wrote them and only for objects the same dump creates; on SQLite it refuses when a table outside the dump cascades from a dropped one. Older Dblore versions refuse dumps with drops. <strong>File &gt; Copy Database File…</strong> saves an open SQLite database as one file. A dump holds your data in clear text.</li>
             <li><strong>File &gt; Export Data Dictionary…</strong> writes the columns, indexes and foreign keys of every table as a Markdown or a standalone HTML file (no scripts, no remote content).</li>
 </ul>
           </section>
@@ -369,8 +409,9 @@
 <ul class="list">
             <li>Toggle the chat panel with <kbd>Cmd+L</kbd>. It writes SQL from plain-language questions and explains or fixes queries.</li>
             <li>Bubble mode: the detach button in the panel header turns it into a floating circle at the bottom of the window. Click the circle to expand or collapse the chat, drag it left or right to move it, hover it and click the small x to hide it, and press <kbd>Esc</kbd> to collapse it. Choose the default in Settings &gt; AI &gt; Panel (Right sidebar or Bubble).</li>
-            <li>Providers: Anthropic, OpenAI, Google Gemini, OpenRouter, xAI, Requesty (its router forwards requests to the model vendor), ChatGPT sign-in, Ollama, LM Studio, <code>mlx_lm.server</code>, any custom OpenAI-compatible endpoint, or on-device MLX models (Qwen3.5 2B, 4B and 9B, Gemma 4 12B). <strong>Settings &gt; AI &gt; Unused model files</strong> removes files of models that are no longer offered.</li>
+            <li>Providers: Anthropic, OpenAI, Google Gemini, OpenRouter, xAI, Requesty (its router forwards requests to the model vendor), ChatGPT sign-in, Ollama, LM Studio, <code>mlx_lm.server</code>, any custom OpenAI-compatible endpoint, Apple Intelligence, or on-device MLX models (Qwen3.5 2B, 4B and 9B, Gemma 4 12B). <strong>Settings &gt; AI &gt; Unused model files</strong> removes files of models that are no longer offered.</li>
             <li>On-device models need the <a href="#plugins">On-device AI plugin</a>: without it, <strong>Settings &gt; AI</strong> shows <strong>Install…</strong>. Models download separately from Hugging Face; every file is checked by its size and SHA-256 before the model is installed, and models are kept when you remove the plugin.</li>
+            <li><strong>Apple Intelligence</strong> (macOS 26 or later) uses Apple's model on this Mac, with no key; the provider shows dimmed with the reason when this Mac cannot run it. It has a small context (4,096 tokens before macOS 27), so Dblore trims the schema and history to fit, and tools are off as with other on-device models. Chat, Review, Explain, Fix and inline suggestions use it. Older Dblore versions drop these AI settings.</li>
             <li>Bring your own API key. Claude Pro/Max subscriptions are not supported.</li>
             <li>Sent automatically: table and column names, types and keys.</li>
             <li>Sent only after you review and press Send: query text and error messages.</li>
@@ -389,6 +430,7 @@
             <li>The server listens on this Mac only, at <code>http://127.0.0.1:&lt;port&gt;/mcp</code> (default port 41730). Use only the port Settings shows as running.</li>
             <li>Every request needs the Bearer token from <strong>Settings &gt; MCP</strong>. <strong>Copy Claude Code command</strong> copies a <code>claude mcp add</code> command to paste in a terminal; <strong>Copy Cursor JSON</strong> copies the entry for Cursor's <code>mcp.json</code>. <strong>Regenerate</strong> creates a new token; clients with the old one stop working until you copy the setup again.</li>
             <li>Agents see only the connections you turn on in the list, never a <a href="#lock">locked</a> one, even after you unlock it in Dblore. DuckDB connections cannot be shared.</li>
+            <li>Paired command-line tools use their own tokens and read only. See <a href="#cli">Command-line tool</a>.</li>
             <li>At most 16 open connections and 8 requests at a time; above that the server answers HTTP 503 with <code>Retry-After: 2</code>.</li>
             <li>Tools: <code>list_connections</code>, <code>list_tables</code>, <code>describe_table</code> and <code>run_query</code>, plus <code>execute_write</code> when write tools are allowed (see <a href="#mcp-write">MCP write tools</a>).</li>
             <li><code>run_query</code> is read-only: one statement per query, checked first and then run in a read-only transaction (SQLite files open read-only). Writes, DDL, <code>SET</code>, <code>CALL</code> and several statements are refused. A query returns 200 rows by default (at most 1000), cells are cut at 2000 characters and a query stops after 30 seconds.</li>
@@ -409,6 +451,30 @@
             <li>Every call opens the <strong>MCP Write Request</strong> panel, even when only the welcome window is open. It shows the connection and engine, the kind of change, the exact statement and the client name (as the client reports it, unverified). <strong>Approve once</strong> runs it once; <strong>Deny</strong> or <strong>Deny all</strong> refuse. Return never approves, and Approve is ignored for a moment after a request shows, so a click meant for something else never approves it.</li>
             <li>There are no standing grants: every call asks again. Requests show one at a time, at most three wait (a further one is refused at once), and a request not answered 2 minutes after it shows is denied. Turning off write tools or MCP, or taking a connection's scope away, denies the waiting requests.</li>
             <li>Approve only statements you have read: an agent can be steered by text stored in the database.</li>
+</ul>
+          </section>
+
+          <section id="cli" class="doc">
+            <h2>Command-line tool</h2>
+<ul class="list">
+            <li><code>dblore</code> ships inside the app. <strong>Settings &gt; MCP &gt; Command-line tool</strong> copies the line that links it into <code>/usr/local/bin</code> (it runs <code>sudo</code>, so you paste it in a terminal yourself).</li>
+            <li>It needs Dblore running with its <a href="#mcp">MCP server</a> on. Pair once: <strong>Pair Command-Line Tool</strong> shows <code>dblore pair --port &lt;port&gt;</code> and a code; run the command and type the code (not echoed), or <code>pbpaste | dblore pair --port &lt;port&gt;</code>. A code works once, for 5 minutes, and is burned after 5 wrong tries.</li>
+            <li><code>dblore connections</code> lists the connections it may use: those shared with the MCP server, except connections whose AI access is Never. Locked, Vault and password-command connections are refused, as for MCP.</li>
+            <li><code>dblore query --connection NAME "SELECT …"</code> (or <code>-f file.sql</code>) runs one read-only statement, under the same rules as <code>run_query</code>. <code>--format csv</code>, <code>tsv</code>, <code>json</code>, <code>jsonl</code> or <code>table</code> (the default) and <code>--max-rows N</code> (up to 1,000). Rows go to stdout; truncation notes and the untrusted-data notice go to stderr.</li>
+            <li>Exit codes: 0 done, 1 usage, 2 Dblore is not running or its MCP server is off or busy, 3 refused (pair again after a revoke), 4 query error.</li>
+            <li>Before it sends its token, the tool checks Dblore's proof for the port it dialed, so another program on that port never gets the token. Its pairing is kept in <code>~/Library/Application Support/Dblore CLI/credentials.json</code>, readable by you only.</li>
+            <li>Settings lists paired tools with <strong>Revoke</strong>, which applies at once. Queries are recorded in History as <strong>Command line</strong>; older Dblore versions show these rows as editor queries.</li>
+</ul>
+          </section>
+
+          <section id="shortcuts" class="doc">
+            <h2>Shortcuts</h2>
+<ul class="list">
+            <li>Dblore adds <strong>Open Connection</strong>, <strong>Run Query</strong> and <strong>Add Row</strong> actions to the Shortcuts app. They work with the MCP server off.</li>
+            <li>Off by default: turn on <strong>Allow Shortcuts</strong> in <strong>Settings &gt; Shortcuts</strong>, then the connections Shortcuts may use (its own list). <strong>What Shortcuts refuses</strong> lists the rest.</li>
+            <li>Refused: locked connections, connections that would need you (an SSH host key not trusted yet, a secret not in the Keychain), Vault connections and connections with a password command; Open Connection also refuses one with a pre-connect or post-disconnect script. Shortcuts never runs your scripts.</li>
+            <li><strong>Run Query</strong> runs one read-only statement and returns at most 1,000 rows (1 MB) as CSV. <strong>Add Row</strong> takes a table and a JSON object of values and inserts one row, only with the Immediate commit style and Protected mode off, since Shortcuts cannot ask you.</li>
+            <li>Actions are recorded in History as <strong>Shortcuts</strong>; older Dblore versions show these rows as editor queries. Query results are untrusted data.</li>
 </ul>
           </section>
 
@@ -447,7 +513,7 @@
             <li>Editor font size, word wrap, side-by-side layout and a configurable result row cap.</li>
             <li>Safe Mode levels. AI keys are stored in the Keychain.</li>
             <li>Updates: toggle background checks.</li>
-            <li><strong>Data</strong> tab: export, import or clear local data as a <code>.dblorebackup</code> package, with progress, a Cancel button and a toast when it ends. Secrets are never included. Saved SSH passwords, keys and trusted host keys can be deleted here.</li>
+            <li><strong>Data</strong> tab: export, import or clear local data as a <code>.dblorebackup</code> package, with progress, a Cancel button and a toast when it ends. Secrets are never included. Saved SSH passwords, keys, trusted host keys, command-line pairings and Vault secrets can be deleted here.</li>
 </ul>
           </section>
           </div>
