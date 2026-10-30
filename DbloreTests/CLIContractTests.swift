@@ -602,6 +602,8 @@ struct CLIContractTests {
       #expect(
         CLIClient.failure(forToolError: text).exitCode == Self.expectedExit(error), "\(text)")
     }
+    let vault = VaultConnectionRefusal().localizedDescription
+    #expect(CLIClient.failure(forToolError: vault).exitCode == .refused, "\(vault)")
     #expect(
       CLIClient.failure(forToolError: "ERROR: relation \"orders\" does not exist").exitCode
         == .queryFailed)

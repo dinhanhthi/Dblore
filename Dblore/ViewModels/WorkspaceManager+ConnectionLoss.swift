@@ -58,11 +58,24 @@ extension WorkspaceManager {
 
   /// Clear everything that came from the lost connection (like Disconnect) and show the loss.
   /// Ignored when the workspace is not connected (it already disconnected, or is connecting)
-  /// or when the actor already holds a newer connection.
+  /// or when the actor already holds a newer connection. A Vault lease end says so; Reconnect
+  /// takes a new lease.
   func connectionWasLost(_ event: SessionLostEvent) async {
     guard connectionState.isConnected, await !connectionManager.isConnected else { return }
+    // Read before the disconnect, which clears it
+    let leaseEnd = await connectionManager.lastLeaseEnd
     await performDisconnect(preserveCertificateForReconnect: true)
-    connectionLostMessage = event.message
+    connectionLostMessage = Self.connectionLostMessage(for: event, leaseEnd: leaseEnd)
+  }
+
+  /// The banner text of a loss: the event's (what was rolled back, then "Reconnect to
+  /// continue."), after "Vault lease ended." when the loss was that connection's lease end.
+  nonisolated static func connectionLostMessage(
+    for event: SessionLostEvent, leaseEnd: VaultLeaseEnd?
+  ) -> String {
+    guard let leaseEnd, leaseEnd.epoch == event.epoch else { return event.message }
+    return (["Vault lease ended."] + [leaseEnd.detail].compactMap { $0 } + [event.message])
+      .joined(separator: " ")
   }
 
   /// Banner Reconnect: connect again with the workspace connection (errors as a toast)

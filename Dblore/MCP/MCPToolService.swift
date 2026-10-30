@@ -1266,7 +1266,9 @@ nonisolated struct MCPToolService: Sendable {
     if case MCPConnectionError.unknownConnection = error {
       return MCPToolError.connectionNotAvailable.localizedDescription
     }
-    if error is MCPToolError || error is MCPConnectionError || error is HeadlessAccessRule.Refusal {
+    if error is MCPToolError || error is MCPConnectionError || error is HeadlessAccessRule.Refusal
+      || error is VaultConnectionRefusal
+    {
       return error.localizedDescription
     }
     let text = config.map { scrub(error.localizedDescription, config: $0) }

@@ -177,13 +177,15 @@ extension DatabaseConnectionManager {
     reset.sessionReset = true
     let certificate = activeUnrememberedCertificate
     let sshCredential = activeUnrememberedSSHCredential
+    let vaultSecret = activeUnrememberedVaultSecret
     // Forgotten in this actor turn: no caller entering meanwhile can send on the closing session
     let forgotten = forgetConnection()
     lastSessionLoss = nil
     do {
       await Self.closeForgotten(forgotten, includingConnection: true)
       try await reconnectWithActiveCertificate(
-        config: config, material: certificate, sshCredential: sshCredential)
+        config: config, material: certificate, sshCredential: sshCredential,
+        vaultSecret: vaultSecret)
       sessionResetsContinuation.yield(
         SessionResetEvent(epoch: connectionEpoch, userTxRolledBack: false))
     } catch {

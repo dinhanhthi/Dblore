@@ -429,6 +429,32 @@ struct MCPToolServiceTests {
     await pool.closeAll()
   }
 
+  @Test("A Vault connection's refusal reaches the agent whole, even for a database named app")
+  func vaultRefusalNotScrubbed() async {
+    var entry = Self.entry(password: "")
+    entry.config.username = "app"
+    entry.config.vault = VaultSource(
+      address: "https://vault.internal:8200", mount: "database", role: "app", authMethod: .token,
+      caPEM: nil)
+    let row = entry
+    let id = row.id
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract())
+    let pool = MCPConnectionPool(
+      entry: { $0 == id ? row : nil }, sessionFactory: factory,
+      certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
+      knownHosts: InMemorySSHKnownHostStore())
+    let historySwitch = historySwitch
+    let service = MCPToolService(
+      connections: { [row] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history,
+      historyEnabled: { historySwitch.enabled }, gate: gate)
+    let read = await runQuery(service, id, "SELECT 1")
+    #expect(read.isError)
+    #expect(read.text == "Vault connections need the app window.")
+    #expect(factory.sessions.isEmpty)
+    await pool.closeAll()
+  }
+
   @Test("list_connections shows only allowlisted connections, without host or secrets")
   func listConnections() async {
     let allowed = Self.entry(name: "Prod")

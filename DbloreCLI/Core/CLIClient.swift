@@ -250,7 +250,7 @@ nonisolated struct CLIClient: Sendable {
   /// The end of every refusal of a statement Dblore did not send
   static let nothingSent = "Nothing was sent to the database."
   /// The app's refusal texts that do not end with `nothingSent` (`HeadlessAccessRule.Refusal`,
-  /// `MCPToolError`, `MCPConnectionError`)
+  /// `MCPToolError`, `MCPConnectionError`, `VaultConnectionRefusal`)
   static let refusalTexts: Set<String> = [
     "No connection with that name or id is available. In Dblore, check that it is allowed in "
       + "Settings and not locked; the command line also skips connections whose AI access is "
@@ -268,6 +268,7 @@ nonisolated struct CLIClient: Sendable {
       + "with Remember on.",
     "The SSH server's host key is not trusted yet. Connect once in Dblore and trust it.",
     "This connection uses a password command; open it in Dblore instead.",
+    "Vault connections need the app window.",
     "MCP connections are read-only: only queries are sent.",
     "MCP connections do not use server-side cursors.",
   ]

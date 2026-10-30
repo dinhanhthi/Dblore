@@ -270,14 +270,16 @@ actor MCPConnectionPool {
     }
   }
 
-  /// Refuses what would otherwise fail on a missing secret or wait for a trust prompt, and a
-  /// password command: an MCP client must not run the user's scripts. Shortcuts' Open
-  /// Connection asks it too, before it connects in a window.
+  /// Refuses what would otherwise fail on a missing secret or wait for a trust prompt, a
+  /// password command (an MCP client must not run the user's scripts) and a Vault connection
+  /// (its lease is renewed and revoked by a workspace). Shortcuts' Open Connection asks it too,
+  /// before it connects in a window.
   /// Reads the Keychain stores here, off the main actor.
   func refuseUnattended(_ config: ConnectionConfig) throws {
     if config.passwordCommandScript != nil, config.databaseType.capabilities.usesPassword {
       throw MCPConnectionError.passwordCommand
     }
+    if config.vault != nil { throw VaultConnectionRefusal() }
     if config.clientCertificate != nil,
       certificates.load(account: ClientCertificateStoreFactory.account(for: config)) == nil
     {
@@ -321,4 +323,9 @@ actor MCPConnectionPool {
     guard let manager = try? await item.connecting.value else { return }
     await manager.disconnect()
   }
+}
+
+/// MCP, the command line and Shortcuts never connect a Vault connection
+nonisolated struct VaultConnectionRefusal: Error, Equatable, LocalizedError {
+  var errorDescription: String? { "Vault connections need the app window." }
 }
