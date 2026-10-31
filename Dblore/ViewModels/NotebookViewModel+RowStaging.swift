@@ -48,6 +48,9 @@ struct PendingStagedBatch: Sendable {
     var cellId: UUID?
     /// Edit target of the edited result: the editor refresh re-runs only that result
     var target: EditTarget
+    /// The Cell Value sidebar as the edit showed it and as it was before, put back when the
+    /// edit stores nothing (see `PendingInlineEdit.sidebarRestore`)
+    var sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
   }
 
   struct MongoStagedChanges: Sendable {
@@ -255,8 +258,10 @@ extension NotebookViewModel {
     dataViewer?.pendingDocumentEditor = nil
     undoManager.removeAllActions()
     let hadInlineEdit = pendingInlineEdit != nil
+    restoreSidebar(pendingInlineEdit?.sidebarRestore)
     pendingInlineEdit = nil
     guard pendingStagedBatch != nil || hadInlineEdit else { return }
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
     queryConfirmationState.clear()
   }
@@ -347,6 +352,7 @@ extension NotebookViewModel {
       pendingStagedBatch = batch
       return
     }
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
     await runConfirmedStagedBatch(batch)
   }
@@ -397,6 +403,8 @@ extension NotebookViewModel {
     }
     let started = Date()
     var failure: String?
+    // The batch runs whole or not at all: the tables it wrote once it ran
+    var ranStatements: [String] = []
     do {
       let rowCount: Int
       if let streamed = batch.streamed {
@@ -404,11 +412,14 @@ extension NotebookViewModel {
         rowCount = try await connectionManager.executeGatedBatch(
           streamed: streamed, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
           caller: id, progress: batch.streamedProgress)
+        // Its INSERTs are made chunk by chunk; they all go into this one table
+        ranStatements = ["INSERT INTO \(streamed.relation)"]
       } else {
         rowCount = try await connectionManager.executeGatedBatch(
           batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
           caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil
         ).reduce(0, +)
+        ranStatements = batch.statements.map(\.sql)
       }
       if batch.historySource == .dataViewerEdit { dataViewer?.changeSet = nil }
       // The page reloads with the same key, so a redo would target rows this batch changed
@@ -432,6 +443,9 @@ extension NotebookViewModel {
         importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
       showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
       failure = message
+    }
+    if !ranStatements.isEmpty {
+      await onRelationsWritten?(ranStatements, id, batch.connectionEpoch)
     }
     await onStatementsExecuted?()
     return failure
@@ -672,7 +686,7 @@ extension NotebookViewModel {
   /// Applies `body` to the current set, creating one for `stagedEditTarget` when needed.
   /// An empty set is stored as nil. A thrown error leaves the previous set unchanged.
   /// `actionName` registers a snapshot on `undoManager` (nil skips that: the key fill before commit).
-  private func changeSet(
+  func changeSet(
     _ actionName: String? = nil, _ body: (inout RowChangeSet) throws -> Void
   ) rethrows -> String? {
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
@@ -761,7 +775,9 @@ extension NotebookViewModel {
   /// otherwise send that captured SQL, then clear this undo.
   private func restoreStagedChangeSet(_ snapshot: RowChangeSet?, actionName: String) {
     if pendingStagedBatch != nil || pendingInlineEdit != nil {
+      restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
       pendingStagedBatch = nil
+      restoreSidebar(pendingInlineEdit?.sidebarRestore)
       pendingInlineEdit = nil
       queryConfirmationState.clear()
     }

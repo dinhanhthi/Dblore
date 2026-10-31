@@ -63,20 +63,25 @@ private enum CommandPaletteAction: String, CaseIterable {
 extension WorkspaceManager {
   /// Tables, views, functions, View Source rows, open tabs, favorites, and the fixed actions.
   /// History is searched separately. `connectionKey` is empty when no database is configured.
+  /// Tables, views and functions come from `paletteCatalog`, or the live arrays while it is nil.
   func paletteSources() -> CommandPaletteSnapshot {
-    CommandPaletteSnapshot(
-      tables: databaseTables.map { .init(schema: $0.schema, name: $0.name) },
-      views: databaseViews.map { .init(schema: $0.schema, name: $0.name) },
-      functions: databaseFunctions.map {
-        .init(schema: $0.schema, name: $0.name, arguments: $0.arguments)
-      },
+    let catalog = paletteCatalog
+    return CommandPaletteSnapshot(
+      tables: catalog != nil ? [] : databaseTables.map { .init(schema: $0.schema, name: $0.name) },
+      views: catalog != nil ? [] : databaseViews.map { .init(schema: $0.schema, name: $0.name) },
+      functions: catalog != nil
+        ? []
+        : databaseFunctions.map {
+          .init(schema: $0.schema, name: $0.name, arguments: $0.arguments)
+        },
       sources: paletteSourceRefs(),
       tabs: tabs.map { .init(id: $0.id, title: $0.title) },
       favorites: workspace.favorites.items.map { .init(id: $0.id, name: $0.name, sql: $0.sql) },
       actions: paletteActions().map {
         $0 == .newSQLFile ? .init(id: $0.rawValue, title: newScriptLabel) : $0.snapshot
       },
-      connectionKey: activeHistoryConnectionKey ?? ""
+      connectionKey: activeHistoryConnectionKey ?? "",
+      catalog: catalog
     )
   }
 
@@ -240,7 +245,10 @@ extension WorkspaceManager {
 
   /// Primary key names in column order. The schema sidebar passes the same list.
   private func palettePrimaryKeyNames(schema: String, name: String) -> [String] {
-    databaseTables.first { $0.schema == schema && $0.name == name }?
+    if let paletteCatalog {
+      return paletteCatalog.primaryKeys[.init(schema: schema, name: name)] ?? []
+    }
+    return databaseTables.first { $0.schema == schema && $0.name == name }?
       .columns.filter(\.isPrimaryKey).map(\.name) ?? []
   }
 

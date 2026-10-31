@@ -83,3 +83,39 @@ nonisolated enum CommandPaletteItem: Equatable, Identifiable, Sendable {
     }
   }
 }
+
+/// The table, view and function rows of a loaded schema with their lowercased search keys, and
+/// the tables' primary keys. Built off the main actor with the schema, so opening the palette
+/// and each keystroke neither copy nor lowercase every name.
+nonisolated struct CommandPaletteCatalog: Equatable, Sendable {
+  /// Tables, views, then functions, in schema order (the first rows of a snapshot)
+  let items: [CommandPaletteItem]
+  /// `searchTexts` of each item, lowercased
+  let searchKeys: [[String]]
+  /// Primary key names in column order of the first table with each schema and name
+  let primaryKeys: [CommandPaletteSnapshot.Relation: [String]]
+
+  init(tables: [DatabaseTable], views: [DatabaseView], functions: [DatabaseFunction]) {
+    var items: [CommandPaletteItem] = []
+    items.reserveCapacity(tables.count + views.count + functions.count)
+    var primaryKeys: [CommandPaletteSnapshot.Relation: [String]] = [:]
+    primaryKeys.reserveCapacity(tables.count)
+    for table in tables {
+      items.append(.table(schema: table.schema, name: table.name))
+      let relation = CommandPaletteSnapshot.Relation(schema: table.schema, name: table.name)
+      if primaryKeys[relation] == nil {
+        primaryKeys[relation] = table.columns.filter(\.isPrimaryKey).map(\.name)
+      }
+    }
+    for view in views {
+      items.append(.view(schema: view.schema, name: view.name))
+    }
+    for function in functions {
+      items.append(
+        .function(schema: function.schema, name: function.name, arguments: function.arguments))
+    }
+    self.items = items
+    searchKeys = items.map { $0.searchTexts.map { $0.lowercased() } }
+    self.primaryKeys = primaryKeys
+  }
+}

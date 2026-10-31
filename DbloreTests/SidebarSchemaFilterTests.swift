@@ -39,8 +39,10 @@ struct SidebarSchemaFilterTests {
         schema: "audit", name: "audit_log",
         columns: [DatabaseColumn(name: "logged_at", type: "timestamptz")]),
     ]
-    // As the schema load does: autocomplete gets every loaded table
+    // As the schema load does: autocomplete gets every loaded table, and the diagram lays out
+    // only a schema read since the connect
     manager.autocompleteProvider.update(tables: manager.databaseTables)
+    manager.schemaConnectionEpoch = 1
 
     let hidden = Set(manager.workspace.connectionConfig?.hiddenSchemas ?? [])
     let schemas = manager.databaseTables.map(\.schema)

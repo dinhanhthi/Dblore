@@ -625,37 +625,44 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
     let refusal = FullAuthRefusal()
     let armed = armsFullAuthGuard(
       tlsMode: config.sslMode, host: config.host, usesSSH: config.sshTunnel != nil)
-    ClientBootstrap(group: loop)
-      .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
-      .channelInitializer { channel in
-        channel.eventLoop.makeCompletedFuture {
-          try channel.pipeline.syncOperations.addHandler(
-            MySQLFullAuthGuard(armed: armed, refusal: refusal))
-        }
-      }
-      .connect(to: address)
-      // On the channel's loop as the connect completes, before the greeting is read.
-      .flatMap { channel in
-        // Read while connected: a closed channel no longer has its address.
-        let clientPort = channel.localAddress?.port
-        return login(over: channel, config: config, tls: tls, refusal: refusal)
-          .flatMapErrorThrowing { error in
-            // The bastion's refusal wins over whatever error the closed channel gave the login.
-            guard let forwarder, let openError = forwarder.takeOpenError(clientPort: clientPort)
-            else { throw error }
-            throw openError
+    // Started on the loop: a callback added from another thread is only added in a later loop
+    // task, by when the connection may have read its greeting or (a refused tunnel channel)
+    // been closed and lost its address.
+    loop.flatSubmit {
+      ClientBootstrap(group: loop)
+        .channelOption(
+          ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1
+        )
+        .channelInitializer { channel in
+          channel.eventLoop.makeCompletedFuture {
+            try channel.pipeline.syncOperations.addHandler(
+              MySQLFullAuthGuard(armed: armed, refusal: refusal))
           }
-      }
-      .whenComplete { outcome in
-        timer.cancel()
-        switch outcome {
-        case .success(let connection):
-          result.futureResult.whenFailure { _ in _ = connection.close() }
-          result.succeed(connection)
-        case .failure(let error):
-          result.fail(error)
         }
+        .connect(to: address)
+        // On the channel's loop as the connect completes, before the greeting is read.
+        .flatMap { channel in
+          // Read while connected: a closed channel no longer has its address.
+          let clientPort = channel.localAddress?.port
+          return login(over: channel, config: config, tls: tls, refusal: refusal)
+            .flatMapErrorThrowing { error in
+              // The bastion's refusal wins over the error the closed channel gave the login.
+              guard let forwarder, let openError = forwarder.takeOpenError(clientPort: clientPort)
+              else { throw error }
+              throw openError
+            }
+        }
+    }
+    .whenComplete { outcome in
+      timer.cancel()
+      switch outcome {
+      case .success(let connection):
+        result.futureResult.whenFailure { _ in _ = connection.close() }
+        result.succeed(connection)
+      case .failure(let error):
+        result.fail(error)
       }
+    }
     return try await result.futureResult.get()
   }
 

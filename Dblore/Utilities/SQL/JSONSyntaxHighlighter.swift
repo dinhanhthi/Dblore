@@ -7,8 +7,8 @@
 
 import SwiftUI
 
-enum JSONSyntaxHighlighter {
-  enum TokenType {
+nonisolated enum JSONSyntaxHighlighter {
+  nonisolated enum TokenType: CaseIterable, Sendable {
     case key
     case string
     case number
@@ -17,7 +17,7 @@ enum JSONSyntaxHighlighter {
     case punctuation
     case whitespace
 
-    var color: Color {
+    @MainActor var color: Color {
       switch self {
       case .key:
         return Color(light: Color(hex: "9333ea"), dark: Color(hex: "c084fc"))  // Purple 600 / 400
@@ -35,9 +35,26 @@ enum JSONSyntaxHighlighter {
     }
   }
 
-  struct Token {
+  nonisolated struct Token: Sendable {
     let text: String
     let type: TokenType
+  }
+
+  /// Color of each token type, read on the main actor and passed to `highlighted(_:palette:)`
+  @MainActor static var palette: [TokenType: Color] {
+    Dictionary(uniqueKeysWithValues: TokenType.allCases.map { ($0, $0.color) })
+  }
+
+  /// `json` with each token colored from `palette`. Pure, so a large JSON is highlighted off the
+  /// main actor: tokenizing and building the text is O(size).
+  static func highlighted(_ json: String, palette: [TokenType: Color]) -> AttributedString {
+    var result = AttributedString()
+    for token in tokenize(json) {
+      var attributed = AttributedString(token.text)
+      attributed.foregroundColor = palette[token.type]
+      result.append(attributed)
+    }
+    return result
   }
 
   static func tokenize(_ json: String) -> [Token] {
@@ -183,10 +200,9 @@ enum JSONSyntaxHighlighter {
 
 // MARK: - Highlighted JSON Text View
 
+/// JSON highlighted beforehand (`JSONSyntaxHighlighter.highlighted`, off the main actor)
 struct HighlightedJSONText: View {
-  let json: String
-  /// Cache `json` whatever its size: only for a parent that clears the cache when it closes
-  var cachesAnySize = false
+  let text: AttributedString
 
   /// Last highlighted JSON and its text: parents re-render with the same JSON (sidebar
   /// animation, copy feedback), and tokenizing plus building the text is O(size)
@@ -196,21 +212,15 @@ struct HighlightedJSONText: View {
   static let maxCachedBytes = 1_000_000
 
   var body: some View {
-    Text(Self.attributedString(for: json, cachesAnySize: cachesAnySize))
+    Text(text)
       .font(.mono)
       .textSelection(.enabled)
   }
 
+  /// `json` highlighted on the calling actor, through the cache
   static func attributedString(for json: String, cachesAnySize: Bool = false) -> AttributedString {
     if let lastHighlight, lastHighlight.json == json { return lastHighlight.text }
-    var result = AttributedString()
-
-    for token in JSONSyntaxHighlighter.tokenize(json) {
-      var attributed = AttributedString(token.text)
-      attributed.foregroundColor = token.type.color
-      result.append(attributed)
-    }
-
+    let result = JSONSyntaxHighlighter.highlighted(json, palette: JSONSyntaxHighlighter.palette)
     if cachesAnySize || json.utf8.count <= maxCachedBytes { lastHighlight = (json, result) }
     return result
   }

@@ -437,17 +437,19 @@ struct WelcomeLockGateTests {
     }
   }
 
-  @Test("Retargeting onto the key of another engine's blocked locked row is refused until unlock")
+  @Test("Retargeting onto the key of another engine's locked row is refused, also after unlock")
   func retargetOverLockedRowOfAnotherEngineIsRefused() throws {
     try Self.withDefaults { defaults, _ in
       let registry = LockRegistry()
+      let passwords = RecordingConnectionPasswordStore()
       let path = FileManager.default.temporaryDirectory
         .appendingPathComponent("welcome-lock-\(UUID().uuidString).sqlite").path
-      // SQLite, like PostgreSQL, has no Keychain scope: the same fields name the same row
+      // SQLite, like PostgreSQL, has no Keychain scope: the same fields name the same key
       var file = ConnectionConfig(
         databaseType: .sqlite, host: "welcome-\(UUID().uuidString).example", database: path,
         username: "ada")
       file.isLocked = true
+      let key = ConnectionKeychainKey.password(for: file)
       let locked = try Self.save(file, defaults: defaults, registry: registry)
       let row = try Self.save(Self.server(), defaults: defaults, registry: registry)
       var edited = row.config
@@ -455,27 +457,29 @@ struct WelcomeLockGateTests {
       edited.port = file.port
       edited.database = file.database
       edited.username = file.username
-      let ids = {
-        Set(
-          SessionManager.loadHistory(
-            defaults: defaults, passwords: NoPasswordStore(), registry: registry
-          ).map(\.id))
+      // A retarget would write the typed password under the SQLite row's key
+      edited.password = "typed"
+      let rows = {
+        SessionManager.loadHistory(
+          defaults: defaults, passwords: NoPasswordStore(), registry: registry)
       }
 
-      // Overwriting the blocked row would drop its file's lock
-      #expect(
-        !SessionManager.replaceConnection(
-          id: row.id, with: edited, defaults: defaults, passwords: NoPasswordStore(),
-          registry: registry))
-      #expect(ids() == [locked.id, row.id])
-      #expect(registry.isBlocked(LockIdentity(file)))
-
-      Self.unlock(file, in: registry)
-      #expect(
-        SessionManager.replaceConnection(
-          id: row.id, with: edited, defaults: defaults, passwords: NoPasswordStore(),
-          registry: registry))
-      #expect(ids() == [row.id])
+      // The locked row of another engine and its password are never replaced
+      for unlocks in [false, true] {
+        if unlocks { Self.unlock(file, in: registry) }
+        #expect(
+          SessionManager.keyUsedByAnotherIdentity(edited, excluding: row.id, defaults: defaults))
+        #expect(
+          !SessionManager.replaceConnection(
+            id: row.id, with: edited, defaults: defaults, passwords: passwords,
+            registry: registry))
+        #expect(Set(rows().map(\.id)) == [locked.id, row.id])
+        #expect(rows().first { $0.id == locked.id }?.config.databaseType == .sqlite)
+        #expect(rows().first { $0.id == row.id }?.config.host == row.config.host)
+        #expect(!passwords.savedKeys.contains(key))
+        #expect(!passwords.deletedKeys.contains(key))
+      }
+      #expect(registry.isLocked(LockIdentity(file)))
     }
   }
 }

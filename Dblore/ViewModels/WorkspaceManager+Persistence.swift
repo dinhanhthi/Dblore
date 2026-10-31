@@ -288,6 +288,25 @@ extension WorkspaceManager {
     schemaLoadTask = nil
     schemaLoadGeneration += 1
     isLoadingSchema = false
+    isSchemaLoadCancelledByUser = false
+  }
+
+  /// The sidebar's Cancel: also leaves a hint until the next load starts
+  func userCancelledSchemaLoad() {
+    cancelSchemaLoad()
+    isSchemaLoadCancelledByUser = true
+  }
+
+  /// Refresh: replaces the running load with a tracked one (so Cancel stops it) and waits for it
+  func reloadSchemaThroughTask() async {
+    cancelSchemaLoad()
+    let generation = schemaLoadGeneration
+    startSchemaLoad()
+    // The new task sets the flag only once it runs: keep the spinner up meanwhile
+    if connectionState == .connected && !isSchemaPaused { isLoadingSchema = true }
+    await awaitSchemaLoad()
+    // The task stopped at its guard (disconnected meanwhile) and no other load started
+    if generation == schemaLoadGeneration { isLoadingSchema = false }
   }
 
   func awaitSchemaLoad() async {
@@ -343,6 +362,7 @@ extension WorkspaceManager {
     schemaLoadGeneration += 1
     let generation = schemaLoadGeneration
     isLoadingSchema = true
+    isSchemaLoadCancelledByUser = false
     defer {
       if generation == schemaLoadGeneration { isLoadingSchema = false }
     }
@@ -365,8 +385,8 @@ extension WorkspaceManager {
 
         async let columnsTask = connectionManager.fetchAllColumns()
 
-        var (
-          tables, views, functions, procedures, triggers, users, roles, foreignKeys,
+        let (
+          fetchedTables, fetchedViews, functions, procedures, triggers, users, roles, foreignKeys,
           columnsByRelation
         ) =
           try await (
@@ -374,13 +394,9 @@ extension WorkspaceManager {
             rolesTask, foreignKeysTask, columnsTask
           )
 
-        // Keys of `columnsByRelation` are "schema.relation" = `qualifiedName`
-        for index in tables.indices {
-          tables[index].columns = columnsByRelation[tables[index].qualifiedName] ?? []
-        }
-        for index in views.indices {
-          views[index].columns = columnsByRelation[views[index].qualifiedName] ?? []
-        }
+        let joined = await Self.joinColumns(
+          tables: fetchedTables, views: fetchedViews, functions: functions,
+          procedures: procedures, triggers: triggers, columnsByRelation: columnsByRelation)
 
         // The transaction opened meanwhile: later lookups were refused, keep the cache
         if await connectionManager.isMetadataPaused {
@@ -392,24 +408,67 @@ extension WorkspaceManager {
           connectionState == .connected
         else { return }
 
-        databaseTables = tables
-        autocompleteProvider.update(tables: tables)
-        databaseViews = views
+        databaseTables = joined.tables
+        autocompleteProvider.update(tables: joined.tables, index: joined.autocompleteIndex)
+        databaseViews = joined.views
         databaseFunctions = functions
+        paletteCatalog = joined.paletteCatalog
         databaseProcedures = procedures
         databaseTriggers = triggers
+        sidebarEntityIndex = joined.sidebarIndex
         databaseUsers = users
         databaseRoles = roles
         databaseForeignKeys = foreignKeys
         schemaConnectionEpoch = epoch
+        // A diagram still here belongs to this connection (a connect or disconnect clears it):
+        // a reload of the same connection carries it forward
+        if schemaGraphEpoch != nil { schemaGraphEpoch = epoch }
 
         // Sync to tab ViewModels
         syncConnectionStateToTabs()
         reloadLoadedCatalogs()
+        // A connect cleared the diagram: an open visualizer lays out the new schema (above the
+        // diagram's cap it shows the table picker, nothing to lay out)
+        if isSchemaVisualizerActive, schemaGraph == nil, schemaDiagramTables == nil,
+          !isLoadingSchemaGraph, databaseTables.count <= SchemaLayoutEngine.maxTables
+        {
+          Task { await loadSchemaGraph() }
+        }
+      } catch is CancellationError {
+        // Cancelled (refresh, Cancel, disconnect): an expected end, not a failure
       } catch {
         await AppLogger.shared.error("Failed to load schema: \(error)", category: "Schema")
       }
     }
+  }
+
+  /// Tables and views joined with their columns, plus the autocomplete index, the sidebar
+  /// filter's index and the palette's rows. Off the main actor: a large catalog has tens of
+  /// thousands of relations.
+  @concurrent nonisolated private static func joinColumns(
+    tables: [DatabaseTable], views: [DatabaseView], functions: [DatabaseFunction],
+    procedures: [DatabaseProcedure], triggers: [DatabaseTrigger],
+    columnsByRelation: [String: [DatabaseColumn]]
+  ) async -> (
+    tables: [DatabaseTable], views: [DatabaseView], autocompleteIndex: SQLAutocompleteIndex,
+    sidebarIndex: SidebarEntityIndex, paletteCatalog: CommandPaletteCatalog
+  ) {
+    var tables = tables
+    var views = views
+    // Keys of `columnsByRelation` are "schema.relation" = `qualifiedName`
+    for index in tables.indices {
+      tables[index].columns = columnsByRelation[tables[index].qualifiedName] ?? []
+    }
+    for index in views.indices {
+      views[index].columns = columnsByRelation[views[index].qualifiedName] ?? []
+    }
+    let sidebarIndex = SidebarEntityIndex(
+      tables: tables, views: views, functions: functions, procedures: procedures,
+      triggers: triggers)
+    let paletteCatalog = CommandPaletteCatalog(tables: tables, views: views, functions: functions)
+    return (
+      tables, views, SQLAutocompleteIndex(tables: tables), sidebarIndex, paletteCatalog
+    )
   }
 
   /// Read the sequences when their sidebar section is first expanded (and again after a failure)
@@ -501,8 +560,7 @@ extension WorkspaceManager {
 
   /// Refresh database schema
   func refreshDatabaseSchema() async {
-    cancelSchemaLoad()
-    await loadDatabaseSchema()
+    await reloadSchemaThroughTask()
   }
 
   /// Toggle left sidebar visibility

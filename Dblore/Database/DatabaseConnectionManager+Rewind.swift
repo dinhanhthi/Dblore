@@ -72,6 +72,10 @@ nonisolated struct RewindPlan: Sendable, Equatable {
       guard let assignment = assignments.first(where: { $0.column == column }) else {
         return rowData[column]
       }
+      // A binary key is edited as base64 and stored as its bytes (`CellUpdateStatement.make`)
+      if case .data = rowData[column], let text = assignment.value {
+        return Data(base64Encoded: text).map(CellValue.data)
+      }
       return assignment.value.map(CellValue.string)
     }
     return Step(

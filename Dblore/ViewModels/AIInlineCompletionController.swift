@@ -151,7 +151,22 @@ final class AIInlineCompletionController {
     try Task.checkCancellation()
     guard version == self.version else { return }
     context.schema = schema
-    let request = AIInlineCompletion.request(context, model: target.model)
+    var request = AIInlineCompletion.request(context, model: target.model)
+    if target.provider == .appleIntelligence {
+      // The compact schema is small: it fits whole or is left out
+      let fitted = try await AppleIntelligencePromptBudget.fitSystemModel(
+        reserve: AppleIntelligencePromptBudget.inlineReserve, history: request.messages,
+        system: { [context] schema in
+          var context = context
+          context.schema = schema
+          return AIPrompts.inline(context: context).system
+        },
+        renderSchema: { [schema] chars in chars >= (schema?.count ?? 0) ? schema ?? "" : "" })
+      try Task.checkCancellation()
+      guard version == self.version else { return }
+      request.system = fitted.system
+      request.messages = fitted.messages
+    }
     let caret = caret
     let reply = try await PerfSignpost.interval("ai.inline") {
       try await Self.collect(client.stream(request))

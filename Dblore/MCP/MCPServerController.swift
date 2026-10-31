@@ -11,8 +11,13 @@
 // after an approval.
 // A locked connection is never served, even after the user unlocked it in the app: the pool's
 // lookup does not know it and the service does not list it (`lockSource`).
-// Nothing here blocks the main actor: the Keychain (token, passwords) is read off main; the
-// main actor is used only to read the settings and the saved connections.
+// Paired command-line tools (`MCPCLIPairingService`): their tokens are loaded from the Keychain
+// into the registry the listener reads, off the main actor, before every start (so one deleted
+// in Data settings stops working after the restart that follows), and pair and revoke update it
+// in place with no restart. The listener answers `/cli/*` through the pairing service; the
+// active pairing code ends whenever the server stops, restarts or changes port.
+// Nothing here blocks the main actor: the Keychain (token, CLI tokens, passwords) is read off
+// main; the main actor is used only to read the settings and the saved connections.
 
 import Foundation
 import NIOCore
@@ -49,6 +54,7 @@ final class MCPServerController {
   @ObservationIgnored private let requestTimeout: Duration
   @ObservationIgnored private let approver: any MCPWriteApproving
   @ObservationIgnored private let lockSource: LockRegistry
+  @ObservationIgnored private let pairing: MCPCLIPairingService
   @ObservationIgnored private var running: Running?
   @ObservationIgnored private var cachedToken: String?
   /// The allowlist the running pool was last told about
@@ -79,7 +85,8 @@ final class MCPServerController {
     requestTimeout: Duration = MCPJSONRPC.defaultTimeout,
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     approver: any MCPWriteApproving = MCPWriteApprovalCenter.shared,
-    lockSource: LockRegistry = .shared
+    lockSource: LockRegistry = .shared,
+    pairing: MCPCLIPairingService = .shared
   ) {
     self.settings = settings
     self.tokens = tokens
@@ -90,6 +97,7 @@ final class MCPServerController {
     self.sessionFactory = sessionFactory
     self.approver = approver
     self.lockSource = lockSource
+    self.pairing = pairing
   }
 
   /// Follows the settings from now on: starts the server when enabled.
@@ -215,10 +223,13 @@ final class MCPServerController {
     let service = Self.makeService(
       pool: pool, settings: settings, savedConnections: savedConnections, recorder: recorder,
       approver: approver, lockSource: lockSource)
+    let pairing = self.pairing
+    await Task.detached { pairing.reloadRegistry() }.value
     let server = MCPHTTPServer(
-      handler: MCPJSONRPC.handler(tools: service, timeout: requestTimeout))
+      handler: pairing.handler(next: MCPJSONRPC.handler(tools: service, timeout: requestTimeout)))
     do {
-      let bound = try await server.start(.init(port: port, token: token))
+      let bound = try await server.start(
+        .init(port: port, token: token, cliTokens: pairing.registry))
       running = Running(server: server, pool: pool, port: bound, token: token)
       status = .running(port: bound)
     } catch is CancellationError {
@@ -231,7 +242,9 @@ final class MCPServerController {
   }
 
   /// Denies every waiting approval first: none outlives the server (and token) it came through.
+  /// The pairing code ends too: it was issued for this server's port.
   private func stopRunning() async {
+    pairing.invalidate()
     guard let running else { return }
     self.running = nil
     await approver.denyAllWaiting()

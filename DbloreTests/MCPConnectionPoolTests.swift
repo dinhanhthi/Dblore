@@ -260,6 +260,22 @@ struct MCPConnectionPoolTests {
     await pool.closeAll()
   }
 
+  @Test("A Vault connection is refused before connecting: its lease needs the app window")
+  func vaultConnectionRefused() async throws {
+    var config = postgres(password: "")
+    config.vault = VaultSource(
+      address: "https://vault.test:8200", mount: "database", role: "app-ro", authMethod: .token,
+      caPEM: nil)
+    let id = book.add(config)
+    let pool = pool()
+    let refusal = await #expect(throws: VaultConnectionRefusal.self) {
+      _ = try await manager(pool, id)
+    }
+    #expect(refusal?.localizedDescription == "Vault connections need the app window.")
+    #expect(factory.sessions.isEmpty)
+    await pool.closeAll()
+  }
+
   @Test("An SSH bastion without a saved secret or a pinned host key is refused")
   func untrustedSSHRefused() async throws {
     var config = postgres()

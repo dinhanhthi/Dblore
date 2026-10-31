@@ -211,6 +211,25 @@ extension WorkspaceManager {
     }
   }
 
+  /// Another tab wrote these tables: their data viewer tabs show Reload, except the tab that
+  /// wrote each (by `NotebookViewModel.id`), whose page already shows the write. Never reloads:
+  /// a staged change set stays as it is.
+  func markDataViewerTabsStale(_ written: [WrittenRelations.Relation: UUID]) {
+    guard !written.isEmpty, let databaseType = workspace.connectionConfig?.databaseType else {
+      return
+    }
+    for viewModel in viewModels.values {
+      guard let state = viewModel.dataViewer, !state.isStale,
+        written.contains(where: { relation, writer in
+          writer != viewModel.id
+            && relation.matches(
+              schema: state.schema, name: state.name, dialect: databaseType.dialect)
+        })
+      else { continue }
+      viewModel.dataViewer?.isStale = true
+    }
+  }
+
   private func dataViewerTabIds(schema: String, name: String) -> [UUID] {
     tabs.map(\.id).filter { id in
       guard let state = viewModels[id]?.dataViewer else { return false }

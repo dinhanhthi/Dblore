@@ -23,4 +23,67 @@ struct SchemaPositionsStoreTests {
   func legacyKeyUnchanged(type: DatabaseType) {
     #expect(SchemaPositionsStore.connectionKey(from: Self.config(type)) == "db.example:3306/app")
   }
+
+  /// The diagram of a large catalog shows a subset: saving it must not drop the others
+  @Test("Saving a two-table subset keeps a third table's saved position")
+  func subsetSaveKeepsOthers() {
+    let key = "SchemaPositionsStoreTests-\(UUID().uuidString)"
+    defer { SchemaPositionsStore.clearPositions(forConnection: key) }
+    func position(_ name: String, _ x: CGFloat) -> SavedNodePosition {
+      SavedNodePosition(tableQualifiedName: name, position: CGPoint(x: x, y: x + 1))
+    }
+    SchemaPositionsStore.savePositions(
+      [position("public.a", 10), position("public.b", 20), position("public.c", 30)],
+      forConnection: key)
+
+    SchemaPositionsStore.savePositions(
+      [position("public.a", 110), position("public.b", 120)], forConnection: key,
+      keepingOthers: true)
+
+    let saved = SchemaPositionsStore.loadPositions(forConnection: key)
+    #expect(
+      saved == [position("public.a", 110), position("public.b", 120), position("public.c", 30)])
+  }
+
+  /// Reset Layout on a subset: only the shown tables lose their saved positions
+  @Test("Removing two tables' positions keeps a third table's")
+  func removeSubsetKeepsOthers() {
+    let key = "SchemaPositionsStoreTests-\(UUID().uuidString)"
+    defer { SchemaPositionsStore.clearPositions(forConnection: key) }
+    func position(_ name: String, _ x: CGFloat) -> SavedNodePosition {
+      SavedNodePosition(tableQualifiedName: name, position: CGPoint(x: x, y: x + 1))
+    }
+    SchemaPositionsStore.savePositions(
+      [position("public.a", 10), position("public.b", 20), position("public.c", 30)],
+      forConnection: key)
+
+    SchemaPositionsStore.removePositions(forTables: ["public.a", "public.b"], forConnection: key)
+
+    #expect(SchemaPositionsStore.loadPositions(forConnection: key) == [position("public.c", 30)])
+  }
+
+  /// A table renamed from the diagram or the structure editor stays where the user put it
+  @Test("A renamed table keeps its saved position; the other tables keep theirs")
+  func renamedTableKeepsPosition() {
+    let key = "SchemaPositionsStoreTests-\(UUID().uuidString)"
+    defer { SchemaPositionsStore.clearPositions(forConnection: key) }
+    func position(_ name: String, _ x: CGFloat) -> SavedNodePosition {
+      SavedNodePosition(tableQualifiedName: name, position: CGPoint(x: x, y: x + 1))
+    }
+    SchemaPositionsStore.savePositions(
+      [position("public.a", 10), position("public.b", 20), position("public.goods", 30)],
+      forConnection: key)
+
+    SchemaPositionsStore.movePosition(from: "public.a", to: "public.goods", forConnection: key)
+
+    // The stale entry under the new name would shadow the moved one
+    #expect(
+      SchemaPositionsStore.loadPositions(forConnection: key) == [
+        position("public.goods", 10), position("public.b", 20),
+      ])
+
+    // A table with no saved position changes nothing
+    SchemaPositionsStore.movePosition(from: "public.x", to: "public.b", forConnection: key)
+    #expect(SchemaPositionsStore.loadPositions(forConnection: key).count == 2)
+  }
 }

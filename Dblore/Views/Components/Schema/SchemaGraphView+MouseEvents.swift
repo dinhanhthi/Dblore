@@ -59,6 +59,11 @@ extension SchemaGraphNSView {
       return
     }
 
+    // A column's foreign-key grip (clear of both resize handles) starts a foreign-key drag
+    if beginForeignKeyDrag(at: point) {
+      return
+    }
+
     // Check if clicking on a node first (nodes are rendered on top of connection lines)
     if let node = hitTestNode(at: point) {
       isDraggingNode = true
@@ -119,7 +124,9 @@ extension SchemaGraphNSView {
     let point = convert(event.locationInWindow, from: nil)
     let deltaX = point.x - lastMouseLocation.x
 
-    if isResizingNode, let nodeId = resizingNodeId {
+    if isDraggingForeignKey {
+      continueForeignKeyDrag(at: point)
+    } else if isResizingNode, let nodeId = resizingNodeId {
       if let index = graph.nodes.firstIndex(where: { $0.id == nodeId }) {
         let currentWidth = graph.nodes[index].width ?? calculateAutoWidth(for: graph.nodes[index])
         let scaledDelta = deltaX / scale
@@ -171,6 +178,12 @@ extension SchemaGraphNSView {
   // MARK: - Mouse Up
 
   func handleMouseUp(with event: NSEvent) {
+    // A foreign-key drag ends on its own: no double-click, no position save
+    if isDraggingForeignKey {
+      endForeignKeyDrag()
+      return
+    }
+
     if event.clickCount == 2 {
       let point = convert(event.locationInWindow, from: nil)
       // Don't trigger node double-click if clicking on resize handles (already handled in mouseDown)
@@ -233,6 +246,11 @@ extension SchemaGraphNSView {
       if hoveredResizeHandleNodeId == nil {  // Only pop if right handle cursor not active
         NSCursor.pop()
       }
+      needsRedraw = true
+    }
+
+    // A column row under the pointer shows its foreign-key grip (after the resize handles)
+    if updateColumnGripHover(at: point) {
       needsRedraw = true
     }
 
@@ -344,6 +362,9 @@ extension SchemaGraphNSView {
     if hoveredLeftResizeHandleNodeId != nil {
       hoveredLeftResizeHandleNodeId = nil
       NSCursor.pop()
+      needsRedraw = true
+    }
+    if clearColumnGripHover() {
       needsRedraw = true
     }
     cancelEdgeHoverTimer()

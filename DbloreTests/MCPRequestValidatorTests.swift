@@ -1,6 +1,7 @@
 // MCPRequestValidatorTests.swift
 // The request-head checks of the MCP HTTP listener: Host, Origin, path, method, bearer token,
-// Content-Type and Content-Length, in that order, before any body is read.
+// Content-Type and Content-Length, in that order, before any body is read; the caller a bearer
+// names (MCP token or a paired command-line tool's), and the command-line tool's routes.
 
 import Foundation
 import NIOHTTP1
@@ -12,8 +13,15 @@ import Testing
 struct MCPRequestValidatorTests {
   private let port = 41730
   private let token = "s3cret-token"
+  private let cliTokens = MCPCLITokenRegistry()
   private var validator: MCPRequestValidator {
-    MCPRequestValidator(port: port, token: token, bodyLimit: 1_048_576)
+    MCPRequestValidator(port: port, token: token, bodyLimit: 1_048_576, cliTokens: cliTokens)
+  }
+
+  private static func credential(id: String = "paired-1") -> MCPCLICredential {
+    MCPCLICredential(
+      id: id, token: MCPTokenStoreFactory.generate(), proofKey: MCPTokenStoreFactory.generate(),
+      name: "laptop", date: Date())
   }
 
   private var goodHeaders: [(String, String)] {
@@ -46,10 +54,10 @@ struct MCPRequestValidatorTests {
 
   @Test("A well-formed POST /mcp proceeds; the query string is ignored")
   func proceeds() {
-    #expect(validate() == .proceed)
-    #expect(validate(uri: "/mcp?x=1") == .proceed)
-    #expect(validate(replacing: [("Host", "localhost:\(port)")]) == .proceed)
-    #expect(validate(replacing: [("Host", "LocalHost:\(port)")]) == .proceed)
+    #expect(validate() == .proceed(.mcp(caller: .mcp)))
+    #expect(validate(uri: "/mcp?x=1") == .proceed(.mcp(caller: .mcp)))
+    #expect(validate(replacing: [("Host", "localhost:\(port)")]) == .proceed(.mcp(caller: .mcp)))
+    #expect(validate(replacing: [("Host", "LocalHost:\(port)")]) == .proceed(.mcp(caller: .mcp)))
   }
 
   @Test(
@@ -71,8 +79,10 @@ struct MCPRequestValidatorTests {
 
   @Test("A present Origin must be a local http origin on the same port")
   func origin() {
-    #expect(validate(replacing: [("Origin", "http://localhost:\(port)")]) == .proceed)
-    #expect(validate(replacing: [("Origin", "http://127.0.0.1:\(port)")]) == .proceed)
+    #expect(
+      validate(replacing: [("Origin", "http://localhost:\(port)")]) == .proceed(.mcp(caller: .mcp)))
+    #expect(
+      validate(replacing: [("Origin", "http://127.0.0.1:\(port)")]) == .proceed(.mcp(caller: .mcp)))
     for bad in [
       "http://evil.com", "null", "https://localhost:\(port)", "http://localhost:1234",
       "http://localhost", "http://[::1]:\(port)", "",
@@ -110,7 +120,8 @@ struct MCPRequestValidatorTests {
       #expect(response.status == 401)
       #expect(response.headers["WWW-Authenticate"] == "Bearer")
     }
-    #expect(validate(replacing: [("Authorization", "bearer \(token)")]) == .proceed)
+    #expect(
+      validate(replacing: [("Authorization", "bearer \(token)")]) == .proceed(.mcp(caller: .mcp)))
   }
 
   @Test("An empty configured token refuses everything")
@@ -136,8 +147,10 @@ struct MCPRequestValidatorTests {
   @Test("POST needs Content-Type application/json, else 415")
   func contentType() {
     #expect(
-      validate(replacing: [("Content-Type", "application/json; charset=utf-8")]) == .proceed)
-    #expect(validate(replacing: [("Content-Type", "Application/JSON")]) == .proceed)
+      validate(replacing: [("Content-Type", "application/json; charset=utf-8")])
+        == .proceed(.mcp(caller: .mcp)))
+    #expect(
+      validate(replacing: [("Content-Type", "Application/JSON")]) == .proceed(.mcp(caller: .mcp)))
     for bad: String? in [
       nil, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data",
       "application/jsonx", "",
@@ -148,8 +161,8 @@ struct MCPRequestValidatorTests {
 
   @Test("Content-Length over the limit is 413; an invalid one is 400")
   func contentLength() {
-    #expect(validate(replacing: [("Content-Length", "1048576")]) == .proceed)
-    #expect(validate(replacing: [("Content-Length", String?.none)]) == .proceed)
+    #expect(validate(replacing: [("Content-Length", "1048576")]) == .proceed(.mcp(caller: .mcp)))
+    #expect(validate(replacing: [("Content-Length", String?.none)]) == .proceed(.mcp(caller: .mcp)))
     #expect(status(validate(replacing: [("Content-Length", "1048577")])) == 413)
     #expect(status(validate(replacing: [("Content-Length", "-1")])) == 400)
     #expect(status(validate(replacing: [("Content-Length", "abc")])) == 400)
@@ -168,5 +181,65 @@ struct MCPRequestValidatorTests {
       status(
         validate(replacing: [("Content-Type", "text/plain"), ("Content-Length", "9999999")]))
         == 415)
+  }
+
+  @Test("A paired command-line tool's token on /mcp is caller cli; the MCP token is caller mcp")
+  func cliTokenIsCallerCLI() {
+    let paired = Self.credential()
+    cliTokens.add(paired)
+    #expect(
+      validate(replacing: [("Authorization", "Bearer \(paired.token)")])
+        == .proceed(.mcp(caller: .cli)))
+    #expect(validate() == .proceed(.mcp(caller: .mcp)))
+  }
+
+  @Test("A revoked command-line tool's token is 401 at once, with no new validator")
+  func revokedCLITokenRefused() {
+    let paired = Self.credential()
+    let kept = Self.credential(id: "paired-2")
+    cliTokens.add(paired)
+    cliTokens.add(kept)
+    let validator = self.validator
+    let head = { (bearer: String) in
+      HTTPRequestHead(
+        version: .http1_1, method: .POST, uri: "/mcp",
+        headers: HTTPHeaders([
+          ("Host", "127.0.0.1:\(self.port)"), ("Authorization", "Bearer \(bearer)"),
+          ("Content-Type", "application/json"),
+        ]))
+    }
+    #expect(validator.validate(head(paired.token)) == .proceed(.mcp(caller: .cli)))
+    cliTokens.remove(id: paired.id)
+    #expect(status(validator.validate(head(paired.token))) == 401)
+    #expect(validator.validate(head(kept.token)) == .proceed(.mcp(caller: .cli)))
+    cliTokens.removeAll()
+    #expect(status(validator.validate(head(kept.token))) == 401)
+  }
+
+  @Test("/cli/pair and /cli/hello need no bearer; a CLI token is no MCP token elsewhere")
+  func cliRoutesProceed() {
+    let noAuth: [(String, String?)] = [("Authorization", nil)]
+    #expect(validate(uri: "/cli/pair", replacing: noAuth) == .proceed(.cliPair))
+    #expect(validate(uri: "/cli/hello?x=1", replacing: noAuth) == .proceed(.cliHello))
+    for uri in ["/cli", "/cli/", "/cli/other", "/CLI/pair", "/cli/pair/"] {
+      #expect(status(validate(uri: uri, replacing: noAuth)) == 404, "\(uri)")
+    }
+  }
+
+  @Test(
+    "/cli/pair and /cli/hello refuse other methods, a non-JSON body and more than 4 KB",
+    arguments: ["/cli/pair", "/cli/hello"])
+  func cliRoutesRefuse(uri: String) {
+    let noAuth: [(String, String?)] = [("Authorization", nil)]
+    for method in [HTTPMethod.GET, .PUT, .OPTIONS] {
+      #expect(status(validate(method: method, uri: uri, replacing: noAuth)) == 405)
+    }
+    for bad: String? in [nil, "text/plain", "application/x-www-form-urlencoded"] {
+      #expect(
+        status(validate(uri: uri, replacing: noAuth + [("Content-Type", bad)])) == 415,
+        "\(bad ?? "nil")")
+    }
+    #expect(status(validate(uri: uri, replacing: noAuth + [("Content-Length", "4096")])) == nil)
+    #expect(status(validate(uri: uri, replacing: noAuth + [("Content-Length", "4097")])) == 413)
   }
 }

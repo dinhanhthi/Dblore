@@ -44,14 +44,21 @@ struct ConnectionScriptRunnerTests {
       self.arguments = arguments
       if backgroundChild, let out = standardOutput { childOutput = dup(out.fileDescriptor) }
       guard completes else { return }
-      let (out, err, stdout, stderr, error) = (
-        standardOutput, standardError, self.stdout, self.stderr, self.error
-      )
+      // Its own copies of the write ends, as a script process has: the runner closing its ends
+      // (exit, timeout, cancel) never reaches them, and the read ends stay open until they close
+      let (out, err) = (standardOutput.map(Self.copy), standardError.map(Self.copy))
+      let (stdout, stderr, error) = (self.stdout, self.stderr, self.error)
       DispatchQueue.global().async {
         try? out?.write(contentsOf: stdout)
         try? err?.write(contentsOf: stderr)
+        try? out?.close()
+        try? err?.close()
         handler?(error)
       }
+    }
+
+    private static func copy(_ handle: FileHandle) -> FileHandle {
+      FileHandle(fileDescriptor: dup(handle.fileDescriptor), closeOnDealloc: true)
     }
 
     func endBackgroundChild() {
@@ -101,11 +108,12 @@ struct ConnectionScriptRunnerTests {
       })
   }
 
-  /// db.example.com:6543, user ada, database sales, 1 s timeout by default. Built on the main
-  /// actor: the config's members are main-actor isolated outside the app module.
+  /// db.example.com:6543, user ada, database sales, 30 s timeout by default (a loaded test run
+  /// may take over 1 s to finish a run). Built on the main actor: the config's members are
+  /// main-actor isolated outside the app module.
   @MainActor private static func config(
     host: String = "db.example.com", user: String = "ada", database: String = "sales",
-    timeout: Int = 1
+    timeout: Int = 30
   ) -> ConnectionConfig {
     var config = ConnectionConfig(host: host, port: 6543, database: database, username: user)
     config.scriptTimeoutSeconds = timeout
@@ -158,7 +166,7 @@ struct ConnectionScriptRunnerTests {
 
   @Test("A script that never finishes is abandoned at the timeout, and the error says so")
   func timeoutAbandonsTheScript() async throws {
-    let config = await Self.config()
+    let config = await Self.config(timeout: 1)
     try await Self.withFolder(["slow.sh"]) { folder in
       let runner = Self.runner(folder, task: FakeTask(completes: false))
       let start = ContinuousClock.now

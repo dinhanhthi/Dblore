@@ -64,9 +64,17 @@ nonisolated enum SidebarEntityFilter {
   /// Higher is better: exact, prefix, word boundary, contains, subsequence, near miss.
   /// An empty keyword matches, same as `fuzzy`.
   static func score(_ keyword: String, in text: String) -> Int? {
-    let needle = keyword.lowercased()
-    let haystack = text.lowercased()
+    score(lowercased: keyword.lowercased(), in: text.lowercased())
+  }
+
+  /// `score` of a keyword in a text both already lowercased (`keywords(in:)`,
+  /// `SidebarEntityIndex`), so a large catalog lowercases each name once, not per keystroke
+  static func score(lowercased needle: String, in haystack: String) -> Int? {
     if needle.isEmpty { return Rank.exact.rawValue }
+    // Every rank allows at most one keyword character the text lacks (one typo)
+    if needle.utf8.count > 1, let missing = asciiMissing(needle, in: haystack), missing >= 2 {
+      return nil
+    }
     if let contiguous = contiguousRank(of: needle, in: haystack) { return contiguous }
 
     let collapsed = haystack.replacingOccurrences(of: "_", with: "")
@@ -84,6 +92,22 @@ nonisolated enum SidebarEntityFilter {
     guard needle.count >= 4 else { return nil }
     guard hasNearMiss(in: haystack, collapsed: collapsed, needle: needle) else { return nil }
     return Rank.nearMiss.rawValue
+  }
+
+  /// Characters of `needle` that `haystack` lacks, repeats counted. Nil unless both are
+  /// printable ASCII, where a byte is a character (a cheap check before the ranks).
+  private static func asciiMissing(_ needle: String, in haystack: String) -> Int? {
+    let printable: ClosedRange<UInt8> = 0x20...0x7E
+    guard needle.utf8.allSatisfy(printable.contains), haystack.utf8.allSatisfy(printable.contains)
+    else { return nil }
+    var missing = 0
+    for (offset, byte) in needle.utf8.enumerated() where !needle.utf8.prefix(offset).contains(byte)
+    {
+      let wanted = needle.utf8.reduce(0) { $1 == byte ? $0 + 1 : $0 }
+      let found = haystack.utf8.reduce(0) { $1 == byte ? $0 + 1 : $0 }
+      missing += max(0, wanted - found)
+    }
+    return missing
   }
 
   /// Case-insensitive and loose: a contiguous hit, an in-order abbreviation, or one typo.

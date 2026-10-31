@@ -19,6 +19,8 @@ struct SidebarEntityFilterScoreTests {
     let hits = [
       ("users", "users"), ("use", "users"), ("id", "user_id"), ("ser", "users"),
       ("usr", "users"), ("uzers", "users"),
+      // One inserted character: the ASCII early exit lets one missing character through
+      ("userss", "users"),
     ]
     for (keyword, text) in hits {
       #expect(SidebarEntityFilter.score(keyword, in: text) != nil)

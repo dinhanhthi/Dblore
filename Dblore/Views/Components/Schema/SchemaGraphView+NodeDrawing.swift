@@ -141,6 +141,8 @@ extension SchemaGraphNSView {
       context.setLineWidth(borderWidth)
       context.strokePath()
 
+      drawStagedOutline(context, node: node, rect: rect)
+
       // Draw table name (with search highlight if matching)
       let tableName = node.table.name
       let tableFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
@@ -265,7 +267,9 @@ extension SchemaGraphNSView {
       ]
       let typeString = NSAttributedString(string: column.type, attributes: typeAttributes)
       let typeSize = typeString.size()
-      let typeX = rect.maxX - typeSize.width - 8
+      // The foreign-key grip's band stays clear of the type
+      let typeX =
+        rect.maxX - typeSize.width - 8 - (reservesColumnGrips ? columnGripWidth : 0)
       let nameStartX = iconX + 2
       let maxNameWidth = typeX - nameStartX - columnTypeGap
 
@@ -310,7 +314,26 @@ extension SchemaGraphNSView {
 
       // Draw type on the right
       typeString.draw(at: CGPoint(x: typeX, y: y + 1))
+
+      drawColumnGrip(context, node: node, index: index)
     }
+  }
+
+  /// A table with staged changes gets an accent outline just outside its border; one being read
+  /// before a change is staged, a dashed one
+  func drawStagedOutline(_ context: CGContext, node: SchemaNode, rect: CGRect) {
+    let isStaged = stagedTables.contains(node.qualifiedName)
+    guard isStaged || loadingTables.contains(node.qualifiedName) else { return }
+    let outline = CGPath(
+      roundedRect: rect.insetBy(dx: -3, dy: -3), cornerWidth: nodeCornerRadius + 3,
+      cornerHeight: nodeCornerRadius + 3, transform: nil)
+    context.saveGState()
+    context.addPath(outline)
+    context.setStrokeColor(nodeSelectedBorderColor.withAlphaComponent(0.6).cgColor)
+    context.setLineWidth(1.5)
+    if !isStaged { context.setLineDash(phase: 0, lengths: [4, 3]) }
+    context.strokePath()
+    context.restoreGState()
   }
 
   /// Truncate text to fit within maxWidth, adding "..." if needed

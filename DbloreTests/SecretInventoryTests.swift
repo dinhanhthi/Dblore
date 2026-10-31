@@ -176,6 +176,19 @@ struct SecretInventoryTests {
     #expect(await inventory.items() == planted())
   }
 
+  @Test("Vault secrets are listed as database passwords and deleted with them")
+  func vaultSecretsAreDatabasePasswords() async throws {
+    let secret = SecretItem.listed(
+      service: KeychainVaultSecretStore.serviceName,
+      account: VaultCredentialStore.account(keychainKey: "db.example:5432:app:ada"))
+    #expect(secret.kind == .dbPassword)
+    #expect(KeychainVaultSecretStore.serviceName == "ace.thi.dblore.vault")
+    #expect(KeychainSecretInventory.services.contains(KeychainVaultSecretStore.serviceName))
+    let inventory = InMemorySecretInventory(items: planted() + [secret])
+    try await inventory.deleteAll(kind: .dbPassword)
+    #expect(await inventory.items().contains(secret) == false)
+  }
+
   @Test("The Lock password and workspace keys are their own kinds and deleted with them")
   func lockItemsAreTheirOwnKinds() async throws {
     let password = SecretItem.listed(
@@ -211,6 +224,7 @@ struct SecretInventoryTests {
     #expect(text.contains("KeychainSSHKnownHostStore.serviceName"))
     #expect(text.contains("KeychainOutsideMCPTokenStore.serviceName,"))
     #expect(text.contains("KeychainMCPTokenStore.serviceName,"))
+    #expect(text.contains("KeychainVaultSecretStore.serviceName,"))
     #expect(text.contains("LockPasswordStore.serviceName,"))
     #expect(text.contains("LockKeyStore.serviceName,"))
     // A workspace key goes with its recorded mode, so an unlock is not offered Touch ID for it

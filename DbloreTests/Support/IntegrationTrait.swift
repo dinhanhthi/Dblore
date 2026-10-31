@@ -1,7 +1,8 @@
 // IntegrationTrait.swift
 // Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, On-device AI
-// plugin, MySQL, MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike). SKIP_INTEGRATION_TESTS or
-// TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them all off.
+// plugin, MySQL, MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike, large catalog).
+// SKIP_INTEGRATION_TESTS or TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them
+// all off.
 
 import Foundation
 import Testing
@@ -134,6 +135,18 @@ nonisolated enum MongoSpikeIntegrationGate {
   }
 }
 
+/// The large-catalog performance suite builds a 50,000-table SQLite file: run only on request.
+nonisolated enum LargeCatalogGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["LARGE_CATALOG_TESTS"] ?? env["TEST_RUNNER_LARGE_CATALOG_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 extension Trait where Self == ConditionTrait {
   /// The PostgreSQL test container is opt-in.
   static var requiresPostgres: Self {
@@ -212,6 +225,14 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: MongoSpikeIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_MONGO_TESTS=1 and TEST_RUNNER_MONGO_SPIKE_TESTS=1 and start docker/mongodb/docker-compose.test.yml to run"
+    )
+  }
+
+  /// The large-catalog performance suite is opt-in.
+  static var requiresLargeCatalog: Self {
+    .enabled(
+      if: LargeCatalogGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_LARGE_CATALOG_TESTS=1 to run"
     )
   }
 }

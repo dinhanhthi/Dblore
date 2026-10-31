@@ -136,9 +136,11 @@ extension DatabaseConnectionManager {
     // Not cancelled with the caller: `connect` sleeps between retries
     let certificate = activeUnrememberedCertificate
     let sshCredential = activeUnrememberedSSHCredential
+    let vaultSecret = activeUnrememberedVaultSecret
     let reconnect = Task {
       try await self.reconnectWithActiveCertificate(
-        config: config, material: certificate, sshCredential: sshCredential)
+        config: config, material: certificate, sshCredential: sshCredential,
+        vaultSecret: vaultSecret)
     }
     do {
       // `connect` disconnects first (forget + close: the server stops the backend's work)

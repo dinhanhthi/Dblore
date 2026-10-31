@@ -9,8 +9,9 @@
 //  name, engine, host, port, database, user, TLS mode, SSH host/port/user/auth method, the
 //  MongoDB connection string rebuilt without userinfo, timeouts and row cap, protection, commit
 //  style, AI access and rules, color, group, hidden schemas, and the connection scripts' plain
-//  file names and timeout (never a path or a script's content; an import never applies them).
-//  Never written: passwords, SSH
+//  file names and timeout (never a path or a script's content; an import never applies them),
+//  and the Vault source: address, mount, role, auth method and CA PEM (public).
+//  Never written: passwords, Vault tokens, AppRole role and secret ids, SSH
 //  passwords, passphrases and keys (nor the key's algorithm and fingerprint), client
 //  certificates and their metadata, file bookmarks, the remember flag and the MongoDB identity
 //  pin (the saved database is written as `database`).
@@ -33,9 +34,17 @@
 //  literal is saved bare); a Unicode host name is not round-tripped (the entry is skipped), so
 //  no lookalike host reaches a warning or the import preview. A host, user or database that
 //  starts with `-` or holds a control character skips the entry: scripts get them as arguments.
+//  A Vault source is checked like a host: an https address of visible ASCII (shown whole: the
+//  Vault secret goes there), a mount and role of plain path names (no reserved mount), a CA PEM
+//  of at most 16 KB that parses as certificates; otherwise the entry is skipped. Its CA is never
+//  imported: the row shows its SHA-256 fingerprints for the user to choose it again in the
+//  connection form, so a file cannot pick whom Dblore trusts for a familiar Vault address. The
+//  Vault secret is entered after import.
 //
 
+import CryptoKit
 import Foundation
+import Security
 
 nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
   enum ReadError: Error, Equatable, Sendable {
@@ -58,12 +67,23 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
   static let maxSQLLength = 1_000_000
   /// Connect timeout range; the form leaves it unbounded.
   static let connectTimeoutRange = 1...3_600
+  /// A Vault CA PEM, in bytes
+  static let maxCAPEMLength = 16 * 1024
 
   nonisolated struct SSH: Codable, Equatable, Sendable {
     var host: String
     var port: Int
     var username: String
     var authMethod: String
+  }
+
+  /// Where a connection's credentials are leased: never a token, role id or secret id.
+  nonisolated struct Vault: Codable, Equatable, Sendable {
+    var address: String
+    var mount: String
+    var role: String
+    var authMethod: String
+    var caPEM: String?
   }
 
   /// One allow-listed connection. Enum values are kept as raw text so a file is checked entry by
@@ -77,6 +97,8 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
     var username: String
     var sslMode: String
     var ssh: SSH?
+    /// Absent from files without a Vault source
+    var vault: Vault?
     var mongoURI: String?
     var timeoutSeconds: Int
     var protectionLevel: String
@@ -185,8 +207,11 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
         item.mongoURI, item.protectionLevel, item.commitStyle, item.aiAccess, item.colorTag,
         item.groupName, item.ssh?.host, item.ssh?.username, item.ssh?.authMethod,
         item.preConnectScript, item.postDisconnectScript, item.passwordCommandScript,
+        item.vault?.address, item.vault?.mount, item.vault?.role, item.vault?.authMethod,
       ]
-      guard fields.allSatisfy(fits), item.aiRules.count <= ConnectionConfig.aiRulesLimit else {
+      guard fields.allSatisfy(fits), item.aiRules.count <= ConnectionConfig.aiRulesLimit,
+        (item.vault?.caPEM?.utf8.count ?? 0) <= Self.maxCAPEMLength
+      else {
         throw ReadError.fieldTooLong
       }
     }
@@ -241,6 +266,15 @@ nonisolated extension DbloreConnectionFile.Connection {
     ssh = config.sshTunnel.map {
       DbloreConnectionFile.SSH(
         host: $0.host, port: $0.port, username: $0.username, authMethod: $0.authMethod.rawValue)
+    }
+    // A CA over the import limit is left out, so the file still imports
+    vault = config.vault.map {
+      DbloreConnectionFile.Vault(
+        address: $0.address, mount: $0.mount, role: $0.role,
+        authMethod: $0.authMethod.rawValue,
+        caPEM: $0.caPEM.flatMap {
+          $0.utf8.count <= DbloreConnectionFile.maxCAPEMLength ? $0 : nil
+        })
     }
     // Rebuilt from its allow-listed options: never userinfo.
     mongoURI = config.mongoURI.flatMap { try? MongoURIParser.parse($0).storedURI }
@@ -328,6 +362,12 @@ nonisolated extension DbloreConnectionFile.Connection {
         "SSH tunnel via host \"\(sshHost)\" port \(ssh.port), user \"\(ssh.username)\"")
       if ssh.username.isEmpty { warnings.append("SSH user is missing; set it after import.") }
     }
+    var vaultSource: VaultSource?
+    if let vault {
+      guard let checked = Self.checkedVault(vault) else { return skip("invalid Vault source") }
+      vaultSource = checked.source
+      warnings += checked.warnings
+    }
 
     var config = ConnectionConfig(
       databaseType: engine, host: savedHost, port: port, database: database, username: username,
@@ -344,6 +384,7 @@ nonisolated extension DbloreConnectionFile.Connection {
       rowCapOverride: SessionBrakeLimits.clampRowCap(rowCapOverride),
       colorTag: colorTag.flatMap(AccentColor.init(rawValue:)), groupName: groupName)
     config.commitStyle = style
+    config.vault = vaultSource
     config.aiAccess = access == .always ? .useDefault : access
     config.aiRules = ConnectionConfig.clampedAIRules(aiRules)
     config.hiddenSchemas = ConnectionConfig.normalizedHiddenSchemas(hiddenSchemas)
@@ -389,6 +430,50 @@ nonisolated extension DbloreConnectionFile.Connection {
   }
 
   private static let validPorts = 1...65535
+
+  /// The Vault source to save without its CA, and the row's warnings; nil when a field is
+  /// refused: the address must be https, visible ASCII without `"` (shown whole), with a host
+  /// `normalizedHost` accepts; the mount and role plain path names
+  /// (`URLSessionVaultClient.isValidPath`), the mount not under a reserved one; the CA PEM
+  /// certificates only.
+  private static func checkedVault(
+    _ vault: DbloreConnectionFile.Vault
+  ) -> (source: VaultSource, warnings: [String])? {
+    let text = vault.address.trimmingCharacters(in: .whitespaces)
+    guard text.utf8.allSatisfy({ (0x21...0x7E).contains($0) && $0 != UInt8(ascii: "\"") }),
+      let url = try? URLSessionVaultClient.address(text), url.scheme == "https",
+      normalizedHost(URLSessionVaultClient.bareHost(url)) != nil,
+      url.port.map(validPorts.contains) ?? true,
+      let method = VaultSource.AuthMethod(rawValue: vault.authMethod),
+      URLSessionVaultClient.isValidPath(vault.mount),
+      URLSessionVaultClient.isValidPath(vault.role)
+    else { return nil }
+    let firstMount = vault.mount.split(separator: "/").first.map { $0.lowercased() } ?? ""
+    guard !URLSessionVaultClient.reservedMounts.contains(firstMount) else { return nil }
+    let address = url.absoluteString
+    let secret = method == .token ? "token" : "role id and secret id"
+    var warnings = [
+      "Your Vault \(secret) will be sent to \"\(address)\"",
+      "Vault \(secret) not imported: enter it in the connection form.",
+    ]
+    if let pem = vault.caPEM {
+      let certificates = URLSessionVaultClient.certificates(pem: pem)
+      guard !certificates.isEmpty else { return nil }
+      let fingerprints = certificates.map(caFingerprint).joined(separator: ", ")
+      warnings.append(
+        "Vault CA certificate not imported (SHA-256 \(fingerprints)): if you trust it, "
+          + "choose it in the connection form.")
+    }
+    let source = VaultSource(
+      address: address, mount: vault.mount, role: vault.role, authMethod: method, caPEM: nil)
+    return (source, warnings)
+  }
+
+  /// SHA-256 of the certificate's DER, as colon-separated uppercase hex
+  static func caFingerprint(_ certificate: SecCertificate) -> String {
+    let der = SecCertificateCopyData(certificate) as Data
+    return SHA256.hash(data: der).map { String(format: "%02X", $0) }.joined(separator: ":")
+  }
 
   /// The database or SSH host to save, or nil: a DNS name or IPv4 address (ASCII letters,
   /// digits, `.`, `-`, `_`; a MongoDB SRV name too) or an IPv6 literal with an optional ASCII

@@ -185,6 +185,56 @@ struct AIProviderConfigTests {
     #expect(!settings.isConfigured(.localMLX))  // catalog id not installed
   }
 
+  @Test("A configuration with Apple Intelligence active round-trips under its permanent raw value")
+  func appleIntelligenceRoundTrip() throws {
+    let config = AIConfiguration(
+      activeProvider: .appleIntelligence,
+      configs: [.appleIntelligence: AIProviderConfig(baseURL: "", model: "system")],
+      inlineProvider: .appleIntelligence)
+    let data = try JSONEncoder().encode(config)
+    let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    #expect(json["activeProvider"] as? String == "appleIntelligence")
+    #expect((json["configs"] as? [String: Any])?["appleIntelligence"] != nil)
+    #expect(try JSONDecoder().decode(AIConfiguration.self, from: data) == config)
+  }
+
+  @Test("isConfigured for Apple Intelligence needs its model and the system model available")
+  func appleIntelligenceConfigured() {
+    let (settings, _, _) = makeSettings()
+    settings.appleIntelligenceAvailability = { .available }
+    #expect(!settings.isConfigured(.appleIntelligence))  // no model written yet
+    settings.configuration.configs[.appleIntelligence] = AIProviderConfig(
+      baseURL: "", model: AIProviderKind.appleIntelligenceModel)
+    #expect(settings.isConfigured(.appleIntelligence))
+    for reason in [AppleIntelligenceAvailability.notEnabled, .modelNotReady, .osTooOld] {
+      settings.appleIntelligenceAvailability = { reason }
+      #expect(!settings.isConfigured(.appleIntelligence))
+    }
+  }
+
+  @Test("The factory returns the Apple Intelligence client when available, else why it can't")
+  func appleIntelligenceFactory() throws {
+    let config = AIProviderConfig(baseURL: "", model: "system")
+    #expect(
+      throws: AIClientError.appleIntelligenceUnavailable(
+        "Turn on Apple Intelligence in System Settings.")
+    ) {
+      _ = try AIClientFactory.make(
+        kind: .appleIntelligence, config: config, apiKey: nil, appleIntelligence: .notEnabled)
+    }
+    // Available: the client on macOS 26 and later, else the macOS version is the reason
+    do {
+      let client = try AIClientFactory.make(
+        kind: .appleIntelligence, config: config, apiKey: nil, appleIntelligence: .available)
+      #expect(String(describing: type(of: client)) == "AppleIntelligenceChatClient")
+      #expect(!client.supportsNativeTools)
+    } catch let error as AIClientError {
+      #expect(
+        error == .appleIntelligenceUnavailable(AppleIntelligenceAvailability.osTooOld.message ?? "")
+      )
+    }
+  }
+
   @Test("setAPIKey with empty string deletes the key")
   func emptyKeyDeletes() {
     let (settings, _, _) = makeSettings()

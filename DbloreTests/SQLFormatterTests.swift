@@ -249,6 +249,73 @@ struct SQLFormatterTests {
     #expect(output == "SELECT a\nFROM t\nWHERE alpha = 1\n  AND beta = :or")
   }
 
+  @Test("Formatting keeps each engine's grammar and re-formats identically")
+  func keepsEngineGrammar() {
+    let delimiterBlock =
+      "delimiter //\ncreate procedure p()\nbegin\n  select 1;\nend//\ndelimiter ;\nselect 2;"
+    let cases: [(name: String, sql: String, dialect: SQLDialect, check: (String) -> Bool)] = [
+      ("$$ body", "select $$ a,  from $$, 1", .postgresql, { $0.contains("$$ a,  from $$") }),
+      (
+        "$tag$ body",
+        "create function f() returns int as $fn$ select 1; select 2 $fn$ language sql",
+        .postgresql, { $0.contains("$fn$ select 1; select 2 $fn$") }
+      ),
+      ("E'' string", "select E'a\\'b', 1", .postgresql, { $0.contains("E'a\\'b'") }),
+      (
+        "# operator", "select 5 # 3 as x from t", .postgresql,
+        { $0 == "SELECT 5 # 3 AS x\nFROM t" }
+      ),
+      (
+        "# comment before AND", "select a from t where x = 1 # note\nand y = 2", .mysql,
+        { $0 == "SELECT a\nFROM t\nWHERE x = 1 # note\nAND y = 2" }
+      ),
+      (
+        "DELIMITER block", delimiterBlock, .mysql,
+        { output in
+          let lines = output.components(separatedBy: "\n")
+          return lines.contains("delimiter //") && lines.contains("delimiter ;")
+            && lines.contains("END//") && output.hasSuffix("SELECT 2;")
+        }
+      ),
+      (
+        "DELIMITER $$ inside a word", "DELIMITER $$\nselect c$$ select 2$$", .mysql,
+        { $0 == "DELIMITER $$\nSELECT c$$\n\nSELECT 2$$" }
+      ),
+      (
+        "no new DELIMITER line", "select 1;\ndelimiter\n// x", .mysql,
+        { $0 == "select 1;\ndelimiter\n// x" }
+      ),
+      (
+        "/*! */ left unchanged", "select /*!40001 SQL_NO_CACHE */ a from t", .mysql,
+        { $0 == "select /*!40001 SQL_NO_CACHE */ a from t" }
+      ),
+      (
+        "multi-character operators",
+        "select a from t where j @> '{}' and j <@ k and j->>'x' = '1' and x::int = 1",
+        .postgresql,
+        { $0.hasSuffix("WHERE j @> '{}' AND j <@ k AND j->>'x' = '1' AND x::int = 1") }
+      ),
+      (
+        "hex literals", "select 0x1F, X'1F' from t", .mysql,
+        { $0 == "SELECT 0x1F,\n       X'1F'\nFROM t" }
+      ),
+      (
+        "nested CASE", "select case when a then case when b then 1 else 2 end else 3 end from t",
+        .postgresql,
+        { $0.hasPrefix("SELECT CASE WHEN a THEN CASE WHEN b THEN 1 ELSE 2 END ELSE 3 END\n") }
+      ),
+    ]
+    for (name, sql, dialect, check) in cases {
+      let once = SQLFormatter.format(sql, dialect: dialect)
+      #expect(SQLFormatter.format(once, dialect: dialect) == once, "\(name)")
+      #expect(SQLFormatter.hasSameTokens(sql, once, dialect: dialect), "\(name)")
+      #expect(
+        SQLTokenizer.splitStatements(once, dialect: dialect).count
+          == SQLTokenizer.splitStatements(sql, dialect: dialect).count, "\(name)")
+      #expect(check(once), "\(name): \(once)")
+    }
+  }
+
   @Test("Clause keywords after a dot are names and stay inline")
   func keepsQualifiedClauseWordsInline() {
     let sql =
@@ -257,5 +324,21 @@ struct SQLFormatterTests {
       "SELECT o.order,\n       plan.limit\nFROM o\nJOIN plan\n  ON o.id = plan.id\nORDER BY o.order\nLIMIT 5"
     #expect(SQLFormatter.format(sql) == expected)
     #expect(SQLFormatter.format(expected) == expected)
+  }
+
+  @Test("Format says why it leaves the text unchanged, and stays silent when already formatted")
+  func reportsRefusals() {
+    let cases: [(String, SQLDialect, SQLFormatter.Refusal?)] = [
+      ("select 'a\\b' from t", .postgresql, .backslashString),
+      ("select /*!40001 SQL_NO_CACHE */ a from t", .mysql, .executableComment),
+      // Joined with `//`, the `delimiter` word would start a new DELIMITER line
+      ("select 1;\ndelimiter\n// x", .mysql, .tokensChanged),
+      ("SELECT a,\n       b\nFROM t", .postgresql, nil),
+    ]
+    for (sql, dialect, refusal) in cases {
+      let outcome = SQLFormatter.formatOutcome(sql, dialect: dialect)
+      #expect(outcome == SQLFormatter.Outcome(text: sql, refusal: refusal), "\(sql)")
+      #expect(SQLFormatter.format(sql, dialect: dialect) == sql, "\(sql)")
+    }
   }
 }

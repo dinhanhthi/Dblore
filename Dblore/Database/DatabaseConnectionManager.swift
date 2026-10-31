@@ -35,6 +35,9 @@ actor DatabaseConnectionManager {
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// SSH secret of an unremembered connection, owned only while this actor's session is active.
   var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  /// Vault secret of an unremembered connection, owned only while this actor's session is
+  /// active (cleared when it is forgotten)
+  var activeUnrememberedVaultSecret: VaultCredentialStore.ConnectionSecret?
   /// Post-disconnect script of the workspace's main connection (`connectRunningScripts`), run
   /// once that connection is closed (`disconnect`). Nil for side managers and plain connects; an
   /// internal reset (`reconnectWithActiveCertificate`) keeps it. Behind a lock, not the actor,
@@ -159,14 +162,24 @@ actor DatabaseConnectionManager {
   /// shared known-host store. Used by the default session factory and `testConnection`.
   nonisolated let sshHostKeyPolicy: SSHHostKeyPolicy
 
+  /// Takes this manager's Vault leases (`VaultLeasing.app` in the app)
+  nonisolated let vaultLeasing: VaultLeasing
+  /// The one Vault lease of a Vault connection, never in `config`: kept by an internal reset
+  /// of an equal key, revoked after the session closes on any other connect or disconnect.
+  /// Behind a lock, not the actor, so a quit can see it synchronously (`holdsLease`).
+  private nonisolated let leaseSlot = OSAllocatedUnfairLock<VaultLeaseSlot?>(initialState: nil)
+  /// Why the Vault lease of the last lost connection ended (cleared on connect / disconnect)
+  private(set) var lastLeaseEnd: VaultLeaseEnd?
+
   /// `sshHostKeyPrompt` asks the user to trust an unknown SSH host key; the default declines.
   init(
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
     readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true,
     scripts: ConnectionScriptRunner = .app, lockSource: LockRegistry = .shared,
-    servesMCP: Bool = false
+    servesMCP: Bool = false, vaultLeasing: VaultLeasing = .app
   ) {
+    self.vaultLeasing = vaultLeasing
     self.scripts = scripts
     self.lockSource = lockSource
     self.servesMCP = servesMCP
@@ -191,7 +204,8 @@ actor DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: MCPReadOnlySessionFactory(
         inner: SQLDumpSessionFactory(inner: sessionFactory)),
-      resetsSessionAfterCappedRead: false, lockSource: lockSource, servesMCP: servesMCP)
+      resetsSessionAfterCappedRead: false, lockSource: lockSource, servesMCP: servesMCP,
+      vaultLeasing: vaultLeasing)
   }
 
   /// `makeReadOnlySideManager` without the read-only wrapper, for an app read that sends its own
@@ -201,14 +215,16 @@ actor DatabaseConnectionManager {
   nonisolated func makeSnapshotSideManager() -> DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: SQLDumpSessionFactory(inner: sessionFactory),
-      resetsSessionAfterCappedRead: false, lockSource: lockSource, servesMCP: servesMCP)
+      resetsSessionAfterCappedRead: false, lockSource: lockSource, servesMCP: servesMCP,
+      vaultLeasing: vaultLeasing)
   }
 
   /// Connects the single-use `side` like this manager: `config` (this manager's when nil), its
   /// unremembered certificate and SSH secret. `identity` (`config` when nil) is the connection
   /// the certificate and SSH secret belong to, when `config` names another database (a MySQL
   /// side on another database of the server): its unremembered secrets, else its Keychain
-  /// items, are used for `config`'s accounts (both accounts include the database).
+  /// items, are used for `config`'s accounts (both accounts include the database). So is its
+  /// Vault secret: the side takes its own lease with it.
   func connectSideManager(
     _ side: DatabaseConnectionManager, config: ConnectionConfig? = nil,
     identity: ConnectionConfig? = nil
@@ -217,9 +233,14 @@ actor DatabaseConnectionManager {
     let identity = identity ?? config
     // This manager's lock source: the side's own is not consulted
     if let refusal = lockSource.refusal(for: config) { throw refusal }
-    try await side.reconnectWithActiveCertificate(
-      config: config, material: sideCertificate(identity: identity, config: config),
-      sshCredential: sideSSHCredential(identity: identity, config: config))
+    let vaultSecret =
+      config.vault == nil ? nil : sideVaultSecret(identity: identity, config: config)
+    defer { vaultSecret?.clear() }
+    try await VaultCredentialStore.$operationSecret.withValue(vaultSecret) {
+      try await side.reconnectWithActiveCertificate(
+        config: config, material: sideCertificate(identity: identity, config: config),
+        sshCredential: sideSSHCredential(identity: identity, config: config))
+    }
   }
 
   /// `identity`'s certificate under `config`'s account
@@ -261,7 +282,27 @@ actor DatabaseConnectionManager {
     return credential.map { .init(account: account, credential: $0) }
   }
 
+  /// `identity`'s Vault secret (its unremembered one, else its stored one) under `config`'s
+  /// account, still bound to `identity`'s destination: the side's config must match it.
+  private func sideVaultSecret(
+    identity: ConnectionConfig, config: ConnectionConfig
+  ) -> VaultCredentialStore.ScopedSecret? {
+    let secret: VaultSecret?
+    if let active = activeUnrememberedVaultSecret,
+      active.account == VaultCredentialStore.account(for: identity),
+      active.destination == VaultCredentialStore.destination(for: identity)
+    {
+      secret = active.secret
+    } else {
+      secret = VaultCredentialStore.load(for: identity, from: vaultLeasing.store)
+    }
+    return VaultCredentialStore.scoped(secret, for: config, boundTo: identity)
+  }
+
   deinit {
+    // A manager dropped without a disconnect revokes its lease from a task that does not
+    // retain the manager
+    if let slot = leaseSlot.withLock({ $0 }) { Task.detached { await slot.lease.revoke() } }
     sqliteFileAccessRelease?()
     sessionEventsContinuation.finish()
     sessionResetsContinuation.finish()
@@ -292,13 +333,19 @@ actor DatabaseConnectionManager {
   /// `connect` without the lock check, for this manager's own resets
   /// (`reconnectWithActiveCertificate`): a relock never drops a live session.
   /// `checkingOpenedFile`: refuse the locked file a bookmark resolves to (`connect` only).
+  /// A Vault connection's session gets the lease's username and password; `config` and the
+  /// published config keep the saved ones. `keepingLease` (internal resets only): a held lease
+  /// of an equal key is reused, never revoked; otherwise the held lease is revoked once the
+  /// current session is closed, and a new one is taken.
   private func connectUnchecked(
-    config: ConnectionConfig, extraAllowedPaths: [String], checkingOpenedFile: Bool = false
+    config: ConnectionConfig, extraAllowedPaths: [String], checkingOpenedFile: Bool = false,
+    keepingLease: Bool = false
   ) async throws {
     let config = config.resolvingBrakes(
       await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
+    let suppliedVaultSecret = VaultCredentialStore.currentSecret(for: config)
     await AppLogger.shared.info(
       "Attempting to connect to database: \(config.safeDisplayString)", category: "Database")
     // The Data Rewind store opens off this actor, long before the first edit reads it
@@ -308,7 +355,8 @@ actor DatabaseConnectionManager {
 
     // Disconnect if already connected. Nothing of the new connection (session, config,
     // epoch) is published until its session brakes are applied.
-    await disconnect()
+    let leaseKey = VaultLeaseKey(config)
+    await disconnect(keepingLeaseFor: keepingLease ? leaseKey : nil)
 
     var prepared: PreparedSQLiteOpen
     do {
@@ -321,20 +369,32 @@ actor DatabaseConnectionManager {
       prepared.release?()
       throw refusal
     }
-    let opening: any DatabaseSession
+    let lease: VaultLeaseManager?
+    let tookLease: Bool
     do {
-      opening = try await sessionFactory.makeSession(
-        config: prepared.config, extraAllowedPaths: extraAllowedPaths)
+      (lease, tookLease) = try await leaseForConnect(leaseKey, config: prepared.config)
     } catch {
       prepared.release?()
       throw error
     }
-    if servesMCP { (opening as? SQLiteSession)?.refuseLockedFilesForMCP() }
+    let sessionConfig = lease?.overlay(on: prepared.config) ?? prepared.config
+    let opening: any DatabaseSession
     do {
-      try await opening.open()
+      opening = try await withLeaseAccounts(sessionConfig, saved: prepared.config) {
+        let made = try await sessionFactory.makeSession(
+          config: sessionConfig, extraAllowedPaths: extraAllowedPaths)
+        if servesMCP { (made as? SQLiteSession)?.refuseLockedFilesForMCP() }
+        do {
+          try await made.open()
+        } catch {
+          await made.close()
+          throw error
+        }
+        return made
+      }
     } catch {
-      await opening.close()
       prepared.release?()
+      if tookLease, let lease { await revokeOwnLease(lease) }
       throw error
     }
     // A file picked with "New File…" exists only now: bookmark it so it reopens after relaunch
@@ -360,7 +420,17 @@ actor DatabaseConnectionManager {
         "Failed to apply session brakes: \(error.localizedDescription)", category: "Database")
       await opening.close()
       prepared.release?()
+      if tookLease, let lease { await revokeOwnLease(lease) }
       throw error
+    }
+    // A reset's kept lease may have ended while the new session opened (`vaultLeaseEnded`
+    // recorded why), or a newer connect or a disconnect took this connect's lease out of the
+    // slot (and revoked it): that session is closed, never published, and the reset reports
+    // the loss
+    if let lease, leaseSlot.withLock({ $0?.lease.leaseID }) != lease.leaseID {
+      await opening.close()
+      prepared.release?()
+      throw VaultLeaseError.leaseEnded
     }
 
     session = opening
@@ -369,14 +439,22 @@ actor DatabaseConnectionManager {
     if !config.rememberConnection {
       activeUnrememberedCertificate = suppliedCertificate
       activeUnrememberedSSHCredential = suppliedSSHCredential
+      activeUnrememberedVaultSecret = suppliedVaultSecret
     }
     sqliteFileAccessRelease = prepared.release
     sqliteReadOnlyReason = prepared.readOnlyReason
     attachWarnings = prepared.warnings + ((opening as? SQLiteSession)?.attachWarnings ?? [])
     connectionEpoch &+= 1
     lastSessionLoss = nil
+    lastLeaseEnd = nil
     // The UI learns about a session the server closed even when no query is running.
     observeSession(opening, epoch: connectionEpoch)
+    if tookLease, let lease {
+      let leaseID = lease.leaseID
+      lease.startRenewal { [weak self] reason in
+        await self?.vaultLeaseEnded(leaseID: leaseID, reason: reason)
+      }
+    }
 
     await AppLogger.shared.info(
       "Successfully connected to database: \(config.safeDisplayString)", category: "Database")
@@ -449,11 +527,15 @@ actor DatabaseConnectionManager {
 
   /// Internal reset of this connection. A fresh connect must use the active unremembered
   /// certificate and SSH secret rather than same-account Keychain items from an older saved
-  /// connection, and the same picked DuckDB files.
+  /// connection, and the same picked DuckDB files. A held Vault lease of the same connection is
+  /// kept (a capped-read or Cancel reset); a manager without one takes its own, with
+  /// `vaultSecret` (an unremembered connection's) when given, else the caller's scoped secret or
+  /// the stored one.
   func reconnectWithActiveCertificate(
     config: ConnectionConfig,
     material: ClientCertificateStoreFactory.ConnectionMaterial?,
-    sshCredential: SSHCredentialStoreFactory.ConnectionCredential? = nil
+    sshCredential: SSHCredentialStoreFactory.ConnectionCredential? = nil,
+    vaultSecret: VaultCredentialStore.ConnectionSecret? = nil
   ) async throws {
     let allowedPaths = duckDBAllowedPaths
     let scoped = material.map {
@@ -463,16 +545,23 @@ actor DatabaseConnectionManager {
       SSHCredentialStoreFactory.ScopedSSHCredential(
         account: $0.account, credential: $0.credential)
     }
+    let scopedVault =
+      vaultSecret.map(VaultCredentialStore.ScopedSecret.init)
+      ?? VaultCredentialStore.operationSecret
     defer {
       scoped?.clear()
       scopedSSH?.clear()
+      if vaultSecret != nil { scopedVault?.clear() }
     }
     // The reset keeps the connection: its post-disconnect script waits for the real close
     let keptScript = takePendingPostDisconnect()
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-          try await connectUnchecked(config: config, extraAllowedPaths: allowedPaths)
+          try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+            try await connectUnchecked(
+              config: config, extraAllowedPaths: allowedPaths, keepingLease: true)
+          }
         }
       }
     } catch {
@@ -485,10 +574,28 @@ actor DatabaseConnectionManager {
   /// Test connection without storing it.
   /// Performs a real connection AND executes a test query to verify credentials. A password
   /// command supplies the password, as on connect; no other script runs. A locked identity is
-  /// refused before the password command.
+  /// refused before the password command. A Vault connection probes with a lease of its own,
+  /// revoked after the probe: this manager's lease and session are left alone.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
     let config = try await withPasswordCommand(config)
+    guard config.vault != nil else { return try await probe(config) }
+    let lease = try await vaultLeasing.take(for: config)
+    let probing = lease.overlay(on: config)
+    do {
+      let probed = try await withLeaseAccounts(probing, saved: config) {
+        try await probe(probing)
+      }
+      await lease.revoke()
+      return probed
+    } catch {
+      await lease.revoke()
+      throw error
+    }
+  }
+
+  /// `SELECT 1` (or the engine's ping) on a session of its own, closed after.
+  private func probe(_ config: ConnectionConfig) async throws -> Bool {
     switch config.databaseType {
     case .postgresql:
       return try await PostgresSession(config: config, hostKeyValidator: sshHostKeyPolicy)
@@ -626,14 +733,142 @@ actor DatabaseConnectionManager {
     }
   }
 
+  // MARK: - Vault Lease
+
+  /// Whether this manager holds a Vault lease (revoked by `disconnect`).
+  nonisolated var holdsLease: Bool {
+    leaseSlot.withLock { $0 != nil }
+  }
+
+  /// A quit closes this manager: it has a post-disconnect script or a Vault lease.
+  nonisolated var closesAtQuit: Bool {
+    hasPendingPostDisconnect || holdsLease
+  }
+
+  /// The held Vault lease, if any
+  nonisolated var vaultLease: VaultLeaseManager? {
+    leaseSlot.withLock { $0?.lease }
+  }
+
+  /// The lease the session of a `key` connection uses: the held one when `disconnect` kept it
+  /// (same key), else a new one, held from now on. Nil for a connection without Vault.
+  /// `took`: this connect took it (revoked again when the connect fails).
+  private func leaseForConnect(
+    _ key: VaultLeaseKey?, config: ConnectionConfig
+  ) async throws -> (lease: VaultLeaseManager?, took: Bool) {
+    if let held = leaseSlot.withLock({ $0 }), held.key != key {
+      await revokeLease()
+    }
+    guard let key else { return (nil, false) }
+    if let held = vaultLease { return (held, false) }
+    let lease = try await vaultLeasing.take(for: config)
+    let replaced = leaseSlot.withLock { slot in
+      defer { slot = VaultLeaseSlot(key: key, lease: lease) }
+      return slot
+    }
+    // Another connect took one meanwhile: only the newest is held
+    if let replaced { await Self.revoke(replaced) }
+    return (lease, true)
+  }
+
+  /// A failed connect's own lease: out of the slot only while the slot still holds it (a newer
+  /// connect's lease stays), then revoked (again, when whoever replaced it revoked it already).
+  private func revokeOwnLease(_ lease: VaultLeaseManager) async {
+    leaseSlot.withLock { if $0?.lease.leaseID == lease.leaseID { $0 = nil } }
+    await lease.revoke()
+  }
+
+  /// Takes the held lease out of the slot (its renewal cancelled at once), then revokes it.
+  private func revokeLease() async {
+    if let slot = takeLeaseSlot() { await Self.revoke(slot) }
+  }
+
+  private nonisolated func takeLeaseSlot() -> VaultLeaseSlot? {
+    leaseSlot.withLock { slot in
+      defer { slot = nil }
+      slot?.lease.cancelRenewal()
+      return slot
+    }
+  }
+
+  private static func revoke(_ slot: VaultLeaseSlot) async {
+    await slot.lease.revoke()
+  }
+
+  /// Runs `body` with `saved`'s client certificate and SSH secret (the caller's scoped ones, else
+  /// the Keychain's) scoped under the accounts of `session`, the config with the lease username,
+  /// which both accounts include. `body` alone when `session` has no Vault source.
+  private func withLeaseAccounts<T: Sendable>(
+    _ session: ConnectionConfig, saved: ConnectionConfig, _ body: () async throws -> T
+  ) async throws -> T {
+    guard session.vault != nil else { return try await body() }
+    let material =
+      saved.clientCertificate == nil ? nil : ClientCertificateStoreFactory.load(for: saved)
+    let scoped = material.map {
+      ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: session), material: $0)
+    }
+    let scopedSSH = SSHCredentialStoreFactory.scoped(
+      SSHCredentialStoreFactory.load(for: saved), for: session)
+    defer {
+      scoped?.clear()
+      scopedSSH?.clear()
+    }
+    return try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+      try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+        try await body()
+      }
+    }
+  }
+
+  /// The renewal of lease `leaseID` reported its end. Applied only while it is still the held
+  /// lease: the session is forgotten and closed as `disconnect` does, then reported lost
+  /// (`SessionLostEvent`, `lastLeaseEnd`), never reconnected. In the middle of a reset (no
+  /// session) only the end is recorded: the reset sees the empty slot and reports the loss. A
+  /// Vault or network blip never gets here (it is retried until the lease's known expiry).
+  private func vaultLeaseEnded(leaseID: String, reason: VaultLeaseEnd.Reason) async {
+    let held = leaseSlot.withLock { slot -> VaultLeaseManager? in
+      guard let lease = slot?.lease, lease.leaseID == leaseID else { return nil }
+      slot = nil
+      return lease
+    }
+    guard let held else { return }
+    // An AppRole login token outlives its lease: revoked once the loss is reported, unless Vault
+    // refused it already
+    let revokesToken = reason != .tokenGone
+    guard session != nil else {
+      lastLeaseEnd = VaultLeaseEnd(reason: reason, epoch: connectionEpoch)
+      if revokesToken { await held.revokeOwnedToken() }
+      return
+    }
+    let event = SessionLostEvent(state: txState, userTxOpen: userTxOpen, epoch: connectionEpoch)
+    lastLeaseEnd = VaultLeaseEnd(reason: reason, epoch: event.epoch)
+    let forgotten = forgetConnection()
+    activeUnrememberedCertificate = nil
+    activeUnrememberedSSHCredential = nil
+    lastSessionLoss = event
+    await AppLogger.shared.warning("Vault lease ended: \(reason)", category: "Database")
+    await Self.closeForgotten(forgotten, includingConnection: true)
+    sessionEventsContinuation.yield(event)
+    if revokesToken { await held.revokeOwnedToken() }
+  }
+
   /// Stores the hook `disconnect` calls after the session closes. Passing nil clears it.
   func setSQLiteFileAccessRelease(_ release: (@Sendable () -> Void)?) {
     sqliteFileAccessRelease = release
   }
 
   /// Disconnect from database. The picked DuckDB files go with the connection. The main
-  /// connection's post-disconnect script runs after the close, without being awaited.
+  /// connection's post-disconnect script runs after the close, without being awaited. A Vault
+  /// lease is revoked once the session is closed (revoking first would leave an open session
+  /// that only fails its next query).
   func disconnect() async {
+    await disconnect(keepingLeaseFor: nil)
+  }
+
+  /// `disconnect`, keeping a held Vault lease of key `leaseKey` (an internal reset)
+  private func disconnect(keepingLeaseFor leaseKey: VaultLeaseKey?) async {
+    let lease = leaseSlot.withLock { $0?.key } == leaseKey ? nil : takeLeaseSlot()
     let postDisconnect = takePendingPostDisconnect()
     duckDBAllowedPaths = []
     activeUnrememberedCertificate = nil
@@ -643,11 +878,13 @@ actor DatabaseConnectionManager {
 
     let forgotten = forgetConnection()
     lastSessionLoss = nil
+    lastLeaseEnd = nil
 
     if forgotten.session != nil {
       await AppLogger.shared.info("Disconnecting from database", category: "Database")
       await Self.closeForgotten(forgotten, includingConnection: true)
     }
+    if let lease { await Self.revoke(lease) }
 
     // A statement that resumed during the awaits above must not leave a stale state
     if session == nil {
@@ -679,6 +916,7 @@ actor DatabaseConnectionManager {
       as: txState.endingKind == .commit || userCommitsInFlight > 0 ? nil : .discarded)
     session = nil
     config = nil
+    activeUnrememberedVaultSecret = nil
     sqliteReadOnlyReason = nil
     attachWarnings = []
     txState = .idle

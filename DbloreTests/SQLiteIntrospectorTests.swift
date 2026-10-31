@@ -262,6 +262,145 @@ struct SQLiteIntrospectorTests {
     }
   }
 
+  @Test("Chunked catalog read matches the one-chunk read on odd names; a broken view is empty")
+  func chunkedReadMatchesOneChunk() async throws {
+    try await withOddFixture { session in
+      let chunked = SQLiteSchemaIntrospector(chunkSize: 2)
+      let oneChunk = SQLiteSchemaIntrospector(chunkSize: 10_000)
+      let columns = try await chunked.allColumns(in: session)
+      let reference = try await oneChunk.allColumns(in: session)
+      #expect(Self.signatures(columns) == Self.signatures(reference))
+      let keys = try await chunked.foreignKeys(in: session)
+      let referenceKeys = try await oneChunk.foreignKeys(in: session)
+      #expect(keys.map(Self.signature) == referenceKeys.map(Self.signature))
+
+      #expect(
+        Set(columns.keys) == [
+          "main.Ünïcode tàble", "main.case child", "main.odd \"quoted\" name", "main.parent",
+          "main.with space", "main.broken", "main.odd view",
+        ])
+      #expect(columns["main.broken"]?.isEmpty == true)
+
+      let odd = try #require(columns["main.odd \"quoted\" name"])
+      #expect(
+        odd.map(\.name) == ["id", "e mail", "naïve 名前", "n", "double it", "stored", "x", "y"])
+      // Single-column, non-partial unique indexes only; the primary key is not "unique"
+      #expect(odd.filter(\.isUnique).map(\.name) == ["e mail"])
+      #expect(odd.filter(\.isGenerated).map(\.name) == ["double it", "stored"])
+      #expect(odd.allSatisfy { !$0.isHidden })
+      let space = try #require(columns["main.with space"])
+      #expect(
+        space.map { "\($0.name) \($0.isPrimaryKey) \($0.isUnique)" } == [
+          "k true false", "v false true",
+        ])
+      let view = try #require(columns["main.odd view"])
+      #expect(view.map(\.name) == ["id", "e mail", "double it"])
+      #expect(view.allSatisfy { !$0.isGenerated && !$0.isPrimaryKey })
+
+      #expect(
+        keys.map(Self.signature) == [
+          "main.case child(pb,pa) -> main.PARENT(b,a) noAction cascade",
+          "main.Ünïcode tàble(pb,pa) -> main.parent(b,a) noAction noAction",
+        ])
+    }
+  }
+
+  @Test("Cancelling the task between chunks throws CancellationError")
+  func cancellingBetweenChunksThrows() async throws {
+    let url = temporaryDatabaseURL()
+    defer { removeDatabase(at: url) }
+    // Query 4 is the first column read: the schema list and the two relation lists come first
+    let session = CancellingSession(
+      base: SQLiteSession(config: makeConfig(path: url.path)), cancelAt: 4)
+    try await session.open()
+    do {
+      for index in 0..<6 {
+        _ = try await session.command("CREATE TABLE t\(index) (id INTEGER)", binds: [])
+      }
+      let introspector = SQLiteSchemaIntrospector(chunkSize: 2)
+      let read = Task { try await introspector.allColumns(in: session) }
+      await #expect(throws: CancellationError.self) { try await read.value }
+      await session.close()
+    } catch {
+      await session.close()
+      throw error
+    }
+  }
+
+  /// Quotes, spaces and Unicode in names, a WITHOUT ROWID table, VIRTUAL and STORED generated
+  /// columns, a foreign key with no referenced column, one naming its table in another case,
+  /// and a view over a dropped table.
+  private func withOddFixture(
+    _ body: (SQLiteSession) async throws -> Void
+  ) async throws {
+    try await withDatabase { session in
+      let statements = [
+        """
+        CREATE TABLE parent (
+          a INTEGER NOT NULL,
+          b TEXT NOT NULL,
+          PRIMARY KEY (b, a)
+        ) WITHOUT ROWID
+        """,
+        """
+        CREATE TABLE "odd ""quoted"" name" (
+          id INTEGER PRIMARY KEY,
+          "e mail" TEXT UNIQUE,
+          "naïve 名前" TEXT,
+          n INTEGER,
+          "double it" INTEGER GENERATED ALWAYS AS (n * 2) VIRTUAL,
+          stored INTEGER GENERATED ALWAYS AS (n + 1) STORED,
+          x INTEGER,
+          y INTEGER,
+          UNIQUE (x, y)
+        )
+        """,
+        "CREATE UNIQUE INDEX \"partial x\" ON \"odd \"\"quoted\"\" name\" (x) WHERE x > 0",
+        "CREATE UNIQUE INDEX lower_name ON \"odd \"\"quoted\"\" name\" (lower(\"naïve 名前\"))",
+        """
+        CREATE TABLE "Ünïcode tàble" (
+          pb TEXT,
+          pa INTEGER,
+          FOREIGN KEY (pb, pa) REFERENCES parent
+        )
+        """,
+        """
+        CREATE TABLE "case child" (
+          pb TEXT,
+          pa INTEGER,
+          FOREIGN KEY (pb, pa) REFERENCES "PARENT" (b, a) ON DELETE CASCADE
+        )
+        """,
+        "CREATE TABLE \"with space\" (k TEXT PRIMARY KEY, v TEXT UNIQUE) WITHOUT ROWID",
+        "CREATE TABLE gone (id INTEGER)",
+        """
+        CREATE VIEW "odd view" AS SELECT id, "e mail", "double it" FROM "odd ""quoted"" name"
+        """,
+        "CREATE VIEW broken AS SELECT id FROM gone",
+        "DROP TABLE gone",
+      ]
+      for sql in statements {
+        _ = try await session.command(sql, binds: [])
+      }
+      try await body(session)
+    }
+  }
+
+  private static func signatures(_ columns: [String: [DatabaseColumn]]) -> [String: [String]] {
+    columns.mapValues { relation in
+      relation.map {
+        "\($0.name) \($0.type) \($0.isNullable) \($0.isPrimaryKey) \($0.isUnique) "
+          + "\($0.isHidden) \($0.isGenerated)"
+      }
+    }
+  }
+
+  private static func signature(_ key: ForeignKey) -> String {
+    "\(key.sourceSchema).\(key.sourceTable)(\(key.sourceColumns.joined(separator: ","))) -> "
+      + "\(key.targetSchema).\(key.targetTable)(\(key.targetColumns.joined(separator: ","))) "
+      + "\(key.onUpdate) \(key.onDelete)"
+  }
+
   private func withFixture(
     _ body: (SQLiteSession) async throws -> Void
   ) async throws {
@@ -351,4 +490,63 @@ struct SQLiteIntrospectorTests {
   private static func qualified(_ view: DatabaseView) -> String {
     view.qualifiedName
   }
+}
+
+/// Forwards to a SQLite session and cancels the calling task when its `cancelAt`-th query starts
+private final class CancellingSession: DatabaseSession, @unchecked Sendable {
+  private let base: SQLiteSession
+  private let cancelAt: Int
+  private let lock = NSLock()
+  private var queries = 0
+
+  init(base: SQLiteSession, cancelAt: Int) {
+    self.base = base
+    self.cancelAt = cancelAt
+  }
+
+  var capabilities: DatabaseCapabilities { base.capabilities }
+  var closeEvents: AsyncStream<SessionCloseReason> { base.closeEvents }
+
+  func open() async throws { try await base.open() }
+
+  func close() async { await base.close() }
+
+  func query(_ sql: String, binds: [SQLBindValue]) async throws -> SessionRowSource {
+    let count = lock.withLock {
+      queries += 1
+      return queries
+    }
+    if count == cancelAt {
+      withUnsafeCurrentTask { $0?.cancel() }
+    }
+    return try await base.query(sql, binds: binds)
+  }
+
+  func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
+    try await base.command(sql, binds: binds)
+  }
+
+  func openCursor(_ sql: String, binds: [SQLBindValue]) async throws -> SessionCursor {
+    try await base.openCursor(sql, binds: binds)
+  }
+
+  func fetch(_ cursor: SessionCursor, maxRows: Int) async throws -> SessionRowSource {
+    try await base.fetch(cursor, maxRows: maxRows)
+  }
+
+  func closeCursor(_ cursor: SessionCursor) async throws {
+    try await base.closeCursor(cursor)
+  }
+
+  func applySessionSettings(
+    statementTimeoutSeconds: Int, lockTimeoutSeconds: Int, idleTimeoutSeconds: Int
+  ) async throws {
+    try await base.applySessionSettings(
+      statementTimeoutSeconds: statementTimeoutSeconds, lockTimeoutSeconds: lockTimeoutSeconds,
+      idleTimeoutSeconds: idleTimeoutSeconds)
+  }
+
+  func interrupt() async { await base.interrupt() }
+
+  func formatError(_ error: Error) -> String { base.formatError(error) }
 }

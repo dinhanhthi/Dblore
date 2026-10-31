@@ -340,4 +340,143 @@ struct DbloreConnectionFileTests {
   func refusesUnknownFiles(data: Data, expected: DbloreConnectionFile.ReadError) {
     #expect(throws: expected) { try DbloreConnectionFile.decode(data) }
   }
+
+  // MARK: - Vault
+
+  /// A self-signed CA (CN "Dblore Test CA"), public test material.
+  private static let testCAPEM = """
+    -----BEGIN CERTIFICATE-----
+    MIIBhzCCAS2gAwIBAgIUEPslqtyOR/a/bYkjsklUZ6VYwQ0wCgYIKoZIzj0EAwIw
+    GTEXMBUGA1UEAwwORGJsb3JlIFRlc3QgQ0EwHhcNMjYxMDMwMDQyNzAzWhcNMzYx
+    MDI3MDQyNzAzWjAZMRcwFQYDVQQDDA5EYmxvcmUgVGVzdCBDQTBZMBMGByqGSM49
+    AgEGCCqGSM49AwEHA0IABHB8bf0QwU6i+RB/LZfixlrpxM8hBdIr5/UPZucOqCrY
+    FcFfnzh/gFWm6WYaXXdReZL9Uu3WyVH58p6h+ArLwJmjUzBRMB0GA1UdDgQWBBRX
+    z5i48grT6oMiYXOwVftBKRfvuDAfBgNVHSMEGDAWgBRXz5i48grT6oMiYXOwVftB
+    KRfvuDAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0gAMEUCIFrdfoQ7JUDJ
+    0rdedhomniodr54VqtqG9g8MuM5uS+lCAiEA5pjBsXeraaBppUfkVcwUQNBlLrQ1
+    QM28ZMTYNgtxVwI=
+    -----END CERTIFICATE-----
+    """
+  /// `openssl x509 -fingerprint -sha256` of `testCAPEM`
+  private static let testCAFingerprint =
+    "EE:58:97:81:98:7D:DF:39:21:35:66:BC:33:FB:85:F2:"
+    + "6E:51:23:2F:CB:EB:64:8B:CE:BD:72:76:5C:43:FB:E8"
+
+  /// `fullConfig` leased from Vault with `auth`, without scripts (they are never imported).
+  private static func vaultConfig(auth: VaultSource.AuthMethod = .token) -> ConnectionConfig {
+    var config = fullConfig()
+    config.preConnectScript = nil
+    config.passwordCommandScript = nil
+    config.postDisconnectScript = nil
+    config.scriptTimeoutSeconds = nil
+    config.vault = VaultSource(
+      address: "https://vault.example.com:8200", mount: "database", role: "sales-ro",
+      authMethod: auth, caPEM: testCAPEM)
+    return config
+  }
+
+  @Test(
+    "A Vault connection exports no secret and re-imports its Vault fields, CA left out",
+    arguments: [VaultSource.AuthMethod.token, .appRole])
+  func vaultRoundTrip(_ auth: VaultSource.AuthMethod) throws {
+    let config = Self.vaultConfig(auth: auth)
+    let data = try DbloreConnectionFile(
+      connections: [try #require(DbloreConnectionFile.Connection(config: config))]
+    ).encoded()
+    let keys = Self.keys(in: try JSONSerialization.jsonObject(with: data))
+    for secret in ["token", "roleId", "roleID", "secretId", "secretID", "password"] {
+      #expect(!keys.contains(secret), "found \(secret)")
+    }
+    #expect(try Self.json(data).contains("BEGIN CERTIFICATE"), "the public CA is written")
+
+    let imported = try #require(DbloreConnectionFile.decode(data).contents().connections.first)
+    var expected = config
+    expected.vault?.caPEM = nil
+    #expect(imported.config == expected)
+    #expect(imported.password == nil)
+    let secret = auth == .token ? "token" : "role id and secret id"
+    #expect(
+      imported.warnings.contains(
+        "Your Vault \(secret) will be sent to \"https://vault.example.com:8200\""))
+    #expect(
+      imported.warnings.contains(
+        "Vault CA certificate not imported (SHA-256 \(Self.testCAFingerprint)): if you trust "
+          + "it, choose it in the connection form."))
+    #expect(
+      imported.warnings.contains("Vault \(secret) not imported: enter it in the connection form."))
+  }
+
+  @Test("A Vault CA PEM over 16 KB refuses the file")
+  func oversizedVaultCARefused() throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.vaultConfig()))
+    entry.vault?.caPEM =
+      Self.testCAPEM + String(repeating: "x", count: DbloreConnectionFile.maxCAPEMLength)
+    let data = try DbloreConnectionFile(connections: [entry]).encoded()
+    #expect(throws: DbloreConnectionFile.ReadError.fieldTooLong) {
+      try DbloreConnectionFile.decode(data)
+    }
+  }
+
+  @Test("An export leaves out a Vault CA over 16 KB, so the file still imports")
+  func oversizedVaultCALeftOutOfExport() throws {
+    var config = Self.vaultConfig()
+    config.vault?.caPEM =
+      Self.testCAPEM + String(repeating: "x", count: DbloreConnectionFile.maxCAPEMLength)
+    let data = try DbloreConnectionFile(
+      connections: [try #require(DbloreConnectionFile.Connection(config: config))]
+    ).encoded()
+    let file = try DbloreConnectionFile.decode(data)
+    #expect(file.connections.first?.vault != nil)
+    #expect(file.connections.first?.vault?.caPEM == nil)
+  }
+
+  @Test(
+    "A Vault address, mount, role, auth method or CA a client must not use skips the entry",
+    arguments: [
+      ("address", "http://vault.example.com:8200"),
+      ("address", "http://127.0.0.1:8200"),
+      ("address", "https://vault.ex\u{00E4}mple.com"),
+      ("address", "https://user:pw@vault.example.com"),
+      ("address", "https://vault.example.com/?x=1"),
+      ("address", "https://vault.example.com/\u{202E}moc.evil"),
+      ("address", "https://-evil.example.com"),
+      ("address", "vault.example.com"),
+      ("mount", "../sys"),
+      ("mount", "sys/raw"),
+      ("mount", "Auth"),
+      ("mount", "data base"),
+      ("role", "a/../../sys"),
+      ("role", ""),
+      ("authMethod", "kerberos"),
+      ("caPEM", "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"),
+      ("caPEM", "not a certificate"),
+    ])
+  func vaultFieldsValidated(field: String, value: String) throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.vaultConfig()))
+    switch field {
+    case "address": entry.vault?.address = value
+    case "mount": entry.vault?.mount = value
+    case "role": entry.vault?.role = value
+    case "authMethod": entry.vault?.authMethod = value
+    default: entry.vault?.caPEM = value
+    }
+    guard case .failure(let skipped) = entry.importedConnection() else {
+      Issue.record("kept \(field) \(value)")
+      return
+    }
+    #expect(skipped.message == "Skipped \"Sales\": invalid Vault source.")
+  }
+
+  @Test("A Vault source without a CA imports with no CA warning, its address rebuilt")
+  func vaultWithoutCA() throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.vaultConfig()))
+    entry.vault?.caPEM = nil
+    entry.vault?.address = "  HTTPS://Vault.Example.com:8200/proxy  "
+    let imported = try entry.importedConnection().get()
+    #expect(imported.config.vault?.address == "https://vault.example.com:8200/proxy")
+    #expect(
+      imported.warnings.contains(
+        "Your Vault token will be sent to \"https://vault.example.com:8200/proxy\""))
+    #expect(!imported.warnings.contains { $0.contains("CA certificate") })
+  }
 }

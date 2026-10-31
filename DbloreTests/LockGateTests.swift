@@ -493,9 +493,8 @@ struct LockGateTests {
     }
   }
 
-  @Test(
-    "Saving onto the key of another engine's blocked locked row is refused until it is unlocked")
-  func saveOverLockedRowOfAnotherEngineKeepsLock() throws {
+  @Test("Saving onto the key of another engine's locked row is refused, also after its unlock")
+  func saveOntoLockedRowOfAnotherEngineIsRefused() throws {
     try Self.withDefaults { defaults in
       let registry = LockRegistry()
       let passwords = RecordingConnectionPasswordStore()
@@ -512,26 +511,22 @@ struct LockGateTests {
       let other = ConnectionConfig(
         databaseType: .sqlite, host: locked.host, port: locked.port, database: locked.database,
         username: locked.username)
-      // Overwriting the blocked row would drop its login's lock
-      #expect(
-        !SessionManager.saveConnection(
-          other, defaults: defaults, passwords: passwords, registry: registry))
-      #expect(
-        Self.rows(locked, defaults: defaults, registry: registry).map(\.config.databaseType) == [
-          .postgresql
-        ])
-      #expect(passwords.loadPassword(forKey: key) == "secret")
-
-      #expect(registry.grant(LockIdentity.all(locked), ifGeneration: registry.generation))
-      #expect(
-        SessionManager.saveConnection(
-          other, defaults: defaults, passwords: passwords, registry: registry))
-      let rows = Self.rows(locked, defaults: defaults, registry: registry)
-      #expect(rows.map(\.config.databaseType) == [.sqlite])
-      #expect(rows.first?.config.isLocked == true)
-      #expect(registry.isBlocked(LockIdentity(other)))
-      // The overwritten login's password does not stay behind under the new row's key
-      #expect(passwords.loadPassword(forKey: key) == nil)
+      let row = try #require(Self.rows(locked, defaults: defaults, registry: registry).first)
+      // Another connection's row and password are never replaced, blocked or unlocked
+      for unlocks in [false, true] {
+        if unlocks {
+          #expect(registry.grant(LockIdentity.all(locked), ifGeneration: registry.generation))
+        }
+        #expect(
+          !SessionManager.saveConnection(
+            other, defaults: defaults, passwords: passwords, registry: registry))
+        let rows = Self.rows(locked, defaults: defaults, registry: registry)
+        #expect(rows.map(\.id) == [row.id])
+        #expect(rows.map(\.config.databaseType) == [.postgresql])
+        #expect(rows.first?.config.isLocked == true)
+        #expect(passwords.loadPassword(forKey: key) == "secret")
+      }
+      #expect(registry.isLocked(LockIdentity(locked)))
     }
   }
 

@@ -14,6 +14,14 @@ struct WorkspaceSchemaVisualizerContent: View {
   let onBuildJoinQuery: ([DatabaseTable]) -> Void
   /// The diagram's selected tables in selection order (Shift- or Command-click adds or removes one)
   @State private var selectedNodeIds: [UUID] = []
+  /// The name (or new column) a diagram edit asks for
+  @State private var editPrompt: SchemaDiagramEditPrompt?
+  /// New Table... on a table header
+  @State private var createTable: CreateTableModel?
+  /// Preview SQL was clicked (the sheet also shows for the Safe Mode step)
+  @State private var showsPreview = false
+  /// A sheet over the window shows the toasts itself
+  @Environment(\.hidesToastOverlay) private var hidesToastOverlay
 
   var body: some View {
     VStack(spacing: 0) {
@@ -24,6 +32,52 @@ struct WorkspaceSchemaVisualizerContent: View {
       graphContent
     }
     .background(Color.appBackground)
+    // The tabs (and their toast overlay) are hidden under the diagram; the preview sheet shows
+    // the toasts itself while it is open
+    .overlay {
+      ToastOverlay().environment(\.hidesToastOverlay, hidesToastOverlay || isPreviewShown)
+    }
+    .sheet(item: $editPrompt) { prompt in
+      SchemaDiagramEditPromptSheet(
+        prompt: prompt,
+        onSubmit: { name, type, isNullable in
+          editPrompt = nil
+          stage(prompt, name: name, type: type, isNullable: isNullable)
+        },
+        onClose: { editPrompt = nil })
+    }
+    .sheet(item: $createTable) { model in
+      CreateTableSheet(
+        model: model,
+        tables: workspaceManager.databaseTables,
+        databasePassword: workspaceManager.workspace.connectionConfig?.password,
+        isConnected: workspaceManager.connectionState == .connected,
+        isShown: { [weak model] in model != nil && createTable === model },
+        onClose: { createTable = nil })
+    }
+    .sheet(isPresented: previewPresented) {
+      if let model = workspaceManager.schemaDiagramEditor {
+        SchemaDiagramPreviewSheet(
+          model: model,
+          databasePassword: workspaceManager.workspace.connectionConfig?.password,
+          isConnected: workspaceManager.connectionState == .connected,
+          isShown: { [weak model] in
+            model != nil && workspaceManager.schemaDiagramEditor === model
+          },
+          onApply: { workspaceManager.applySchemaDiagramChanges() },
+          onClose: { closePreview() })
+      }
+    }
+    // The edit model went with the connection: its preview does not come back with the next one
+    .onChange(of: workspaceManager.schemaDiagramEditor == nil) { _, isGone in
+      if isGone { showsPreview = false }
+    }
+    // A prompt names a table of the previous database: it goes with the connection
+    .onChange(of: workspaceManager.schemaConnectionEpoch) { editPrompt = nil }
+    // A schema load landed: an applied (or committed) diagram change lays the diagram out again
+    .onChange(of: workspaceManager.sidebarEntityIndex.id) {
+      Task { await workspaceManager.relayoutSchemaDiagramIfOwed() }
+    }
     // A selection made elsewhere (schema search, a reload) replaces the multi-selection
     .onChange(of: workspaceManager.selectedGraphNodeId, initial: true) { _, id in
       guard id.map({ !selectedNodeIds.contains($0) }) ?? true else { return }
@@ -106,7 +160,22 @@ struct WorkspaceSchemaVisualizerContent: View {
       }
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .help("Reset Layout to Default")
-      .disabled(workspaceManager.isLoadingSchemaGraph)
+      // Nothing laid out (the table picker shows): nothing to reset
+      .disabled(workspaceManager.isLoadingSchemaGraph || workspaceManager.schemaGraph == nil)
+
+      // Back to the table picker of a catalog above the diagram's cap (once a connect's schema
+      // landed: until then the tables are the previous database's)
+      if workspaceManager.schemaConnectionEpoch != nil,
+        workspaceManager.databaseTables.count > SchemaLayoutEngine.maxTables
+      {
+        Button(action: { workspaceManager.pickSchemaDiagramTables() }) {
+          Image(systemName: "checklist")
+        }
+        .buttonStyle(GhostButtonStyle(iconOnly: true))
+        .help("Pick Tables")
+        .accessibilityLabel("Pick Tables")
+        .disabled(workspaceManager.schemaGraph == nil)
+      }
 
       // Toggle table connection lines (ER diagram lines)
       Button(action: { workspaceManager.showTableConnections.toggle() }) {
@@ -242,7 +311,7 @@ struct WorkspaceSchemaVisualizerContent: View {
       // Show disconnected state first - this takes priority
       emptyStateView(message: "Connect to a database to visualize schema")
     } else if workspaceManager.isLoadingSchemaGraph {
-      loadingView
+      SchemaGraphLoadingView()
     } else if let graph = workspaceManager.schemaGraph {
       if graph.isEmpty {
         emptyStateView(message: "No tables found in database")
@@ -251,20 +320,14 @@ struct WorkspaceSchemaVisualizerContent: View {
       } else {
         graphView(graph: graph)
       }
+    } else if workspaceManager.schemaConnectionEpoch != nil,
+      workspaceManager.databaseTables.count > SchemaLayoutEngine.maxTables
+    {
+      // Only once a connect's schema landed: until then the tables are the previous database's
+      SchemaDiagramTablePicker(workspaceManager: workspaceManager)
     } else {
       emptyStateView(message: "Loading schema...")
     }
-  }
-
-  private var loadingView: some View {
-    VStack(spacing: Spacing.md) {
-      ProgressView()
-        .scaleEffect(1.0)
-      Text("Loading schema...")
-        .font(.body)
-        .foregroundColor(.foregroundMuted)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private func emptyStateView(message: String) -> some View {
@@ -328,7 +391,13 @@ struct WorkspaceSchemaVisualizerContent: View {
           },
           onViewCreated: { nsView in
             workspaceManager.schemaGraphNSView = nsView
-          }
+          },
+          onEditAction: { perform($0) },
+          editDisabledReason: workspaceManager.schemaDiagramEditDisabledReason,
+          foreignKeyDisabledReason: workspaceManager.schemaDiagramForeignKeyDisabledReason,
+          stagedTables: workspaceManager.schemaDiagramEditor?.touchedTables ?? [],
+          loadingTables: Set(
+            workspaceManager.schemaDiagramEditor?.loadingTables.map(\.qualifiedName) ?? [])
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -343,6 +412,13 @@ struct WorkspaceSchemaVisualizerContent: View {
           }
           .transition(.move(edge: .top).combined(with: .opacity))
         }
+      }
+
+      // Staged changes: count, Discard, Preview SQL and Apply
+      if let model = workspaceManager.schemaDiagramEditor, SchemaDiagramEditBar.isShown(model) {
+        SchemaDiagramEditBar(
+          model: model, onPreview: { showsPreview = true },
+          onApply: { workspaceManager.applySchemaDiagramChanges() })
       }
 
       // Footer legend
@@ -426,6 +502,86 @@ struct WorkspaceSchemaVisualizerContent: View {
     }
   }
 
+  // MARK: - Editing
+
+  private var isPreviewShown: Bool {
+    guard let model = workspaceManager.schemaDiagramEditor else { return false }
+    return showsPreview || model.confirmation.pendingConfirmation != nil
+  }
+
+  private var previewPresented: Binding<Bool> {
+    Binding(
+      get: { isPreviewShown },
+      set: { if !$0 { closePreview() } })
+  }
+
+  /// Closing the sheet cancels a Safe Mode step still open (a late Touch ID answer sends nothing)
+  private func closePreview() {
+    showsPreview = false
+    workspaceManager.schemaDiagramEditor?.cancelConfirmation()
+  }
+
+  private static func key(_ node: SchemaNode) -> SchemaDiagramEditModel.TableKey {
+    SchemaDiagramEditModel.TableKey(schema: node.table.schema, table: node.table.name)
+  }
+
+  /// A menu item or a foreign-key drop: a prompt or the Create Table sheet opens at once; the
+  /// rest is staged (the table shows loading while its structure is read)
+  private func perform(_ action: SchemaDiagramEditAction) {
+    switch action {
+    case .renameTable(let node):
+      editPrompt = .renameTable(Self.key(node))
+    case .addColumn(let node):
+      editPrompt = .addColumn(Self.key(node))
+    case .renameColumn(let node, let column):
+      editPrompt = .renameColumn(Self.key(node), column: column)
+    case .newTable(let schema):
+      openCreateTable(schema: schema)
+    case .dropColumn(let node, let column):
+      workspaceManager.stageSchemaDiagramEdit { await $0.dropColumn(column, in: Self.key(node)) }
+    case .dropForeignKey(let foreignKey):
+      workspaceManager.stageSchemaDiagramEdit { await $0.dropForeignKey(foreignKey) }
+    case .addForeignKey(let source, let column, let target, let targetColumn):
+      workspaceManager.stageSchemaDiagramEdit {
+        await $0.addForeignKey(
+          from: Self.key(source), column: column, to: Self.key(target), column: targetColumn)
+      }
+    }
+  }
+
+  private func stage(
+    _ prompt: SchemaDiagramEditPrompt, name: String, type: String, isNullable: Bool
+  ) {
+    switch prompt {
+    case .renameTable(let table):
+      workspaceManager.stageSchemaDiagramEdit { await $0.renameTable(table, to: name) }
+    case .renameColumn(let table, let column):
+      workspaceManager.stageSchemaDiagramEdit {
+        await $0.renameColumn(column, in: table, to: name)
+      }
+    case .addColumn(let table):
+      let column = StructureChange.NewColumn(
+        name: name, type: type, isNullable: isNullable, defaultExpression: nil)
+      workspaceManager.stageSchemaDiagramEdit { await $0.addColumn(column, to: table) }
+    }
+  }
+
+  /// The Create Table sheet for a table in `schema` (the diagram's schemas are the choices); a
+  /// created table lays the diagram out again once the schema reloaded
+  private func openCreateTable(schema: String) {
+    guard createTable == nil else { return }
+    let schemas = Set((workspaceManager.schemaGraph?.nodes ?? []).map(\.table.schema))
+      .union([schema]).sorted()
+    guard let model = workspaceManager.makeCreateTableModel(schema: schema, schemas: schemas)
+    else { return }
+    let applied = model.onApplied
+    model.onApplied = { [weak workspaceManager] pending in
+      workspaceManager?.oweSchemaDiagramRelayout()
+      await applied?(pending)
+    }
+    createTable = model
+  }
+
   // MARK: - Actions
 
   private func handleNodeDoubleClick(_ node: SchemaNode) {
@@ -442,6 +598,187 @@ struct WorkspaceSchemaVisualizerContent: View {
         workspaceManager.databaseTables[tableIndex].isExpanded = true
       }
     }
+  }
+}
+
+// MARK: - Loading
+
+/// In the diagram's place while it lays out. Its spinner fades in after 150 ms, so a fast
+/// layout never flashes it.
+private struct SchemaGraphLoadingView: View {
+  @State private var showsSpinner = false
+
+  var body: some View {
+    VStack(spacing: Spacing.md) {
+      ProgressView()
+        .opacity(showsSpinner ? 1 : 0)
+        .animation(.easeIn(duration: 0.15), value: showsSpinner)
+        // Opt out of the app-wide animation kill switch, only for the fade
+        .transaction(value: showsSpinner) { $0.disablesAnimations = false }
+      Text("Loading schema...")
+        .font(.body)
+        .foregroundColor(.foregroundMuted)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .task {
+      try? await Task.sleep(for: .milliseconds(150))
+      showsSpinner = !Task.isCancelled
+    }
+  }
+}
+
+// MARK: - Table Picker
+
+/// In the diagram's place when the catalog has more tables than one diagram lays out: a schema
+/// (only those within the cap) or up to `SchemaLayoutEngine.maxTables` checked tables
+private struct SchemaDiagramTablePicker: View {
+  @Bindable var workspaceManager: WorkspaceManager
+  /// Qualified names of the checked tables
+  @State private var checked: Set<String> = []
+  /// The schema whose tables were checked from the dropdown; nil once a row changes them
+  @State private var pickedSchema: String?
+  @State private var filter = ""
+  /// Positions in `databaseTables` the filter keeps, in array order; nil until the first result
+  @State private var shown: [Int]?
+  /// Each schema with its table count, in name order
+  @State private var schemas: [SchemaCount] = []
+
+  private static let cap = SchemaLayoutEngine.maxTables
+
+  struct SchemaCount: Hashable, Sendable {
+    let name: String
+    let tables: Int
+  }
+
+  /// The filter's input: a schema reload (new index) or a keystroke runs it again
+  private struct FilterKey: Equatable {
+    let index: UUID
+    let text: String
+  }
+
+  var body: some View {
+    let tables = workspaceManager.databaseTables
+    VStack(alignment: .leading, spacing: Spacing.md) {
+      Text(
+        "This schema has \(tables.count.formatted()) tables. The diagram shows up to \(Self.cap): pick a "
+          + "schema or tables."
+      )
+      .font(.body)
+      .foregroundColor(.foreground)
+
+      HStack(spacing: Spacing.sm) {
+        schemaDropdown
+        Spacer()
+        Text("\(checked.count) of \(Self.cap) tables checked")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .monospacedDigit()
+        Button("Uncheck All") {
+          checked = []
+          pickedSchema = nil
+        }
+        .buttonStyle(GhostButtonStyle())
+        .disabled(checked.isEmpty)
+        Button("Show Diagram") { workspaceManager.showSchemaDiagram(tables: checked) }
+          .buttonStyle(PrimaryButtonStyle())
+          .disabled(checked.isEmpty)
+      }
+
+      TextField("Filter tables", text: $filter)
+        .textFieldStyle(.plain)
+        .font(.structureField)
+        .autocorrectionDisabled()
+        .structureInputStyle()
+
+      Divider()
+
+      if let shown, shown.isEmpty {
+        Text("No table matches.")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        ScrollView {
+          // Rows are built as they scroll into view, never one per table up front
+          LazyVStack(alignment: .leading, spacing: Spacing.xs) {
+            ForEach(shown ?? [], id: \.self) { position in
+              if tables.indices.contains(position) {
+                tableRow(tables[position])
+              }
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+    }
+    .padding(Spacing.xl)
+    .frame(maxWidth: 640, maxHeight: .infinity)
+    .frame(maxWidth: .infinity)
+    .onAppear { checked = workspaceManager.schemaDiagramTables ?? [] }
+    .task(id: workspaceManager.sidebarEntityIndex.id) {
+      let counts = await Self.schemaCounts(workspaceManager.databaseTables)
+      if !Task.isCancelled { schemas = counts }
+    }
+    // Off the main actor; a newer keystroke cancels the run (its result is dropped)
+    .task(id: FilterKey(index: workspaceManager.sidebarEntityIndex.id, text: filter)) {
+      let result = await workspaceManager.sidebarEntityIndex.filterInBackground(
+        keywords: SidebarEntityFilter.keywords(in: filter), hidden: [], temporarySchemas: [])
+      guard !Task.isCancelled else { return }
+      shown = (result.listed.tables + result.temporary.tables).map(\.position).sorted()
+    }
+  }
+
+  private var schemaDropdown: some View {
+    CapsulePickerMenu(title: pickedSchema ?? "Pick a Schema") {
+      ForEach(schemas, id: \.self) { schema in
+        Toggle(
+          "\(schema.name) (\(schema.tables) tables)",
+          isOn: Binding(
+            get: { pickedSchema == schema.name },
+            set: { _ in pick(schema: schema.name) })
+        )
+        .disabled(schema.tables > Self.cap)
+      }
+    }
+    .accessibilityLabel("Schema")
+    .disabled(schemas.isEmpty)
+  }
+
+  private func tableRow(_ table: DatabaseTable) -> some View {
+    let name = table.qualifiedName
+    let isChecked = checked.contains(name)
+    return Toggle(
+      isOn: Binding(
+        get: { isChecked },
+        set: { on in
+          if on { checked.insert(name) } else { checked.remove(name) }
+          pickedSchema = nil
+        })
+    ) {
+      Text(verbatim: name)
+        .font(.monoMedium)
+        .foregroundColor(.foreground)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+    .toggleStyle(.checkbox)
+    // At the cap, only checked rows change
+    .disabled(!isChecked && checked.count >= Self.cap)
+  }
+
+  /// Checks every table of the schema (within the cap: larger schemas are disabled)
+  private func pick(schema: String) {
+    checked = Set(
+      workspaceManager.databaseTables.lazy.filter { $0.schema == schema }.map(\.qualifiedName))
+    pickedSchema = schema
+  }
+
+  @concurrent private nonisolated static func schemaCounts(
+    _ tables: [DatabaseTable]
+  ) async -> [SchemaCount] {
+    var counts: [String: Int] = [:]
+    for table in tables { counts[table.schema, default: 0] += 1 }
+    return counts.map { SchemaCount(name: $0.key, tables: $0.value) }.sorted { $0.name < $1.name }
   }
 }
 

@@ -2,10 +2,18 @@
 // Restore of a Dblore SQL dump (`SQLDumpWriter`) through the gate. `SQLRestorePlan` reads the
 // script once: the 64 MiB cap, the header engine, one split, then every statement is classified
 // and must be a statement shape the dump writer emits for that engine (leading tokens; a data
-// INSERT is read to its end and may hold only the literals the writer emits). PostgreSQL catalog
+// INSERT is read to its end and may hold only the literals the writer emits). A version 2 dump
+// may also drop, with `DROP <kind> IF EXISTS` and never CASCADE, the tables, views, sequences,
+// domains and types it creates later in the same script. PostgreSQL catalog
 // text prints plain `'...'` strings with a backslash (`'^\d+$'`): such a schema statement is
 // read as `standard_conforming_strings = on` reads it, and runs only once the session says on.
-// `executeGatedRestore` checks the plan against the merged policy before anything is sent.
+// `executeGatedRestore` checks the plan against the merged policy before anything is sent. A
+// restore that drops first reads the target's catalog, so a DROP removes only what the script
+// recreates: PostgreSQL partitions and owned sequences (which DROP TABLE takes along) and types
+// that are not enums (which DROP TYPE drops), DuckDB databases a schema name could reach and a session moved off
+// `main`, SQLite names in temp or an attached database (an unqualified DROP looks there), and
+// SQLite foreign keys (SQLite's DROP TABLE deletes the rows, which fires the ON DELETE actions
+// of tables the dump does not drop).
 // PostgreSQL and SQLite run it as one staged batch (atomic; inside the app transaction under
 // Protected mode). DuckDB runs it as one staged batch too, but has no SAVEPOINT, so it is
 // refused under Protected mode and with a transaction open. MySQL commits each schema change at
@@ -17,6 +25,9 @@ import Foundation
 
 /// What a restored statement is, for the confirmation and history
 nonisolated enum SQLRestoreStatementKind: String, Sendable, CaseIterable {
+  /// A version 2 dump's `DROP VIEW / TABLE / SEQUENCE / DOMAIN / TYPE IF EXISTS` of an object it
+  /// creates later (MySQL commits each one at once)
+  case drop
   /// CREATE of schemas, types, domains, sequences, tables, indexes and views, and the dump's
   /// `ALTER ... ADD CONSTRAINT` / `ALTER SEQUENCE ... OWNED BY`
   case schema
@@ -47,8 +58,8 @@ nonisolated struct SQLRestoreSummary: Sendable, Equatable {
 
   func count(_ kind: SQLRestoreStatementKind) -> Int { counts[kind, default: 0] }
 
-  /// Schema statements or triggers (history records the restore as a schema change)
-  var changesSchema: Bool { count(.schema) + count(.trigger) > 0 }
+  /// Schema statements, drops or triggers (history records the restore as a schema change)
+  var changesSchema: Bool { count(.schema) + count(.drop) + count(.trigger) > 0 }
 }
 
 /// How far a restore is
@@ -59,10 +70,13 @@ nonisolated struct SQLRestoreProgress: Sendable, Equatable {
 
 /// Why a restore was refused or did not finish cleanly. Every case but `sessionNotReset` and
 /// `restoreFailedSessionClosed` means nothing was executed (the `standardStrings` cases follow
-/// only the `SHOW standard_conforming_strings` read); those two closed the connection.
+/// only the `SHOW standard_conforming_strings` read, the drop target and foreign key cases only
+/// the catalog reads of `executeGatedRestore`); those two closed the connection.
 nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
   case tooLarge(bytes: Int)
   case headerMissing
+  /// The header is a Dblore dump's, of a version after 2
+  case newerDumpVersion
   case engineMismatch(dump: String, connection: String)
   case unsupportedEngine(String)
   case containsNUL
@@ -82,6 +96,31 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
   case standardStringsUnreadable(String)
   /// The connection was reset (reconnect, or a Cancel that reconnected) after the dump was read
   case connectionChanged
+  /// SQLite: the dump drops `dropped`, and `table`, which it does not drop, has a foreign key to
+  /// it with ON DELETE `action`, which the DROP's implicit DELETE would fire
+  case dropFiresForeignKeyAction(table: String, dropped: String, action: String)
+  /// SQLite: the target's foreign keys could not be read before a restore that drops tables
+  case foreignKeysUnreadable(String)
+  /// The target's objects could not be read before a restore that drops
+  case dropTargetsUnreadable(String)
+  /// SQLite: the dump drops `name`, which the connection has in its `database` schema (temp, or
+  /// an attached database while main has none), where an unqualified DROP would find it
+  case dropReachesOtherDatabase(name: String, database: String)
+  /// DuckDB: the dump drops in the schema `name`, which also names a database of the session
+  case dropNamesDuckDBDatabase(name: String)
+  /// DuckDB: the session's current schema is not `main` of its own database (USE, SET schema or
+  /// SET search_path ran), where the dump's unqualified objects would not land in `main`
+  case duckdbSessionNotAtMain(schema: String, searchPath: String)
+  /// PostgreSQL: DROP TABLE `table` also removes `object` (its `objectKind`: a partition or
+  /// child table, or a sequence it owns), which the dump does not drop and recreate
+  case dropTakesAlong(table: String, object: String, objectKind: String)
+  /// PostgreSQL: the dump drops the type `name` with DROP TYPE, and the target's `name` is a
+  /// domain, which DROP TYPE removes too
+  case dropTypeIsDomain(name: String)
+  /// PostgreSQL: the dump drops the type `name` with DROP TYPE (it writes only enums), and the
+  /// target's `name` is another kind of type (range, composite, base), which DROP TYPE removes
+  /// with what goes along with it (a range's multirange and constructors)
+  case dropTypeNotEnum(name: String)
 
   var errorDescription: String? {
     switch self {
@@ -91,6 +130,8 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .headerMissing:
       "This file is not a Dblore SQL dump: its first line is not \""
         + SQLRestorePlan.headerPrefix + "<engine> ...\". Nothing was executed."
+    case .newerDumpVersion:
+      "This dump was made by a newer Dblore; update Dblore to restore it. Nothing was executed."
     case .engineMismatch(let dump, let connection):
       "This dump was made from a \(dump) database and cannot be restored into \(connection). "
         + "Nothing was executed."
@@ -123,6 +164,37 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .connectionChanged:
       "The connection was reset after this dump was read. Open the dump again to restore it. "
         + "Nothing was executed."
+    case .dropFiresForeignKeyAction(let table, let dropped, let action):
+      "This dump drops the table \"\(dropped)\", and \"\(table)\", which the dump does not "
+        + "drop, has a foreign key to it with ON DELETE \(action). SQLite's DROP TABLE deletes "
+        + "the rows first, which would run that action on \"\(table)\". Nothing was executed."
+    case .foreignKeysUnreadable(let reason):
+      "Could not read this database's foreign keys, which decide whether dropping the dump's "
+        + "tables would change other tables (\(reason)). Nothing was executed."
+    case .dropTargetsUnreadable(let reason):
+      "Could not read this database's objects, which decide what the dump's DROP statements "
+        + "would remove (\(reason)). Nothing was executed."
+    case .dropReachesOtherDatabase(let name, let database):
+      "This dump drops \"\(name)\", and this connection also has \"\(name)\" in its "
+        + "\"\(database)\" database. SQLite's DROP looks in temp first, then main, then the "
+        + "attached databases, so it could remove that one instead. Nothing was executed."
+    case .dropNamesDuckDBDatabase(let name):
+      "This dump drops objects of the schema \"\(name)\", which is also the name of a database "
+        + "in this session, where DuckDB could find them instead. Nothing was executed."
+    case .duckdbSessionNotAtMain(let schema, let searchPath):
+      "This session's current schema is \"\(schema)\" with the search path \"\(searchPath)\" "
+        + "(set by USE, SET schema or SET search_path), so the dump's objects would not land in "
+        + "the main schema of this database. Reconnect, then restore. Nothing was executed."
+    case .dropTakesAlong(let table, let object, let objectKind):
+      "This dump drops the table \"\(table)\", and PostgreSQL's DROP TABLE also removes its "
+        + "\(objectKind) \"\(object)\", which the dump does not recreate. Nothing was executed."
+    case .dropTypeIsDomain(let name):
+      "This dump drops the type \"\(name)\", which is a domain in this database: DROP TYPE "
+        + "would remove that domain. Nothing was executed."
+    case .dropTypeNotEnum(let name):
+      "This dump drops the type \"\(name)\", which is not an enum in this database: DROP TYPE "
+        + "would remove that type and what goes with it, which the dump does not recreate. "
+        + "Nothing was executed."
     }
   }
 }
@@ -135,6 +207,9 @@ nonisolated struct SQLRestorePlan: Sendable {
   static let maxScriptBytes = 64 * 1024 * 1024
   /// First line of every dump (`SQLDumpAssembler.header`), followed by the engine's raw value
   static let headerPrefix = "-- Dblore SQL dump 1 engine="
+  /// First line of a dump that holds a DROP (version 2). Builds that read only version 1 refuse
+  /// it at the header, so no DROP reaches them.
+  static let dropHeaderPrefix = "-- Dblore SQL dump 2 engine="
   /// Why a DuckDB restore is refused under Protected mode
   static let duckdbProtectedModeMessage =
     "Turn Protected mode off for this connection to restore a DuckDB dump: DuckDB has no "
@@ -163,10 +238,31 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// schema statement with a plain string holding a backslash), or nil. `executeGatedRestore`
   /// runs the plan only after the session reports on.
   let standardStringsStatement: Int?
+  /// SQLite: the tables the script drops (`objectKey` parts), whose foreign keys
+  /// `executeGatedRestore` checks before the batch
+  let droppedSQLiteTables: Set<[UInt8]>
+  /// SQLite: the tables and views the script drops (`objectKey` parts), which
+  /// `executeGatedRestore` checks only main holds (`checkSQLiteDropTargets`)
+  let droppedSQLiteNames: Set<[UInt8]>
+  /// DuckDB: the schemas (first name parts, ASCII lowercased) the script drops in, which
+  /// `executeGatedRestore` checks against the session's databases (`checkDuckDBDropTargets`)
+  let droppedDuckDBSchemas: Set<String>
+  /// PostgreSQL: the dropped tables and types `executeGatedRestore` checks in the target
+  /// (`checkPostgresDropTargets`), nil when the script drops neither
+  let postgresDrops: PostgresDrops?
+
+  /// What a PostgreSQL script drops and creates, as `objectKey` parts (`[schema, name]`)
+  struct PostgresDrops: Sendable, Equatable {
+    var tables: Set<[[UInt8]]>
+    var types: Set<[[UInt8]]>
+    /// Every sequence the script creates
+    var createdSequences: Set<[[UInt8]]>
+  }
 
   /// - Throws: `SQLRestoreError` (too large, header missing or another engine, a NUL in a
-  ///   SQLite or DuckDB script, or the first statement a dump never writes);
-  ///   `CancellationError` when the task planning it is cancelled
+  ///   SQLite or DuckDB script, the first statement a dump never writes, or a DROP of an object
+  ///   the script does not create after it); `CancellationError` when the task planning it is
+  ///   cancelled
   init(script: String, engine: DatabaseType) throws {
     let bytes = script.utf8.count
     guard bytes <= Self.maxScriptBytes else { throw SQLRestoreError.tooLarge(bytes: bytes) }
@@ -174,7 +270,7 @@ nonisolated struct SQLRestorePlan: Sendable {
     case .postgresql, .mysql, .sqlite, .duckdb: break
     case .mongodb: throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
-    try Self.checkHeader(script, engine: engine)
+    let version = try Self.checkHeader(script, engine: engine)
     // Both read statements as C strings: a NUL would cut the statement the whitelist approved
     if engine == .sqlite || engine == .duckdb, script.unicodeScalars.contains("\0") {
       throw SQLRestoreError.containsNUL
@@ -186,25 +282,54 @@ nonisolated struct SQLRestorePlan: Sendable {
     var standardStrings: Int?
     // DuckDB: the sequences the file created so far (`checkDuckDBSequences`)
     var sequences = Set<[String]>()
+    // Each DROP's targets, checked once the loop ends against the last CREATE of each object
+    var drops: [(index: Int, target: DropTarget)] = []
+    var lastCreated: [ObjectKey: Int] = [:]
     for piece in SQLTokenizer(dialect: dialect).splitStatements(script) {
       // A file read cancelled while it is planned stops here
       try Task.checkCancellation()
       guard let classified = SQLStatementClassifier.classifyStatement(piece, dialect: dialect)
       else { continue }
-      let accepted = try Self.accept(classified, engine: engine, index: statements.count)
+      let accepted = try Self.accept(
+        classified, engine: engine, version: version, index: statements.count)
       if engine == .duckdb, accepted.kind == .schema {
         try Self.checkDuckDBSequences(
           classified.text, created: &sequences, index: statements.count)
       }
+      drops += accepted.drops.map { (statements.count, $0) }
+      if let created = accepted.created { lastCreated[created] = statements.count }
       if accepted.standardStrings, standardStrings == nil { standardStrings = statements.count }
       statements.append(accepted.statement)
       kinds.append(accepted.kind)
       options += accepted.options
     }
+    // A DROP only clears the way for an object of the same kind and name created after it
+    for drop in drops where lastCreated[drop.target.key, default: -1] < drop.index {
+      throw Self.refusal(
+        drop.index,
+        "a Dblore dump drops only what it creates after the DROP, and this script never creates "
+          + "\(drop.target.key.kind) \(drop.target.name) after it")
+    }
     self.engine = engine
     self.statements = statements
     self.kinds = kinds
     standardStringsStatement = standardStrings
+    droppedSQLiteTables =
+      engine == .sqlite
+      ? Set(drops.filter { $0.target.key.kind == "TABLE" }.map { $0.target.key.parts[0] }) : []
+    droppedSQLiteNames = engine == .sqlite ? Set(drops.map { $0.target.key.parts[0] }) : []
+    droppedDuckDBSchemas =
+      engine == .duckdb
+      ? Set(drops.map { String(decoding: $0.target.key.parts[0], as: UTF8.self) }) : []
+    let dropped = { (kind: String) in
+      Set(drops.filter { $0.target.key.kind == kind }.map(\.target.key.parts))
+    }
+    let postgres = PostgresDrops(
+      tables: dropped("TABLE"), types: dropped("TYPE"),
+      createdSequences: Set(lastCreated.keys.filter { $0.kind == "SEQUENCE" }.map(\.parts)))
+    postgresDrops =
+      engine == .postgresql && !(postgres.tables.isEmpty && postgres.types.isEmpty)
+      ? postgres : nil
     summary = SQLRestoreSummary(
       engine: engine, statementCount: statements.count,
       counts: kinds.reduce(into: [:]) { $0[$1, default: 0] += 1 }, serverVersionOptions: options)
@@ -212,11 +337,20 @@ nonisolated struct SQLRestorePlan: Sendable {
 
   // MARK: - Header
 
-  /// The first line must be `headerPrefix` + `engine.rawValue`, then a space or the line end.
-  /// Compared scalar by scalar (no canonical equivalence).
-  private static func checkHeader(_ script: String, engine: DatabaseType) throws {
+  /// The first line must be `headerPrefix` (version 1) or `dropHeaderPrefix` (version 2) +
+  /// `engine.rawValue`, then a space or the line end. Compared scalar by scalar (no canonical
+  /// equivalence). Returns the version. A later version's header (`isNewerHeader`) is refused
+  /// as such.
+  private static func checkHeader(_ script: String, engine: DatabaseType) throws -> Int {
     let line = script.unicodeScalars.prefix { $0 != "\n" && $0 != "\r" }
-    guard line.starts(with: headerPrefix.unicodeScalars) else {
+    let version: Int
+    if line.starts(with: headerPrefix.unicodeScalars) {
+      version = 1
+    } else if line.starts(with: dropHeaderPrefix.unicodeScalars) {
+      version = 2
+    } else if isNewerHeader(line) {
+      throw SQLRestoreError.newerDumpVersion
+    } else {
       throw SQLRestoreError.headerMissing
     }
     let name = line.dropFirst(headerPrefix.unicodeScalars.count).prefix { $0 != " " }
@@ -225,6 +359,19 @@ nonisolated struct SQLRestorePlan: Sendable {
       throw SQLRestoreError.engineMismatch(
         dump: String(String.UnicodeScalarView(name)), connection: engine.rawValue)
     }
+    return version
+  }
+
+  /// `-- Dblore SQL dump <N> engine=` with N, ASCII digits, above 2
+  private static func isNewerHeader(_ line: Substring.UnicodeScalarView) -> Bool {
+    let lead = "-- Dblore SQL dump ".unicodeScalars
+    guard line.starts(with: lead) else { return false }
+    let rest = line.dropFirst(lead.count)
+    let digits = rest.prefix { ("0"..."9").contains($0) }
+    guard !digits.isEmpty, rest.dropFirst(digits.count).starts(with: " engine=".unicodeScalars)
+    else { return false }
+    let number = digits.drop { $0 == "0" }
+    return number.count > 1 || (number.first.map { $0 > "2" } ?? false)
   }
 
   // MARK: - Accepted statements
@@ -235,6 +382,10 @@ nonisolated struct SQLRestorePlan: Sendable {
     var options: [String] = []
     /// Read with `standard_conforming_strings = on` (`standardConformingSchema`)
     var standardStrings = false
+    /// The object a schema statement creates (`createdObject`)
+    var created: ObjectKey?
+    /// The objects a DROP names (`dropTargets`)
+    var drops: [DropTarget] = []
   }
 
   /// Only the statement shapes `SQLDumpWriter` writes for `engine`, matched on their leading
@@ -243,10 +394,12 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// `SELECT pg_catalog.setval('<name>', <n>, true | false)`, a SQLite `CREATE TRIGGER` the
   /// splitter kept whole, a MySQL CREATE TABLE whose only unknown parts are server-version
   /// options, and a PostgreSQL schema statement unknown only for a plain string with a backslash
-  /// (`standardConformingSchema`). Anything else (roles, users, grants, extensions, functions, DROP, UPDATE, other
-  /// DELETEs, reads, SET, transaction control, utilities, other PRAGMAs) is refused.
+  /// (`standardConformingSchema`). A version 2 dump may also hold the DROPs of `dropTargets`
+  /// (the plan then checks each target is created after it). Anything else (roles, users,
+  /// grants, extensions, functions, other DROPs, UPDATE, other DELETEs, reads, SET, transaction
+  /// control, utilities, other PRAGMAs) is refused.
   private static func accept(
-    _ statement: ClassifiedStatement, engine: DatabaseType, index: Int
+    _ statement: ClassifiedStatement, engine: DatabaseType, version: Int, index: Int
   ) throws -> Accepted {
     let dialect = engine.dialect
     let tokens = tokens(statement.text, dialect)
@@ -257,6 +410,16 @@ nonisolated struct SQLRestorePlan: Sendable {
     case .dml:
       if let reason = dataRefusal(tokens, engine: engine) { throw refusal(index, reason) }
       return Accepted(statement: statement, kind: .data)
+    case .ddl where tokens.first?.isWord("DROP") == true:
+      guard version >= 2 else { throw refusal(index, notWritten(tokens)) }
+      guard let targets = dropTargets(tokens, engine: engine) else {
+        throw refusal(
+          index,
+          "a Dblore dump drops only with DROP "
+            + droppedKinds(engine).joined(separator: " / ")
+            + " IF EXISTS and the names it writes, never with CASCADE or RESTRICT")
+      }
+      return Accepted(statement: statement, kind: .drop, drops: targets)
     case .ddl where engine == .sqlite && startsWithPragma(statement.text):
       guard tokens == sqlitePragmaTokens else {
         throw refusal(index, "only the PRAGMA defer_foreign_keys = ON of a dump is restored")
@@ -266,7 +429,8 @@ nonisolated struct SQLRestorePlan: Sendable {
       guard isDumpSchema(tokens, engine: engine) else {
         throw refusal(index, notWritten(tokens))
       }
-      return Accepted(statement: statement, kind: .schema)
+      return Accepted(
+        statement: statement, kind: .schema, created: createdObject(tokens, engine: engine))
     case .read where engine == .postgresql && isSetval(tokens):
       return Accepted(statement: statement, kind: .sequenceValue)
     case .sessionSet, .utility:
@@ -283,12 +447,17 @@ nonisolated struct SQLRestorePlan: Sendable {
           "unrecognized statement (MySQL version comments /*!...*/ are restored only inside "
             + "CREATE TABLE)")
       }
-      return Accepted(statement: with(statement, kind: .ddl), kind: .schema, options: options)
+      return Accepted(
+        statement: with(statement, kind: .ddl), kind: .schema, options: options,
+        created: createdObject(tokens, engine: engine))
     case .unknown where engine == .postgresql:
       guard let read = standardConformingSchema(statement.text) else {
         throw refusal(index, describe(statement.kind))
       }
-      return Accepted(statement: read, kind: .schema, standardStrings: true)
+      // The name comes before any string, so the tokens read either way agree there
+      return Accepted(
+        statement: read, kind: .schema, standardStrings: true,
+        created: createdObject(tokens, engine: engine))
     default:
       throw refusal(index, describe(statement.kind))
     }
@@ -589,6 +758,130 @@ nonisolated extension SQLRestorePlan {
     case .mongodb:
       return false
     }
+  }
+
+  // MARK: - Drops
+
+  /// An object a DROP names or a CREATE makes, as the engine tells names apart (`objectKey`)
+  fileprivate struct ObjectKey: Hashable, Sendable {
+    /// TABLE, VIEW, SEQUENCE, DOMAIN or TYPE (a SQLite virtual table is a TABLE)
+    let kind: String
+    /// Name parts as UTF-8 bytes: compared byte for byte, never by canonical equivalence
+    let parts: [[UInt8]]
+  }
+
+  /// A DROP's target and its name as written, for a refusal
+  fileprivate struct DropTarget: Sendable {
+    let key: ObjectKey
+    let name: String
+  }
+
+  /// The kinds a dump of `engine` drops (`SQLDumpDDL`)
+  fileprivate static func droppedKinds(_ engine: DatabaseType) -> [String] {
+    switch engine {
+    case .postgresql: ["VIEW", "TABLE", "SEQUENCE", "DOMAIN", "TYPE"]
+    case .duckdb: ["VIEW", "TABLE", "SEQUENCE", "TYPE"]
+    case .mysql, .sqlite: ["VIEW", "TABLE"]
+    case .mongodb: []
+    }
+  }
+
+  /// `DROP <kind> IF EXISTS <name>` with nothing after it (PostgreSQL TABLE: `<name>, ...`), as
+  /// `SQLDumpDDL` writes it, for a kind of `droppedKinds` and names `objectKey` can compare: its
+  /// targets. Nil for anything else: no CASCADE, RESTRICT, TEMPORARY or MATERIALIZED, no DROP
+  /// without IF EXISTS, no list on another kind or engine.
+  fileprivate static func dropTargets(
+    _ tokens: [SQLToken], engine: DatabaseType
+  ) -> [DropTarget]? {
+    var shape = ShapeReader(tokens)
+    guard shape.words("DROP"), let kind = shape.anyOf(droppedKinds(engine)),
+      shape.words("IF", "EXISTS")
+    else { return nil }
+    var targets: [DropTarget] = []
+    repeat {
+      guard let parts = shape.nameParts(),
+        let key = objectKey(kind, parts, engine: engine, creating: false)
+      else { return nil }
+      targets.append(DropTarget(key: key, name: parts.map(\.text).joined(separator: ".")))
+    } while engine == .postgresql && kind == "TABLE" && shape.symbol(",")
+    return shape.atEnd ? targets : nil
+  }
+
+  /// The object a dump's schema statement creates, for the kinds a dump drops: `CREATE TABLE`
+  /// (SQLite also `VIRTUAL TABLE`), `VIEW` (MySQL after `ALGORITHM = ...` and `SQL SECURITY
+  /// ...`), `SEQUENCE`, `DOMAIN` and `TYPE`, by `objectKey`. Nil for anything else (schemas,
+  /// indexes, triggers, ALTER).
+  fileprivate static func createdObject(_ tokens: [SQLToken], engine: DatabaseType) -> ObjectKey? {
+    var shape = ShapeReader(tokens)
+    guard shape.words("CREATE") else { return nil }
+    if engine == .mysql {
+      if shape.words("ALGORITHM"), !(shape.symbol("=") && shape.anyWord()) { return nil }
+      if shape.words("SQL", "SECURITY"), !shape.anyWord() { return nil }
+    }
+    if engine == .sqlite, shape.words("VIRTUAL") {
+      guard shape.peek("TABLE") else { return nil }
+    }
+    guard let kind = shape.anyOf(droppedKinds(engine)) else { return nil }
+    if engine == .sqlite { _ = shape.words("IF", "NOT", "EXISTS") }
+    guard let parts = shape.nameParts() else { return nil }
+    return objectKey(kind, parts, engine: engine, creating: true)
+  }
+
+  /// `parts` as `engine` tells names apart, or nil when the name cannot be compared safely
+  /// (a nil DROP target is refused; a nil CREATE never matches one):
+  /// - PostgreSQL: `<schema>.<name>` (the writer qualifies every object), not in a system
+  ///   schema (`isSystemSchema`); an unquoted part folds ASCII letters to lowercase, a quoted
+  ///   one is exact. An unquoted part with a non-ASCII letter is left out: a single-byte server
+  ///   encoding folds those too. So is a part over 63 UTF-8 bytes: the server truncates it, so
+  ///   the catalog's name would never match the key. The limit is measured in UTF-8; on a
+  ///   server whose encoding is not UTF8 and stores a character in more bytes, the cut can
+  ///   fall elsewhere (rare).
+  /// - MySQL: one backquoted part, exact. Unquoted names are left out: the tokenizer drops
+  ///   their case, which `lower_case_table_names` may or may not ignore.
+  /// - SQLite: one part, ASCII case-insensitive, quoted or not, as SQLite compares names.
+  /// - DuckDB: `<schema>.<name>`, ASCII case-insensitive, never a system name
+  ///   (`isDuckDBSystemName`); a CREATE's one-part name is in `main` (the catalog leaves `main`
+  ///   out), a DROP's must be qualified.
+  fileprivate static func objectKey(
+    _ kind: String, _ parts: [SQLToken], engine: DatabaseType, creating: Bool
+  ) -> ObjectKey? {
+    func folded(_ token: SQLToken) -> [UInt8] {
+      Array(SQLTokenizer.asciiLowercased(token.text).utf8)
+    }
+    let key: [[UInt8]]
+    switch engine {
+    case .postgresql:
+      guard parts.count == 2, !isSystemSchema(parts[0]) else { return nil }
+      var exact: [[UInt8]] = []
+      for part in parts {
+        if part.kind == .quotedIdentifier {
+          exact.append(Array(part.text.utf8))
+        } else {
+          guard part.asciiText != nil else { return nil }
+          exact.append(folded(part))
+        }
+        // The server truncates a longer name (NAMEDATALEN - 1), the catalog holds the cut one
+        guard exact[exact.count - 1].count <= 63 else { return nil }
+      }
+      key = exact
+    case .mysql:
+      guard parts.count == 1, parts[0].kind == .quotedIdentifier else { return nil }
+      key = [Array(parts[0].text.utf8)]
+    case .sqlite:
+      guard parts.count == 1 else { return nil }
+      key = [folded(parts[0])]
+    case .duckdb:
+      if parts.count == 2, !isDuckDBSystemName(parts[0]) {
+        key = parts.map(folded)
+      } else if creating, parts.count == 1 {
+        key = [Array("main".utf8), folded(parts[0])]
+      } else {
+        return nil
+      }
+    case .mongodb:
+      return nil
+    }
+    return ObjectKey(kind: kind, parts: key)
   }
 
   /// The DuckDB shapes of `isDumpSchema`
@@ -896,6 +1189,102 @@ nonisolated extension SQLRestorePlan {
   }
 }
 
+// MARK: - Drop targets in the database
+
+/// Before a restore that drops, the target's catalog decides whether each DROP removes only what
+/// the script recreates. Pure: `executeGatedRestore` reads the rows and these decide.
+nonisolated extension SQLRestorePlan {
+  private static func unreadable() -> SQLRestoreError {
+    .dropTargetsUnreadable("unexpected answer")
+  }
+
+  /// SQLite: an unqualified DROP looks in temp, then main, then the attached databases, and
+  /// the script's CREATE goes into main. `objects` are the tables and views of every schema
+  /// (`schema`, `name`). Refused when a dropped name is in temp (it shadows main), or in another
+  /// database while main has none. Names compare ASCII case-insensitively, as SQLite does.
+  /// - Throws: `SQLRestoreError.dropReachesOtherDatabase`
+  static func checkSQLiteDropTargets(
+    _ objects: [(schema: String, name: String)], dropped: Set<[UInt8]>
+  ) throws {
+    func folded(_ text: String) -> [UInt8] { Array(SQLTokenizer.asciiLowercased(text).utf8) }
+    let inMain = Set(objects.filter { folded($0.schema) == folded("main") }.map { folded($0.name) })
+    for object in objects where dropped.contains(folded(object.name)) {
+      let schema = folded(object.schema)
+      if schema == folded("temp")
+        || (schema != folded("main") && !inMain.contains(folded(object.name)))
+      {
+        throw SQLRestoreError.dropReachesOtherDatabase(name: object.name, database: object.schema)
+      }
+    }
+  }
+
+  /// DuckDB: `rows` are `database_name, current_schema(), current_setting('search_path')`, one
+  /// per database of the session. Refused unless the session is at its defaults (`main` with an
+  /// empty search path: no USE or SET moved it, so a one-part CREATE lands in `main` of the
+  /// connection's own database, as `objectKey` keys it), and when a schema the script drops in
+  /// also names a database: DuckDB reads `a.b` as schema `a`, else as table `b` of database
+  /// `a`, so the DROP could reach an attached database while the CREATE lands in a new schema.
+  /// - Throws: `SQLRestoreError.duckdbSessionNotAtMain`, `.dropNamesDuckDBDatabase`,
+  ///   `.dropTargetsUnreadable`
+  static func checkDuckDBDropTargets(_ rows: [[CellValue]], droppedSchemas: Set<String>) throws {
+    guard !rows.isEmpty else { throw unreadable() }
+    var databases = Set<String>()
+    for row in rows {
+      guard row.count == 3, case .string(let database) = row[0], case .string(let schema) = row[1],
+        case .string(let searchPath) = row[2]
+      else { throw unreadable() }
+      guard schema == "main", searchPath.isEmpty else {
+        throw SQLRestoreError.duckdbSessionNotAtMain(schema: schema, searchPath: searchPath)
+      }
+      databases.insert(SQLTokenizer.asciiLowercased(database))
+    }
+    if let name = droppedSchemas.intersection(databases).sorted().first {
+      throw SQLRestoreError.dropNamesDuckDBDatabase(name: name)
+    }
+  }
+
+  /// PostgreSQL: `rows` are `kind, schema, name, other schema, other name`: `inherits` (a table
+  /// and a partition or child of it), `owns` (a table and a sequence it owns, `OWNED BY`) and
+  /// `type` (a type that is not an enum, its `typtype` as the other schema). DROP TABLE without
+  /// CASCADE still removes a partitioned table's partitions and the sequences the table owns:
+  /// refused when the script does not also drop (and so recreate) that partition or child, or
+  /// never creates that sequence. The dump drops only enums with DROP TYPE, which also removes a
+  /// domain, or a range type's multirange and constructors: refused when a dropped type is not
+  /// an enum. Names compare byte for byte with `objectKey`'s parts.
+  /// - Throws: `SQLRestoreError.dropTakesAlong`, `.dropTypeIsDomain`, `.dropTypeNotEnum`,
+  ///   `.dropTargetsUnreadable`
+  static func checkPostgresDropTargets(_ rows: [[CellValue]], _ drops: PostgresDrops) throws {
+    for row in rows {
+      guard row.count == 5, case .string(let kind) = row[0], case .string(let schema) = row[1],
+        case .string(let name) = row[2], case .string(let otherSchema) = row[3],
+        case .string(let otherName) = row[4]
+      else { throw unreadable() }
+      let key = [Array(schema.utf8), Array(name.utf8)]
+      let other = [Array(otherSchema.utf8), Array(otherName.utf8)]
+      switch kind {
+      case "inherits":
+        guard drops.tables.contains(key), !drops.tables.contains(other) else { continue }
+        throw SQLRestoreError.dropTakesAlong(
+          table: "\(schema).\(name)", object: "\(otherSchema).\(otherName)",
+          objectKind: "partition or child table")
+      case "owns":
+        guard drops.tables.contains(key), !drops.createdSequences.contains(other) else { continue }
+        throw SQLRestoreError.dropTakesAlong(
+          table: "\(schema).\(name)", object: "\(otherSchema).\(otherName)",
+          objectKind: "owned sequence")
+      case "type":
+        guard drops.types.contains(key) else { continue }
+        guard otherSchema != "d" else {
+          throw SQLRestoreError.dropTypeIsDomain(name: "\(schema).\(name)")
+        }
+        throw SQLRestoreError.dropTypeNotEnum(name: "\(schema).\(name)")
+      default:
+        throw unreadable()
+      }
+    }
+  }
+}
+
 /// Reads a statement's tokens from the start, one expected piece at a time
 nonisolated private struct ShapeReader {
   let tokens: [SQLToken]
@@ -918,6 +1307,13 @@ nonisolated private struct ShapeReader {
   }
 
   func peek(_ word: String) -> Bool { index < tokens.count && tokens[index].isWord(word) }
+
+  /// Consumes the first of `words` that comes next, and returns it
+  mutating func anyOf(_ words: [String]) -> String? {
+    guard let word = words.first(where: { peek($0) }) else { return nil }
+    index += 1
+    return word
+  }
 
   func peekSymbol(_ symbol: String) -> Bool {
     index < tokens.count && tokens[index].isSymbol(symbol)
@@ -1078,6 +1474,64 @@ extension DatabaseConnectionManager {
   /// App-owned read, before a PostgreSQL restore whose plan read plain backslash strings as
   /// standard-conforming (`SQLRestorePlan.standardStringsStatement`)
   static let standardStringsQuery = "SHOW standard_conforming_strings"
+  /// App-owned read, before a SQLite restore that drops tables
+  /// (`SQLRestorePlan.droppedSQLiteTables`), of every table's foreign keys
+  static let sqliteForeignKeysQuery =
+    "SELECT m.name, f.\"table\", f.on_delete FROM sqlite_master AS m "
+    + "JOIN pragma_foreign_key_list(m.name) AS f WHERE m.type = 'table'"
+  /// App-owned read, before a SQLite restore that drops, of the connection's schemas (then each
+  /// one's tables and views, `SQLRestorePlan.checkSQLiteDropTargets`)
+  static let sqliteDatabasesQuery = "SELECT name FROM pragma_database_list"
+  /// App-owned read, before a DuckDB restore that drops (`SQLRestorePlan.checkDuckDBDropTargets`)
+  static let duckdbDropTargetsQuery =
+    "SELECT database_name, current_schema(), current_setting('search_path') "
+    + "FROM duckdb_databases()"
+  /// App-owned read, before a PostgreSQL restore that drops tables or types
+  /// (`SQLRestorePlan.checkPostgresDropTargets`), of only what `drops` needs (never empty: a
+  /// plan has `postgresDrops` only when it drops one or the other). Dropped tables: partitions
+  /// and children, and owned sequences; only `deptype = 'a'` (OWNED BY) on purpose: an identity
+  /// sequence (`'i'`) goes with its column, and the dump's CREATE TABLE recreates it. Dropped
+  /// types: the types that are not enums, without a table's row type or an array type (the
+  /// server refuses DROP TYPE on those without CASCADE, so the batch rolls back anyway). System
+  /// schemas are left out: `objectKey` never keys them.
+  static func postgresDropTargetsQuery(_ drops: SQLRestorePlan.PostgresDrops) -> String {
+    var branches: [String] = []
+    if !drops.tables.isEmpty {
+      branches.append(
+        """
+        SELECT 'inherits'::text, pn.nspname::text, pc.relname::text,
+          cn.nspname::text, cc.relname::text
+        FROM pg_inherits i
+        JOIN pg_class pc ON pc.oid = i.inhparent JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+        JOIN pg_class cc ON cc.oid = i.inhrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
+        WHERE pc.relkind IN ('r', 'p')
+        """)
+      branches.append(
+        """
+        SELECT 'owns'::text, tn.nspname::text, tc.relname::text,
+          sn.nspname::text, sc.relname::text
+        FROM pg_depend d
+        JOIN pg_class sc ON sc.oid = d.objid AND sc.relkind = 'S'
+        JOIN pg_namespace sn ON sn.oid = sc.relnamespace
+        JOIN pg_class tc ON tc.oid = d.refobjid JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+        WHERE d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass
+          AND d.deptype = 'a'
+        """)
+    }
+    if !drops.types.isEmpty {
+      branches.append(
+        """
+        SELECT 'type'::text, n.nspname::text, t.typname::text, t.typtype::text, ''::text
+        FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE t.typtype <> 'e'
+          AND left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
+          AND (t.typrelid = 0
+            OR EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))
+          AND NOT EXISTS (SELECT 1 FROM pg_type e WHERE e.typarray = t.oid)
+        """)
+    }
+    return branches.joined(separator: "\nUNION ALL\n")
+  }
 
   /// Plan `script` (`SQLRestorePlan`, for the connected engine) and restore it. Large scripts
   /// should be planned off the actor and passed to `executeGatedRestore(_:policy:...)`.
@@ -1099,9 +1553,15 @@ extension DatabaseConnectionManager {
   /// plan with `standardStringsStatement` then reads `SHOW standard_conforming_strings` and runs
   /// only when it is `on` (`SQLRestoreError.standardStringsOff` / `.standardStringsUnreadable`);
   /// a Cancel during that read stops the restore (`DatabaseError.batchCancelled`), another
-  /// connection refuses it (`SQLRestoreError.connectionChanged`). Only that read may come before a
-  /// refusal: in the same actor turn as the first change, a read-only policy refuses any
-  /// restore and every statement must pass `evaluate` against `effectivePolicy(for:)`
+  /// connection refuses it (`SQLRestoreError.connectionChanged`). A plan that drops reads the
+  /// target's catalog the same way first: PostgreSQL its partitions, owned sequences and types
+  /// (`SQLRestorePlan.checkPostgresDropTargets`), DuckDB its databases and current schema
+  /// (`checkDuckDBDropTargets`), SQLite the tables and views of every schema
+  /// (`checkSQLiteDropTargets`), then, when it drops tables, its foreign keys: refused when a
+  /// table it does not drop has an ON DELETE action on one it drops
+  /// (`SQLRestoreError.dropFiresForeignKeyAction` / `.foreignKeysUnreadable`). Only those reads
+  /// may come before a refusal: in the same actor turn as the first change, a read-only policy
+  /// refuses any restore and every statement must pass `evaluate` against `effectivePolicy(for:)`
   /// (`DatabaseError.blockedByProtection`; schema-only refuses DDL).
   /// - PostgreSQL / SQLite: one staged batch with no row-count checks (`runStagedBatch`), so a
   ///   failure rolls everything back; under Protected mode it joins the app transaction
@@ -1137,13 +1597,32 @@ extension DatabaseConnectionManager {
     defer { commitGuard.inFlight -= 1 }
     let generation = batchCancellationGeneration
     if let index = plan.standardStringsStatement {
-      do {
-        try await requireStandardConformingStrings(statement: index)
-      } catch {
-        try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
-        throw error
+      try await runRestoreCheck(since: generation, epoch: epoch) {
+        try await self.requireStandardConformingStrings(statement: index)
       }
-      try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
+    }
+    if let drops = plan.postgresDrops {
+      try await runRestoreCheck(since: generation, epoch: epoch) {
+        let rows = try await self.restoreCheckRows(Self.postgresDropTargetsQuery(drops))
+        try SQLRestorePlan.checkPostgresDropTargets(rows, drops)
+      }
+    }
+    if !plan.droppedDuckDBSchemas.isEmpty {
+      try await runRestoreCheck(since: generation, epoch: epoch) {
+        let rows = try await self.restoreCheckRows(Self.duckdbDropTargetsQuery)
+        try SQLRestorePlan.checkDuckDBDropTargets(rows, droppedSchemas: plan.droppedDuckDBSchemas)
+      }
+    }
+    if !plan.droppedSQLiteNames.isEmpty {
+      try await runRestoreCheck(since: generation, epoch: epoch) {
+        try SQLRestorePlan.checkSQLiteDropTargets(
+          try await self.sqliteObjects(), dropped: plan.droppedSQLiteNames)
+      }
+    }
+    if !plan.droppedSQLiteTables.isEmpty {
+      try await runRestoreCheck(since: generation, epoch: epoch) {
+        try await self.refuseSQLiteDropActions(dropping: plan.droppedSQLiteTables)
+      }
     }
     // From here no suspension until the batch: every check and the summary read the state the
     // batch runs in. Decisions are pure and finish before any await that could send SQL. A
@@ -1278,16 +1757,31 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// PostgreSQL: the session must report `standard_conforming_strings` `on`, as the plan read
-  /// statement `index` and the ones after it (never guessed: off or unreadable refuses)
-  /// - Throws: `SQLRestoreError.standardStringsOff` / `.standardStringsUnreadable`;
-  ///   `DatabaseError` from the session.
-  private func requireStandardConformingStrings(statement index: Int) async throws {
-    let rows: [[CellValue]]
+  /// One read-only check before the batch: whether it passes or throws, a Cancel or another
+  /// connection meanwhile stops the restore (`refuseIfRestoreInterrupted`)
+  private func runRestoreCheck(
+    since generation: UInt64, epoch: UInt64, _ check: () async throws -> Void
+  ) async throws {
     do {
-      rows = try await withSession { session in
+      try await check()
+    } catch {
+      try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
+      throw error
+    }
+    try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
+  }
+
+  /// The rows of an app-owned read before the batch
+  /// - Throws: `DatabaseError` from the session; any other failure as `unreadable`'s error
+  ///   (by default `SQLRestoreError.dropTargetsUnreadable`)
+  private func restoreCheckRows(
+    _ sql: String,
+    unreadable: (String) -> SQLRestoreError = { .dropTargetsUnreadable($0) }
+  ) async throws -> [[CellValue]] {
+    do {
+      return try await withSession { session in
         var rows: [[CellValue]] = []
-        for try await row in try await session.query(Self.standardStringsQuery, binds: []).rows {
+        for try await row in try await session.query(sql, binds: []).rows {
           rows.append(row)
         }
         return rows
@@ -1295,13 +1789,76 @@ extension DatabaseConnectionManager {
     } catch let error as DatabaseError {
       throw error
     } catch {
-      throw SQLRestoreError.standardStringsUnreadable(error.localizedDescription)
+      throw unreadable(error.localizedDescription)
+    }
+  }
+
+  /// SQLite: the tables and views of every schema of the connection (main, temp and each
+  /// attached database), read from each schema's own `sqlite_master`
+  private func sqliteObjects() async throws -> [(schema: String, name: String)] {
+    var schemas: [String] = []
+    for row in try await restoreCheckRows(Self.sqliteDatabasesQuery) {
+      guard row.count == 1, case .string(let name) = row[0] else {
+        throw SQLRestoreError.dropTargetsUnreadable("unexpected answer")
+      }
+      schemas.append(name)
+    }
+    // temp is listed only once something opened it; its sqlite_master is there either way
+    if !schemas.contains(where: { SQLTokenizer.asciiLowercased($0) == "temp" }) {
+      schemas.append("temp")
+    }
+    var objects: [(schema: String, name: String)] = []
+    for schema in schemas {
+      let quoted = try SQLDialect.sqlite.quoteIdentifier(schema)
+      let sql = "SELECT name FROM \(quoted).sqlite_master WHERE type IN ('table', 'view')"
+      for row in try await restoreCheckRows(sql) {
+        guard row.count == 1, case .string(let name) = row[0] else {
+          throw SQLRestoreError.dropTargetsUnreadable("unexpected answer")
+        }
+        objects.append((schema, name))
+      }
+    }
+    return objects
+  }
+
+  /// PostgreSQL: the session must report `standard_conforming_strings` `on`, as the plan read
+  /// statement `index` and the ones after it (never guessed: off or unreadable refuses)
+  /// - Throws: `SQLRestoreError.standardStringsOff` / `.standardStringsUnreadable`;
+  ///   `DatabaseError` from the session.
+  private func requireStandardConformingStrings(statement index: Int) async throws {
+    let rows = try await restoreCheckRows(Self.standardStringsQuery) {
+      .standardStringsUnreadable($0)
     }
     guard rows.count == 1, rows[0].count == 1, case .string(let value) = rows[0][0] else {
       throw SQLRestoreError.standardStringsUnreadable("unexpected answer")
     }
     guard value == "on" else {
       throw SQLRestoreError.standardStringsOff(index: index, value: value)
+    }
+  }
+
+  /// SQLite: SQLite's DROP TABLE first deletes every row, which runs the ON DELETE action of
+  /// each foreign key to the table, even with `defer_foreign_keys` on. Refused when a table the
+  /// plan does not drop has a foreign key to one it drops with any action but NO ACTION and
+  /// RESTRICT (CASCADE, SET NULL, SET DEFAULT), which only fail the restore. Names compare as
+  /// SQLite compares them (ASCII case-insensitive, `dropped` as `SQLRestorePlan.objectKey` folds).
+  /// - Throws: `SQLRestoreError.dropFiresForeignKeyAction` / `.foreignKeysUnreadable`;
+  ///   `DatabaseError` from the session.
+  private func refuseSQLiteDropActions(dropping dropped: Set<[UInt8]>) async throws {
+    let rows = try await restoreCheckRows(Self.sqliteForeignKeysQuery) {
+      .foreignKeysUnreadable($0)
+    }
+    func key(_ name: String) -> [UInt8] { Array(SQLTokenizer.asciiLowercased(name).utf8) }
+    for row in rows {
+      guard row.count == 3, case .string(let table) = row[0], case .string(let parent) = row[1],
+        case .string(let action) = row[2]
+      else { throw SQLRestoreError.foreignKeysUnreadable("unexpected answer") }
+      guard !dropped.contains(key(table)), dropped.contains(key(parent)) else { continue }
+      let upper = SQLTokenizer.asciiUppercased(action)
+      guard upper == "NO ACTION" || upper == "RESTRICT" else {
+        throw SQLRestoreError.dropFiresForeignKeyAction(
+          table: table, dropped: parent, action: action)
+      }
     }
   }
 

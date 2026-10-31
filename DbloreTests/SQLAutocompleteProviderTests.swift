@@ -332,6 +332,80 @@ struct SQLAutocompleteProviderTests {
     #expect(!suggest(provider, "SELECT tag AS al_tag FROM users WHERE al|").contains("al_tag"))
   }
 
+  // MARK: - Top 20 at scale
+
+  /// 5,000 tables over three schemas, every 7th name upper case, 30 named like a keyword and a
+  /// second "t1" in schema z; columns `c<i>` and `c<i>_amount` are unique, `name` is shared
+  private static let scaleTables: [DatabaseTable] = {
+    var tables = (0..<5_000).map { index in
+      DatabaseTable(
+        schema: "s\(index % 3)", name: index.isMultiple(of: 7) ? "T\(index)" : "t\(index)",
+        columns: ["c\(index)", "c\(index)_amount", "name"].map {
+          DatabaseColumn(name: $0, type: "integer")
+        })
+    }
+    tables += (0..<30).map { DatabaseTable(schema: "s0", name: "table\($0)") }
+    tables.append(DatabaseTable(schema: "z", name: "t1"))
+    return tables
+  }()
+
+  /// Today's order before the bounded selection: every matching keyword, table and (without
+  /// FROM) column of every table appended, then the whole list sorted (exact match, then
+  /// shorter, then alphabetical; the sort is stable)
+  private func fullSortTop20(token: String, columns: Bool) -> [String] {
+    let lower = token.lowercased()
+    var candidates: [(text: String, description: String)] = []
+    candidates += SQLAutocompleteProvider.sqlKeywords.filter { $0.lowercased().hasPrefix(lower) }
+      .map { ($0, "SQL Keyword") }
+    candidates += Self.scaleTables.filter { $0.name.lowercased().hasPrefix(lower) }
+      .map { ($0.name, "Table (\($0.schema))") }
+    if columns {
+      for table in Self.scaleTables {
+        for column in table.columns where column.name.lowercased().hasPrefix(lower) {
+          candidates.append((column.name, "\(column.type) (\(table.schema).\(table.name))"))
+        }
+      }
+    }
+    candidates.sort { lhs, rhs in
+      let lhsExact = lhs.text.lowercased() == lower
+      let rhsExact = rhs.text.lowercased() == lower
+      if lhsExact != rhsExact { return lhsExact }
+      if lhs.text.count != rhs.text.count { return lhs.text.count < rhs.text.count }
+      return lhs.text.lowercased() < rhs.text.lowercased()
+    }
+    return candidates.prefix(20).map { "\($0.text)|\($0.description)" }
+  }
+
+  private func scaleSuggestions(_ text: String) -> [String] {
+    let provider = SQLAutocompleteProvider()
+    provider.snippets = { [] }
+    provider.update(tables: Self.scaleTables)
+    return provider.getSuggestions(for: text, at: utf16Length(text), dialect: .postgresql)
+      .map { "\($0.text)|\($0.description ?? "")" }
+  }
+
+  @Test("after FROM the top 20 equal the first 20 of the full sort on 5,000 tables")
+  func top20AfterFromMatchesFullSort() {
+    for token in ["t1", "T", "table", "t49"] {
+      let suggestions = scaleSuggestions("SELECT * FROM \(token)")
+      #expect(suggestions.count == 20)
+      #expect(suggestions == fullSortTop20(token: token, columns: false), "token \(token)")
+    }
+  }
+
+  @Test("with no FROM the top 20 equal the first 20 of the full sort on 5,000 tables")
+  func top20FallbackMatchesFullSort() {
+    for token in ["c1", "C49", "c4999_"] {
+      let suggestions = scaleSuggestions("SELECT \(token)")
+      #expect(!suggestions.isEmpty)
+      #expect(suggestions == fullSortTop20(token: token, columns: true), "token \(token)")
+    }
+    // A name every table shares: the same texts (the tables of equal names may differ, as the
+    // full sort kept them in dictionary order)
+    let shared = scaleSuggestions("SELECT na").map { $0.split(separator: "|")[0] }
+    #expect(shared == fullSortTop20(token: "na", columns: true).map { $0.split(separator: "|")[0] })
+  }
+
   // MARK: - extractTableReferences parity with the original implementation
 
   private func parityProvider() -> SQLAutocompleteProvider {

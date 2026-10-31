@@ -59,7 +59,8 @@ extension DatabaseConnectionManager {
   }
 
   /// `withCatalogSession`, with a query failure wrapped as `Failed to fetch \(what)`.
-  /// `catalogConnection()` errors (`notConnected`, `metadataPausedDuringTransaction`) stay as they are.
+  /// `catalogConnection()` errors (`notConnected`, `metadataPausedDuringTransaction`) and a
+  /// cancellation (`CancellationError`) stay as they are.
   func fetchCatalog<T: Sendable>(
     _ what: String,
     _ body: (any DatabaseSession) async throws -> T
@@ -67,6 +68,8 @@ extension DatabaseConnectionManager {
     _ = try catalogConnection()
     do {
       return try await withCatalogReadSession(body)
+    } catch let error as CancellationError {
+      throw error
     } catch {
       throw DatabaseError.queryFailed(
         "Failed to fetch \(what): \(error.localizedDescription)", 0)

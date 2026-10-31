@@ -3,11 +3,33 @@
 //  Dblore
 //
 
+import CryptoKit
 import Foundation
 
+/// Stable id of a table or view: SHA-256 of the type tag, schema and name, each written as
+/// a 4-byte big-endian UTF-8 length then its bytes, truncated to 16 bytes with the RFC 9562
+/// version 8 layout. The same relation gets the same id on every schema load.
+nonisolated private func schemaObjectID(tag: String, schema: String, name: String) -> UUID {
+  var hasher = SHA256()
+  for part in [tag, schema, name] {
+    let bytes = Array(part.utf8)
+    withUnsafeBytes(of: UInt32(bytes.count).bigEndian) { hasher.update(bufferPointer: $0) }
+    hasher.update(data: bytes)
+  }
+  var uuid = Array(hasher.finalize().prefix(16))
+  uuid[6] = (uuid[6] & 0x0F) | 0x80  // version 8
+  uuid[8] = (uuid[8] & 0x3F) | 0x80  // variant 10
+  return UUID(
+    uuid: (
+      uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9],
+      uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
+    ))
+}
+
 /// Represents a database table with its columns
-struct DatabaseTable: Identifiable, Sendable {
-  let id = UUID()
+nonisolated struct DatabaseTable: Identifiable, Sendable {
+  /// Derived from the kind (base or temporary), schema and name (`schemaObjectID`)
+  let id: UUID
   let schema: String
   let name: String
   var columns: [DatabaseColumn]
@@ -26,7 +48,7 @@ struct DatabaseTable: Identifiable, Sendable {
     static let clustered = CollectionFlags(rawValue: 1 << 2)
   }
 
-  nonisolated init(
+  init(
     schema: String,
     name: String,
     columns: [DatabaseColumn] = [],
@@ -35,6 +57,8 @@ struct DatabaseTable: Identifiable, Sendable {
     collectionFlags: CollectionFlags = [],
     isTemporary: Bool = false
   ) {
+    self.id = schemaObjectID(
+      tag: isTemporary ? "temporary table" : "table", schema: schema, name: name)
     self.schema = schema
     self.name = name
     self.columns = columns
@@ -51,7 +75,7 @@ struct DatabaseTable: Identifiable, Sendable {
 }
 
 /// Represents a column in a database table
-struct DatabaseColumn: Identifiable, Sendable {
+nonisolated struct DatabaseColumn: Identifiable, Sendable {
   let id = UUID()
   let name: String
   let type: String
@@ -64,7 +88,7 @@ struct DatabaseColumn: Identifiable, Sendable {
   /// Generated column (virtual or stored). PostgreSQL leaves this false.
   let isGenerated: Bool
 
-  nonisolated init(
+  init(
     name: String,
     type: String,
     isNullable: Bool = true,
@@ -155,8 +179,9 @@ struct DatabaseColumn: Identifiable, Sendable {
 // MARK: - Database Views
 
 /// Represents a database view
-struct DatabaseView: Identifiable, Sendable {
-  let id = UUID()
+nonisolated struct DatabaseView: Identifiable, Sendable {
+  /// Derived from the schema and name (`schemaObjectID`)
+  let id: UUID
   let schema: String
   let name: String
   var columns: [DatabaseColumn]
@@ -165,7 +190,7 @@ struct DatabaseView: Identifiable, Sendable {
   /// The MongoDB view's `viewOn` collection. Nil for SQL views.
   let source: String?
 
-  nonisolated init(
+  init(
     schema: String,
     name: String,
     columns: [DatabaseColumn] = [],
@@ -173,6 +198,7 @@ struct DatabaseView: Identifiable, Sendable {
     definition: String? = nil,
     source: String? = nil
   ) {
+    self.id = schemaObjectID(tag: "view", schema: schema, name: name)
     self.schema = schema
     self.name = name
     self.columns = columns

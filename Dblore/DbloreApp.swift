@@ -54,6 +54,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Set before launch finishes, so a click that launches the app is delivered too
   func applicationWillFinishLaunching(_ notification: Notification) {
+    // Debug builds, or Release with -DbloreStallMonitor YES: logs main-thread stalls
+    MainThreadStallMonitor.installIfEnabled()
     // Before the first window, so every scroll view gets the soft scroll bar
     NSScrollView.installSoftScrollers()
     // Long-query notification clicks open their tab
@@ -138,7 +140,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   /// Quitting with a pending Protected transaction asks Commit / Roll back / Cancel for each
   /// workspace (Cancel keeps the app running). A force-quit skips this: the connection closes
   /// without COMMIT, so the server rolls the transaction back. Connections with a
-  /// post-disconnect script are closed and their scripts started before the app exits.
+  /// post-disconnect script or a Vault lease are closed (their scripts started, their leases
+  /// revoked) before the app exits. A connect still waiting for its lease is not among them
+  /// (its slot is empty until the lease arrives): that lease ends at its TTL.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard confirmKeyboardQuit() else { return .terminateCancel }
     let managers = WorkspaceWindowManager.shared.allWorkspaces
@@ -146,8 +150,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let resolves = managers.contains(where: {
       !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting
     })
-    let scripted = managers.map(\.connectionManager).filter(\.hasPendingPostDisconnect)
-    guard resolves || !scripted.isEmpty else {
+    let closing = managers.map(\.connectionManager).filter(\.closesAtQuit)
+    guard resolves || !closing.isEmpty else {
       isTerminating = true
       recordLaunchSession()
       return .terminateNow
@@ -163,20 +167,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
       isTerminating = true
       recordLaunchSession()
-      await Self.closeRunningPostDisconnectScripts(scripted)
+      await Self.closeConnectionsForQuit(closing)
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater
   }
 
-  /// Closes `connections` and starts their post-disconnect scripts (started, not awaited: they
-  /// run outside the app). After `quitCloseLimit`, the scripts of connections still closing
-  /// start anyway, so a quit never hangs on a server.
-  @concurrent nonisolated private static func closeRunningPostDisconnectScripts(
+  /// Closes `connections` (a Vault lease is revoked after its close) and starts the
+  /// post-disconnect scripts taken (started, not awaited: they run outside the app). After
+  /// `quitCloseLimit`, the scripts of connections still closing start anyway, so a quit never
+  /// hangs on a server.
+  @concurrent nonisolated private static func closeConnectionsForQuit(
     _ connections: [DatabaseConnectionManager]
   ) async {
     let scripts = connections.map { $0.takePostDisconnectForQuit() }
-    guard scripts.contains(where: { $0 != nil }) else { return }
+    guard !connections.isEmpty else { return }
     let started = OSAllocatedUnfairLock(
       initialState: [Bool](repeating: false, count: scripts.count))
     /// Starts script `index` once, whichever of its close and the limit comes first
@@ -202,7 +207,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
       Task {
         await withTaskGroup(of: Void.self) { group in
-          for (index, connection) in connections.enumerated() where scripts[index] != nil {
+          for (index, connection) in connections.enumerated() {
             group.addTask {
               await connection.disconnect()
               start(index)
@@ -214,7 +219,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
-  /// Longest a quit waits for connections with a post-disconnect script to close
+  /// Longest a quit waits for connections with a post-disconnect script or a lease to close
   nonisolated private static let quitCloseLimit: TimeInterval = 3
 
   /// With "Confirm before quitting" on, Cmd+Q asks first. Quit from the Dock, logout and
@@ -699,6 +704,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
   @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
   @BridgedFocusedValue(\.openJoinBuilderAction) private var openJoinBuilderAction
+  @BridgedFocusedValue(\.openCopyObjectsAction) private var openCopyObjectsAction
   @BridgedFocusedValue(\.activeWorkspace) private var focusedWorkspace
 
   var body: some Commands {
@@ -828,6 +834,10 @@ struct TabCommands: Commands {
         Button("Build Join Query...") { openJoinBuilderAction?() }
           .disabled(openJoinBuilderAction == nil)
       }
+
+      // PostgreSQL, MySQL / MariaDB, SQLite and DuckDB sources (disabled on MongoDB)
+      Button("Copy Objects...") { openCopyObjectsAction?() }
+        .disabled(openCopyObjectsAction == nil)
 
       Button("Copy Database File...") { openDatabaseFileCopyAction?() }
         .disabled(openDatabaseFileCopyAction == nil)

@@ -430,6 +430,41 @@ struct LocalModelManagerTests {
     try await Task.sleep(for: .milliseconds(100))
     #expect(manager.installedIDs == ["new"])
   }
+
+  @Test func localModelsChangeRefreshesInstalledAndUnused() async throws {
+    await LocalDataNotificationGate.shared.acquire()
+    defer { LocalDataNotificationGate.shared.release() }
+    let root = makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let scans = ScanCount()
+    let manager = LocalModelManager(
+      root: root, downloader: { _, _, _ in }, unloader: { _ in true },
+      scanner: { root in
+        let ids = await LocalModelManager.diskScan(root)
+        await scans.add()
+        return ids
+      })
+    // The init scan is done before the files appear, so only the change can list them
+    for _ in 0..<300 {
+      if await scans.value >= 1 { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(await scans.value == 1)
+    #expect(!manager.isInstalled(model))
+    try write(["config.json", "model.safetensors"], in: manager.directory(for: model))
+    try write(["stray.bin"], in: root)
+    LocalDataNotifications.post(.localModels)
+    for _ in 0..<300 where !manager.isInstalled(model) || manager.unusedBytes != 1 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(manager.isInstalled(model))
+    #expect(manager.unusedBytes == 1)
+  }
+}
+
+private actor ScanCount {
+  private(set) var value = 0
+  func add() { value += 1 }
 }
 
 private actor IDRecorder {

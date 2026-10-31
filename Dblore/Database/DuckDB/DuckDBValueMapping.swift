@@ -237,7 +237,7 @@ nonisolated struct DuckDBValueMapping {
     case .structure(let fields):
       let parts = fields.enumerated().map { index, field in
         let child = library.structVectorChild(vector, UInt64(index))
-        return "'\(field.name)': \(text(field.type, child, row))"
+        return "\(Self.quoted(field.name)): \(element(field.type, child, row))"
       }
       return "{" + parts.joined(separator: ", ") + "}"
     case .union(let members):
@@ -266,7 +266,7 @@ nonisolated struct DuckDBValueMapping {
       let (offset, length) = Self.listEntry(data, row)
       let childVector = library.listVectorChild(vector)
       return "["
-        + (0..<length).map { text(child, childVector, offset + $0) }.joined(separator: ", ")
+        + (0..<length).map { element(child, childVector, offset + $0) }.joined(separator: ", ")
         + "]"
     case .map(let key, let value):
       let (offset, length) = Self.listEntry(data, row)
@@ -274,10 +274,44 @@ nonisolated struct DuckDBValueMapping {
       let keys = library.structVectorChild(entries, 0)
       let values = library.structVectorChild(entries, 1)
       let parts = (0..<length).map {
-        "\(text(key, keys, offset + $0))=\(text(value, values, offset + $0))"
+        "\(element(key, keys, offset + $0))=\(element(value, values, offset + $0))"
       }
       return "{" + parts.joined(separator: ", ") + "}"
     }
+  }
+
+  /// Text of a LIST element, MAP key or value, or STRUCT field value. DuckDB quotes a scalar's
+  /// text there when it could be misread (`['a,b', '', 'NULL']`); nested values, JSON and UNION
+  /// values are never quoted, nor are ARRAY elements (`text` renders those).
+  private func element(_ type: DuckDBTypeNode, _ vector: OpaquePointer?, _ row: Int) -> String {
+    let text = text(type, vector, row)
+    switch type {
+    case .scalar(let id) where id != DuckDBTypeID.sqlNull:
+      break
+    case .decimal, .enumeration:
+      break
+    default:
+      return text
+    }
+    guard isValid(vector, row), Self.needsQuotes(text) else { return text }
+    return Self.quoted(text)
+  }
+
+  /// Empty, `NULL` in any case, edge whitespace or a delimiter, quote or bracket character.
+  private static func needsQuotes(_ text: String) -> Bool {
+    // Scalars, not Characters: "\r\n" or a combining mark would hide a character in a cluster.
+    let scalars = text.unicodeScalars
+    let edgeSpace: Set<Unicode.Scalar> = [" ", "\t", "\n", "\u{0B}", "\u{0C}", "\r"]
+    guard let first = scalars.first, let last = scalars.last else { return true }
+    return text.lowercased() == "null" || edgeSpace.contains(first) || edgeSpace.contains(last)
+      || scalars.contains { ",'\"()[]{}:=".unicodeScalars.contains($0) }
+  }
+
+  /// `'text'` with backslashes and single quotes escaped by a backslash.
+  private static func quoted(_ text: String) -> String {
+    "'"
+      + text.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "'", with: "\\'") + "'"
   }
 
   private func scalarText(_ id: Int32, _ data: UnsafeMutableRawPointer, _ row: Int) -> String {

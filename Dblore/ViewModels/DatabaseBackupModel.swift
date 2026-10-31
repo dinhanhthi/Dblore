@@ -12,6 +12,14 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 
+/// The dump sheet's database row for Structure, Data or Drop: on for every table, for none, or
+/// for some (the checkbox shows a dash)
+nonisolated enum SQLDumpTriState: Sendable, Equatable {
+  case all
+  case none
+  case mixed
+}
+
 nonisolated enum DatabaseBackupError: LocalizedError, Equatable, Sendable {
   case notUTF8
 
@@ -155,6 +163,9 @@ final class DatabaseBackupModel {
       resultMessage =
         "Saved \(destination.lastPathComponent): \(Self.counted(final.tablesDone, "table")), "
         + "\(Self.counted(final.rowsWritten, "row"))."
+        + (final.foreignKeyCycle
+          ? " The tables' foreign keys form a cycle, so a restore into a database that has them"
+            + " may fail on a foreign key." : "")
     } catch {
       status = Self.historyStatus(for: error)
       failure = error.localizedDescription
@@ -225,14 +236,64 @@ final class DatabaseBackupModel {
     end(id)
   }
 
-  /// The chosen tables as dump options: nil tables when every listed table is chosen, so the
-  /// dump also keeps tables the sidebar does not list
-  static func dumpOptions(
-    selected: Set<SQLDumpDDL.ObjectName>, from tables: [DatabaseTable], includeData: Bool
+  /// The listed tables' flags as dump options. A table without an entry, or with Structure and
+  /// Data off, is left out; nil tables when none is, so the dump also keeps tables the sidebar
+  /// does not list. Those (and partitions the dump adds) get Structure and Data unless no chosen
+  /// table has it, Drop only when every chosen table has it (no chosen table: the defaults).
+  nonisolated static func dumpOptions(
+    _ flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions], from tables: [DatabaseTable]
   ) -> SQLDumpOptions {
+    let chosen = flags.filter { $0.value.structure || $0.value.data }
     let all = Set(tables.map { SQLDumpDDL.ObjectName(schema: $0.schema, name: $0.name) })
+    let other =
+      chosen.isEmpty
+      ? SQLDumpOptions.TableOptions()
+      : SQLDumpOptions.TableOptions(
+        structure: databaseRow(\.structure, of: chosen) != .none,
+        data: databaseRow(\.data, of: chosen) != .none,
+        drop: databaseRow(\.drop, of: chosen) == .all)
     return SQLDumpOptions(
-      tables: all.isSubset(of: selected) ? nil : selected, includeData: includeData)
+      tables: all.isSubset(of: Set(chosen.keys)) ? nil : Set(chosen.keys),
+      perTable: chosen.filter { $0.value != other }, otherTables: other)
+  }
+
+  /// Every listed table's flags (its override, else the "All tables" `baseline`; Drop only with
+  /// Structure) as dump options, off the main actor. No listed table: the defaults.
+  @concurrent nonisolated static func dumpOptions(
+    _ tables: [DatabaseTable], baseline: SQLDumpOptions.TableOptions,
+    overrides: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+  ) async -> SQLDumpOptions {
+    guard !tables.isEmpty else { return SQLDumpOptions() }
+    let flags = Dictionary(
+      tables.map { table in
+        let name = SQLDumpDDL.ObjectName(schema: table.schema, name: table.name)
+        var options = overrides[name] ?? baseline
+        if !options.structure { options.drop = false }
+        return (name, options)
+      }, uniquingKeysWith: { first, _ in first })
+    return dumpOptions(flags, from: tables)
+  }
+
+  /// The database row's checkbox for `flag` (Structure, Data or Drop) over the tables' flags
+  nonisolated static func databaseRow(
+    _ flag: KeyPath<SQLDumpOptions.TableOptions, Bool>,
+    of flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+  ) -> SQLDumpTriState {
+    let on = flags.values.filter { $0[keyPath: flag] }.count
+    if on == 0 { return .none }
+    return on == flags.count ? .all : .mixed
+  }
+
+  /// The database row set to `on`: `flag` on or off for every table beneath it
+  static func settingDatabaseRow(
+    _ flag: WritableKeyPath<SQLDumpOptions.TableOptions, Bool>, to on: Bool,
+    in flags: [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions]
+  ) -> [SQLDumpDDL.ObjectName: SQLDumpOptions.TableOptions] {
+    flags.mapValues {
+      var table = $0
+      table[keyPath: flag] = on
+      return table
+    }
   }
 
   // MARK: - Restore
@@ -316,10 +377,10 @@ final class DatabaseBackupModel {
     restoreConfirmation = []
   }
 
-  /// The Safe Mode list of a restore: every statement but the rows (schema, triggers, sequence
-  /// values, session settings), each with its text on one line (comments dropped, whitespace
-  /// runs collapsed), cut as the query confirmation cuts it. A cut row and every trigger also
-  /// carry their whole text (`fullText`, behind "Show full statement") and a note: how much the
+  /// The Safe Mode list of a restore: every statement but the rows (each DROP, schema,
+  /// triggers, sequence values, session settings), each with its text on one line (comments
+  /// dropped, whitespace runs collapsed), cut as the query confirmation cuts it. A cut row and
+  /// every trigger also carry their whole text (`fullText`, behind "Show full statement") and a note: how much the
   /// preview leaves out, and for a trigger the table whose writes run its body. INSERTs (and
   /// SQLite's `DELETE FROM sqlite_sequence`) stay a count.
   nonisolated static func restoreConfirmation(_ plan: SQLRestorePlan) -> [StatementConfirmation] {
@@ -329,6 +390,7 @@ final class DatabaseBackupModel {
       let label: String
       switch kind {
       case .data: return nil
+      case .drop: label = "Drop"
       case .schema: label = "Schema"
       case .trigger: label = "Trigger"
       case .sequenceValue: label = "Sequence value"

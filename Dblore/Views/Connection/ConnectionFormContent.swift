@@ -67,6 +67,9 @@ struct ConnectionFormContent: View {
   @State private var isConnecting = false
   @State private var inputMode: ConnectionInputMode = .form
   @State private var connectionString: String = ""
+  /// The config the shown PostgreSQL URL was generated from (memory only): an edited URL typed
+  /// back to its target gets its password again (the URL never carries it)
+  @State var connectionStringSource: ConnectionConfig?
   @State private var parseError: String?
   @State private var connectionStringSSLMode: SSLMode = .prefer
 
@@ -94,6 +97,20 @@ struct ConnectionFormContent: View {
   @State var sshOriginalConfig: ConnectionConfig?
   /// Auth method of the credential stored under `sshOriginalConfig`'s account (nil = none).
   @State var sshStoredMethod: SSHTunnelConfig.AuthMethod?
+
+  // Vault draft. The token or AppRole secret stays in memory until a remembered save.
+  @State var vaultDraft = VaultFormDraft()
+  /// Password command chosen as the source before a script is picked
+  @State var choosesPasswordCommand = false
+  @State var vaultTest: VaultTestStatus?
+  /// The Keychain refused the saved Vault secret: it lasts this session only
+  @State var vaultSessionOnly = false
+  @State var vaultCAError: String?
+  /// The Vault CA row's subject and fingerprints (`VaultCADescription`)
+  @State var vaultCADescription: VaultCADescription?
+  /// The password choosing Vault cleared, brought back when the source switches back; dropped
+  /// with the draft (row load, form close)
+  @State var passwordBeforeVault: String?
 
   /// AI policy and rules the form was seeded with (`seedAIFields`).
   @State var aiSeed = ConnectionAIDraft()
@@ -129,12 +146,14 @@ struct ConnectionFormContent: View {
     var privateKeyPEM: String?
     var caPEM: String?
     var certificatePassphrase: String
+    var vaultDraft: VaultFormDraft
   }
 
   var formInputs: FormInputs {
     FormInputs(
       config: connectionConfig, sshDraft: sshDraft, certificatePEM: certificatePEM,
-      privateKeyPEM: privateKeyPEM, caPEM: caPEM, certificatePassphrase: certificatePassphrase)
+      privateKeyPEM: privateKeyPEM, caPEM: caPEM, certificatePassphrase: certificatePassphrase,
+      vaultDraft: vaultDraft)
   }
 
   enum ConnectionInputMode: String, CaseIterable {
@@ -219,17 +238,7 @@ struct ConnectionFormContent: View {
                   .onChange(of: inputMode) { _, newMode in
                     parseError = nil
                     testResult = nil
-                    if newMode == .connectionString {
-                      let config = connectionConfig
-                      if config.databaseType == .mongodb {
-                        connectionString = MongoConnectionDraft.connectionString(for: config)
-                      } else if !config.username.isEmpty && !config.database.isEmpty {
-                        connectionString = generateConnectionString()
-                      } else {
-                        connectionString = ""
-                      }
-                      connectionStringSSLMode = connectionConfig.sslMode
-                    }
+                    if newMode == .connectionString { showDraftConnectionString() }
                   }
               }
               if inputMode == .form || !Self.supportsConnectionString(connectionConfig.databaseType)
@@ -282,6 +291,7 @@ struct ConnectionFormContent: View {
         if showsRecentHistory { loadConnectionHistory() }
         restoreCertificateDraft()
         restoreSSHDraft()
+        restoreVaultDraft()
         refreshSQLiteFileBookmark()
         // After the Recent row load above, which replaces the form's values
         seedAIFields()
@@ -295,6 +305,7 @@ struct ConnectionFormContent: View {
         // A string typed for the previous engine is not parsed as the new one's.
         inputMode = .form
         connectionString = ""
+        connectionStringSource = nil
         // Loading a history row sets `fieldsEngine` before `databaseType`, so this
         // only runs for the header picker. A PostgreSQL database name would otherwise
         // stay in `database` and show up under Browse.
@@ -335,6 +346,7 @@ struct ConnectionFormContent: View {
           isBlankForm: Self.isBlankForm(connectionConfig))
         {
           restoreSSHDraft()
+          restoreVaultDraft()
           seedAIFields()
         }
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
@@ -361,12 +373,18 @@ struct ConnectionFormContent: View {
       .onChange(of: formInputs) { _, _ in
         testResult = nil
       }
+      // Test Vault's status too (a run still going is dropped)
+      .onChange(of: VaultTestInputs(config: connectionConfig.vault, draft: vaultDraft)) { _, _ in
+        vaultTest = nil
+      }
 
       footerView()
     }
     .onDisappear {
       clearCertificateDraft()
       sshDraft.clearSecrets()
+      vaultDraft.clearSecrets()
+      passwordBeforeVault = nil
       unlockConnectError?.wrappedValue = nil
     }
     .background(HostWindowReader(reference: hostWindow))
@@ -653,7 +671,26 @@ struct ConnectionFormContent: View {
     seenDraftGeneration = draftGeneration
     fieldsEngine = connectionConfig.databaseType
     selectedHistoryId = nil
+    // The previous draft's string and source (its password) never parse into this one
+    connectionString = ""
+    connectionStringSource = nil
+    if inputMode == .connectionString { showDraftConnectionString() }
+    restoreVaultDraft()
     seedAIFields()
+  }
+
+  /// The Connection String tab's text for the form's draft
+  private func showDraftConnectionString() {
+    let config = connectionConfig
+    if config.databaseType == .mongodb {
+      connectionString = MongoConnectionDraft.connectionString(for: config)
+    } else if !config.username.isEmpty && !config.database.isEmpty {
+      setGeneratedConnectionString()
+    } else {
+      connectionString = ""
+      connectionStringSource = nil
+    }
+    connectionStringSSLMode = connectionConfig.sslMode
   }
 
   func setFieldsEngine(_ type: DatabaseType) {
@@ -689,8 +726,10 @@ struct ConnectionFormContent: View {
     inputMode
   }
 
-  func setConnectionString(_ value: String) {
-    connectionString = value
+  /// Shows the form's PostgreSQL URL and keeps the config it came from (`connectionStringSource`)
+  func setGeneratedConnectionString() {
+    connectionString = generateConnectionString()
+    connectionStringSource = connectionConfig
   }
 
   func updateConnectionStringSSLMode(_ mode: SSLMode) {
@@ -792,10 +831,14 @@ struct ConnectionFormContent: View {
     guard let unchangedFrom else { return false }
     return withSSHConfig(connectionConfig) == unchangedFrom && !certificateDraftChanged
       && sshDraft.enteredCredential == nil
+      && vaultDraft.enteredSecret(for: connectionConfig.vault?.authMethod ?? .token) == nil
   }
 
   private var isFormValid: Bool {
-    guard sshDraftIsValid else { return false }
+    guard sshDraftIsValid,
+      connectionConfig.vault == nil
+        || vaultDraft.isValid(for: Self.withVaultRules(withSSHConfig(connectionConfig)))
+    else { return false }
     if inputMode == .connectionString
       && Self.supportsConnectionString(connectionConfig.databaseType)
     {
@@ -834,7 +877,8 @@ struct ConnectionFormContent: View {
   var preparedSSHCredential: SSHStoredCredential? {
     sshDraft.preparedCredential(
       original: sshOriginalConfig, new: withSSHConfig(connectionConfig),
-      store: SSHCredentialStoreFactory.shared, held: unrememberedSSHCredential?())
+      store: SSHCredentialStoreFactory.shared, held: unrememberedSSHCredential?(),
+      registry: LockCenter.shared.registry)
   }
 
   /// The stored or held secret's method while it still serves the bastion in the form.
@@ -856,9 +900,17 @@ struct ConnectionFormContent: View {
     sshDraft = SSHFormDraft(from: connectionConfig)
     let original = connectionConfig.sshTunnel == nil ? nil : connectionConfig
     sshOriginalConfig = original
+    refreshSSHStoredMethod()
+  }
+
+  /// Rereads the method of the held or stored secret of `sshOriginalConfig`, keeping the draft
+  /// (after an unlock: a blocked row reads no stored secret).
+  func refreshSSHStoredMethod() {
     sshStoredMethod =
-      heldSSHCredential(for: original).map(SSHFormDraft.method(of:))
-      ?? SSHFormDraft.storedMethod(for: original, store: SSHCredentialStoreFactory.shared)
+      heldSSHCredential(for: sshOriginalConfig).map(SSHFormDraft.method(of:))
+      ?? SSHFormDraft.storedMethod(
+        for: sshOriginalConfig, store: SSHCredentialStoreFactory.shared,
+        registry: LockCenter.shared.registry)
   }
 
   /// Parses the key off the main actor, keeps only the decrypted key for the store, and
@@ -970,7 +1022,8 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig()))
+      config = Self.withVaultRules(
+        withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig())))
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -984,18 +1037,23 @@ struct ConnectionFormContent: View {
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
     let scopedSSH = SSHCredentialStoreFactory.scoped(preparedSSHCredential, for: config)
+    // The draft's Vault secret: the test's lease reads it before the store; nothing is saved
+    let scopedVault = scopedVaultSecret(for: config)
 
     Task { @MainActor in
       defer {
         scopedMaterial?.clear()
         scopedSSH?.clear()
+        scopedVault?.clear()
       }
       do {
         let success = try await ClientCertificateStoreFactory.$operationMaterial.withValue(
           scopedMaterial
         ) {
           try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-            try await onTest(config)
+            try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+              try await onTest(config)
+            }
           }
         }
         isTesting = false
@@ -1035,7 +1093,8 @@ struct ConnectionFormContent: View {
 
     let config: ConnectionConfig
     do {
-      config = withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig()))
+      config = Self.withVaultRules(
+        withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig())))
     } catch {
       testResult = .failure(error.localizedDescription)
       return
@@ -1050,16 +1109,22 @@ struct ConnectionFormContent: View {
     // The typed, imported or moved SSH secret: the session reads it before the store, and a
     // remembered save persists it (`SessionManager`). Remember off keeps it only here.
     let scopedSSH = SSHCredentialStoreFactory.scoped(preparedSSHCredential, for: config)
+    // The typed or stored Vault secret, bound to the submitted Vault settings: the lease reads
+    // it, and only an accepted, remembered save writes it (`SessionManager`).
+    let scopedVault = scopedVaultSecret(for: config)
 
     Task { @MainActor in
       defer {
         scopedMaterial?.clear()
         scopedSSH?.clear()
+        scopedVault?.clear()
       }
       do {
         try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
           try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-            try await onConnectCallback(config, aiFieldsEdited)
+            try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+              try await onConnectCallback(config, aiFieldsEdited)
+            }
           }
         }
         connectionConfig.clientCertificate = config.clientCertificate
@@ -1068,6 +1133,12 @@ struct ConnectionFormContent: View {
         // Restores the draft from the submitted tunnel (and drops the typed secret).
         connectionConfig.sshTunnel = config.sshTunnel
         restoreSSHDraft()
+        // Rereads the Vault secret as saved (and drops the typed one)
+        connectionConfig.vault = config.vault
+        connectionConfig.rememberConnection = config.rememberConnection
+        connectionConfig.password = config.password
+        connectionConfig.passwordCommandScript = config.passwordCommandScript
+        restoreVaultDraft()
         aiSeed = ConnectionAIDraft(config: config)
         isConnecting = false
         onConnectionSuccess?()
@@ -1258,10 +1329,12 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
   /// The secret to use and save with `new`. A typed or imported secret wins. Otherwise, while
   /// the bastion is unchanged: the `held` secret of a live unremembered connection (not in the
   /// store), else, when the account changed (DB fields or engine), the credential stored under
-  /// the original account so it moves to the new account. Nil keeps the store as is.
+  /// the original account so it moves to the new account (not read while any lock `original`
+  /// reaches is blocked: an edit save then moves it after the unlock,
+  /// `SessionManager.replaceConnection`). Nil keeps the store as is otherwise.
   func preparedCredential(
     original: ConnectionConfig?, new: ConnectionConfig, store: any SSHCredentialStore,
-    held: SSHCredentialStoreFactory.ConnectionCredential? = nil
+    held: SSHCredentialStoreFactory.ConnectionCredential? = nil, registry: LockRegistry = .shared
   ) -> SSHStoredCredential? {
     guard enabled, let newAccount = SSHCredentialStoreFactory.account(for: new) else {
       return nil
@@ -1275,19 +1348,21 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
     {
       return held.credential
     }
-    guard oldAccount != newAccount, let stored = store.load(account: oldAccount),
+    guard oldAccount != newAccount, registry.refusal(for: original) == nil,
+      let stored = store.load(account: oldAccount),
       canUseStoredCredential(Self.method(of: stored))
     else { return nil }
     return stored
   }
 
-  /// Auth method of the credential stored for `config` (nil when there is none).
+  /// Auth method of the credential stored for `config` (nil when there is none). Nil without
+  /// reading the store while any lock `config` reaches is blocked.
   static func storedMethod(
-    for config: ConnectionConfig?, store: any SSHCredentialStore
+    for config: ConnectionConfig?, store: any SSHCredentialStore, registry: LockRegistry = .shared
   ) -> SSHTunnelConfig.AuthMethod? {
-    guard let config, let account = SSHCredentialStoreFactory.account(for: config) else {
-      return nil
-    }
+    guard let config, registry.refusal(for: config) == nil,
+      let account = SSHCredentialStoreFactory.account(for: config)
+    else { return nil }
     return store.load(account: account).map(method(of:))
   }
 

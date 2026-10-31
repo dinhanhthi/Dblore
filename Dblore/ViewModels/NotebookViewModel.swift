@@ -97,6 +97,12 @@ class NotebookViewModel {
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
+  /// Workspace mode: awaited after the SQL paths ran statements (cell and editor runs, staged
+  /// commit, inline edit) with the statements that ran, this tab's `id` as the writer and the
+  /// `connectionEpoch` read before the run, so the workspace marks the other data viewer tabs
+  /// of the tables they wrote stale. Set by `WorkspaceManager`.
+  @ObservationIgnored var onRelationsWritten:
+    (@MainActor (_ statements: [String], _ writer: UUID, _ epoch: UInt64) async -> Void)?
   /// Test hook: awaited where the commit's integer key lookup suspends, so a test can change the
   /// page at that exact point. Nil in production.
   @ObservationIgnored var keyLookupCheckpointForTesting: (@MainActor () async -> Void)?
@@ -507,7 +513,9 @@ class NotebookViewModel {
     // Run All waiting for the Safe Mode unlock
     if queryConfirmationState.runAllAwaitingUnlock {
       pendingExplainSQL = nil
+      restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
       pendingStagedBatch = nil
+      restoreSidebar(pendingInlineEdit?.sidebarRestore)
       pendingInlineEdit = nil
       executeUnlockedRunAll()
       return
@@ -515,6 +523,7 @@ class NotebookViewModel {
     if let sql = pendingExplainSQL {
       let cellId = queryConfirmationState.pendingCellId
       pendingExplainSQL = nil
+      restoreSidebar(pendingInlineEdit?.sidebarRestore)
       pendingInlineEdit = nil
       queryConfirmationState.clear()
       await runExplained(sql, cellId: cellId)
@@ -522,6 +531,7 @@ class NotebookViewModel {
     }
     if let batch = pendingStagedBatch {
       pendingStagedBatch = nil
+      restoreSidebar(pendingInlineEdit?.sidebarRestore)
       pendingInlineEdit = nil
       queryConfirmationState.clear()
       // A staged commit (not an import or a MongoDB inline edit): no second one while it is sent
@@ -529,6 +539,8 @@ class NotebookViewModel {
       if commits { isCommittingStaged = true }
       let failure = await runConfirmedStagedBatch(batch)
       if commits { isCommittingStaged = false }
+      // A MongoDB inline edit refused or failed stored nothing (it is one command)
+      if failure != nil { restoreSidebar(batch.mongoInlineEdit?.sidebarRestore) }
       batch.streamedCompletion?(failure)
       return
     }
@@ -561,7 +573,10 @@ class NotebookViewModel {
     pendingExplainSQL = nil
     // A Generate Rows run waiting on this decision ends unsent
     pendingStagedBatch?.streamedCompletion?(nil)
+    // A cancelled cell edit was never sent: the sidebar shows the stored value again
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
+    restoreSidebar(pendingInlineEdit?.sidebarRestore)
     pendingInlineEdit = nil
     if queryConfirmationState.runAllAwaitingUnlock {
       queryConfirmationState.clearRunAll()

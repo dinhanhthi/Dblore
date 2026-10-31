@@ -346,6 +346,8 @@ struct WorkspaceContainerView: View {
     .ignoresSafeArea(.all, edges: isFullScreen ? [] : .top)
     .environment(\.nativeTabBarHeight, nativeTabBarHeight)
     .environment(\.trafficLightsWidth, trafficLightsWidth)
+    // The types editor sheet shows the toasts in its own overlay: this window's would repeat them
+    .environment(\.hidesToastOverlay, workspaceManager.userTypeEditor != nil)
     .background(
       DocumentWindowConfigurator(
         tabTitle: WorkspaceWindowTitle.tab(workspaceName: workspaceManager.workspace.name),
@@ -590,14 +592,16 @@ struct WorkspaceContainerView: View {
       }
       .dataDictionaryExportSheet(workspaceManager: workspaceManager)
       .schemaCompareSheet(workspaceManager: workspaceManager)
+      .userTypeEditorSheet(workspaceManager: workspaceManager)
+      .copyObjectsSheet(workspaceManager: workspaceManager)
       .lockWorkspaceSheet(workspaceManager: workspaceManager)
       .crossTableSearchSheet(workspaceManager: workspaceManager)
   }
 
   /// The window was just covered: its sheets, dialogs and panels close (a running Lock
-  /// Workspace or schema compare keeps its sheet state and shows again after the unlock). Then,
-  /// once SwiftUI dismissed its own, any AppKit sheet still on the window (alerts, save panels)
-  /// ends as cancelled; an unlock prompt stays.
+  /// Workspace, schema compare or copy keeps its sheet state and shows again after the unlock).
+  /// Then, once SwiftUI dismissed its own, any AppKit sheet still on the window (alerts, save
+  /// panels) ends as cancelled; an unlock prompt stays.
   private func dismissPresentationsForCover() {
     let manager = workspaceManager
     if manager.showingCloseConfirmation { manager.cancelClose() }
@@ -608,6 +612,8 @@ struct WorkspaceContainerView: View {
     if manager.isCommitUnlockVisible { manager.cancelCommitUnlock() }
     manager.dataDictionaryExport?.cancel()
     manager.closeSchemaCompare()
+    manager.closeUserTypeEditor()
+    manager.closeCopyObjects()
     manager.lockSheet?.close()
     if manager.isCrossTableSearchPresented { manager.crossTableSearch?.hide() }
     if manager.pendingWeakeningConnect != nil { manager.cancelPendingWeakeningConnect() }
@@ -647,7 +653,10 @@ struct WorkspaceContainerView: View {
     }
     guard workspaceManager.connectionState.isConnected,
       let type = workspaceManager.workspace.connectionConfig?.databaseType,
-      type.capabilities.supportsSQLDump, sheet != .fileCopy || type == .sqlite
+      type.capabilities.supportsSQLDump, sheet != .fileCopy || type == .sqlite,
+      // The dump lists the loaded tables: none until a connect's schema landed (they are still
+      // the previous database's)
+      sheet != .dump || workspaceManager.schemaConnectionEpoch != nil
     else { return nil }
     return {
       guard backupSheet == nil else { return }
@@ -932,7 +941,7 @@ struct WorkspaceTabContentView: View {
   @State private var keyEventMonitor: Any?
 
   var body: some View {
-    contentView
+    fileConflictAlert(on: contentView)
       .bridgedFocusedSceneValue(\.documentMode, documentMode)
       .focusedSceneValue(\.activeTabId, tabId)
       .bridgedFocusedSceneValue(\.activeViewModel, viewModel)
@@ -981,6 +990,44 @@ struct WorkspaceTabContentView: View {
     } else {
       editorContent
     }
+  }
+
+  /// Asks what to do when the tab's file changes or is deleted on disk (notebook or script only,
+  /// see `watchesFileConflicts`)
+  @ViewBuilder
+  private func fileConflictAlert(on content: some View) -> some View {
+    if !workspaceManager.watchesFileConflicts(tabId: tabId) {
+      content
+    } else if let document = workspaceManager.notebookDocument(for: tabId) {
+      content.modifier(fileConflictAlert(for: document))
+    } else if let document = workspaceManager.editorDocument(for: tabId) {
+      content.modifier(fileConflictAlert(for: document))
+    } else {
+      content
+    }
+  }
+
+  private func fileConflictAlert<Document: FileConflictPresenting>(
+    for document: Document
+  ) -> DocumentFileConflictAlertModifier<Document> {
+    DocumentFileConflictAlertModifier(
+      document: document,
+      hasUnsavedChanges: workspaceManager.tabs.first { $0.id == tabId }?.isDirty ?? false,
+      onKeepMyVersion: { [workspaceManager, tabId] in
+        workspaceManager.keepMyVersion(tabId: tabId)
+      },
+      onLoadExternal: { [workspaceManager, tabId, viewModel] in
+        Task {
+          do {
+            try await workspaceManager.loadExternalVersion(tabId: tabId)
+          } catch {
+            viewModel.showToast(
+              "Could not load the external version: \(error.localizedDescription)", type: .error)
+          }
+        }
+      },
+      onClose: { [workspaceManager, tabId] in workspaceManager.closeTabForDeletedFile(id: tabId) }
+    )
   }
 
   private var documentMode: DocumentMode {

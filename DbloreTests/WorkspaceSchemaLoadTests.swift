@@ -138,7 +138,8 @@ struct WorkspaceSchemaLoadTests {
     await fixture.workspace.refreshDatabaseSchema()
     await background.value
 
-    #expect(fixture.workspace.schemaLoadTask == nil)
+    // Refresh runs its own tracked load in place of the background one
+    #expect(fixture.workspace.schemaLoadTask != background)
     #expect(fixture.ownTables().count == fixture.tableCount + 1)
     #expect(fixture.ownTables().contains("late"))
     #expect(!fixture.workspace.isLoadingSchema)
@@ -177,7 +178,8 @@ struct WorkspaceSchemaLoadTests {
       }
       if workspace.isLoadingSchema {
         sawLoading = true
-      } else if sawLoading && !finished {
+      } else if sawLoading && !finished && !fixture.ownTables().contains("late") {
+        // The tracked load clears the flag after it assigns; the refresh returns a hop later
         clearedEarly = true
       }
       await Task.yield()
@@ -363,9 +365,11 @@ struct WorkspaceTriggerLoadTests {
     #expect(workspace.databaseTriggers.first?.table == "items")
     // tables, views, triggers, foreign keys, columns: no definition read during the load
     #expect(await workspace.connectionManager.catalogQueryCount == 5)
+    #expect(workspace.paletteCatalog != nil)
 
     await workspace.performDisconnect()
     #expect(workspace.databaseTriggers.isEmpty)
+    #expect(workspace.paletteCatalog == nil)
   }
 
   @Test("a tab opened after the schema load gets the triggers")
@@ -424,6 +428,22 @@ struct WorkspaceTriggerLoadTests {
     #expect(factory.statements.contains { $0.contains("pg_trigger") })
     #expect(workspace.databaseTables.isEmpty)
     #expect(workspace.databaseTriggers.isEmpty)
+    await manager.disconnect()
+  }
+
+  @Test("a catalog read cancelled mid-load rethrows CancellationError, not a query failure")
+  func cancelledCatalogReadStaysCancellation() async throws {
+    let manager = DatabaseConnectionManager(
+      sessionFactory: FakeDatabaseSessionFactory(capabilities: .contract()))
+    try await manager.connect(
+      config: ConnectionConfig(
+        databaseType: .postgresql, host: "fake", port: 1, database: "db", username: "u",
+        password: "p", sslMode: .disable, protectionLevel: .none, safeMode: .silent,
+        protectedMode: false))
+
+    await #expect(throws: CancellationError.self) {
+      try await manager.fetchCatalog("columns") { @Sendable _ -> Int in throw CancellationError() }
+    }
     await manager.disconnect()
   }
 }

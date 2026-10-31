@@ -17,6 +17,8 @@ struct DataViewerView: View {
   var openQuery: ((String) -> Void)? = nil
   /// Workspace AI assistant behind the MongoDB filter and pipeline prompts; nil hides them
   var aiAssistant: AIAssistantViewModel? = nil
+  /// A Reload of the stale banner is running: its bar stays in place as the loading state
+  @State private var isReloadingStale = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -163,6 +165,13 @@ struct DataViewerView: View {
       if viewModel.isMongoDataViewer {
         MongoFilterBar(viewModel: viewModel, aiAssistant: aiAssistant)
       }
+      if isReloadingStale
+        || (viewModel.dataViewer?.isStale == true && viewModel.editorResult != nil)
+      {
+        StaleTableBanner(
+          isReloading: isReloadingStale, canReload: !viewModel.isEditorQueryRunning,
+          reload: reloadStale)
+      }
       content
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       DataViewerPagingBar(viewModel: viewModel)
@@ -199,6 +208,16 @@ struct DataViewerView: View {
     }
   }
 
+  /// The bar shows the reload from the click's frame until the page is in; `isStale` is cleared
+  /// only by the page read, so the banner comes back when none started
+  private func reloadStale() {
+    isReloadingStale = true
+    Task {
+      await viewModel.reloadStaleDataViewer()
+      isReloadingStale = false
+    }
+  }
+
   /// A staged insert on an empty page still belongs in the grid.
   private var hasStagedInserts: Bool {
     viewModel.dataViewer?.changeSet?.inserts.isEmpty == false
@@ -226,5 +245,67 @@ struct DataViewerView: View {
         .font(.system(size: 13, weight: .medium))
         .foregroundColor(.foregroundMuted)
     }
+  }
+}
+
+/// "This table changed in another tab." with Reload, over a page another tab wrote to since it
+/// was read. While the reload runs the bar keeps its place (no layout jump) and shows
+/// "Reloading...", faded in after ~150 ms so a quick reload does not flash it.
+private struct StaleTableBanner: View {
+  let isReloading: Bool
+  let canReload: Bool
+  let reload: () -> Void
+
+  @State private var showsProgress = false
+
+  var body: some View {
+    HStack(spacing: Spacing.sm) {
+      if isReloading {
+        progress
+      } else {
+        Image(systemName: "arrow.triangle.2.circlepath")
+          .foregroundColor(.warning)
+          .accessibilityHidden(true)
+        Text("This table changed in another tab.")
+          .font(.small)
+          .foregroundColor(.foreground)
+          .lineLimit(1)
+        Spacer(minLength: Spacing.sm)
+        Button("Reload", action: reload)
+          .buttonStyle(SecondaryButtonStyle(vPadding: Spacing.xs))
+          .linkPointer()
+          .disabled(!canReload)
+          .help("Read this page and the row count again; staged changes stay")
+      }
+    }
+    .padding(.horizontal, Spacing.md)
+    .frame(minHeight: ComponentSize.compactHeaderHeight)
+    .background(isReloading ? Color.clear : Color.warning.opacity(0.12), in: Rectangle())
+    .overlay(alignment: .bottom) {
+      Rectangle().fill(Color.warning.opacity(isReloading ? 0 : 0.4)).frame(height: 1)
+    }
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel(isReloading ? "Reloading the table" : "Table changed in another tab")
+  }
+
+  private var progress: some View {
+    HStack(spacing: Spacing.sm) {
+      ProgressView()
+        .controlSize(.small)
+      Text("Reloading...")
+        .font(.small)
+        .foregroundColor(.foregroundMuted)
+      Spacer(minLength: 0)
+    }
+    .opacity(showsProgress ? 1 : 0)
+    .animation(.easeIn(duration: 0.15), value: showsProgress)
+    // Opt out of the app-wide animation kill switch, only for the fade
+    .transaction(value: showsProgress) { $0.disablesAnimations = false }
+    .task {
+      // A cancelled sleep must not show the progress after the reload ended
+      guard (try? await Task.sleep(for: .milliseconds(150))) != nil else { return }
+      showsProgress = true
+    }
+    .onDisappear { showsProgress = false }
   }
 }

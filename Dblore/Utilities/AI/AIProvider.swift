@@ -6,7 +6,7 @@ import Observation
 
 nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
   case anthropic, openAI, gemini, openRouter, xAI, requesty, ollama, lmStudio, mlxServer, custom
-  case chatGPT, localMLX
+  case chatGPT, localMLX, appleIntelligence
 
   var displayName: String {
     switch self {
@@ -22,6 +22,7 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .custom: return "Custom (OpenAI-compatible)"
     case .chatGPT: return "ChatGPT (subscription, experimental)"
     case .localMLX: return "On-device (MLX)"
+    case .appleIntelligence: return "Apple Intelligence"
     }
   }
 
@@ -30,6 +31,8 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .anthropic: return .anthropicMessages
     case .chatGPT: return .responses
     case .gemini: return .geminiGenerateContent
+    // Never sent over HTTP: AIClientFactory routes this kind before the wire
+    case .appleIntelligence: return .chatCompletions
     default: return .chatCompletions
     }
   }
@@ -47,14 +50,15 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .mlxServer: return "http://127.0.0.1:8080/v1"
     case .custom: return ""
     case .chatGPT: return "https://chatgpt.com/backend-api/codex"
-    case .localMLX: return ""
+    case .localMLX, .appleIntelligence: return ""
     }
   }
 
   var requiresAPIKey: Bool {
     switch self {
     case .anthropic, .openAI, .gemini, .openRouter, .xAI, .requesty: return true
-    case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT, .localMLX: return false
+    case .ollama, .lmStudio, .mlxServer, .custom, .chatGPT, .localMLX, .appleIntelligence:
+      return false
     }
   }
 
@@ -67,8 +71,22 @@ nonisolated enum AIProviderKind: String, Codable, CaseIterable, Sendable {
     case .openRouter:
       return ["anthropic/claude-sonnet-4.5", "openai/gpt-4.1", "google/gemini-2.5-pro"]
     case .chatGPT: return ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"]
+    case .appleIntelligence: return [AIProviderKind.appleIntelligenceModel]
     // xAI and Requesty: models come from their /models list only
     case .xAI, .requesty, .ollama, .lmStudio, .mlxServer, .custom, .localMLX: return []
+    }
+  }
+
+  /// The one model of Apple Intelligence, written as its model when the provider is selected
+  static let appleIntelligenceModel = "system"
+
+  /// Runs on this Mac: compact prompt, no tools, and ghost text uses the chat model
+  var isOnDevice: Bool {
+    switch self {
+    case .localMLX, .appleIntelligence: return true
+    case .anthropic, .openAI, .gemini, .openRouter, .xAI, .requesty, .ollama, .lmStudio,
+      .mlxServer, .custom, .chatGPT:
+      return false
     }
   }
 }
@@ -123,13 +141,14 @@ nonisolated struct AIConfiguration: Codable, Equatable, Sendable {
 
   /// Provider and model ghost text uses: the inline provider (else the chat provider) with the
   /// inline model (else that provider's model; only when the inline provider is set). On-device
-  /// always uses its chat model: the engine holds one resident model, and a second one would
-  /// reload weights on every typing pause. Nil without a provider or a model.
+  /// always uses its chat model: the MLX engine holds one resident model, and a second one would
+  /// reload weights on every typing pause; Apple Intelligence has one model. Nil without a
+  /// provider or a model.
   var inlineTarget: (provider: AIProviderKind, model: String)? {
     guard let provider = inlineProvider ?? activeProvider else { return nil }
     let chatModel = configs[provider]?.model ?? ""
     let model =
-      provider == .localMLX || inlineProvider == nil
+      provider.isOnDevice || inlineProvider == nil
       ? chatModel : (inlineModel.flatMap { $0.isEmpty ? nil : $0 } ?? chatModel)
     return model.isEmpty ? nil : (provider, model)
   }
@@ -221,6 +240,11 @@ final class AISettings {
   @ObservationIgnored var localRuntimeInstalled: @MainActor () -> Bool = {
     PluginRegistry.shared.manager(id: "local-ai")?.isInstalledOrPending ?? false
   }
+  /// Whether Apple Intelligence can run requests on this Mac
+  @ObservationIgnored var appleIntelligenceAvailability:
+    @MainActor () -> AppleIntelligenceAvailability = {
+      .current
+    }
 
   init(defaults: UserDefaults, keyStore: AIKeyStore) {
     self.defaults = defaults
@@ -278,6 +302,7 @@ final class AISettings {
       return installedLocalModels().contains(model.id) && localRuntimeInstalled()
     }
     if kind == .chatGPT { return ChatGPTTokenStorage.load(from: keyStore) != nil }
+    if kind == .appleIntelligence { return appleIntelligenceAvailability() == .available }
     guard kind.requiresAPIKey else { return true }
     return !(apiKey(for: kind) ?? "").isEmpty
   }

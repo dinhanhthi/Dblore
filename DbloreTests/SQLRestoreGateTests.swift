@@ -2,7 +2,9 @@
 // `SQLRestorePlan` and `executeGatedRestore`: the 64 MiB cap, the dump header, the statements a
 // dump may hold (per-kind counts, server-version options, triggers), the gate before anything
 // is sent, the PostgreSQL / SQLite batch and the MySQL one-by-one path with its session cleanup,
-// and the SQLite deferred foreign key COMMIT failure that must not leave the transaction open.
+// the SQLite deferred foreign key COMMIT failure that must not leave the transaction open, and a
+// version 2 dump's DROPs (only of objects it creates later; on SQLite never one that fires an
+// ON DELETE action of a table outside the dump).
 
 import Foundation
 import Testing
@@ -15,8 +17,16 @@ struct SQLRestoreGateTests {
 
   // MARK: - Fixtures
 
-  private static func header(_ engine: DatabaseType) -> String {
-    SQLDumpAssembler.header(engine: engine, created: Date(timeIntervalSince1970: 1_760_000_000))
+  private static func header(_ engine: DatabaseType, version: Int = 1) -> String {
+    SQLDumpAssembler.header(
+      engine: engine, created: Date(timeIntervalSince1970: 1_760_000_000), version: version)
+  }
+
+  /// A header (version 2 by default), then `statements`, one per line
+  private static func script(
+    _ engine: DatabaseType, version: Int = 2, _ statements: [String]
+  ) -> String {
+    ([header(engine, version: version)] + statements).map { $0 + "\n" }.joined()
   }
 
   private static let postgresDump = [
@@ -98,9 +108,34 @@ struct SQLRestoreGateTests {
       Self.planError("\n" + Self.header(.postgresql) + "\nSELECT 1;", .postgresql)
         == .headerMissing)
     #expect(
+      SQLDumpAssembler.header(engine: .mysql, created: Date(), version: 2).hasPrefix(
+        SQLRestorePlan.dropHeaderPrefix + "MySQL "))
+    // Version 2 is read (a dump that drops); any other version is refused at the header, a
+    // later one as made by a newer Dblore
+    #expect(
       Self.planError(
         "-- Dblore SQL dump 2 engine=PostgreSQL\nCREATE TABLE a (id int);", .postgresql)
-        == .headerMissing)
+        == nil)
+    for newer in ["3", "10", "003", "99999999999999999999999"] {
+      #expect(
+        Self.planError(
+          "-- Dblore SQL dump \(newer) engine=PostgreSQL\nCREATE TABLE a (id int);", .postgresql)
+          == .newerDumpVersion, "\(newer)")
+    }
+    #expect(
+      SQLRestoreError.newerDumpVersion.localizedDescription
+        == "This dump was made by a newer Dblore; update Dblore to restore it. Nothing was "
+        + "executed.")
+    for other in ["0", "02", "", "3x", "-3"] {
+      #expect(
+        Self.planError(
+          "-- Dblore SQL dump \(other) engine=PostgreSQL\nCREATE TABLE a (id int);", .postgresql)
+          == .headerMissing, "\(other)")
+    }
+    #expect(Self.planError("-- Dblore SQL dump 3 engine\nSELECT 1;", .postgresql) == .headerMissing)
+    #expect(
+      Self.planError("-- Dblore SQL dump 2 engine=MySQL\nCREATE TABLE a (id int);", .postgresql)
+        == .engineMismatch(dump: "MySQL", connection: "PostgreSQL"))
     #expect(
       Self.planError(Self.header(.mysql) + "\nCREATE TABLE a (id int);", .postgresql)
         == .engineMismatch(dump: "MySQL", connection: "PostgreSQL"))
@@ -777,6 +812,260 @@ struct SQLRestoreGateTests {
     #expect(
       Self.planError(Self.header(.sqlite) + "\nINSERT INTO a VALUES ('x\u{0}');", .sqlite)
         == .containsNUL)
+  }
+
+  // MARK: - DROP (version 2)
+
+  private static let postgresDropDump = [
+    "CREATE SCHEMA IF NOT EXISTS \"app\";",
+    "DROP VIEW IF EXISTS \"app\".\"v\";",
+    // An unquoted name folds to lowercase, as PostgreSQL reads it
+    "DROP TABLE IF EXISTS \"app\".\"items\", app.Tags;",
+    "DROP SEQUENCE IF EXISTS \"app\".\"items_id_seq\";",
+    "DROP DOMAIN IF EXISTS \"app\".\"pos\";",
+    "DROP TYPE IF EXISTS \"app\".\"mood\";",
+    "CREATE TYPE \"app\".\"mood\" AS ENUM ('ok', 'sad');",
+    "CREATE DOMAIN \"app\".\"pos\" AS integer;",
+    "CREATE SEQUENCE \"app\".\"items_id_seq\" AS integer START WITH 1 INCREMENT BY 1;",
+    "CREATE TABLE \"app\".\"items\" (\"id\" integer NOT NULL, \"m\" \"app\".\"mood\");",
+    "CREATE TABLE \"app\".\"tags\" (\"id\" integer);",
+    "INSERT INTO \"app\".\"items\" (\"id\", \"m\") VALUES\n('1', 'ok');",
+    "CREATE VIEW \"app\".\"v\" AS SELECT 1;",
+  ]
+
+  @Test("Version 2: DROP IF EXISTS of a view, tables, a sequence, a domain and an enum it creates")
+  func postgresDropsAccepted() throws {
+    let plan = try Self.plan(Self.script(.postgresql, Self.postgresDropDump), .postgresql)
+    #expect(plan.kinds.firstIndex(of: .drop) == 1)
+    #expect(plan.summary.count(.drop) == 5)
+    #expect(plan.summary.count(.schema) == 7)
+    #expect(plan.summary.count(.data) == 1)
+    #expect(plan.summary.changesSchema)
+    #expect(plan.droppedSQLiteTables.isEmpty)
+    // Safe Mode lists each DROP as its own row
+    let rows = DatabaseBackupModel.restoreConfirmation(plan)
+    #expect(rows.filter { $0.kindLabel == "Drop" }.map(\.index) == [1, 2, 3, 4, 5])
+    #expect(rows.count == 12)
+  }
+
+  @Test(
+    "Version 2: DROP IF EXISTS of objects the dump creates, names compared as the engine does",
+    arguments: [
+      (
+        DatabaseType.mysql,
+        [
+          "SET FOREIGN_KEY_CHECKS=0;", "DROP VIEW IF EXISTS `v`;", "DROP TABLE IF EXISTS `t`;",
+          "CREATE TABLE `t` (`id` int) ENGINE=InnoDB"
+            + " /*!50100 PARTITION BY HASH (`id`) PARTITIONS 2 */;",
+          "CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `v` AS select 1 AS `x`;",
+        ], 2
+      ),
+      (
+        .sqlite,
+        [
+          "PRAGMA defer_foreign_keys = ON;", "DROP VIEW IF EXISTS \"V\";",
+          "DROP TABLE IF EXISTS \"Parent\";", "DROP TABLE IF EXISTS [fts];",
+          "CREATE TABLE parent (id INTEGER PRIMARY KEY);",
+          "CREATE VIRTUAL TABLE fts USING fts5(body);", "CREATE VIEW v AS SELECT 1;",
+        ], 3
+      ),
+      (
+        .duckdb,
+        [
+          "CREATE SCHEMA IF NOT EXISTS \"s\";", "DROP VIEW IF EXISTS \"main\".\"v1\";",
+          "DROP TABLE IF EXISTS \"s\".\"A\";", "DROP SEQUENCE IF EXISTS \"s\".\"seq\";",
+          "DROP TYPE IF EXISTS \"s\".\"mood\";", "CREATE TYPE \"s\".\"mood\" AS ENUM ('ok');",
+          "CREATE SEQUENCE \"s\".\"seq\" START WITH 1 INCREMENT BY 1 MINVALUE 1 MAXVALUE 9"
+            + " NO CYCLE;",
+          "CREATE TABLE s.a(id INTEGER DEFAULT(nextval('s.seq')));",
+          // The catalog leaves `main` out
+          "CREATE VIEW v1 AS SELECT 1;",
+        ], 4
+      ),
+    ])
+  func dropsAccepted(engine: DatabaseType, statements: [String], drops: Int) throws {
+    let plan = try Self.plan(Self.script(engine, statements), engine)
+    #expect(plan.summary.count(.drop) == drops)
+    #expect(
+      plan.droppedSQLiteTables
+        == (engine == .sqlite ? [Array("parent".utf8), Array("fts".utf8)] : []))
+  }
+
+  @Test(
+    "Version 2: a DROP of an object not created after it, or in another form, is refused",
+    arguments: [
+      // Never created, created only before the DROP, created as another kind
+      (
+        DatabaseType.postgresql,
+        ["DROP TABLE IF EXISTS \"app\".\"other\";", "CREATE TABLE \"app\".\"items\" (id int);"], 0
+      ),
+      (
+        .postgresql,
+        ["CREATE TABLE \"app\".\"items\" (id int);", "DROP TABLE IF EXISTS \"app\".\"items\";"], 1
+      ),
+      (
+        .postgresql,
+        ["DROP TABLE IF EXISTS \"app\".\"v\";", "CREATE VIEW \"app\".\"v\" AS SELECT 1;"], 0
+      ),
+      (
+        .postgresql,
+        ["DROP TYPE IF EXISTS \"app\".\"pos\";", "CREATE DOMAIN \"app\".\"pos\" AS integer;"], 0
+      ),
+      // A multi-table DROP with one name the dump never creates
+      (
+        .postgresql,
+        [
+          "DROP TABLE IF EXISTS \"app\".\"items\", \"app\".\"other\";",
+          "CREATE TABLE \"app\".\"items\" (id int);",
+        ], 0
+      ),
+      // A quoted name is exact; unqualified and system names are never dropped
+      (
+        .postgresql,
+        ["DROP TABLE IF EXISTS \"app\".\"Items\";", "CREATE TABLE \"app\".\"items\" (id int);"], 0
+      ),
+      (.postgresql, ["DROP TABLE IF EXISTS items;", "CREATE TABLE items (id int);"], 0),
+      (
+        .postgresql,
+        ["DROP TABLE IF EXISTS pg_temp.items;", "CREATE TABLE \"app\".\"items\" (id int);"], 0
+      ),
+      // CASCADE, RESTRICT, no IF EXISTS, other kinds, a list on another kind
+      (
+        .postgresql,
+        [
+          "DROP TABLE IF EXISTS \"app\".\"items\" CASCADE;",
+          "CREATE TABLE \"app\".\"items\" (id int);",
+        ], 0
+      ),
+      (
+        .postgresql,
+        [
+          "DROP TABLE IF EXISTS \"app\".\"items\" RESTRICT;",
+          "CREATE TABLE \"app\".\"items\" (id int);",
+        ], 0
+      ),
+      (
+        .postgresql, ["DROP TABLE \"app\".\"items\";", "CREATE TABLE \"app\".\"items\" (id int);"],
+        0
+      ),
+      (.postgresql, ["DROP SCHEMA IF EXISTS \"app\";", "CREATE SCHEMA IF NOT EXISTS \"app\";"], 0),
+      (
+        .postgresql,
+        [
+          "DROP MATERIALIZED VIEW IF EXISTS \"app\".\"v\";",
+          "CREATE VIEW \"app\".\"v\" AS SELECT 1;",
+        ], 0
+      ),
+      (
+        .postgresql, ["DROP INDEX IF EXISTS \"app\".\"i\";", "CREATE INDEX i ON app.items (id);"], 0
+      ),
+      (
+        .postgresql,
+        [
+          "DROP VIEW IF EXISTS \"app\".\"v\", \"app\".\"w\";",
+          "CREATE VIEW \"app\".\"v\" AS SELECT 1;", "CREATE VIEW \"app\".\"w\" AS SELECT 1;",
+        ], 0
+      ),
+      // MySQL: backquoted names, exact; one per statement; no TEMPORARY
+      (.mysql, ["DROP TABLE IF EXISTS `T`;", "CREATE TABLE `t` (id int);"], 0),
+      (.mysql, ["DROP TABLE IF EXISTS t;", "CREATE TABLE t (id int);"], 0),
+      (.mysql, ["DROP TEMPORARY TABLE IF EXISTS `t`;", "CREATE TABLE `t` (id int);"], 0),
+      (
+        .mysql,
+        [
+          "DROP TABLE IF EXISTS `t`, `u`;", "CREATE TABLE `t` (id int);",
+          "CREATE TABLE `u` (id int);",
+        ], 0
+      ),
+      (.mysql, ["DROP TABLE IF EXISTS `t` CASCADE;", "CREATE TABLE `t` (id int);"], 0),
+      // SQLite: one-part names, tables and views only
+      (.sqlite, ["DROP TABLE IF EXISTS main.t;", "CREATE TABLE t (id);"], 0),
+      (.sqlite, ["DROP TABLE IF EXISTS temp.t;", "CREATE TABLE t (id);"], 0),
+      (
+        .sqlite, ["DROP INDEX IF EXISTS i;", "CREATE TABLE t (id);", "CREATE INDEX i ON t (id);"], 0
+      ),
+      (.sqlite, ["DROP TRIGGER IF EXISTS tr;", "CREATE TABLE t (id);"], 0),
+      (.sqlite, ["DROP TABLE t;", "CREATE TABLE t (id);"], 0),
+      // DuckDB: qualified names, never a system schema
+      (.duckdb, ["DROP TABLE IF EXISTS t;", "CREATE TABLE t(id INTEGER);"], 0),
+      (.duckdb, ["DROP TABLE IF EXISTS \"temp\".\"t\";", "CREATE TABLE t(id INTEGER);"], 0),
+      (
+        .duckdb, ["DROP TABLE IF EXISTS \"main\".\"t\" CASCADE;", "CREATE TABLE t(id INTEGER);"], 0
+      ),
+      (.duckdb, ["DROP TABLE IF EXISTS \"s\".\"t\";", "CREATE TABLE t(id INTEGER);"], 0),
+    ])
+  func dropsRefused(engine: DatabaseType, statements: [String], index: Int) {
+    guard
+      case .statementRefused(let refused, _)? = Self.planError(
+        Self.script(engine, statements), engine)
+    else {
+      Issue.record("Expected \(statements) to be refused")
+      return
+    }
+    #expect(refused == index, "\(statements)")
+  }
+
+  @Test(
+    "A DROP in a version 1 dump is refused as before",
+    arguments: DatabaseType.allCases.filter { $0 != .mongodb })
+  func dropInVersion1Refused(engine: DatabaseType) {
+    let create =
+      switch engine {
+      case .mysql: "CREATE TABLE `t` (id int);"
+      case .sqlite: "CREATE TABLE t (id);"
+      case .duckdb: "CREATE TABLE t(id INTEGER);"
+      default: "CREATE TABLE \"public\".\"t\" (id int);"
+      }
+    let drop =
+      switch engine {
+      case .mysql: "DROP TABLE IF EXISTS `t`;"
+      case .sqlite: "DROP TABLE IF EXISTS \"t\";"
+      case .duckdb: "DROP TABLE IF EXISTS \"main\".\"t\";"
+      default: "DROP TABLE IF EXISTS \"public\".\"t\";"
+      }
+    #expect(
+      Self.planError(Self.script(engine, version: 1, [drop, create]), engine)
+        == .statementRefused(
+          index: 0, reason: "a Dblore dump never writes this DROP TABLE statement"))
+    #expect(throws: Never.self) { try Self.plan(Self.script(engine, [drop, create]), engine) }
+  }
+
+  @Test(
+    "A SQLite dump written with Drop plans: each DROP names a table or view it creates after it")
+  func sqliteWriterDropDumpPlans() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-restore-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let source = directory.appendingPathComponent("source.sqlite")
+    let handle = try SQLiteHandle(url: source)
+    for sql in [
+      "CREATE TABLE \"Parent\" (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+      "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES Parent (id))",
+      "CREATE VIRTUAL TABLE notes_fts USING fts5(body)",
+      "CREATE VIEW v_child AS SELECT * FROM child",
+      "INSERT INTO \"Parent\" (name) VALUES ('a')", "INSERT INTO child VALUES (1, 1)",
+    ] {
+      try handle.execute(sql)
+    }
+    let destination = directory.appendingPathComponent("dump.sql")
+    let writer = SQLDumpWriter(
+      config: ConnectionConfig(databaseType: .sqlite, database: source.path, username: ""),
+      material: nil, sshCredential: nil,
+      sessionFactory: SQLDumpSessionFactory(inner: AppDatabaseSessionFactory()),
+      temporaryDirectory: directory)
+    _ = try await writer.write(
+      to: destination,
+      options: SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true)))
+    let text = try String(contentsOf: destination, encoding: .utf8)
+    #expect(text.hasPrefix(SQLRestorePlan.dropHeaderPrefix + "SQLite "))
+    let plan = try Self.plan(text, .sqlite)
+    let dropLines = text.components(separatedBy: "\n").filter { $0.hasPrefix("DROP ") }
+    // The view and the two tables; the virtual table is kept and created only when missing
+    #expect(dropLines.count == 3)
+    #expect(plan.summary.count(.drop) == 3)
+    #expect(plan.droppedSQLiteTables == [Array("parent".utf8), Array("child".utf8)])
+    #expect(text.contains("\nCREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(body);\n"))
   }
 
   // MARK: - Gate before anything is sent
@@ -1581,6 +1870,89 @@ extension SQLRestoreGateTests {
     #expect(await manager.transactionSnapshot() == .idle)
     try await Self.expectAutocommit(manager, url)
     await manager.disconnect()
+  }
+
+  /// `parent` and `child`, whose foreign key to it has ON DELETE `action`, one row each
+  private static func makeCascadeDatabase(_ action: String) throws -> URL {
+    let url = try makeDatabase()
+    let handle = try SQLiteHandle(url: url)
+    try handle.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT)")
+    try handle.execute(
+      "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER DEFAULT 1"
+        + " REFERENCES Parent (id) ON DELETE \(action))")
+    try handle.execute("INSERT INTO parent VALUES (1, 'old')")
+    try handle.execute("INSERT INTO child VALUES (1, 1)")
+    return url
+  }
+
+  /// Drops and recreates `tables` (`parent`, and `child` when asked) with one new parent row
+  private static func sqliteDropDump(_ tables: [String]) -> String {
+    script(
+      .sqlite,
+      ["PRAGMA defer_foreign_keys = ON;"] + tables.map { "DROP TABLE IF EXISTS \"\($0)\";" }
+        + ["CREATE TABLE parent (id INTEGER PRIMARY KEY, name TEXT);"]
+        + (tables.contains("child")
+          ? [
+            "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent (id));"
+          ]
+          : [])
+        + ["INSERT INTO \"parent\" (\"id\", \"name\") VALUES\n(1, 'new');"])
+  }
+
+  @Test(
+    "SQLite: a Drop restore is refused when a table outside it reacts to a dropped table",
+    arguments: ["CASCADE", "SET NULL", "SET DEFAULT"])
+  func sqliteDropRefusedWhenAKeptTableReacts(action: String) async throws {
+    let url = try Self.makeCascadeDatabase(action)
+    defer { Self.removeDatabase(url) }
+    let manager = try await Self.sqliteFile(url, protectedMode: false)
+    let error = await restoreError(manager, Self.sqliteDropDump(["parent"]))
+    #expect(
+      error as? SQLRestoreError
+        == .dropFiresForeignKeyAction(table: "child", dropped: "Parent", action: action))
+    let message = error?.localizedDescription ?? ""
+    #expect(message.contains("\"child\"") && message.contains("\"Parent\""))
+    #expect(message.contains("Nothing was executed"))
+    try await Self.expectNothingRestored(manager, url)
+    await manager.disconnect()
+  }
+
+  /// The two rows of `makeCascadeDatabase` are still there, and the connection autocommits
+  private static func expectNothingRestored(
+    _ manager: DatabaseConnectionManager, _ url: URL
+  ) async throws {
+    _ = try await manager.executeInternal("CREATE TABLE probe (x)")
+    let handle = try SQLiteHandle(url: url)
+    #expect(try int(handle, "SELECT count(*) FROM sqlite_master WHERE name = 'probe'") == 1)
+    #expect(try int(handle, "SELECT count(*) FROM parent WHERE name = 'old'") == 1)
+    #expect(try int(handle, "SELECT count(*) FROM child WHERE parent_id = 1") == 1)
+  }
+
+  @Test("SQLite: a Drop restore that drops the reacting table too, or meets NO ACTION, runs")
+  func sqliteDropRunsWithoutAReactingKeptTable() async throws {
+    let both = try Self.makeCascadeDatabase("CASCADE")
+    defer { Self.removeDatabase(both) }
+    let manager = try await Self.sqliteFile(both, protectedMode: false)
+    let summary = try await manager.executeGatedRestore(
+      script: Self.sqliteDropDump(["parent", "child"]), policy: open,
+      connectionEpoch: await manager.connectionEpoch)
+    await manager.disconnect()
+    #expect(summary.count(.drop) == 2)
+    let handle = try SQLiteHandle(url: both)
+    #expect(try Self.int(handle, "SELECT count(*) FROM parent WHERE name = 'new'") == 1)
+    #expect(try Self.int(handle, "SELECT count(*) FROM child") == 0)
+
+    let noAction = try Self.makeCascadeDatabase("NO ACTION")
+    defer { Self.removeDatabase(noAction) }
+    let other = try await Self.sqliteFile(noAction, protectedMode: false)
+    // The new parent keeps id 1, so the deferred check passes at COMMIT
+    _ = try await other.executeGatedRestore(
+      script: Self.sqliteDropDump(["parent"]), policy: open,
+      connectionEpoch: await other.connectionEpoch)
+    await other.disconnect()
+    let kept = try SQLiteHandle(url: noAction)
+    #expect(try Self.int(kept, "SELECT count(*) FROM parent WHERE name = 'new'") == 1)
+    #expect(try Self.int(kept, "SELECT count(*) FROM child WHERE parent_id = 1") == 1)
   }
 
   // MARK: - MySQL / MariaDB server

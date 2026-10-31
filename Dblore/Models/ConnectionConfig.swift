@@ -343,6 +343,25 @@ nonisolated struct SSHTunnelConfig: Codable, Equatable, Sendable {
   }
 }
 
+/// HashiCorp Vault source of a connection's credentials: each connect leases a username and
+/// password from `<mount>/creds/<role>`. Public data only: the token, or the AppRole role id and
+/// secret id, live in `VaultCredentialStore`, and a leased password is never encoded.
+nonisolated struct VaultSource: Codable, Equatable, Sendable {
+  enum AuthMethod: String, Codable, Sendable {
+    case token
+    case appRole
+  }
+
+  /// https, or http on this Mac only (`VaultClient` checks it)
+  var address: String
+  /// Mount of the database secrets engine, for example `database`
+  var mount: String
+  var role: String
+  var authMethod: AuthMethod
+  /// A private CA: the only anchors trusted for the Vault address
+  var caPEM: String?
+}
+
 /// A database file attached to a SQLite connection on every connect, under `name` (its schema
 /// name in SQL). Kept on the saved row only: connection files never carry it.
 nonisolated struct AttachedDatabase: Codable, Equatable, Sendable {
@@ -365,6 +384,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var clientCertificate: ClientCertificateInfo?
   /// Display metadata only. SSH secrets live in SSHCredentialStore.
   var sshTunnel: SSHTunnelConfig?
+  /// Credentials leased from Vault on connect; `password` is then never encoded.
+  var vault: VaultSource?
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
@@ -516,6 +537,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case databaseType, host, port, database, username, password, sslMode, clientCertificate
     // Absent on connections saved before SSH tunnels
     case sshTunnel
+    // Absent on connections saved before Vault sources
+    case vault
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
@@ -558,6 +581,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     clientCertificate = try container.decodeIfPresent(
       ClientCertificateInfo.self, forKey: .clientCertificate)
     sshTunnel = try container.decodeIfPresent(SSHTunnelConfig.self, forKey: .sshTunnel)
+    vault = try container.decodeIfPresent(VaultSource.self, forKey: .vault)
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
@@ -652,10 +676,13 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encode(port, forKey: .port)
     try container.encode(database, forKey: .database)
     try container.encode(username, forKey: .username)
-    try container.encode(password, forKey: .password)
+    // A Vault connection's password is a lease's: it never reaches a saved row, a workspace
+    // file or Recents
+    try container.encode(vault == nil ? password : "", forKey: .password)
     try container.encode(sslMode, forKey: .sslMode)
     try container.encodeIfPresent(clientCertificate, forKey: .clientCertificate)
     try container.encodeIfPresent(sshTunnel, forKey: .sshTunnel)
+    try container.encodeIfPresent(vault, forKey: .vault)
     try container.encode(rememberConnection, forKey: .rememberConnection)
     try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
     try container.encode(protectionLevel, forKey: .protectionLevel)

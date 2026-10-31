@@ -33,6 +33,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   private var watchStorage: ConnectionCloseWatch?
   /// Extension type names by OID for this database (`viewerExtensionTypesSQL`), read at open.
   private var extensionTypesStorage: [UInt32: String] = [:]
+  /// `server_version_num`, read once at open (nil when that read failed)
+  private var serverVersionNumStorage: Int?
   private var didEmitClose = false
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
 
@@ -76,6 +78,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     if config.sshTunnel != nil {
       try await openThroughTunnel()
       await loadExtensionTypes()
+      await loadServerVersionNum()
       return
     }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -114,6 +117,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       self?.emit(.connectionLost)
     }
     await loadExtensionTypes()
+    await loadServerVersionNum()
   }
 
   /// Best effort: without it, extension columns keep the generic USER-DEFINED type.
@@ -140,6 +144,32 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
   private var extensionTypes: [UInt32: String] {
     lock.withLock { extensionTypesStorage }
+  }
+
+  /// Best effort, at open (before any transaction): without it the version is unknown, and
+  /// the types editor adds enum values the way older servers need.
+  private func loadServerVersionNum() async {
+    do {
+      let version = try await runWatched {
+        guard let connection = self.connection else { throw ConnectionClosedError() }
+        let rows = try await connection.query(
+          PostgresQuery(unsafeSQL: "SELECT current_setting('server_version_num')::int"),
+          logger: Logger(label: "dblore.session"))
+        var version: Int?
+        for try await number in rows.decode(Int.self) { version = number }
+        return version
+      }
+      lock.withLock { serverVersionNumStorage = version }
+    } catch {
+      await AppLogger.shared.warning(
+        "server_version_num not read: " + String(describing: error), category: "Database")
+    }
+  }
+
+  /// `server_version_num` of this connection (120000 for 12.0), read once at open; nil when
+  /// that read failed. A new connection is a new session, so it never outlives its server.
+  var serverVersionNum: Int? {
+    lock.withLock { serverVersionNumStorage }
   }
 
   /// Test connection without storing it on the actor. Same probe as before: real connect,

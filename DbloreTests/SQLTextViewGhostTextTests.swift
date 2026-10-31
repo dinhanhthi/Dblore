@@ -2,6 +2,7 @@
 // AI ghost text in the SQL editor: opt-in, overlay only, Tab/Esc, and where it is wired
 
 import AppKit
+import Observation
 import SwiftUI
 import Testing
 
@@ -21,6 +22,11 @@ nonisolated private final class ImmediateInlineClient: AIChatClient, @unchecked 
   }
 
   func listModels() async throws -> [String] { [] }
+}
+
+/// Set when an observation tracked in a test fires
+nonisolated private final class ObservationFlag: @unchecked Sendable {
+  var isSet = false
 }
 
 /// The editor's own undo stack, as the editor's coordinator vends it. The coordinator itself
@@ -82,8 +88,6 @@ struct SQLTextViewGhostTextTests {
     _ controller: AIInlineCompletionController, height: CGFloat = 200
   ) -> (SQLTextView, NSScrollView) {
     let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: height))
-    // Insets from the titled window would re-tile it, with a scroll, at a later layout pass
-    scrollView.automaticallyAdjustsContentInsets = false
     window.contentView?.addSubview(scrollView)
     let textView = makeEditor(controller, width: 200)
     // Only for its wrap setting: never the delegate, and without a text view to blur
@@ -110,10 +114,6 @@ struct SQLTextViewGhostTextTests {
     textView.string = text
     textView.setSelectedRange(NSRange(location: caret, length: 0))
     textView.sizeToFit()
-    // The first display pass and a pending layout re-tile the scroll view and post a scroll,
-    // which would dismiss the suggestion that lands before them
-    window.displayIfNeeded()
-    window.layoutIfNeeded()
     await ask(textView, controller: controller)
   }
 
@@ -384,6 +384,34 @@ struct SQLTextViewGhostTextTests {
     #expect(controller.suggestion == nil)
     #expect(textView.visibleGhostText == nil)
     #expect(textView.string == Self.typed + "\n\n\n\n")
+  }
+
+  @Test("a bounds change without a scroll keeps the suggestion and reads no observed state")
+  func boundsChangeWithoutScrollKeeps() async {
+    let controller = makeController()
+    let (textView, scrollView) = makeScrolledEditor(controller, height: 40)
+    await show(
+      Self.typed + "\n\n\n\n", caret: Self.typed.utf16.count, in: textView,
+      controller: controller)
+    #expect(textView.visibleGhostText == Self.suggestion)
+
+    // A layout pass re-tiles the scroll view and posts a bounds change that ends where it began.
+    // A read of the suggestion there would lay the scroll view out again when the next arrives.
+    let relaidOut = ObservationFlag()
+    withObservationTracking {
+      NotificationCenter.default.post(
+        name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+    } onChange: {
+      relaidOut.isSet = true
+    }
+    #expect(controller.suggestion != nil)
+    #expect(textView.visibleGhostText == Self.suggestion)
+    await ask(textView, controller: controller)
+    #expect(textView.visibleGhostText == Self.suggestion)
+    #expect(!relaidOut.isSet)
+
+    scroll(scrollView, to: NSPoint(x: 0, y: 5))
+    #expect(controller.suggestion == nil)
   }
 
   @Test("a scroll before the suggestion arrives keeps the request, as typing scrolls")

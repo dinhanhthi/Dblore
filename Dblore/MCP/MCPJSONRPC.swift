@@ -21,7 +21,10 @@
 // sessions' 30 s statement timeout, so an approved write is not cut by the request timeout.
 // tools/list is built per request (`listedTools`): execute_write comes and goes with the write
 // settings without a restart. A tool call sees the request's User-Agent as
-// `MCPToolService.clientName` (shown, not trusted, in the write approval).
+// `MCPToolService.clientName` (shown, not trusted, in the write approval), and tools/list and
+// tools/call see whose bearer the listener accepted as `MCPToolService.caller` (a paired
+// command-line tool gets the read tools only). A request without a caller (the `/cli/*` routes,
+// answered by `MCPCLIPairingService` before this handler) is refused.
 
 import Foundation
 import MCP
@@ -85,13 +88,17 @@ nonisolated enum MCPJSONRPC {
   private static func handle(
     _ request: MCPHTTPRequest, tools: any MCPToolCalling, version: String
   ) async -> MCPHTTPResponse {
+    guard let caller = request.caller else {
+      return .text(401, "Unauthorized", headers: ["WWW-Authenticate": "Bearer"])
+    }
     let call = MCPToolCall()
     let client = clientName(request.headers)
     let server = MCP.Server(
       name: serverName, version: version, capabilities: .init(tools: .init()))
+    // Task-locals are set inside each method handler: the Server runs them in its own tasks.
     await server.withMethodHandler(ListTools.self) { _ in
       ListTools.Result(
-        tools: await tools.listedTools().map {
+        tools: await MCPToolService.$caller.withValue(caller) { await tools.listedTools() }.map {
           Tool(
             name: $0.name, description: $0.description,
             inputSchema: convert($0.inputSchema) ?? .object([:]))
@@ -100,7 +107,9 @@ nonisolated enum MCPJSONRPC {
     await server.withMethodHandler(CallTool.self) { params in
       let arguments: [String: JSONValue] = convert(params.arguments ?? [:]) ?? [:]
       let result = await MCPToolService.$clientName.withValue(client) {
-        await call.run { await tools.call(params.name, arguments: arguments) }
+        await MCPToolService.$caller.withValue(caller) {
+          await call.run { await tools.call(params.name, arguments: arguments) }
+        }
       }
       return CallTool.Result(
         content: [.text(text: result.text, annotations: nil, _meta: nil)], isError: result.isError)

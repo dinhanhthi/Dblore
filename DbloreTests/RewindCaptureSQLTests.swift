@@ -156,6 +156,22 @@ struct RewindCaptureSQLTests {
     }
   }
 
+  @Test("An edited binary key is read back by its decoded bytes, like the UPDATE binds it")
+  func inlineStepDecodesBinaryKey() {
+    let old = Data([0x01, 0x02])
+    let new = Data([0xDE, 0xAD])
+    let step = RewindPlan.inlineStep(
+      assignments: [(column: "k", value: new.base64EncodedString())], primaryKeyColumns: ["k"],
+      rowData: ["k": .data(old)])
+    #expect(step?.keyBefore == [.data(old)])
+    #expect(step?.keyAfter == [.data(new)])
+
+    let text = RewindPlan.inlineStep(
+      assignments: [(column: "k", value: "b")], primaryKeyColumns: ["k"],
+      rowData: ["k": .string("a")])
+    #expect(text?.keyAfter == [.string("b")])
+  }
+
   // MARK: - Fixtures
 
   private static func column(_ name: String, _ type: String) -> RewindColumn {

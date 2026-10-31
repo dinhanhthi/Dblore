@@ -56,7 +56,10 @@ struct CellValueValidator: Sendable {
     case .null:
       // Empty or "null" keeps NULL; any other value is checked as the column's type
       if input.isEmpty || input.lowercased() == "null" { return .valid }
-      return validate(input, for: .placeholder(forColumnType: columnType))
+      let placeholder = CellValue.placeholder(forColumnType: columnType)
+      // A NULL bytea cell binds the typed text as bytea input, not base64
+      if case .data = placeholder { return .valid }
+      return validate(input, for: placeholder)
 
     case .json:
       return validateJSON(input)
@@ -121,6 +124,13 @@ struct CellValueValidator: Sendable {
       return .invalid("Date cannot be empty")
     }
 
+    // Plain DATE value: a real calendar day, so the round trip refuses rollovers like 2026-02-30
+    if let parsedDate = plainDateFormatter.date(from: input),
+      plainDateFormatter.string(from: parsedDate) == input
+    {
+      return .valid
+    }
+
     let iso8601Formatter = ISO8601DateFormatter()
     let dateFormatter = DateFormatter()
     dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
@@ -132,7 +142,7 @@ struct CellValueValidator: Sendable {
       if formatted == input {
         return .valid
       } else {
-        return .invalid("Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)")
+        return .invalid("Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
       }
     }
 
@@ -143,12 +153,22 @@ struct CellValueValidator: Sendable {
       if formatted == input {
         return .valid
       } else {
-        return .invalid("Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)")
+        return .invalid("Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
       }
     }
 
-    return .invalid("Invalid date format (use ISO8601 or yyyy-MM-dd HH:mm:ss)")
+    return .invalid("Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
   }
+
+  private nonisolated static let plainDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = TimeZone(identifier: "UTC")
+    formatter.isLenient = false
+    formatter.dateFormat = "yyyy-MM-dd"
+    return formatter
+  }()
 
   nonisolated private static func validateBoolean(_ input: String) -> ValidationResult {
     let lowercased = input.lowercased()
@@ -166,7 +186,10 @@ struct CellValueValidator: Sendable {
       return .invalid("Binary data cannot be empty")
     }
 
-    // Accept any non-empty string (could be hex string or base64)
+    // The edit is the value's base64 text, sent as the decoded bytes
+    if Data(base64Encoded: input) == nil {
+      return .invalid("Invalid base64 (binary values are edited as base64)")
+    }
     return .valid
   }
 }

@@ -55,6 +55,9 @@ struct DataViewerState: Equatable {
   /// (`lazyColumns(_:databaseType:orderColumns:binaryValueColumns:)`), nil for `SELECT *`.
   /// Set from what is cached before each page read, never from a catalog query.
   var lazyColumns: [LazyColumn]? = nil
+  /// Another tab wrote to the relation since the shown page was read: the viewer offers Reload
+  /// (never reloads on its own, so staged changes stay). Cleared by the next page load.
+  var isStale = false
 
   /// What a page load depends on; loads are coalesced while it is unchanged
   struct LoadKey: Hashable {

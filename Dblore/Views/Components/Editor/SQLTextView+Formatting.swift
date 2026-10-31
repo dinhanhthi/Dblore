@@ -16,12 +16,18 @@ extension SQLTextView {
     dialect != .mongodb
   }
 
-  /// Replace the whole text with its formatted version (undoable)
+  /// Replace the whole text with its formatted version (undoable). When the formatter refuses,
+  /// a toast says why; already formatted text changes nothing and shows nothing.
   func formatDocument() {
     guard Self.canFormat(dialect: dialect), let textStorage = textStorage else { return }
     let options = AppSettings.shared.formatterOptions
-    replaceDocument(
-      with: SQLFormatter.format(textStorage.string, dialect: dialect, options: options))
+    let outcome = SQLFormatter.formatOutcome(textStorage.string, dialect: dialect, options: options)
+    if let refusal = outcome.refusal {
+      WorkspaceWindowManager.shared.showToast(
+        "Format left the text unchanged: \(refusal.message)", type: .warning)
+      return
+    }
+    replaceDocument(with: outcome.text)
   }
 
   /// Replace the whole text with `newText` (undoable), as a format does

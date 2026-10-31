@@ -4,9 +4,13 @@
 // Users, roles, functions, and procedures stay empty. Triggers come from sqlite_schema.
 
 import Foundation
+import SQLite3
 
 /// `sqlite_schema` and `pragma_*` reads through `DatabaseSession.query`.
 nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
+  /// Tables and views read per chunk by `allColumns` and `foreignKeys` (tests use a small one)
+  var chunkSize = 500
+
   /// `pragma_database_list` lists `temp` only once the session holds a temp object.
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     var tables: [DatabaseTable] = []
@@ -89,7 +93,8 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
   func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
     var foreignKeys: [ForeignKey] = []
     for schema in try await schemas(in: session) {
-      for table in try await relations(schema: schema, type: "table", in: session) {
+      let tables = try await relations(schema: schema, type: "table", in: session)
+      try await forEachChunked(tables) { table in
         foreignKeys.append(
           contentsOf: try await keys(of: table, schema: schema, in: session))
       }
@@ -97,16 +102,22 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
     return foreignKeys
   }
 
+  /// A view whose definition no longer compiles (a dropped table or column) keeps its key with
+  /// no columns, so it does not fail the whole read. Any other failure is rethrown.
   func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {
     var columns: [String: [DatabaseColumn]] = [:]
     for schema in try await schemas(in: session) {
       let names =
-        try await relations(schema: schema, type: "table", in: session)
-        + (try await relations(schema: schema, type: "view", in: session))
-      for name in names {
-        columns["\(schema).\(name)"] = try await describe(
-          schema: schema, table: name, in: session
-        ).columns
+        try await relations(schema: schema, type: "table", in: session).map { ($0, false) }
+        + (try await relations(schema: schema, type: "view", in: session).map { ($0, true) })
+      try await forEachChunked(names) { name, isView in
+        do {
+          columns["\(schema).\(name)"] = try await describe(
+            schema: schema, table: name, in: session
+          ).columns
+        } catch let error as SQLiteSessionError where isView && error.extendedCode == SQLITE_ERROR {
+          columns["\(schema).\(name)"] = []
+        }
       }
     }
     return columns
@@ -221,6 +232,20 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
   }
 
   // MARK: - Relations
+
+  /// Per-relation reads in chunks of `chunkSize`. A cancelled task (schema refresh, disconnect)
+  /// stops before the next chunk instead of reading every remaining relation.
+  private func forEachChunked<Item>(
+    _ items: [Item], _ body: (Item) async throws -> Void
+  ) async throws {
+    let size = max(chunkSize, 1)
+    for start in stride(from: 0, to: items.count, by: size) {
+      try Task.checkCancellation()
+      for item in items[start..<min(start + size, items.count)] {
+        try await body(item)
+      }
+    }
+  }
 
   private func schemas(in session: any DatabaseSession) async throws -> [String] {
     let listed = try await rows(

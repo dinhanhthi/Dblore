@@ -51,22 +51,63 @@ nonisolated enum SQLFormatter {
     static let `default` = Options()
   }
 
+  /// Why Format left the text as it was
+  enum Refusal: Error, Equatable, Sendable {
+    /// A plain string holds a backslash: where it ends depends on standard_conforming_strings
+    case backslashString
+    /// MySQL runs the content of a `/*! */` comment
+    case executableComment
+    /// The formatted text would not keep the input's tokens
+    case tokensChanged
+
+    /// Short phrase for the user; never quotes the SQL
+    var message: String {
+      switch self {
+      case .backslashString: "a string contains a backslash"
+      case .executableComment: "it has a MySQL executable comment (/*! */)"
+      case .tokensChanged: "the result would not keep the same tokens"
+      }
+    }
+  }
+
+  /// The text Format returns, and why it is the input unchanged when the formatter refused
+  struct Outcome: Equatable, Sendable {
+    let text: String
+    /// nil when the text was formatted, or was already formatted
+    let refusal: Refusal?
+  }
+
   static func format(
     _ sql: String, dialect: SQLDialect = .postgresql, options: Options = .default
   ) -> String {
-    let items = lex(sql, dialect: dialect, options: options)
-    guard !items.isEmpty else { return sql }
+    formatOutcome(sql, dialect: dialect, options: options).text
+  }
+
+  static func formatOutcome(
+    _ sql: String, dialect: SQLDialect = .postgresql, options: Options = .default
+  ) -> Outcome {
+    let items: [Item]
+    do {
+      items = try lex(sql, dialect: dialect, options: options)
+    } catch {
+      return Outcome(text: sql, refusal: error)
+    }
+    guard !items.isEmpty else { return Outcome(text: sql, refusal: nil) }
     var printer = Printer(items: items, options: options)
     printer.run()
     // Safety net: never return text whose tokens differ from the input's
-    return signature(of: lex(printer.output, dialect: dialect)) == signature(of: items)
-      ? printer.output : sql
+    let output = (try? lex(printer.output, dialect: dialect)) ?? []
+    return signature(of: output) == signature(of: items)
+      ? Outcome(text: printer.output, refusal: nil)
+      : Outcome(text: sql, refusal: .tokensChanged)
   }
 
   /// Whether `a` and `b` have the same tokens in the same order. Only keywords and known
   /// function names before `(` may differ in case; other words must match exactly.
   static func hasSameTokens(_ a: String, _ b: String, dialect: SQLDialect) -> Bool {
-    signature(of: lex(a, dialect: dialect)) == signature(of: lex(b, dialect: dialect))
+    let lhs = (try? lex(a, dialect: dialect)) ?? []
+    let rhs = (try? lex(b, dialect: dialect)) ?? []
+    return signature(of: lhs) == signature(of: rhs)
   }
 
   /// Everything about `items` that affects meaning: kinds, texts (words whose case may
@@ -160,22 +201,47 @@ nonisolated enum SQLFormatter {
     /// A string constant continuing the previous one (a newline separates them, so
     /// PostgreSQL concatenates them)
     let continuesString: Bool
+    /// MySQL: a whole `DELIMITER x` line, kept verbatim on its own line
+    var isDelimiterLine = false
+    /// MySQL: the custom delimiter a `DELIMITER` line set, which ends a statement as `;` does
+    var endsStatement = false
 
     var isComment: Bool { kind == .lineComment || kind == .blockComment }
   }
 
   private static func lex(
     _ sql: String, dialect: SQLDialect, options: Options = .default
-  ) -> [Item] {
+  ) throws(Refusal) -> [Item] {
     let scalars = Array(sql.unicodeScalars)
     let tokenizer = SQLTokenizer(dialect: dialect)
     var items: [Item] = []
     var spaced = false
     var hadNewline = false
     var startsLine = false
+    // MySQL client grammar, as `SQLTokenizer.splitStatements` reads it: the active delimiter,
+    // and whether the current statement has a token yet (a `DELIMITER` line must come first)
+    var delimiter: [Unicode.Scalar] = [";"]
+    var hasContent = false
     var i = 0
     while i < scalars.count {
-      let lexeme = tokenizer.lexeme(in: scalars, at: i)
+      var lexeme = tokenizer.lexeme(in: scalars, at: i)
+      var isDelimiterLine = false
+      var endsStatement = false
+      if dialect == .mysql, !hasContent, case .word = lexeme.kind,
+        let directive = delimiterDirective(scalars, lexeme.range)
+      {
+        lexeme = SQLLexeme(kind: .word, range: i..<directive.end)
+        delimiter = directive.delimiter
+        isDelimiterLine = true
+      } else if dialect == .mysql, delimiter != [";"], canHoldDelimiter(lexeme.kind),
+        let p = lexeme.range.first(where: { scalars[$0...].starts(with: delimiter) })
+      {
+        // The delimiter may start inside a word (`END$$`) or span symbols (`//`)
+        endsStatement = p == i
+        lexeme = SQLLexeme(
+          kind: endsStatement ? .symbol : lexeme.kind,
+          range: i..<(endsStatement ? i + delimiter.count : p))
+      }
       let raw = SQLTokenizer.text(scalars, lexeme.range)
       i = lexeme.range.upperBound
       let kind: ItemKind
@@ -187,17 +253,18 @@ nonisolated enum SQLFormatter {
         startsLine = startsLine || isNewline
         continue
       case .comment:
-        // Compare scalars: `hasPrefix` would miss `--` followed by a combining mark
-        kind = scalars[lexeme.range.lowerBound] == "-" ? .lineComment : .blockComment
+        // Compare scalars: `hasPrefix` would miss `--` followed by a combining mark. Only the
+        // MySQL scanner lexes `#` as a comment; elsewhere it stays a symbol (an operator).
+        kind = ["-", "#"].contains(scalars[lexeme.range.lowerBound]) ? .lineComment : .blockComment
       case .word, .number:
         kind = .word
       case .quoted(.backslashString, _):
-        // Where it ends depends on standard_conforming_strings: fail closed (no items, so
-        // `format` returns its input unchanged)
-        return []
+        // Where it ends depends on standard_conforming_strings: fail closed (`format`
+        // returns its input unchanged)
+        throw .backslashString
       case .executableComment:
         // MySQL runs its content: leave the text unformatted
-        return []
+        throw .executableComment
       case .quoted, .dollarString:
         kind = .literal
       case .symbol:
@@ -214,13 +281,49 @@ nonisolated enum SQLFormatter {
       items.append(
         Item(
           kind: kind, text: text, keyword: upper, foldsCase: isKeyword, spaced: spaced,
-          startsLine: startsLine, continuesString: continuesString))
+          startsLine: startsLine, continuesString: continuesString,
+          isDelimiterLine: isDelimiterLine, endsStatement: endsStatement))
+      if kind != .lineComment && kind != .blockComment && !isDelimiterLine {
+        hasContent = !endsStatement && !(delimiter == [";"] && raw == ";")
+      }
       startsLine = false
       spaced = kind == .lineComment || kind == .blockComment
       if !spaced { hadNewline = false }
     }
     applyFunctionCase(to: &items, options: options)
     return items
+  }
+
+  /// Lexemes where the MySQL splitter looks for the active delimiter
+  private static func canHoldDelimiter(_ kind: SQLLexeme.Kind) -> Bool {
+    switch kind {
+    case .word, .number, .symbol: true
+    default: false
+    }
+  }
+
+  /// A `DELIMITER x` line starting at the word `range`, by the MySQL splitter's rule: the
+  /// word, spaces or tabs, then `x` up to whitespace; the rest of the line is ignored. Returns
+  /// `x` and the end of the line before its trailing whitespace (so the line break still
+  /// lexes as whitespace).
+  private static func delimiterDirective(
+    _ s: [Unicode.Scalar], _ range: Range<Int>
+  ) -> (delimiter: [Unicode.Scalar], end: Int)? {
+    guard SQLTokenizer.asciiUppercased(SQLTokenizer.text(s, range)) == "DELIMITER" else {
+      return nil
+    }
+    var j = range.upperBound
+    while j < s.count, s[j] == " " || s[j] == "\t" { j += 1 }
+    guard j > range.upperBound else { return nil }
+    var delimiter: [Unicode.Scalar] = []
+    while j < s.count, !SQLTokenizer.isWhitespace(s[j]) {
+      delimiter.append(s[j])
+      j += 1
+    }
+    guard !delimiter.isEmpty else { return nil }
+    while j < s.count, s[j] != "\n" { j += 1 }
+    while SQLTokenizer.isWhitespace(s[j - 1]) { j -= 1 }
+    return (delimiter, j)
   }
 
   /// Sets the case of each known function name right before `(`, unless it names a table:
@@ -335,6 +438,10 @@ nonisolated enum SQLFormatter {
     /// Prints the item at `index` and returns the index of the next unprinted item.
     mutating func handle(at index: Int) -> Int {
       let item = items[index]
+      if item.isDelimiterLine || item.endsStatement {
+        handleDelimiter(item)
+        return index + 1
+      }
       switch item.kind {
       case .lineComment, .blockComment:
         handleComment(item)
@@ -375,6 +482,17 @@ nonisolated enum SQLFormatter {
         pendingBreak = pending
         if item.kind == .lineComment { requestBreak(pending ?? .line(indent: lineIndent)) }
       }
+    }
+
+    /// A MySQL `DELIMITER` line keeps a line of its own; the custom delimiter ends a statement
+    /// as `;` does.
+    mutating func handleDelimiter(_ item: Item) {
+      if item.isDelimiterLine { requestBreak(.line(indent: Margin())) }
+      emit(item.text, spaced: item.spaced || item.isDelimiterLine)
+      frames.removeSubrange(1...)
+      frame = Frame(isQuery: true, base: Margin(), openIndent: Margin())
+      requestBreak(item.isDelimiterLine ? .line(indent: Margin()) : .blank)
+      isStatementStart = true
     }
 
     mutating func handleSymbol(_ item: Item, at index: Int) {

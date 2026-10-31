@@ -20,8 +20,11 @@ nonisolated struct CommandPaletteSnapshot: Equatable, Sendable {
   var actions: [Action] = []
   /// `QueryHistoryStore.Scope.connection` key. Empty still searches only that key.
   var connectionKey: String = ""
+  /// Cached table, view and function rows; when set, `tables`, `views` and `functions` are
+  /// left empty and these rows come first
+  var catalog: CommandPaletteCatalog?
 
-  nonisolated struct Relation: Equatable, Sendable {
+  nonisolated struct Relation: Hashable, Sendable {
     var schema: String
     var name: String
   }
@@ -50,10 +53,10 @@ nonisolated struct CommandPaletteSnapshot: Equatable, Sendable {
 
   /// Tables, views, functions, sources, tabs, favorites, then actions. History is not included.
   var items: [CommandPaletteItem] {
-    var items: [CommandPaletteItem] = []
+    var items: [CommandPaletteItem] = catalog?.items ?? []
     items.reserveCapacity(
-      tables.count + views.count + functions.count + sources.count + tabs.count + favorites.count
-        + actions.count)
+      items.count + tables.count + views.count + functions.count + sources.count + tabs.count
+        + favorites.count + actions.count)
     for table in tables {
       items.append(.table(schema: table.schema, name: table.name))
     }
@@ -86,13 +89,29 @@ nonisolated enum CommandPaletteRanking: Sendable {
   static let limit = 50
 
   static func rank(_ items: [CommandPaletteItem], _ query: String) async -> [CommandPaletteItem] {
+    await rank(catalog: nil, items, query)
+  }
+
+  /// Ranks the `catalog` rows, then `items`, as one list. The catalog's stored keys spare
+  /// lowercasing every name on each keystroke.
+  static func rank(
+    catalog: CommandPaletteCatalog?, _ items: [CommandPaletteItem], _ query: String
+  ) async -> [CommandPaletteItem] {
     assert(!Thread.isMainThread)
     let keywords = SidebarEntityFilter.keywords(in: query)
+    let cached = catalog?.items ?? []
+    let keys = catalog?.searchKeys ?? []
     var scored: [(index: Int, score: Int, item: CommandPaletteItem)] = []
-    scored.reserveCapacity(items.count)
-    for (index, item) in items.enumerated() {
+    scored.reserveCapacity(cached.count + items.count)
+    for index in 0..<(cached.count + items.count) {
       if index.isMultiple(of: 32), Task.isCancelled { return [] }
-      guard let score = score(item, keywords: keywords) else { continue }
+      let isCached = index < cached.count
+      let item = isCached ? cached[index] : items[index - cached.count]
+      // An empty query scores 0 without reading the texts
+      let texts: [String] =
+        keywords.isEmpty
+        ? [] : isCached ? keys[index] : item.searchTexts.map { $0.lowercased() }
+      guard let score = score(texts, keywords: keywords) else { continue }
       scored.append((index, score, item))
     }
     if Task.isCancelled { return [] }
@@ -103,13 +122,15 @@ nonisolated enum CommandPaletteRanking: Sendable {
     return scored.prefix(limit).map(\.item)
   }
 
-  private static func score(_ item: CommandPaletteItem, keywords: [String]) -> Int? {
-    if keywords.isEmpty { return 0 }
+  /// `keywords` and `texts` are lowercased (`SidebarEntityFilter.keywords(in:)`)
+  private static func score(_ texts: [String], keywords: [String]) -> Int? {
     var total = 0
     for keyword in keywords {
       var best: Int?
-      for text in item.searchTexts where !text.isEmpty {
-        guard let value = SidebarEntityFilter.score(keyword, in: text) else { continue }
+      for text in texts where !text.isEmpty {
+        guard let value = SidebarEntityFilter.score(lowercased: keyword, in: text) else {
+          continue
+        }
         best = max(best ?? value, value)
       }
       guard let best else { return nil }
@@ -158,26 +179,37 @@ final class CommandPaletteModel {
     (isRankFresh && ranked.contains(item)) || (isHistoryFresh && history.contains(item))
   }
 
+  /// Rows after `snapshotCatalog`'s (all of them when it is nil)
   @ObservationIgnored private var snapshotItems: [CommandPaletteItem] = []
+  @ObservationIgnored private var snapshotCatalog: CommandPaletteCatalog?
   @ObservationIgnored private var connectionKey = ""
   @ObservationIgnored private var didOpen = false
   @ObservationIgnored private var rankTask: Task<Void, Never>?
   @ObservationIgnored private var historyTask: Task<Void, Never>?
   @ObservationIgnored private let historyStore: QueryHistoryStore?
   @ObservationIgnored private let rank:
-    @Sendable ([CommandPaletteItem], String) async -> [CommandPaletteItem]
+    @Sendable (CommandPaletteCatalog?, [CommandPaletteItem], String) async -> [CommandPaletteItem]
 
   init(
     historyStore: QueryHistoryStore? = nil,
     rank: (@Sendable ([CommandPaletteItem], String) async -> [CommandPaletteItem])? = nil
   ) {
     self.historyStore = historyStore
-    self.rank = rank ?? CommandPaletteRanking.rank
+    if let rank {
+      // An injected rank sees one list, the catalog's rows first
+      self.rank = { catalog, items, query in await rank((catalog?.items ?? []) + items, query) }
+    } else {
+      self.rank = CommandPaletteRanking.rank(catalog:_:_:)
+    }
   }
 
   /// Replaces the copied snapshot and connection key, then ranks and searches again.
+  /// The catalog's rows are kept as they are (no copy on the main actor).
   func open(_ snapshot: CommandPaletteSnapshot) {
-    snapshotItems = snapshot.items
+    var rest = snapshot
+    rest.catalog = nil
+    snapshotItems = rest.items
+    snapshotCatalog = snapshot.catalog
     connectionKey = snapshot.connectionKey
     didOpen = true
     schedule()
@@ -189,13 +221,14 @@ final class CommandPaletteModel {
     generation += 1
     let generation = generation
     let items = snapshotItems
+    let catalog = snapshotCatalog
     let query = query
     let connectionKey = connectionKey
     let rank = rank
 
     rankTask?.cancel()
     rankTask = Task.detached {
-      let ranked = await rank(items, query)
+      let ranked = await rank(catalog, items, query)
       guard !Task.isCancelled else { return }
       await self.adoptRank(ranked, generation: generation)
     }

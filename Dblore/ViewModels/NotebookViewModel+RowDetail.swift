@@ -188,7 +188,7 @@ extension NotebookViewModel {
       Self.isSameTable(target, state.editTarget)
     else { return }
     // Same table, columns and key: the panel's row rebuilds the very statement that was sent
-    let assignments = zip(edit.columnNames, edit.statement.values).map { (column: $0, value: $1) }
+    let assignments = zip(edit.columnNames, edit.setInputValues).map { (column: $0, value: $1) }
     guard
       let statement = try? CellUpdateStatement.make(
         qualifiedName: target.qualifiedName, assignments: assignments,
@@ -200,7 +200,7 @@ extension NotebookViewModel {
     var rowData = state.rowData
     let fields = state.fields.map { field in
       guard let index = edit.columnNames.firstIndex(of: field.name) else { return field }
-      let value = Self.rowDetailValue(edit.statement.values[index], of: field)
+      let value = Self.rowDetailValue(edit.setInputValues[index], of: field)
       rowData[field.name] = value
       return RowDetailField(field: field.field, original: value, isReadOnly: field.isReadOnly)
     }

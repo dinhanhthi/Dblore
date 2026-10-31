@@ -38,6 +38,15 @@ extension CellResult {
     return parts.joined(separator: " ")
   }
 
+  /// Shown on an editor result an inline edit made stale (`staleAfterEdit`)
+  static let runAgainToRefreshNotice = "Run again to refresh"
+
+  /// The editor result banner: `capNotice` and, on its own line, `runAgainToRefreshNotice`
+  var editorNotice: String? {
+    let parts = [capNotice, staleAfterEdit ? Self.runAgainToRefreshNotice : nil].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: "\n")
+  }
+
   /// "N queued cells were not run because the connection was reset."
   static func queuedCellsNotRunMessage(_ count: Int) -> String {
     "\(count) queued cell\(count == 1 ? " was" : "s were") not run because the connection was "

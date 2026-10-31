@@ -188,7 +188,8 @@ extension WorkspaceManager {
       let model = CrossTableSearchModel(
         schemaEpoch: epoch, dialect: type.dialect, connectionManager: connectionManager
       ) { [weak self] in
-        self?.crossTableSearchTargets(dialect: type.dialect) ?? []
+        guard let tables = self?.databaseTables else { return [] }
+        return await Self.crossTableSearchTargets(tables, dialect: type.dialect)
       }
       model.onClose = { [weak self] in self?.isCrossTableSearchPresented = false }
       model.onOpen = { [weak self] result, filter in
@@ -212,9 +213,12 @@ extension WorkspaceManager {
   }
 
   /// The sidebar's tables, without temporary ones (only the tab's session sees them), and their
-  /// columns without virtual-table hidden ones
-  private func crossTableSearchTargets(dialect: SQLDialect) -> [CrossTableSearchModel.Target] {
-    databaseTables.compactMap { table in
+  /// columns without virtual-table hidden ones. Off the main actor: a large catalog has tens of
+  /// thousands of tables.
+  @concurrent private nonisolated static func crossTableSearchTargets(
+    _ tables: [DatabaseTable], dialect: SQLDialect
+  ) async -> [CrossTableSearchModel.Target] {
+    tables.compactMap { table in
       let temporary =
         dialect == .sqlite
         ? table.schema.caseInsensitiveCompare("temp") == .orderedSame

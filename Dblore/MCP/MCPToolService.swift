@@ -50,6 +50,11 @@
 // generic message, server text is scrubbed (`scrub`).
 // Connections are reached only through `MCPReadSource` and `MCPWriteSource` (one SQL
 // implementation each, the pool).
+// A paired command-line tool (caller cli, `MCPToolService.caller`, set per request from the
+// bearer the listener accepted) gets the read tools only: execute_write is neither listed nor
+// run. Its connections follow `HeadlessAccessRule` (by id or label: the allowlist, the lock, and
+// the strictest AI policy minus Never; Ask once per session runs with no prompt, since the user
+// paired the tool), and its run_query is recorded in History as `.cli`.
 
 import Foundation
 
@@ -151,6 +156,7 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
   case writeTooManyWaiting
   case writeConnectionChanged
   case writeOutcomeUnknown
+  case cliReadOnly
 
   var errorDescription: String? {
     switch self {
@@ -231,6 +237,9 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .writeOutcomeUnknown:
       "The change was interrupted while it ran, so Dblore cannot tell whether it was applied. "
         + "Check the data before trying again."
+    case .cliReadOnly:
+      "The command-line tool only reads: execute_write is not available to it. Nothing was "
+        + "sent to the database."
     }
   }
 }
@@ -339,6 +348,9 @@ nonisolated struct MCPToolService: Sendable {
   /// What the client calls itself (its User-Agent, set per request by the JSON-RPC layer)
   @TaskLocal static var clientName = "MCP client"
 
+  /// Whose bearer the listener accepted (set per request by the JSON-RPC layer)
+  @TaskLocal static var caller = MCPCallerKind.mcp
+
   /// Longest execute_write statement (UTF-8 bytes), so the approval shows all of it
   static let maxWriteBytes = 16 * 1_024
   /// Most lines of an execute_write statement
@@ -380,7 +392,7 @@ nonisolated struct MCPToolService: Sendable {
   /// The tools to list now: the read tools, plus execute_write while write tools are on and an
   /// allowlisted connection has a write scope.
   func listedTools() async -> [MCPToolDefinition] {
-    guard let writes, await writes.enabled() else { return Self.tools }
+    guard Self.caller == .mcp, let writes, await writes.enabled() else { return Self.tools }
     let allowed = await allowlist()
     let writable = await writes.scopes().contains { allowed.contains($0.key) && $0.value != .read }
     return writable ? Self.tools + [Self.executeWriteTool] : Self.tools
@@ -411,6 +423,7 @@ nonisolated struct MCPToolService: Sendable {
       case "run_query":
         return try await runQuery(entry: allowedEntry(arguments), arguments: arguments)
       case "execute_write":
+        guard Self.caller == .mcp else { throw MCPToolError.cliReadOnly }
         return try await executeWrite(arguments)
       default:
         throw MCPToolError.unknownTool
@@ -435,7 +448,7 @@ nonisolated struct MCPToolService: Sendable {
 
   /// The allowlist, lock and AI access checks every connection-scoped tool starts with. Only an
   /// allowlisted, unlocked entry is returned; every saved row of its identity tightens the
-  /// decision.
+  /// decision. The command-line tool's go through `HeadlessAccessRule` instead.
   private func allowedEntry(
     _ arguments: [String: JSONValue]
   ) async throws
@@ -445,6 +458,12 @@ nonisolated struct MCPToolService: Sendable {
       throw MCPToolError.missingArgument("connection_id")
     }
     let saved = await connections()
+    if Self.caller == .cli {
+      let caller = HeadlessAccessRule.Caller.cli(
+        mcpAllowlist: await allowlist(), aiSettings: await aiSettings())
+      return try HeadlessAccessRule(gate: gate, lockSource: lockSource)
+        .resolve(raw, saved: saved, caller: caller)
+    }
     guard let id = UUID(uuidString: raw), await allowlist().contains(id),
       let entry = saved.first(where: { $0.id == id }), !isLocked(entry)
     else { throw MCPToolError.connectionNotAvailable }
@@ -457,13 +476,27 @@ nonisolated struct MCPToolService: Sendable {
 
   /// Whether any identity `entry` reaches is locked, unlocked in the app or not
   private func isLocked(_ entry: ConnectionHistoryEntry) -> Bool {
+    Self.isLocked(entry, lockSource: lockSource)
+  }
+
+  /// Whether any identity `entry` reaches is locked in `lockSource`, unlocked in the app or not
+  /// (also `HeadlessAccessRule`)
+  static func isLocked(_ entry: ConnectionHistoryEntry, lockSource: LockRegistry) -> Bool {
     LockIdentity.all(entry.config).contains(where: lockSource.isLocked)
   }
 
-  /// The gate's decision on `entry` with the policy of every saved row of its identity, so no
-  /// looser row (allowlisted or not) opens a connection another row keeps private.
   private func decision(
     for entry: ConnectionHistoryEntry, saved: [ConnectionHistoryEntry], settings: AIConfiguration
+  ) -> AIAccessGate.Decision {
+    Self.decision(for: entry, saved: saved, settings: settings, gate: gate)
+  }
+
+  /// The gate's decision on `entry` with the policy of every saved row of its identity, so no
+  /// looser row (allowlisted or not) opens a connection another row keeps private (also
+  /// `HeadlessAccessRule`).
+  static func decision(
+    for entry: ConnectionHistoryEntry, saved: [ConnectionHistoryEntry], settings: AIConfiguration,
+    gate: AIAccessGate
   ) -> AIAccessGate.Decision {
     let key = AIAccessGate.sessionKey(for: entry.config)
     let policies = saved.filter { AIAccessGate.sessionKey(for: $0.config) == key }
@@ -471,11 +504,13 @@ nonisolated struct MCPToolService: Sendable {
     return gate.decision(for: entry.config, settings: settings, savedPolicies: policies)
   }
 
+  /// What unreadable AI settings read as: a default that asks (fail closed)
+  static let unreadableAISettings = AIConfiguration(
+    activeProvider: nil, configs: [:], defaultConnectionAccess: .askOncePerSession)
+
   /// The AI settings, or when unreadable a default that asks (fail closed).
   private func readAISettings() async -> AIConfiguration {
-    await aiSettings()
-      ?? AIConfiguration(
-        activeProvider: nil, configs: [:], defaultConnectionAccess: .askOncePerSession)
+    await aiSettings() ?? Self.unreadableAISettings
   }
 
   private func runQuery(
@@ -1175,12 +1210,13 @@ nonisolated struct MCPToolService: Sendable {
         rowCount: rowCount, status: status, errorMessage: redacted ? nil : error,
         connectionKey: QueryHistoryIdentity.connectionKey(for: config),
         connectionLabel: name.isEmpty ? "\(config.host)/\(config.database)" : name,
-        workspaceID: nil, workspaceName: nil, source: .mcp,
+        workspaceID: nil, workspaceName: nil, source: Self.caller == .cli ? .cli : .mcp,
         kind: Self.historyKind(statements)))
   }
 
-  /// The kind the editor's History stores: a write wins over schema, transaction, other, read.
-  private static func historyKind(_ statements: [ClassifiedStatement]) -> QueryHistoryEntry.Kind? {
+  /// The kind the editor's History stores: a write wins over schema, transaction, other, read
+  /// (also `ShortcutsRunner`).
+  static func historyKind(_ statements: [ClassifiedStatement]) -> QueryHistoryEntry.Kind? {
     let order: [QueryHistoryEntry.Kind] = [.read, .other, .transaction, .schema, .write]
     return
       statements
@@ -1230,7 +1266,9 @@ nonisolated struct MCPToolService: Sendable {
     if case MCPConnectionError.unknownConnection = error {
       return MCPToolError.connectionNotAvailable.localizedDescription
     }
-    if error is MCPToolError || error is MCPConnectionError {
+    if error is MCPToolError || error is MCPConnectionError || error is HeadlessAccessRule.Refusal
+      || error is VaultConnectionRefusal
+    {
       return error.localizedDescription
     }
     let text = config.map { scrub(error.localizedDescription, config: $0) }
@@ -1263,8 +1301,9 @@ nonisolated struct MCPToolService: Sendable {
     return result
   }
 
-  /// Name, else the database's last path component (a file path for SQLite).
-  private static func label(of config: ConnectionConfig) -> String {
+  /// Name, else the database's last path component (a file path for SQLite). Also the name
+  /// `HeadlessAccessRule` resolves.
+  static func label(of config: ConnectionConfig) -> String {
     let name = config.name.trimmingCharacters(in: .whitespacesAndNewlines)
     return name.isEmpty ? (config.database as NSString).lastPathComponent : name
   }

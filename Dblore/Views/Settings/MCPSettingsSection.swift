@@ -4,7 +4,8 @@
 //
 //  Settings > MCP: run the MCP server, choose the connections agents may use (each Read
 //  unless write tools are on and it is given a write scope), copy the client setup for
-//  Claude Code or Cursor, and add the outside MCP servers the AI chat may call.
+//  Claude Code or Cursor, pair the dblore command-line tool, and add the outside MCP servers
+//  the AI chat may call.
 //
 
 import SwiftUI
@@ -125,6 +126,8 @@ struct MCPSettingsSection: View {
         }
       }
 
+      commandLineTool
+
       OutsideMCPServersSection()
 
       SettingsGroupCard(title: "About MCP") {
@@ -141,7 +144,138 @@ struct MCPSettingsSection: View {
         }
       }
     }
-    .task { model.load() }
+    .task {
+      model.load()
+      await model.loadPairedTools()
+    }
+    .task(id: model.pairingCode) { await model.followPairing() }
+  }
+
+  private var isRunning: Bool {
+    if case .running = model.controller.status { return true }
+    return false
+  }
+
+  private var commandLineTool: some View {
+    SettingsGroupCard(title: "Command-line tool") {
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        note(
+          "Lets the dblore command-line tool list and query the connections allowed above from a terminal, read-only. Each pairing has its own token."
+        )
+        HStack(spacing: Spacing.sm) {
+          Button("Pair Command-Line Tool") { model.startPairing() }
+            .buttonStyle(PrimaryButtonStyle())
+            .controlSize(.regular)
+            .disabled(!isRunning)
+            .linkPointer()
+          Spacer(minLength: 0)
+        }
+        if !appSettings.mcpEnabled {
+          note("Turn the MCP server on to use the command-line tool.")
+        }
+        if isRunning, let code = model.pairingCode {
+          pairingCodeView(code)
+        }
+        Divider()
+        pairedTools
+        Divider()
+        VStack(alignment: .leading, spacing: Spacing.sm) {
+          Text("Install")
+            .font(.bodyText)
+            .foregroundColor(.foreground)
+          note("Links the tool inside Dblore into /usr/local/bin. Asks for your Mac password.")
+          commandLine(
+            MCPSettingsModel.installCommand(appPath: Bundle.main.bundlePath),
+            copy: .installCommand)
+        }
+      }
+    }
+  }
+
+  private func pairingCodeView(_ code: MCPCLIPairingCode) -> some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      note("Run this in a terminal:")
+      commandLine(MCPSettingsModel.pairCommand(port: code.port), copy: .pairCommand)
+      note("Then type this code when it asks (it works once):")
+      HStack(alignment: .firstTextBaseline, spacing: Spacing.md) {
+        Text(code.code)
+          .font(.monoLarge)
+          .foregroundColor(.foreground)
+          .textSelection(.enabled)
+        Spacer(minLength: Spacing.sm)
+        Text("Expires in \(model.pairingCountdown)")
+          .font(.bodyText)
+          .monospacedDigit()
+          .foregroundColor(.foregroundSubtle)
+      }
+    }
+  }
+
+  private func commandLine(_ text: String, copy snippet: MCPSettingsModel.Snippet) -> some View {
+    HStack(spacing: Spacing.sm) {
+      Text(text)
+        .font(.monoMedium)
+        .foregroundColor(.foreground)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .textSelection(.enabled)
+        .help(text)
+      Spacer(minLength: Spacing.sm)
+      copyButton(snippet, title: "Copy")
+    }
+  }
+
+  @ViewBuilder private var pairedTools: some View {
+    VStack(alignment: .leading, spacing: Spacing.sm) {
+      Text("Paired tools")
+        .font(.bodyText)
+        .foregroundColor(.foreground)
+      if let tools = model.pairedTools {
+        if tools.isEmpty {
+          Text("No command-line tool is paired.")
+            .font(.bodyText)
+            .foregroundColor(.foregroundMuted)
+        }
+        ForEach(tools, id: \.id) { tool in
+          pairedToolRow(tool)
+        }
+        if tools.contains(where: \.isSessionOnly) {
+          note(
+            "Session only: this build cannot keep pairings in the Keychain, so they end when Dblore quits."
+          )
+        }
+      } else {
+        Text("Loading…")
+          .font(.bodyText)
+          .foregroundColor(.foregroundMuted)
+      }
+      if let error = model.revokeError {
+        warning(error)
+      }
+    }
+  }
+
+  private func pairedToolRow(_ tool: MCPCLICredential) -> some View {
+    HStack(spacing: Spacing.md) {
+      VStack(alignment: .leading, spacing: Spacing.xs) {
+        Text(tool.name)
+          .font(.bodyText)
+          .foregroundColor(.foreground)
+        Text(
+          "Paired \(tool.date.formatted(date: .abbreviated, time: .shortened))"
+            + (tool.isSessionOnly ? " · Session only" : "")
+        )
+        .font(.bodyText)
+        .foregroundColor(.foregroundSubtle)
+      }
+      Spacer(minLength: Spacing.sm)
+      Button("Revoke") {
+        Task { await model.revoke(id: tool.id) }
+      }
+      .buttonStyle(DangerButtonStyle())
+      .controlSize(.regular)
+      .linkPointer()
+    }
   }
 
   private var portRow: some View {

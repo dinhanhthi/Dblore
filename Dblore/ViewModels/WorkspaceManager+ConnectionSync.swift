@@ -42,14 +42,24 @@ extension WorkspaceManager {
   }
 
   /// A tab changed the protection level, commit style, Safe Mode or protected mode of the
-  /// connection: update the workspace config, every tab and the actor's connected config.
-  func updateConnectionProtection(from config: ConnectionConfig) {
-    guard var current = workspace.connectionConfig else { return }
+  /// connection: update the workspace config, every tab, the actor's connected config and,
+  /// when it has one, its saved row (saved as `setHiddenSchemas` does, so a reopen keeps the
+  /// change). The tab gated the change on the workspace config only, so a saved row stricter
+  /// than that config (raised elsewhere since) is not weakened: it keeps its protection, and
+  /// the next connect asks the unlock.
+  func updateConnectionProtection(
+    from config: ConnectionConfig,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
+  ) {
+    guard let previous = workspace.connectionConfig else { return }
+    var current = previous
     current.protectionLevel = config.protectionLevel
     current.safeMode = config.safeMode
     current.protectedMode = config.protectedMode
     current.commitStyle = config.commitStyle
-    guard current != workspace.connectionConfig else { return }
+    guard current != previous else { return }
     workspace.connectionConfig = current
     editingConnectionConfig.protectionLevel = current.protectionLevel
     editingConnectionConfig.safeMode = current.safeMode
@@ -61,6 +71,22 @@ extension WorkspaceManager {
     Task {
       await connectionManager.updateConnectedProtection(from: current)
     }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    guard let saved = Self.exactSavedEntry(for: current, in: history)?.config else { return }
+    let needsUnlock = { (old: ConnectionConfig) in
+      NotebookViewModel.requiresUnlockForChange(
+        from: ConnectionSafetyState(config: old, defaultCommitStyle: defaultCommitStyle),
+        to: ConnectionSafetyState(config: current, defaultCommitStyle: defaultCommitStyle),
+        hasPassword: hasPassword, hasTouchID: hasTouchID)
+    }
+    // Weakening the row needs an unlock the tab's gate did not ask
+    guard !needsUnlock(saved) || needsUnlock(previous) else { return }
+    var row = Self.keepingSavedAIFields(current, defaults: defaults)
+    row = Self.keepingSavedAppearance(row, defaults: defaults)
+    SessionManager.saveConnection(
+      row.mongoHomeDatabase == nil
+        ? row : Self.switchedMongoConfig(row, to: row.identityDatabase),
+      defaults: defaults, passwords: passwords)
   }
 
   /// The saved connection with the identity of `config`: engine, host, port, home database and
@@ -148,12 +174,13 @@ extension WorkspaceManager {
   }
 
   /// An opened file's `config` with the TLS mode, SSH tunnel, client certificate (which also
-  /// decides whether the saved custom CA is used) and connection string of its saved row
-  /// (`hasSavedTransport`), even where the file's are stronger: the saved row is the user's
-  /// choice, and a file never picks how a saved password travels. Remember off in the file
-  /// changes nothing. Without that row they stay the file's (auto-connect then reads no
-  /// password), but a connection string that reaches another host, port or TLS mode than the
-  /// config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
+  /// decides whether the saved custom CA is used), connection string and Vault source (address,
+  /// CA, mount, role, auth method) of its saved row (`hasSavedTransport`), even where the file's
+  /// are stronger: the saved row is the user's choice, and a file never picks how a saved
+  /// password travels nor where a Vault secret goes. Remember off in the file changes nothing.
+  /// Without that row they stay the file's (auto-connect then reads no password), but its Vault
+  /// source is dropped and a connection string that reaches another host, port or TLS mode than
+  /// the config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
   static func keepingSavedTransport(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -163,11 +190,15 @@ extension WorkspaceManager {
       config.sshTunnel = saved.sshTunnel
       config.clientCertificate = saved.clientCertificate
       config.mongoURI = saved.mongoURI
-    } else if let uri = config.mongoURI {
-      config.mongoURI = try? MongoURIParser.checkedMongoURI(
-        uri, host: config.host, port: config.port, engine: config.databaseType,
-        sslMode: config.sslMode
-      ).get()
+      config.vault = saved.vault
+    } else {
+      config.vault = nil
+      if let uri = config.mongoURI {
+        config.mongoURI = try? MongoURIParser.checkedMongoURI(
+          uri, host: config.host, port: config.port, engine: config.databaseType,
+          sslMode: config.sslMode
+        ).get()
+      }
     }
     return config
   }
@@ -195,8 +226,8 @@ extension WorkspaceManager {
   /// on their own: the protection level, the commit style with the protected mode and Safe Mode
   /// it projects to (compared on the resolved style, as
   /// `NotebookViewModel.requiresUnlockForChange` does), and the read-only file flag. A part as
-  /// strict or stricter keeps the file's: the protection pickers write only the workspace, and
-  /// the next connect saves them to the row.
+  /// strict or stricter keeps the file's: a picker change saved to the workspace may not have
+  /// reached the row (a Remember-off save, or a row raised elsewhere since).
   static func keepingSavedProtection(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard,
     defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle
@@ -346,20 +377,74 @@ extension WorkspaceManager {
   // MARK: - Connect (weakening needs the Safe Mode unlock)
 
   /// True if connecting with `new` needs the Safe Mode unlock: `new` targets the same database
-  /// as `current` (engine, host, port, database, username; strings trimmed and compared
-  /// case-insensitively, so a case variant cannot dodge the check) and the resolved commit
-  /// style weakens under the same rule as a runtime change
-  /// (`NotebookViewModel.requiresUnlockForChange`). A different target is a new connection.
-  /// `defaultCommitStyle` is the fallback for a legacy unprotected connection with a nil safe mode.
+  /// as `current` or `saved` (engine, host, port, database, username; strings trimmed and
+  /// compared case-insensitively, so a case variant cannot dodge the check) and the resolved
+  /// commit style weakens either under the same rule as a runtime change
+  /// (`NotebookViewModel.requiresUnlockForChange`), so `new` is checked against the stricter of
+  /// the workspace's config and the saved row its save overwrites. A different target is a new
+  /// connection. `defaultCommitStyle` is the fallback for a legacy unprotected connection with a
+  /// nil safe mode.
   nonisolated static func connectRequiresUnlock(
-    current: ConnectionConfig?, new: ConnectionConfig, defaultCommitStyle: CommitStyle,
-    hasPassword: Bool, hasTouchID: Bool
+    current: ConnectionConfig?, saved: ConnectionConfig? = nil, new: ConnectionConfig,
+    defaultCommitStyle: CommitStyle, hasPassword: Bool, hasTouchID: Bool
   ) -> Bool {
-    guard let current, isSameTarget(current, new) else { return false }
-    return NotebookViewModel.requiresUnlockForChange(
-      from: ConnectionSafetyState(config: current, defaultCommitStyle: defaultCommitStyle),
-      to: ConnectionSafetyState(config: new, defaultCommitStyle: defaultCommitStyle),
-      hasPassword: hasPassword, hasTouchID: hasTouchID)
+    [current, saved].contains { old in
+      guard let old, isSameTarget(old, new) else { return false }
+      return NotebookViewModel.requiresUnlockForChange(
+        from: ConnectionSafetyState(config: old, defaultCommitStyle: defaultCommitStyle),
+        to: ConnectionSafetyState(config: new, defaultCommitStyle: defaultCommitStyle),
+        hasPassword: hasPassword, hasTouchID: hasTouchID)
+    }
+  }
+
+  /// Before the Welcome form creates a workspace: when `config` weakens the saved row its save
+  /// overwrites (`connectRequiresUnlock`), asks `unlock` with that row (its password unread)
+  /// once, on the Welcome window. True once granted: the new workspace's connect then skips the
+  /// weakening check (`connectFromWelcome(config:aiFieldsEdited:weakeningUnlocked:)`). False
+  /// when nothing weakens (nothing asked).
+  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled: no
+  ///   workspace is created and the saved row keeps its protection
+  static func unlockWelcomeWeakening(
+    of config: ConnectionConfig, defaults: UserDefaults = .standard,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
+    unlock: (_ savedRow: ConnectionConfig) async -> Bool
+  ) async throws -> Bool {
+    guard let saved = savedTransportRow(for: config, defaults: defaults),
+      connectRequiresUnlock(
+        current: nil, saved: saved, new: config, defaultCommitStyle: defaultCommitStyle,
+        hasPassword: hasPassword, hasTouchID: hasTouchID)
+    else { return false }
+    guard await unlock(saved) else { throw WorkspaceConnectError.unlockRequired }
+    return true
+  }
+
+  /// Before the Welcome form's Edit saves `row` over the saved row `id`: when `row` weakens that
+  /// row (`NotebookViewModel.requiresUnlockForChange`, whatever target the edit moves it to) or
+  /// the saved row of its new target the save merges, asks `unlock` with that row (its password
+  /// unread) once, on the Welcome window. False when nothing weakens (nothing asked).
+  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled: nothing is
+  ///   saved and the row keeps its protection
+  static func unlockWelcomeEditWeakening(
+    of row: ConnectionConfig, editing id: UUID, defaults: UserDefaults = .standard,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
+    unlock: (_ savedRow: ConnectionConfig) async -> Bool
+  ) async throws -> Bool {
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    let overwritten = [history.first { $0.id == id }, exactSavedEntry(for: row, in: history)]
+    guard
+      let saved = overwritten.compactMap({ $0?.config }).first(where: { saved in
+        NotebookViewModel.requiresUnlockForChange(
+          from: ConnectionSafetyState(config: saved, defaultCommitStyle: defaultCommitStyle),
+          to: ConnectionSafetyState(config: row, defaultCommitStyle: defaultCommitStyle),
+          hasPassword: hasPassword, hasTouchID: hasTouchID)
+      })
+    else { return false }
+    guard await unlock(saved) else { throw WorkspaceConnectError.unlockRequired }
+    return true
   }
 
   nonisolated private static func isSameTarget(
@@ -395,7 +480,8 @@ extension WorkspaceManager {
   /// Protected transaction is resolved first (Commit / Roll back / Cancel, like a disconnect).
   /// Compared against the workspace's current config whether or not it is connected right now:
   /// the workspace keeps the last config after a disconnect, so reconnecting to the same
-  /// database with weaker settings needs the unlock too.
+  /// database with weaker settings needs the unlock too. Also compared against the saved row its
+  /// save overwrites, so a workspace config that is weaker than that row cannot weaken it.
   /// - Throws: `WorkspaceConnectError.pendingTransactionKept` when the pending transaction was
   ///   not resolved (still connected, nothing changed); `WorkspaceConnectError.unlockRequired`
   ///   when the connect is held in `pendingWeakeningConnect` (nothing changed); connect with
@@ -423,7 +509,9 @@ extension WorkspaceManager {
       config.mongoHomeDatabase = nil
     }
     if !isAutoConnect { await supersedeAutoConnect() }
-    // A locked connection asks on this workspace's window before anything else; auto-connect
+    // A save onto another connection's Keychain key fails before any prompt is asked
+    try throwIfKeychainKeyInUse(config)
+    // A locked connection asks on this workspace's window before any other prompt; auto-connect
     // never asks (the connection actor refuses it)
     if !isAutoConnect, lockCenter.registry.refusal(for: config) != nil {
       config = try await unlockedForConnect(config)
@@ -434,27 +522,70 @@ extension WorkspaceManager {
     else {
       throw WorkspaceConnectError.pendingTransactionKept
     }
+    // Checked again after the prompts, before the weakening unlock is asked
+    try throwIfKeychainKeyInUse(config)
     if Self.connectRequiresUnlock(
-      current: workspace.connectionConfig, new: config, defaultCommitStyle: defaultCommitStyle,
-      hasPassword: hasPassword, hasTouchID: hasTouchID)
+      current: workspace.connectionConfig,
+      saved: Self.savedTransportRow(for: config, defaults: defaults), new: config,
+      defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
     {
-      pendingWeakeningConnect = config
-      pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
-      let pendingSSH = SSHCredentialStoreFactory.currentCredential(for: config)
-      pendingWeakeningSSHCredential = pendingSSH?.credential
-      pendingWeakeningAIFieldsEdited = aiFieldsEdited
-      pendingWeakeningFromForm = fromForm
+      holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
       throw WorkspaceConnectError.unlockRequired
     }
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningFromForm = false
     try await connectWithoutUnlockCheck(
       config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited,
       fromForm: fromForm)
     await showAttachWarnings()
+  }
+
+  /// Throws `SessionManagerError.keychainKeyInUse` when saving `config` would write onto another
+  /// connection's Keychain key. Reads no Keychain item.
+  private func throwIfKeychainKeyInUse(_ config: ConnectionConfig) throws {
+    if config.rememberConnection, config.mongoHomeDatabase == nil,
+      SessionManager.keyUsedByAnotherIdentity(config, defaults: defaults)
+    {
+      throw SessionManagerError.keychainKeyInUse
+    }
+  }
+
+  /// The Welcome form's connect on the workspace it just created. `weakeningUnlocked`: the Safe
+  /// Mode unlock was granted on the Welcome window (`unlockWelcomeWeakening(of:)`), so the
+  /// connect is held and completed at once, without asking again; otherwise it is `connect`.
+  func connectFromWelcome(
+    config: ConnectionConfig, aiFieldsEdited: Bool, weakeningUnlocked: Bool,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
+  ) async throws {
+    guard weakeningUnlocked else {
+      try await connect(
+        config: config, defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword,
+        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+      return
+    }
+    await unlockAttachedFiles(of: config)
+    holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+    try await completePendingWeakeningConnect()
+  }
+
+  /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate, SSH
+  /// secret and Vault secret of the running operation (the form's), which end with it.
+  private func holdWeakeningConnect(
+    _ config: ConnectionConfig, aiFieldsEdited: Bool, fromForm: Bool
+  ) {
+    pendingWeakeningConnect = config
+    pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
+    let pendingSSH = SSHCredentialStoreFactory.currentCredential(for: config)
+    pendingWeakeningSSHCredential = pendingSSH?.credential
+    pendingWeakeningVaultSecret = VaultCredentialStore.currentSecret(for: config)
+    pendingWeakeningAIFieldsEdited = aiFieldsEdited
+    pendingWeakeningFromForm = fromForm
   }
 
   /// Asks, on this workspace's window, to unlock each locked file `config` attaches. A cancel
@@ -479,8 +610,8 @@ extension WorkspaceManager {
   }
 
   /// `config` once its blocked lock is unlocked, with its saved password when it uses one, has
-  /// no password command and none typed (a locked row loads without it). Nothing is read before
-  /// the grant.
+  /// no password command nor Vault source and none typed (a locked row loads without it).
+  /// Nothing is read before the grant.
   /// - Parameter action: what the prompt says the unlock is for ("connect", "test it")
   /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
   ///   changed, no error to show)
@@ -494,7 +625,8 @@ extension WorkspaceManager {
         anchor: NewWindowStore.shared.findWindow(for: id))
     else { throw WorkspaceConnectError.unlockRequired }
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.password.isEmpty, lockCenter.registry.refusal(for: config) == nil,
+      config.vault == nil, config.password.isEmpty,
+      lockCenter.registry.refusal(for: config) == nil,
       let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
     else { return config }
     var config = config
@@ -512,21 +644,26 @@ extension WorkspaceManager {
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
     }
     let scopedSSH = SSHCredentialStoreFactory.scoped(pendingWeakeningSSHCredential, for: config)
+    let scopedVault = pendingWeakeningVaultSecret.map(VaultCredentialStore.ScopedSecret.init)
     let aiFieldsEdited = pendingWeakeningAIFieldsEdited
     let fromForm = pendingWeakeningFromForm
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningFromForm = false
     defer {
       scopedMaterial?.clear()
       scopedSSH?.clear()
+      scopedVault?.clear()
     }
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-          try await connectWithoutUnlockCheck(
-            config: config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+          try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+            try await connectWithoutUnlockCheck(
+              config: config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+          }
         }
       }
     } catch {
@@ -558,6 +695,7 @@ extension WorkspaceManager {
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningFromForm = false
   }

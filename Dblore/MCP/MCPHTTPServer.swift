@@ -1,14 +1,23 @@
 // MCPHTTPServer.swift
-// The MCP Streamable HTTP listener: HTTP/1.1 on 127.0.0.1 only (NIOHTTP1 + NIOPosix), one
-// endpoint, `POST /mcp`. `MCPRequestValidator` checks each request head before any body is read;
-// the body is buffered up to the limit (413 while it streams), then the injected handler runs
-// off the event loop and its response is written back on the connection's loop. A connection
-// takes one of `maxConnections` slots only when a request head first passes validation (token
-// included) and keeps it until it closes, so idle or unauthenticated sockets never hold one. Over
-// either that cap or `maxInFlight` running handlers, a validated request gets 503 instead.
-// Refusals close the connection; answered requests honour keep-alive. A client that closes its
-// connection while its handler runs cancels the handler (a waiting write approval is denied).
-// JSON-RPC lives in the handler.
+// The MCP Streamable HTTP listener: HTTP/1.1 on 127.0.0.1 only (NIOHTTP1 + NIOPosix): `POST /mcp`,
+// plus the command-line tool's `POST /cli/pair` and `POST /cli/hello`. `MCPRequestValidator`
+// checks each request head before any body is read; the body is buffered up to the route's limit
+// (413 while it streams), then the injected handler runs off the event loop with the route's
+// path, the caller and the bound port, and its response is written back on the connection's
+// loop. A `/mcp` connection takes one of `maxConnections` slots only when a request head first
+// passes validation (token included) and keeps it until it closes, so idle or unauthenticated
+// sockets never hold one. Over either that cap or `maxInFlight` running handlers, a validated
+// `/mcp` request gets 503 instead. `/cli/*` requests take neither kind of slot (they are short
+// and do not wait on anyone) and are answered with `Connection: close`, so they never crowd out
+// an agent. Refusals close the connection; answered `/mcp` requests honour keep-alive. A client
+// that closes its connection while its handler runs cancels the handler (a waiting write approval
+// is denied).
+// With no request in flight a per-connection timer closes the socket: no first request head
+// within 10 s, a request body not complete 15 s after its head, or 30 s of keep-alive silence. No
+// timer runs while a handler does, so a write awaiting approval keeps its own bound. While a
+// handler runs the connection keeps reading (the HTTP pipeline handler would pause reads), so a
+// close is seen; once over `inFlightReadLimit` bytes are buffered that way, it is closed.
+// JSON-RPC and the pairing answers live in the handler.
 
 import Foundation
 import NIOCore
@@ -18,10 +27,17 @@ import os
 
 nonisolated struct MCPHTTPRequest: Sendable {
   let method: String
+  /// The route's path, without a query string
   let path: String
   /// Repeated header names are joined with ", ".
   let headers: [String: String]
   let body: Data
+  /// Whose bearer `/mcp` accepted; nil on the `/cli/*` routes, which carry none. The listener
+  /// always sets it.
+  var caller: MCPCallerKind? = .mcp
+  /// The port the connection reached, read from its socket (`channel.localAddress`), not from
+  /// the configuration
+  var port = 0
 }
 
 /// A notification answer is 202 with an empty body.
@@ -47,11 +63,17 @@ nonisolated struct MCPHTTPResponse: Sendable, Equatable {
 actor MCPHTTPServer {
   typealias Handler = @Sendable (MCPHTTPRequest) async -> MCPHTTPResponse
 
-  nonisolated struct Configuration: Sendable, Equatable {
+  nonisolated struct Configuration: Sendable {
     /// 0 picks a free port.
     var port: Int
     var token: String
     var bodyLimit = MCPRequestValidator.defaultBodyLimit
+    var firstRequestTimeout = MCPHTTPServer.firstRequestTimeout
+    var readTimeout = MCPHTTPServer.readTimeout
+    var keepAliveTimeout = MCPHTTPServer.keepAliveTimeout
+    var inFlightReadLimit = MCPHTTPServer.inFlightReadLimit
+    /// The paired command-line tools' tokens, also accepted on `/mcp` (caller cli)
+    var cliTokens = MCPCLITokenRegistry()
   }
 
   static let host = "127.0.0.1"
@@ -59,6 +81,15 @@ actor MCPHTTPServer {
   /// validated request gets `busy` (503).
   static let maxConnections = 16
   static let maxInFlight = 8
+  /// From accept until the first request head is complete.
+  static let firstRequestTimeout = TimeAmount.seconds(10)
+  /// From a validated head until its body is complete.
+  static let readTimeout = TimeAmount.seconds(15)
+  /// From an answer on a kept-alive connection until the next request head is complete.
+  static let keepAliveTimeout = TimeAmount.seconds(30)
+  /// Bytes a client may send while its requests are in flight, until the pipelined requests
+  /// buffered meanwhile are all handed over.
+  static let inFlightReadLimit = MCPRequestValidator.defaultBodyLimit
 
   private enum State {
     case stopped
@@ -155,10 +186,14 @@ actor MCPHTTPServer {
             // An accepted connection's local port is the listening port, also when bound to 0.
             let validator = MCPRequestValidator(
               port: channel.localAddress?.port ?? -1, token: configuration.token,
-              bodyLimit: configuration.bodyLimit)
+              bodyLimit: configuration.bodyLimit, cliTokens: configuration.cliTokens)
+            let reader = MCPInFlightReader(limit: configuration.inFlightReadLimit)
+            try channel.pipeline.syncOperations.addHandler(reader)
             try channel.pipeline.syncOperations.configureHTTPServerPipeline()
             try channel.pipeline.syncOperations.addHandler(
-              MCPHTTPConnectionHandler(validator: validator, handler: handler, tasks: tasks))
+              MCPHTTPConnectionHandler(
+                validator: validator, handler: handler, tasks: tasks, reader: reader,
+                configuration: configuration))
           }
         }
         .bind(host: host, port: configuration.port)
@@ -223,14 +258,16 @@ private nonisolated final class MCPRequestTasks: Sendable {
     state.withLock { $0.connections -= 1 }
   }
 
-  /// Starts `body` in an in-flight slot that `body` frees with `finishRequest()`, unless the
-  /// listener is stopping or every slot is taken.
-  func run(_ body: @escaping @Sendable () async -> Void) -> Start {
+  /// Starts `body`, unless the listener is stopping. With `takesSlot`, in an in-flight slot that
+  /// `body` frees with `finishRequest()`, unless every slot is taken.
+  func run(takesSlot: Bool, _ body: @escaping @Sendable () async -> Void) -> Start {
     let id = UUID()
     return state.withLock { state in
       guard state.accepting else { return .stopping }
-      guard state.inFlight < MCPHTTPServer.maxInFlight else { return .busy }
-      state.inFlight += 1
+      if takesSlot {
+        guard state.inFlight < MCPHTTPServer.maxInFlight else { return .busy }
+        state.inFlight += 1
+      }
       let task = Task {
         await body()
         self.state.withLock { _ = $0.tasks.removeValue(forKey: id) }
@@ -256,8 +293,66 @@ private nonisolated final class MCPRequestTasks: Sendable {
   }
 }
 
+/// First in a connection's pipeline, confined to its event loop. While a request is in flight the
+/// HTTP pipeline handler holds reads back, and on Darwin a peer's close is only seen by reading,
+/// so this one keeps reading then: the close reaches `channelInactive`, which cancels the handler.
+/// Bytes read meanwhile pass on and the pipeline handler buffers them, handing over one request
+/// per answer (inside that answer's write, so the next one is in flight again at once). It asks
+/// to read again only once its buffer is empty, so the count resets on a read outside a request,
+/// and over `limit` the connection is closed. Quiet clients are never closed here; outside a
+/// request reads pass through untouched.
+private nonisolated final class MCPInFlightReader: ChannelInboundHandler {
+  typealias InboundIn = ByteBuffer
+
+  private let limit: Int
+  private var context: ChannelHandlerContext?
+  private var inFlight = false
+  /// Bytes read while requests were in flight since the pipeline handler's buffer was empty.
+  private var received = 0
+
+  init(limit: Int) {
+    self.limit = limit
+  }
+
+  func handlerAdded(context: ChannelHandlerContext) {
+    self.context = context
+  }
+
+  func handlerRemoved(context: ChannelHandlerContext) {
+    self.context = nil
+  }
+
+  func requestStarted() {
+    inFlight = true
+    context?.read()
+  }
+
+  func requestFinished() {
+    inFlight = false
+  }
+
+  func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    if inFlight {
+      received += Self.unwrapInboundIn(data).readableBytes
+      guard received <= limit else {
+        context.close(promise: nil)
+        return
+      }
+    } else {
+      received = 0
+    }
+    context.fireChannelRead(data)
+  }
+
+  func channelReadComplete(context: ChannelHandlerContext) {
+    if inFlight { context.read() }
+    context.fireChannelReadComplete()
+  }
+}
+
 /// One per connection, confined to its event loop. The HTTP pipeline handler serializes
-/// pipelined requests, so at most one is in flight here.
+/// pipelined requests, so at most one is in flight here. The decoder hands over a head only once
+/// complete, so a head still streaming is bounded by the first-request or keep-alive timer.
 private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
@@ -265,22 +360,45 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
   private let validator: MCPRequestValidator
   private let handler: MCPHTTPServer.Handler
   private let tasks: MCPRequestTasks
+  private let reader: MCPInFlightReader
   /// Set once the head passed validation; nil while refusing the rest of a request.
   private var head: HTTPRequestHead?
+  /// What `head` asks for
+  private var route = MCPRoute.mcp(caller: .mcp)
   private var body = ByteBuffer()
   /// The handler task of the request in flight, cancelled when the client goes away
   private var inFlight: Task<Void, Never>?
   /// Holds a connection slot, taken at the first valid request head; over the cap that request
   /// is answered `busy`.
   private var counted = false
+  /// Supplies the timer durations.
+  private let configuration: MCPHTTPServer.Configuration
+  /// Closes the connection when it fires; never armed while `inFlight` is set.
+  private var timer: Scheduled<Void>?
 
   init(
     validator: MCPRequestValidator, handler: @escaping MCPHTTPServer.Handler,
-    tasks: MCPRequestTasks
+    tasks: MCPRequestTasks, reader: MCPInFlightReader,
+    configuration: MCPHTTPServer.Configuration
   ) {
     self.validator = validator
     self.handler = handler
     self.tasks = tasks
+    self.reader = reader
+    self.configuration = configuration
+  }
+
+  func handlerAdded(context: ChannelHandlerContext) {
+    if context.channel.isActive { arm(configuration.firstRequestTimeout, context: context) }
+  }
+
+  func channelActive(context: ChannelHandlerContext) {
+    if timer == nil { arm(configuration.firstRequestTimeout, context: context) }
+    context.fireChannelActive()
+  }
+
+  func handlerRemoved(context: ChannelHandlerContext) {
+    disarm()
   }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -288,10 +406,13 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
     case .head(let head):
       body.clear()
       switch validator.validate(head) {
-      case .proceed:
-        if !counted { counted = tasks.openConnection() }
-        if counted {
+      case .proceed(let route):
+        // The command-line tool's routes take no connection slot
+        if !counted && !route.isCLI { counted = tasks.openConnection() }
+        if counted || route.isCLI {
           self.head = head
+          self.route = route
+          arm(configuration.readTimeout, context: context)
         } else {
           self.head = nil
           Self.write(.busy, version: head.version, keepAlive: false, context: context)
@@ -302,7 +423,7 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
       }
     case .body(var chunk):
       guard let head else { return }
-      guard body.readableBytes + chunk.readableBytes <= validator.bodyLimit else {
+      guard body.readableBytes + chunk.readableBytes <= validator.bodyLimit(of: route) else {
         self.head = nil
         body = ByteBuffer()
         Self.write(
@@ -314,7 +435,7 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
     case .end:
       guard let head else { return }
       self.head = nil
-      dispatch(head, body: Data(body.readableBytesView), context: context)
+      dispatch(head, route: route, body: Data(body.readableBytesView), context: context)
       body = ByteBuffer()
     }
   }
@@ -323,42 +444,72 @@ private nonisolated final class MCPHTTPConnectionHandler: ChannelInboundHandler 
   func channelInactive(context: ChannelHandlerContext) {
     if counted { tasks.closeConnection() }
     counted = false
+    disarm()
     inFlight?.cancel()
     inFlight = nil
     context.fireChannelInactive()
   }
 
-  private func dispatch(_ head: HTTPRequestHead, body: Data, context: ChannelHandlerContext) {
+  private func dispatch(
+    _ head: HTTPRequestHead, route: MCPRoute, body: Data, context: ChannelHandlerContext
+  ) {
     var headers: [String: String] = [:]
     for (name, value) in head.headers {
       headers[name] = headers[name].map { "\($0), \(value)" } ?? value
     }
+    var caller: MCPCallerKind?
+    if case .mcp(let kind) = route { caller = kind }
     let request = MCPHTTPRequest(
-      method: head.method.rawValue, path: MCPRequestValidator.path, headers: headers, body: body)
+      method: head.method.rawValue, path: route.path, headers: headers, body: body,
+      caller: caller, port: validator.port)
     let handler = self.handler
     let eventLoop = context.eventLoop
     let bound = NIOLoopBound(context, eventLoop: eventLoop)
     let version = head.version
-    let keepAlive = head.isKeepAlive
+    let takesSlot = !route.isCLI
+    // The command-line tool's routes close their connection after the answer
+    let keepAlive = head.isKeepAlive && takesSlot
     let connection = NIOLoopBound(self, eventLoop: eventLoop)
     let tasks = self.tasks
-    let start = tasks.run {
+    let keepAliveTimeout = configuration.keepAliveTimeout
+    let start = tasks.run(takesSlot: takesSlot) {
       let response = await handler(request)
       // Freed before the write, so a client that got its answer finds the slot free.
-      tasks.finishRequest()
+      if takesSlot { tasks.finishRequest() }
       eventLoop.execute {
         connection.value.inFlight = nil
+        connection.value.reader.requestFinished()
+        // Armed before the write, which may hand over the next pipelined head.
+        if keepAlive, bound.value.channel.isActive {
+          connection.value.arm(keepAliveTimeout, context: bound.value)
+        }
         Self.write(response, version: version, keepAlive: keepAlive, context: bound.value)
       }
     }
     switch start {
     case .started(let task):
+      disarm()
       inFlight = task
+      reader.requestStarted()
     case .busy:
       Self.write(.busy, version: version, keepAlive: false, context: context)
     case .stopping:
       context.close(promise: nil)
     }
+  }
+
+  /// Replaces the pending timer with one that closes the connection after `timeout`.
+  private func arm(_ timeout: TimeAmount, context: ChannelHandlerContext) {
+    timer?.cancel()
+    let channel = context.channel
+    timer = context.eventLoop.assumeIsolated().scheduleTask(in: timeout) {
+      channel.close(promise: nil)
+    }
+  }
+
+  private func disarm() {
+    timer?.cancel()
+    timer = nil
   }
 
   private static func write(

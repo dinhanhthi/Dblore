@@ -32,6 +32,10 @@ struct TableRowView: View {
   /// Title of the structure menu item (`SidebarSectionModel.structureMenuTitle`). Nil hides it.
   var structureMenuTitle: String? = nil
   var onEditStructure: () -> Void = {}
+  /// Nil hides "Copy to Another Connection..." (the engine is no Copy Objects source)
+  var onCopyToConnection: (() -> Void)? = nil
+  /// Disables "Copy to Another Connection..." (not connected, or the catalog is paused)
+  var canCopyToConnection = true
   /// Menu items of a MongoDB collection, or an SQL table's Build Join Query From Here, Rename and
   /// Drop Table (after the structure item)
   var menuActions: [SidebarSectionModel.RowAction] = []
@@ -134,6 +138,10 @@ struct TableRowView: View {
         }
         if let structureMenuTitle {
           Button(structureMenuTitle, action: onEditStructure)
+        }
+        if let onCopyToConnection {
+          Button("Copy to Another Connection...", action: onCopyToConnection)
+            .disabled(!canCopyToConnection)
         }
         if language == .sql, !menuActions.isEmpty {
           Divider()
@@ -578,16 +586,18 @@ struct SequenceRowView: View {
   }
 }
 
-/// An enum, domain or composite type. A click opens its DDL read-only.
+/// An enum, domain or composite type. A click opens its DDL read-only; Edit Type... (only
+/// while types may change) opens the types editor.
 struct UserTypeRowView: View {
   let type: DatabaseUserType
   let onShowDDL: () -> Void
   let onCopyName: () -> Void
+  var onEdit: (() -> Void)? = nil
 
   var body: some View {
     CatalogObjectRow(
       name: type.name, subtitle: subtitle, icon: ObjectSourceRef.Kind.userType.iconName,
-      onShowDDL: onShowDDL, onCopyName: onCopyName)
+      onShowDDL: onShowDDL, onCopyName: onCopyName, onEdit: onEdit)
   }
 
   /// "enum · 3 labels", "domain over integer", "composite · 2 attributes"
@@ -604,13 +614,14 @@ struct UserTypeRowView: View {
   }
 }
 
-/// Name and subtitle of a sequence or type, with Show DDL and Copy Name
+/// Name and subtitle of a sequence or type, with Show DDL and Copy Name (and Edit Type...)
 private struct CatalogObjectRow: View {
   let name: String
   let subtitle: String
   let icon: String
   let onShowDDL: () -> Void
   let onCopyName: () -> Void
+  var onEdit: (() -> Void)? = nil
 
   @State private var isHovering = false
 
@@ -657,6 +668,10 @@ private struct CatalogObjectRow: View {
     .contextMenu {
       Button("Show DDL", action: onShowDDL)
       Button("Copy Name", action: onCopyName)
+      if let onEdit {
+        Divider()
+        Button("Edit Type…", action: onEdit)
+      }
     }
     .help(subtitle)
   }

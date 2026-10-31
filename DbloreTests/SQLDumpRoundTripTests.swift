@@ -9,8 +9,11 @@
 // whose name sorts before its parent, a self-referencing foreign key row, a SQLite trigger with
 // a multi-statement body, and on PostgreSQL an enum, a domain, a non-public schema, a
 // partitioned table with a PK and an index on the parent, and a view built on another view.
-// Every database and file is dropped on every path. PostgreSQL and MySQL are opt-in
-// (`.requiresPostgres`, `.requiresMySQL`); SQLite runs locally.
+// Dumps with Drop are restored over databases that already have the same names (other shapes
+// and rows) and replace them; a SQLite dump with Structure off on every table restores its rows
+// into the database it came from; a SQLite Drop dump of a parent is refused where a table outside
+// it cascades from that parent. Every database and file is dropped on every path. PostgreSQL and
+// MySQL are opt-in (`.requiresPostgres`, `.requiresMySQL`); SQLite runs locally.
 
 import Foundation
 import SQLite3
@@ -113,6 +116,212 @@ struct SQLDumpRoundTripTests {
       let audit = "SELECT what FROM audit ORDER BY id"
       #expect(try Self.sqliteRows(target, audit) == ["insert 4;", "insert 9;"])
       #expect(try Self.sqliteRows(target, audit) == Self.sqliteRows(source, audit))
+    } catch {
+      await restorer.disconnect()
+      try? FileManager.default.removeItem(at: directory)
+      throw error
+    }
+    try? FileManager.default.removeItem(at: directory)
+  }
+
+  /// Tables with a foreign key, an AUTOINCREMENT counter, an index and a view
+  private static let sqliteDropSeed = [
+    "CREATE TABLE parent (id INTEGER PRIMARY KEY, label TEXT)",
+    "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent (id))",
+    "CREATE TABLE counter (id INTEGER PRIMARY KEY AUTOINCREMENT, what TEXT)",
+    "CREATE INDEX child_parent ON child (parent_id)",
+    "INSERT INTO counter (what) VALUES ('a'), ('b')",
+    "CREATE VIEW child_labels AS SELECT c.id, p.label FROM child c JOIN parent p"
+      + " ON p.id = c.parent_id",
+  ]
+
+  @Test(
+    "SQLite dump with Drop restored over the same tables replaces them", .timeLimit(.minutes(1)))
+  func sqliteDropRoundTrip() async throws {
+    let directory = try Self.temporaryDirectory()
+    let source = directory.appendingPathComponent("source.db")
+    let target = directory.appendingPathComponent("target.db")
+    let restorer = DatabaseConnectionManager()
+    do {
+      // A trigger runs only when the restore created it, after the rows
+      let trigger = """
+        CREATE TRIGGER parent_count AFTER INSERT ON parent BEGIN
+          INSERT INTO counter (what) VALUES ('parent ' || NEW.id);
+        END
+        """
+      for statement in Self.sqliteDropSeed + [
+        trigger, "INSERT INTO parent VALUES (1, 'p'), (2, 'q')",
+        "INSERT INTO child VALUES (1, 2), (2, 1)",
+      ] {
+        try Self.sqliteExec(source, statement)
+      }
+      // The target has the same names with another shape and other rows
+      for statement in [
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, label TEXT, old TEXT)",
+        "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER)",
+        "CREATE TABLE counter (id INTEGER PRIMARY KEY AUTOINCREMENT, what TEXT)",
+        "CREATE VIEW child_labels AS SELECT id FROM child",
+        "INSERT INTO parent VALUES (9, 'old', 'x')", "INSERT INTO child VALUES (9, 9)",
+        "INSERT INTO counter (id, what) VALUES (50, 'old')",
+      ] {
+        try Self.sqliteExec(target, statement)
+      }
+      let options = SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true))
+      let text = try await Self.dump(Self.sqliteConfig(source), into: directory, options: options)
+      #expect(text.hasPrefix("-- Dblore SQL dump 2 engine=SQLite created="))
+
+      try await restorer.connect(config: Self.sqliteConfig(target))
+      let summary = try await restorer.executeGatedRestore(
+        script: text, policy: open, connectionEpoch: await restorer.connectionEpoch)
+      // The view, then the three tables
+      #expect(summary.count(.drop) == 4)
+      await restorer.disconnect()
+
+      let relations = try Self.sqliteRelations(source)
+      #expect(relations == ["child", "child_labels", "counter", "parent"])
+      #expect(try Self.sqliteRelations(target) == relations)
+      for relation in relations {
+        let expected = try Self.sqliteChecksum(source, relation)
+        #expect(try Self.sqliteChecksum(target, relation) == expected, "\(relation)")
+      }
+      let schema = "SELECT type || ' ' || name || ' ' || sql FROM sqlite_master ORDER BY name"
+      #expect(try Self.sqliteRows(target, schema) == Self.sqliteRows(source, schema))
+      let counters = "SELECT name || '=' || seq FROM sqlite_sequence ORDER BY name"
+      #expect(try Self.sqliteRows(target, counters) == ["counter=4"])
+    } catch {
+      await restorer.disconnect()
+      try? FileManager.default.removeItem(at: directory)
+      throw error
+    }
+    try? FileManager.default.removeItem(at: directory)
+  }
+
+  @Test(
+    "SQLite Drop restore keeps a filled virtual table and creates a missing one empty",
+    .timeLimit(.minutes(1)))
+  func sqliteDropKeepsVirtualTables() async throws {
+    let directory = try Self.temporaryDirectory()
+    let source = directory.appendingPathComponent("source.db")
+    let filled = directory.appendingPathComponent("filled.db")
+    let empty = directory.appendingPathComponent("empty.db")
+    let restorer = DatabaseConnectionManager()
+    do {
+      let fts = "CREATE VIRTUAL TABLE docs USING fts5(body)"
+      for statement in [
+        "CREATE TABLE t (id INTEGER PRIMARY KEY)", "INSERT INTO t VALUES (1)", fts,
+        "INSERT INTO docs (body) VALUES ('source')",
+      ] {
+        try Self.sqliteExec(source, statement)
+      }
+      for statement in [
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, old TEXT)", fts,
+        "INSERT INTO docs (body) VALUES ('kept')",
+      ] {
+        try Self.sqliteExec(filled, statement)
+      }
+      FileManager.default.createFile(atPath: empty.path, contents: Data())
+      let options = SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true))
+      let text = try await Self.dump(Self.sqliteConfig(source), into: directory, options: options)
+
+      for target in [filled, empty] {
+        try await restorer.connect(config: Self.sqliteConfig(target))
+        let summary = try await restorer.executeGatedRestore(
+          script: text, policy: open, connectionEpoch: await restorer.connectionEpoch)
+        #expect(summary.count(.drop) == 1)
+        await restorer.disconnect()
+        #expect(try Self.sqliteChecksum(target, "t") == Self.sqliteChecksum(source, "t"))
+      }
+      let docs = "SELECT body FROM docs ORDER BY rowid"
+      #expect(try Self.sqliteRows(filled, docs) == ["kept"])
+      #expect(try Self.sqliteRows(empty, docs) == [])
+    } catch {
+      await restorer.disconnect()
+      try? FileManager.default.removeItem(at: directory)
+      throw error
+    }
+    try? FileManager.default.removeItem(at: directory)
+  }
+
+  @Test(
+    "SQLite dump with Structure off on every table restores its rows into the same database",
+    .timeLimit(.minutes(1)))
+  func sqliteDataOnlyRoundTrip() async throws {
+    let directory = try Self.temporaryDirectory()
+    let database = directory.appendingPathComponent("data.db")
+    let restorer = DatabaseConnectionManager()
+    do {
+      for statement in Self.sqliteDropSeed + [
+        "INSERT INTO parent VALUES (1, 'p'), (2, 'it''s')",
+        "INSERT INTO child VALUES (1, 2), (2, 1), (3, NULL)",
+      ] {
+        try Self.sqliteExec(database, statement)
+      }
+      let tables = ["child", "counter", "parent"]
+      let before = try tables.map { try Self.sqliteChecksum(database, $0) }
+      let options = SQLDumpOptions(
+        otherTables: SQLDumpOptions.TableOptions(structure: false, data: true))
+      let text = try await Self.dump(
+        Self.sqliteConfig(database), into: directory, options: options)
+      #expect(text.hasPrefix("-- Dblore SQL dump 1 engine=SQLite created="))
+      #expect(!text.contains("CREATE ") && !text.contains("DROP "))
+
+      try Self.sqliteExec(
+        database, "DELETE FROM child; DELETE FROM parent; DELETE FROM counter")
+      #expect(try Self.sqliteChecksum(database, "parent") == "0|")
+      try await restorer.connect(config: Self.sqliteConfig(database))
+      let summary = try await restorer.executeGatedRestore(
+        script: text, policy: open, connectionEpoch: await restorer.connectionEpoch)
+      #expect(summary.statementsRun == summary.statementCount)
+      await restorer.disconnect()
+
+      #expect(try tables.map { try Self.sqliteChecksum(database, $0) } == before)
+      #expect(try Self.sqliteRows(database, "SELECT count(*) FROM child_labels") == ["2"])
+      let counters = "SELECT name || '=' || seq FROM sqlite_sequence ORDER BY name"
+      #expect(try Self.sqliteRows(database, counters) == ["counter=2"])
+    } catch {
+      await restorer.disconnect()
+      try? FileManager.default.removeItem(at: directory)
+      throw error
+    }
+    try? FileManager.default.removeItem(at: directory)
+  }
+
+  @Test(
+    "SQLite Drop dump of a parent is refused where a table outside it cascades from the parent",
+    .timeLimit(.minutes(1)))
+  func sqliteDropRefusedOverCascadingChild() async throws {
+    let directory = try Self.temporaryDirectory()
+    let database = directory.appendingPathComponent("cascade.db")
+    let restorer = DatabaseConnectionManager()
+    do {
+      for statement in [
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY, label TEXT)",
+        "CREATE TABLE child (id INTEGER PRIMARY KEY,"
+          + " parent_id INTEGER REFERENCES parent (id) ON DELETE CASCADE)",
+        "INSERT INTO parent VALUES (1, 'p'), (2, 'q')",
+        "INSERT INTO child VALUES (1, 1), (2, 2)",
+      ] {
+        try Self.sqliteExec(database, statement)
+      }
+      let options = SQLDumpOptions(
+        tables: [SQLDumpDDL.ObjectName(schema: "main", name: "parent")],
+        otherTables: SQLDumpOptions.TableOptions(drop: true))
+      let text = try await Self.dump(
+        Self.sqliteConfig(database), into: directory, options: options)
+      #expect(text.contains("DROP TABLE IF EXISTS \"parent\";"))
+      #expect(!text.contains("\"child\""))
+      let before = try ["child", "parent"].map { try Self.sqliteChecksum(database, $0) }
+
+      try await restorer.connect(config: Self.sqliteConfig(database))
+      let error = await #expect(throws: SQLRestoreError.self) {
+        _ = try await restorer.executeGatedRestore(
+          script: text, policy: open, connectionEpoch: await restorer.connectionEpoch)
+      }
+      #expect(
+        error == .dropFiresForeignKeyAction(table: "child", dropped: "parent", action: "CASCADE"))
+      await restorer.disconnect()
+
+      #expect(try ["child", "parent"].map { try Self.sqliteChecksum(database, $0) } == before)
     } catch {
       await restorer.disconnect()
       try? FileManager.default.removeItem(at: directory)
@@ -326,6 +535,186 @@ struct SQLDumpRoundTripTests {
     await Self.dropPostgres(admin, [name, restored], directory)
   }
 
+  /// A sequence default without serial or OWNED BY, an enum column, a domain, a foreign key and
+  /// a view
+  private static let postgresDropSeed = [
+    "CREATE SCHEMA app",
+    "CREATE TYPE app.mood AS ENUM ('ok', 'it''s bad')",
+    "CREATE DOMAIN app.positive AS integer CHECK (VALUE > 0)",
+    "CREATE SEQUENCE app.ticket_ids START 100",
+    "CREATE TABLE app.owners (id integer PRIMARY KEY, name text)",
+    """
+    CREATE TABLE app.tickets (id integer PRIMARY KEY DEFAULT nextval('app.ticket_ids'),
+      owner_id integer REFERENCES app.owners (id), mood app.mood, qty app.positive)
+    """,
+    "CREATE VIEW app.ticket_moods AS SELECT id, mood FROM app.tickets",
+  ]
+
+  @Test(
+    "PostgreSQL dump with Drop restored over the same objects replaces them", .requiresPostgres,
+    .timeLimit(.minutes(2)))
+  func postgresDropRoundTrip() async throws {
+    let name = "roundtrip_\(UUID().uuidString.prefix(8).lowercased())"
+    let restored = name + "_restored"
+    let admin = DatabaseConnectionManager()
+    try await admin.connect(config: Self.postgresConfig(TestDatabase.database))
+    let restorer = DatabaseConnectionManager()
+    let directory = try Self.temporaryDirectory()
+    do {
+      _ = try await admin.executeInternal("CREATE DATABASE \(name)")
+      _ = try await admin.executeInternal("CREATE DATABASE \(restored)")
+      _ = try await Self.values(
+        Self.postgresConfig(name),
+        Self.postgresDropSeed + [
+          "INSERT INTO app.owners VALUES (1, 'Ada'), (2, 'Bob')",
+          "INSERT INTO app.tickets (owner_id, mood, qty) VALUES (1, 'it''s bad', 5), (2, 'ok', 1)",
+        ])
+      // The target has the same names with other labels, checks, columns and rows
+      _ = try await Self.values(
+        Self.postgresConfig(restored),
+        [
+          "CREATE SCHEMA app",
+          "CREATE TYPE app.mood AS ENUM ('old')",
+          "CREATE DOMAIN app.positive AS integer CHECK (VALUE > 10)",
+          "CREATE SEQUENCE app.ticket_ids START 900",
+          "CREATE TABLE app.owners (id integer PRIMARY KEY, name text, old text)",
+          """
+          CREATE TABLE app.tickets (id integer PRIMARY KEY DEFAULT nextval('app.ticket_ids'),
+            owner_id integer REFERENCES app.owners (id), mood app.mood, qty app.positive)
+          """,
+          "CREATE VIEW app.ticket_moods AS SELECT id FROM app.tickets",
+          "INSERT INTO app.owners VALUES (9, 'old', 'x')",
+          "INSERT INTO app.tickets (owner_id, mood, qty) VALUES (9, 'old', 50)",
+        ])
+      let options = SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true))
+      let text = try await Self.dump(Self.postgresConfig(name), into: directory, options: options)
+      #expect(text.hasPrefix("-- Dblore SQL dump 2 engine=PostgreSQL created="))
+      for drop in [
+        "DROP VIEW IF EXISTS \"app\".\"ticket_moods\";",
+        "DROP SEQUENCE IF EXISTS \"app\".\"ticket_ids\";",
+        "DROP DOMAIN IF EXISTS \"app\".\"positive\";",
+        "DROP TYPE IF EXISTS \"app\".\"mood\";",
+      ] {
+        #expect(text.contains(drop), "\(drop)")
+      }
+      #expect(!text.contains("CASCADE"))
+
+      try await restorer.connect(config: Self.postgresConfig(restored))
+      let summary = try await restorer.executeGatedRestore(
+        script: text, policy: open, connectionEpoch: await restorer.connectionEpoch)
+      // The view, one statement for both tables, the sequence, the domain and the type
+      #expect(summary.count(.drop) == 5)
+      #expect(!summary.pending)
+      await restorer.disconnect()
+
+      let compare = [
+        "SELECT string_agg(o::text, chr(10) ORDER BY o.id) FROM app.owners o",
+        "SELECT string_agg(t::text, chr(10) ORDER BY t.id) FROM app.tickets t",
+        "SELECT string_agg(v::text, chr(10) ORDER BY v.id) FROM app.ticket_moods v",
+        "SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) FROM pg_enum"
+          + " WHERE enumtypid = 'app.mood'::regtype",
+        "SELECT string_agg(pg_get_constraintdef(oid), ',') FROM pg_constraint"
+          + " WHERE contypid = 'app.positive'::regtype",
+        "SELECT pg_get_viewdef('app.ticket_moods'::regclass)",
+        "INSERT INTO app.tickets (mood, qty) VALUES ('ok', 2) RETURNING id::text",
+      ]
+      let expected = try await Self.values(Self.postgresConfig(name), compare)
+      #expect(try await Self.values(Self.postgresConfig(restored), compare) == expected)
+      #expect(expected.last == .string("102"))
+    } catch {
+      await restorer.disconnect()
+      await Self.dropPostgres(admin, [name, restored], directory)
+      throw error
+    }
+    await Self.dropPostgres(admin, [name, restored], directory)
+  }
+
+  @Test(
+    "PostgreSQL: a Drop restore taking partitions, an owned sequence or a domain along is refused",
+    .requiresPostgres, .timeLimit(.minutes(1)))
+  func postgresDropTargetsRefused() async throws {
+    let name = "droptargets_\(UUID().uuidString.prefix(8).lowercased())"
+    let admin = DatabaseConnectionManager()
+    try await admin.connect(config: Self.postgresConfig(TestDatabase.database))
+    let restorer = DatabaseConnectionManager()
+    let directory = try Self.temporaryDirectory()
+    do {
+      _ = try await admin.executeInternal("CREATE DATABASE \(name)")
+      _ = try await Self.values(
+        Self.postgresConfig(name),
+        [
+          "CREATE SCHEMA app",
+          "CREATE TABLE app.events (at date, n integer) PARTITION BY RANGE (at)",
+          "CREATE TABLE app.events_2024 PARTITION OF app.events"
+            + " FOR VALUES FROM ('2024-01-01') TO ('2025-01-01')",
+          "INSERT INTO app.events VALUES ('2024-05-01', 1)",
+          "CREATE TABLE app.logs (id serial PRIMARY KEY)",
+          "CREATE DOMAIN app.mood AS text",
+        ])
+      try await restorer.connect(config: Self.postgresConfig(name))
+      func script(_ statements: [String]) -> String {
+        ([SQLDumpAssembler.header(engine: .postgresql, created: Date(), version: 2)] + statements)
+          .map { $0 + "\n" }.joined()
+      }
+      let refused: [([String], SQLRestoreError)] = [
+        (
+          [
+            "DROP TABLE IF EXISTS \"app\".\"events\";",
+            "CREATE TABLE \"app\".\"events\" (\"at\" date, \"n\" integer) PARTITION BY RANGE (at);",
+          ],
+          .dropTakesAlong(
+            table: "app.events", object: "app.events_2024", objectKind: "partition or child table")
+        ),
+        (
+          [
+            "DROP TABLE IF EXISTS \"app\".\"logs\";",
+            "CREATE TABLE \"app\".\"logs\" (\"id\" integer);",
+          ],
+          .dropTakesAlong(
+            table: "app.logs", object: "app.logs_id_seq", objectKind: "owned sequence")
+        ),
+        (
+          [
+            "DROP TYPE IF EXISTS \"app\".\"mood\";",
+            "CREATE TYPE \"app\".\"mood\" AS ENUM ('ok');",
+          ],
+          .dropTypeIsDomain(name: "app.mood")
+        ),
+      ]
+      for (statements, expected) in refused {
+        let error = await #expect(throws: SQLRestoreError.self) {
+          _ = try await restorer.executeGatedRestore(
+            script: script(statements), policy: open,
+            connectionEpoch: await restorer.connectionEpoch)
+        }
+        #expect(error == expected)
+      }
+      // The partition, its row and the domain are still there
+      let check = [
+        "SELECT count(*)::text FROM app.events_2024",
+        "SELECT typtype::text FROM pg_type WHERE oid = 'app.mood'::regtype",
+      ]
+      #expect(
+        try await Self.values(Self.postgresConfig(name), check) == [.string("1"), .string("d")])
+      // Recreating the owned sequence too runs
+      let summary = try await restorer.executeGatedRestore(
+        script: script([
+          "DROP TABLE IF EXISTS \"app\".\"logs\";",
+          "DROP SEQUENCE IF EXISTS \"app\".\"logs_id_seq\";",
+          "CREATE SEQUENCE \"app\".\"logs_id_seq\" AS integer START WITH 1;",
+          "CREATE TABLE \"app\".\"logs\" (\"id\" integer DEFAULT"
+            + " nextval('app.logs_id_seq'::regclass));",
+        ]), policy: open, connectionEpoch: await restorer.connectionEpoch)
+      #expect(summary.count(.drop) == 2)
+      await restorer.disconnect()
+    } catch {
+      await restorer.disconnect()
+      await Self.dropPostgres(admin, [name], directory)
+      throw error
+    }
+    await Self.dropPostgres(admin, [name], directory)
+  }
+
   private static func postgresConfig(_ database: String) -> ConnectionConfig {
     ConnectionConfig(
       host: TestDatabase.host, port: TestDatabase.port, database: database,
@@ -439,6 +828,74 @@ struct SQLDumpRoundTripTests {
     await Self.dropMySQL(admin, [name, restored], directory)
   }
 
+  @Test(
+    "MySQL dump with Drop restored over the same tables replaces them", .requiresMySQL,
+    .timeLimit(.minutes(2)), arguments: [Server.mysql, .mariadb])
+  func mysqlDropRoundTrip(server: Server) async throws {
+    let name = "roundtrip_\(UUID().uuidString.prefix(8).lowercased())"
+    let restored = name + "_restored"
+    let admin = DatabaseConnectionManager()
+    try await admin.connect(config: MySQLManagerTests.rootConfig(server))
+    let restorer = DatabaseConnectionManager()
+    let directory = try Self.temporaryDirectory()
+    do {
+      _ = try await admin.executeInternal("CREATE DATABASE \(name) CHARACTER SET utf8mb4")
+      _ = try await admin.executeInternal("CREATE DATABASE \(restored) CHARACTER SET utf8mb4")
+      let config = Self.mysqlConfig(server, name)
+      _ = try await Self.values(
+        config,
+        Self.mysqlSeed + ["CREATE VIEW big_order_ids AS SELECT id FROM big_orders"])
+      // The target has the same names with other columns and rows
+      let restoredConfig = Self.mysqlConfig(server, restored)
+      _ = try await Self.values(
+        restoredConfig,
+        [
+          "CREATE TABLE customers (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50), old INT)",
+          """
+          CREATE TABLE orders (id BIGINT AUTO_INCREMENT PRIMARY KEY, customer_id INT,
+            amount DECIMAL(38,18), CONSTRAINT orders_customer_fk FOREIGN KEY (customer_id)
+            REFERENCES customers (id))
+          """,
+          "CREATE VIEW big_orders AS SELECT id FROM orders",
+          "INSERT INTO customers (id, name, old) VALUES (9, 'old', 1)",
+          "INSERT INTO orders (customer_id, amount) VALUES (9, 5)",
+        ])
+      let options = SQLDumpOptions(otherTables: SQLDumpOptions.TableOptions(drop: true))
+      let text = try await Self.dump(config, into: directory, options: options)
+      #expect(text.hasPrefix("-- Dblore SQL dump 2 engine=MySQL created="))
+      // The drops run with foreign key checks off, so their order does not matter
+      let lines = text.components(separatedBy: "\n")
+      let checksOff = try #require(lines.firstIndex(of: "SET FOREIGN_KEY_CHECKS=0;"))
+      let firstDrop = try #require(lines.firstIndex { $0.hasPrefix("DROP ") })
+      #expect(checksOff < firstDrop)
+
+      try await restorer.connect(config: restoredConfig)
+      let summary = try await restorer.executeGatedRestore(
+        script: text, policy: open, connectionEpoch: await restorer.connectionEpoch)
+      // Two views and five tables, one statement each
+      #expect(summary.count(.drop) == 7)
+      #expect(summary.statementsRun == summary.statementCount)
+      await restorer.disconnect()
+
+      let relations = try await Self.mysqlRelations(config)
+      #expect(relations == (try await Self.mysqlRelations(restoredConfig)))
+      let compare = [
+        "SELECT GROUP_CONCAT(CONCAT_WS(',', id, name) ORDER BY id SEPARATOR '|') FROM customers",
+        """
+        SELECT GROUP_CONCAT(CONCAT_WS(',', id, QUOTE(customer_id), QUOTE(amount), QUOTE(note),
+          QUOTE(total)) ORDER BY id SEPARATOR '|') FROM orders
+        """,
+        "SELECT GROUP_CONCAT(id ORDER BY id) FROM big_order_ids",
+      ]
+      #expect(try await Self.values(restoredConfig, compare) == Self.values(config, compare))
+    } catch {
+      await restorer.disconnect()
+      await Self.dropMySQL(admin, [name, restored], directory)
+      throw error
+    }
+    await Self.dropMySQL(admin, [name, restored], directory)
+  }
+
   private struct MySQLRelation: Equatable {
     var name: String
     var columns: [String]
@@ -494,12 +951,14 @@ struct SQLDumpRoundTripTests {
   // MARK: - Helpers
 
   /// The dump text of the database at `config`
-  private static func dump(_ config: ConnectionConfig, into directory: URL) async throws -> String {
+  private static func dump(
+    _ config: ConnectionConfig, into directory: URL, options: SQLDumpOptions = SQLDumpOptions()
+  ) async throws -> String {
     let destination = directory.appendingPathComponent("dump.sql")
     _ = try await SQLDumpWriter(
       config: config, material: nil, sshCredential: nil,
       sshHostKeyPrompt: RejectingSSHHostKeyPrompt()
-    ).write(to: destination)
+    ).write(to: destination, options: options)
     return try String(contentsOf: destination, encoding: .utf8)
   }
 

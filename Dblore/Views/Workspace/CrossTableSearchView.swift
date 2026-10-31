@@ -104,12 +104,16 @@ private struct CrossTableSearchView: View {
         )
         .progressViewStyle(.linear)
       }
-      Text(statusText)
-        .font(.small)
-        .foregroundColor(.foregroundMuted)
-        .monospacedDigit()
-        .lineLimit(2)
-        .fixedSize(horizontal: false, vertical: true)
+      if model.isLoadingTargets {
+        ImportLoadingRow(text: "Reading the tables…")
+      } else {
+        Text(statusText)
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .monospacedDigit()
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
     .padding(Spacing.md)
   }

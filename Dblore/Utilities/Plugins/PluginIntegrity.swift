@@ -37,7 +37,8 @@ nonisolated enum PluginIntegrity {
       try Task.checkCancellation()
       let chunk: Data
       do {
-        chunk = try handle.read(upToCount: 1 << 20) ?? Data()
+        // Without the pool every chunk read stays alive until the hash ends
+        chunk = try autoreleasepool { try handle.read(upToCount: 1 << 20) ?? Data() }
       } catch {
         throw PluginIntegrityError.io(error.localizedDescription)
       }

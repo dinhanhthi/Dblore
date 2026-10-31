@@ -9,10 +9,20 @@
 import CoreGraphics
 import Foundation
 
+/// What a layout returns: the laid-out graph, the table count when it is above
+/// `SchemaLayoutEngine.maxTables` (nothing laid out), or cancelled (no partial graph)
+nonisolated enum SchemaLayoutResult: Sendable {
+  case graph(SchemaGraph)
+  case tooManyTables(Int)
+  case cancelled
+}
+
 /// Engine for calculating layout positions of schema graph nodes
 /// Uses a force-directed algorithm to position tables with minimal edge crossings
-@MainActor
-final class SchemaLayoutEngine {
+nonisolated struct SchemaLayoutEngine: Sendable {
+
+  /// Most tables one diagram lays out (the simulation is quadratic in the table count)
+  static let maxTables = 300
 
   // MARK: - Configuration
 
@@ -56,27 +66,31 @@ final class SchemaLayoutEngine {
   ///   - tables: Array of database tables to position
   ///   - foreignKeys: Array of foreign key relationships
   ///   - canvasSize: Size of the canvas to layout within
-  /// - Returns: SchemaGraph with calculated positions
+  /// - Returns: The graph with calculated positions; `.tooManyTables` above `maxTables`
+  ///   without laying out; `.cancelled` once the task is cancelled
   func calculateLayout(
     tables: [DatabaseTable],
     foreignKeys: [ForeignKey],
     canvasSize: CGSize
-  ) -> SchemaGraph {
+  ) -> SchemaLayoutResult {
+    guard tables.count <= Self.maxTables else { return .tooManyTables(tables.count) }
+    guard !Task.isCancelled else { return .cancelled }
+
     // Build initial graph
     var graph = SchemaGraph.build(from: tables, foreignKeys: foreignKeys)
 
-    guard !graph.nodes.isEmpty else { return graph }
+    guard !graph.nodes.isEmpty else { return .graph(graph) }
 
     // Initialize positions in a grid
     initializePositions(&graph, canvasSize: canvasSize)
 
     // Run force-directed simulation
-    runSimulation(&graph, canvasSize: canvasSize)
+    guard runSimulation(&graph, canvasSize: canvasSize) else { return .cancelled }
 
     // Move isolated tables closer to the connected group
-    positionIsolatedNodesNearConnectedGroup(&graph)
+    guard positionIsolatedNodesNearConnectedGroup(&graph) else { return .cancelled }
 
-    return graph
+    return .graph(graph)
   }
 
   // MARK: - Private Methods
@@ -141,14 +155,16 @@ final class SchemaLayoutEngine {
     return counts
   }
 
-  /// Run the force-directed simulation with overlap prevention and edge-node avoidance
-  private func runSimulation(_ graph: inout SchemaGraph, canvasSize: CGSize) {
+  /// Run the force-directed simulation with overlap prevention and edge-node avoidance.
+  /// False once the task is cancelled (the graph is left half-moved).
+  private func runSimulation(_ graph: inout SchemaGraph, canvasSize: CGSize) -> Bool {
     var velocities: [CGPoint] = Array(repeating: .zero, count: graph.nodes.count)
 
     // Build node rects cache for edge-node intersection checking
     _ = graph.nodes.map { nodeRect(for: $0) }
 
     for iteration in 0..<iterations {
+      if Task.isCancelled { return false }
       var forces: [CGPoint] = Array(repeating: .zero, count: graph.nodes.count)
 
       // Temperature decreases over time (simulated annealing)
@@ -224,7 +240,7 @@ final class SchemaLayoutEngine {
     }
 
     // Final pass: resolve any remaining overlaps with stronger separation
-    resolveOverlaps(&graph)
+    return resolveOverlaps(&graph)
   }
 
   /// Calculate forces to push nodes away from edge paths they might be blocking
@@ -375,12 +391,14 @@ final class SchemaLayoutEngine {
     )
   }
 
-  /// Final pass to resolve any remaining overlaps with proper separation
-  private func resolveOverlaps(_ graph: inout SchemaGraph) {
+  /// Final pass to resolve any remaining overlaps with proper separation. False once the task
+  /// is cancelled.
+  private func resolveOverlaps(_ graph: inout SchemaGraph) -> Bool {
     let maxPasses = 100
     let margin: CGFloat = minHorizontalDistance / 2
 
     for _ in 0..<maxPasses {
+      if Task.isCancelled { return false }
       var hasOverlap = false
       var maxOverlap: CGFloat = 0
 
@@ -438,6 +456,7 @@ final class SchemaLayoutEngine {
       // Stop early if no overlap or overlap is minimal
       if !hasOverlap || maxOverlap < 5 { break }
     }
+    return true
   }
 
   /// Calculate node rect for overlap detection using actual node dimensions
@@ -506,8 +525,9 @@ final class SchemaLayoutEngine {
     return adjacency
   }
 
-  /// Position isolated nodes (no relationships) near the connected group
-  private func positionIsolatedNodesNearConnectedGroup(_ graph: inout SchemaGraph) {
+  /// Position isolated nodes (no relationships) near the connected group. False once the task
+  /// is cancelled.
+  private func positionIsolatedNodesNearConnectedGroup(_ graph: inout SchemaGraph) -> Bool {
     let connectedNodeIds = Set(graph.edges.flatMap { [$0.sourceNodeId, $0.targetNodeId] })
 
     // Get isolated node indices
@@ -515,13 +535,13 @@ final class SchemaLayoutEngine {
       !connectedNodeIds.contains(graph.nodes[$0].id)
     }
 
-    guard !isolatedIndices.isEmpty else { return }
+    guard !isolatedIndices.isEmpty else { return true }
 
     // If all nodes are isolated, no need to reposition
     let connectedIndices = graph.nodes.indices.filter {
       connectedNodeIds.contains(graph.nodes[$0].id)
     }
-    guard !connectedIndices.isEmpty else { return }
+    guard !connectedIndices.isEmpty else { return true }
 
     // Calculate bounding box of connected nodes
     let connectedBounds = calculateBoundingBox(
@@ -557,7 +577,7 @@ final class SchemaLayoutEngine {
     }
 
     // Final overlap resolution for isolated nodes
-    resolveOverlaps(&graph)
+    return resolveOverlaps(&graph)
   }
 
   /// Calculate bounding box for a set of nodes

@@ -68,8 +68,18 @@ extension ConnectionFormContent {
       }
 
       if capabilities.usesPassword {
-        FormField(label: "Password") {
-          PasswordInputField(password: $connectionConfig.password)
+        passwordSourcePicker()
+        switch passwordSource {
+        case .saved:
+          FormField(label: "Password") {
+            PasswordInputField(password: $connectionConfig.password)
+          }
+        case .command:
+          Text("Pick the script under Scripts > Password command.")
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+        case .vault:
+          vaultFields()
         }
       }
 
@@ -278,8 +288,9 @@ extension ConnectionFormContent {
         }
       }
 
-      // The URI keeps no password: it moves here and is saved in the Keychain.
-      if isMongoDB {
+      // The URI keeps no password: it moves here and is saved in the Keychain. A Vault source
+      // leases it instead.
+      if isMongoDB, connectionConfig.vault == nil {
         FormField(label: "Password") {
           PasswordInputField(password: $connectionConfig.password)
         }
@@ -516,7 +527,7 @@ extension ConnectionFormContent {
     }
   }
 
-  private func readPEM(at url: URL) throws -> String {
+  func readPEM(at url: URL) throws -> String {
     let granted = url.startAccessingSecurityScopedResource()
     defer { if granted { url.stopAccessingSecurityScopedResource() } }
     let file = try FileHandle(forReadingFrom: url)
@@ -928,7 +939,8 @@ extension ConnectionFormContent {
     connectionConfig.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
   }
 
-  /// Writes the chosen style onto this draft. Not a live connection, so there is no unlock.
+  /// Writes the chosen style onto this draft. Not a live connection, so there is no unlock here:
+  /// a save or connect that weakens a saved row asks it then.
   func applyFormCommitStyle(_ style: CommitStyle) {
     var updated = connectionConfig
     updated.applyCommitStyle(style)
@@ -950,11 +962,27 @@ extension ConnectionFormContent {
 
         Spacer()
 
-        Toggle("", isOn: $connectionConfig.rememberConnection)
-          .labelsHidden()
-          .toggleStyle(.switch)
-          .tint(.accent)
-          .controlSize(.mini)
+        // A Vault source is always remembered (`withVaultRules`)
+        Toggle(
+          "",
+          isOn: Binding(
+            get: { connectionConfig.rememberConnection || connectionConfig.vault != nil },
+            set: { connectionConfig.rememberConnection = $0 })
+        )
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.accent)
+        .controlSize(.mini)
+        .disabled(connectionConfig.vault != nil)
+      }
+
+      if connectionConfig.vault != nil {
+        Text(
+          "Vault connections are always remembered: the Vault secret is saved with the connection, so reconnects, renewals and other windows find it."
+        )
+        .font(.caption)
+        .foregroundColor(.foregroundMuted)
+        .fixedSize(horizontal: false, vertical: true)
       }
 
       // Protection Level Picker

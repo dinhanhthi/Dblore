@@ -15,6 +15,9 @@ struct FileConflictAlertModifier: ViewModifier {
   let hasUnsavedChanges: Bool
   let onKeepMyVersion: () -> Void
   let onLoadExternal: () -> Void
+  /// Close Document (or OK) after a deletion; nil: `onLoadExternal`. Each button is built for
+  /// the alert's type, so a deletion arriving while a change is shown never swaps its action.
+  var onClose: (() -> Void)? = nil
 
   func body(content: Content) -> some View {
     content
@@ -48,14 +51,50 @@ struct FileConflictAlertModifier: ViewModifier {
           onKeepMyVersion()
         }
         Button("Close Document", role: .destructive) {
-          onLoadExternal()
+          (onClose ?? onLoadExternal)()
         }
       } else {
         Button("OK") {
-          onLoadExternal()
+          (onClose ?? onLoadExternal)()
         }
       }
     }
+  }
+}
+
+// MARK: - Document Conflict Alert
+
+/// A document that watches its file on disk and publishes what changed there
+protocol FileConflictPresenting: ObservableObject {
+  var fileConflictState: FileConflictState { get set }
+  /// The file's date on disk when it changed since the document last read or wrote it
+  func unseenChangeDate() -> Date?
+  /// Takes the file's date on disk as seen (after this app wrote the file)
+  func updateLastKnownModificationDate()
+  /// Notes the file's date on disk as this app's own rewrite over a change not shown yet: that
+  /// change still asks, and Keep My Version over it takes the rewrite as seen too
+  func noteOwnRewrite()
+}
+
+/// The file conflict alert of a document's tab. Observes the document, so the alert shows as
+/// soon as its file changes or is deleted on disk; after a deletion, Close Document (or OK)
+/// calls `onClose` instead of `onLoadExternal`.
+struct DocumentFileConflictAlertModifier<Document: FileConflictPresenting>: ViewModifier {
+  @ObservedObject var document: Document
+  let hasUnsavedChanges: Bool
+  let onKeepMyVersion: () -> Void
+  let onLoadExternal: () -> Void
+  let onClose: () -> Void
+
+  func body(content: Content) -> some View {
+    content.modifier(
+      FileConflictAlertModifier(
+        state: $document.fileConflictState,
+        hasUnsavedChanges: hasUnsavedChanges,
+        onKeepMyVersion: onKeepMyVersion,
+        onLoadExternal: onLoadExternal,
+        onClose: onClose
+      ))
   }
 }
 

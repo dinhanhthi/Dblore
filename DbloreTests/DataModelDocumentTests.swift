@@ -128,6 +128,316 @@ struct DataModelDocumentTests {
     #expect(statements.map(\.queryText) == ["SELECT 1", "SELECT 2"])
     #expect(statements.allSatisfy { $0.result.rows.isEmpty && $0.result.columns.isEmpty })
   }
+
+  // MARK: - File Conflict (an open file changed on disk)
+
+  /// A temp file opened in a fresh workspace, dated a minute ago so a write now is newer
+  @MainActor
+  private struct OpenFile {
+    let manager: WorkspaceManager
+    let tabId: UUID
+    let url: URL
+    let suiteName: String
+
+    static func open(_ name: String, data: Data) async throws -> OpenFile {
+      let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("conflict-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      let url = folder.appendingPathComponent(name)
+      try data.write(to: url)
+      try FileManager.default.setAttributes(
+        [.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: url.path)
+      let suiteName = "DataModelDocumentTests.\(UUID().uuidString)"
+      let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
+      manager.recents = RecentManager(defaults: try #require(UserDefaults(suiteName: suiteName)))
+      var hooks = SecurityScopedAccessHooks()
+      hooks.resolve = { _ in throw CocoaError(.fileNoSuchFile) }
+      hooks.makeBookmark = { _ in nil }
+      manager.accessHooks = hooks
+      try await manager.openFile(url: url)
+      let tabId = try #require(manager.tabs.first { $0.fileURL == url }).id
+      // The document presents its file once the queued registration ran
+      #expect(SQLiteFileAccess.onPresenterQueue {})
+      return OpenFile(manager: manager, tabId: tabId, url: url, suiteName: suiteName)
+    }
+
+    var isDirty: Bool { manager.tabs.first { $0.id == tabId }?.isDirty == true }
+
+    /// Closes the tab (unregistering its presenter) and removes the temp files
+    func close() {
+      manager.closeTabImmediately(id: tabId)
+      try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+      UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+    }
+  }
+
+  /// Another writer replacing the file's text through file coordination, as other apps do
+  private func coordinatedWrite(_ text: String, to url: URL) async throws {
+    try await Task.detached {
+      var coordinationError: NSError?
+      var writeError: (any Error)?
+      NSFileCoordinator(filePresenter: nil).coordinate(
+        writingItemAt: url, options: [], error: &coordinationError
+      ) { url in
+        do { try Data(text.utf8).write(to: url) } catch { writeError = error }
+      }
+      if let error = coordinationError ?? writeError { throw error }
+    }.value
+  }
+
+  /// Waits up to 5 s for `condition` (a presenter's change is debounced 500 ms)
+  private func wait(until condition: () -> Bool) async {
+    for _ in 0..<50 where !condition() {
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+  }
+
+  @Test("An external write to a file with unsaved edits sets its document's conflict state")
+  func externalWriteWhileDirtySetsConflictState() async throws {
+    let file = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { file.close() }
+    let document = try #require(file.manager.editorDocument(for: file.tabId))
+    let viewModel = try #require(file.manager.viewModel(for: file.tabId))
+    viewModel.editorContent = "select 2"
+    file.manager.markDirty(tabId: file.tabId)
+
+    try await coordinatedWrite("select 3", to: file.url)
+    await wait { document.fileConflictState.showDialog }
+
+    #expect(document.fileConflictState.showDialog)
+    #expect(document.fileConflictState.conflictType == .modified)
+    #expect(viewModel.editorContent == "select 2")
+    #expect(file.isDirty)
+  }
+
+  @Test("Load External puts the file's text into the tab and leaves it clean")
+  func loadExternalRefreshesTab() async throws {
+    let script = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { script.close() }
+    let scriptModel = try #require(script.manager.viewModel(for: script.tabId))
+    scriptModel.editorContent = "select 2"
+    script.manager.markDirty(tabId: script.tabId)
+    try Data("select 3".utf8).write(to: script.url)
+
+    try await script.manager.loadExternalVersion(tabId: script.tabId)
+
+    #expect(scriptModel.editorContent == "select 3")
+    #expect(!script.isDirty)
+
+    func encoded(_ sql: String) throws -> Data {
+      let cells = [NotebookCell(cellType: .sql, content: sql)]
+      return try DocumentCoder.encode(
+        DbloreNotebook(cells: cells, documentType: .notebook), includeResultsOnSave: false)
+    }
+    let notebook = try await OpenFile.open("notes.dblore", data: encoded("select 1"))
+    defer { notebook.close() }
+    let notebookModel = try #require(notebook.manager.viewModel(for: notebook.tabId))
+    notebook.manager.markDirty(tabId: notebook.tabId)
+    try encoded("select 4").write(to: notebook.url)
+
+    try await notebook.manager.loadExternalVersion(tabId: notebook.tabId)
+
+    #expect(notebookModel.notebook.cells.map(\.content) == ["select 4"])
+    #expect(!notebook.isDirty)
+  }
+
+  @Test("Keep My Version keeps the tab's edits and asks again only about a newer change")
+  func keepMyVersionKeepsEdits() async throws {
+    let file = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { file.close() }
+    let document = try #require(file.manager.editorDocument(for: file.tabId))
+    let viewModel = try #require(file.manager.viewModel(for: file.tabId))
+    viewModel.editorContent = "select 2"
+    file.manager.markDirty(tabId: file.tabId)
+    try Data("select 3".utf8).write(to: file.url)
+    document.presentedItemDidChange()
+    await wait { document.fileConflictState.showDialog }
+    #expect(document.fileConflictState.showDialog)
+
+    // The alert's binding dismisses it, then Keep My Version runs
+    document.fileConflictState.dismiss()
+    file.manager.keepMyVersion(tabId: file.tabId)
+
+    #expect(viewModel.editorContent == "select 2")
+    #expect(file.isDirty)
+    // The same change reported again does not ask again (no signal ends the debounce: wait 4x)
+    document.presentedItemDidChange()
+    try await Task.sleep(for: .seconds(2))
+    #expect(!document.fileConflictState.showDialog)
+    // A newer change, reported the same way, does ask
+    try writeNewerChange("select 4", to: file.url)
+    document.presentedItemDidChange()
+    await wait { document.fileConflictState.showDialog }
+    #expect(document.fileConflictState.showDialog)
+  }
+
+  @Test("Keep My Version still asks about a change made while the alert was up")
+  func keepMyVersionAsksAboutChangeDuringAlert() async throws {
+    let file = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { file.close() }
+    let document = try #require(file.manager.editorDocument(for: file.tabId))
+    file.manager.markDirty(tabId: file.tabId)
+    try Data("select 3".utf8).write(to: file.url)
+    document.presentedItemDidChange()
+    await wait { document.fileConflictState.showDialog }
+    #expect(document.fileConflictState.showDialog)
+
+    // Another change lands before the user clicks
+    try writeNewerChange("select 4", to: file.url)
+    document.fileConflictState.dismiss()
+    file.manager.keepMyVersion(tabId: file.tabId)
+
+    document.presentedItemDidChange()
+    await wait { document.fileConflictState.showDialog }
+    #expect(document.fileConflictState.showDialog)
+  }
+
+  @Test("A markdown note does not ask about its file, and Load External leaves it alone")
+  func markdownNoteHasNoFileConflictFlow() async throws {
+    let note = try await OpenFile.open("note.md", data: Data("# One".utf8))
+    defer { note.close() }
+    let viewModel = try #require(note.manager.viewModel(for: note.tabId))
+    viewModel.editorContent = "# Two"
+    note.manager.markDirty(tabId: note.tabId)
+    try Data("# Three".utf8).write(to: note.url)
+
+    try await note.manager.loadExternalVersion(tabId: note.tabId)
+
+    #expect(!note.manager.watchesFileConflicts(tabId: note.tabId))
+    #expect(note.manager.editorDocument(for: note.tabId)?.content == "# One")
+    #expect(viewModel.editorContent == "# Two")
+    #expect(note.isDirty)
+    let script = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { script.close() }
+    #expect(script.manager.watchesFileConflicts(tabId: script.tabId))
+  }
+
+  @Test("The app's own save of a file is not reported as an external change")
+  func ownSaveIsNotAConflict() async throws {
+    let file = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { file.close() }
+    let document = try #require(file.manager.editorDocument(for: file.tabId))
+    let viewModel = try #require(file.manager.viewModel(for: file.tabId))
+    viewModel.editorContent = "select 2"
+    file.manager.markDirty(tabId: file.tabId)
+
+    try await file.manager.saveTab(id: file.tabId)
+    document.presentedItemDidChange()
+    try await Task.sleep(for: .seconds(2))
+
+    #expect(!file.isDirty)
+    #expect(!document.fileConflictState.showDialog)
+    // A newer external change after the save does ask
+    try writeNewerChange("select 3", to: file.url)
+    document.presentedItemDidChange()
+    await wait { document.fileConflictState.showDialog }
+    #expect(document.fileConflictState.showDialog)
+  }
+
+  @Test("A save over a change on disk the tab has not shown writes nothing and asks instead")
+  func saveOverUnseenExternalChangeAsks() async throws {
+    let file = try await OpenFile.open("query.sql", data: Data("select 1".utf8))
+    defer { file.close() }
+    let document = try #require(file.manager.editorDocument(for: file.tabId))
+    let viewModel = try #require(file.manager.viewModel(for: file.tabId))
+    viewModel.editorContent = "select 2"
+    file.manager.markDirty(tabId: file.tabId)
+    // Lands just before the save, inside the presenter's debounce: not reported yet
+    try writeNewerChange("select 3", to: file.url)
+
+    await #expect(throws: FileConflictError.self) {
+      try await file.manager.saveTab(id: file.tabId)
+    }
+
+    #expect(try String(contentsOf: file.url, encoding: .utf8) == "select 3")
+    #expect(document.fileConflictState.showDialog)
+    #expect(document.fileConflictState.conflictType == .modified)
+    #expect(file.isDirty)
+    // While the alert asks, another save writes nothing either
+    await #expect(throws: FileConflictError.self) {
+      try await file.manager.saveTab(id: file.tabId)
+    }
+    #expect(try String(contentsOf: file.url, encoding: .utf8) == "select 3")
+    // Keep My Version, then Save writes the tab's text
+    document.fileConflictState.dismiss()
+    file.manager.keepMyVersion(tabId: file.tabId)
+    try await file.manager.saveTab(id: file.tabId)
+    #expect(try String(contentsOf: file.url, encoding: .utf8) == "select 2")
+    #expect(!file.isDirty)
+  }
+
+  /// Another writer's change, dated a minute ahead so it is newer than any date seen so far
+  private func writeNewerChange(_ text: String, to url: URL) throws {
+    try Data(text.utf8).write(to: url)
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: url.path)
+  }
+
+  // MARK: Close Document after the file was deleted
+
+  /// A dirty notebook tab in a workspace whose pending transaction (if any) the tab opened
+  private func deletedFileTab(pendingTransaction: Bool) -> (WorkspaceManager, UUID) {
+    let manager = WorkspaceManager(workspace: Workspace(), restoreTabs: false)
+    // Never show an NSAlert from tests
+    manager.pendingTransactionPrompt = { _, _, _ in .cancel }
+    let tabId = manager.newNotebook()
+    manager.markDirty(tabId: tabId)
+    if pendingTransaction {
+      let pending = SQLStatementClassifier.classify("UPDATE t SET v = 1 WHERE id = 1").map {
+        StatementSummary(statement: $0, affectedRows: 1)
+      }
+      manager.pendingTransaction = .appTx(pending: pending)
+      manager.transactionOriginTabId = tabId
+    }
+    return (manager, tabId)
+  }
+
+  @Test("Close Document of a deleted file waits for the tab's pending transaction")
+  func deletedFileCloseResolvesTransactionFirst() async {
+    let (manager, tabId) = deletedFileTab(pendingTransaction: true)
+
+    manager.closeTabForDeletedFile(id: tabId)
+
+    // Deferred to the Commit / Roll back / Cancel question, not closed at once
+    #expect(manager.tabs.contains { $0.id == tabId })
+    // Without a database the actor reports no transaction: the resolve passes, the tab closes
+    await wait { !manager.tabs.contains { $0.id == tabId } }
+    #expect(!manager.tabs.contains { $0.id == tabId })
+    // The edits were already dropped: no save question
+    #expect(!manager.showingCloseConfirmation)
+    #expect(manager.tabToClose == nil)
+  }
+
+  @Test("Cancel at the transaction question keeps the deleted file's tab and its edits")
+  func deletedFileCloseCancelKeepsEdits() async {
+    let (manager, tabId) = deletedFileTab(pendingTransaction: true)
+
+    manager.closeTabForDeletedFile(id: tabId)
+    // The deferred resolve finds another prompt open and returns false, as Cancel does
+    manager.isResolvingPendingTransaction = true
+    try? await Task.sleep(for: .milliseconds(300))
+    manager.isResolvingPendingTransaction = false
+
+    #expect(manager.tabs.contains { $0.id == tabId })
+    #expect(manager.tabs.first { $0.id == tabId }?.isDirty == true)
+    // A later normal close (transaction resolved meanwhile) asks the save question
+    manager.pendingTransaction = .idle
+    manager.requestCloseTab(id: tabId)
+    #expect(manager.showingCloseConfirmation)
+    #expect(manager.tabToClose == tabId)
+    manager.cancelClose()
+  }
+
+  @Test("Close Document of a deleted file without a pending transaction closes at once")
+  func deletedFileCloseWithoutTransactionClosesAtOnce() {
+    let (manager, tabId) = deletedFileTab(pendingTransaction: false)
+
+    manager.closeTabForDeletedFile(id: tabId)
+
+    #expect(!manager.tabs.contains { $0.id == tabId })
+    #expect(!manager.showingCloseConfirmation)
+    #expect(manager.tabToClose == nil)
+  }
 }
 
 // MARK: - Saved-file compatibility (pre-Phase-4 <-> current)

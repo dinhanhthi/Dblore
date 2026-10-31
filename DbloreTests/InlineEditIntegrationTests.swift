@@ -142,6 +142,36 @@ struct InlineEditIntegrationTests {
     _ = try await manager.executeInternal("DROP TABLE s6_edit_ts")
   }
 
+  @Test("A bytea cell edited as base64 stores the decoded bytes; invalid base64 is refused")
+  func byteaEditStoresDecodedBytes() async throws {
+    let manager = try await connect()
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("DROP TABLE IF EXISTS s6_edit_bytea")
+    _ = try await manager.executeInternal(
+      "CREATE TABLE s6_edit_bytea (id int PRIMARY KEY, b bytea)")
+    _ = try await manager.executeInternal(#"INSERT INTO s6_edit_bytea VALUES (1, '\x0102')"#)
+
+    let rowData: [String: CellValue] = ["id": .int(1), "b": .data(Data([0x01, 0x02]))]
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "public.s6_edit_bytea", columnName: "b",
+      newValue: Data([0xDE, 0xAD, 0xBE, 0xEF]).base64EncodedString(), primaryKeyColumns: ["id"],
+      rowData: rowData)
+    #expect(statement.values == [#"\xdeadbeef"#, "1"])
+    #expect(
+      try await manager.executeGatedUpdate(
+        statement, policy: open, connectionEpoch: await manager.connectionEpoch) == 1)
+    #expect(
+      try await scalar(manager, "SELECT encode(b, 'hex') FROM s6_edit_bytea")
+        == .string("deadbeef"))
+
+    #expect(throws: DatabaseError.self) {
+      try CellUpdateStatement.make(
+        qualifiedName: "public.s6_edit_bytea", columnName: "b", newValue: "not base64!",
+        primaryKeyColumns: ["id"], rowData: rowData)
+    }
+    _ = try await manager.executeInternal("DROP TABLE s6_edit_bytea")
+  }
+
   @Test("Table without PK: not editable and the edit is refused before sending")
   func noPrimaryKeyRefused() async throws {
     let manager = try await connect()
@@ -178,5 +208,53 @@ struct InlineEditIntegrationTests {
       try await scalar(manager, "SELECT count(*)::int FROM s6_edit_nopk WHERE b = 'x'")
         == .int(2))
     _ = try await manager.executeInternal("DROP TABLE s6_edit_nopk")
+  }
+}
+
+/// MySQL and MariaDB: a BLOB or BINARY cell edited as base64 stores the decoded bytes.
+@Suite("Inline Edit - Integration (Requires MySQL)", .serialized)
+@MainActor
+struct InlineEditMySQLIntegrationTests {
+  typealias Server = MySQLSessionTests.Server
+
+  private let open = ProtectionPolicy(protectionLevel: .none)
+
+  /// Plain-TCP logins of the caching_sha2 fixture users need the server's auth cache.
+  init() async throws {
+    if MySQLIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment) {
+      try await TestMySQLDatabase.primeAuthCache()
+    }
+  }
+
+  @Test(
+    "BLOB and BINARY cells edited as base64 store the decoded bytes", .requiresMySQL,
+    arguments: [Server.mysql, .mariadb])
+  func binaryEditStoresDecodedBytes(server: Server) async throws {
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: MySQLManagerTests.config(server))
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("DROP TABLE IF EXISTS s6_edit_blob")
+    _ = try await manager.executeInternal(
+      "CREATE TABLE s6_edit_blob (id INT PRIMARY KEY, b BLOB, f BINARY(4))")
+    _ = try await manager.executeInternal(
+      "INSERT INTO s6_edit_blob VALUES (1, x'0102', x'01020304')")
+
+    let bytes = Data([0xDE, 0xAD, 0xBE, 0xEF]).base64EncodedString()
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "`\(TestMySQLDatabase.database)`.`s6_edit_blob`",
+      assignments: [(column: "b", value: bytes), (column: "f", value: bytes)],
+      primaryKeyColumns: ["id"],
+      rowData: [
+        "id": .int(1), "b": .data(Data([0x01, 0x02])), "f": .data(Data([0x01, 0x02, 0x03, 0x04])),
+      ],
+      dialect: .mysql)
+    #expect(statement.sql.contains("`b` = UNHEX(?), `f` = UNHEX(?)"))
+    #expect(
+      try await manager.executeGatedUpdate(
+        statement, policy: open, connectionEpoch: await manager.connectionEpoch) == 1)
+    #expect(
+      try await manager.executeInternal("SELECT HEX(b), HEX(f) FROM s6_edit_blob").rows
+        == [[.string("DEADBEEF"), .string("DEADBEEF")]])
+    _ = try await manager.executeInternal("DROP TABLE s6_edit_blob")
   }
 }

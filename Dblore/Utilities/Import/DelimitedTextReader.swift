@@ -38,11 +38,14 @@ nonisolated enum DelimitedTextReader {
     var maxFieldCharacters: Int
     /// nil = UTF-8, then Latin-1. UTF-8 = fail instead of falling back to Latin-1.
     var encoding: String.Encoding?
+    /// Fills `Table.quoted`, so a quoted "NULL" can be told from a bare NULL (paste rows)
+    var reportsQuotedFields: Bool
 
     init(
       delimiter: Character? = nil, hasHeader: Bool = true, rowLimit: Int? = nil,
       maxCells: Int = 1_000_000, maxRows: Int = DelimitedTextReader.maxImportRows,
-      maxFieldCharacters: Int = 8 * 1_024 * 1_024, encoding: String.Encoding? = nil
+      maxFieldCharacters: Int = 8 * 1_024 * 1_024, encoding: String.Encoding? = nil,
+      reportsQuotedFields: Bool = false
     ) {
       self.delimiter = delimiter
       self.hasHeader = hasHeader
@@ -51,6 +54,7 @@ nonisolated enum DelimitedTextReader {
       self.maxRows = max(maxRows, 0)
       self.maxFieldCharacters = max(maxFieldCharacters, 0)
       self.encoding = encoding
+      self.reportsQuotedFields = reportsQuotedFields
     }
   }
 
@@ -59,6 +63,9 @@ nonisolated enum DelimitedTextReader {
     var columns: [String]
     var rows: [[String]]
     var encoding: String.Encoding = .utf8
+    /// With `reportsQuotedFields`: per row, one flag per field the record held (not padded,
+    /// so a short record shows as a shorter list), true when that field was quoted. Else empty.
+    var quoted: [[Bool]] = []
   }
 
   static func read(_ data: Data, options: Options = Options()) throws -> Table {
@@ -78,9 +85,12 @@ nonisolated enum DelimitedTextReader {
     let parsed = try records(
       in: text, delimiter: scalar, maxRecords: recordCap(options), options: options)
     var table = try makeTable(
-      records: parsed, delimiter: delimiter, hasHeader: options.hasHeader,
+      records: parsed.records, delimiter: delimiter, hasHeader: options.hasHeader,
       maxCells: options.maxCells)
     table.encoding = encoding
+    if options.reportsQuotedFields {
+      table.quoted = Array(parsed.quoted.dropFirst(options.hasHeader ? 1 : 0))
+    }
     return table
   }
 
@@ -92,7 +102,8 @@ nonisolated enum DelimitedTextReader {
       let scalar = candidate.unicodeScalars[candidate.unicodeScalars.startIndex]
       let sample =
         (try? records(
-          in: text, delimiter: scalar, maxRecords: detectionRows, options: options)) ?? []
+          in: text, delimiter: scalar, maxRecords: detectionRows, options: options
+        ).records) ?? []
       let scored = score(sample)
       if scored > bestScore {
         bestScore = scored
@@ -126,10 +137,13 @@ nonisolated enum DelimitedTextReader {
 
   private static func records(
     in text: String, delimiter: Unicode.Scalar, maxRecords: Int?, options: Options
-  ) throws -> [[String]] {
-    if let maxRecords, maxRecords <= 0 { return [] }
+  ) throws -> (records: [[String]], quoted: [[Bool]]) {
+    if let maxRecords, maxRecords <= 0 { return ([], []) }
     var records: [[String]] = []
     var row: [String] = []
+    // Filled only with `reportsQuotedFields`
+    var quotedRecords: [[Bool]] = []
+    var rowQuoted: [Bool] = []
     var field = ""
     var inQuotes = false
     var quoted = false
@@ -146,6 +160,7 @@ nonisolated enum DelimitedTextReader {
         throw DelimitedTextError.cellLimitExceeded
       }
       row.append(field)
+      if options.reportsQuotedFields { rowQuoted.append(quoted) }
       field = ""
       fieldCharacters = 0
       quoted = false
@@ -165,8 +180,10 @@ nonisolated enum DelimitedTextReader {
         }
         totalFields += row.count
         records.append(row)
+        if options.reportsQuotedFields { quotedRecords.append(rowQuoted) }
       }
       row.removeAll(keepingCapacity: true)
+      rowQuoted.removeAll(keepingCapacity: true)
       sawContent = false
     }
 
@@ -221,7 +238,7 @@ nonisolated enum DelimitedTextReader {
     }
     if inQuotes { throw DelimitedTextError.unclosedQuote }
     if sawContent || !row.isEmpty { try finishRecord() }
-    return records
+    return (records, quotedRecords)
   }
 
   private static func makeTable(

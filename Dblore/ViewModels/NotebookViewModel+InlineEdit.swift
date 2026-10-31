@@ -376,9 +376,19 @@ extension NotebookViewModel {
 
     // Update the sidebar content with the new value. Open Row Details are not replaced by a
     // grid edit; the refresh after the send may still rebuild them and drop their drafts.
+    // An edit still armed for a dialog closed without Cancel is dropped unsent here, once: its
+    // value leaves the sidebar first, so this edit's Cancel puts the stored value back, and the
+    // dialog this edit opens has no old edit left to put back over it.
+    restoreSidebar(pendingInlineEdit?.sidebarRestore)
+    pendingInlineEdit = nil
+    if let batch = pendingStagedBatch, batch.mongoInlineEdit != nil {
+      restoreSidebar(batch.mongoInlineEdit?.sidebarRestore)
+      pendingStagedBatch = nil
+    }
+    var sidebarRestore: (edited: SidebarContent, original: SidebarContent?)?
     if case .rowDetail = rightSidebarContent {
     } else {
-      rightSidebarContent = .cellInfo(
+      let edited = SidebarContent.cellInfo(
         columnName: columnName,
         columnType: columnType,
         value: Self.editedCellValue(newValue, original: originalValue, columnType: columnType),
@@ -387,13 +397,29 @@ extension NotebookViewModel {
         primaryKeyColumns: primaryKeyColumns,
         cellId: cellId
       )
+      sidebarRestore = (edited: edited, original: rightSidebarContent)
+      rightSidebarContent = edited
     }
 
-    guard let connectionManager, let rowData else { return }
-    submitInlineEdit(
+    guard let connectionManager, var rowData else { return }
+    // The sidebar's value decides how the text binds (base64 for bytes), as it does for the
+    // validator and `editedCellValue`: its `rowData` is only refreshed by a re-run, so an edit
+    // not re-read yet (Confirm, a stale result) left that column behind. A key keeps the stored
+    // value the WHERE needs.
+    if !primaryKeyColumns.contains(columnName) { rowData[columnName] = originalValue }
+    let armed = submitInlineEdit(
       assignments: [(column: columnName, value: bindText)], rowData: rowData,
       target: cellDetailEditTarget, cellId: cellId, connectionManager: connectionManager,
-      documentValue: (columnType: columnType, text: newValue))
+      documentValue: (columnType: columnType, text: newValue), sidebarRestore: sidebarRestore)
+    // A refused edit sends nothing: the sidebar shows the stored value again
+    if !armed { restoreSidebar(sidebarRestore) }
+  }
+
+  /// A cell edit that stored nothing (refused, cancelled, dropped or failed): the Cell Value
+  /// sidebar shows `restore.original` again while it still shows `restore.edited`
+  func restoreSidebar(_ restore: (edited: SidebarContent, original: SidebarContent?)?) {
+    guard let restore, rightSidebarContent == restore.edited else { return }
+    rightSidebarContent = restore.original
   }
 
   /// Gate shared by a cell edit and Row Details Apply: ONE UPDATE setting every `assignments`
@@ -401,37 +427,41 @@ extension NotebookViewModel {
   /// target), which must be live for `cellId`, checked by the protection gate, confirmed when
   /// the commit style asks, then sent. On MongoDB the one assignment is sent as a `$set` of
   /// `documentValue` (its column type and the typed text) at `documentPath` (nil: the column).
+  /// `sidebarRestore` goes with the edit, put back when it stores nothing. False: refused,
+  /// nothing sent or armed (on MongoDB also: the editor sheet opened on the stored value).
+  @discardableResult
   func submitInlineEdit(
     assignments: [(column: String, value: String?)], rowData: [String: CellValue],
     target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager,
-    documentValue: (columnType: String, text: String?)? = nil, documentPath: [String]? = nil
-  ) {
+    documentValue: (columnType: String, text: String?)? = nil, documentPath: [String]? = nil,
+    sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
+  ) -> Bool {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
-      return
+      return false
     }
-    guard !refuseWhileTransactionPendingElsewhere() else { return }
+    guard !refuseWhileTransactionPendingElsewhere() else { return false }
 
     // Only the live target of the result the cell was opened from; never the passed table/key
     guard let target, isLiveEditTarget(target, cellId: cellId) else {
       showToast(Self.notEditableMessage, type: .error)
-      return
+      return false
     }
     let columnNames = assignments.map(\.column)
     if let generated = columnNames.first(where: target.generatedColumns.contains) {
       showToast(Self.generatedColumnMessage(generated), type: .error)
-      return
+      return false
     }
     // MongoDB: one `$set` through `executeGatedSequentialBatch`, never `executeGatedUpdate`
     if stagesDocuments {
       guard assignments.count == 1, let column = columnNames.first, let documentValue else {
         showToast(Self.oneDocumentFieldMessage, type: .error)
-        return
+        return false
       }
-      handleDocumentValueEdit(
+      return handleDocumentValueEdit(
         columnName: column, columnType: documentValue.columnType, newValue: documentValue.text,
-        rowData: rowData, target: target, cellId: cellId, path: documentPath)
-      return
+        rowData: rowData, target: target, cellId: cellId, path: documentPath,
+        sidebarRestore: sidebarRestore)
     }
 
     let statement: CellUpdateStatement
@@ -442,13 +472,13 @@ extension NotebookViewModel {
         updateOnly: target.updateOnly, dialect: sqlDialect)
     } catch {
       showToast(error.localizedDescription, type: .error)
-      return
+      return false
     }
 
     // Protection level: same gate the actor enforces again before sending
     if let message = protectionBlockMessage(for: statement.sql) {
       showToast(message, type: .error)
-      return
+      return false
     }
 
     let step = RewindPlan.inlineStep(
@@ -460,7 +490,8 @@ extension NotebookViewModel {
         target: target, resultColumns: liveResult(of: target, cellId: cellId)?.columns ?? [],
         editKind: .inline, steps: step.map { [$0] } ?? [],
         engine: notebook.connectionConfig?.databaseType,
-        enabled: historySettings.rewindEnabled))
+        enabled: historySettings.rewindEnabled),
+      inputValues: assignments.map(\.value), sidebarRestore: sidebarRestore)
 
     // Confirm and password ask before anything is sent. Review and immediate do not.
     if resolvedCommitStyle().confirmsWrites,
@@ -469,12 +500,13 @@ extension NotebookViewModel {
       pendingExplainSQL = nil
       pendingStagedBatch = nil
       pendingInlineEdit = edit
-      return
+      return true
     }
 
     Task { [weak self] in
       await self?.sendInlineEdit(edit, target: target)
     }
+    return true
   }
 
   /// Commit style of this notebook's connection, or the app default when it has none.
@@ -503,21 +535,27 @@ extension NotebookViewModel {
   /// edited result (same generation). Anything but exactly one updated row is reported as an
   /// error (the actor undoes it, see `DatabaseConnectionManager.executeGatedUpdate`).
   func sendInlineEdit(_ edit: PendingInlineEdit, target: EditTarget?) async {
-    guard !refuseWhileTransactionPendingElsewhere() else { return }
+    guard !refuseWhileTransactionPendingElsewhere() else {
+      restoreSidebar(edit.sidebarRestore)
+      return
+    }
     guard let target, target.qualifiedName == edit.tableName,
       isLiveEditTarget(target, cellId: edit.cellId)
     else {
+      restoreSidebar(edit.sidebarRestore)
       showToast(Self.notEditableMessage, type: .error)
       return
     }
     let columnList = edit.columnNames.joined(separator: ", ")
     let started = Date()
+    var updated = false
     do {
       let rowsAffected = try await edit.connectionManager.executeGatedUpdate(
         edit.statement,
         policy: protectionPolicy,
         connectionEpoch: target.connectionEpoch, caller: id,
         commitImmediately: resolvedCommitStyle() != .review, rewind: edit.rewindPlan)
+      updated = true
       scheduleHistory(
         [
           QueryHistoryOutcome(
@@ -538,7 +576,7 @@ extension NotebookViewModel {
         if hasPendingStagedChanges {
           // Refresh stored values without replacing the batch's generation or drafts.
           let count = edit.columnNames.count
-          let newValues = Array(edit.statement.values.prefix(count))
+          let newValues = edit.setInputValues
           let assignments = zip(edit.columnNames, newValues).map { (column: $0, value: $1) }
           let result = editorResult
           let columns = edit.columnNames.compactMap { name in
@@ -576,17 +614,52 @@ extension NotebookViewModel {
           await loadDataViewerPage()
         }
       } else if rowsAffected == 1 {
-        // A plain editor result is not re-run: Row Details takes the sent values as its row
+        // Row Details takes the sent values as its row (kept when the re-run fails)
         rowDetailSent(edit, target: target)
+        await refreshEditorResult(after: target)
       }
     } catch {
+      // The UPDATE refused, failed or undone (a row count other than one): nothing is stored
+      if !updated { restoreSidebar(edit.sidebarRestore) }
       recordFailure(
         error, sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
         source: .dataViewerEdit)
       showToast(
         "Failed to update '\(columnList)': \(error.localizedDescription)", type: .error)
     }
+    if updated { await onRelationsWritten?([edit.statement.sql], id, target.connectionEpoch) }
     await onStatementsExecuted?()
+  }
+
+  /// After an edit of the editor result whose live target is `target`: re-runs the query that
+  /// produced it when that text passes `ReadOnlyQueryGuard`, through the user's read path (same
+  /// gate and tab, so inside a pending app transaction it shows the uncommitted edit, as Run
+  /// does), not recorded in history. A result of a script (re-running one statement would drop
+  /// the others), of a refused statement or of a query with `:name` parameters (the result does
+  /// not keep the values it ran with; the live ones may differ) shows "Run again to refresh".
+  private func refreshEditorResult(after target: EditTarget) async {
+    guard isLiveEditTarget(target, cellId: nil), let query = editorResult?.sourceQuery else {
+      return
+    }
+    if editorStatementResults.isEmpty, !isEditorQueryRunning,
+      parameterNames(in: query).isEmpty,
+      (try? ReadOnlyQueryGuard.check(query, dialect: sqlDialect)) != nil
+    {
+      // No Safe Mode confirmation: safe only because ReadOnlyQueryGuard admits one read; do not
+      // widen without routing through Safe Mode
+      await executeEditorQuery(query, source: .internal)
+      return
+    }
+    if editorResult?.editTarget == target { editorResult?.staleAfterEdit = true }
+    // Kept when another statement of the script is selected and this one again
+    editorStatementResults = editorStatementResults.map { statement in
+      guard statement.result.editTarget == target else { return statement }
+      var result = statement.result
+      result.staleAfterEdit = true
+      return StatementResult(
+        id: statement.id, queryText: statement.queryText, result: result,
+        statementIndex: statement.statementIndex)
+    }
   }
 
   /// Re-reads the data viewer's page into the shown result, keeping its edit target (staged
@@ -645,7 +718,8 @@ extension NotebookViewModel {
 
   /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits).
   /// Nil is NULL, whatever the original type. A NULL original takes `columnType`'s type.
-  static func editedCellValue(
+  /// Nonisolated: Paste Rows types its values off the main actor.
+  nonisolated static func editedCellValue(
     _ newValue: String?, original: CellValue, columnType: String = ""
   ) -> CellValue {
     guard let newValue else { return .null }
@@ -659,14 +733,17 @@ extension NotebookViewModel {
     case .bool:
       return Bool(newValue).map(CellValue.bool) ?? .string(newValue)
     case .null:
-      return bindText(for: newValue, original: original) == nil
-        ? .null : editedCellValue(newValue, original: .placeholder(forColumnType: columnType))
+      guard bindText(for: newValue, original: original) != nil else { return .null }
+      let placeholder = CellValue.placeholder(forColumnType: columnType)
+      // A NULL bytea cell binds the typed text as bytea input, not base64 (`CellUpdateStatement`)
+      if case .data = placeholder { return .data(Data(newValue.utf8)) }
+      return editedCellValue(newValue, original: placeholder)
     case .json:
       return .json(newValue)
     case .date:
       return ISO8601DateFormatter().date(from: newValue).map(CellValue.date) ?? .string(newValue)
     case .data:
-      return .data(Data(newValue.utf8))
+      return Data(base64Encoded: newValue).map(CellValue.data) ?? .string(newValue)
     }
   }
 }

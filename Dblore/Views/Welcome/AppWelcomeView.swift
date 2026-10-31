@@ -39,6 +39,8 @@ struct AppWelcomeView: View {
   /// Height of the native window tab bar below the titlebar row (0 when hidden or in full screen)
   @State private var nativeTabBarHeight: CGFloat = 0
   @State private var isFullScreen = false
+  /// The Safe Mode unlock a Welcome connect weaker than its saved row waits for
+  @State private var weakeningUnlock: WeakeningUnlockRequest?
   @Environment(\.controlActiveState) private var controlActiveState
 
   @Environment(\.pixelLength) private var pixelLength
@@ -120,6 +122,25 @@ struct AppWelcomeView: View {
       onConnect: submitConnectionForm,
       onOpenPluginSettings: { openSettings(section: .plugins) }
     )
+    // Over the form, whose Connect waits for it
+    .sheet(
+      isPresented: Binding(
+        get: { weakeningUnlock != nil },
+        set: { if !$0 { finishWeakeningUnlock(granted: false) } }
+      )
+    ) {
+      if let request = weakeningUnlock {
+        SafeModeUnlockSheet(
+          message:
+            "Safe Mode requires verification to connect to this saved connection with weaker protection or Safe Mode settings.",
+          biometricReason: "Connect with weaker protection",
+          // The saved row's password, never the one typed into the form
+          storedDatabasePassword: request.storedDatabasePassword,
+          onUnlock: { finishWeakeningUnlock(granted: true) },
+          onCancel: { finishWeakeningUnlock(granted: false) })
+      }
+    }
+    .onDisappear { finishWeakeningUnlock(granted: false) }
     // After the connection form, so they open on top of it
     .connectionImportPanel(isPresented: $isImportPresented)
     .sidePanelOverlay(isPresented: $isExportPresented, width: ConnectionExportSheet.panelWidth) {
@@ -338,8 +359,15 @@ struct AppWelcomeView: View {
   /// fields were edited it keeps the saved row's AI policy and rules, so a stale form copy never
   /// loosens a policy another window saved meanwhile.
   /// A locked connection asks first (in Edit mode the edited row and its target); cancel keeps
-  /// the form as it is.
+  /// the form as it is. A protection weaker than the edited row asks the Safe Mode unlock too.
   private func submitConnectionForm(_ config: ConnectionConfig, aiFieldsEdited: Bool) async throws {
+    // A save onto another connection's Keychain key fails before any prompt; checked again below
+    if config.rememberConnection, editingConnectionId != nil || config.mongoHomeDatabase == nil,
+      SessionManager.keyUsedByAnotherIdentity(
+        config, excluding: editingConnectionId, defaults: RecentManager.sharedDefaults)
+    {
+      throw SessionManagerError.keychainKeyInUse
+    }
     let edited = recentManager.recentConnections.first { $0.id == editingConnectionId }
     for locked in [edited?.config, config].compactMap(\.self) {
       guard await unlock(locked, reason: "Unlock this connection to save it") else {
@@ -348,8 +376,29 @@ struct AppWelcomeView: View {
     }
     if let id = editingConnectionId {
       let row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
+      if row.rememberConnection,
+        SessionManager.keyUsedByAnotherIdentity(
+          row, excluding: id, defaults: RecentManager.sharedDefaults)
+      {
+        throw SessionManagerError.keychainKeyInUse
+      }
+      // Weaker protection than the saved row asks the Safe Mode unlock; cancel saves nothing
+      _ = try await WorkspaceManager.unlockWelcomeEditWeakening(
+        of: row, editing: id, defaults: RecentManager.sharedDefaults,
+        unlock: unlockWeakening(of:))
       guard recentManager.replaceConnection(id: id, with: row) else {
-        throw CertificateFormError.keychainSave
+        // Relocked while the sheet was open, or the target's key was taken meanwhile
+        if [edited?.config, row].compactMap(\.self).contains(where: {
+          LockCenter.shared.registry.refusal(for: $0) != nil
+        }) {
+          throw DatabaseError.connectionLocked
+        }
+        if SessionManager.keyUsedByAnotherIdentity(
+          row, excluding: id, defaults: RecentManager.sharedDefaults)
+        {
+          throw SessionManagerError.keychainKeyInUse
+        }
+        throw SessionManagerError.saveFailed
       }
       return
     }
@@ -373,13 +422,24 @@ struct AppWelcomeView: View {
     .withTrustPrompt()
   }
 
+  /// Weaker protection than the saved row asks the Safe Mode unlock on this window first, once;
+  /// cancel creates nothing and keeps the row's protection.
   private func connectAndCreateWorkspaceForWelcome(
     _ config: ConnectionConfig, aiFieldsEdited: Bool
   ) async throws {
+    // A save onto another connection's Keychain key fails before any unlock is asked
+    if config.rememberConnection, config.mongoHomeDatabase == nil,
+      SessionManager.keyUsedByAnotherIdentity(config, defaults: RecentManager.sharedDefaults)
+    {
+      throw SessionManagerError.keychainKeyInUse
+    }
+    let unlocked = try await WorkspaceManager.unlockWelcomeWeakening(
+      of: config, unlock: unlockWeakening(of:))
     let windowManager = WorkspaceWindowManager.shared
     let manager = windowManager.newWorkspace(connection: config)
     do {
-      try await manager.connect(config: config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+      try await manager.connectFromWelcome(
+        config: config, aiFieldsEdited: aiFieldsEdited, weakeningUnlocked: unlocked)
       isShowingConnectionSidebar = false
       onWorkspaceSelected?(manager.id)
     } catch {
@@ -387,6 +447,30 @@ struct AppWelcomeView: View {
       throw error
     }
   }
+
+  /// Shows the Safe Mode unlock sheet for `savedRow` and waits for it; true once unlocked
+  private func unlockWeakening(of savedRow: ConnectionConfig) async -> Bool {
+    finishWeakeningUnlock(granted: false)
+    let storedPassword = recentManager.withSavedPassword(savedRow).password
+    return await withCheckedContinuation { continuation in
+      weakeningUnlock = WeakeningUnlockRequest(
+        storedDatabasePassword: storedPassword,
+        resume: { continuation.resume(returning: $0) })
+    }
+  }
+
+  /// Answers the waiting unlock once and closes its sheet; no-op without one
+  private func finishWeakeningUnlock(granted: Bool) {
+    guard let request = weakeningUnlock else { return }
+    weakeningUnlock = nil
+    request.resume(granted)
+  }
+}
+
+/// A Safe Mode unlock the Welcome form's connect waits for
+private struct WeakeningUnlockRequest {
+  let storedDatabasePassword: String
+  let resume: (Bool) -> Void
 }
 
 // MARK: - Welcome Sidebar

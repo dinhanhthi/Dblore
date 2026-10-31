@@ -35,9 +35,11 @@ class WorkspaceManager: Identifiable {
   var workspace: Workspace
   var isDirty: Bool = false
   var autoSaveTask: Task<Void, Never>?
-  /// Background schema load started by connect (and by a Commit / Rollback that retries a
-  /// load discarded during the transaction)
+  /// Background schema load started by connect, by Refresh, and by a Commit / Rollback that
+  /// retries a load discarded during the transaction
   var schemaLoadTask: Task<Void, Never>?
+  /// Page loads of the restored data viewers started by the last connect
+  @ObservationIgnored var dataViewerLoadTasks: [Task<Void, Never>] = []
   /// Bumped by every load start and cancel: a load that is no longer the latest is superseded
   var schemaLoadGeneration = 0
   /// The connection epoch the sidebar schema was read with; nil until a load since the last
@@ -106,6 +108,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningConnect: ConnectionConfig?
   var pendingWeakeningCertificate: ClientCertificateMaterial?
   var pendingWeakeningSSHCredential: SSHStoredCredential?
+  /// The form's Vault secret for the held connect (a first connect has no stored one yet)
+  var pendingWeakeningVaultSecret: VaultCredentialStore.ConnectionSecret?
   /// The held connect's `aiFieldsEdited` (see `connect(config:…, aiFieldsEdited:)`)
   var pendingWeakeningAIFieldsEdited = false
   /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
@@ -174,6 +178,9 @@ class WorkspaceManager: Identifiable {
   private(set) var viewModels: [UUID: NotebookViewModel] = [:]
   private var notebookDocuments: [UUID: DbloreDocument] = [:]
   private var editorDocuments: [UUID: SQLEditorDocument] = [:]
+  /// Edits per tab (`markDirty` calls), so Load External never replaces an edit made during its
+  /// read
+  @ObservationIgnored private var editCounts: [UUID: Int] = [:]
 
   // MARK: - Security-Scoped Bookmarks
 
@@ -286,6 +293,15 @@ class WorkspaceManager: Identifiable {
   /// Renames and drops waiting in the Protected mode transaction: applied to the open tabs on
   /// Commit, dropped on any other end
   @ObservationIgnored var pendingTableChanges: [StructureEditorModel.TableChange] = []
+  /// Tables written inside the open Protected mode or user transaction, each with the `id` of
+  /// the tab that wrote it last (its page already shows the write): their other data viewer tabs
+  /// are marked stale on Commit; dropped on Rollback and with the connection
+  @ObservationIgnored var heldWrittenRelations: [WrittenRelations.Relation: UUID] = [:]
+
+  // MARK: - Types Editor
+
+  /// PostgreSQL type shown in the types editor sheet (or a new one). Nil hides it.
+  var userTypeEditor: UserTypeEditorModel?
 
   // MARK: - Data Dictionary
 
@@ -296,6 +312,11 @@ class WorkspaceManager: Identifiable {
 
   /// Compare Schemas sheet. Nil hides it.
   var schemaCompare: SchemaCompareModel?
+
+  // MARK: - Copy Objects
+
+  /// Copy Objects sheet. Nil hides it.
+  var copyObjects: CopyObjectsModel?
 
   // MARK: - Find a Value in Every Table
 
@@ -325,6 +346,27 @@ class WorkspaceManager: Identifiable {
   var visualizerOffset: CGPoint = .zero
   var selectedGraphNodeId: UUID?
   var isLoadingSchemaGraph: Bool = false
+  /// Qualified names of the tables the diagram shows, picked when the catalog has more than
+  /// `SchemaLayoutEngine.maxTables`; nil: every table. Kept by refresh and reset, forgotten by
+  /// a connect and a disconnect.
+  var schemaDiagramTables: Set<String>?
+  /// The running diagram layout: a newer one, a connect or a disconnect cancels it
+  @ObservationIgnored var schemaLayoutTask: Task<SchemaLayoutResult, Never>?
+  /// Bumped by every layout start and cancel: a superseded layout assigns nothing
+  @ObservationIgnored var schemaLayoutGeneration = 0
+  /// The `schemaConnectionEpoch` the diagram was laid out from (a reload of the same connection
+  /// carries it forward): its positions are saved only while that schema is the loaded one
+  @ObservationIgnored var schemaGraphEpoch: UInt64?
+  /// The diagram's staged schema edits, made on the first edit (it may open a SQL tab). Goes
+  /// with the diagram (connect, disconnect).
+  var schemaDiagramEditor: SchemaDiagramEditModel?
+  /// A diagram change was applied (or waits for Commit) while the sidebar index had this id:
+  /// the diagram lays out again, keeping its positions, once a schema load replaced it. Nil:
+  /// nothing owed.
+  @ObservationIgnored var schemaDiagramRelayoutIndexID: UUID?
+  /// A table rename moved its saved position under the shown diagram: the diagram's positions
+  /// are not saved until it is laid out again (they would write the old name back)
+  @ObservationIgnored var schemaDiagramPositionsStale = false
   weak var schemaGraphNSView: SchemaGraphNSView?
   var showTableConnections: Bool = true
   var showColumnConnections: Bool = false
@@ -380,6 +422,13 @@ class WorkspaceManager: Identifiable {
   var databaseFunctions: [DatabaseFunction] = []
   var databaseProcedures: [DatabaseProcedure] = []
   var databaseTriggers: [DatabaseTrigger] = []
+  /// The sidebar filter's index of the five arrays above, built with them off the main actor
+  /// and assigned with them
+  var sidebarEntityIndex = SidebarEntityIndex.empty
+  /// The command palette's table, view and function rows with their search keys, built with
+  /// the arrays above off the main actor and assigned and cleared with them. Nil until a schema
+  /// load lands: the palette then reads the live arrays.
+  @ObservationIgnored var paletteCatalog: CommandPaletteCatalog?
   /// In-flight definition reads of object source tabs, cancelled when the tab closes
   @ObservationIgnored var objectSourceLoads: [UUID: Task<Void, Never>] = [:]
   var databaseUsers: [DatabaseUser] = []
@@ -390,6 +439,8 @@ class WorkspaceManager: Identifiable {
   /// Read when the sidebar's Types section is first expanded
   var databaseUserTypes = LazyCatalog<DatabaseUserType>()
   var isLoadingSchema: Bool = false
+  /// The user stopped the last schema load (sidebar Cancel); cleared when a load starts
+  var isSchemaLoadCancelledByUser = false
   var areAllEntitiesExpanded: Bool = false
 
   // MARK: - Autocomplete
@@ -413,9 +464,9 @@ class WorkspaceManager: Identifiable {
     // A config read from a file (`sanitizesFileConfig`; off for the app's in-memory config, see
     // `createNew(connection:)`): its AI policy never weakens the saved one, the form opens on the
     // saved color and group (a form connect writes what the form shows), its scripts and
-    // transport (TLS mode, SSH tunnel, client certificate, connection string) are the saved
-    // row's only, and it never weakens the saved row's protection. Its own password is never
-    // used (a connect reads the Keychain or the form), so it is dropped
+    // transport (TLS mode, SSH tunnel, client certificate, connection string, Vault source) are
+    // the saved row's only, and it never weakens the saved row's protection. Its own password is
+    // never used (a connect reads the Keychain or the form), so it is dropped
     var workspace = workspace
     if sanitizesFileConfig {
       workspace.connectionConfig = Self.sanitizedFileAIPolicy(
@@ -699,6 +750,84 @@ class WorkspaceManager: Identifiable {
     editorDocuments[tabId]
   }
 
+  /// Keeps a tab's document; Load External of its file conflict alert refreshes the tab's cells
+  private func store(_ document: DbloreDocument, for tabId: UUID) {
+    document.onExternalReload = { [weak self, weak document] in
+      guard let document, let viewModel = self?.viewModels[tabId] else { return }
+      viewModel.notebook.cells = document.notebook.cells
+    }
+    notebookDocuments[tabId] = document
+  }
+
+  /// Keeps a tab's document; Load External of its file conflict alert refreshes the tab's text
+  private func store(_ document: SQLEditorDocument, for tabId: UUID) {
+    document.onExternalReload = { [weak self, weak document] in
+      guard let document, let viewModel = self?.viewModels[tabId] else { return }
+      viewModel.editorContent = document.content
+    }
+    editorDocuments[tabId] = document
+  }
+
+  /// Whether the tab asks about changes to its file on disk: notebooks and scripts only. A
+  /// markdown note's preview keeps its own copy of the text, so a reload would not stick.
+  func watchesFileConflicts(tabId: UUID) -> Bool {
+    switch tabs.first(where: { $0.id == tabId })?.documentType {
+    case .notebook, .sqlFile: true
+    default: false
+    }
+  }
+
+  /// Load External of the file conflict alert: rereads the tab's file into its document (asking
+  /// to unlock a sealed file as opening it does), which refreshes the tab, now clean
+  func loadExternalVersion(tabId: UUID) async throws {
+    guard watchesFileConflicts(tabId: tabId) else { return }
+    // An edit during the read (an unlock prompt) is kept: the alert asks again instead
+    let edits = editCounts[tabId]
+    let stillApplies = { [weak self] in self?.editCounts[tabId] == edits }
+    let reloaded: Bool
+    if let document = notebookDocuments[tabId] {
+      reloaded = try await document.reloadFromDisk(
+        holder: id, io: lockedIO, unlock: unlockLockedFile, stillApplies: stillApplies)
+    } else if let document = editorDocuments[tabId] {
+      reloaded = try await document.reloadFromDisk(
+        holder: id, io: lockedIO, unlock: unlockLockedFile, stillApplies: stillApplies)
+    } else {
+      return
+    }
+    if reloaded { markClean(tabId: tabId) }
+  }
+
+  /// Keep My Version of the file conflict alert: the tab keeps its edits, and only a change
+  /// newer than the one the alert showed asks again
+  func keepMyVersion(tabId: UUID) {
+    guard watchesFileConflicts(tabId: tabId) else { return }
+    notebookDocuments[tabId]?.keepVersionOverShownChange()
+    editorDocuments[tabId]?.keepVersionOverShownChange()
+  }
+
+  /// The tab's notebook, script or note document
+  private func fileDocument(for tabId: UUID) -> (any FileConflictPresenting)? {
+    if let document = notebookDocuments[tabId] { return document }
+    return editorDocuments[tabId]
+  }
+
+  /// Save of a notebook or script whose file changed on disk since the tab last read or wrote
+  /// it, or whose "modified" alert is still up: nothing is written over that change, and the
+  /// tab's conflict alert asks which version to keep
+  private func refuseSaveOverExternalChange(tabId: UUID) throws {
+    guard watchesFileConflicts(tabId: tabId), let document = fileDocument(for: tabId) else {
+      return
+    }
+    let state = document.fileConflictState
+    let isAsking = state.showDialog && state.conflictType == .modified
+    let changeDate = document.unseenChangeDate()
+    guard isAsking || changeDate != nil else { return }
+    if !isAsking { document.fileConflictState.show(type: .modified, modificationDate: changeDate) }
+    // Only the selected tab shows its alert
+    selectTab(id: tabId)
+    throw FileConflictError.changedOnDisk
+  }
+
   // MARK: - Connection Operations
 
   /// Connect without the weakening check. Only `connect(config:defaultCommitStyle:)`,
@@ -709,10 +838,17 @@ class WorkspaceManager: Identifiable {
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
   /// unless `aiFieldsEdited`, its color and group unless `fromForm`, and its hidden schemas.
+  /// A save onto the Keychain key of another saved connection throws
+  /// `SessionManagerError.keychainKeyInUse` before anything changes.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
     aiFieldsEdited: Bool = false, fromForm: Bool = false
   ) async throws {
+    if savesConnection, config.rememberConnection, config.mongoHomeDatabase == nil,
+      SessionManager.keyUsedByAnotherIdentity(config, defaults: defaults)
+    {
+      throw SessionManagerError.keychainKeyInUse
+    }
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     activeUnrememberedCertificate = nil
@@ -720,6 +856,11 @@ class WorkspaceManager: Identifiable {
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
+    // The types editor belongs to the previous connection
+    dropUserTypeEditor()
+    // The diagram and its picked tables belong to the previous database
+    cancelSchemaLayout()
+    clearSchemaGraph()
     if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
     // A search running with its sheet hidden must not reach the new server
     dropCrossTableSearch()
@@ -727,6 +868,8 @@ class WorkspaceManager: Identifiable {
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()
+    // Their transaction ends with the previous connection
+    heldWrittenRelations = [:]
 
     // Picked DuckDB files stay readable only when reconnecting the same database
     let keepsDuckDBFiles = keepsDuckDBFileAccess(for: config)
@@ -778,10 +921,9 @@ class WorkspaceManager: Identifiable {
       syncConnectionStateToTabs()
 
       // Restored data viewers load once connected (before the schema, they are what the user sees)
-      for viewModel in viewModels.values
-      where viewModel.dataViewer != nil && viewModel.editorResult == nil {
-        Task { await viewModel.loadDataViewerPage() }
-      }
+      dataViewerLoadTasks = viewModels.values
+        .filter { $0.dataViewer != nil && $0.editorResult == nil }
+        .map { viewModel in Task { await viewModel.loadDataViewerPage() } }
 
       // The schema loads in the background; tabs get it when the load finishes
       startSchemaLoad()
@@ -849,9 +991,12 @@ class WorkspaceManager: Identifiable {
 
     var configWithPassword = config
     // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
-    // unless a password command prints it on connect. Only the key of this config is read
-    // (`Workspace.keychainKey`), never one a file names for another connection.
-    if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil {
+    // unless a password command prints it or a Vault lease brings it on connect. Only the key
+    // of this config is read (`Workspace.keychainKey`), never one a file names for another
+    // connection.
+    if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
+      config.vault == nil
+    {
       guard let keychainKey = workspace.keychainKey,
         let password = passwords.loadPassword(forKey: keychainKey)
       else {
@@ -995,7 +1140,7 @@ class WorkspaceManager: Identifiable {
     let tab = TabItem.newNotebook()
     tabs.append(tab)
     viewModels[tab.id] = viewModel
-    notebookDocuments[tab.id] = document
+    store(document, for: tab.id)
     markDirtyAndScheduleAutoSave()
 
     selectTab(id: tab.id)
@@ -1018,7 +1163,7 @@ class WorkspaceManager: Identifiable {
       fileExtension: TabDocumentType.scriptExtension(for: workspace.connectionConfig?.databaseType))
     tabs.append(tab)
     viewModels[tab.id] = viewModel
-    editorDocuments[tab.id] = document
+    store(document, for: tab.id)
     markDirtyAndScheduleAutoSave()
     if !content.isEmpty { markDirty(tabId: tab.id) }
 
@@ -1096,7 +1241,7 @@ class WorkspaceManager: Identifiable {
     let tab = TabItem.newMarkdownFile()
     tabs.append(tab)
     viewModels[tab.id] = viewModel
-    editorDocuments[tab.id] = document
+    store(document, for: tab.id)
     markDirtyAndScheduleAutoSave()
 
     selectTab(id: tab.id)
@@ -1296,7 +1441,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      notebookDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .sqlFile, .markdown:
       guard let content = String(data: data, encoding: .utf8) else {
@@ -1315,7 +1460,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      editorDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .dataViewer:
       return false  // File-less: restored by restoreDataViewer
@@ -1427,7 +1572,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      notebookDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .sqlFile, .markdown:
       guard let content = String(data: data, encoding: .utf8) else {
@@ -1446,7 +1591,7 @@ class WorkspaceManager: Identifiable {
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
-      editorDocuments[tab.id] = document
+      store(document, for: tab.id)
 
     case .dataViewer:
       return  // Never detected from a file URL
@@ -1556,6 +1701,30 @@ class WorkspaceManager: Identifiable {
     }
   }
 
+  /// Close Document (or OK) of the file conflict alert after the tab's file was deleted on disk.
+  /// The user already chose to drop the edits, so no save prompt; a pending transaction the tab
+  /// opened (then staged rows) is still resolved first, and Cancel keeps the tab and its edits.
+  func closeTabForDeletedFile(id: UUID) {
+    guard tabs.contains(where: { $0.id == id }), canCloseDeletedFileTab(id: id) else { return }
+    let close: @MainActor () -> Void = { [weak self] in
+      guard let self, tabs.contains(where: { $0.id == id }), canCloseDeletedFileTab(id: id)
+      else { return }
+      guard !deferCloseTabForStagedChanges(id: id) else { return }
+      closeTabImmediately(id: id)
+    }
+    guard !deferCloseTabForPendingTransaction(id: id, onResolved: close) else { return }
+    close()
+  }
+
+  /// A pinned tab stays open; the alert already went away, so say why nothing closed
+  private func canCloseDeletedFileTab(id: UUID) -> Bool {
+    guard canClose(tabId: id) else {
+      WorkspaceWindowManager.shared.showToast("Unpin the tab to close it")
+      return false
+    }
+    return true
+  }
+
   func closeTabWithoutSaving() {
     guard let id = tabToClose else { return }
     closeTabImmediately(id: id)
@@ -1632,8 +1801,10 @@ class WorkspaceManager: Identifiable {
     viewModels[id]?.resolveStagedBlockerPrompt(commitAnyway: false)
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
-    notebookDocuments.removeValue(forKey: id)
-    editorDocuments.removeValue(forKey: id)
+    // Unregister the file presenter: the file coordinator keeps a registered document alive
+    notebookDocuments.removeValue(forKey: id)?.setFileURL(nil)
+    editorDocuments.removeValue(forKey: id)?.setFileURL(nil)
+    editCounts.removeValue(forKey: id)
     tabBookmarks.removeValue(forKey: id)
     tabAccess.removeValue(forKey: id)?.release()
     objectSourceLoads.removeValue(forKey: id)?.cancel()
@@ -1663,12 +1834,16 @@ class WorkspaceManager: Identifiable {
     pendingWeakeningCertificate = nil
     activeUnrememberedSSHCredential = nil
     pendingWeakeningSSHCredential = nil
+    pendingWeakeningVaultSecret = nil
     for token in tabAccess.values { token.release() }
     tabAccess = [:]
     workspaceAccess?.release()
     workspaceAccess = nil
     folderAccess?.release()
     folderAccess = nil
+    // Every caller drops this manager: its documents stop presenting their files
+    for document in notebookDocuments.values { document.setFileURL(nil) }
+    for document in editorDocuments.values { document.setFileURL(nil) }
     releaseDuckDBFileAccess()
     if !keepsSessions { lockedIO.sessions.release(holder: id) }
   }
@@ -1854,9 +2029,9 @@ class WorkspaceManager: Identifiable {
       if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
         document.setFileURL(url)
       }
-      notebookDocuments[tabId] = document
+      store(document, for: tabId)
     }
-    editorDocuments.removeValue(forKey: tabId)
+    editorDocuments.removeValue(forKey: tabId)?.setFileURL(nil)
 
     let viewModel = createViewModel(for: document.notebook)
     viewModel.viewMode = .notebook
@@ -1878,9 +2053,9 @@ class WorkspaceManager: Identifiable {
       if let url = workspace.tabs.first(where: { $0.id == tabId })?.fileURL {
         document.setFileURL(url)
       }
-      editorDocuments[tabId] = document
+      store(document, for: tabId)
     }
-    notebookDocuments.removeValue(forKey: tabId)
+    notebookDocuments.removeValue(forKey: tabId)?.setFileURL(nil)
 
     let notebook = DbloreNotebook(
       cells: [NotebookCell(cellType: .sql, content: script)], documentType: .script)
@@ -1919,6 +2094,7 @@ class WorkspaceManager: Identifiable {
   }
 
   func markDirty(tabId: UUID) {
+    editCounts[tabId, default: 0] += 1
     // Data viewer and object source tabs have no document to save. Called per keystroke: an
     // already dirty tab is not written again, so `tabs` readers are not re-evaluated
     guard let index = tabs.firstIndex(where: { $0.id == tabId }),
@@ -1967,6 +2143,7 @@ class WorkspaceManager: Identifiable {
     await viewModels[id]?.flushMarkdownPreview?()
 
     if let url = tab.fileURL {
+      try refuseSaveOverExternalChange(tabId: id)
       try await saveToURL(tabId: id, url: url)
     } else {
       try await saveWithPanel(tabId: id)
@@ -2021,6 +2198,9 @@ class WorkspaceManager: Identifiable {
       markDirty(tabId: tabId)
       throw error
     }
+    // Not an external change: the file conflict alert only asks about a newer one
+    notebookDocuments[tabId]?.updateLastKnownModificationDate()
+    editorDocuments[tabId]?.updateLastKnownModificationDate()
   }
 
   private func saveWithPanel(tabId: UUID) async throws {
@@ -2161,6 +2341,9 @@ class WorkspaceManager: Identifiable {
       Task {
         await loadSchemaGraph()
       }
+    } else {
+      // A change applied while the diagram was hidden
+      Task { await relayoutSchemaDiagramIfOwed() }
     }
   }
 
@@ -2169,101 +2352,287 @@ class WorkspaceManager: Identifiable {
     isSchemaVisualizerActive = false
   }
 
-  /// Load and calculate the schema graph layout
+  /// Load and calculate the schema graph layout, off the main actor. Above
+  /// `SchemaLayoutEngine.maxTables` with no table picked nothing is laid out: the graph stays
+  /// nil and the visualizer shows the table picker.
   func loadSchemaGraph() async {
     guard connectionState.isConnected else {
       schemaGraph = nil
+      isLoadingSchemaGraph = false
       return
     }
 
-    isLoadingSchemaGraph = true
-
-    // Build graph from existing data
-    let layoutEngine = SchemaLayoutEngine()
-
-    // Calculate canvas size based on number of tables
-    let tableCount = databaseTables.count
-    let canvasWidth = max(800, CGFloat(tableCount) * 100)
-    let canvasHeight = max(600, CGFloat(tableCount) * 80)
-    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
-
-    // Calculate layout
-    var graph = layoutEngine.calculateLayout(
-      tables: databaseTables,
-      foreignKeys: databaseForeignKeys,
-      canvasSize: canvasSize
-    )
-
-    // Restore saved positions if available from local storage
-    if let config = workspace.connectionConfig {
-      let key = SchemaPositionsStore.connectionKey(from: config)
-      let savedPositions = SchemaPositionsStore.loadPositions(forConnection: key)
-      if !savedPositions.isEmpty {
-        graph.applyPositions(savedPositions)
-      }
-    }
-
-    schemaGraph = graph
+    guard await layOutSchemaGraph() else { return }
 
     // Reset view state
     visualizerScale = 1.0
     visualizerOffset = .zero
     selectedGraphNodeId = nil
+  }
 
+  /// The picker's Show Diagram: lays out these tables (the placeholder shows at once)
+  func showSchemaDiagram(tables: Set<String>) {
+    guard schemaConnectionEpoch != nil else { return }  // The tables of the previous database
+    schemaDiagramTables = tables
+    isLoadingSchemaGraph = true
+    Task { await loadSchemaGraph() }
+  }
+
+  /// Back to the table picker: the graph goes, the picked tables stay checked
+  func pickSchemaDiagramTables() {
+    cancelSchemaLayout()
+    schemaGraph = nil
+  }
+
+  /// Forgets the diagram, its picked tables and what points into it (a connect or disconnect:
+  /// they belong to the previous database). An open visualizer lays out again once the new
+  /// schema lands.
+  func clearSchemaGraph() {
+    schemaGraph = nil
+    schemaGraphEpoch = nil
+    schemaDiagramTables = nil
+    selectedGraphNodeId = nil
+    schemaSearchState = SchemaSearchState()
+    // Its staged edits name the previous database's tables (a late Touch ID answer sends nothing)
+    schemaDiagramEditor?.cancelConfirmation()
+    schemaDiagramEditor = nil
+    schemaDiagramRelayoutIndexID = nil
+    schemaDiagramPositionsStale = false
+  }
+
+  /// Cancels the running layout: it assigns nothing
+  func cancelSchemaLayout() {
+    schemaLayoutTask?.cancel()
+    schemaLayoutTask = nil
+    schemaLayoutGeneration += 1
     isLoadingSchemaGraph = false
+  }
+
+  /// Lays out the picked tables (every table when none is picked) off the main actor, replacing
+  /// a running layout, and assigns the graph with its saved positions (nil: too many tables).
+  /// False when superseded by a newer layout, a connect or a disconnect, or before a connect's
+  /// schema landed (the tables are still the previous database's): nothing assigned.
+  private func layOutSchemaGraph() async -> Bool {
+    guard schemaConnectionEpoch != nil else {
+      isLoadingSchemaGraph = false
+      return false
+    }
+    schemaLayoutTask?.cancel()
+    schemaLayoutGeneration += 1
+    let generation = schemaLayoutGeneration
+    isLoadingSchemaGraph = true
+
+    let tables = databaseTables
+    let foreignKeys = databaseForeignKeys
+    let picked = schemaDiagramTables
+    let index = sidebarEntityIndex.id
+    let task = Task {
+      await Self.layOut(tables: tables, picked: picked, foreignKeys: foreignKeys)
+    }
+    schemaLayoutTask = task
+    let result = await task.value
+    guard generation == schemaLayoutGeneration, connectionState.isConnected else { return false }
+    schemaLayoutTask = nil
+    isLoadingSchemaGraph = false
+
+    switch result {
+    case .graph(var graph):
+      // Restore saved positions if available from local storage
+      if let config = workspace.connectionConfig {
+        let key = SchemaPositionsStore.connectionKey(from: config)
+        let savedPositions = SchemaPositionsStore.loadPositions(forConnection: key)
+        if !savedPositions.isEmpty {
+          graph.applyPositions(savedPositions)
+        }
+      }
+      schemaGraph = graph
+      schemaGraphEpoch = schemaConnectionEpoch
+      // Laid out from a schema loaded after the last diagram change: nothing owed any more
+      if let owed = schemaDiagramRelayoutIndexID, owed != index {
+        schemaDiagramRelayoutIndexID = nil
+        schemaDiagramPositionsStale = false
+      }
+    case .tooManyTables:
+      schemaGraph = nil
+    case .cancelled:
+      return false
+    }
+    return true
+  }
+
+  /// The picked tables (all when nil) laid out on a canvas sized to them, off the main actor
+  @concurrent private nonisolated static func layOut(
+    tables: [DatabaseTable], picked: Set<String>?, foreignKeys: [ForeignKey]
+  ) async -> SchemaLayoutResult {
+    let shown = picked.map { names in tables.filter { names.contains($0.qualifiedName) } } ?? tables
+    let canvasWidth = max(800, CGFloat(shown.count) * 100)
+    let canvasHeight = max(600, CGFloat(shown.count) * 80)
+    return SchemaLayoutEngine().calculateLayout(
+      tables: shown, foreignKeys: foreignKeys,
+      canvasSize: CGSize(width: canvasWidth, height: canvasHeight))
   }
 
   /// Save current schema node positions to local storage
   func saveSchemaNodePositions() {
-    guard let graph = schemaGraph,
+    // Never a graph laid out from another schema read: its tables may be another database's.
+    // Nor one shown before a rename moved a saved position: it would write the old name back.
+    guard let graph = schemaGraph, schemaGraphEpoch != nil,
+      schemaGraphEpoch == schemaConnectionEpoch, !schemaDiagramPositionsStale,
       let config = workspace.connectionConfig
     else { return }
 
     let key = SchemaPositionsStore.connectionKey(from: config)
     let positions = graph.exportPositions()
-    SchemaPositionsStore.savePositions(positions, forConnection: key)
+    // Some tables shown: the others keep their saved positions
+    SchemaPositionsStore.savePositions(
+      positions, forConnection: key, keepingOthers: schemaDiagramTables != nil)
   }
 
   /// Reset schema layout to default (recalculate positions)
   func resetSchemaLayout() async {
-    guard connectionState.isConnected else { return }
+    // Before a connect's schema landed the picked tables are the previous database's
+    guard connectionState.isConnected, schemaConnectionEpoch != nil else { return }
 
-    isLoadingSchemaGraph = true
-
-    // Clear saved positions from local storage
+    // Clear saved positions from local storage: of the picked tables only, so the tables not
+    // shown keep theirs
     if let config = workspace.connectionConfig {
       let key = SchemaPositionsStore.connectionKey(from: config)
-      SchemaPositionsStore.clearPositions(forConnection: key)
+      if let picked = schemaDiagramTables {
+        SchemaPositionsStore.removePositions(forTables: picked, forConnection: key)
+      } else {
+        SchemaPositionsStore.clearPositions(forConnection: key)
+      }
     }
 
     // Recalculate layout
-    let layoutEngine = SchemaLayoutEngine()
-    let tableCount = databaseTables.count
-    let canvasWidth = max(800, CGFloat(tableCount) * 100)
-    let canvasHeight = max(600, CGFloat(tableCount) * 80)
-    let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
-
-    schemaGraph = layoutEngine.calculateLayout(
-      tables: databaseTables,
-      foreignKeys: databaseForeignKeys,
-      canvasSize: canvasSize
-    )
+    guard await layOutSchemaGraph() else { return }
 
     // Reset view state but keep current zoom level
     visualizerOffset = .zero
     selectedGraphNodeId = nil
-
-    isLoadingSchemaGraph = false
   }
 
   /// Refresh the schema graph
   func refreshSchemaGraph() async {
-    // Reload schema data first (a cancelled load still finishes its queries but is superseded:
-    // it assigns nothing and leaves `isLoadingSchema` to this load)
-    cancelSchemaLoad()
-    await loadDatabaseSchema()
+    // Reload schema data first, through the tracked load so Cancel stops it
+    await reloadSchemaThroughTask()
     // Then rebuild graph
     await loadSchemaGraph()
+  }
+
+  // MARK: - Schema Diagram Editing
+
+  /// Why the diagram cannot change tables now (its edit menu items are disabled with it, the
+  /// foreign-key grips hidden), or nil. Before the first edit made the model, read from the
+  /// connection and the active tab's rules.
+  var schemaDiagramEditDisabledReason: String? {
+    if let reason = schemaDiagramEditor?.disabledReason { return reason }
+    guard let config = workspace.connectionConfig else {
+      return SchemaDiagramEditModel.unsupportedMessage
+    }
+    if let reason = SchemaDiagramEditModel.disabledReason(
+      databaseType: config.databaseType,
+      policy: activeViewModel?.protectionPolicy ?? ProtectionPolicy(config: config))
+    {
+      return reason
+    }
+    // The catalog is paused until Commit / Rollback: no table structure can be read
+    if isSchemaPaused { return SchemaDiagramEditModel.pausedMessage }
+    return canChangeTableSchema ? nil : SchemaDiagramEditModel.unsupportedMessage
+  }
+
+  /// Why the diagram cannot add or drop foreign keys (SQLite), or nil
+  var schemaDiagramForeignKeyDisabledReason: String? {
+    workspace.connectionConfig?.databaseType == .sqlite
+      ? SchemaDiagramEditModel.sqliteForeignKeyMessage : nil
+  }
+
+  /// The diagram's edit model, made on the first edit (on the active tab, or a new SQL tab when
+  /// none is open). Nil when this connection's tables do not change here. An applied change
+  /// lays the diagram out again once the schema reloaded (on Commit when pending).
+  func schemaDiagramEditModel() -> SchemaDiagramEditModel? {
+    if let schemaDiagramEditor { return schemaDiagramEditor }
+    guard let model = makeSchemaDiagramEditModel() else { return nil }
+    let applied = model.onApplied
+    model.onApplied = { [weak self, weak model] pending in
+      guard let self, let model, self.schemaDiagramEditor === model else { return }
+      self.oweSchemaDiagramRelayout()
+      await applied?(pending)
+      // The reload started above (pending: it waits for Commit)
+      if !pending { await self.relayoutSchemaDiagramIfOwed() }
+    }
+    schemaDiagramEditor = model
+    return model
+  }
+
+  /// Stages `edit` on the diagram's edit model (made now when needed); the click returns at
+  /// once and the table shows loading while its structure is read
+  func stageSchemaDiagramEdit(_ edit: @escaping (SchemaDiagramEditModel) async -> Void) {
+    guard let model = schemaDiagramEditModel() else {
+      showSchemaDiagramEditRefusal()
+      return
+    }
+    if let reason = model.disabledReason {
+      model.toastPresenter(reason, .warning)
+      return
+    }
+    Task { await edit(model) }
+  }
+
+  /// Apply on the diagram, from the active tab (the tab of the first edit may have closed: its
+  /// caller token, commit style and History follow). The shown positions are saved first: a
+  /// table rename moves the saved entry, so it must hold where the table is now.
+  func applySchemaDiagramChanges() {
+    guard let model = schemaDiagramEditor, model.canApply else { return }
+    guard let context = schemaDiagramEditContext() else {
+      showSchemaDiagramEditRefusal()
+      return
+    }
+    model.retarget(context)
+    saveSchemaNodePositions()
+    Task { await model.apply() }
+  }
+
+  /// No edit model could be made or re-targeted: says why instead of dropping the click
+  private func showSchemaDiagramEditRefusal() {
+    WorkspaceWindowManager.shared.showToast(
+      schemaDiagramEditDisabledReason ?? SchemaDiagramEditModel.notConnectedMessage,
+      type: .warning)
+  }
+
+  /// The app transaction ended (Commit / Rollback): a diagram edit model paused by its pending
+  /// change, or by the paused catalog, stages again
+  func schemaDiagramEditorTransactionEnded() {
+    schemaDiagramEditor?.transactionEnded()
+  }
+
+  /// A change reached (or waits for) the server: the diagram lays out again once the schema
+  /// load after it landed
+  func oweSchemaDiagramRelayout() {
+    schemaDiagramRelayoutIndexID = sidebarEntityIndex.id
+  }
+
+  /// A table rename moved a saved diagram position: the shown diagram's positions are not saved
+  /// until it is laid out again from the reloaded schema
+  func schemaDiagramPositionsMoved() {
+    schemaDiagramPositionsStale = true
+    oweSchemaDiagramRelayout()
+  }
+
+  /// Lays the diagram out again from the reloaded schema, keeping zoom, pan and the saved
+  /// positions (a renamed table keeps its own), when a change asked for it and a schema load
+  /// landed since. Waits for a running load; the table picker (no graph) stays as it is.
+  func relayoutSchemaDiagramIfOwed() async {
+    guard schemaDiagramRelayoutIndexID != nil else { return }
+    await awaitSchemaLoad()
+    guard let owed = schemaDiagramRelayoutIndexID, owed != sidebarEntityIndex.id,
+      schemaGraph != nil, !isLoadingSchema
+    else { return }
+    schemaDiagramRelayoutIndexID = nil
+    schemaDiagramPositionsStale = false
+    guard await layOutSchemaGraph() else { return }
+    // The new nodes have new ids
+    selectedGraphNodeId = nil
   }
 
   // MARK: - Schema Visualizer Controls
@@ -2535,7 +2904,7 @@ extension WorkspaceManager {
     var written: [(url: URL, kind: LockEnvelope.Kind)] = []
     for (index, file) in files.enumerated() {
       do {
-        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: nil)
+        try await rewriteTabFile(file, sealingWith: nil)
         written.append(file)
       } catch {
         failures.append(.init(url: file.url, reason: error.localizedDescription))
@@ -2585,6 +2954,26 @@ extension WorkspaceManager {
     return files
   }
 
+  /// Rewrites a tab file in one atomic write (sealed with `session`, plaintext when nil). Its open
+  /// documents take the new date, as after a save, unless the file had a change they had not
+  /// seen yet: that one still raises the conflict alert, and its Keep My Version takes the
+  /// rewrite as seen too.
+  private func rewriteTabFile(
+    _ file: (url: URL, kind: LockEnvelope.Kind), sealingWith session: WorkspaceLockSession?
+  ) async throws {
+    let documents = tabs.filter { $0.fileURL == file.url }
+      .compactMap { fileDocument(for: $0.id) }
+    let upToDate = documents.map { $0.unseenChangeDate() == nil }
+    try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+    for (document, upToDate) in zip(documents, upToDate) {
+      if upToDate {
+        document.updateLastKnownModificationDate()
+      } else {
+        document.noteOwnRewrite()
+      }
+    }
+  }
+
   /// Saves the .sqlws when `workspaceURL` is set (sealed: the workspace carries the key), then
   /// rewrites each tab file as `session`'s envelope, with `progress(done, total)`; returns the
   /// files left as they were
@@ -2606,7 +2995,7 @@ extension WorkspaceManager {
     }
     for file in files {
       do {
-        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+        try await rewriteTabFile(file, sealingWith: session)
       } catch {
         failures.append(.init(url: file.url, reason: error.localizedDescription))
       }
@@ -2626,7 +3015,7 @@ extension WorkspaceManager {
     for file in files {
       do {
         guard let session else { throw LockedFileIOError.sessionMissing(id) }
-        try await lockedIO.rewrite(file.url, kind: file.kind, sealingWith: session)
+        try await rewriteTabFile(file, sealingWith: session)
       } catch {
         failures.append(
           .init(

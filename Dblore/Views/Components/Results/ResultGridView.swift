@@ -34,6 +34,9 @@ struct ResultGridView: NSViewRepresentable {
   /// Page row, result column and new text of a staged cell edit
   var onStageEdit: ((_ row: Int, _ column: Int, _ newValue: String) -> Void)? = nil
   var onStageInsert: (() -> Void)? = nil
+  /// Paste Rows (Cmd+V, Edit > Paste, the cell menu) with the result columns in on-screen
+  /// order. Nil disables paste.
+  var onPasteRows: ((_ columnOrder: [Int]) -> Void)? = nil
   var onStageDuplicate: ((_ rows: [Int]) -> Void)? = nil
   var onStageDelete: ((_ rows: [Int]) -> Void)? = nil
   var onRevertStaged: ((_ rows: [Int]) -> Void)? = nil
@@ -234,6 +237,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onCommitEdit = onCommitEdit
     coordinator.onStageEdit = onStageEdit
     coordinator.onStageInsert = onStageInsert
+    coordinator.onPasteRows = onPasteRows
     coordinator.onStageDuplicate = onStageDuplicate
     coordinator.onStageDelete = onStageDelete
     coordinator.onRevertStaged = onRevertStaged
@@ -624,9 +628,9 @@ final class ResultGridHeaderView: NSTableHeaderView {
   }
 }
 
-/// Table view that answers the copy: action with the coordinator's TSV, starts an inline edit
-/// on double-click or Return (in the last clicked column), and shows one details button over
-/// the hovered cell that reports it to the coordinator (the right sidebar).
+/// Table view that answers copy: with the coordinator's TSV and paste: with Paste Rows, starts
+/// an inline edit on double-click or Return (in the last clicked column), and shows one details
+/// button over the hovered cell that reports it to the coordinator (the right sidebar).
 /// A single tracking area and a single reused button keep hovering cheap on large results.
 final class ResultGridTableView: NSTableView {
   weak var coordinator: ResultGridCoordinator?
@@ -964,9 +968,18 @@ final class ResultGridTableView: NSTableView {
     coordinator?.copySelection(self)
   }
 
+  /// Paste Rows. An inline edit's field editor is first responder and takes Cmd+V itself.
+  @objc func paste(_ sender: Any?) {
+    guard coordinator?.canPasteRows == true else { return }
+    coordinator?.pasteRows()
+  }
+
   override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
     if item.action == #selector(copy(_:)) {
       return !selectedRowIndexes.isEmpty
+    }
+    if item.action == #selector(paste(_:)) {
+      return coordinator?.canPasteRows == true
     }
     return super.validateUserInterfaceItem(item)
   }

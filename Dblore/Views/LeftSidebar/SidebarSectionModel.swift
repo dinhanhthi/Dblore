@@ -225,6 +225,7 @@ nonisolated enum SidebarSectionModel {
     case (.mongodb, .tables): "New Collection…"
     case (.mongodb, .views): "New View…"
     case (.postgresql, .tables), (.mysql, .tables), (.sqlite, .tables): "New Table…"
+    case (.postgresql, .types): "New Type…"
     default: nil
     }
   }

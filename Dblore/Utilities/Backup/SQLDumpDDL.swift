@@ -14,8 +14,9 @@
 // writer adds `SET FOREIGN_KEY_CHECKS`.
 // SQLite: `PRAGMA defer_foreign_keys = ON;` first, then `sqlite_master.sql` of tables (internal
 // `sqlite_` tables and virtual-table shadow tables skipped; a virtual table keeps its CREATE
-// only); AUTOINCREMENT counters, indexes, views and triggers after data. That text is file data,
-// so each one must be exactly one CREATE statement of its row's type (`sqliteDefinition`).
+// only, with Drop as `IF NOT EXISTS` instead of a DROP); AUTOINCREMENT counters, indexes, views
+// and triggers after data. That text is file data, so each one must be exactly one CREATE
+// statement of its row's type (`sqliteDefinition`).
 // DuckDB: pre-data is CREATE SCHEMA for every schema but `main`, the ENUM types, the sequences
 // (built from their values, starting at the next one), then `duckdb_tables().sql` in creation
 // order (a foreign key's table first); post-data is `duckdb_indexes().sql`, then
@@ -23,6 +24,18 @@
 // created, and a reopened file numbers views by name). The catalog text must be exactly one CREATE statement
 // of its kind (`duckdbDefinition`). The table text writes ENUM columns as `ENUM('a', ...)`, so
 // restored columns have the labels but not the type name.
+//
+// Per table (`SQLDumpOptions`): a table with Structure off adds no DDL (no CREATE TABLE, index,
+// constraint, trigger or OWNED BY) but keeps its INSERTs, `setval` and `sqlite_sequence` rows.
+// When every dumped table has Structure off, sequences, enums, domains and views go too, so the
+// rows restore into the database they came from; with only some, the objects a Structure-off
+// table keeps using there are neither created nor dropped (PostgreSQL: the sequences it owns or
+// names in a nextval default and its column types, domains down to their base types, with their
+// `setval` kept; DuckDB: the sequences of its nextval defaults). PostgreSQL then inserts the
+// tables a foreign key references first (catalog order on a cycle). With Drop on a table that keeps its Structure, the
+// dump drops, right after the CREATE SCHEMA lines (SQLite: after its PRAGMA), the views it
+// writes, the dropped tables, then the non-identity sequences, domains and types it creates
+// (domains before types); never with CASCADE. `Script.containsDrop` makes the header version 2.
 //
 // Views are ordered by their dependencies, ties and unknown dependencies by schema then name.
 // Identifiers go through `SQLDialect.quoteIdentifier`; expressions, types and definitions are
@@ -64,9 +77,15 @@ nonisolated enum SQLDumpDDL {
     /// `-- ` lines for the top of the dump
     var comment: [String]
     var preData: [String]
-    /// Tables in creation order
+    /// Tables in creation order (PostgreSQL with a Structure-off table: the tables a foreign
+    /// key references first)
     var tables: [TableInsert]
     var postData: [String]
+    /// `preData` holds a DROP: the dump header says version 2
+    var containsDrop = false
+    /// PostgreSQL with a Structure-off table: the dumped foreign keys form a cycle, so `tables`
+    /// keep catalog order and a restore into a database that has them may fail on a foreign key
+    var foreignKeyCycle = false
   }
 
   /// What the data writer needs to read one table and write its INSERTs
@@ -277,25 +296,50 @@ nonisolated enum SQLDumpDDL {
     "-- row security policies, materialized views, comments, and types other than enums and domains.",
   ]
 
-  static func postgres(_ input: PostgresInput) throws -> Script {
+  static func postgres(
+    _ input: PostgresInput, options: SQLDumpOptions = SQLDumpOptions()
+  ) throws -> Script {
     let dialect = SQLDialect.postgresql
     let tables = parentsFirst(input.tables)
-    var pre = try dumpedSchemas(input).map {
+    let names = tables.map { ObjectName(schema: $0.structure.schema, name: $0.structure.name) }
+    let structured = Set(names.filter { options.table($0).structure })
+    // Every dumped table without Structure: only their rows and sequence values
+    let dataOnly = !tables.isEmpty && structured.isEmpty
+    var written = input
+    if dataOnly {
+      written.sequences = []
+      written.enums = []
+      written.domains = []
+      written.views = []
+    } else if structured.count < names.count {
+      // The Structure-off tables stay in the target with their defaults and column types
+      let kept = postgresKeptObjects(
+        input, off: zip(tables, names).filter { !structured.contains($0.1) }.map(\.0))
+      func isKept(_ schema: String, _ name: String) -> Bool {
+        kept.contains(ObjectName(schema: schema, name: name))
+      }
+      written.sequences.removeAll { isKept($0.schema, $0.name) }
+      written.enums.removeAll { isKept($0.schema, $0.name) }
+      written.domains.removeAll { isKept($0.schema, $0.name) }
+    }
+    let dropped = names.filter { structured.contains($0) && options.table($0).drop }
+    var pre = try dumpedSchemas(written).map {
       "CREATE SCHEMA IF NOT EXISTS \(try dialect.quoteIdentifier($0));"
     }
-    for type in input.enums {
+    if !dropped.isEmpty { pre += try postgresDrops(written, tables: dropped) }
+    for type in written.enums {
       let labels = type.labels.map { dialect.literal(.string($0)) }.joined(separator: ", ")
       pre.append(
         "CREATE TYPE \(try qualified(type.schema, type.name)) AS ENUM (\(labels));")
     }
-    pre += try input.domains.map(domainStatement)
-    for sequence in input.sequences where !sequence.isIdentity {
+    pre += try written.domains.map(domainStatement)
+    for sequence in written.sequences where !sequence.isIdentity {
       pre.append(
         "CREATE SEQUENCE \(try qualified(sequence.schema, sequence.name)) AS \(sequence.dataType) "
           + sequenceOptions(sequence) + ";")
     }
     var indexes: [String] = []
-    var checks = try input.domains.flatMap { domain in
+    var checks = try written.domains.flatMap { domain in
       try domain.constraints.filter(\.notValid).map {
         "ALTER DOMAIN \(try qualified(domain.schema, domain.name)) ADD CONSTRAINT"
           + " \(try dialect.quoteIdentifier($0.name)) \($0.definition);"
@@ -303,9 +347,16 @@ nonisolated enum SQLDumpDDL {
     }
     var foreignKeys: [String] = []
     var inserts: [TableInsert] = []
-    for table in tables {
+    for (table, tableName) in zip(tables, names) {
       let structure = table.structure
       let name = try StructureDDLBuilder.tableName(structure, dialect: dialect)
+      let columns = structure.columns.filter { $0.generated == nil }
+      inserts.append(
+        TableInsert(
+          schema: structure.schema, name: structure.name, target: name, columns: columns,
+          overridingSystemValue: columns.contains { $0.identity == .always },
+          hasData: table.partitionKey == nil))
+      guard structured.contains(tableName) else { continue }
       let ownConstraints = structure.constraints.filter {
         !table.inheritedConstraintNames.contains($0.name ?? "")
           && table.notValidCheckDefinitions[$0.name ?? ""] == nil
@@ -343,18 +394,14 @@ nonisolated enum SQLDumpDDL {
         }
         foreignKeys.append("ALTER TABLE \(name) ADD \(try definition(constraint));")
       }
-      let columns = structure.columns.filter { $0.generated == nil }
-      inserts.append(
-        TableInsert(
-          schema: structure.schema, name: structure.name, target: name, columns: columns,
-          overridingSystemValue: columns.contains { $0.identity == .always },
-          hasData: table.partitionKey == nil))
     }
     var ownership: [String] = []
     var setvals: [String] = []
     for sequence in input.sequences {
       let name = try qualified(sequence.schema, sequence.name)
-      if let owner = sequence.ownedBy, !sequence.isIdentity {
+      if let owner = sequence.ownedBy, !sequence.isIdentity, !dataOnly,
+        options.table(owner.table).structure
+      {
         ownership.append(
           "ALTER SEQUENCE \(name) OWNED BY \(try qualified(owner.table.schema, owner.table.name))."
             + "\(try dialect.quoteIdentifier(owner.column));")
@@ -364,13 +411,166 @@ nonisolated enum SQLDumpDDL {
           "SELECT pg_catalog.setval(\(dialect.literal(.string(name))), \(last), true);")
       }
     }
-    let views = try orderedViews(input.views).map {
+    let views = try orderedViews(written.views).map {
       "CREATE VIEW \(try qualified($0.schema, $0.name)) AS\n"
         + terminated($0.sql.trimmingCharacters(in: .whitespacesAndNewlines))
     }
+    // The tables that keep their structure in the target keep their foreign keys during the
+    // INSERTs: parents go first
+    var cycle = false
+    if structured.count < names.count {
+      if let ordered = referencedFirst(tables, inserts) {
+        inserts = ordered
+      } else {
+        cycle = true
+      }
+    }
     return Script(
       comment: postgresComment, preData: pre, tables: inserts,
-      postData: indexes + checks + foreignKeys + ownership + setvals + views)
+      postData: indexes + checks + foreignKeys + ownership + setvals + views,
+      containsDrop: !dropped.isEmpty, foreignKeyCycle: cycle)
+  }
+
+  /// The sequences, enums and domains that `off` (tables with Structure off, which stay in the
+  /// target) depend on there: sequences they own or name in a `nextval` default, and the types
+  /// of their columns (arrays included) with each domain's base type, down the chain. The dump
+  /// leaves out their CREATE and DROP (a DROP would fail on the dependency, a CREATE on the
+  /// existing object) but keeps their `setval`. The catalog is read with `search_path` empty,
+  /// so a user object's name is always schema-qualified: one-part names (`pg_catalog` types)
+  /// are not matched.
+  private static func postgresKeptObjects(
+    _ input: PostgresInput, off: [PostgresTable]
+  ) -> Set<ObjectName> {
+    let offNames = Set(off.map { ObjectName(schema: $0.structure.schema, name: $0.structure.name) })
+    var kept = Set(
+      input.sequences.compactMap { sequence in
+        sequence.ownedBy.map { offNames.contains($0.table) } == true
+          ? ObjectName(schema: sequence.schema, name: sequence.name) : nil
+      })
+    var types: [ObjectName] = []
+    for column in off.flatMap(\.structure.columns) {
+      kept.formUnion(postgresNextvalNames(column.defaultExpression ?? ""))
+      if let type = postgresTypeName(column.dataType) { types.append(type) }
+    }
+    let domains = Dictionary(
+      input.domains.map { (ObjectName(schema: $0.schema, name: $0.name), $0.baseType) },
+      uniquingKeysWith: { first, _ in first })
+    while let type = types.popLast() {
+      guard kept.insert(type).inserted, let base = domains[type] else { continue }
+      if let baseType = postgresTypeName(base) { types.append(baseType) }
+    }
+    return kept
+  }
+
+  /// `<schema>.<name>` as PostgreSQL reads it (an unquoted part folds ASCII to lowercase), with
+  /// nothing after it but `[]` pairs, or nil
+  private static func postgresTypeName(_ text: String) -> ObjectName? {
+    let tokens = SQLTokenizer(dialect: .postgresql).tokens(text)
+    guard tokens.count >= 3, let name = postgresName(Array(tokens.prefix(3))) else { return nil }
+    let rest = tokens.dropFirst(3)
+    guard rest.count.isMultiple(of: 2),
+      rest.enumerated().allSatisfy({ $0.element.isSymbol($0.offset.isMultiple(of: 2) ? "[" : "]") })
+    else { return nil }
+    return name
+  }
+
+  /// The two-part sequence names of the `nextval('<name>'...)` calls in a default expression
+  private static func postgresNextvalNames(_ text: String) -> [ObjectName] {
+    let tokens = SQLTokenizer(dialect: .postgresql).tokens(text)
+    return tokens.indices.compactMap { index in
+      guard tokens[index].isWord("NEXTVAL"), index + 2 < tokens.count,
+        tokens[index + 1].isSymbol("("), tokens[index + 2].kind == .string
+      else { return nil }
+      let name = SQLTokenizer(dialect: .postgresql).tokens(tokens[index + 2].text)
+      return name.count == 3 ? postgresName(name) : nil
+    }
+  }
+
+  /// `<part>.<part>` tokens as a name: a quoted part exact, an unquoted one ASCII lowercased
+  private static func postgresName(_ tokens: [SQLToken]) -> ObjectName? {
+    func part(_ token: SQLToken) -> String? {
+      switch token.kind {
+      case .quotedIdentifier: token.text
+      case .word: SQLTokenizer.asciiLowercased(token.text)
+      default: nil
+      }
+    }
+    guard tokens.count == 3, tokens[1].isSymbol("."), let schema = part(tokens[0]),
+      let name = part(tokens[2])
+    else { return nil }
+    return ObjectName(schema: schema, name: name)
+  }
+
+  /// The views the dump writes (dependents first), one DROP TABLE for `tables`, then the
+  /// non-identity sequences, domains (last created first) and enum types the dump creates.
+  /// Never CASCADE: an object outside the dump that depends on one of them stops the restore.
+  private static func postgresDrops(
+    _ written: PostgresInput, tables: [ObjectName]
+  ) throws -> [String] {
+    var drops = try orderedViews(written.views).reversed().map {
+      "DROP VIEW IF EXISTS \(try qualified($0.schema, $0.name));"
+    }
+    // One statement: foreign keys between the dropped tables need no order
+    drops.append(
+      "DROP TABLE IF EXISTS "
+        + (try tables.map { try qualified($0.schema, $0.name) }).joined(separator: ", ") + ";")
+    for sequence in written.sequences where !sequence.isIdentity {
+      drops.append("DROP SEQUENCE IF EXISTS \(try qualified(sequence.schema, sequence.name));")
+    }
+    for domain in written.domains.reversed() {
+      drops.append("DROP DOMAIN IF EXISTS \(try qualified(domain.schema, domain.name));")
+    }
+    for type in written.enums {
+      drops.append("DROP TYPE IF EXISTS \(try qualified(type.schema, type.name));")
+    }
+    return drops
+  }
+
+  /// `inserts` (one per table, same order) with every table after the tables its foreign keys
+  /// reference among them; a reference to a partitioned table counts for its partitions, and
+  /// one within a partition tree (or a table to itself) is left out. Ties keep their order.
+  /// Nil on a cycle.
+  private static func referencedFirst(
+    _ tables: [PostgresTable], _ inserts: [TableInsert]
+  ) -> [TableInsert]? {
+    let names = tables.map { ObjectName(schema: $0.structure.schema, name: $0.structure.name) }
+    let parents = Dictionary(
+      tables.map { (ObjectName(schema: $0.structure.schema, name: $0.structure.name), $0) },
+      uniquingKeysWith: { first, _ in first }
+    ).compactMapValues(\.partitionOf?.parent)
+    /// `name` and the dumped tables above it, nearest first
+    func lineage(_ name: ObjectName) -> [ObjectName] {
+      var chain = [name]
+      while let parent = parents[chain[chain.count - 1]], !chain.contains(parent) {
+        chain.append(parent)
+      }
+      return chain
+    }
+    let lineages = names.map(lineage)
+    let dependencies: [Set<Int>] = tables.indices.map { index in
+      var referenced = Set<Int>()
+      for constraint in tables[index].structure.constraints {
+        guard case .foreignKey(let reference) = constraint.kind else { continue }
+        let target = ObjectName(schema: reference.schema, name: reference.table)
+        for other in names.indices
+        where lineages[other].contains(target) && lineages[other].last != lineages[index].last {
+          referenced.insert(other)
+        }
+      }
+      return referenced
+    }
+    var placed = Set<Int>()
+    var ordered: [TableInsert] = []
+    while ordered.count < inserts.count {
+      guard
+        let next = inserts.indices.first(where: {
+          !placed.contains($0) && dependencies[$0].isSubset(of: placed)
+        })
+      else { return nil }
+      placed.insert(next)
+      ordered.append(inserts[next])
+    }
+    return ordered
   }
 
   /// Non-public schemas of every dumped object, sorted
@@ -530,21 +730,40 @@ nonisolated enum SQLDumpDDL {
     "-- Not included: stored procedures, functions, triggers, events, users and grants."
   ]
 
-  static func mysql(_ input: MySQLInput) throws -> Script {
+  /// With Drop, the views the dump writes (dependents first) then the dropped tables go first,
+  /// one statement each, under the writer's `SET FOREIGN_KEY_CHECKS=0`
+  static func mysql(
+    _ input: MySQLInput, options: SQLDumpOptions = SQLDumpOptions()
+  ) throws -> Script {
+    let dialect = SQLDialect.mysql
     var inserts: [TableInsert] = []
+    var creates: [String] = []
+    var dropped: [String] = []
     for table in input.tables {
       let structure = table.structure
+      let target = try dialect.quoteIdentifier(structure.name)
       inserts.append(
         TableInsert(
-          schema: structure.schema, name: structure.name,
-          target: try SQLDialect.mysql.quoteIdentifier(structure.name),
+          schema: structure.schema, name: structure.name, target: target,
           columns: structure.columns.filter { $0.generated == nil }, overridingSystemValue: false,
           hasData: true))
+      let flags = options.table(ObjectName(schema: structure.schema, name: structure.name))
+      guard flags.structure else { continue }
+      creates.append(terminated(table.createStatement))
+      if flags.drop { dropped.append("DROP TABLE IF EXISTS \(target);") }
+    }
+    // Every dumped table without Structure: only their rows
+    let views = !input.tables.isEmpty && creates.isEmpty ? [] : orderedViews(input.views)
+    var drops: [String] = []
+    if !dropped.isEmpty {
+      drops = try views.reversed().map {
+        "DROP VIEW IF EXISTS \(try dialect.quoteIdentifier($0.name));"
+      }
+      drops += dropped
     }
     return Script(
-      comment: mysqlComment, preData: input.tables.map { terminated($0.createStatement) },
-      tables: inserts,
-      postData: orderedViews(input.views).map { terminated(removingDefiner($0.sql)) })
+      comment: mysqlComment, preData: drops + creates, tables: inserts,
+      postData: views.map { terminated(removingDefiner($0.sql)) }, containsDrop: !drops.isEmpty)
   }
 
   /// `SHOW CREATE VIEW` text without its `DEFINER=user@host` clause, so a user without the
@@ -635,15 +854,23 @@ nonisolated enum SQLDumpDDL {
     sqliteTables(rows, shadowTableNames: shadowTableNames).filter { !isVirtual($0) }.map(\.name)
   }
 
-  static func sqlite(_ input: SQLiteInput) throws -> Script {
+  /// With Drop on any table with Structure (a virtual one too), the views the dump writes (last
+  /// created first) then the dropped tables go right after `PRAGMA defer_foreign_keys = ON;`,
+  /// one statement each. A virtual table is never dropped (its rows are not dumped): with Drop
+  /// its CREATE gets `IF NOT EXISTS`, so a restore keeps an existing one and creates it empty
+  /// only when missing.
+  static func sqlite(
+    _ input: SQLiteInput, options: SQLDumpOptions = SQLDumpOptions()
+  ) throws -> Script {
+    let dialect = SQLDialect.sqlite
     let tables = sqliteTables(input.masterRows, shadowTableNames: input.shadowTableNames)
     var inserts: [TableInsert] = []
     for table in tables {
       if isVirtual(table) {
         inserts.append(
           TableInsert(
-            schema: SQLDialect.sqlite.defaultSchema, name: table.name,
-            target: try SQLDialect.sqlite.quoteIdentifier(table.name), columns: [],
+            schema: dialect.defaultSchema, name: table.name,
+            target: try dialect.quoteIdentifier(table.name), columns: [],
             overridingSystemValue: false, hasData: false))
         continue
       }
@@ -653,34 +880,75 @@ nonisolated enum SQLDumpDDL {
       inserts.append(
         TableInsert(
           schema: structure.schema, name: structure.name,
-          target: try SQLDialect.sqlite.quoteIdentifier(structure.name),
+          target: try dialect.quoteIdentifier(structure.name),
           columns: structure.columns.filter { $0.generated == nil }, overridingSystemValue: false,
           hasData: true))
     }
+    let flags = inserts.map { options.table($0) }
+    let structured = zip(tables, flags).filter(\.1.structure).map(\.0)
+    let structuredNames = Set(structured.map(\.name))
     let tableNames = Set(tables.map(\.name))
-    let virtualNames = try tables.filter(isVirtual).map {
-      try SQLDialect.sqlite.quoteIdentifier($0.name)
+    let virtualNames = try structured.filter(isVirtual).map {
+      try dialect.quoteIdentifier($0.name)
     }
+    // A virtual table's rows are not dumped: Drop keeps an existing one (IF NOT EXISTS)
+    let withDrop = zip(tables, flags).filter { $0.1.structure && $0.1.drop }.map(\.0)
+    let dropped = withDrop.filter { !isVirtual($0) }
+    let kept = Set(withDrop.filter(isVirtual).map(\.name))
     let comment =
       virtualNames.isEmpty
       ? []
       : [
-        "-- Virtual tables are created empty (their contents are not included): "
+        "-- Virtual tables are created empty (their contents are not included)"
+          + (kept.isEmpty ? "" : "; Drop keeps an existing one with its rows") + ": "
           + virtualNames.joined(separator: ", ") + "."
       ]
     var post: [String] = []
     for sequence in input.sequences where tableNames.contains(sequence.name) {
-      let name = SQLDialect.sqlite.literal(.string(sequence.name))
+      let name = dialect.literal(.string(sequence.name))
       post.append("DELETE FROM sqlite_sequence WHERE name = \(name);")
       post.append("INSERT INTO sqlite_sequence (name, seq) VALUES (\(name), \(sequence.seq));")
     }
-    let objects = ["index", "view", "trigger"].flatMap { dumped(input.masterRows, type: $0) }
+    // Every dumped table without Structure: no views either
+    let dataOnly = !tables.isEmpty && structured.isEmpty
     let shadows = shadowNames(input.masterRows, shadowTableNames: input.shadowTableNames)
-    post += try objects.filter { !shadows.contains($0.tableName) }.map(sqliteDefinition)
+    let views = dataOnly ? [] : dumped(input.masterRows, type: "view")
+    let objects =
+      (dumped(input.masterRows, type: "index") + views
+      + dumped(input.masterRows, type: "trigger")).filter {
+        !shadows.contains($0.tableName)
+          && ($0.type.lowercased() == "view" || !tableNames.contains($0.tableName)
+            || structuredNames.contains($0.tableName))
+      }
+    post += try objects.map(sqliteDefinition)
+    var drops: [String] = []
+    // Views too when Drop is on only for virtual tables: every CREATE VIEW follows a DROP VIEW
+    if !withDrop.isEmpty {
+      drops = try views.filter { !shadows.contains($0.tableName) }.reversed().map {
+        "DROP VIEW IF EXISTS \(try dialect.quoteIdentifier($0.name));"
+      }
+      drops += try dropped.map { "DROP TABLE IF EXISTS \(try dialect.quoteIdentifier($0.name));" }
+    }
+    let creates = try structured.map {
+      let text = try sqliteDefinition($0)
+      return kept.contains($0.name) ? ifNotExists(virtualTable: text) : text
+    }
     return Script(
-      comment: comment,
-      preData: ["PRAGMA defer_foreign_keys = ON;"] + (try tables.map(sqliteDefinition)),
-      tables: inserts, postData: post)
+      comment: comment, preData: ["PRAGMA defer_foreign_keys = ON;"] + drops + creates,
+      tables: inserts, postData: post, containsDrop: !drops.isEmpty)
+  }
+
+  /// `CREATE VIRTUAL TABLE IF NOT EXISTS ...` from the catalog text, which SQLite stores as
+  /// `CREATE VIRTUAL TABLE <name as written> ...`; any other text as is (its CREATE then fails
+  /// on an existing table, and the restore with it)
+  private static func ifNotExists(virtualTable text: String) -> String {
+    let prefix = "CREATE VIRTUAL TABLE "
+    let tokens = SQLTokenizer(dialect: .sqlite).tokens(text)
+    guard text.utf8.starts(with: prefix.utf8), tokens.count > 3, !tokens[3].isWord("IF") else {
+      return text
+    }
+    return prefix + "IF NOT EXISTS "
+      + String(decoding: text.utf8.dropFirst(prefix.utf8.count), as: UTF8.self)
   }
 
   /// First words of the statement each `sqlite_master` type may hold
@@ -763,17 +1031,60 @@ nonisolated enum SQLDumpDDL {
       + " types other than ENUM."
   ]
 
-  static func duckdb(_ input: DuckDBInput) throws -> Script {
+  /// With Drop, after the CREATE SCHEMA lines and in reverse creation order: the views the dump
+  /// writes, the dropped tables, then the sequences and ENUM types it creates
+  static func duckdb(
+    _ input: DuckDBInput, options: SQLDumpOptions = SQLDumpOptions()
+  ) throws -> Script {
     let dialect = SQLDialect.duckdb
+    let structured = input.tables.filter {
+      options.table(ObjectName(schema: $0.structure.schema, name: $0.structure.name)).structure
+    }
+    // Every dumped table without Structure: only their rows
+    var written = input
+    if !input.tables.isEmpty && structured.isEmpty {
+      written.enums = []
+      written.sequences = []
+      written.views = []
+    } else if structured.count < input.tables.count {
+      // A Structure-off table stays in the target, and DuckDB keeps its nextval default's
+      // sequence from being dropped: no CREATE or DROP for it (its ENUM columns hold the labels,
+      // not the type, so the types go as usual)
+      let kept = Set(
+        input.tables.filter { !structured.contains($0) }.flatMap(duckdbNextvalSequences))
+      written.sequences.removeAll {
+        kept.contains([
+          SQLTokenizer.asciiUppercased($0.schema), SQLTokenizer.asciiUppercased($0.name),
+        ])
+      }
+    }
     var pre = try input.schemas.map {
       "CREATE SCHEMA IF NOT EXISTS \(try dialect.quoteIdentifier($0));"
     }
-    for type in input.enums {
+    let views = orderedViews(duckdbViewDependencies(written.views))
+    let dropped = structured.filter {
+      options.table(ObjectName(schema: $0.structure.schema, name: $0.structure.name)).drop
+    }
+    if !dropped.isEmpty {
+      pre += try views.reversed().map {
+        "DROP VIEW IF EXISTS \(try duckdbQualified($0.schema, $0.name));"
+      }
+      pre += try dropped.reversed().map {
+        "DROP TABLE IF EXISTS \(try duckdbQualified($0.structure.schema, $0.structure.name));"
+      }
+      pre += try written.sequences.reversed().map {
+        "DROP SEQUENCE IF EXISTS \(try duckdbQualified($0.schema, $0.name));"
+      }
+      pre += try written.enums.reversed().map {
+        "DROP TYPE IF EXISTS \(try duckdbQualified($0.schema, $0.name));"
+      }
+    }
+    for type in written.enums {
       let labels = type.labels.map { dialect.literal(.string($0)) }.joined(separator: ", ")
       pre.append(
         "CREATE TYPE \(try duckdbQualified(type.schema, type.name)) AS ENUM (\(labels));")
     }
-    for sequence in input.sequences {
+    for sequence in written.sequences {
       pre.append(
         "CREATE SEQUENCE \(try duckdbQualified(sequence.schema, sequence.name))"
           + " START WITH \(duckdbNextValue(sequence)) INCREMENT BY \(sequence.increment)"
@@ -783,8 +1094,6 @@ nonisolated enum SQLDumpDDL {
     var inserts: [TableInsert] = []
     for table in input.tables {
       let structure = table.structure
-      pre.append(
-        try duckdbDefinition(table.sql, heads: [["CREATE", "TABLE"]], name: structure.name))
       let generated = duckdbGeneratedColumns(table.sql, columns: structure.columns.map(\.name))
       inserts.append(
         TableInsert(
@@ -793,14 +1102,43 @@ nonisolated enum SQLDumpDDL {
           columns: structure.columns.filter { !generated.contains($0.name) },
           overridingSystemValue: false, hasData: true))
     }
-    let indexes = try input.indexes.map {
+    pre += try structured.map {
+      try duckdbDefinition($0.sql, heads: [["CREATE", "TABLE"]], name: $0.structure.name)
+    }
+    let indexes = try input.indexes.filter {
+      options.table(ObjectName(schema: $0.schema, name: $0.table)).structure
+    }.map {
       try duckdbDefinition(
         $0.sql, heads: [["CREATE", "INDEX"], ["CREATE", "UNIQUE", "INDEX"]], name: $0.name)
     }
-    let views = try orderedViews(duckdbViewDependencies(input.views)).map {
+    let viewStatements = try views.map {
       try duckdbDefinition($0.sql, heads: [["CREATE", "VIEW"]], name: $0.name)
     }
-    return Script(comment: duckdbComment, preData: pre, tables: inserts, postData: indexes + views)
+    return Script(
+      comment: duckdbComment, preData: pre, tables: inserts, postData: indexes + viewStatements,
+      containsDrop: !dropped.isEmpty)
+  }
+
+  /// The sequences (`[schema, name]`, ASCII uppercased, as DuckDB compares names) a table's
+  /// `nextval('<name>')` defaults may name: a one-part name in the table's schema and in `main`
+  private static func duckdbNextvalSequences(_ table: DuckDBTable) -> [[String]] {
+    let tokenizer = SQLTokenizer(dialect: .duckdb)
+    let schema = SQLTokenizer.asciiUppercased(table.structure.schema)
+    return table.structure.columns.flatMap { column -> [[String]] in
+      let tokens = tokenizer.tokens(column.defaultExpression ?? "")
+      return tokens.indices.flatMap { index -> [[String]] in
+        guard tokens[index].isWord("NEXTVAL"), index + 2 < tokens.count,
+          tokens[index + 1].isSymbol("("), tokens[index + 2].kind == .string
+        else { return [] }
+        let parts = tokenizer.tokens(tokens[index + 2].text)
+          .filter { !$0.isSymbol(".") }.map { SQLTokenizer.asciiUppercased($0.text) }
+        switch parts.count {
+        case 1: return [[schema, parts[0]], ["MAIN", parts[0]]]
+        case 2: return [parts]
+        default: return []
+        }
+      }
+    }
   }
 
   /// The value the restored sequence hands out first: the one after `lastValue` (its start

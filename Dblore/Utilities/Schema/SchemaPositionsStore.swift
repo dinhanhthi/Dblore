@@ -27,8 +27,11 @@ enum SchemaPositionsStore {
     return config.databaseType.keychainScope.map { "\($0)|\(key)" } ?? key
   }
 
-  /// Save positions for a specific database connection
-  static func savePositions(_ positions: [SavedNodePosition], forConnection key: String) {
+  /// Save positions for a specific database connection, replacing its entry. `keepingOthers`
+  /// (a diagram showing some of the tables) merges them by table: the others keep theirs.
+  static func savePositions(
+    _ positions: [SavedNodePosition], forConnection key: String, keepingOthers: Bool = false
+  ) {
     var allPositions = loadAllPositions()
 
     // Convert positions to dictionary format
@@ -40,7 +43,47 @@ enum SchemaPositionsStore {
       ] as [String: Any]
     }
 
-    allPositions[key] = positionsData
+    let saved = keepingOthers ? allPositions[key] as? [[String: Any]] ?? [] : []
+    let replaced = Set(positions.map(\.tableQualifiedName))
+    let kept = saved.filter { entry in
+      (entry["tableQualifiedName"] as? String).map { !replaced.contains($0) } ?? false
+    }
+    allPositions[key] = positionsData + kept
+    UserDefaults.standard.set(allPositions, forKey: storageKey)
+  }
+
+  /// Remove the saved positions of these tables only (the others stay)
+  static func removePositions(
+    forTables qualifiedNames: Set<String>, forConnection key: String
+  ) {
+    var allPositions = loadAllPositions()
+    guard let saved = allPositions[key] as? [[String: Any]] else { return }
+    allPositions[key] = saved.filter { entry in
+      (entry["tableQualifiedName"] as? String).map { !qualifiedNames.contains($0) } ?? false
+    }
+    UserDefaults.standard.set(allPositions, forKey: storageKey)
+  }
+
+  /// A renamed table keeps its saved position: the entry of `oldName` takes `newName`. An entry
+  /// already saved under `newName` goes (the table it belonged to no longer has that name).
+  /// Nothing changes when `oldName` has no entry.
+  static func movePosition(from oldName: String, to newName: String, forConnection key: String) {
+    var allPositions = loadAllPositions()
+    guard oldName != newName, let saved = allPositions[key] as? [[String: Any]],
+      saved.contains(where: { $0["tableQualifiedName"] as? String == oldName })
+    else { return }
+    allPositions[key] = saved.compactMap { entry -> [String: Any]? in
+      switch entry["tableQualifiedName"] as? String {
+      case oldName:
+        var moved = entry
+        moved["tableQualifiedName"] = newName
+        return moved
+      case newName:
+        return nil
+      default:
+        return entry
+      }
+    }
     UserDefaults.standard.set(allPositions, forKey: storageKey)
   }
 

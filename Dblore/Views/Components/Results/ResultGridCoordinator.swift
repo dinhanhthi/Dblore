@@ -122,6 +122,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   var onStageEdit: ((_ row: Int, _ column: Int, _ newValue: String) -> Void)?
   /// Staged insert of one row
   var onStageInsert: (() -> Void)?
+  /// Paste Rows: the clipboard's rows staged as inserts (Cmd+V, Edit > Paste, the cell menu),
+  /// with the result columns in on-screen order (as Copy Rows writes them). Nil disables paste.
+  var onPasteRows: ((_ columnOrder: [Int]) -> Void)?
   /// Staged copies of the page rows
   var onStageDuplicate: ((_ rows: [Int]) -> Void)?
   /// Staged deletes of the page rows. Does not delete on the server.
@@ -140,6 +143,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private var editing: (row: [CellValue], column: Int, pageIndex: Int?)?
   /// True while a cell is being edited (the details button stays hidden)
   var isEditing: Bool { editing != nil }
+  /// Paste Rows is enabled: a staging grid with `onPasteRows`, and no inline edit (the field
+  /// editor keeps Cmd+V)
+  var canPasteRows: Bool { stagesEdits && onPasteRows != nil && !isEditing }
   /// Called with the column and direction chosen by a header click (nil column: no sort)
   var onSortChange: ((_ column: String?, _ ascending: Bool) -> Void)?
   /// Called with the category filter after a header filter popover toggles a value
@@ -498,6 +504,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       let pages = pageIndexes(in: displayedRows)
       menu.addItem(.separator())
       addItem(to: menu, "Add Row", #selector(addRow(_:)), MenuTarget(row: row, column: column))
+      if onPasteRows != nil {
+        addItem(
+          to: menu, "Paste Rows", #selector(pasteRows(_:)), MenuTarget(row: row, column: column)
+        ).isEnabled = canPasteRows
+      }
       addStagedRowItems(to: menu, row: row, column: column, pages: pages)
       addSetCellsItems(to: menu, row: row, column: column, pages: pages)
     }
@@ -940,6 +951,16 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   @objc private func addRow(_: NSMenuItem) {
     onStageInsert?()
+  }
+
+  @objc private func pasteRows(_: NSMenuItem) {
+    pasteRows()
+  }
+
+  /// Paste Rows with the grid's column order (the frozen pane's table holds only its columns)
+  func pasteRows() {
+    guard let gridTableView else { return }
+    onPasteRows?(Self.resultColumns(of: gridTableView))
   }
 
   @objc private func duplicateRows(_ sender: NSMenuItem) {

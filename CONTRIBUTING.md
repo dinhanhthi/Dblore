@@ -38,7 +38,7 @@ Thanks for your interest — contributions are welcome!
 
   2. Match the existing style: the project is Swift 6 with strict concurrency, formatted
      with `swift-format` (`.swift-format`; format with
-     `swift-format -i -r Dblore/ DbloreTests/ Plugins/LocalAI/`). Check the files you changed
+     `swift-format -i -r Dblore/ DbloreTests/ DbloreCLI/ Plugins/LocalAI/`). Check the files you changed
      with `swift-format lint --strict <files>`.
   3. Keep pull requests focused, and describe what changed and why.
 
@@ -64,6 +64,65 @@ on this fork's pipeline layout: the fork appends its codec and connection handle
 and puts `NIOSSLClientHandler` at `.first`, so the guard, added before
 `MySQLConnection.connect(over:)`, sees decrypted packets before the packet decoder. Check
 that layout, and the guard's tests, whenever you bump the fork.
+
+## Large catalogs
+
+`LargeCatalogPerformanceTests` (trait `.requiresLargeCatalog`, off by default) builds a SQLite
+file with 50,000 tables, 1,000 views and 5,000 foreign keys
+(`DbloreTests/Support/LargeCatalogFixture.swift`, about 2 minutes per run) and times the schema
+load, the sidebar filter, the command palette, autocomplete, the AI table pick, the diagram
+layout of 300 tables and the sheets that list every table. Run it on its own, never with
+`SKIP_INTEGRATION_TESTS` (that variable turns every gate off):
+
+```bash
+TEST_RUNNER_LARGE_CATALOG_TESTS=1 LARGE_CATALOG_TESTS=1 xcodebuild test -scheme Dblore \
+  -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
+  -only-testing:DbloreTests/LargeCatalogPerformanceTests
+```
+
+Each budget is 1.25x the median of three Debug runs on the maintainer's Mac (a 25 ms floor for
+stages under 20 ms, 60 ms for sheet layouts), and every stage keeps the main actor's longest gap
+at 100 ms or less. `PERF` lines land in
+`~/Library/Containers/ace.thi.Dblore/Data/tmp/perf-results.txt`. Change a budget only with three
+new runs written in its comment.
+
+`MainThreadStallMonitor` logs every main run-loop turn of 50 ms or more to the unified log
+(subsystem `ace.thi.dblore.app`, category `stall`). It is on in Debug builds; launch a Release
+build with `-DbloreStallMonitor YES` to turn it on. Read it with
+`log show --last 5m --predicate 'subsystem == "ace.thi.dblore.app" AND category == "stall"'`.
+
+## Command-line tool
+
+`dblore` is its own target (`DbloreCLI/`: Swift 6, nonisolated by default, hardened runtime, no
+sandbox, no entitlements), built as a dependency of the app and copied to
+`Dblore.app/Contents/Helpers/dblore` with Code Sign On Copy. The target sets
+`PRODUCT_MODULE_NAME = DbloreCLI`: a module named `dblore` would overwrite
+`Dblore.swiftmodule` on a case-insensitive disk. `DbloreCLI/Core` is compiled into both the tool
+and `DbloreTests`, so `CLIContractTests` checks that the app's pairing and `/mcp` answers decode
+with the tool's decoders, the five output formats, the flags, the exit codes (0 ok, 1 usage,
+2 Dblore not running or its MCP server off or busy, 3 refused, 4 query error) and the hello proof. Change the app's
+answers and the tool together.
+
+- The tool talks only to Dblore's MCP server on `127.0.0.1`. Before it sends its token it posts a
+  fresh nonce to `/cli/hello` and checks
+  `HMAC-SHA256(proofKey, "dblore-cli-hello-v1" || nonce || port)` against the port it dialed.
+- Its credentials are a 0600 file in `~/Library/Application Support/Dblore CLI/` (0700), not the
+  login Keychain: each update re-signs the tool with a new CDHash, and the Keychain then prompts
+  for and refuses the items the old binary wrote.
+- `scripts/build-release.sh` fails unless the exported helper has the Developer ID authority, the
+  Team ID, the hardened runtime and a timestamp. Check a local build with
+  `codesign -dv --verbose=4 <app>/Contents/Helpers/dblore`.
+
+## SQL dump format
+
+A dump starts with `-- Dblore SQL dump 1 engine=<engine> created=<date>`. A dump that writes a
+DROP is version 2 (`-- Dblore SQL dump 2 ...`), so older builds refuse it at the header and never
+meet the DROP; a dump without one stays version 1, byte for byte. Restore
+(`Dblore/Database/DatabaseConnectionManager+Restore.swift`) accepts only
+`DROP VIEW / TABLE / SEQUENCE / DOMAIN / TYPE IF EXISTS` under version 2, only for objects the
+same script creates, and never CASCADE; on SQLite it first refuses when a table outside the dump
+cascades from a dropped one. A new statement kind that older builds must not run needs a new
+version. `SQLDumpWriterTests`, `SQLRestoreGateTests` and `SQLDumpRoundTripTests` pin both sides.
 
 ## Connection scripts
 

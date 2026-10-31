@@ -758,6 +758,50 @@ struct DataModelConnectionConfigTests {
     #expect(account != SSHCredentialStoreFactory.account(for: tunnelConfig(sshPort: 22)))
   }
 
+  // MARK: - Vault source
+
+  private func vaultConfig(password: String = "") -> ConnectionConfig {
+    var config = ConnectionConfig(
+      host: "db.internal", database: "app", username: "ada", password: password)
+    config.vault = VaultSource(
+      address: "https://vault.example.com:8200", mount: "database", role: "app-ro",
+      authMethod: .appRole, caPEM: "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----")
+    return config
+  }
+
+  @Test("Legacy JSON without a vault key decodes with no Vault source")
+  func legacyJSONHasNoVault() throws {
+    let legacy = try JSONDecoder().decode(ConnectionConfig.self, from: savedConnectionJSON())
+    #expect(legacy.vault == nil)
+    #expect(try encodedObject(legacy)["vault"] == nil)
+  }
+
+  @Test("A Vault config round-trips its public fields")
+  func vaultRoundTrip() throws {
+    let config = vaultConfig()
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: JSONEncoder().encode(config))
+    #expect(decoded.vault == config.vault)
+    #expect(decoded == config)
+    let vault = try #require(try encodedObject(config)["vault"] as? [String: Any])
+    #expect(Set(vault.keys) == ["address", "mount", "role", "authMethod", "caPEM"])
+    #expect(vault["authMethod"] as? String == "appRole")
+  }
+
+  @Test("Encoding a Vault config whose password is set writes no password")
+  func vaultConfigEncodesNoPassword() throws {
+    let leased = "v-lease-pw-0123456789"
+    let object = try encodedObject(vaultConfig(password: leased))
+    #expect(object["password"] as? String == "")
+    let json = String(
+      decoding: try JSONEncoder().encode(vaultConfig(password: leased)), as: UTF8.self)
+    #expect(!json.contains(leased))
+    // Without a Vault source the encoder is unchanged
+    var plain = vaultConfig(password: leased)
+    plain.vault = nil
+    #expect(try encodedObject(plain)["password"] as? String == leased)
+  }
+
   // MARK: - DuckDB form
 
   @Test("Opening a DuckDB file is read-only, creating one is read-write")

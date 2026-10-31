@@ -216,37 +216,51 @@ extension NotebookViewModel {
   /// An inline edit of a MongoDB result's field (grid, sidebar or Documents card), after the
   /// live-target checks of `handleCellValueEdit`. `path` is the field's key path (nil: the
   /// top-level `columnName`). Primitive types parse by BSON type and commit one `$set`; other
-  /// types open the editor sheet in the data viewer, and only there.
+  /// types open the editor sheet in the data viewer, and only there. `sidebarRestore` goes with
+  /// the `$set`, put back when it stores nothing. True: the `$set` was sent or armed for Confirm.
+  @discardableResult
   func handleDocumentValueEdit(
     columnName: String, columnType: String, newValue: String?, rowData: [String: CellValue],
-    target: EditTarget, cellId: UUID?, path: [String]? = nil
-  ) {
+    target: EditTarget, cellId: UUID?, path: [String]? = nil,
+    sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
+  ) -> Bool {
     guard let id = rowData["_id"] else {
       showToast(Self.notEditableMessage, type: .error)
-      return
+      return false
     }
     let path = path ?? [columnName]
     let value: MongoValue
     do {
       guard let parsed = try Self.parsedDocumentValue(newValue, columnType: columnType) else {
+        // The sheet starts from the stored value, not the typed text
         openDocumentValueEditor(
           id: id, path: path,
           current: Self.documentValue(cell: rowData[columnName] ?? .null, columnType: columnType),
           cellId: cellId)
-        return
+        return false
       }
       value = parsed
     } catch {
       showToast(error.message, type: .error)
-      return
+      return false
     }
-    switch documentEditBatch(id: id, path: path, value: value, target: target, cellId: cellId) {
+    switch documentEditBatch(
+      id: id, path: path, value: value, target: target, cellId: cellId,
+      sidebarRestore: sidebarRestore)
+    {
     case .success(let batch?):
-      Task { [weak self] in await self?.runConfirmedStagedBatch(batch) }
+      Task { [weak self] in
+        // Refused or failed, the one command stored nothing
+        if await self?.runConfirmedStagedBatch(batch) != nil {
+          self?.restoreSidebar(sidebarRestore)
+        }
+      }
+      return true
     case .success(nil):
-      break
+      return true
     case .failure(let error):
       showToast(error.message, type: .error)
+      return false
     }
   }
 
@@ -387,6 +401,7 @@ extension NotebookViewModel {
       pendingStagedBatch = batch
       return
     }
+    restoreSidebar(pendingStagedBatch?.mongoInlineEdit?.sidebarRestore)
     pendingStagedBatch = nil
     await runConfirmedStagedBatch(batch)
   }
@@ -547,7 +562,8 @@ extension NotebookViewModel {
   /// nil: the Safe Mode dialog holds it (`pendingStagedBatch`). Success with a batch: send it
   /// now. A document staged for deletion, `_id`, and invalid keys are refused.
   private func documentEditBatch(
-    id: CellValue, path: [String], value: MongoValue, target: EditTarget, cellId: UUID?
+    id: CellValue, path: [String], value: MongoValue, target: EditTarget, cellId: UUID?,
+    sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
   ) -> Result<PendingStagedBatch?, DataViewerState.DocumentEditorError> {
     func refused(
       _ message: String
@@ -575,7 +591,8 @@ extension NotebookViewModel {
     let batch = PendingStagedBatch(
       statements: [], preview: preview, connectionEpoch: target.connectionEpoch,
       mongoCommands: commands,
-      mongoInlineEdit: PendingStagedBatch.MongoInlineEdit(cellId: cellId, target: target))
+      mongoInlineEdit: PendingStagedBatch.MongoInlineEdit(
+        cellId: cellId, target: target, sidebarRestore: sidebarRestore))
     if presentConfirmationIfNeeded(for: preview, cellId: cellId) {
       pendingExplainSQL = nil
       pendingStagedBatch = batch

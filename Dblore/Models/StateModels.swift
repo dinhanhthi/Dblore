@@ -213,6 +213,17 @@ struct PendingInlineEdit: Equatable, Sendable {
   let connectionManager: DatabaseConnectionManager
   /// Data Rewind reads around the UPDATE, nil when nothing is recorded
   var rewindPlan: RewindPlan? = nil
+  /// The typed text of the set columns, in SET order (base64 for bytes, which the statement
+  /// binds decoded). Nil: the statement's SET values are that text.
+  var inputValues: [String?]? = nil
+  /// The Cell Value sidebar as the edit showed it and as it was before; Cancel puts `original`
+  /// back while the sidebar still shows `edited`
+  var sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
+
+  /// What the local value of each set column mirrors (`editedCellValue`), in SET order
+  var setInputValues: [String?] {
+    inputValues ?? Array(statement.values.prefix(columnNames.count))
+  }
 
   static func == (lhs: PendingInlineEdit, rhs: PendingInlineEdit) -> Bool {
     lhs.statement == rhs.statement && lhs.columnNames == rhs.columnNames
