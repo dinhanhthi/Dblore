@@ -85,9 +85,9 @@
           <h2>What the app sends over the network</h2>
           <ul class="list">
             <li><strong>Update checks.</strong> Dblore fetches the update feed (<code>appcast.xml</code>) from GitHub Pages and downloads updates from GitHub Releases. You can turn background checks off in Settings.</li>
-            <li><strong>Your databases.</strong> Connections go to the servers you configure, nowhere else.</li>
+            <li><strong>Your databases.</strong> Connections go to the servers you configure, nowhere else. A connection that takes its login from HashiCorp Vault also asks the Vault address you enter.</li>
             <li><strong>AI assistant.</strong> Only when you use it, and only to the provider you chose with your own key or sign-in. Table and column names, types and keys are sent automatically. Query text and error messages are sent only after you review and press Send. Dblore does not send row data on its own.</li>
-            <li><strong>Local AI.</strong> Ollama, LM Studio, <code>mlx_lm.server</code> and on-device MLX models keep your prompts on your machine. Downloading an MLX model fetches it from huggingface.co.</li>
+            <li><strong>Local AI.</strong> Apple Intelligence, Ollama, LM Studio, <code>mlx_lm.server</code> and on-device MLX models keep your prompts on your machine. Downloading an MLX model fetches it from huggingface.co.</li>
             <li><strong>Nothing else.</strong> No usage, crash or install reporting.</li>
           </ul>
         </section>
@@ -95,7 +95,7 @@
         <section>
           <h2>What stays on your Mac</h2>
           <ul class="list">
-            <li>Passwords and AI keys are stored in the Keychain.</li>
+            <li>Passwords, AI keys and Vault tokens are stored in the Keychain.</li>
             <li>Query history, saved chats, settings and your notebooks stay on your Mac.</li>
             <li>Local data backups (<code>.dblorebackup</code>) exclude secrets: an export is scanned for them and refused if one is found.</li>
             <li>Settings &gt; Data lets you export, import or clear local data.</li>
