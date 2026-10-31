@@ -2,6 +2,41 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.9.0 (2026-10-31)
+
+### Added
+
+- **Paste rows.** Paste rows from the clipboard into a table tab with Cmd+V or Paste Rows: up to 10,000 rows staged as inserts in one Undo step, with a header row matched by column names. [#6ebedb37](https://github.com/dinhanhthi/Dblore/commit/6ebedb37)
+- **SQL dump per object.** Choose Structure, Data and Drop for each table in the SQL dump sheet. A restore drops only the objects the dump creates, never with CASCADE. [#c422d58c](https://github.com/dinhanhthi/Dblore/commit/c422d58c)
+- **Copy Objects.** Copy tables and their rows from a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB connection to another saved PostgreSQL, MySQL/MariaDB or SQLite connection, with type warnings and an editable DDL preview. A failed or cancelled copy leaves nothing behind on PostgreSQL and SQLite; on MySQL/MariaDB Dblore drops the tables it created and names any it could not. [#4d8b5a5a](https://github.com/dinhanhthi/Dblore/commit/4d8b5a5a) [#53d8f307](https://github.com/dinhanhthi/Dblore/commit/53d8f307) [#4f1261a0](https://github.com/dinhanhthi/Dblore/commit/4f1261a0)
+- **PostgreSQL types editor.** Create and change enums, domains and composite types, with a preview of the exact SQL. [#dfb3a420](https://github.com/dinhanhthi/Dblore/commit/dfb3a420)
+- **Schema editing on the ER diagram.** Rename tables and edit columns and foreign keys on the canvas, or drag a column onto another table to add a foreign key, then review the changes before Apply. [#803fa58d](https://github.com/dinhanhthi/Dblore/commit/803fa58d)
+- **Reload banner.** A table tab shows a Reload banner when another tab changed its table. It never reloads over staged edits. [#aedeb020](https://github.com/dinhanhthi/Dblore/commit/aedeb020)
+- **Shortcuts actions.** Open Connection, Run Query and Add Row for the Shortcuts app, off by default and only on the connections you allow in Settings > Shortcuts. [#f89eccfc](https://github.com/dinhanhthi/Dblore/commit/f89eccfc)
+- **Command-line tool.** `dblore connections` and `dblore query` read the connections the MCP server shares (read-only), as CSV, TSV, JSON, JSON Lines or a table. Pair once with `dblore pair --port N` and the code shown in Settings > MCP, which also gives the line that installs `dblore`. [#82750f6d](https://github.com/dinhanhthi/Dblore/commit/82750f6d) [#2f2f84cf](https://github.com/dinhanhthi/Dblore/commit/2f2f84cf)
+- **Apple Intelligence.** Choose Apple Intelligence (macOS 26+) as the AI provider; prompts stay on this Mac. [#f437176f](https://github.com/dinhanhthi/Dblore/commit/f437176f)
+- **HashiCorp Vault.** A connection can take its login from Vault: a lease on every connect, renewed while connected and revoked on disconnect. Test Vault checks the setup from the connection form, and connection files carry the Vault settings without the token. [#10e7d8a9](https://github.com/dinhanhthi/Dblore/commit/10e7d8a9) [#dadebb56](https://github.com/dinhanhthi/Dblore/commit/dadebb56) [#ee45d301](https://github.com/dinhanhthi/Dblore/commit/ee45d301)
+
+### Improved
+
+- **Large catalogs.** At 50,000 tables the schema load can be cancelled, the sidebar filter runs in the background, autocomplete, the command palette and AI context stay fast, and the diagram draws up to 300 tables you pick. [#173cc2dd](https://github.com/dinhanhthi/Dblore/commit/173cc2dd) [#2a5fe2a9](https://github.com/dinhanhthi/Dblore/commit/2a5fe2a9) [#7131f235](https://github.com/dinhanhthi/Dblore/commit/7131f235) [#0c51a7eb](https://github.com/dinhanhthi/Dblore/commit/0c51a7eb)
+- **Formatter.** Format SQL keeps MySQL `#` comments and says when it leaves the text unchanged. [#55953867](https://github.com/dinhanhthi/Dblore/commit/55953867)
+
+### Fixed
+
+- **Saved connections.** Saving a connection replaces only its own row, the connection string never shows the saved password, a locked row reads no SSH secret before unlock, and the form cannot weaken a saved row's protection without unlocking it. [#21a2d4b7](https://github.com/dinhanhthi/Dblore/commit/21a2d4b7)
+- **Cell values.** Binary edits write bytes instead of base64 text, a plain DATE is accepted in the NULL editor, large values no longer slow the right sidebar, and editor results refresh after an inline edit. [#55953867](https://github.com/dinhanhthi/Dblore/commit/55953867)
+- **Documents and windows.** The file conflict alert shows, window restoration keeps a single Welcome window, and the launch window keeps its size after its last tab leaves. [#9725caa5](https://github.com/dinhanhthi/Dblore/commit/9725caa5)
+- **DuckDB and local models.** A DuckDB file query waits for the reconnect, nested text is quoted correctly, the local models list refreshes after an import, and inline suggestions no longer disappear on layout. [#c1d7cc04](https://github.com/dinhanhthi/Dblore/commit/c1d7cc04)
+- **MCP server.** Idle and slow connections now time out. [#40a654e2](https://github.com/dinhanhthi/Dblore/commit/40a654e2)
+
+### Upgrade notes
+
+- SQL dumps with Drop use format 2 (`-- Dblore SQL dump 2`); older versions refuse to restore them.
+- A connection that uses Vault connects without a password in older versions and fails to log in.
+- With Apple Intelligence as the AI provider, older versions drop the AI settings.
+- History rows from Shortcuts or the command-line tool show as editor in older versions.
+
 ## v0.8.7 (2026-10-29)
 
 ### Improved
