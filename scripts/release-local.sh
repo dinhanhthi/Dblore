@@ -11,7 +11,7 @@ SCHEME="Dblore"
 PROJECT="Dblore.xcodeproj"
 TEAM_ID="86H6CNLN4C"
 IDENTITY="Developer ID Application: Anh-Thi Dinh ($TEAM_ID)"
-NOTARY_PROFILE="DbloreNotary"
+NOTARY_PROFILE="apple-notary"
 # Must match PROVISIONING_PROFILE_SPECIFIER (Release) and scripts/ExportOptions.plist
 SIGNING_PROFILE="Dblore Developer ID"
 SPARKLE_ACCOUNT="sqlnotebook"

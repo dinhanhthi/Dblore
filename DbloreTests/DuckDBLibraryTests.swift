@@ -231,7 +231,7 @@ struct DuckDBLibraryTests {
   @Test(
     .disabled(
       if: !isNotarized,
-      "container copies are auto-quarantined by the sandbox; needs a notarized artifact (scripts/release-plugin.sh --install-dev with DbloreNotary)"
+      "container copies are auto-quarantined by the sandbox; needs a notarized artifact (scripts/release-plugin.sh --install-dev with apple-notary)"
     ))
   func signedCopyLoadsFromContainerApplicationSupport() throws {
     let staged = try Self.stage(Self.signedSource, as: "libduckdb.dylib")

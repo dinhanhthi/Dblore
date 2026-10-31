@@ -57,7 +57,7 @@ never trigger a release.
 the preflight only):
 
 1. Preflight, machine checks first: Xcode matches `.xcode-version`, the
-   Developer ID certificate is in the keychain, the `DbloreNotary` notary
+   Developer ID certificate is in the keychain, the `apple-notary` notary
    profile (or `NOTARY_KEY_PATH` / `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` env)
    works, the Sparkle key (account `sqlnotebook`) exists, `gh` is authenticated.
 2. Then repo checks: on `main`, clean tree, `HEAD` == `origin/main`, the tag is
@@ -85,11 +85,11 @@ On this Mac (how to set each one up, or recover it on a new Mac:
 `docs/release-setup.md`):
 
 - The Developer ID Application certificate in your login keychain.
-- The `DbloreNotary` notary profile, created once (placeholders; see
+- The `apple-notary` notary profile, created once (placeholders; see
   `docs/release-setup.md`):
 
   ```bash
-  xcrun notarytool store-credentials DbloreNotary --key docs/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>
+  xcrun notarytool store-credentials apple-notary --key docs/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>
   ```
 
 - The Sparkle EdDSA key in your login keychain under the account `sqlnotebook`.
@@ -130,7 +130,7 @@ other than a plain version. Set it to `X.Y.Z`.
 rewrite) only the Swift files changed since the last tag and stops on any
 finding. Fix them in a normal commit, then release again.
 
-**"notary profile DbloreNotary not found".** The local preflight stops before
+**"notary profile apple-notary not found".** The local preflight stops before
 building. Create the profile once with the `xcrun notarytool store-credentials`
 command under Prerequisites (or `docs/release-setup.md`), then release again.
 

@@ -196,8 +196,8 @@ Then this Mac's release prerequisites, by exit code only (never print values):
 ```bash
 security find-identity -v -p codesigning | grep -q "Developer ID Application: Anh-Thi Dinh (86H6CNLN4C)" \
   && echo "cert: Developer ID present" || echo "STOP: Developer ID Application certificate missing"
-xcrun notarytool history --keychain-profile DbloreNotary >/dev/null 2>&1 \
-  && echo "notary: DbloreNotary profile present" || echo "STOP: notary profile DbloreNotary missing"
+xcrun notarytool history --keychain-profile apple-notary >/dev/null 2>&1 \
+  && echo "notary: apple-notary profile present" || echo "STOP: notary profile apple-notary missing"
 security find-generic-password -a sqlnotebook >/dev/null 2>&1 \
   && echo "sparkle: key present" || echo "STOP: Sparkle private key (account sqlnotebook) missing"
 ```
@@ -207,7 +207,7 @@ security find-generic-password -a sqlnotebook >/dev/null 2>&1 \
 - `private` visibility is a **STOP**: Sparkle and users cannot download release assets from a private repo.
 - Pages not `workflow` (or a 404: Pages not enabled) is a **STOP**: `pages.yml` cannot publish the feed.
 - A missing Developer ID certificate or Sparkle key is a **STOP**.
-- A missing notary profile is a **STOP**. Show the user the one-time setup command with placeholders (never fill in real values, never run it yourself): `xcrun notarytool store-credentials DbloreNotary --key docs/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>`.
+- A missing notary profile is a **STOP**. Show the user the one-time setup command with placeholders (never fill in real values, never run it yourself): `xcrun notarytool store-credentials apple-notary --key docs/AuthKey_<KEYID>.p8 --key-id <KEYID> --issuer <ISSUER_ID>`.
 
 On any `STOP`, report it with a pointer to `docs/release-setup.md` and do not commit or release.
 
@@ -240,7 +240,7 @@ scripts/release-local.sh --expect-version <tag version>
 
 What it does, in order:
 
-1. Preflight, machine checks first (Xcode = `.xcode-version`, Developer ID identity, `DbloreNotary` profile or `NOTARY_KEY_*` env, Sparkle key, `gh auth`), then repo checks (on `main`, clean tree, `HEAD` == `origin/main`, `<tag>` absent locally and on origin, `MARKETING_VERSION` == `<tag version>`, non-empty `## <tag>` section in `CHANGELOG.md`).
+1. Preflight, machine checks first (Xcode = `.xcode-version`, Developer ID identity, `apple-notary` profile or `NOTARY_KEY_*` env, Sparkle key, `gh auth`), then repo checks (on `main`, clean tree, `HEAD` == `origin/main`, `<tag>` absent locally and on origin, `MARKETING_VERSION` == `<tag version>`, non-empty `## <tag>` section in `CHANGELOG.md`).
 2. `scripts/build-release.sh --expect-version <tag version>`: archive, sign, notarize, staple; `dist/Dblore-<tag version>.dmg` + `.sha256`. Takes about 20 minutes.
 3. Re-checks that `HEAD` and the tree did not change, then generates and verifies the signed appcast in a temp dir with `generate_appcast` from `DerivedData/Dblore-*` only. Approve the Keychain prompt with "Always Allow".
 4. Only then creates the annotated tag `<tag>` on the release SHA and pushes it.
