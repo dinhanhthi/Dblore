@@ -25,7 +25,7 @@ enum SettingsPage: String {
 /// Shows settings in a tabbed modal, one section per tab
 struct SettingsModal: View {
   /// Width of the right sidebar: room for the 180pt navigation and the setting cards.
-  static let panelWidth: CGFloat = 640
+  static let panelWidth: CGFloat = 720
 
   @Binding var isPresented: Bool
   let viewMode: ViewMode?
