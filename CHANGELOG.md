@@ -19,6 +19,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 
 ### Improved
 
+- **Settings pages.** Keyboard shortcuts have their own Keyboard page; the Shortcuts page is for the Shortcuts app. [#e8d5116b](https://github.com/dinhanhthi/Dblore/commit/e8d5116b)
 - **Large catalogs.** At 50,000 tables the schema load can be cancelled, the sidebar filter runs in the background, autocomplete, the command palette and AI context stay fast, and the diagram draws up to 300 tables you pick. [#173cc2dd](https://github.com/dinhanhthi/Dblore/commit/173cc2dd) [#2a5fe2a9](https://github.com/dinhanhthi/Dblore/commit/2a5fe2a9) [#7131f235](https://github.com/dinhanhthi/Dblore/commit/7131f235) [#0c51a7eb](https://github.com/dinhanhthi/Dblore/commit/0c51a7eb)
 - **Formatter.** Format SQL keeps MySQL `#` comments and says when it leaves the text unchanged. [#55953867](https://github.com/dinhanhthi/Dblore/commit/55953867)
 
