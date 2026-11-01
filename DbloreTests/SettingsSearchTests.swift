@@ -18,9 +18,9 @@ struct SettingsSearchTests {
   @Test("a setting title matches across tabs, in tab order")
   func titleMatchesAcrossTabs() {
     let matches = Tab.search("word wrap")
-    #expect(matches.map(\.tab) == [.editor, .shortcuts])
+    #expect(matches.map(\.tab) == [.editor, .keyboard])
     #expect(titles(matches, in: .editor).first == "Word Wrap")
-    #expect(titles(matches, in: .shortcuts).contains("Toggle Word Wrap"))
+    #expect(titles(matches, in: .keyboard).contains("Toggle Word Wrap"))
   }
 
   @Test("the AI privacy settings are found by their keywords")

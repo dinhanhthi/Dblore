@@ -68,6 +68,7 @@ struct SettingsModal: View {
     case mcp = "MCP"
     case developer = "Developer"
     case shortcuts = "Shortcuts"
+    case keyboard = "Keyboard"
 
     /// SF Symbol shown next to the label in the navigation sidebar
     var icon: String {
@@ -83,7 +84,8 @@ struct SettingsModal: View {
       case .plugins: return "puzzlepiece.extension"
       case .mcp: return "point.3.connected.trianglepath.dotted"
       case .developer: return "wrench.and.screwdriver"
-      case .shortcuts: return "keyboard"
+      case .shortcuts: return "square.2.layers.3d"
+      case .keyboard: return "keyboard"
       }
     }
 
@@ -243,6 +245,7 @@ struct SettingsModal: View {
       SettingsModalDeveloperSection(isExportingLogs: $isExportingLogs)
     case .shortcuts:
       ShortcutsSettingsSection()
+    case .keyboard:
       SettingsModalKeyboardShortcutsSection()
     }
   }
