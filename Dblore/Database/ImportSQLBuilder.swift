@@ -94,6 +94,8 @@ nonisolated enum ImportSQLBuilder {
   /// literal made from the bytes, with no bind (the only source value that becomes SQL text).
   /// Text in a binary column is written as its UTF-8 bytes, except on SQLite (kept as text);
   /// bytes in a text column are a SQLite literal, else UTF-8 text (`Error.bytesNotText`).
+  /// The table is always schema-qualified, even in the default schema: a PostgreSQL copy pins
+  /// its search_path to pg_catalog (`CopyObjectsRun.postgresPinnedSearchPath`).
   static func insertStatements(
     schema: String?, table: String, columns: [BoundColumn], values rows: [[Value]],
     dialect: SQLDialect, bindLimit: Int? = nil, maxChunkBytes: Int? = nil
@@ -104,7 +106,8 @@ nonisolated enum ImportSQLBuilder {
     }
     return try chunkedInserts(
       schema: schema, table: table, names: columns.map(\.name), markers: markers, rows: rows,
-      dialect: dialect, bindLimit: bindLimit, maxChunkBytes: maxChunkBytes
+      dialect: dialect, bindLimit: bindLimit, maxChunkBytes: maxChunkBytes,
+      qualifiesDefaultSchema: true
     ) { row in
       try zip(row, columns).map { value, column in try entry(value, bindForm: column.bindForm) }
     }
@@ -132,15 +135,21 @@ nonisolated enum ImportSQLBuilder {
 
   /// INSERT statements of at most 1,000 rows, within the bind limit and `maxChunkBytes`. Each
   /// `.bind` entry takes the next placeholder through its column's marker; `.inline` takes none.
+  /// `qualifiesDefaultSchema` keeps the schema even when it is the dialect's default.
   private static func chunkedInserts<Row>(
     schema: String?, table: String, names: [String], markers: [(String) -> String],
     rows: [Row], dialect: SQLDialect, bindLimit: Int?, maxChunkBytes: Int?,
-    entries: (Row) throws -> [Entry]
+    qualifiesDefaultSchema: Bool = false, entries: (Row) throws -> [Entry]
   ) throws -> [BoundStatement] where Row: Collection {
     let maximumBinds = bindLimit ?? defaultBindLimit(dialect)
     let chunkSize = min(1_000, maximumBinds / names.count)
     guard chunkSize > 0 else { throw Error.bindLimitExceeded }
-    let relation = try dialect.qualified(schema: schema, name: table)
+    let relation =
+      if qualifiesDefaultSchema, let schema {
+        try dialect.quoteIdentifier(schema) + "." + dialect.quoteIdentifier(table)
+      } else {
+        try dialect.qualified(schema: schema, name: table)
+      }
     let quoted = try names.map { try dialect.quoteIdentifier($0) }.joined(separator: ", ")
     let prefix = "INSERT INTO \(relation) (\(quoted)) VALUES "
     var statements: [BoundStatement] = []

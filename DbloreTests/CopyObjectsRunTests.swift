@@ -306,12 +306,13 @@ struct CopyObjectsRunTests {
           target: target, recorder: nil
         ).run()
         #expect(result.rows == 3)
+        // quote_nullable: the session reads empty text as NULL
         #expect(
           try await manager.executeInternal(
-            "SELECT id, flag, encode(data, 'hex'), note FROM c_\(suffix) ORDER BY id"
+            "SELECT id, flag, encode(data, 'hex'), quote_nullable(note) FROM c_\(suffix) ORDER BY id"
           ).rows == [
-            [.int(1), .bool(true), .string("00ff"), .string("")],
-            [.int(2), .bool(false), .null, .null],
+            [.int(1), .bool(true), .string("00ff"), .string("''")],
+            [.int(2), .bool(false), .null, .string("NULL")],
           ])
         // The identity continues after the copied ids
         #expect(
