@@ -1493,7 +1493,8 @@ extension DatabaseConnectionManager {
   /// sequence (`'i'`) goes with its column, and the dump's CREATE TABLE recreates it. Dropped
   /// types: the types that are not enums, without a table's row type or an array type (the
   /// server refuses DROP TYPE on those without CASCADE, so the batch rolls back anyway). System
-  /// schemas are left out: `objectKey` never keys them.
+  /// schemas are left out: `objectKey` never keys them. No column is ever empty text: the
+  /// session reads an empty value as NULL.
   static func postgresDropTargetsQuery(_ drops: SQLRestorePlan.PostgresDrops) -> String {
     var branches: [String] = []
     if !drops.tables.isEmpty {
@@ -1521,7 +1522,7 @@ extension DatabaseConnectionManager {
     if !drops.types.isEmpty {
       branches.append(
         """
-        SELECT 'type'::text, n.nspname::text, t.typname::text, t.typtype::text, ''::text
+        SELECT 'type'::text, n.nspname::text, t.typname::text, t.typtype::text, '-'::text
         FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
         WHERE t.typtype <> 'e'
           AND left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
