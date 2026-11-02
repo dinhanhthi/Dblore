@@ -6,8 +6,9 @@
 // retired exactly like the read one, and no read ever runs on it. Nothing here prompts: a
 // connection that would need the user (no saved client certificate or SSH secret, or an SSH
 // host key not pinned yet) is refused. An empty password is sent as is (trust or
-// passwordless auth works; a wrong one fails with the server's error). Statements stop after
-// at most `statementTimeoutSeconds` (the session brake). Managers unused for `idleTimeout`
+// passwordless auth works; a wrong one fails with the server's error); a saved one the Keychain
+// cannot read is refused (`passwordStoreUnreadable`), never replaced by an empty one.
+// Statements stop after at most `statementTimeoutSeconds` (the session brake). Managers unused for `idleTimeout`
 // are disconnected, and so is one that lost its session or whose connection was edited (once
 // its running reads finish). A failed connect is reported as `MCPConnectionError.connectFailed`,
 // without the server's text. A locked connection is never served, even after the user unlocked
@@ -19,7 +20,8 @@ import os
 
 actor MCPConnectionPool {
   /// The saved connection for an id, its password loaded from the Keychain; nil when unknown.
-  typealias EntryLookup = @Sendable (UUID) async -> ConnectionHistoryEntry?
+  /// Throws `ConnectionPasswordError` when a saved password could not be read.
+  typealias EntryLookup = @Sendable (UUID) async throws -> ConnectionHistoryEntry?
 
   /// Server-side statement timeout of MCP sessions; a shorter one of the connection is kept
   static let statementTimeoutSeconds = 30
@@ -103,7 +105,7 @@ actor MCPConnectionPool {
   /// edited since it connected is reconnected with its new settings (a reader of the old
   /// manager finishes first); one that lost its session is rebuilt.
   /// - Throws: `MCPConnectionError` when the connection is unknown or would need a prompt,
-  ///   `.connectFailed`, or `.stopped` after `closeAll`.
+  ///   `.passwordStoreUnreadable`, `.connectFailed`, or `.stopped` after `closeAll`.
   func withManager<T: Sendable>(
     for entryID: UUID, _ body: @Sendable (DatabaseConnectionManager) async throws -> T
   ) async throws -> T {
@@ -188,7 +190,13 @@ actor MCPConnectionPool {
     guard !closed else { throw MCPConnectionError.stopped }
     // Before the lock check below, so a lock that lands after it retires what is built here
     observeLocks()
-    guard let entry = await entry(id.id) else { throw MCPConnectionError.unknownConnection }
+    let found: ConnectionHistoryEntry?
+    do {
+      found = try await entry(id.id)
+    } catch is ConnectionPasswordError {
+      throw MCPConnectionError.passwordStoreUnreadable
+    }
+    guard let entry = found else { throw MCPConnectionError.unknownConnection }
     if let open = pooled[id], open.config != entry.config {
       pooled[id] = nil
       if open.inUse > 0 {

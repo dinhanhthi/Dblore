@@ -944,13 +944,6 @@ protocol ConnectionPasswordStore {
   func deletePassword(forKey key: String)
 }
 
-extension ConnectionPasswordStore {
-  /// `readPassword(forKey:)` with an unreadable password flattened to nil.
-  func loadPassword(forKey key: String) -> String? {
-    (try? readPassword(forKey: key)) ?? nil
-  }
-}
-
 /// Keychain implementation of `ConnectionPasswordStore`.
 struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
   nonisolated static let vault = KeychainVault(
@@ -972,14 +965,10 @@ struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
     try Self.password(from: keychain.read(account: key))
   }
 
-  /// `readPassword(forKey:)` callable off the main actor (the MCP pool).
+  /// `readPassword(forKey:)` callable off the main actor (the MCP pool, Schema Compare and
+  /// Copy Objects).
   nonisolated static func readPassword(forKey key: String) throws -> String? {
     try password(from: vault.read(account: key))
-  }
-
-  /// `loadPassword(forKey:)` callable off the main actor: an unreadable password is nil.
-  nonisolated static func loadPassword(forKey key: String) -> String? {
-    (try? readPassword(forKey: key)) ?? nil
   }
 
   /// A miss is nil; a failed lookup or non-UTF-8 data (`errSecDecode`) throws.

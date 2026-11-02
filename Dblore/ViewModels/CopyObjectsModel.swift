@@ -39,7 +39,8 @@ struct CopyObjectsContext {
   var workspaceID: UUID?
   var workspaceName: String?
   /// A saved connection's password, called off the main actor (the Keychain in the app)
-  var password: @Sendable (ConnectionConfig) -> String? = SchemaCompareContext.keychainPassword
+  var password: @Sendable (ConnectionConfig) throws -> String? =
+    SchemaCompareContext.keychainPassword
   /// Asks before a locked target is read
   var lockCenter: LockCenter = .shared
   /// The window the unlock prompt opens on (over the sheet attached to it)

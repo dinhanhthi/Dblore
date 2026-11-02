@@ -970,7 +970,7 @@ struct LockGateTests {
     try await Self.withMCPLookup(rows, registry: registry) { lookup in
       let pool = Self.mcpPool(factory, registry: registry, entry: lookup)
       for row in rows.prefix(2) {
-        #expect(await lookup(row.id) == nil)
+        #expect(try await lookup(row.id) == nil)
         #expect(await Self.unknownToMCP { _ = try await pool.withManager(for: row.id) { $0 } })
       }
       // A session unlock in the app does not open the login to MCP

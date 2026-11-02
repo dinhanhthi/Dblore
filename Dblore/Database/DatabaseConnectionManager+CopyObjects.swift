@@ -1,9 +1,10 @@
 // DatabaseConnectionManager+CopyObjects.swift
 // The writable connection Copy Objects writes into: a saved PostgreSQL, MySQL / MariaDB or SQLite
 // row, opened on its own single-use manager that the caller closes after the copy (no pool). A
-// locked row is refused before any Keychain read; Read-only and Schema-only rows, DuckDB and
-// MongoDB before connecting. The manager connects with a copy of the row whose Protected mode is
-// off (protection level, Safe Mode and commit style unchanged), and every run call passes
+// locked row is refused before any Keychain read; Read-only and Schema-only rows, DuckDB,
+// MongoDB and a saved password the Keychain cannot read before connecting. The manager connects
+// with a copy of the row whose Protected mode is off (protection level, Safe Mode and commit
+// style unchanged), and every run call passes
 // `CopyObjectsTarget.policy`, so the copy commits on its own transaction instead of waiting in a
 // Protected mode one that closing the manager would roll back.
 
@@ -49,13 +50,14 @@ extension DatabaseConnectionManager {
   /// Opens a writable manager on the saved row `config`. `identity` (`config` when nil) is the
   /// saved row whose lock, password and certificate / SSH secret apply, when `config` names
   /// another database of it. `password` reads a saved password off the main actor (the Keychain
-  /// in the app); a password command runs instead when the row has one. `makeManager` makes the
-  /// unconnected manager: the app's host-key trust prompt by default, and its lock source is
-  /// the one checked here.
+  /// in the app); a password command runs instead when the row has one. A saved password the
+  /// Keychain could not read throws `DatabaseError.passwordStoreUnreadable` before any connect.
+  /// `makeManager` makes the unconnected manager: the app's host-key trust prompt by default,
+  /// and its lock source is the one checked here.
   @MainActor
   static func makeCopyTargetManager(
     config: ConnectionConfig, identity: ConnectionConfig? = nil,
-    password: @escaping @Sendable (ConnectionConfig) -> String? = SchemaCompareContext
+    password: @escaping @Sendable (ConnectionConfig) throws -> String? = SchemaCompareContext
       .keychainPassword,
     makeManager: @MainActor () -> DatabaseConnectionManager = { .withTrustPrompt() }
   ) async throws -> CopyObjectsTarget {
@@ -100,7 +102,7 @@ extension DatabaseConnectionManager {
   /// `config`'s own saved items)
   @concurrent nonisolated private static func withSavedSecrets(
     _ config: ConnectionConfig, identity: ConnectionConfig,
-    password: @Sendable (ConnectionConfig) -> String?
+    password: @Sendable (ConnectionConfig) throws -> String?
   ) async throws -> (
     config: ConnectionConfig, material: ClientCertificateStoreFactory.ConnectionMaterial?,
     sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
@@ -110,8 +112,16 @@ extension DatabaseConnectionManager {
       if let command = identity.passwordCommandScript {
         config.password = try await ConnectionScriptRunner.app.password(
           from: command, for: identity)
-      } else if let saved = password(identity) {
-        config.password = saved
+      } else {
+        let saved: String?
+        do {
+          saved = try password(identity)
+        } catch {
+          // Never connect with an empty password instead
+          throw DatabaseError.passwordStoreUnreadable(
+            name: identity.name.isEmpty ? identity.displayString : identity.name)
+        }
+        if let saved { config.password = saved }
       }
     }
     var material: ClientCertificateStoreFactory.ConnectionMaterial?

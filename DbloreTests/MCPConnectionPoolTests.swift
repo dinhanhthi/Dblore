@@ -3,6 +3,7 @@
 // without a prompt when a secret or trust decision is missing, closed when idle.
 
 import Foundation
+import Security
 import Testing
 
 @testable import Dblore
@@ -211,6 +212,34 @@ struct MCPConnectionPoolTests {
     let pool = pool()
     let id = book.add(postgres(password: ""))
     _ = try await manager(pool, id)
+    #expect(factory.sessions.count == 1)
+    await pool.closeAll()
+  }
+
+  @Test("An unreadable saved password is refused, never sent empty; a missing one still connects")
+  func unreadablePasswordRefused() async throws {
+    let unreadable = ConnectionHistoryEntry(config: postgres(password: "", database: "locked"))
+    let missing = ConnectionHistoryEntry(config: postgres(password: "", database: "trust"))
+    let name = "MCPConnectionPoolTests-\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+    let settings = AppSettings(defaults: suite)
+    settings.mcpAllowedConnectionIDs = [unreadable.id, missing.id]
+    let locked = unreadable.config
+    let lookup = MCPServerController.entryLookup(
+      settings: settings, savedConnections: { [unreadable, missing] },
+      password: { config in
+        guard config == locked else { return nil }
+        throw ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)
+      }, lockSource: LockRegistry())
+    let pool = MCPConnectionPool(
+      entry: lookup, sessionFactory: factory, certificates: certificates,
+      sshCredentials: sshCredentials, knownHosts: knownHosts, lockSource: LockRegistry())
+    await #expect(throws: MCPConnectionError.passwordStoreUnreadable) {
+      _ = try await manager(pool, unreadable.id)
+    }
+    #expect(factory.sessions.isEmpty)
+    #expect(try await manager(pool, missing.id).config?.password == "")
     #expect(factory.sessions.count == 1)
     await pool.closeAll()
   }

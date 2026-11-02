@@ -86,7 +86,8 @@ nonisolated struct ShortcutsRunner: Sendable {
 
   /// `saved`: every saved connection, without passwords. `caller`: the Shortcuts settings as
   /// they are now. `password`: a connection's saved password, read off the main actor only
-  /// after the rule allowed it. `sessionFactory` nil: the app's sessions.
+  /// after the rule allowed it; throws when the Keychain could not read it (the row is refused).
+  /// `sessionFactory` nil: the app's sessions.
   init(
     rule: HeadlessAccessRule = HeadlessAccessRule(),
     saved: @escaping @Sendable () async -> [ConnectionHistoryEntry],
@@ -94,7 +95,7 @@ nonisolated struct ShortcutsRunner: Sendable {
     defaultCommitStyle: @escaping @Sendable () async -> CommitStyle,
     recorder: any QueryHistoryRecording,
     historyEnabled: @escaping @Sendable () async -> Bool,
-    password: @escaping @Sendable (ConnectionConfig) -> String?,
+    password: @escaping @Sendable (ConnectionConfig) throws -> String?,
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     idleTimeout: Duration = .seconds(60)
   ) {
@@ -428,9 +429,9 @@ extension ShortcutsRunner {
       recorder: NotebookViewModel.defaultHistoryRecorder(),
       historyEnabled: { await MainActor.run { settings.historyEnabled } },
       password: { config in
-        SessionManager.isRunningAsTestHost
+        try SessionManager.isRunningAsTestHost
           ? nil
-          : KeychainConnectionPasswordStore.loadPassword(
+          : KeychainConnectionPasswordStore.readPassword(
             forKey: ConnectionKeychainKey.password(for: config))
       })
     closeRevoked(pool: runner.pool, settings: settings, allowed: usable(settings))

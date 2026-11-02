@@ -48,7 +48,7 @@ final class MCPServerController {
   @ObservationIgnored private let tokens: any MCPTokenStore
   @ObservationIgnored private let savedConnections:
     @MainActor @Sendable () -> [ConnectionHistoryEntry]
-  @ObservationIgnored private let password: @Sendable (ConnectionConfig) -> String?
+  @ObservationIgnored private let password: @Sendable (ConnectionConfig) throws -> String?
   @ObservationIgnored private let recorder: any QueryHistoryRecording
   @ObservationIgnored private let sessionFactory: (any DatabaseSessionFactory)?
   @ObservationIgnored private let requestTimeout: Duration
@@ -67,7 +67,8 @@ final class MCPServerController {
   @ObservationIgnored private var observation = 0
 
   /// `savedConnections`: the saved connections without passwords. `password`: a connection's
-  /// saved password, called off the main actor (nothing under the test host).
+  /// saved password, called off the main actor (nothing under the test host); throws when the
+  /// Keychain could not read it.
   /// `sessionFactory`: the pool's sessions, nil for the app's.
   init(
     settings: AppSettings = .shared,
@@ -75,10 +76,10 @@ final class MCPServerController {
     savedConnections: @escaping @MainActor @Sendable () -> [ConnectionHistoryEntry] = {
       SessionManager.loadHistory(passwords: NoPasswordStore())
     },
-    password: @escaping @Sendable (ConnectionConfig) -> String? = { config in
-      SessionManager.isRunningAsTestHost
+    password: @escaping @Sendable (ConnectionConfig) throws -> String? = { config in
+      try SessionManager.isRunningAsTestHost
         ? nil
-        : KeychainConnectionPasswordStore.loadPassword(
+        : KeychainConnectionPasswordStore.readPassword(
           forKey: ConnectionKeychainKey.password(for: config))
     },
     recorder: any QueryHistoryRecording = NotebookViewModel.defaultHistoryRecorder(),
@@ -280,18 +281,20 @@ final class MCPServerController {
 
   /// The pool's lookup: an allowlisted entry with its password, read off the main actor; nil
   /// for a locked one (any identity it reaches, unlocked in the app or not), before its password
-  /// is read.
+  /// is read. A password the Keychain could not read throws (the pool refuses the row).
   nonisolated static func entryLookup(
     settings: AppSettings,
     savedConnections: @escaping @MainActor @Sendable () -> [ConnectionHistoryEntry],
-    password: @escaping @Sendable (ConnectionConfig) -> String?, lockSource: LockRegistry
+    password: @escaping @Sendable (ConnectionConfig) throws -> String?, lockSource: LockRegistry
   ) -> MCPConnectionPool.EntryLookup {
     { id in
       let entries = await allowedEntries(settings: settings, savedConnections: savedConnections)
       guard var entry = entries.first(where: { $0.id == id }),
         !LockIdentity.all(entry.config).contains(where: lockSource.isLocked)
       else { return nil }
-      if entry.config.databaseType.capabilities.usesPassword, let saved = password(entry.config) {
+      if entry.config.databaseType.capabilities.usesPassword,
+        let saved = try password(entry.config)
+      {
         entry.config.password = saved
       }
       return entry

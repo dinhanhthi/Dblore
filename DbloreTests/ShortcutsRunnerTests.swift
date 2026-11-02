@@ -5,6 +5,7 @@
 // would run the user's scripts.
 
 import Foundation
+import Security
 import Testing
 
 @testable import Dblore
@@ -50,13 +51,16 @@ struct ShortcutsRunnerTests {
     return ConnectionHistoryEntry(config: config)
   }
 
-  private func runner(_ rows: [ConnectionHistoryEntry]) -> ShortcutsRunner {
+  private func runner(
+    _ rows: [ConnectionHistoryEntry],
+    password: @escaping @Sendable (ConnectionConfig) throws -> String? = { _ in nil }
+  ) -> ShortcutsRunner {
     let allowed = Set(rows.map(\.id))
     return ShortcutsRunner(
       rule: HeadlessAccessRule(gate: AIAccessGate(), lockSource: LockRegistry()),
       saved: { rows }, caller: { .shortcuts(enabled: true, allowlist: allowed) },
       defaultCommitStyle: { .immediate }, recorder: history, historyEnabled: { true },
-      password: { _ in nil }, sessionFactory: factory)
+      password: password, sessionFactory: factory)
   }
 
   @Test(
@@ -94,7 +98,7 @@ struct ShortcutsRunnerTests {
   }
 
   @Test("The pool's lookup reads a password only for a row Shortcuts may use")
-  func lookupReadsPasswordAfterRule() async {
+  func lookupReadsPasswordAfterRule() async throws {
     let allowed = Self.entry(name: "Allowed")
     let other = Self.entry(name: "Other")
     let reads = PasswordReads()
@@ -106,13 +110,26 @@ struct ShortcutsRunnerTests {
         caller: { .shortcuts(enabled: enabled, allowlist: allowlist) },
         password: reads.read)
     }
-    #expect(await lookup(true)(other.id) == nil)
-    #expect(await lookup(false)(allowed.id) == nil)
+    #expect(try await lookup(true)(other.id) == nil)
+    #expect(try await lookup(false)(allowed.id) == nil)
     #expect(reads.count == 0)
-    let found = await lookup(true)(allowed.id)
+    let found = try await lookup(true)(allowed.id)
     #expect(found?.id == allowed.id)
     #expect(found?.config.password == "secret")
     #expect(reads.count == 1)
+  }
+
+  @Test("A row whose saved password the Keychain cannot read is refused with that reason")
+  func unreadablePasswordRefused() async {
+    let entry = Self.entry()
+    let runner = runner([entry]) { _ in
+      throw ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)
+    }
+    await #expect(throws: MCPConnectionError.passwordStoreUnreadable) {
+      try await runner.runQuery(connectionID: entry.id, sql: "SELECT n FROM orders")
+    }
+    #expect(factory.sessions.isEmpty)
+    await runner.pool.closeAll()
   }
 
   @Test("Open Connection refuses a row with a password command, as the actions run here do")

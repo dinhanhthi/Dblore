@@ -23,7 +23,7 @@ struct ConnectionPasswordStoreTests {
     #expect(try Self.store(.found(Data("secret".utf8))).readPassword(forKey: "k") == "secret")
   }
 
-  @Test("A failed read or non-UTF-8 data throws unreadable; loadPassword flattens it to nil")
+  @Test("A failed read or non-UTF-8 data throws unreadable")
   func unreadablePasswordThrows() {
     #expect(throws: ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)) {
       try Self.store(.failed(errSecInteractionNotAllowed)).readPassword(forKey: "k")
@@ -32,7 +32,9 @@ struct ConnectionPasswordStoreTests {
       try Self.store(.found(Data([0xFF, 0xFE]))).readPassword(forKey: "k")
     }
     let unreadable = UnreadableConnectionPasswordStore()
-    #expect(unreadable.loadPassword(forKey: "k") == nil)
+    #expect(throws: ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)) {
+      try unreadable.readPassword(forKey: "k")
+    }
     #expect(unreadable.readKeys == ["k"])
   }
 

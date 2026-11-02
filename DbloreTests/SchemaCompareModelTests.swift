@@ -2,7 +2,8 @@
 // SchemaCompareModel safety through fake connections: Run sends the script to the target only,
 // through `executeGatedSchemaChange` with the epoch captured at compare time, and nothing to the
 // source; a changed epoch refuses before anything is sent; the source's private connection is
-// closed after a compare, a failed read and a cancel; a MySQL run that stops at a failing
+// closed after a compare, a failed read and a cancel; a saved password the Keychain cannot read is
+// reported and opens no source connection; a MySQL run that stops at a failing
 // statement says what ran and what did not (nothing, when it was rolled back); a ticked drop
 // asks first, cannot be skipped by the Safe Mode answer, and once sent closes the table's tabs;
 // changing a side clears the result; a new selection clears the last run's report; a second
@@ -12,6 +13,7 @@
 // certificate.
 
 import Foundation
+import Security
 import Testing
 
 @testable import Dblore
@@ -154,13 +156,14 @@ struct SchemaCompareModelTests {
       sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false))
 
   private static func model(
-    _ database: any SchemaCompareDatabase, targetSchemas: [String] = ["public"]
+    _ database: any SchemaCompareDatabase, targetSchemas: [String] = ["public"],
+    password: @escaping @Sendable (ConnectionConfig) throws -> String? = { _ in nil }
   ) -> SchemaCompareModel {
     let model = SchemaCompareModel(
       context: SchemaCompareContext(
         database: database, databaseType: .postgresql,
         policy: { ProtectionPolicy(protectionLevel: .none) }, commitStyle: { .immediate },
-        caller: caller, recordHistory: { _ in }, password: { _ in nil }),
+        caller: caller, recordHistory: { _ in }, password: password),
       targetSchemas: targetSchemas, targetSchema: "public", savedConnections: [savedEntry])
     model.sourceConnection = .saved(savedEntry.id)
     model.sourceSchema = "public"
@@ -242,6 +245,23 @@ struct SchemaCompareModelTests {
     #expect(await hanging.disconnected)
     #expect(cancelled.compareError == nil && cancelled.progress == nil)
     #expect(cancelled.items.isEmpty)
+  }
+
+  @Test func anUnreadableSavedPasswordIsReportedAndOpensNoSourceConnection() async throws {
+    let (target, source) = Self.fakes()
+    let model = Self.model(target) { _ in
+      throw ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)
+    }
+    await model.compare()
+    // Never connects with an empty password instead
+    #expect(await target.openedConfigs.isEmpty)
+    #expect(await source.calls.isEmpty)
+    #expect(model.compareError?.hasPrefix("Source") == true)
+    let name = Self.savedEntry.config.displayString
+    #expect(
+      model.compareErrorDetail
+        == DatabaseError.passwordStoreUnreadable(name: name).localizedDescription)
+    #expect(model.items.isEmpty && !model.canRun)
   }
 
   @Test func aRunThatStopsAtAFailingStatementSaysWhatRanAndWhatDidNot() async throws {

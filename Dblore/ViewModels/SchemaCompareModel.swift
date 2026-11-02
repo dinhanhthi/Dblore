@@ -5,7 +5,8 @@
 // (`openSchemaCompareSource`) that is closed after the read, its failure, a cancel and the sheet
 // closing. A MySQL source in another database of the same server also gets its own connection
 // (MySQL lists only the connected database's tables). A locked saved source asks to unlock
-// before its password is read; a cancelled unlock reads and compares nothing.
+// before its password is read; a cancelled unlock reads and compares nothing, and a saved
+// password the Keychain cannot read is reported and opens nothing.
 // Compare reads the source, then the target (`SchemaSnapshotLoader`, with progress and Cancel),
 // diffs them (`SchemaDiff`) and builds the script for the ticked items
 // (`SchemaMigrationScriptBuilder`), off the main actor; ticking an item builds it again and
@@ -77,16 +78,19 @@ struct SchemaCompareContext {
   var caller: UUID?
   var recordHistory: @MainActor ([QueryHistoryOutcome]) async -> Void
   /// A saved connection's password, called off the main actor (the Keychain in the app)
-  var password: @Sendable (ConnectionConfig) -> String? = SchemaCompareContext.keychainPassword
+  var password: @Sendable (ConnectionConfig) throws -> String? =
+    SchemaCompareContext.keychainPassword
   /// Asks before a locked saved connection is read (tests pass a registry and prompter double)
   var lockCenter: LockCenter = .shared
   /// The window the unlock prompt opens on (over the sheet attached to it)
   var unlockAnchor: @MainActor () -> NSWindow? = { nil }
 
-  nonisolated static func keychainPassword(_ config: ConnectionConfig) -> String? {
+  /// - Throws: `ConnectionPasswordError.unreadable` when a saved password may exist but the
+  ///   Keychain could not read it
+  nonisolated static func keychainPassword(_ config: ConnectionConfig) throws -> String? {
     SessionManager.isRunningAsTestHost
       ? nil
-      : KeychainConnectionPasswordStore.loadPassword(
+      : try KeychainConnectionPasswordStore.readPassword(
         forKey: ConnectionKeychainKey.password(for: config))
   }
 }
@@ -723,15 +727,24 @@ final class SchemaCompareModel: Identifiable {
   /// The saved connection with its password, read off the main actor: printed by its password
   /// command when it has one (it is not the live connection, so there is no resolved password to
   /// reuse), else the Keychain's.
+  /// - Throws: `DatabaseError.passwordStoreUnreadable` when a saved password may exist but the
+  ///   Keychain could not read it: never connect with an empty one instead
   @concurrent nonisolated private static func withSavedPassword(
-    _ config: ConnectionConfig, password: @Sendable (ConnectionConfig) -> String?
+    _ config: ConnectionConfig, password: @Sendable (ConnectionConfig) throws -> String?
   ) async throws -> ConnectionConfig {
     var config = config
     guard config.databaseType.capabilities.usesPassword else { return config }
     if let command = config.passwordCommandScript {
       config.password = try await ConnectionScriptRunner.app.password(from: command, for: config)
-    } else if let saved = password(config) {
-      config.password = saved
+    } else {
+      let saved: String?
+      do {
+        saved = try password(config)
+      } catch {
+        throw DatabaseError.passwordStoreUnreadable(
+          name: config.name.isEmpty ? config.displayString : config.name)
+      }
+      if let saved { config.password = saved }
     }
     return config
   }

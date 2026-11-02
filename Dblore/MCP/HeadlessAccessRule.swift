@@ -105,17 +105,20 @@ nonisolated struct HeadlessAccessRule: Sendable {
 
   /// A pool's lookup for `caller` (Shortcuts runs its own pool, the MCP server may be off): the
   /// row `id` while the rule allows it, checked again at every connect, with its password read
-  /// only after the rule passed. `saved` and `caller` read the settings as they are now.
+  /// only after the rule passed (one the Keychain could not read throws: the pool refuses the
+  /// row). `saved` and `caller` read the settings as they are now.
   func entryLookup(
     saved: @escaping @Sendable () async -> [ConnectionHistoryEntry],
     caller: @escaping @Sendable () async -> Caller,
-    password: @escaping @Sendable (ConnectionConfig) -> String?
+    password: @escaping @Sendable (ConnectionConfig) throws -> String?
   ) -> MCPConnectionPool.EntryLookup {
     { id in
       let rows = await saved()
       let current = await caller()
       guard var entry = try? self.entry(id: id, saved: rows, caller: current) else { return nil }
-      if entry.config.databaseType.capabilities.usesPassword, let saved = password(entry.config) {
+      if entry.config.databaseType.capabilities.usesPassword,
+        let saved = try password(entry.config)
+      {
         entry.config.password = saved
       }
       return entry
