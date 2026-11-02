@@ -333,6 +333,26 @@ class NotebookViewModel {
   @ObservationIgnored var aiInlineSchema: @MainActor (_ prefix: String) async -> String? = { _ in
     nil
   }
+  /// Workspace mode: the workspace connect generation a user run or confirmation dialog is
+  /// checked against (nil: a connect is in progress). Read synchronously when the dialog is
+  /// built, else where the run shows as running; passed to `awaitConnectLoads` and compared
+  /// again before the send. A workspace connect moves it; the actor's own session reopen does
+  /// not (the send's epoch check covers that). Set by `WorkspaceManager`
+  /// (`connectGenerationForRun`).
+  @ObservationIgnored var connectGenerationForRun: @MainActor () -> UInt64? = { 0 }
+  /// Workspace mode: awaited by a user run (cell or editor) once it shows as running, before
+  /// anything is sent, with the `connectGenerationForRun` its checks were made against. After a
+  /// DuckDB connect it waits for that connect's loads (see
+  /// `WorkspaceManager.settleDuckDBConnectLoadsBeforeRun`); false: send nothing (cancelled, or a
+  /// connect started or the connection changed since those checks). Set by `WorkspaceManager`.
+  @ObservationIgnored var awaitConnectLoads: @MainActor (_ admitted: UInt64?) async -> Bool = {
+    _ in true
+  }
+  /// The editor run's `awaitConnectLoads` while it waits: Stop cancels it, nothing is sent
+  @ObservationIgnored var editorConnectLoadsWait: Task<Bool, Never>?
+  /// The queue task (`ExecutionTask.id`) whose cell waits in `awaitConnectLoads`: nothing of it
+  /// was sent, so Stop only cancels the queue
+  @ObservationIgnored var connectLoadsWaitTaskId: UUID?
   /// Ghost text controller of each SQL editor: the cell id, or this view model's `id` for the
   /// editor tab (see `aiInlineCompletion(cellId:)`). Session only.
   @ObservationIgnored var aiInlineCompletions: [UUID: AIInlineCompletionController] = [:]
@@ -508,8 +528,10 @@ class NotebookViewModel {
     }
   }
 
-  /// Execute the pending query after user confirmation
+  /// Execute the pending query after user confirmation, on the connection the dialog was built
+  /// for only
   func executePendingQuery() async {
+    guard !refuseConfirmationOfChangedConnection() else { return }
     // Run All waiting for the Safe Mode unlock
     if queryConfirmationState.runAllAwaitingUnlock {
       pendingExplainSQL = nil
@@ -561,6 +583,8 @@ class NotebookViewModel {
       await executeConfirmedEditorQuery()
     } else {
       guard let cellId = queryConfirmationState.pendingCellId else { return }
+      // Built while a connect was in progress: not checked for the connection it opened
+      guard !refuseConfirmationOfChangedConnection(unrecorded: true) else { return }
       await runCell(id: cellId)
 
       // Clear pending state

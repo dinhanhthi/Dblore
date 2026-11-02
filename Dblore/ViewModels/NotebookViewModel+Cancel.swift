@@ -23,12 +23,22 @@ extension NotebookViewModel {
       }
       return
     }
+    // Still waiting for a DuckDB connect's loads: nothing was sent, and the loads keep running
+    if connectLoadsWaitTaskId != nil {
+      cancelAllCells()
+      return
+    }
     Task { await cancelRunningStatement(cancelQueue: true) }
   }
 
-  /// Run button clicked while the editor run is in flight: always confirmed first
+  /// Run button clicked while the editor run is in flight: always confirmed first, unless the
+  /// run still waits for a DuckDB connect's loads (nothing was sent: the wait just ends)
   func cancelEditorQuery() {
     guard isEditorQueryRunning else { return }
+    if let editorConnectLoadsWait {
+      editorConnectLoadsWait.cancel()
+      return
+    }
     Task { await cancelRunningStatement(cancelQueue: false, alwaysConfirm: true) }
   }
 

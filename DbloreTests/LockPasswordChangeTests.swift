@@ -104,11 +104,20 @@ struct LockPasswordChangeTests {
   private var lockedList: LockedWorkspaceList { LockedWorkspaceList(defaults: defaults) }
 
   private func center(
-    prompter: any UnlockPrompter = RefusingUnlockPrompter()
+    prompter: any UnlockPrompter = RefusingUnlockPrompter(),
+    openDocuments: @escaping @MainActor (URL) -> [any FileConflictPresenting] = { _ in [] }
   ) -> LockCenter {
     LockCenter(
       registry: registry, lockVault: vault, prompter: prompter, ownerAuthenticator: owner,
-      sessions: sessions, lockedWorkspaces: lockedList)
+      sessions: sessions, lockedWorkspaces: lockedList, openDocuments: openDocuments)
+  }
+
+  /// Dates the file at `url` `seconds` ago and returns that date as the file system keeps it
+  private func backdate(_ url: URL, by seconds: TimeInterval) throws -> Date {
+    try FileManager.default.setAttributes(
+      [.modificationDate: Date().addingTimeInterval(-seconds)], ofItemAtPath: url.path)
+    return try #require(
+      FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
   }
 
   /// A content-key store over an in-memory Keychain domain (`passcodeSet` false: no item can
@@ -337,6 +346,78 @@ struct LockPasswordChangeTests {
     for url in workspace.files {
       #expect(try opens(url, with: Self.newPassword, key: workspace.session.contentKey))
     }
+  }
+
+  @Test("The re-seal reports each file it rewrote with its date just before the write (LN4)")
+  func resealReportsDateBeforeWrite() async throws {
+    defer { cleanUp() }
+    let workspace = try sealedWorkspace(
+      in: directory.appendingPathComponent("ws"), tabs: ["a.sql", "b.sql"])
+    var before: [String: Date] = [:]
+    for (offset, url) in workspace.files.enumerated() {
+      before[url.path] = try backdate(url, by: 60 + Double(offset))
+    }
+
+    let result = await LockedFileIO(sessions: sessions, registry: registry).reseal(
+      [workspace.entry], currentPassword: Self.oldPassword, newPassword: Self.newPassword,
+      iterations: Self.iterations)
+
+    #expect(result.failures.isEmpty)
+    let reported = Dictionary(
+      result.rewritten.map { ($0.url.path, $0.dateBeforeWrite) }, uniquingKeysWith: { $1 })
+    #expect(reported == before)
+    for url in workspace.files {
+      let now = try #require(
+        FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+      #expect(now > before[url.path] ?? .distantFuture)
+    }
+  }
+
+  @Test(
+    "After a change an open document that saw its file stays quiet; an unseen change still asks")
+  func changeRefreshesOpenDocuments() async throws {
+    defer { cleanUp() }
+    let workspace = try sealedWorkspace(
+      in: directory.appendingPathComponent("ws"), tabs: ["seen.sql", "seen.dblore", "theirs.sql"])
+    let session = workspace.session
+    sessions.hold(session, by: session.workspaceId)
+    let script = workspace.files[1]
+    let notebook = workspace.files[2]
+    let theirs = workspace.files[3]
+    for url in [script, notebook, theirs] { _ = try backdate(url, by: 120) }
+    let seenScript = SQLEditorDocument(content: "")
+    seenScript.setFileURL(script)
+    defer { seenScript.setFileURL(nil) }
+    let seenNotebook = DbloreDocument(notebook: DbloreNotebook(cells: []))
+    seenNotebook.setFileURL(notebook)
+    defer { seenNotebook.setFileURL(nil) }
+    let stale = SQLEditorDocument(content: "")
+    stale.setFileURL(theirs)
+    defer { stale.setFileURL(nil) }
+    // Another writer changes one file before the change; its document has not seen it yet
+    try LockEnvelope.seal(
+      Data("SELECT theirs;".utf8), kind: .script, workspaceId: session.workspaceId,
+      wrapBlock: session.wrapBlock, contentKey: session.contentKey
+    ).write(to: theirs)
+    _ = try backdate(theirs, by: 60)
+    #expect(seenScript.unseenChangeDate() == nil)
+    #expect(seenNotebook.unseenChangeDate() == nil)
+    #expect(stale.unseenChangeDate() != nil)
+    let documents: [String: any FileConflictPresenting] = [
+      script.standardizedFileURL.path: seenScript, notebook.standardizedFileURL.path: seenNotebook,
+      theirs.standardizedFileURL.path: stale,
+    ]
+
+    let result = await center(openDocuments: { url in
+      documents[url.standardizedFileURL.path].map { [$0] } ?? []
+    }).changeLockPassword(
+      current: Self.oldPassword, new: Self.newPassword, workspaces: [workspace.entry],
+      reason: "change", keyStore: keyStore(), iterations: Self.iterations)
+
+    #expect(result == .changed(failures: []))
+    #expect(seenScript.unseenChangeDate() == nil)
+    #expect(seenNotebook.unseenChangeDate() == nil)
+    #expect(stale.unseenChangeDate() != nil)
   }
 
   @Test("The durable list adds and removes one entry per workspace file")

@@ -187,12 +187,56 @@ extension WorkspaceManager {
     return true
   }
 
+  /// A user run after a DuckDB connect: until the connect's schema load and restored data-viewer
+  /// pages have settled (`settleReconnectLoads`, capped by `connectLoadsSettleLimit`), every run
+  /// waits for them, so it neither interrupts them nor is interrupted on the one connection. The
+  /// first wait that ends clears the mark: later runs, a Refresh's load and other engines do
+  /// not wait. A cancelled wait (Stop) keeps it: the loads may still be running.
+  /// - Parameter admitted: the connect generation the run's checks (confirmation dialog,
+  ///   protection, parameters) were made against: `connectGenerationForRun()` read when its
+  ///   confirmation dialog was built, else where it shows as running. Nil: a connect was in
+  ///   progress then.
+  /// - Returns: false when the run must send nothing: the wait was cancelled, a workspace
+  ///   connect started since `admitted` (its generation moved), or the session was reopened or
+  ///   dropped during the wait (its epoch moved). The caller checks the generation again,
+  ///   synchronously, after this returns; the send itself is checked by its epoch.
+  func settleDuckDBConnectLoadsBeforeRun(admitted: UInt64?) async -> Bool {
+    // Any engine: a connect in progress at admission, or started since, opens a connection the
+    // run was not checked for. The mark of that connect is kept for the next run.
+    guard let admitted, admitted == connectGeneration else { return false }
+    guard let pending = duckDBConnectLoadsPending else { return true }
+    let epoch = await connectionManager.connectionEpoch
+    // Nothing started yet (the connect is still starting its loads, or its schema load was
+    // cancelled): the mark is kept on purpose, so the next run waits
+    guard await settleReconnectLoads(limit: connectLoadsSettleLimit) else {
+      return admitted == connectGeneration
+    }
+    guard !Task.isCancelled else { return false }
+    let sameConnection =
+      await connectionManager.connectionEpoch == epoch && admitted == connectGeneration
+    // Another run waiting on the same loads may have cleared the mark already; a mark set by
+    // another connect meanwhile is kept (that connect moved the epoch: this run refuses)
+    if duckDBConnectLoadsPending == pending { duckDBConnectLoadsPending = nil }
+    return sameConnection && connectionState == .connected
+  }
+
+  /// The workspace connect generation a user run or confirmation dialog is checked against,
+  /// read synchronously where those checks are made. It moves only when a workspace connect
+  /// starts (`connectGeneration`), not on the actor's own session reopen (Cancel, a capped read):
+  /// that is the connection epoch's job. Nil while a connect is in progress: a run would be sent
+  /// on whatever that connect opens. See `settleDuckDBConnectLoadsBeforeRun`.
+  func connectGenerationForRun() -> UInt64? {
+    connectionState == .connecting ? nil : connectGeneration
+  }
+
   /// Waits for the connect's schema load and restored data-viewer pages: a query the user runs
   /// meanwhile on the one DuckDB connection would interrupt them, or be interrupted by them. A
   /// load still running after `limit` keeps running and the caller proceeds.
-  private func settleReconnectLoads(limit: Duration = .seconds(30)) async {
+  /// - Returns: false when there was no load to wait for
+  @discardableResult
+  private func settleReconnectLoads(limit: Duration = .seconds(30)) async -> Bool {
     let loads = [schemaLoadTask].compactMap { $0 } + dataViewerLoadTasks
-    guard !loads.isEmpty else { return }
+    guard !loads.isEmpty else { return false }
     // Unstructured, so the deadline is not held up by a load (awaiting `value` ignores cancel)
     let (settled, signal) = AsyncStream.makeStream(of: Void.self)
     Task {
@@ -205,6 +249,7 @@ extension WorkspaceManager {
     }
     for await _ in settled {}
     deadline.cancel()
+    return true
   }
 
   private func confirmInMemoryDuckDBReconnect() async -> Bool {

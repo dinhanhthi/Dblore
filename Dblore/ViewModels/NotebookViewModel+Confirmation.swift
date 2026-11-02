@@ -42,6 +42,7 @@ extension NotebookViewModel {
     queryConfirmationState.requiresPassword = commitStyle.requiresPassword
     queryConfirmationState.statements = statements
     queryConfirmationState.alsoAffected = alsoAffected
+    queryConfirmationState.connectGeneration = connectGenerationForRun()
     // A dialog dismissed without Cancel (Escape, click outside) leaves its pending action armed.
     // Drop it so Execute Query runs what this dialog shows; the caller re-arms its own after.
     // A dropped cell edit was never sent: the sidebar shows the stored value again.
@@ -51,6 +52,34 @@ extension NotebookViewModel {
     restoreSidebar(pendingInlineEdit?.sidebarRestore)
     pendingInlineEdit = nil
     queryConfirmationState.showDialog = true
+    return true
+  }
+
+  /// Execute on a dialog built for a connection that has changed since (a connect ran while it
+  /// was up): its commit style and statements were that connection's, so nothing it confirmed
+  /// is sent. Drops the dialog and shows why: on the cell of a cell run, else as a toast.
+  /// - Parameter unrecorded: also refuse a dialog with no connection recorded (built while a
+  ///   connect was in progress)
+  /// - Returns: true when refused
+  func refuseConfirmationOfChangedConnection(unrecorded: Bool = false) -> Bool {
+    if let presented = queryConfirmationState.connectGeneration {
+      guard presented != connectGenerationForRun() else { return false }
+    } else if !unrecorded {
+      return false
+    }
+    let plainCellRun =
+      viewMode != .editor && pendingExplainSQL == nil && pendingStagedBatch == nil
+      && pendingInlineEdit == nil && !queryConfirmationState.runAllAwaitingUnlock
+    let cellId = plainCellRun ? queryConfirmationState.pendingCellId : nil
+    let query = queryConfirmationState.pendingQuery
+    cancelPendingQuery()
+    if let cellId, let index = notebook.cells.firstIndex(where: { $0.id == cellId }) {
+      notebook.cells[index].result = .errorResult(
+        Self.connectionChangedWhileWaitingMessage, sourceQuery: query, aiSessionKey: aiSessionKey)
+      onDocumentChanged?()
+    } else {
+      showToast(Self.connectionChangedWhileWaitingMessage, type: .error)
+    }
     return true
   }
 

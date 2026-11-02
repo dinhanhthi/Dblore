@@ -40,6 +40,15 @@ class WorkspaceManager: Identifiable {
   var schemaLoadTask: Task<Void, Never>?
   /// Page loads of the restored data viewers started by the last connect
   @ObservationIgnored var dataViewerLoadTasks: [Task<Void, Never>] = []
+  /// Set by a DuckDB connect until a user run waited for its loads (see
+  /// `settleDuckDBConnectLoadsBeforeRun`)
+  @ObservationIgnored var duckDBConnectLoadsPending: UUID?
+  /// How long a run waits for the connect's loads (see `settleDuckDBConnectLoadsBeforeRun`)
+  @ObservationIgnored var connectLoadsSettleLimit: Duration = .seconds(30)
+  /// Bumped when a connect starts, synchronously and before it touches the connection: a user
+  /// run or confirmation dialog checked before is never sent on the connection it opens (see
+  /// `connectGenerationForRun`)
+  @ObservationIgnored var connectGeneration: UInt64 = 0
   /// Bumped by every load start and cancel: a load that is no longer the latest is superseded
   var schemaLoadGeneration = 0
   /// The connection epoch the sidebar schema was read with; nil until a load since the last
@@ -811,6 +820,13 @@ class WorkspaceManager: Identifiable {
     return editorDocuments[tabId]
   }
 
+  /// The open notebook, script and note documents of the tab files at `url`
+  func fileDocuments(at url: URL) -> [any FileConflictPresenting] {
+    let path = url.standardizedFileURL.path
+    return tabs.filter { $0.fileURL?.standardizedFileURL.path == path }
+      .compactMap { fileDocument(for: $0.id) }
+  }
+
   /// Save of a notebook or script whose file changed on disk since the tab last read or wrote
   /// it, or whose "modified" alert is still up: nothing is written over that change, and the
   /// tab's conflict alert asks which version to keep
@@ -865,9 +881,15 @@ class WorkspaceManager: Identifiable {
     // A search running with its sheet hidden must not reach the new server
     dropCrossTableSearch()
     if !isAutoConnect { await supersedeAutoConnect() }
+    connectGeneration &+= 1
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()
+    // An open confirmation was built for the previous connection: nothing it confirmed is sent
+    for viewModel in viewModels.values {
+      viewModel.cancelPendingQuery()
+      viewModel.cancelRunAllCells()
+    }
     // Their transaction ends with the previous connection
     heldWrittenRelations = [:]
 
@@ -880,6 +902,10 @@ class WorkspaceManager: Identifiable {
           config: config, extraAllowedPaths: keepsDuckDBFiles ? duckDBAllowedPaths : [])
       }
       if !keepsDuckDBFiles { releaseDuckDBFileAccess() }
+      // Before `.connected`: the first runs on the one DuckDB connection wait for the loads
+      // started below (none of the previous connect's are left to settle at once)
+      dataViewerLoadTasks = []
+      duckDBConnectLoadsPending = config.databaseType == .duckdb ? UUID() : nil
       // A file created by "New File…" gets its bookmark on connect
       var config = config
       if config.fileBookmark == nil, let bookmark = await connectionManager.config?.fileBookmark {
@@ -928,6 +954,7 @@ class WorkspaceManager: Identifiable {
       // The schema loads in the background; tabs get it when the load finishes
       startSchemaLoad()
     } catch {
+      duckDBConnectLoadsPending = nil
       await connectionManager.disconnect()
       releaseDuckDBFileAccess()
       connectionState = .disconnected
@@ -1656,6 +1683,10 @@ class WorkspaceManager: Identifiable {
     }
     viewModel.isAIAllowed = { [weak self] in self?.isAIAllowed() ?? false }
     viewModel.aiInlineSchema = { [weak self] prefix in await self?.aiInlineSchema(prefix: prefix) }
+    viewModel.connectGenerationForRun = { [weak self] in self?.connectGenerationForRun() }
+    viewModel.awaitConnectLoads = { [weak self] admitted in
+      await self?.settleDuckDBConnectLoadsBeforeRun(admitted: admitted) ?? true
+    }
     // Resolved at completion: the tab is registered after this returns
     viewModel.notificationTab = { [weak self, weak viewModel] in
       guard let self, let viewModel,

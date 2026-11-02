@@ -63,23 +63,56 @@ extension NotebookViewModel {
     await executeEditorQuery(query)
   }
 
-  /// Execute the pending editor query after confirmation
+  /// Execute the pending editor query after confirmation, on the connection the dialog was
+  /// built for only
   func executeConfirmedEditorQuery() async {
     guard !queryConfirmationState.pendingQuery.isEmpty else { return }
+    guard !refuseConfirmationOfChangedConnection() else { return }
     let query = queryConfirmationState.pendingQuery
     let parameters = queryConfirmationState.parameterValues
-    await executeEditorQuery(query, parameters: parameters)
+    let admitted = queryConfirmationState.connectGeneration
+    await executeEditorQuery(query, parameters: parameters, admitted: admitted)
     queryConfirmationState.clear()
+  }
+
+  /// The editor run's `awaitConnectLoads`, which Stop ends (`cancelEditorQuery`), then the
+  /// connection epoch the run is sent with. Nil: send nothing (stopped, the connection changed
+  /// meanwhile or another tab's transaction began).
+  /// `admitted`: the connection a confirmation dialog was built for; nil reads it here, right
+  /// where the run shows as running, before any suspension.
+  private func waitForConnectLoads(
+    admitted confirmed: UInt64?, connectionManager: DatabaseConnectionManager
+  ) async -> UInt64? {
+    let admitted = confirmed ?? connectGenerationForRun()
+    let wait = Task { await awaitConnectLoads(admitted) }
+    editorConnectLoadsWait = wait
+    let connectionKept = await withTaskCancellationHandler {
+      await wait.value
+    } onCancel: {
+      wait.cancel()
+    }
+    if editorConnectLoadsWait == wait { editorConnectLoadsWait = nil }
+    // Read before the checks below, which are synchronous: a connect started before them moved
+    // the generation and is refused there, one started after them moves the epoch the send
+    // checks (`expectedEpoch`)
+    let epoch = await connectionManager.connectionEpoch
+    guard !wait.isCancelled, !Task.isCancelled else { return nil }
+    guard connectionKept, connectGenerationForRun() == admitted else {
+      showToast(Self.connectionChangedWhileWaitingMessage, type: .error)
+      return nil
+    }
+    return refuseWhileTransactionPendingElsewhere() ? nil : epoch
   }
 
   /// Execute query in editor mode; `maxRows` overrides the effective row cap (data viewer page).
   /// `source` is `.editor` for a user run and `.internal` for a data-viewer page, which is not
   /// recorded. `pageState` is the SQL data viewer state `query` is the `pageSQL` of, taken
   /// before the page read: its length columns leave the result before anything reads it.
+  /// `admitted`: the connection the confirmation dialog of a confirmed run was built for.
   func executeEditorQuery(
     _ query: String, maxRows: Int? = nil, source: QueryHistoryRecordSource = .editor,
     parameters boundParameters: [String: SQLBindValue]? = nil,
-    pageState: DataViewerState? = nil
+    pageState: DataViewerState? = nil, admitted: UInt64? = nil
   ) async {
     guard let connectionManager = connectionManager else {
       showToast("No database connection available", type: .error)
@@ -92,6 +125,25 @@ extension NotebookViewModel {
     // A confirmed run passes the binds captured with the dialog. Nil reads the live values.
     if boundParameters == nil, refuseMissingParameters(query, cellId: nil) != nil { return }
     let parameters = boundParameters ?? boundParameterValues(for: query, cellId: nil)
+    let maxRows = maxRows ?? effectiveRowCap
+    let multipleStatements = connectionManager.hasMultipleStatements(query, dialect: sqlDialect)
+    // Connection identity before the query: edit targets must resolve on the same one. Shown as
+    // running first; a user run after a DuckDB connect then waits for its loads. Never an
+    // internal read: the restored data-viewer pages are among those loads.
+    let epoch: UInt64
+    if source == .internal {
+      epoch = await connectionManager.connectionEpoch
+    } else {
+      guard
+        let checked = await waitForConnectLoads(
+          admitted: admitted, connectionManager: connectionManager)
+      else { return }
+      epoch = checked
+    }
+    // A user run is sent on the connection its checks were made for, or not at all: the send
+    // refuses any epoch but this one (`expectedEpoch`), so it never runs on a connection a
+    // connect opened after the checks. An internal read is sent on whatever connection is open.
+    let expectedEpoch = source == .internal ? nil : epoch
     // Before the query is sent: an error that lands after a switch stays the old connection's
     let aiSessionKey = self.aiSessionKey
 
@@ -114,17 +166,15 @@ extension NotebookViewModel {
         throw LazyPageError.unexpectedShape
       }
       // Check if this is a multi-statement query
-      if connectionManager.hasMultipleStatements(query, dialect: sqlDialect) {
+      if multipleStatements {
         if pageState?.lazyColumns != nil { throw LazyPageError.unexpectedShape }
-        // Connection identity before the query: edit targets must resolve on the same one
-        let epoch = await connectionManager.connectionEpoch
         runEpoch = epoch
         // Execute all statements and get detailed results
         let (statementResults, totalTime) =
           try await connectionManager
           .executeDetailed(
             userSQL: query, parameters: parameters, policy: protectionPolicy,
-            maxRows: maxRows ?? effectiveRowCap, caller: id)
+            maxRows: maxRows, caller: id, expectedEpoch: expectedEpoch)
         ranStatements = statementResults.map(\.queryText)
 
         totalExecutionTime = totalTime
@@ -178,14 +228,12 @@ extension NotebookViewModel {
 
       } else {
         // Single statement - use existing logic
-        let maxRows = maxRows ?? effectiveRowCap
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
-        let epoch = await connectionManager.connectionEpoch
         runEpoch = epoch
         var result = try await connectionManager.execute(
           userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
-          caller: id)
+          caller: id, expectedEpoch: expectedEpoch)
         ranStatements = [query]
         var truncation: DataViewerState.Truncation?
         if let pageState {
@@ -247,7 +295,7 @@ extension NotebookViewModel {
       totalExecutionTime = executionTime
 
       editorResult = CellResult.errorResult(
-        error.localizedDescription,
+        Self.runErrorMessage(error, multipleStatements: multipleStatements),
         executionTime: executionTime,
         sourceQuery: query,
         aiSessionKey: aiSessionKey

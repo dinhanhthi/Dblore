@@ -7,7 +7,8 @@ import Foundation
 import os
 
 /// Binds captured when a confirmation dialog is created, sent later instead of live parameters.
-/// Cell runs copy the dialog snapshot in `runCell` (state is cleared after enqueue). Explain
+/// Cell runs copy the dialog snapshot in `runCell` (state is cleared after enqueue), with the
+/// connection the dialog was built for (`QueryConfirmationState.connectGeneration`). Explain
 /// copies it when the dialog is shown, because confirmation clears state before `runExplained`.
 /// The maps are static, so a tab close clears them from `deinit` (not the main actor). A lock
 /// covers that and every later read.
@@ -15,6 +16,8 @@ nonisolated enum ConfirmedParameterSnapshot {
   private struct CellBind: Sendable {
     var query: String
     var values: [String: SQLBindValue]
+    /// The connection the dialog was built for; nil: not a dialog's run (Run All, Explain)
+    var admitted: UInt64?
   }
 
   private struct ExplainBind: Sendable {
@@ -49,12 +52,13 @@ nonisolated enum ConfirmedParameterSnapshot {
 
   @MainActor
   static func stashCell(
-    _ owner: NotebookViewModel, cellId: UUID, query: String, values: [String: SQLBindValue]
+    _ owner: NotebookViewModel, cellId: UUID, query: String, values: [String: SQLBindValue],
+    admitted: UInt64? = nil
   ) {
     let key = ObjectIdentifier(owner)
     store.withLock { state in
       var map = state.cells[key] ?? [:]
-      map[cellId] = CellBind(query: query, values: values)
+      map[cellId] = CellBind(query: query, values: values, admitted: admitted)
       state.cells[key] = map
     }
   }
@@ -63,7 +67,7 @@ nonisolated enum ConfirmedParameterSnapshot {
   @MainActor
   static func takeCell(
     _ owner: NotebookViewModel, cellId: UUID, query: String
-  ) -> [String: SQLBindValue]? {
+  ) -> (values: [String: SQLBindValue], admitted: UInt64?)? {
     let key = ObjectIdentifier(owner)
     return store.withLock { state in
       guard var map = state.cells[key], let armed = map.removeValue(forKey: cellId) else {
@@ -71,7 +75,7 @@ nonisolated enum ConfirmedParameterSnapshot {
       }
       state.cells[key] = map.isEmpty ? nil : map
       guard armed.query == query else { return nil }
-      return armed.values
+      return (armed.values, armed.admitted)
     }
   }
 
@@ -119,6 +123,20 @@ nonisolated enum ConfirmedParameterSnapshot {
 // MARK: - Cell Execution
 
 extension NotebookViewModel {
+  /// A run, or a confirmation dialog's Execute, whose connection changed after its checks were
+  /// made (`connectGenerationForRun`): nothing was sent
+  nonisolated static let connectionChangedWhileWaitingMessage =
+    "The connection changed before the query was sent. Run it again."
+
+  /// What a failed run shows: a single statement the send refused because the connection
+  /// changed (`DatabaseError.sessionChanged`) was not run at all, so it can simply run again
+  nonisolated static func runErrorMessage(_ error: any Error, multipleStatements: Bool) -> String {
+    if !multipleStatements, case DatabaseError.sessionChanged = error {
+      return connectionChangedWhileWaitingMessage
+    }
+    return error.localizedDescription
+  }
+
   /// Run a specific cell by adding it to the execution queue
   func runCell(id: UUID) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
@@ -145,7 +163,8 @@ extension NotebookViewModel {
     // before the queue sends, and a later edit of the cell's values must not change this run.
     if queryConfirmationState.pendingCellId == id, queryConfirmationState.pendingQuery == query {
       ConfirmedParameterSnapshot.stashCell(
-        self, cellId: id, query: query, values: queryConfirmationState.parameterValues)
+        self, cellId: id, query: query, values: queryConfirmationState.parameterValues,
+        admitted: queryConfirmationState.connectGeneration)
     } else {
       ConfirmedParameterSnapshot.dropCell(self, cellId: id)
     }
@@ -212,7 +231,7 @@ extension NotebookViewModel {
     case .refused(let result): return result
     }
     // The cell list may have changed while the admission awaited: the cell may be gone or moved
-    guard let index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+    guard var index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
     }
     let snapshotted = ConfirmedParameterSnapshot.takeCell(
@@ -225,19 +244,56 @@ extension NotebookViewModel {
     if snapshotted == nil, refuseMissingParameters(task.query, cellId: task.cellId) != nil {
       return notebook.cells[index].result
     }
-    let parameters = snapshotted ?? boundParameterValues(for: task.query, cellId: task.cellId)
+    let parameters =
+      snapshotted?.values ?? boundParameterValues(for: task.query, cellId: task.cellId)
 
     notebook.cells[index].isRunning = true
-
-    // INFO: Log sanitized query being executed (redact sensitive data)
+    // The connection this run was checked for (its confirmation dialog's, else now): it is
+    // never sent on another one
+    let admitted = snapshotted?.admitted ?? connectGenerationForRun()
+    // Shown as running first; the first run after a DuckDB connect then waits for its loads.
+    // Stop meanwhile only cancels the queue (`cancelCell`): nothing of this run was sent.
+    connectLoadsWaitTaskId = task.id
+    // INFO: Log sanitized query being executed (redact sensitive data). Before the wait: no
+    // suspension between the checks below and the send
     let sanitizedQuery = AppLogger.shared.sanitizeQuery(task.query)
     await AppLogger.shared.info(
       "Executing query from cell \(task.cellId): `\(sanitizedQuery)`", category: "Execution")
+    let connectionKept = await awaitConnectLoads(admitted)
+    if connectLoadsWaitTaskId == task.id { connectLoadsWaitTaskId = nil }
+    // The connection the statements are sent on: read before the checks below, and the send
+    // refuses any other one (`expectedEpoch`), so a connect started after them sends nothing
+    let runEpoch: UInt64
+    if let expectedEpoch {
+      runEpoch = expectedEpoch
+    } else {
+      runEpoch = await connectionManager.connectionEpoch
+    }
     // Cancelled meanwhile (e.g. the pending transaction is being resolved): send nothing
     guard !Task.isCancelled else {
       if let current = notebook.cells.firstIndex(where: { $0.id == task.cellId }) {
         notebook.cells[current].isRunning = false
       }
+      return nil
+    }
+    // The cell may have moved or gone while the run waited
+    guard let current = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
+      return nil
+    }
+    index = current
+    // What was checked before the wait (confirmation, protection) was for the previous connection.
+    // A connect starts by moving the generation: one started since the wait ended refuses too.
+    guard connectionKept, connectGenerationForRun() == admitted else {
+      notebook.cells[index].result = .errorResult(
+        Self.connectionChangedWhileWaitingMessage, sourceQuery: task.query,
+        aiSessionKey: aiSessionKey)
+      notebook.cells[index].isRunning = false
+      onDocumentChanged?()
+      return nil
+    }
+    // Another tab may have begun a transaction while the run waited
+    guard !refuseWhileTransactionPendingElsewhere() else {
+      notebook.cells[index].isRunning = false
       return nil
     }
 
@@ -248,13 +304,6 @@ extension NotebookViewModel {
     var ranStatements: [String] = []
     // A script that threw: which of its statements may have run is read after the run
     var scriptError: (any Error)?
-    // The connection the statements are sent on: what they wrote belongs to it
-    let runEpoch: UInt64
-    if let expectedEpoch {
-      runEpoch = expectedEpoch
-    } else {
-      runEpoch = await connectionManager.connectionEpoch
-    }
 
     // The statements run on their own task, not cancelled with the queue: only Cancel (close +
     // reconnect, `cancelRunningStatement`) stops the server work, and the server
@@ -266,7 +315,7 @@ extension NotebookViewModel {
         let detailed = try await Task {
           try await connectionManager.executeDetailed(
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
-            caller: caller, expectedEpoch: expectedEpoch)
+            caller: caller, expectedEpoch: runEpoch)
         }.value
         let statementResults = detailed.results
         let totalTime = detailed.totalTime
@@ -310,11 +359,11 @@ extension NotebookViewModel {
       } else {
         // Single statement - use original logic
         // Connection identity before the query: the edit target must resolve on the same one
-        let epoch = await connectionManager.connectionEpoch
+        let epoch = runEpoch
         let queryResult = try await Task {
           try await connectionManager.execute(
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
-            caller: caller, expectedEpoch: expectedEpoch)
+            caller: caller, expectedEpoch: runEpoch)
         }.value
         ranStatements = [task.query]
 
@@ -358,7 +407,10 @@ extension NotebookViewModel {
       executionCounter += 1
       let executionTime = error.executionTime ?? 0
       result = .errorResult(
-        error.localizedDescription,
+        Self.runErrorMessage(
+          error,
+          multipleStatements: connectionManager.hasMultipleStatements(
+            task.query, dialect: sqlDialect)),
         executionTime: executionTime,
         sourceQuery: task.query,
         aiSessionKey: aiSessionKey

@@ -47,6 +47,9 @@ final class LockCenter {
   /// Locked workspace files kept apart from Recents: a Lock password change re-seals them, and
   /// the Lock password stays while one depends on it
   @ObservationIgnored let lockedWorkspaces: LockedWorkspaceList
+  /// The open documents of a file (in every window): a Lock password change's re-seal of the
+  /// file refreshes their known date
+  @ObservationIgnored private let openDocuments: @MainActor (URL) -> [any FileConflictPresenting]
 
   /// Locked items relocked since their last unlock in this session: the windows of these
   /// workspaces and connections are covered (`coverage`)
@@ -65,8 +68,12 @@ final class LockCenter {
     ownerAuthenticator: any BiometricAuthenticator = SessionManager.isRunningAsTestHost
       ? UnavailableBiometricAuthenticator() : LAContextBiometricAuthenticator(),
     sessions: WorkspaceLockSessions = .shared, focusRegistry: FocusedActionRegistry = .shared,
-    lockedWorkspaces: LockedWorkspaceList = .shared
+    lockedWorkspaces: LockedWorkspaceList = .shared,
+    openDocuments: @escaping @MainActor (URL) -> [any FileConflictPresenting] = { url in
+      WorkspaceWindowManager.shared.workspaceManagers.flatMap { $0.fileDocuments(at: url) }
+    }
   ) {
+    self.openDocuments = openDocuments
     self.registry = registry
     self.lockedWorkspaces = lockedWorkspaces
     self.sessions = sessions
@@ -250,9 +257,13 @@ final class LockCenter {
       }
     }
     let io = LockedFileIO(sessions: sessions, registry: registry)
+    // Each file's open documents, as soon as it is written: before their file presenters ask
+    let rewrote: @Sendable (LockedFileIO.RewrittenFile) async -> Void = { @MainActor [weak self] in
+      self?.noteRewrite($0)
+    }
     var result = await io.reseal(
       workspaces, currentPassword: current, newPassword: new, storedKeys: storedKeys,
-      iterations: iterations, progress: progress)
+      iterations: iterations, rewrote: rewrote, progress: progress)
     // Locked workspaces listed while the files were re-sealed (an open of a sealed file adds
     // it to the durable list; Lock Workspace waits for the change): re-sealed too, before the
     // new record is stored, never refused at this point (the files above already moved)
@@ -272,7 +283,7 @@ final class LockCenter {
       let reached = added.filter { entry in !unreached.contains { $0.fileURL == entry.fileURL } }
       result.failures += await io.reseal(
         reached, currentPassword: current, newPassword: new, iterations: iterations,
-        progress: progress
+        rewrote: rewrote, progress: progress
       ).failures
     }
     // Still joining after the last pass: not re-sealed, listed
@@ -285,6 +296,13 @@ final class LockCenter {
     let failures = result.failures.map(\.url)
     return await Self.store(new, in: lockVault)
       ? .changed(failures: failures) : .notStored(failures: failures)
+  }
+
+  /// The open documents of a file a Lock password change re-sealed take its new date when they
+  /// had seen the bytes re-sealed (no false "changed on disk"); one with an unseen change still
+  /// asks
+  private func noteRewrite(_ file: LockedFileIO.RewrittenFile) {
+    for document in openDocuments(file.url) { document.noteRewrite(file) }
   }
 
   /// Removes the Lock password (Settings). Refused while a locked workspace depends on it (a

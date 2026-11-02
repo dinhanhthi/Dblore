@@ -138,6 +138,7 @@ extension NotebookViewModel {
         dialect: sqlDialect)
     }
     queryConfirmationState.requiresPassword = true
+    queryConfirmationState.connectGeneration = connectGenerationForRun()
     queryConfirmationState.runAllPendingCells = cells
     queryConfirmationState.runAllAwaitingUnlock = true
     queryConfirmationState.showDialog = true
