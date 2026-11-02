@@ -1,14 +1,25 @@
 // WelcomeLockGateTests.swift
 // Welcome and recents on locked connections: a blocked row loads without its saved password,
 // export leaves it out, and the history routes that would drop a locked row (remove, retarget,
-// Remember off, clear all, Local Data restore and clear) refuse until it is unlocked. Each test
+// Remember off, clear all, Local Data restore and clear) refuse until it is unlocked. A saved
+// password the Keychain cannot read never connects with an empty one, and an edit opened
+// without it keeps it on Save. Each test
 // injects its own LockRegistry, an isolated UserDefaults suite and an in-memory password store:
 // no test touches LockRegistry.shared, the real Keychain or UserDefaults.standard.
 
+import AppKit
 import Foundation
 import Testing
 
 @testable import Dblore
+
+/// Grants every unlock without showing anything
+@MainActor
+private final class GrantingUnlockPrompter: UnlockPrompter {
+  func unlock(
+    _ item: LockIdentity, reason: String, anchor: NSWindow?, lockVault: UnlockPasswordVault
+  ) async -> Bool { true }
+}
 
 @Suite("Welcome Lock Gate")
 @MainActor
@@ -85,13 +96,83 @@ struct WelcomeLockGateTests {
       let recents = RecentManager(defaults: defaults, passwords: passwords, registry: registry)
       let row = try #require(recents.recentConnections.first { $0.id == saved.id })
       // Still blocked: the draft gets no saved password
-      #expect(recents.withSavedPassword(row.config).password == "")
+      #expect(try recents.withSavedPassword(row.config).password == "")
 
       Self.unlock(row.config, in: registry)
-      var draft = recents.withSavedPassword(row.config)
+      var draft = try recents.withSavedPassword(row.config)
       draft.name = "Renamed"
       #expect(recents.replaceConnection(id: row.id, with: draft))
       #expect(try passwords.readPassword(forKey: row.keychainKey) == "secret")
+    }
+  }
+
+  @Test("A saved password the Keychain cannot read connects nothing; the form shows why")
+  func unreadablePasswordNeverConnects() async throws {
+    let name = "WelcomeLockGateTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let registry = LockRegistry()
+    let saved = RecordingConnectionPasswordStore()
+    let unreadable = UnreadableConnectionPasswordStore()
+    // An open row, and a locked row whose unlock is granted before its password is read
+    for config in [Self.server(password: "secret"), Self.server(locked: true, password: "secret")] {
+      let row = try Self.save(config, defaults: defaults, passwords: saved, registry: registry)
+      let recents = RecentManager(defaults: defaults, passwords: unreadable, registry: registry)
+      let factory = FakeDatabaseSessionFactory(capabilities: .contract())
+      var seed = row.config
+      seed.password = ""
+      let manager = WorkspaceManager(
+        workspace: Workspace(connectionConfig: seed), restoreTabs: false,
+        connectionManager: DatabaseConnectionManager(
+          sessionFactory: factory, scripts: .app, lockSource: registry),
+        defaults: defaults, passwords: unreadable, sanitizesFileConfig: false,
+        lockCenter: LockCenter(
+          registry: registry, lockVault: .lockPassword(store: InMemoryPasswordStore()),
+          prompter: GrantingUnlockPrompter()))
+
+      // What a Welcome recent card and the Shortcuts Open Connection run
+      await manager.connectSavedConnection(seed, recents: recents)
+      #expect(factory.sessions.isEmpty)
+      #expect(manager.connectionState == .disconnected)
+      #expect(manager.isConnectionFormModalVisible)
+      #expect(manager.lastUnlockConnectError?.contains("could not be read") == true)
+      #expect(manager.editingConnectionConfig.password == "")
+      #expect(unreadable.readKeys.contains(row.keychainKey))
+    }
+  }
+
+  @Test("Saving an edit opened without its unreadable password keeps the saved password")
+  func editWithUnreadPasswordKeepsIt() throws {
+    try Self.withDefaults { defaults, _ in
+      let registry = LockRegistry()
+      let passwords = RecordingConnectionPasswordStore()
+      let row = try Self.save(
+        Self.server(password: "secret"), defaults: defaults, passwords: passwords,
+        registry: registry)
+      var draft = row.config
+      draft.password = ""
+      // The Edit prefill could not read it
+      let locked = RecentManager(
+        defaults: defaults, passwords: UnreadableConnectionPasswordStore(), registry: registry)
+      let isUnreadable: (any Error) -> Bool = {
+        if case DatabaseError.passwordStoreUnreadable = $0 { return true }
+        return false
+      }
+      #expect(performing: { try locked.withSavedPassword(draft) }, throws: isUnreadable)
+      draft.name = "Renamed"
+      // Still unreadable at Save: nothing is saved
+      #expect(
+        performing: { try locked.keepingSavedPassword(draft, of: row.config) },
+        throws: isUnreadable)
+
+      // Readable again at Save: the saved password stays
+      let recents = RecentManager(defaults: defaults, passwords: passwords, registry: registry)
+      #expect(
+        recents.replaceConnection(
+          id: row.id, with: try recents.keepingSavedPassword(draft, of: row.config)))
+      #expect(try passwords.readPassword(forKey: row.keychainKey) == "secret")
+      #expect(!passwords.deletedKeys.contains(row.keychainKey))
+      #expect(recents.recentConnections.first { $0.id == row.id }?.config.name == "Renamed")
     }
   }
 

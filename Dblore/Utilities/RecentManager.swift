@@ -305,14 +305,40 @@ class RecentManager {
   /// `config` with its saved password when it uses one, has no password command or Vault
   /// source and none typed, and no lock it reaches is blocked: a locked row comes without its
   /// password, and an edit or connect after the unlock needs it (a save with an empty
-  /// password deletes it).
-  func withSavedPassword(_ config: ConnectionConfig) -> ConnectionConfig {
+  /// password deletes it). No saved password returns `config` as it is.
+  /// - Throws: `DatabaseError.passwordStoreUnreadable` when a saved password may exist but the
+  ///   Keychain could not read it (locked or denied): never connect with an empty one instead
+  func withSavedPassword(_ config: ConnectionConfig) throws -> ConnectionConfig {
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.vault == nil, config.password.isEmpty, registry.refusal(for: config) == nil,
-      let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
+      config.vault == nil, config.password.isEmpty, registry.refusal(for: config) == nil
     else { return config }
+    let password: String?
+    do {
+      password = try passwords.readPassword(forKey: ConnectionKeychainKey.password(for: config))
+    } catch {
+      throw DatabaseError.passwordStoreUnreadable(
+        name: config.name.isEmpty ? config.displayString : config.name)
+    }
+    guard let password else { return config }
     var config = config
     config.password = password
+    return config
+  }
+
+  /// `config`, the edit of saved row `saved` that opened without its unreadable password, to
+  /// save: while its password field is still empty, it takes `saved`'s password, read now, so
+  /// the save keeps it (moved along on a retarget) instead of deleting it.
+  /// - Throws: `DatabaseError.passwordStoreUnreadable` when it still cannot be read: save nothing
+  func keepingSavedPassword(
+    _ config: ConnectionConfig, of saved: ConnectionConfig
+  ) throws -> ConnectionConfig {
+    guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
+      config.vault == nil, config.password.isEmpty
+    else { return config }
+    var saved = saved
+    saved.password = ""
+    var config = config
+    config.password = try withSavedPassword(saved).password
     return config
   }
 

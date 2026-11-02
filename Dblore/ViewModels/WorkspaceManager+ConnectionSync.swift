@@ -614,7 +614,8 @@ extension WorkspaceManager {
   /// Nothing is read before the grant.
   /// - Parameter action: what the prompt says the unlock is for ("connect", "test it")
   /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
-  ///   changed, no error to show)
+  ///   changed, no error to show); `DatabaseError.passwordStoreUnreadable` when the Keychain
+  ///   could not read the saved password (never continue with an empty one)
   func unlockedForConnect(
     _ config: ConnectionConfig, to action: String = "connect"
   ) async throws -> ConnectionConfig {
@@ -626,12 +627,35 @@ extension WorkspaceManager {
     else { throw WorkspaceConnectError.unlockRequired }
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
       config.vault == nil, config.password.isEmpty,
-      lockCenter.registry.refusal(for: config) == nil,
-      let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
+      lockCenter.registry.refusal(for: config) == nil
     else { return config }
+    let saved: String?
+    do {
+      saved = try passwords.readPassword(forKey: ConnectionKeychainKey.password(for: config))
+    } catch {
+      throw DatabaseError.passwordStoreUnreadable(name: name)
+    }
+    guard let password = saved else { return config }
     var config = config
     config.password = password
     return config
+  }
+
+  /// Connects saved row `seed` as a Welcome recent card and the Shortcuts Open Connection do:
+  /// with its saved password (a locked row asks first and reads it after the grant). A saved
+  /// password the Keychain could not read connects nothing: the form opens on the error. A
+  /// cancelled unlock leaves the workspace disconnected, without an error.
+  func connectSavedConnection(_ seed: ConnectionConfig, recents: RecentManager = .shared) async {
+    var config = seed
+    do {
+      config = try recents.withSavedPassword(seed)
+      try await connect(config: config)
+    } catch WorkspaceConnectError.unlockRequired {
+      return
+    } catch {
+      await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
+      presentConnectErrorIfActionable(error, config: config)
+    }
   }
 
   /// Connect with the held config after a successful Safe Mode unlock. No-op without one.

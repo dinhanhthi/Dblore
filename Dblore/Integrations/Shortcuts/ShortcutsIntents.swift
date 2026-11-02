@@ -102,17 +102,8 @@ struct OpenConnectionIntent: AppIntent {
     } else {
       store.openWorkspaceWindow(workspaceId: manager.id)
     }
-    Task {
-      let config = RecentManager.shared.withSavedPassword(seed)
-      do {
-        try await manager.connect(config: config)
-      } catch WorkspaceConnectError.unlockRequired {
-        return
-      } catch {
-        await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
-        manager.presentConnectErrorIfActionable(error, config: config)
-      }
-    }
+    // A saved password the Keychain could not read connects nothing: the form says why
+    Task { await manager.connectSavedConnection(seed) }
   }
 
   /// The window whose `AppWindowView` handles a pending workspace id, in its order: the key

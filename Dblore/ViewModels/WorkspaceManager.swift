@@ -997,9 +997,23 @@ class WorkspaceManager: Identifiable {
     if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
       config.vault == nil
     {
-      guard let keychainKey = workspace.keychainKey,
-        let password = passwords.loadPassword(forKey: keychainKey)
-      else {
+      let password: String?
+      do {
+        password = try workspace.keychainKey.flatMap { try passwords.readPassword(forKey: $0) }
+      } catch {
+        // Locked or denied: connect nothing, and the form says why
+        await AppLogger.shared.warning(
+          "Auto-connect: the saved password could not be read", category: "Workspace")
+        if !Task.isCancelled {
+          connectionState = .disconnected
+          presentConnectErrorIfActionable(
+            DatabaseError.passwordStoreUnreadable(
+              name: config.name.isEmpty ? config.displayString : config.name),
+            config: config)
+        }
+        return
+      }
+      guard let password else {
         // No stored password: never leave the UI on "connecting"
         if !Task.isCancelled { connectionState = .disconnected }
         return
@@ -1077,10 +1091,13 @@ class WorkspaceManager: Identifiable {
     isConnectionFormModalVisible = true
   }
 
-  /// A connect outside the form (auto-connect, a Welcome recent card) failed with an error the
-  /// form offers an action for (missing plugin): open the form showing the error and its button.
+  /// A connect outside the form (auto-connect, a Welcome recent card, Shortcuts) failed with an
+  /// error the form offers an action for (missing plugin): open the form showing the error and
+  /// its button. A saved password the Keychain could not read opens it too, showing why (the
+  /// user can unlock the Keychain and retry, or type the password).
   func presentConnectErrorIfActionable(_ error: any Error, config: ConnectionConfig) {
-    guard ConnectionErrorAction.action(for: error) != nil else { return }
+    let unreadable = if case DatabaseError.passwordStoreUnreadable = error { true } else { false }
+    guard unreadable || ConnectionErrorAction.action(for: error) != nil else { return }
     editingConnectionConfig = config
     connectionFormDraftGeneration += 1
     connectionFormOpensOnDraft = true
