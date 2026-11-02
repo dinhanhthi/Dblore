@@ -36,7 +36,9 @@
 // A column change of type, or from NULL to NOT NULL, stays ticked with a warning: existing values
 // may be converted (rounded, truncated, time zone dropped) or rejected. A default change on a
 // PostgreSQL identity column (identity against serial) is manual: DROP DEFAULT would leave the
-// column without either. Warnings carry their item's id.
+// column without either. An index keeps its DESC / NULLS order, except DESC on a MySQL before 8.0
+// or MariaDB before 10.8 target (which build every key ascending): dropped with a warning, as
+// Copy Objects does. Warnings carry their item's id.
 // New tables: columns with their type, nullability and default; PostgreSQL identity and MySQL
 // AUTO_INCREMENT, character set, collation, ON UPDATE and INVISIBLE (manual on MySQL before
 // 8.0.23 and MariaDB before 10.3.3, which have no invisible columns) are kept in the column type
@@ -193,14 +195,18 @@ nonisolated enum SchemaMigrationScriptBuilder {
               + "reject existing values; check the data first.")
         }
       case .addIndex(let index):
+        let (index, warning) = ascending(index, table: item.table)
         plan.add(
           .addIndexes, try build([.createIndex(try newIndex(index))], targetTable(item.table)))
+        if let warning { plan.warnings.append(warning) }
       case .dropIndex(let index):
         plan.add(.dropIndexes, try build([.dropIndex(name: index.name)], targetTable(item.table)))
       case .changeIndex(let from, let to):
         let table = try targetTable(item.table)
+        let (from, warning) = ascending(from, table: table.name)
         plan.add(.dropIndexes, try build([.dropIndex(name: to.name)], table))
         plan.add(.addIndexes, try build([.createIndex(try newIndex(from))], table))
+        if let warning { plan.warnings.append(warning) }
       case .addForeignKey(let constraint):
         plan.add(
           .addForeignKeys,
@@ -270,9 +276,12 @@ nonisolated enum SchemaMigrationScriptBuilder {
       let uniqueNames = Set(
         table.constraints.compactMap { $0.kind == .unique ? $0.name : nil })
       for index in table.indexes where !index.isPrimary && !uniqueNames.contains(index.name) {
+        let (index, warning) = ascending(index, table: table.name)
+        let manualCount = plan.manualItems.count
         part(&plan, item: item, "Create index \"\(index.name)\" on \"\(table.name)\"") {
           (.addIndexes, try build([.createIndex(try newIndex(index))], table))
         }
+        if let warning, plan.manualItems.count == manualCount { plan.warnings.append(warning) }
       }
       for constraint in later {
         let what =
@@ -542,6 +551,24 @@ nonisolated enum SchemaMigrationScriptBuilder {
       return (parts[0], parts[1])
     }
 
+    /// The index without DESC, and a warning, on a MySQL / MariaDB target that builds every key
+    /// ascending; otherwise the index as it is
+    private func ascending(
+      _ index: TableStructure.Index, table: String
+    ) -> (index: TableStructure.Index, warning: String?) {
+      guard case .mysql(let server) = engine, !server.supportsDescendingIndexKeys,
+        index.sortOrder.contains(where: \.descending)
+      else { return (index, nil) }
+      var index = index
+      index.sortOrder = []
+      let name = server.flavor == .mysql ? "MySQL" : "MariaDB"
+      return (
+        index,
+        "\"\(table)\": The index \"\(index.name)\" is copied without DESC: \(name) "
+          + "\(server.major).\(server.minor) builds every key ascending."
+      )
+    }
+
     private func newIndex(_ index: TableStructure.Index) throws -> StructureChange.NewIndex {
       let columns = index.keys.compactMap { key -> String? in
         if case .column(let name) = key { name } else { nil }
@@ -559,7 +586,8 @@ nonisolated enum SchemaMigrationScriptBuilder {
       }
       if case .sqlite = engine { method = nil }
       return StructureChange.NewIndex(
-        name: index.name, columns: columns, isUnique: index.isUnique, method: method)
+        name: index.name, columns: columns, isUnique: index.isUnique, method: method,
+        sortOrder: index.sortOrder)
     }
 
     private func dropForeignKey(_ constraint: Constraint) throws -> StructureChange {

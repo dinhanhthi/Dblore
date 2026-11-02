@@ -38,6 +38,11 @@ struct ExportOptionsTests {
     let json = DataExporter.applying(
       ExportOptions(format: .json, nullAsEmpty: true), to: sample())
     #expect(json.rows[0][2] == .null)
+    // Excel always writes an empty cell, so a saved preset with the flag on keeps NULL for it
+    #expect(!ExportFormat.excel.offersNullAsEmpty)
+    let excel = DataExporter.applying(
+      ExportOptions(format: .excel, nullAsEmpty: true), to: sample())
+    #expect(excel.rows[0][2] == .null)
   }
 
   @Test("A redacted null stays **** even when NULL is converted to empty")
@@ -99,6 +104,14 @@ struct ExportOptionsTests {
     #expect(csv.rows[0][0] == .string("'\r\n=1+1"))
     #expect(csv.rows[0][1] == .string("'\n=1+1"))
     #expect(csv.rows[0][2] == .string("'=\u{0301}1+1"))
+    // Plain number and time-offset text is not a formula; anything more still is
+    let plain = ["-12.5", "+3", "-1e5", "-05:00", "+02:30"]
+    let formulas = ["-cmd|' /C calc'!A0", "@SUM(1)", "+1+cmd", "-1\n=1", "-05:00x", "=1"]
+    let texts = grid(
+      columns: (plain + formulas).map { _ in "c" }, rows: [(plain + formulas).map(CellValue.string)]
+    )
+    let mixed = DataExporter.applying(ExportOptions(format: .csv), to: texts)
+    #expect(mixed.rows[0] == plain.map(CellValue.string) + formulas.map { .string("'" + $0) })
   }
 
   @Test("Without quotes, a formula cannot start the next physical line of a field")

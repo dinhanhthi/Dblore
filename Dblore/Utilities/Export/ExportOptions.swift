@@ -61,9 +61,10 @@ nonisolated enum ExportFormat: String, CaseIterable, Identifiable, Sendable {
     self == .sqlInsert ? "Include column names" : "Put field names in the first row"
   }
 
-  /// Formats that can write an empty field instead of NULL. JSON keeps a real null or omits the key.
+  /// Formats that can write an empty field instead of NULL. JSON keeps a real null or omits the key;
+  /// Excel always writes an empty cell.
   var offersNullAsEmpty: Bool {
-    self == .csv || self == .excel || self == .markdown || self == .sqlInsert
+    self == .csv || self == .markdown || self == .sqlInsert
   }
 
   var offersWrap: Bool {
@@ -211,7 +212,8 @@ nonisolated struct ExportOptions: Equatable, Sendable {
   /// CSV and Markdown. On matches the previous exporters, which always wrote a header.
   /// SQL uses the same flag for the column list.
   var includeHeader: Bool = true
-  /// Off keeps NULL. CSV writes the letters NULL; SQL writes the keyword NULL.
+  /// Off keeps NULL. CSV writes the letters NULL; SQL writes the keyword NULL. Excel does not
+  /// offer it and always writes an empty cell.
   var nullAsEmpty: Bool = false
   /// Off keeps line breaks inside the cell.
   var convertLineBreaksToSpace: Bool = false
@@ -307,7 +309,8 @@ extension DataExporter {
   }
 
   /// A first unicode scalar `=`, `+`, `-`, `@`, tab, CR, or LF marks a spreadsheet formula, so
-  /// CRLF and a starter with a combining mark count. Numbers stay numbers. `splitsFields`
+  /// CRLF and a starter with a combining mark count. Numbers stay numbers, and so does text that
+  /// is only a signed number or a time offset (`-12.5`, `+3`, `-1e5`, `-05:00`). `splitsFields`
   /// (unquoted CSV) also checks each field start inside the value: after a line break, where a
   /// reader begins a new row, and after a comma, where it begins a new field.
   static func sanitizingFormula(_ value: CellValue, splitsFields: Bool) -> CellValue {
@@ -327,6 +330,7 @@ extension DataExporter {
   /// so a CRLF is never split and a blank line is not prefixed. With `splitsFields`, a field
   /// start that is a double quote is prefixed too, so a reader never strips it as quoting.
   static func prefixedIfFormula(_ text: String, splitsFields: Bool) -> String {
+    if isSignedNumberOrOffset(text) { return text }
     guard splitsFields else {
       guard let first = text.unicodeScalars.first, formulaStarters.contains(first) else {
         return text
@@ -346,4 +350,17 @@ extension DataExporter {
     }
     return result
   }
+
+  /// The whole text is a signed number (`-12.5`, `+3`, `-1e5`) or a signed time (`-05:00`,
+  /// `+02:30`, `-838:59:59.5`): ASCII digits only, nothing after it, not even a line break.
+  /// Checked only after a leading sign, as the pattern runs on every exported text cell.
+  private static func isSignedNumberOrOffset(_ text: String) -> Bool {
+    guard let first = text.unicodeScalars.first, first == "-" || first == "+" else {
+      return false
+    }
+    return text.range(of: signedNumberOrOffset, options: .regularExpression) != nil
+  }
+
+  private static let signedNumberOrOffset =
+    #"\A[+-](?:[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|[0-9]+:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?)\z"#
 }

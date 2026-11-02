@@ -1,7 +1,7 @@
 // MySQLTableImportTests.swift
 // CSV / TSV / JSON import through TableImportModel into MySQL 8.4 (3307) and MariaDB 11.4 (3308):
-// a new table (BIGINT, DOUBLE, BOOLEAN, DATE, DATETIME(6) from ISO 8601 with `Z` or an offset,
-// LONGTEXT), an existing table, a ~1 MB text value (packet size), a bad row that rolls the
+// a new table (BIGINT, DECIMAL(65,30), BOOLEAN, DATE, DATETIME(6) from ISO 8601 with `Z` or an
+// offset, LONGTEXT), an existing table, a ~1 MB text value (packet size), a bad row that rolls the
 // existing-table import back, Protected mode (rows pending; CREATE TABLE refused because it
 // commits implicitly), timestamps converted only for DATE / DATETIME / TIMESTAMP destinations,
 // INSERT chunks kept under the session's max_allowed_packet, and the keyed modes (Update,
@@ -100,7 +100,7 @@ struct MySQLTableImportTests {
             return "\(cell)"
           }
         } == [
-          ["id", "bigint"], ["price", "double"], ["active", "tinyint"], ["born", "date"],
+          ["id", "bigint"], ["price", "decimal"], ["active", "tinyint"], ["born", "date"],
           ["seen", "datetime"], ["name", "longtext"],
         ])
       let result = try await manager.executeInternal(
@@ -108,11 +108,13 @@ struct MySQLTableImportTests {
       #expect(
         result.rows == [
           [
-            .int(1), .double(1.5), .int(1), .string("2024-01-02"),
+            .int(1), .string("1." + "5".padding(toLength: 30, withPad: "0", startingAt: 0)),
+            .int(1), .string("2024-01-02"),
             Self.instant("2024-01-02T03:04:05.000Z"), .string("Ada"),
           ],
           [
-            .int(2), .double(2.25), .int(0), .string("2024-02-29"),
+            .int(2), .string("2." + "25".padding(toLength: 30, withPad: "0", startingAt: 0)),
+            .int(0), .string("2024-02-29"),
             Self.instant("2024-01-02T03:04:05.500Z"), .string("Bob"),
           ],
         ])

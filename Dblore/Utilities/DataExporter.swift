@@ -251,7 +251,10 @@ enum DataExporter {
         worksheet += "    <row r=\"\(rowNum)\">\n"
         for (colIndex, value) in row.enumerated() {
           let cellRef = columnLetter(colIndex) + String(rowNum)
-          let (cellType, cellValue) = cellValueToXLSXCell(value)
+          guard let (cellType, cellValue) = cellValueToXLSXCell(value) else {
+            worksheet += "      <c r=\"\(cellRef)\"/>\n"
+            continue
+          }
           worksheet += "      <c r=\"\(cellRef)\" t=\"\(cellType)\">\(cellValue)</c>\n"
         }
         worksheet += "    </row>\n"
@@ -321,7 +324,10 @@ enum DataExporter {
     for row in result.rows {
       xml += "   <Row>\n"
       for value in row {
-        let (type, data) = cellValueToExcelXML(value)
+        guard let (type, data) = cellValueToExcelXML(value) else {
+          xml += "    <Cell/>\n"
+          continue
+        }
         xml += "    <Cell><Data ss:Type=\"\(type)\">\(data)</Data></Cell>\n"
       }
       xml += "   </Row>\n"
@@ -746,18 +752,26 @@ enum DataExporter {
     return escaped
   }
 
-  private static func cellValueToExcelXML(_ value: CellValue) -> (type: String, data: String) {
+  /// A spreadsheet app keeps 15 significant digits of a number cell, so a longer integer is
+  /// written as text to keep every digit
+  private static func isSpreadsheetExact(_ int: Int) -> Bool {
+    int.magnitude < 1_000_000_000_000_000
+  }
+
+  /// nil for NULL, written as an empty cell. An integer a spreadsheet would round and a NaN or
+  /// infinity (no number cell holds them) are text, with the grid's words for the latter.
+  private static func cellValueToExcelXML(_ value: CellValue) -> (type: String, data: String)? {
     switch value {
     case .string(let str):
       return ("String", escapeXML(str))
     case .int(let int):
-      return ("Number", String(int))
+      return (isSpreadsheetExact(int) ? "Number" : "String", String(int))
     case .double(let double):
-      return ("Number", String(double))
+      return (double.isFinite ? "Number" : "String", value.displayString)
     case .bool(let bool):
       return ("Boolean", bool ? "1" : "0")
     case .null:
-      return ("String", "NULL")
+      return nil
     case .json(let json):
       return ("String", escapeXML(json))
     case .date(let date):
@@ -768,19 +782,24 @@ enum DataExporter {
     }
   }
 
-  /// Convert cell value to XLSX cell format
-  private static func cellValueToXLSXCell(_ value: CellValue) -> (type: String, value: String) {
+  /// Convert cell value to XLSX cell format: nil for NULL (an empty cell), text for the values
+  /// `cellValueToExcelXML` writes as text
+  private static func cellValueToXLSXCell(_ value: CellValue) -> (type: String, value: String)? {
     switch value {
     case .string(let str):
       return ("inlineStr", "<is><t>\(escapeXML(str))</t></is>")
+    case .int(let int) where !isSpreadsheetExact(int):
+      return ("inlineStr", "<is><t>\(int)</t></is>")
     case .int(let int):
       return ("n", "<v>\(int)</v>")
+    case .double(let double) where !double.isFinite:
+      return ("inlineStr", "<is><t>\(value.displayString)</t></is>")
     case .double(let double):
       return ("n", "<v>\(double)</v>")
     case .bool(let bool):
       return ("b", "<v>\(bool ? "1" : "0")</v>")
     case .null:
-      return ("inlineStr", "<is><t>NULL</t></is>")
+      return nil
     case .json(let json):
       return ("inlineStr", "<is><t>\(escapeXML(json))</t></is>")
     case .date(let date):

@@ -17,8 +17,10 @@
 // schema prefix in types, defaults, index key expressions and predicates reads as the same
 // prefix (`schemaPrefixReplaced`).
 // Indexes that back the primary key or a unique constraint are left out (they follow their
-// constraint). An index is matched by name and compared by key parts, uniqueness, method (when
-// both report one) and partial predicate; a foreign
+// constraint). An index is matched by name and compared by key parts, their effective order (a
+// missing entry is ASC, a missing NULLS the default for the direction; not compared when the
+// target is MySQL before 8.0 or MariaDB before 10.8, which build every key ascending), uniqueness,
+// method (when both report one) and partial predicate; a foreign
 // key by name (by definition when unnamed, as on SQLite) and compared by columns, referenced
 // table and columns, and ON UPDATE / ON DELETE. A reference to the snapshot's own schema counts
 // as the same reference in the other snapshot's schema.
@@ -247,16 +249,38 @@ nonisolated enum SchemaDiff {
       || SQLTokenizer.asciiLowercased(a.method ?? "")
         == SQLTokenizer.asciiLowercased(b.method ?? "")
     return a.isUnique == b.isUnique && sameMethod && a.keys.count == b.keys.count
-      && zip(a.keys, b.keys).allSatisfy(sameKey) && a.isPartial == b.isPartial
-      && names.sameExpression(a.predicate, b.predicate)
+      && zip(a.keys, b.keys).allSatisfy(sameKey)
+      && (!names.keepsKeyOrder
+        || a.keys.indices.allSatisfy { effectiveOrder(a, $0) == effectiveOrder(b, $0) })
+      && a.isPartial == b.isPartial && names.sameExpression(a.predicate, b.predicate)
   }
 
+  /// The key part's order with the defaults filled in: no entry is ASC, no NULLS the default
+  /// for the direction
+  private static func effectiveOrder(
+    _ index: TableStructure.Index, _ position: Int
+  ) -> TableStructure.Index.KeyOrder {
+    let order =
+      index.sortOrder.indices.contains(position)
+      ? index.sortOrder[position] : TableStructure.Index.KeyOrder(descending: false)
+    return TableStructure.Index.KeyOrder(
+      descending: order.descending, nullsFirst: order.effectiveNullsFirst)
+  }
+
+  /// `(a DESC NULLS LAST, b)`: DESC, and NULLS only when not the default for the direction
   private static func keyText(_ index: TableStructure.Index) -> String {
-    let parts = index.keys.map { key -> String in
-      switch key {
-      case .column(let name): name
-      case .expression(let text): text ?? "expression"
+    let parts = index.keys.enumerated().map { position, key -> String in
+      var text =
+        switch key {
+        case .column(let name): name
+        case .expression(let text): text ?? "expression"
+        }
+      let order = effectiveOrder(index, position)
+      if order.descending { text += " DESC" }
+      if order.nullsFirst != order.descending {
+        text += order.nullsFirst == true ? " NULLS FIRST" : " NULLS LAST"
       }
+      return text
     }
     return "(" + parts.joined(separator: ", ") + ")"
   }
@@ -362,6 +386,8 @@ nonisolated enum SchemaDiff {
     var foldsOthers: Bool
     /// PostgreSQL with two schema names: each side's schema prefix in types and defaults
     var schemas: (source: String, target: String)?
+    /// False on a MySQL / MariaDB target that builds every key ascending: DESC cannot be applied
+    var keepsKeyOrder = true
 
     init(source: SchemaSnapshot, target: SchemaSnapshot) {
       let ignoreCase = source.tableNamesIgnoreCase || target.tableNamesIgnoreCase
@@ -372,6 +398,9 @@ nonisolated enum SchemaDiff {
       }
       if case .postgresql = target.engine, source.schema != target.schema {
         schemas = (source.schema, target.schema)
+      }
+      if case .mysql(let server) = target.engine {
+        keepsKeyOrder = server.supportsDescendingIndexKeys
       }
     }
 

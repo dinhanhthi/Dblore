@@ -55,13 +55,13 @@ struct DataExporterTSVTests {
         ColumnInfo(name: "x\t=HYPERLINK(\"y\")", type: "text"),
         ColumnInfo(name: "x\n=1", type: "text"),
       ],
-      rows: [[.json("-5"), .string("-5")]],
+      rows: [[.json("-5"), .string("-5+1")]],
       rowCount: 1)
     #expect(
       DataExporter.toTSV(result: result, neutralizesFormulas: true)
-        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t'-5\n")
+        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t'-5+1\n")
     #expect(
       DataExporter.toTSV(result: result, neutralizesFormulas: false)
-        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t-5\n")
+        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t-5+1\n")
   }
 }

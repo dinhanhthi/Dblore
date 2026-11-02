@@ -36,7 +36,9 @@ struct SQLRestoreSheet: View {
           fileSection
           if let plan = model.restorePlan {
             contentsSection(plan.summary)
-            notesSection(plan.engine, drops: plan.summary.count(.drop) > 0)
+            notesSection(
+              plan.engine, drops: plan.summary.count(.drop) > 0,
+              dataOnly: plan.summary.count(.data) > 0 && plan.summary.count(.schema) == 0)
           }
           if let reason = model.restoreBlockedReason {
             BackupMessageBox(text: reason, isError: true)
@@ -187,7 +189,8 @@ struct SQLRestoreSheet: View {
     }
   }
 
-  private func notesSection(_ engine: DatabaseType, drops: Bool) -> some View {
+  /// `dataOnly`: rows and no schema statements (a dump with Structure off on every table)
+  private func notesSection(_ engine: DatabaseType, drops: Bool, dataOnly: Bool) -> some View {
     SettingsGroupCard(title: "Before You Restore") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
         switch engine {
@@ -222,6 +225,11 @@ struct SQLRestoreSheet: View {
           note(
             "This dump first drops the tables, views, sequences and types it recreates (never "
               + "with CASCADE), so their current rows are replaced.")
+        } else if dataOnly {
+          note(
+            "This dump holds only rows: they go into existing tables, whose triggers run for "
+              + "each row, so a trigger that logs or counts rows adds its own on top of the "
+              + "dumped ones.")
         } else {
           note(
             "Restore into an empty database: existing tables with the same names make it fail.")

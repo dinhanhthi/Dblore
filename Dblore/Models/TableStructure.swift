@@ -78,6 +78,9 @@ nonisolated struct TableStructure: Sendable, Equatable {
       /// Nil for the engine default for the direction (PostgreSQL: LAST for ASC, FIRST for
       /// DESC). Only PostgreSQL has a NULLS clause.
       var nullsFirst: Bool? = nil
+
+      /// `nullsFirst`, or the default for the direction (FIRST for DESC, LAST for ASC)
+      var effectiveNullsFirst: Bool { nullsFirst ?? descending }
     }
 
     /// `order` as stored: empty when every entry is ASC with the default NULLS order

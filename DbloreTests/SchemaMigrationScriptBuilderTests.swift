@@ -2,8 +2,9 @@
 // SchemaMigrationScriptBuilder: statements in dependency order (foreign key and index drops
 // before column drops, creates before foreign key adds, table drops last) for the target schema,
 // drops only when ticked, changes a builder refuses listed as manual and never scripted (a
-// replaced index is not dropped when its new form cannot be created), lossy column changes
-// warned per item, the source schema in PostgreSQL types and defaults rewritten to the target,
+// replaced index is not dropped when its new form cannot be created), a new index keeping its
+// DESC / NULLS order (DESC dropped with a warning on MySQL 5.7), lossy column changes warned per item, the source schema in PostgreSQL
+// types and defaults rewritten to the target,
 // a new PostgreSQL serial column's sequence created before and owned by the column after, inside
 // its item (a shared or other-named sequence created only if missing, with a warning, and one a
 // target column already reads left alone), and new MySQL columns with expression defaults restated with parentheses and
@@ -64,7 +65,7 @@ struct SchemaMigrationScriptBuilderTests {
       constraints: [Constraint(name: "customers_pkey", kind: .primaryKey, columns: ["id"])])
   }
 
-  /// Source `dev`: a new `audit` table (index, FK to orders). Target `prod`: `orders.legacy`
+  /// Source `dev`: a new `audit` table (DESC NULLS LAST index, FK to orders). Target `prod`: `orders.legacy`
   /// (indexed, FK to customers) and an `old_stuff` table that the source does not have.
   private static func postgresPair() -> (SchemaSnapshot, SchemaSnapshot) {
     let orders = { (schema: String, legacy: Bool) in
@@ -81,7 +82,12 @@ struct SchemaMigrationScriptBuilderTests {
     let audit = table(
       "dev", "audit",
       [column(1, "id", "integer", nullable: false), column(2, "order_id", "integer")],
-      indexes: [index("audit_order_idx", ["order_id"], method: "btree")],
+      indexes: [
+        Index(
+          name: "audit_order_idx", keys: [.column("order_id")], isUnique: false,
+          isPrimary: false, method: "btree", isPartial: false, predicate: nil,
+          sortOrder: [.init(descending: true, nullsFirst: false)])
+      ],
       constraints: [
         Constraint(name: "audit_pkey", kind: .primaryKey, columns: ["id"]),
         foreignKey("audit_order_fk", ["order_id"], schema: "dev", table: "orders"),
@@ -123,7 +129,7 @@ struct SchemaMigrationScriptBuilderTests {
         )
         """,
         #"ALTER TABLE "prod"."orders" DROP COLUMN "legacy""#,
-        #"CREATE INDEX "audit_order_idx" ON "prod"."audit" USING btree ("order_id")"#,
+        #"CREATE INDEX "audit_order_idx" ON "prod"."audit" USING btree ("order_id" DESC NULLS LAST)"#,
         #"ALTER TABLE "prod"."audit" ADD CONSTRAINT "audit_order_fk" FOREIGN KEY ("order_id") "#
           + #"REFERENCES "prod"."orders" ("id") ON DELETE CASCADE"#,
         #"DROP TABLE "prod"."old_stuff""#,
@@ -376,5 +382,55 @@ struct SchemaMigrationScriptBuilderTests {
     ).script
     #expect(refused.manualItems.map(\.itemID) == [#"column.add "orders"."secret""#])
     #expect(refused.statements.count == 1)
+  }
+
+  @Test func descIsDroppedWithAWarningOnATargetThatBuildsKeysAscending() throws {
+    let mysql8 = StructureDDLBuilder.Engine.mysql(
+      MySQLServerInfo(flavor: .mysql, major: 8, minor: 0, patch: 36))
+    let mysql57 = StructureDDLBuilder.Engine.mysql(
+      MySQLServerInfo(flavor: .mysql, major: 5, minor: 7, patch: 44))
+    var at = Self.index("orders_at", ["at", "id"])
+    at.sortOrder = [.init(descending: true), .init(descending: false)]
+    var total = Self.index("orders_total", ["total"])
+    total.isUnique = true
+    total.sortOrder = [.init(descending: true)]
+    let columns = [
+      Self.column(1, "id", "int", nullable: false), Self.column(2, "at", "datetime"),
+      Self.column(3, "total", "int"),
+    ]
+    let source = SchemaSnapshot(
+      engine: mysql8, schema: "shop",
+      tables: [
+        Self.table("shop", "events", columns, indexes: [at]),
+        Self.table("shop", "orders", columns, indexes: [at, total]),
+      ])
+    // The target has orders_total ascending and not unique: a change, not only DESC
+    let target = { (engine: StructureDDLBuilder.Engine) in
+      SchemaSnapshot(
+        engine: engine, schema: "shop",
+        tables: [
+          Self.table("shop", "orders", columns, indexes: [Self.index("orders_total", ["total"])])
+        ])
+    }
+
+    let old = try Self.script(source, target(mysql57)).script
+    let creates = old.statements.map(\.sql).filter {
+      $0.contains("ADD INDEX") || $0.contains("ADD UNIQUE")
+    }
+    #expect(creates.count == 3)
+    #expect(!creates.contains { $0.contains("DESC") })
+    // One warning per index (new table, added and changed index), in the same words as Copy Objects
+    #expect(
+      old.warnings.map(\.message).sorted() == [
+        #""events": The index "orders_at" is copied without DESC: MySQL 5.7 builds every key ascending."#,
+        #""orders": The index "orders_at" is copied without DESC: MySQL 5.7 builds every key ascending."#,
+        #""orders": The index "orders_total" is copied without DESC: MySQL 5.7 builds every key ascending."#,
+      ])
+    #expect(old.manualItems.isEmpty)
+
+    let new = try Self.script(source, target(mysql8)).script
+    #expect(
+      new.statements.map(\.sql).filter { $0.contains("DESC") }.count == 3)
+    #expect(new.warnings.isEmpty)
   }
 }

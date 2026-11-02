@@ -3,8 +3,10 @@
 // in types, defaults, index keys and predicates; tables only on one side (drops unticked), column
 // add / drop / type, nullability and default changes, index renames and changes (constraint
 // indexes left out, index drops unticked), foreign key changes (drops unticked, unnamed keys with
-// distinct ids), per-engine name matching, same-engine refusal with the MySQL / MariaDB warning,
-// and where a schema prefix is rewritten, left alone or refused (`schemaPrefixReplaced`).
+// distinct ids), index order compared as the effective order (DESC differences reported, except
+// on a MySQL 5.7 / MariaDB 10.6 target; explicit defaults equal no order) and shown in the item, per-engine name matching,
+// same-engine refusal with the MySQL / MariaDB warning, and where a schema prefix is rewritten,
+// left alone or refused (`schemaPrefixReplaced`).
 
 import Foundation
 import Testing
@@ -30,11 +32,12 @@ struct SchemaDiffTests {
   }
 
   private static func index(
-    _ name: String, _ columns: [String], unique: Bool = false, primary: Bool = false
+    _ name: String, _ columns: [String], unique: Bool = false, primary: Bool = false,
+    order: [Index.KeyOrder] = []
   ) -> Index {
     Index(
       name: name, keys: columns.map { .column($0) }, isUnique: unique || primary,
-      isPrimary: primary, method: "btree", isPartial: false, predicate: nil)
+      isPrimary: primary, method: "btree", isPartial: false, predicate: nil, sortOrder: order)
   }
 
   private static func foreignKey(
@@ -161,6 +164,63 @@ struct SchemaDiffTests {
         .dropIndex(target[1].indexes[1]),
       ])
     #expect(items.map(\.isSelected) == [true, true, false])
+  }
+
+  @Test func indexOrderComparesTheEffectiveOrderAndShowsIt() throws {
+    var source = Self.shop("dev")
+    var target = Self.shop("prod")
+    // An explicit default order reads as none: ASC NULLS LAST, DESC NULLS FIRST
+    source[1].indexes[1].sortOrder = [.init(descending: false, nullsFirst: false)]
+    #expect(try Self.diff(source, target).isEmpty)
+    source[1].indexes[1].sortOrder = [.init(descending: true, nullsFirst: true)]
+    target[1].indexes[1].sortOrder = [.init(descending: true)]
+    #expect(try Self.diff(source, target).isEmpty)
+    // A DESC difference is a change, and the item shows the order
+    target[1].indexes[1].sortOrder = []
+    source[1].indexes.append(
+      Self.index(
+        "orders_total_idx", ["total", "id"],
+        order: [.init(descending: true, nullsFirst: false), .init(descending: false)]))
+    let items = try Self.diff(source, target)
+    #expect(
+      items.map(\.kind) == [
+        .addIndex(source[1].indexes[2]),
+        .changeIndex(source: source[1].indexes[1], target: target[1].indexes[1]),
+      ])
+    #expect(items.first?.description.hasSuffix("(total DESC NULLS LAST, id)") == true)
+    #expect(items.last?.description.hasSuffix("to (customer_id DESC)") == true)
+  }
+
+  @Test func aDescOnlyDifferenceIsNoChangeOnATargetThatBuildsKeysAscending() throws {
+    var source = Self.shop("shop")
+    let target = Self.shop("shop")
+    source[1].indexes[1].sortOrder = [.init(descending: true)]
+    let mysql8 = StructureDDLBuilder.Engine.mysql(
+      MySQLServerInfo(flavor: .mysql, major: 8, minor: 0, patch: 36))
+    let diff = { (target: StructureDDLBuilder.Engine, tables: [TableStructure]) in
+      try SchemaDiff.diff(
+        source: Self.snapshot("shop", source, engine: mysql8),
+        target: Self.snapshot("shop", tables, engine: target)
+      ).items
+    }
+    // MySQL 5.7 and MariaDB 10.6 store the key ascending: comparing again finds nothing
+    for old in [
+      MySQLServerInfo(flavor: .mysql, major: 5, minor: 7, patch: 44),
+      MySQLServerInfo(flavor: .mariadb, major: 10, minor: 6, patch: 18),
+    ] {
+      #expect(try diff(.mysql(old), target).isEmpty)
+    }
+    // MySQL 8 stores DESC, so the difference is a change
+    #expect(
+      try diff(mysql8, target).map(\.kind) == [
+        .changeIndex(source: source[1].indexes[1], target: target[1].indexes[1])
+      ])
+    // Any other difference is still a change on an old target
+    var unique = target
+    unique[1].indexes[1].isUnique = true
+    #expect(
+      try diff(.mysql(MySQLServerInfo(flavor: .mysql, major: 5, minor: 7, patch: 44)), unique)
+        .count == 1)
   }
 
   @Test func foreignKeysAddedAndChanged() throws {
