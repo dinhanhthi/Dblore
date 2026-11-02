@@ -91,7 +91,7 @@ struct WelcomeLockGateTests {
       var draft = recents.withSavedPassword(row.config)
       draft.name = "Renamed"
       #expect(recents.replaceConnection(id: row.id, with: draft))
-      #expect(passwords.loadPassword(forKey: row.keychainKey) == "secret")
+      #expect(try passwords.readPassword(forKey: row.keychainKey) == "secret")
     }
   }
 
@@ -170,7 +170,7 @@ struct WelcomeLockGateTests {
       let rows = SessionManager.loadHistory(
         defaults: defaults, passwords: NoPasswordStore(), registry: registry)
       #expect(rows.map(\.config.host) == [row.config.host])
-      #expect(passwords.loadPassword(forKey: row.keychainKey) == "secret")
+      #expect(try passwords.readPassword(forKey: row.keychainKey) == "secret")
       #expect(registry.isBlocked(LockIdentity(row.config)))
     }
   }

@@ -524,7 +524,7 @@ struct LockGateTests {
         #expect(rows.map(\.id) == [row.id])
         #expect(rows.map(\.config.databaseType) == [.postgresql])
         #expect(rows.first?.config.isLocked == true)
-        #expect(passwords.loadPassword(forKey: key) == "secret")
+        #expect(try passwords.readPassword(forKey: key) == "secret")
       }
       #expect(registry.isLocked(LockIdentity(locked)))
     }

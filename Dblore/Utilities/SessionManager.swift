@@ -50,8 +50,13 @@ class SessionManager {
     // Engines without passwords never touch the Keychain
     if config.databaseType.capabilities.usesPassword {
       let keychainKey = keychainKey(for: config)
-      if let password = KeychainConnectionPasswordStore().loadPassword(forKey: keychainKey) {
-        config.password = password
+      do {
+        if let password = try KeychainConnectionPasswordStore().readPassword(forKey: keychainKey) {
+          config.password = password
+        }
+      } catch {
+        // Not readable now: the legacy session stays, and the next launch retries
+        return
       }
     }
 
@@ -71,7 +76,17 @@ class SessionManager {
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
     registry: LockRegistry = .shared
   ) -> [ConnectionHistoryEntry] {
+    historyWithUnreadablePasswords(defaults: defaults, passwords: passwords, registry: registry)
+      .entries
+  }
+
+  /// `loadHistory`, plus the ids of the rows whose saved password could not be read (they load
+  /// without it). Save and replace never delete those passwords.
+  static func historyWithUnreadablePasswords(
+    defaults: UserDefaults, passwords: any ConnectionPasswordStore, registry: LockRegistry
+  ) -> (entries: [ConnectionHistoryEntry], unreadableIDs: Set<UUID>) {
     var entries = storedEntries(defaults: defaults).known
+    var unreadableIDs: Set<UUID> = []
     publishLocks(entries, defaults: defaults, registry: registry)
 
     // Load passwords for engines that store one. Others are not queried, nor is a Vault row
@@ -83,13 +98,24 @@ class SessionManager {
       && registry.refusal(for: entries[i].config) == nil
     {
       let key = entries[i].keychainKey
-      if let password = passwords.loadPassword(forKey: key) {
-        entries[i].config.password = password
+      do {
+        if let password = try passwords.readPassword(forKey: key) {
+          entries[i].config.password = password
+        }
+      } catch {
+        unreadableIDs.insert(entries[i].id)
       }
     }
 
     // Sort by most recent first
-    return entries.sorted { $0.lastUsedAt > $1.lastUsedAt }
+    return (entries.sorted { $0.lastUsedAt > $1.lastUsedAt }, unreadableIDs)
+  }
+
+  /// Keychain keys of the given rows' passwords that could not be read.
+  private static func unreadableKeys(
+    of history: [ConnectionHistoryEntry], ids: Set<UUID>
+  ) -> Set<String> {
+    Set(history.filter { ids.contains($0.id) }.map(\.keychainKey))
   }
 
   /// Decodes saved entries one by one. Entries this build cannot decode (for example an
@@ -169,8 +195,12 @@ class SessionManager {
     }
 
     guard !keyUsedByAnotherIdentity(config, defaults: defaults) else { return false }
-    var history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
+    let loaded = historyWithUnreadablePasswords(
+      defaults: defaults, passwords: passwords, registry: registry)
+    var history = loaded.entries
     let previous = history
+    // Passwords that could not be read are never deleted: they may still be there
+    let unreadable = unreadableKeys(of: previous, ids: loaded.unreadableIDs)
     // Locked by the form's toggle before the first save (nothing else sets a draft's lock)
     let locksNewRow = config.isLocked
     // This connection's own row (same engine, host, port, home database and username)
@@ -217,7 +247,7 @@ class SessionManager {
         // row on that key still uses a saved password
         if !history.contains(where: {
           $0.id != newEntry.id && $0.keychainKey == newEntry.keychainKey && $0.config.vault == nil
-        }) {
+        }), !unreadable.contains(newEntry.keychainKey) {
           passwords.deletePassword(forKey: newEntry.keychainKey)
         }
       } else if !config.password.isEmpty {
@@ -230,12 +260,17 @@ class SessionManager {
       grantNewLocks(
         of: [config], lockedBefore: lockedBefore, generation: generation, registry: registry)
     }
-    for entry in previous where !history.contains(where: { $0.keychainKey == entry.keychainKey }) {
+    let rawKeys = undecodableRowKeys(defaults: defaults)
+    for entry in previous
+    where !keyStillUsed(entry.keychainKey, in: history, rawKeys: rawKeys)
+      && !unreadable.contains(entry.keychainKey)
+    {
       deleteStoredPassword(for: entry, passwords: passwords)
     }
     pruneCertificates(previous: previous, current: history, certificates: certificates)
     pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
-    pruneVaultSecrets(previous: previous, current: history, vaultSecrets: vaultSecrets)
+    pruneVaultSecrets(
+      previous: previous, current: history, rawKeys: rawKeys, vaultSecrets: vaultSecrets)
     return true
   }
 
@@ -384,7 +419,9 @@ class SessionManager {
     registry: LockRegistry = .shared
   ) -> Bool {
     var config = singleLineName(config)
-    var history = loadHistory(defaults: defaults, passwords: passwords, registry: registry)
+    let loaded = historyWithUnreadablePasswords(
+      defaults: defaults, passwords: passwords, registry: registry)
+    var history = loaded.entries
     let oldHistory = history
     guard let index = history.firstIndex(where: { $0.id == id }) else {
       return saveConnection(
@@ -396,8 +433,13 @@ class SessionManager {
     let previous = history[index]
     guard registry.refusal(for: previous.config) == nil, registry.refusal(for: config) == nil
     else { return false }
+    // Passwords that could not be read are never deleted: they may still be there
+    let unreadable = unreadableKeys(of: oldHistory, ids: loaded.unreadableIDs)
+    let rawKeys = undecodableRowKeys(defaults: defaults)
     if !config.rememberConnection {
-      if !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey }) {
+      if !keyStillUsed(previous.keychainKey, in: history, excluding: id, rawKeys: rawKeys),
+        !unreadable.contains(previous.keychainKey)
+      {
         deleteStoredPassword(for: previous, passwords: passwords)
       }
       history.remove(at: index)
@@ -405,7 +447,8 @@ class SessionManager {
       publishLocks(history, defaults: defaults, registry: registry)
       pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
       pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
-      pruneVaultSecrets(previous: oldHistory, current: history, vaultSecrets: vaultSecrets)
+      pruneVaultSecrets(
+        previous: oldHistory, current: history, rawKeys: rawKeys, vaultSecrets: vaultSecrets)
       return true
     }
 
@@ -455,14 +498,15 @@ class SessionManager {
       VaultCredentialStore.save(moved, for: config, to: vaultSecrets)
     }
     if previous.keychainKey != newKey,
-      !history.contains(where: { $0.id != id && $0.keychainKey == previous.keychainKey })
+      !keyStillUsed(previous.keychainKey, in: history, excluding: id, rawKeys: rawKeys),
+      !unreadable.contains(previous.keychainKey)
     {
       deleteStoredPassword(for: previous, passwords: passwords)
     }
     if config.databaseType.capabilities.usesPassword {
       // A Vault row keeps no saved password: its password is a lease's
       if config.password.isEmpty || config.vault != nil {
-        passwords.deletePassword(forKey: newKey)
+        if !unreadable.contains(newKey) { passwords.deletePassword(forKey: newKey) }
       } else {
         passwords.savePassword(config.password, forKey: newKey)
       }
@@ -475,7 +519,8 @@ class SessionManager {
     }
     pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
     pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
-    pruneVaultSecrets(previous: oldHistory, current: history, vaultSecrets: vaultSecrets)
+    pruneVaultSecrets(
+      previous: oldHistory, current: history, rawKeys: rawKeys, vaultSecrets: vaultSecrets)
     return true
   }
 
@@ -505,7 +550,8 @@ class SessionManager {
     }
     pruneCertificates(previous: history, current: [], certificates: certificates)
     pruneSSHCredentials(previous: history, current: [], sshCredentials: sshCredentials)
-    pruneVaultSecrets(previous: history, current: [], vaultSecrets: vaultSecrets)
+    // The undecodable rows go too: none keeps a secret
+    pruneVaultSecrets(previous: history, current: [], rawKeys: [], vaultSecrets: vaultSecrets)
 
     defaults.removeObject(forKey: historyKey)
     publishLocks([], defaults: defaults, registry: registry)
@@ -529,7 +575,10 @@ class SessionManager {
     if let index = history.firstIndex(where: { $0.id == id }) {
       guard registry.refusal(for: history[index].config) == nil else { return false }
       let previous = history
-      deleteStoredPassword(for: history[index], passwords: passwords)
+      let rawKeys = undecodableRowKeys(defaults: defaults)
+      if !keyStillUsed(history[index].keychainKey, in: history, excluding: id, rawKeys: rawKeys) {
+        deleteStoredPassword(for: history[index], passwords: passwords)
+      }
 
       // Remove from array
       history.remove(at: index)
@@ -537,7 +586,8 @@ class SessionManager {
       publishLocks(history, defaults: defaults, registry: registry)
       pruneCertificates(previous: previous, current: history, certificates: certificates)
       pruneSSHCredentials(previous: previous, current: history, sshCredentials: sshCredentials)
-      pruneVaultSecrets(previous: previous, current: history, vaultSecrets: vaultSecrets)
+      pruneVaultSecrets(
+        previous: previous, current: history, rawKeys: rawKeys, vaultSecrets: vaultSecrets)
     }
     return true
   }
@@ -653,6 +703,21 @@ class SessionManager {
     passwords.deletePassword(forKey: entry.keychainKey)
   }
 
+  /// Whether a row other than `rowID` still uses Keychain key `key`: a row of `history`, or a
+  /// saved row this build cannot decode (`rawKeys`, from `undecodableRowKeys`). Its password and
+  /// Vault secret are then kept.
+  private static func keyStillUsed(
+    _ key: String, in history: [ConnectionHistoryEntry], excluding rowID: UUID? = nil,
+    rawKeys: Set<String>
+  ) -> Bool {
+    rawKeys.contains(key) || history.contains { $0.id != rowID && $0.keychainKey == key }
+  }
+
+  /// Keychain keys of the saved rows this build cannot decode. Reads no Keychain item.
+  private static func undecodableRowKeys(defaults: UserDefaults) -> Set<String> {
+    Set(storedEntries(defaults: defaults).unknown.compactMap(rawKeychainKey))
+  }
+
   private static func pruneCertificates(
     previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry],
     certificates: any ClientCertificateStore
@@ -736,15 +801,16 @@ class SessionManager {
   }
 
   /// Deletes Vault secrets no remaining entry uses: a row switched away from Vault, retargeted
-  /// or removed. A secret another row on the same Keychain key still uses is kept.
+  /// or removed. A secret another Vault row on the same Keychain key still uses is kept, and so is
+  /// one on the key of a row this build cannot decode (`rawKeys`).
   private static func pruneVaultSecrets(
-    previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry],
+    previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry], rawKeys: Set<String>,
     vaultSecrets: any VaultSecretStore
   ) {
-    let retained = Set(current.compactMap { VaultCredentialStore.account(for: $0.config) })
+    let vaultRows = current.filter { $0.config.vault != nil }
     for entry in previous {
       guard let account = VaultCredentialStore.account(for: entry.config),
-        !retained.contains(account)
+        !keyStillUsed(entry.keychainKey, in: vaultRows, rawKeys: rawKeys)
       else { continue }
       vaultSecrets.delete(account: account)
     }
@@ -846,12 +912,28 @@ struct BulkSaveReport: Equatable, Sendable {
   var droppedByLimit = 0
 }
 
-/// Saves, loads, and deletes one connection password.
+/// A saved connection password exists but could not be read. Never a missing password.
+nonisolated enum ConnectionPasswordError: Error, Equatable, Sendable {
+  /// The Keychain lookup failed with this status (for example a denied prompt or a locked
+  /// keychain), or the item held data that is not UTF-8 text (`errSecDecode`).
+  case unreadable(OSStatus)
+}
+
+/// Saves, reads, and deletes one connection password.
 /// The app uses `KeychainConnectionPasswordStore`.
 protocol ConnectionPasswordStore {
   func savePassword(_ password: String, forKey key: String)
-  func loadPassword(forKey key: String) -> String?
+  /// nil when no password is saved under `key`; throws `ConnectionPasswordError.unreadable`
+  /// when one may exist but could not be read.
+  func readPassword(forKey key: String) throws -> String?
   func deletePassword(forKey key: String)
+}
+
+extension ConnectionPasswordStore {
+  /// `readPassword(forKey:)` with an unreadable password flattened to nil.
+  func loadPassword(forKey key: String) -> String? {
+    (try? readPassword(forKey: key)) ?? nil
+  }
 }
 
 /// Keychain implementation of `ConnectionPasswordStore`.
@@ -859,23 +941,49 @@ struct KeychainConnectionPasswordStore: ConnectionPasswordStore {
   nonisolated static let vault = KeychainVault(
     service: SessionManager.keychainService, accessible: kSecAttrAccessibleAfterFirstUnlock)
 
+  private let keychain: KeychainVault
+
+  /// `vault` is the connection password service; tests pass one over an in-memory backend.
+  init(vault: KeychainVault = KeychainConnectionPasswordStore.vault) {
+    keychain = vault
+  }
+
   func savePassword(_ password: String, forKey key: String) {
     guard let passwordData = password.data(using: .utf8) else { return }
-    Self.vault.write(account: key, data: passwordData)
+    keychain.write(account: key, data: passwordData)
   }
 
-  func loadPassword(forKey key: String) -> String? {
-    Self.loadPassword(forKey: key)
+  func readPassword(forKey key: String) throws -> String? {
+    try Self.password(from: keychain.read(account: key))
   }
 
-  /// `loadPassword(forKey:)` callable off the main actor (the MCP pool).
+  /// `readPassword(forKey:)` callable off the main actor (the MCP pool).
+  nonisolated static func readPassword(forKey key: String) throws -> String? {
+    try password(from: vault.read(account: key))
+  }
+
+  /// `loadPassword(forKey:)` callable off the main actor: an unreadable password is nil.
   nonisolated static func loadPassword(forKey key: String) -> String? {
-    guard case .found(let passwordData) = vault.read(account: key) else { return nil }
-    return String(data: passwordData, encoding: .utf8)
+    (try? readPassword(forKey: key)) ?? nil
+  }
+
+  /// A miss is nil; a failed lookup or non-UTF-8 data (`errSecDecode`) throws.
+  private nonisolated static func password(from read: KeychainRead) throws -> String? {
+    switch read {
+    case .notFound:
+      return nil
+    case .failed(let status):
+      throw ConnectionPasswordError.unreadable(status)
+    case .found(let passwordData):
+      guard let password = String(data: passwordData, encoding: .utf8) else {
+        throw ConnectionPasswordError.unreadable(errSecDecode)
+      }
+      return password
+    }
   }
 
   func deletePassword(forKey key: String) {
-    Self.vault.delete(account: key)
+    keychain.delete(account: key)
   }
 }
 

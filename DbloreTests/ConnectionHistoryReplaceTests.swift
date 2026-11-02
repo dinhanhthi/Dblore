@@ -299,6 +299,85 @@ struct ConnectionHistoryReplaceTests {
     #expect(harness.store.deletedKeys.contains(entry.keychainKey))
   }
 
+  /// `config`'s row as a build with an unknown engine wrote it: this build cannot decode it, and it
+  /// shares the Keychain key of a PostgreSQL row of the same fields.
+  private static func undecodableRow(_ config: ConnectionConfig) throws -> [String: Any] {
+    var object = try #require(
+      JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(ConnectionHistoryEntry(config: config)))
+        as? [String: Any])
+    var raw = try #require(object["config"] as? [String: Any])
+    raw["databaseType"] = "FutureEngine"
+    object["config"] = raw
+    return object
+  }
+
+  /// Saves `row` and an undecodable row on its Keychain key.
+  private static func writeWithUndecodableTwin(
+    _ row: ConnectionHistoryEntry, to defaults: UserDefaults
+  ) throws {
+    let decoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(row))
+    defaults.set(
+      try JSONSerialization.data(withJSONObject: [decoded, try undecodableRow(row.config)]),
+      forKey: "ace.thi.dblore.connectionHistory")
+    #expect(SessionManager.savedConnectionKeys(defaults: defaults) == [row.keychainKey])
+  }
+
+  @Test("Moving away from or removing a row keeps the password an undecodable row shares")
+  func undecodableTwinKeepsPassword() throws {
+    for removes in [false, true] {
+      let harness = try Harness()
+      defer { harness.cleanup() }
+      let row = ConnectionHistoryEntry(
+        config: ConnectionConfig(
+          host: "db.example", port: 5432, database: "app", username: "ada",
+          rememberConnection: true))
+      try Self.writeWithUndecodableTwin(row, to: harness.defaults)
+      harness.store.savePassword("s3cret", forKey: row.keychainKey)
+
+      if removes {
+        #expect(
+          SessionManager.removeConnection(
+            id: row.id, defaults: harness.defaults, passwords: harness.store))
+      } else {
+        var moved = row.config
+        moved.host = "db.other"
+        moved.password = "next"
+        #expect(
+          SessionManager.replaceConnection(
+            id: row.id, with: moved, defaults: harness.defaults, passwords: harness.store))
+      }
+      #expect(!harness.store.deletedKeys.contains(row.keychainKey))
+      #expect(try harness.store.readPassword(forKey: row.keychainKey) == "s3cret")
+    }
+  }
+
+  @Test("Moving away from or removing a Vault row keeps the secret an undecodable row shares")
+  func undecodableTwinKeepsVaultSecret() throws {
+    for removes in [false, true] {
+      let harness = try Harness()
+      defer { harness.cleanup() }
+      let vaults = InMemoryVaultSecretStore()
+      let row = ConnectionHistoryEntry(config: ConnectionFormVaultDraftTests.vaultConfig())
+      try Self.writeWithUndecodableTwin(row, to: harness.defaults)
+      #expect(VaultCredentialStore.save(.token("t"), for: row.config, to: vaults) != nil)
+      let account = try #require(VaultCredentialStore.account(for: row.config))
+
+      if removes {
+        #expect(
+          SessionManager.removeConnection(
+            id: row.id, defaults: harness.defaults, passwords: harness.store,
+            vaultSecrets: vaults))
+      } else {
+        #expect(
+          SessionManager.replaceConnection(
+            id: row.id, with: ConnectionFormVaultDraftTests.vaultConfig(host: "db2.internal"),
+            defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults))
+      }
+      #expect(vaults.load(account: account) != nil)
+    }
+  }
+
   private static func tunneledConfig(bastion: String = "bastion.example") -> ConnectionConfig {
     var config = ConnectionConfig(
       host: "db.internal", port: 5432, database: "app", username: "ada",

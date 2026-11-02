@@ -118,6 +118,9 @@ enum DatabaseError: LocalizedError {
   case sshHostKeyChanged(host: String, port: Int, expected: String, presented: String)
   /// The pinned SSH host key exists but could not be read: the connection is blocked
   case sshHostKeyStoreUnreadable(host: String, port: Int)
+  /// The saved password of connection `name` exists but could not be read from the Keychain:
+  /// nothing was opened, changed or deleted
+  case passwordStoreUnreadable(name: String)
   /// The user trusted the unknown SSH host key but the pin could not be saved: not connected
   case sshHostKeyPinFailed(host: String, port: Int)
   /// The SSH server rejected the user name, password or key
@@ -210,6 +213,10 @@ enum DatabaseError: LocalizedError {
       return "The pinned SSH host key for \(host):\(port) could not be read from the Keychain, "
         + "so the connection was blocked. Unlock the Keychain and try again, or remove the pin "
         + "in Settings > Data and connect again to confirm the fingerprint."
+    case .passwordStoreUnreadable(let name):
+      return "The saved password for \(name) could not be read from the Keychain, so nothing "
+        + "was opened, changed or deleted. Unlock the Keychain and try again, or edit the "
+        + "connection and enter the password again."
     case .sshHostKeyPinFailed(let host, let port):
       return "The SSH host key for \(host):\(port) was trusted but could not be saved to the "
         + "Keychain, so the connection was not opened. Unlock the Keychain and connect again."

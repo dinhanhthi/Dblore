@@ -73,7 +73,7 @@ struct SessionManagerBulkSaveTests {
     #expect(report.added == 0)
     #expect(report.skippedDuplicates == ["Imported"])
     #expect(harness.store.savedKeys.count == savesBefore)
-    #expect(harness.store.loadPassword(forKey: before.keychainKey) == "original")
+    #expect(try harness.store.readPassword(forKey: before.keychainKey) == "original")
     #expect(history(harness) == [before])
   }
 
@@ -119,7 +119,7 @@ struct SessionManagerBulkSaveTests {
     #expect(report.added == 0)
     #expect(report.skippedDuplicates == ["Bastion"])
     #expect(harness.store.savedKeys.count == savesBefore)
-    #expect(harness.store.loadPassword(forKey: before.keychainKey) == "original")
+    #expect(try harness.store.readPassword(forKey: before.keychainKey) == "original")
     #expect(history(harness) == [before])
     #expect(credentials.load(account: account) == nil)
   }
@@ -139,7 +139,7 @@ struct SessionManagerBulkSaveTests {
     #expect(report.added == 1)
     #expect(report.skippedDuplicates == ["B"])
     #expect(history(harness).map(\.config.name) == ["A"])
-    #expect(harness.store.loadPassword(forKey: "db.example:5432:app:ada") == "first")
+    #expect(try harness.store.readPassword(forKey: "db.example:5432:app:ada") == "first")
   }
 
   @Test("Passwords are saved only when present; SSH secrets under their account")
@@ -329,7 +329,7 @@ struct SessionManagerBulkSaveTests {
     #expect((1...49).allSatisfy { databases.contains("o\($0)") })
     #expect(databases.contains("db1"))
     #expect(harness.store.deletedKeys.isEmpty)
-    #expect(harness.store.loadPassword(forKey: "old.example:5432:o1:ada") == "old1")
+    #expect(try harness.store.readPassword(forKey: "old.example:5432:o1:ada") == "old1")
     #expect(!harness.store.savedKeys.contains("db.example:5432:db2:ada"))
     #expect(!harness.store.savedKeys.contains("db.example:5432:db3:ada"))
   }

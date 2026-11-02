@@ -455,8 +455,8 @@ struct DBeaverImporterTests {
       scope: nil, host: "mysql.example.com", port: 3306, database: "shop", username: "alice")
     #expect(scoped != legacy)
     #expect(store.savedKeys == [scoped, legacy])
-    #expect(store.loadPassword(forKey: scoped) == "MyPass!")
-    #expect(store.loadPassword(forKey: legacy) == "PgPass!")
+    #expect(try store.readPassword(forKey: scoped) == "MyPass!")
+    #expect(try store.readPassword(forKey: legacy) == "PgPass!")
   }
 
   // MARK: - Errors

@@ -157,7 +157,7 @@ struct SessionManagerTests {
     let after = SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store)
     #expect(after.map(\.id) == before.map(\.id))
     #expect(after.map(\.config.host) == before.map(\.config.host))
-    #expect(harness.store.loadPassword(forKey: key) == "a-secret")
+    #expect(try harness.store.readPassword(forKey: key) == "a-secret")
     #expect(harness.store.savedKeys.count == saves)
     #expect(!harness.store.deletedKeys.contains(key))
   }
@@ -201,7 +201,7 @@ struct SessionManagerTests {
       SessionManager.removeConnection(
         id: a.id, defaults: harness.defaults, passwords: harness.store))
     #expect(harness.store.deletedKeys == [key])
-    #expect(harness.store.loadPassword(forKey: key) == nil)
+    #expect(try harness.store.readPassword(forKey: key) == nil)
     #expect(
       SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).isEmpty)
   }
@@ -297,7 +297,7 @@ struct SessionManagerTests {
       })
     #expect(harness.store.savedKeys == [key])
     #expect(harness.store.deletedKeys == [key])
-    #expect(harness.store.loadPassword(forKey: key) == nil)
+    #expect(try harness.store.readPassword(forKey: key) == nil)
     #expect(VaultCredentialStore.lookup(for: vault, from: vaults) == .found(.token("t")))
   }
 
@@ -463,6 +463,52 @@ struct SessionManagerTests {
     #expect(VaultCredentialStore.lookup(for: config, from: vaults) == .found(.token("typed")))
     await manager.disconnect()
     #expect(client.calls.last == .revoke(id: "lease-1"))
+  }
+
+  // MARK: - Unreadable passwords
+
+  @Test("A save never deletes a saved password the Keychain could not read")
+  func saveKeepsUnreadablePassword() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let store = UnreadableConnectionPasswordStore()
+    var plain = Self.vaultConfig()
+    plain.vault = nil
+    let row = ConnectionHistoryEntry(config: plain)
+    harness.defaults.set(try JSONEncoder().encode([row]), forKey: Self.historyKey)
+
+    // Switching the row to Vault deletes a readable saved password; this one could not be read
+    #expect(
+      SessionManager.saveConnection(
+        Self.vaultConfig(), defaults: harness.defaults, passwords: store,
+        vaultSecrets: InMemoryVaultSecretStore()))
+    #expect(store.readKeys == [row.keychainKey])
+    #expect(store.deletedKeys.isEmpty)
+  }
+
+  @Test("An edit never deletes a saved password the Keychain could not read")
+  func replaceKeepsUnreadablePassword() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let store = UnreadableConnectionPasswordStore()
+    let row = ConnectionHistoryEntry(
+      config: ConnectionConfig(host: "db.example", database: "app", username: "ada"))
+    harness.defaults.set(try JSONEncoder().encode([row]), forKey: Self.historyKey)
+
+    // The form could not read the password either, so its field is empty
+    var renamed = row.config
+    renamed.name = "Renamed"
+    #expect(
+      SessionManager.replaceConnection(
+        id: row.id, with: renamed, defaults: harness.defaults, passwords: store))
+    #expect(store.deletedKeys.isEmpty)
+
+    var retargeted = renamed
+    retargeted.host = "db.other"
+    #expect(
+      SessionManager.replaceConnection(
+        id: row.id, with: retargeted, defaults: harness.defaults, passwords: store))
+    #expect(!store.deletedKeys.contains(row.keychainKey))
   }
 
   /// A saved entry from a newer build whose engine this build does not know.
