@@ -64,10 +64,18 @@ nonisolated enum VaultSecretSave: Equatable, Sendable {
 
 nonisolated protocol VaultSecretStore: AnyObject, Sendable {
   func load(account: String) -> VaultStoredSecret?
+  /// As `load(account:)`, but a secret that exists and could not be read throws
+  /// `ConnectionPasswordError.unreadable`
+  func readSecret(account: String) throws -> VaultStoredSecret?
   @discardableResult func save(_ secret: VaultStoredSecret, account: String) -> VaultSecretSave
   func delete(account: String)
   /// The account's secret lasts this session only
   func isSessionOnly(account: String) -> Bool
+}
+
+nonisolated extension VaultSecretStore {
+  /// Stores whose reads cannot fail
+  func readSecret(account: String) throws -> VaultStoredSecret? { load(account: account) }
 }
 
 nonisolated final class KeychainVaultSecretStore: VaultSecretStore, @unchecked Sendable {
@@ -88,10 +96,18 @@ nonisolated final class KeychainVaultSecretStore: VaultSecretStore, @unchecked S
 
   /// A session-only secret is newer than any Keychain copy.
   func load(account: String) -> VaultStoredSecret? {
-    lock.withLock {
+    (try? readSecret(account: account)) ?? nil
+  }
+
+  /// A Keychain read that failed throws; an item that does not decode is nil.
+  func readSecret(account: String) throws -> VaultStoredSecret? {
+    try lock.withLock {
       if let secret = session[account] { return secret }
-      guard case .found(let data) = vault.read(account: account) else { return nil }
-      return try? JSONDecoder().decode(VaultStoredSecret.self, from: data)
+      switch vault.read(account: account) {
+      case .found(let data): return try? JSONDecoder().decode(VaultStoredSecret.self, from: data)
+      case .notFound: return nil
+      case .failed(let status): throw ConnectionPasswordError.unreadable(status)
+      }
     }
   }
 
@@ -224,6 +240,8 @@ nonisolated enum VaultCredentialStore {
     /// A secret of the account exists, bound to another destination
     case destinationChanged
     case missing
+    /// The stored secret exists but the Keychain could not read it
+    case unreadable
   }
 
   /// The scoped secret when it belongs to `config`'s account and destination.
@@ -247,11 +265,17 @@ nonisolated enum VaultCredentialStore {
     if let scoped = operationSecret, scoped.account == account, let secret = scoped.secret {
       return scoped.destination == destination ? .found(secret) : .destinationChanged
     }
-    guard let stored = store.load(account: account) else { return .missing }
+    let stored: VaultStoredSecret?
+    do {
+      stored = try store.readSecret(account: account)
+    } catch {
+      return .unreadable
+    }
+    guard let stored else { return .missing }
     return stored.destination == destination ? .found(stored.secret) : .destinationChanged
   }
 
-  /// `lookup(for:)`'s secret; nil when missing or bound to another destination.
+  /// `lookup(for:)`'s secret; nil when missing, unreadable or bound to another destination.
   static func load(
     for config: ConnectionConfig, from store: any VaultSecretStore = shared
   ) -> VaultSecret? {

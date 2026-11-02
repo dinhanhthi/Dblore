@@ -206,6 +206,18 @@ struct ConnectionFormVaultDraftTests {
     #expect(elsewhere.needsSecretAgain(for: config))
   }
 
+  @Test("A stored secret the Keychain cannot read keeps the draft's secret and shows the notice")
+  func unreadableStoredSecret() {
+    var draft = VaultFormDraft(restoringFor: Self.vaultConfig(), blocked: false)
+    draft.storedSecret = .token("kept")
+    draft.apply(.unreadable)
+    #expect(draft.storedSecret == .token("kept"))
+    #expect(draft.storeUnreadable)
+    // Not "waits for the unlock" nor "saved for other settings"
+    #expect(!draft.pending)
+    #expect(!draft.storedElsewhere)
+  }
+
   @Test("A submitted Vault config is remembered, with no password or password command")
   func vaultRules() {
     var config = Self.vaultConfig()

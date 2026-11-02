@@ -2,7 +2,6 @@
 // A connection password read tells a missing item from one the Keychain could not read.
 
 import Foundation
-import LocalAuthentication
 import Security
 import Testing
 
@@ -42,25 +41,4 @@ struct ConnectionPasswordStoreTests {
     let message = DatabaseError.passwordStoreUnreadable(name: "Coffee Shop").localizedDescription
     #expect(message.contains("Coffee Shop"))
   }
-}
-
-/// A Keychain domain whose every lookup returns `read`; writes succeed and keep nothing.
-private struct FixedReadKeychain: KeychainBackend {
-  let read: KeychainRead
-
-  func copy(service: String, account: String, context: LAContext?) -> KeychainRead { read }
-
-  func add(
-    service: String, account: String, data: Data, accessible: CFString,
-    accessControl: KeychainAccessControl?
-  ) -> OSStatus { errSecSuccess }
-
-  func upsert(
-    service: String, account: String, data: Data, accessible: CFString,
-    accessControl: KeychainAccessControl?
-  ) -> OSStatus { errSecSuccess }
-
-  func delete(service: String, account: String) -> OSStatus { errSecSuccess }
-
-  func accounts(service: String) -> [String] { [] }
 }

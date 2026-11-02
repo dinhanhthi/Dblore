@@ -387,6 +387,32 @@ struct SessionManagerTests {
     #expect(VaultCredentialStore.lookup(for: original, from: vaults) == .missing)
   }
 
+  @Test("A retarget whose old Vault secret cannot be read keeps that secret")
+  func retargetKeepsUnreadableVaultSecret() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let vaults = UnreadableVaultSecretStore()
+    let original = Self.vaultConfig()
+    #expect(
+      Self.withDraft(.token("t"), for: original) {
+        SessionManager.saveConnection(
+          original, defaults: harness.defaults, passwords: harness.store, vaultSecrets: vaults)
+      })
+    let id = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?.id)
+    let oldAccount = try #require(VaultCredentialStore.account(for: original))
+    vaults.failReads(of: [oldAccount])
+
+    // Same destination, new key: the secret to move cannot be read, so it is not deleted
+    let edited = Self.vaultConfig(host: "db2.internal")
+    #expect(
+      SessionManager.replaceConnection(
+        id: id, with: edited, defaults: harness.defaults, passwords: harness.store,
+        vaultSecrets: vaults))
+    #expect(!vaults.deletedAccounts.contains(oldAccount))
+    #expect(vaults.base.load(account: oldAccount) != nil)
+  }
+
   @Test("An edited Vault role re-saves the draft's secret under the new settings")
   func editedVaultSettingResavesSecret() throws {
     let harness = try Harness()

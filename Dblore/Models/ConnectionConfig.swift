@@ -831,7 +831,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   }
 
   /// Display string for connection info
-  var displayString: String {
+  nonisolated var displayString: String {
     "\(database)@\(host):\(port)"
   }
 

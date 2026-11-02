@@ -492,10 +492,20 @@ class SessionManager {
           ?? movedSSHCredential(from: previous.config, to: config, sshCredentials: sshCredentials),
         for: config, to: sshCredentials)
     else { return false }
-    if VaultCredentialStore.persistOperationSecret(for: config, to: vaultSecrets) == nil,
-      let moved = movedVaultSecret(from: previous.config, to: config, vaultSecrets: vaultSecrets)
-    {
-      VaultCredentialStore.save(moved, for: config, to: vaultSecrets)
+    // A Vault secret that could not be read is never deleted: it may still be there
+    var unreadableVaultAccounts: Set<String> = []
+    if VaultCredentialStore.persistOperationSecret(for: config, to: vaultSecrets) == nil {
+      do {
+        if let moved = try movedVaultSecret(
+          from: previous.config, to: config, vaultSecrets: vaultSecrets)
+        {
+          VaultCredentialStore.save(moved, for: config, to: vaultSecrets)
+        }
+      } catch {
+        if let account = VaultCredentialStore.account(for: previous.config) {
+          unreadableVaultAccounts.insert(account)
+        }
+      }
     }
     if previous.keychainKey != newKey,
       !keyStillUsed(previous.keychainKey, in: history, excluding: id, rawKeys: rawKeys),
@@ -520,7 +530,8 @@ class SessionManager {
     pruneCertificates(previous: oldHistory, current: history, certificates: certificates)
     pruneSSHCredentials(previous: oldHistory, current: history, sshCredentials: sshCredentials)
     pruneVaultSecrets(
-      previous: oldHistory, current: history, rawKeys: rawKeys, vaultSecrets: vaultSecrets)
+      previous: oldHistory, current: history, rawKeys: rawKeys, vaultSecrets: vaultSecrets,
+      keeping: unreadableVaultAccounts)
     return true
   }
 
@@ -787,29 +798,33 @@ class SessionManager {
   /// The Vault secret stored for `previous`, to save under the edited `config`'s account when
   /// the operation brings none (the form had not read it). Only while the destination is
   /// unchanged: a secret is never re-bound to other Vault settings without the user's draft.
-  /// Called only after the row's unlock.
+  /// Called only after the row's unlock. Throws `ConnectionPasswordError.unreadable` when the
+  /// old account's secret could not be read.
   private static func movedVaultSecret(
     from previous: ConnectionConfig, to config: ConnectionConfig,
     vaultSecrets: any VaultSecretStore
-  ) -> VaultSecret? {
+  ) throws -> VaultSecret? {
     guard let oldAccount = VaultCredentialStore.account(for: previous),
       let newAccount = VaultCredentialStore.account(for: config), oldAccount != newAccount,
       let destination = VaultCredentialStore.destination(for: config),
-      let stored = vaultSecrets.load(account: oldAccount), stored.destination == destination
+      let stored = try vaultSecrets.readSecret(account: oldAccount),
+      stored.destination == destination
     else { return nil }
     return stored.secret
   }
 
   /// Deletes Vault secrets no remaining entry uses: a row switched away from Vault, retargeted
   /// or removed. A secret another Vault row on the same Keychain key still uses is kept, and so is
-  /// one on the key of a row this build cannot decode (`rawKeys`).
+  /// one on the key of a row this build cannot decode (`rawKeys`), and the accounts in
+  /// `keeping` (a secret that could not be read).
   private static func pruneVaultSecrets(
     previous: [ConnectionHistoryEntry], current: [ConnectionHistoryEntry], rawKeys: Set<String>,
-    vaultSecrets: any VaultSecretStore
+    vaultSecrets: any VaultSecretStore, keeping: Set<String> = []
   ) {
     let vaultRows = current.filter { $0.config.vault != nil }
     for entry in previous {
       guard let account = VaultCredentialStore.account(for: entry.config),
+        !keeping.contains(account),
         !keyStillUsed(entry.keychainKey, in: vaultRows, rawKeys: rawKeys)
       else { continue }
       vaultSecrets.delete(account: account)

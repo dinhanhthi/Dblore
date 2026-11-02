@@ -53,6 +53,8 @@ nonisolated struct VaultFormDraft: Equatable, Sendable {
   var pending = false
   /// A saved secret exists, bound to other Vault settings
   var storedElsewhere = false
+  /// A saved secret exists but the Keychain could not read it
+  var storeUnreadable = false
   /// Destination (`VaultCredentialStore.destination(for:)`) of the restored connection
   var originalDestination: String?
   /// Vault address (trimmed) and CA of the restored connection: the stored secret goes only there
@@ -87,6 +89,8 @@ nonisolated struct VaultFormDraft: Equatable, Sendable {
     case .found(let secret): storedSecret = secret
     case .destinationChanged: storedElsewhere = true
     case .missing: break
+    // Not "no saved secret": the stored item is still there
+    case .unreadable: storeUnreadable = true
     case nil: pending = true
     }
   }
@@ -491,6 +495,12 @@ extension ConnectionFormContent {
   @ViewBuilder
   private func vaultNotes() -> some View {
     let submitted = Self.withVaultRules(withSSHConfig(connectionConfig))
+    if vaultDraft.storeUnreadable {
+      Text(Self.vaultStoreUnreadableHint)
+        .font(.caption)
+        .foregroundColor(.warning)
+        .fixedSize(horizontal: false, vertical: true)
+    }
     if vaultDraft.needsSecretAgain(for: submitted) {
       Text(Self.vaultSecretAgainHint)
         .font(.caption)
@@ -512,6 +522,11 @@ extension ConnectionFormContent {
       .fixedSize(horizontal: false, vertical: true)
     }
   }
+
+  static let vaultStoreUnreadableHint =
+    "The Keychain could not be read, so the saved Vault secret was not loaded; it is kept. "
+    + "Unlock the Keychain and open the connection again, or enter the token or AppRole "
+    + "secret to replace it."
 
   static let vaultSecretAgainHint =
     "The saved Vault secret is for the previous Vault settings. Enter the token or AppRole "

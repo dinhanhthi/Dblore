@@ -234,7 +234,7 @@ actor DatabaseConnectionManager {
     // This manager's lock source: the side's own is not consulted
     if let refusal = lockSource.refusal(for: config) { throw refusal }
     let vaultSecret =
-      config.vault == nil ? nil : sideVaultSecret(identity: identity, config: config)
+      config.vault == nil ? nil : try sideVaultSecret(identity: identity, config: config)
     defer { vaultSecret?.clear() }
     try await VaultCredentialStore.$operationSecret.withValue(vaultSecret) {
       try await side.reconnectWithActiveCertificate(
@@ -283,10 +283,11 @@ actor DatabaseConnectionManager {
   }
 
   /// `identity`'s Vault secret (its unremembered one, else its stored one) under `config`'s
-  /// account, still bound to `identity`'s destination: the side's config must match it.
+  /// account, still bound to `identity`'s destination: the side's config must match it. A
+  /// stored secret the Keychain could not read refuses the side connect.
   private func sideVaultSecret(
     identity: ConnectionConfig, config: ConnectionConfig
-  ) -> VaultCredentialStore.ScopedSecret? {
+  ) throws -> VaultCredentialStore.ScopedSecret? {
     let secret: VaultSecret?
     if let active = activeUnrememberedVaultSecret,
       active.account == VaultCredentialStore.account(for: identity),
@@ -294,7 +295,13 @@ actor DatabaseConnectionManager {
     {
       secret = active.secret
     } else {
-      secret = VaultCredentialStore.load(for: identity, from: vaultLeasing.store)
+      switch VaultCredentialStore.lookup(for: identity, from: vaultLeasing.store) {
+      case .found(let found): secret = found
+      case .destinationChanged, .missing: secret = nil
+      case .unreadable:
+        throw DatabaseError.passwordStoreUnreadable(
+          name: identity.name.isEmpty ? identity.displayString : identity.name)
+      }
     }
     return VaultCredentialStore.scoped(secret, for: config, boundTo: identity)
   }

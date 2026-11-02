@@ -6,6 +6,7 @@
 // unremembered secrets, the quit close set, and the "Vault lease ended." banner text.
 
 import Foundation
+import Security
 import Testing
 
 @testable import Dblore
@@ -1072,6 +1073,82 @@ struct VaultLeaseManagerTests {
     #expect(
       (try? JSONDecoder().decode(VaultStoredSecret.self, from: current))
         == VaultStoredSecret(secret: .token("hvs.new"), destination: "abc"))
+  }
+
+  /// The Keychain store over a data protection domain answering `read` and `writeStatus`
+  private static func keychainStore(
+    _ read: KeychainRead, writeStatus: OSStatus = errSecSuccess
+  ) -> KeychainVaultSecretStore {
+    KeychainVaultSecretStore(
+      vault: KeychainVault(
+        service: KeychainVaultSecretStore.serviceName,
+        accessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        modern: FixedReadKeychain(read: read, writeStatus: writeStatus),
+        legacy: FixedReadKeychain(read: .notFound)))
+  }
+
+  @Test("The Keychain store throws unreadable on a failed read; missing or undecodable is nil")
+  func keychainStoreReadFailureThrows() throws {
+    let config = vaultConfig(saved: false)
+    let account = try #require(VaultCredentialStore.account(for: config))
+    let failing = Self.keychainStore(.failed(errSecInteractionNotAllowed))
+    #expect(throws: ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)) {
+      try failing.readSecret(account: account)
+    }
+    #expect(failing.load(account: account) == nil)
+    #expect(VaultCredentialStore.lookup(for: config, from: failing) == .unreadable)
+
+    #expect(try Self.keychainStore(.notFound).readSecret(account: account) == nil)
+    #expect(try Self.keychainStore(.found(Data("x".utf8))).readSecret(account: account) == nil)
+
+    // A secret the Keychain refused lasts this session and is read before the Keychain
+    let refusing = Self.keychainStore(
+      .failed(errSecInteractionNotAllowed), writeStatus: errSecInteractionNotAllowed)
+    #expect(
+      VaultCredentialStore.save(.token(Self.token), for: config, to: refusing) == .sessionOnly)
+    #expect(refusing.isSessionOnly(account: account))
+    #expect(try refusing.readSecret(account: account)?.secret == .token(Self.token))
+    #expect(VaultCredentialStore.lookup(for: config, from: refusing) == .found(.token(Self.token)))
+  }
+
+  /// The error is the Keychain's, never "no secret saved"
+  private static func isUnreadable(_ error: any Error) -> Bool {
+    guard case .passwordStoreUnreadable? = error as? DatabaseError else { return false }
+    return true
+  }
+
+  @Test("A stored Vault secret the Keychain cannot read refuses the lease and sends nothing")
+  func unreadableSecretRefusesLease() async throws {
+    let unreadable = UnreadableVaultSecretStore()
+    let client = client
+    let leasing = VaultLeasing(clock: clock, makeClient: { _ in client }, store: unreadable)
+    let config = vaultConfig(saved: false)
+    VaultCredentialStore.save(.token(Self.token), for: config, to: unreadable)
+    unreadable.failReads(of: nil)
+
+    await #expect {
+      _ = try await leasing.take(for: config)
+    } throws: {
+      Self.isUnreadable($0)
+    }
+    #expect(client.calls.isEmpty)
+
+    // A side manager reading the identity's secret is refused the same way
+    unreadable.failReads(of: [])
+    let connection = DatabaseConnectionManager(
+      sessionFactory: RecordingFactory(), vaultLeasing: leasing)
+    try await connection.connect(config: config)
+    let account = try #require(VaultCredentialStore.account(for: config))
+    unreadable.failReads(of: [account])
+    let side = DatabaseConnectionManager(sessionFactory: RecordingFactory(), vaultLeasing: leasing)
+    await #expect {
+      try await connection.connectSideManager(
+        side, config: vaultConfig(database: "other", saved: false), identity: config)
+    } throws: {
+      Self.isUnreadable($0)
+    }
+    #expect(client.count(isRead) == 1)
+    await connection.disconnect()
   }
 
   @Test("A side manager whose Vault settings differ from the identity's is refused")
