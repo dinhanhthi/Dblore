@@ -16,9 +16,12 @@ import os
 class AppDelegate: NSObject, NSApplicationDelegate {
   /// Set once quitting is confirmed, so closing the windows on quit does not reopen Welcome
   private var isTerminating = false
+  /// Files that launch the app arrive before this is set
+  private var didFinishLaunching = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     PerfSignpost.event("launch.didFinish")
+    didFinishLaunching = true
     NotificationCenter.default.addObserver(
       forName: NSWindow.willCloseNotification, object: nil, queue: .main
     ) { [weak self] note in
@@ -35,6 +38,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         LaunchSessionCapture.schedule()
       }
     }
+    openLaunchWindowIfMissing()
     // Start Sparkle (no-op under tests)
     UpdaterController.shared.start()
     // The MCP server runs only while enabled in Settings
@@ -42,6 +46,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       MCPServerController.shared.activate()
       // Sleep, screen lock and idle relock the locked items
       RelockMonitor.shared.start()
+    }
+  }
+
+  /// The system window (a normal launch) or the Welcome window a launch by a file opens takes the
+  /// restored front window. A launch with neither (a Shortcut, or a file opened just after launch:
+  /// the scene makes no window for them, and a workspace window never takes the claim) would
+  /// leave the restore waiting all session: a Welcome window opens to take it.
+  private func openLaunchWindowIfMissing() {
+    Task { @MainActor in
+      guard LaunchRestorer.hasStagedFrontWindowClaim else { return }
+      let store = NewWindowStore.shared
+      let hasLaunchWindow = NSApp.windows.contains {
+        $0.isDbloreDocumentWindow && !store.isWorkspaceWindow($0)
+      }
+      guard !hasLaunchWindow else { return }
+      store.openWelcomeWindow(frame: .zero)
     }
   }
 
@@ -65,6 +85,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   }
 
   func application(_ application: NSApplication, open urls: [URL]) {
+    // A launch by a file opens no system window (the scene handles no external event): the
+    // launch window opens here, takes a restored window's claim, then the file's workspace
+    if !didFinishLaunching {
+      NewWindowStore.shared.openWelcomeWindow(frame: .zero)
+    }
+
     // Separate workspace files from document files
     var workspaceURLs: [URL] = []
     var documentURLs: [URL] = []
@@ -83,7 +109,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       // file that does not open says why in a toast
       for url in workspaceURLs {
         if let id = await WorkspaceWindowManager.shared.requestWorkspaceReportingError(url: url) {
-          WorkspaceWindowManager.shared.pendingWorkspaceId = id
+          WorkspaceWindowManager.shared.showPendingWorkspace(id)
         }
       }
 
@@ -94,14 +120,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if existingWorkspaces.isEmpty {
           // No existing workspaces - create new one and open files
           let newManager = WorkspaceWindowManager.shared.newWorkspace()
-          WorkspaceWindowManager.shared.pendingWorkspaceId = newManager.id
+          WorkspaceWindowManager.shared.showPendingWorkspace(newManager.id)
           for url in documentURLs {
             try? await newManager.openFile(url: url, checksScriptKind: true)
           }
         } else {
           // Have existing workspaces - store URLs for chooser dialog
-          // The new window SwiftUI creates will show the chooser
+          // A new window on the welcome screen shows the chooser
           PendingFileOpen.shared.addFiles(documentURLs)
+          NewWindowStore.shared.openWelcomeWindow(frame: .zero, reuseExisting: false)
         }
       }
     }
@@ -290,8 +317,7 @@ enum QueryNotificationRouter {
       if window.isMiniaturized { window.deminiaturize(nil) }
       window.makeKeyAndOrderFront(nil)
     } else {
-      // The window showing it focuses itself (see `WorkspaceWindowView`)
-      WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+      WorkspaceWindowManager.shared.showPendingWorkspace(manager.id)
     }
   }
 }
@@ -380,8 +406,10 @@ struct DbloreApp: App {
     .defaultSize(DocumentWindowSizing.compactSize)
     // Min and max follow the content (`documentWindowMode`): Welcome screens are not resizable
     .windowResizability(.contentSize)
-    // Note: handlesExternalEvents doesn't work for file open events
-    // Duplicate windows are closed in AppDelegate.application(_:open:)
+    // A file opened from Finder or `open` (or another external event) makes no window here:
+    // by default each one adds a Welcome window beside the one `application(_:open:)` shows.
+    // The Dock's reopen still makes one.
+    .handlesExternalEvents(matching: [])
   }
 
   /// Drop expired history rows. A failure is logged; launch continues either way.
@@ -713,7 +741,7 @@ struct TabCommands: Commands {
       // Workspace commands first
       Button {
         let manager = WorkspaceWindowManager.shared.newWorkspace()
-        WorkspaceWindowManager.shared.pendingWorkspaceId = manager.id
+        WorkspaceWindowManager.shared.showPendingWorkspace(manager.id)
       } label: {
         Label("New Workspace", systemImage: "folder.badge.plus")
       }
@@ -722,7 +750,7 @@ struct TabCommands: Commands {
       Button {
         Task {
           if let id = await openWorkspaceWithPanel() {
-            WorkspaceWindowManager.shared.pendingWorkspaceId = id
+            WorkspaceWindowManager.shared.showPendingWorkspace(id)
           }
         }
       } label: {
@@ -738,7 +766,7 @@ struct TabCommands: Commands {
               if let id = await WorkspaceWindowManager.shared.requestWorkspaceReportingError(
                 url: workspace.fileURL)
               {
-                WorkspaceWindowManager.shared.pendingWorkspaceId = id
+                WorkspaceWindowManager.shared.showPendingWorkspace(id)
               }
             }
           }
@@ -1013,7 +1041,7 @@ struct TabCommands: Commands {
         var manager = FocusedActionRegistry.shared.commandWorkspace(active)
         if manager == nil, active == nil, !FocusedActionRegistry.shared.isKeyWindowLocked {
           manager = windows.newWorkspace()
-          windows.pendingWorkspaceId = manager!.id
+          windows.showPendingWorkspace(manager!.id)
         }
         for url in panel.urls {
           try? await manager?.openFile(url: url, checksScriptKind: true)

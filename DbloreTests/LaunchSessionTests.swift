@@ -522,6 +522,19 @@ struct LaunchSessionTests {
     #expect(LaunchRestorer.isRestoring == true)
   }
 
+  @Test("Restore keeps the key window's workspace active when that window shows another one")
+  func restoreActiveWorkspaceFollowsKeyWindow() {
+    let restored = UUID()
+    // A launch by a file: its workspace's window is key, the restored one opened beside it
+    #expect(
+      !LaunchSessionRestore.setsActiveWorkspace(restored, keyWindow: .workspace(UUID())))
+    #expect(LaunchSessionRestore.setsActiveWorkspace(restored, keyWindow: .workspace(restored)))
+    #expect(LaunchSessionRestore.setsActiveWorkspace(restored, keyWindow: .welcome))
+    #expect(LaunchSessionRestore.setsActiveWorkspace(restored, keyWindow: nil))
+    // A restored Welcome does not clear the key window's workspace either
+    #expect(!LaunchSessionRestore.setsActiveWorkspace(nil, keyWindow: .workspace(UUID())))
+  }
+
   // MARK: - Locked workspaces (envelope kind 5)
 
   @Test("A locked workspace's dirty text is stored only sealed, never as plaintext")

@@ -138,8 +138,8 @@ struct AppWindowView: View {
     claimLaunchWindowIfNeeded(window)
   }
 
-  /// Only the first document window with a staged claim applies it. `openWelcomeWindow` and
-  /// Cmd+N create this view too; by then the claim is gone, so they get nil and stay Welcome.
+  /// Only the first document window with a staged claim applies it: the launch window (a launch
+  /// by a file opens it with `openWelcomeWindow`). Later Welcome windows get nil and stay Welcome.
   private func claimLaunchWindowIfNeeded(_ window: NSWindow) {
     guard !didClaimLaunchWindow else { return }
     guard let claim = LaunchRestorer.takeFrontWindowClaim() else { return }
@@ -259,10 +259,22 @@ struct AppWindowView: View {
 struct NewWorkspaceWindowView: View {
   let workspaceId: UUID
   @Bindable private var windowManager = WorkspaceWindowManager.shared
+  @State private var hostWindow = HostWindowReference()
+  /// Its workspace closed: the window closes with it
+  @State private var isClosing = false
+
+  /// The workspace, or its locked open, is still there
+  private var hasContent: Bool {
+    windowManager.workspace(for: workspaceId) != nil
+      || windowManager.lockedOpens[workspaceId] != nil
+  }
 
   var body: some View {
     Group {
-      if let manager = windowManager.workspace(for: workspaceId) {
+      if isClosing {
+        // Flexible, like AppWindowView's: a fixed size would shrink the window before it closes
+        Color.clear
+      } else if let manager = windowManager.workspace(for: workspaceId) {
         WorkspaceContainerView(workspaceManager: manager)
           .onAppear {
             windowManager.setActiveWorkspace(workspaceId)
@@ -271,7 +283,7 @@ struct NewWorkspaceWindowView: View {
         // Made for this open: Cancel closes the window
         LockedWorkspacePlaceholder(open: open, replacesWelcome: false)
       } else {
-        // Workspace not found - show error
+        // Never had its workspace (a closed one closes the window instead)
         VStack(spacing: Spacing.md) {
           Image(systemName: "exclamationmark.triangle")
             .font(.largeTitle)
@@ -284,12 +296,42 @@ struct NewWorkspaceWindowView: View {
       }
     }
     .buttonBorderShape(.capsule)
+    .background(HostWindowReader(reference: hostWindow))
     // Observe pendingWorkspaceId to focus this window if its workspace is re-opened
     .onChange(of: windowManager.pendingWorkspaceId) { _, newId in
-      guard let newId, newId == workspaceId else { return }
+      // A closing window leaves the id to the window that shows the workspace again
+      guard !isClosing, let newId, newId == workspaceId else { return }
       // This workspace is already showing here - just focus this window
       windowManager.pendingWorkspaceId = nil
       NewWindowStore.shared.findWindow(for: workspaceId)?.makeKeyAndOrderFront(nil)
+    }
+    // Closed (File > Close Workspace, or a locked open cancelled): no empty window stays
+    .onChange(of: hasContent) { hadContent, hasContent in
+      guard hadContent, !hasContent else { return }
+      isClosing = true
+      closeHostWindow()
+    }
+  }
+
+  /// Closes this view's own window once the update is over. The close button and a cancelled
+  /// locked open close it themselves too: whichever comes second finds it no longer open.
+  /// Marked closing at once, so a re-open of the workspace in the meantime gets another window.
+  private func closeHostWindow() {
+    guard let window = hostWindow.window else { return }
+    let store = NewWindowStore.shared
+    store.markClosing(window)
+    Task { @MainActor in
+      // The workspace came back and no other window shows it or is about to: keep this one
+      if hasContent, store.findWindow(for: workspaceId) == nil,
+        windowManager.pendingWorkspaceId != workspaceId
+      {
+        store.unmarkClosing(window)
+        isClosing = false
+        return
+      }
+      // A background tab or a minimized window too, but not one already closing
+      guard window.isOpenDbloreDocumentWindow else { return }
+      window.close()
     }
   }
 }
@@ -354,6 +396,22 @@ class NewWindowStore {
 
   func registration(for window: NSWindow) -> Registration? {
     registrations[window.windowNumber]
+  }
+
+  /// Windows closing with their workspace (`NewWorkspaceWindowView`): open until the close runs,
+  /// but a re-opened workspace is never shown in one
+  private let closingWindows = NSHashTable<NSWindow>.weakObjects()
+
+  func markClosing(_ window: NSWindow) {
+    closingWindows.add(window)
+  }
+
+  func unmarkClosing(_ window: NSWindow) {
+    closingWindows.remove(window)
+  }
+
+  func isClosing(_ window: NSWindow) -> Bool {
+    closingWindows.contains(window)
   }
 
   /// A document window for `workspaceId`. `frame` and `parent` are the restore placement:
@@ -431,16 +489,26 @@ class NewWindowStore {
   }
 
   /// Find the NSWindow displaying a specific workspace, including a Welcome window that opened it
-  /// (known only through `register`)
+  /// (known only through `register`). A window closing with its workspace does not count.
   func findWindow(for workspaceId: UUID) -> NSWindow? {
-    windowControllers.first { $0.workspaceId == workspaceId }?.controller.window
-      ?? NSApp.windows.first { registrations[$0.windowNumber] == .workspace(workspaceId) }
+    windowControllers.lazy
+      .compactMap { $0.workspaceId == workspaceId ? $0.controller.window : nil }
+      .first { !self.isClosing($0) }
+      ?? NSApp.windows.first {
+        registrations[$0.windowNumber] == .workspace(workspaceId) && !isClosing($0)
+      }
   }
 
   /// The window a new window should join as a tab, or nil to open it standalone.
   static func tabParent(openAsTab: Bool, keyWindow: NSWindow?) -> NSWindow? {
     guard openAsTab, keyWindow?.isDbloreDocumentWindow == true else { return nil }
     return keyWindow
+  }
+
+  /// Whether `window` was opened for a workspace (`openWorkspaceWindow`): it never shows Welcome,
+  /// so it never takes the launch claim
+  func isWorkspaceWindow(_ window: NSWindow) -> Bool {
+    windowControllers.contains { $0.workspaceId != nil && $0.controller.window === window }
   }
 
   /// All managed windows

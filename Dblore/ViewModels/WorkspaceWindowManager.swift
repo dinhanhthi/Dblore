@@ -6,7 +6,6 @@
 import AppKit
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Manages multiple workspace windows.
 /// This is the top-level manager for the entire application.
@@ -64,9 +63,60 @@ class WorkspaceWindowManager {
     }
   }
 
-  /// Pending workspace ID to open in a window (set by menu commands)
+  /// Pending workspace ID a Welcome window takes (set only by `showPendingWorkspace`)
   /// Observed by AppWindowView to open workspace in current or new window
   var pendingWorkspaceId: UUID?
+
+  /// The window already showing a workspace (tests answer without one)
+  @ObservationIgnored var findWorkspaceWindow: @MainActor (UUID) -> NSWindow? = {
+    NewWindowStore.shared.findWindow(for: $0)
+  }
+
+  /// Whether the window whose `AppWindowView` takes a pending id shows Welcome
+  @ObservationIgnored var hasWelcomeHandler: @MainActor () -> Bool = {
+    guard let window = WorkspaceWindowManager.pendingHandlerWindow() else { return false }
+    return NewWindowStore.shared.registration(for: window) == .welcome
+  }
+
+  /// Opens a workspace window (tests open none)
+  @ObservationIgnored var openWorkspaceWindow: @MainActor (UUID) -> Void = {
+    NewWindowStore.shared.openWorkspaceWindow(workspaceId: $0)
+  }
+
+  /// Shows workspace `id` in a window that surely shows it (menus, Finder, Shortcuts, a moved
+  /// tab, Settings): the window already showing it comes to the front; else a Welcome window
+  /// that would take the pending id replaces itself; else (no window, or a front window that
+  /// shows its own workspace and would leave the id unread) a workspace window opens at once.
+  /// A window closing with the workspace's earlier open is never reused: it closes right after.
+  func showPendingWorkspace(_ id: UUID) {
+    if let window = findWorkspaceWindow(id), window.isOpenDbloreDocumentWindow,
+      !NewWindowStore.shared.isClosing(window)
+    {
+      NewWindowStore.shared.clearPendingDetach(workspaceId: id)
+      window.makeKeyAndOrderFront(nil)
+    } else if hasWelcomeHandler() {
+      pendingWorkspaceId = id
+      // Safety net: that Welcome window clears the id as it takes it. Still pending a moment
+      // later (a short sleep, not one main-queue hop, which can run before SwiftUI sees the
+      // change) means no window took it: open one.
+      Task {
+        try? await Task.sleep(for: .milliseconds(300))
+        guard pendingWorkspaceId == id, findWorkspaceWindow(id) == nil else { return }
+        pendingWorkspaceId = nil
+        openWorkspaceWindow(id)
+      }
+    } else {
+      openWorkspaceWindow(id)
+    }
+  }
+
+  /// The window whose `AppWindowView` handles a pending workspace id, in its order: the key
+  /// document window, else the main window, else the first visible document window
+  private static func pendingHandlerWindow() -> NSWindow? {
+    if let key = NSApp.keyWindow, key.isDbloreDocumentWindow { return key }
+    return NSApp.mainWindow
+      ?? NSApp.orderedWindows.first { $0.isVisible && $0.isDbloreDocumentWindow }
+  }
 
   /// Whether app is showing welcome screen (no workspaces open)
   var isShowingWelcome: Bool {
@@ -384,32 +434,6 @@ class WorkspaceWindowManager {
         recents.removeWorkspace(url: url)
       }
       recents.addWorkspace(entry)
-    }
-  }
-
-  /// Open workspace with file panel
-  func openWorkspaceWithPanel() async {
-    let panel = NSOpenPanel()
-    panel.allowedContentTypes = UTType.sqlWorkspaceOpenTypes
-    panel.allowsMultipleSelection = false
-    panel.canChooseDirectories = false
-    panel.message = "Select a workspace file to open"
-
-    let response: NSApplication.ModalResponse
-    if let window = NSApp.keyWindow {
-      response = await panel.beginSheetModal(for: window)
-    } else {
-      response = await withCheckedContinuation { continuation in
-        panel.begin { result in
-          continuation.resume(returning: result)
-        }
-      }
-    }
-
-    if response == .OK, let url = panel.url,
-      let id = await requestWorkspaceReportingError(url: url)
-    {
-      pendingWorkspaceId = id
     }
   }
 

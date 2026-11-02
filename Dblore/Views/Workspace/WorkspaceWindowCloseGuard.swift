@@ -26,21 +26,33 @@ struct WorkspaceWindowCloseGuard: NSViewRepresentable {
 
   final class GuardView: NSView {
     weak var workspaceManager: WorkspaceManager?
+    /// The close button's own target and action, given back when this view leaves the window
+    private weak var originalTarget: AnyObject?
+    private var originalAction: Selector?
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
       super.viewWillMove(toWindow: newWindow)
-      // Leaving the window: give the button back its standard action
-      if let window, let button = window.standardWindowButton(.closeButton),
-        button.target === self
-      {
-        button.target = window
-        button.action = #selector(NSWindow.performClose(_:))
+      // Leaving the window: give the button back its own action. Never `performClose`: it
+      // clicks the button, which would call `performClose` again until the stack overflows.
+      if let button = window?.standardWindowButton(.closeButton), button.target === self {
+        button.target = originalTarget
+        button.action = originalAction
       }
     }
 
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
       guard let button = window?.standardWindowButton(.closeButton) else { return }
+      // A guard about to leave (the next content can arrive first) holds the button's own
+      if let other = button.target as? GuardView {
+        if other !== self {
+          originalTarget = other.originalTarget
+          originalAction = other.originalAction
+        }
+      } else {
+        originalTarget = button.target
+        originalAction = button.action
+      }
       button.target = self
       button.action = #selector(closeButtonClicked(_:))
     }
