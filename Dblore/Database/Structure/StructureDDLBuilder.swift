@@ -133,7 +133,7 @@ nonisolated enum StructureDDLBuilder {
         createIndexes.append(
           "CREATE \(index.isUnique ? "UNIQUE " : "")INDEX \(try q(index.name)) ON \(table)"
             + (index.method.map { " USING \($0)" } ?? "")
-            + " (\(try quotedList(index.columns, dialect: dialect)))")
+            + " (\(try indexColumnList(index, dialect: dialect)))")
       case .dropIndex(let name):
         dropIndexes.append("DROP INDEX \(try q(structure.schema)).\(try q(name))")
       case .renameTable(let newName):
@@ -175,6 +175,23 @@ nonisolated enum StructureDDLBuilder {
     _ names: [String], dialect: SQLDialect, renamed: [String: String] = [:]
   ) throws -> String {
     try names.map { try dialect.quoteIdentifier(renamed[$0] ?? $0) }.joined(separator: ", ")
+  }
+
+  /// An index's columns with their order: `"a" DESC NULLS LAST, "b"`. An empty `sortOrder`
+  /// writes the bare list. NULLS is written on PostgreSQL only (MySQL and SQLite have none).
+  static func indexColumnList(
+    _ index: StructureChange.NewIndex, dialect: SQLDialect, renamed: [String: String] = [:]
+  ) throws -> String {
+    try index.columns.enumerated().map { position, name in
+      var text = try dialect.quoteIdentifier(renamed[name] ?? name)
+      guard position < index.sortOrder.count else { return text }
+      let order = index.sortOrder[position]
+      if order.descending { text += " DESC" }
+      if dialect == .postgresql, let nullsFirst = order.nullsFirst {
+        text += nullsFirst ? " NULLS FIRST" : " NULLS LAST"
+      }
+      return text
+    }.joined(separator: ", ")
   }
 
   /// `[CONSTRAINT name] PRIMARY KEY (...) | UNIQUE (...) | FOREIGN KEY ... | CHECK (expr)`.
@@ -272,6 +289,9 @@ nonisolated enum StructureDDLBuilder {
         try checkedName(index.name)
         guard !index.columns.isEmpty else {
           throw StructureDDLError.invalidText("An index needs at least one column.")
+        }
+        guard index.sortOrder.isEmpty || index.sortOrder.count == index.columns.count else {
+          throw StructureDDLError.invalidText("An index order needs one entry per column.")
         }
         if let method = index.method,
           method.isEmpty || !method.unicodeScalars.allSatisfy(isASCIIWordCharacter)

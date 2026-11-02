@@ -104,11 +104,18 @@ struct StructureDDLBuilderTests {
   }
 
   private static func index(
-    _ name: String, _ columns: [String], unique: Bool = false, method: String? = nil
+    _ name: String, _ columns: [String], unique: Bool = false, method: String? = nil,
+    order: [TableStructure.Index.KeyOrder] = []
   ) -> StructureChange {
     .createIndex(
-      StructureChange.NewIndex(name: name, columns: columns, isUnique: unique, method: method))
+      StructureChange.NewIndex(
+        name: name, columns: columns, isUnique: unique, method: method, sortOrder: order))
   }
+
+  /// `a DESC NULLS LAST, b NULLS FIRST`: both non-default on PostgreSQL
+  private static let mixedOrder: [TableStructure.Index.KeyOrder] = [
+    .init(descending: true, nullsFirst: false), .init(descending: false, nullsFirst: true),
+  ]
 
   private func build(
     _ changes: [StructureChange], _ structure: TableStructure, _ engine: StructureDDLBuilder.Engine
@@ -238,6 +245,10 @@ struct StructureDDLBuilderTests {
         index("items_name_idx", ["name"], unique: true, method: "btree"),
         #"CREATE UNIQUE INDEX "items_name_idx" ON "public"."items" USING btree ("name")"#
       ),
+      (
+        index("items_order_idx", ["name", "price"], order: mixedOrder),
+        #"CREATE INDEX "items_order_idx" ON "public"."items" ("name" DESC NULLS LAST, "price" NULLS FIRST)"#
+      ),
       (.dropIndex(name: "items_name_idx"), #"DROP INDEX "public"."items_name_idx""#),
       // The new name is bare: the table stays in its schema
       (.renameTable(newName: "goods"), #"ALTER TABLE "public"."items" RENAME TO "goods""#),
@@ -361,10 +372,13 @@ struct StructureDDLBuilderTests {
         == ["ALTER TABLE \"public\".\"items\" ALTER COLUMN \"price\" SET DEFAULT 1\t+\r\n2"])
   }
 
-  @Test("An index method must be a single word")
+  @Test("An index method must be a single word; an index order has one entry per column")
   func indexMethodValidated() {
     #expect(throws: StructureDDLError.self) {
       try build([Self.index("i", ["name"], method: "btree (id); --")], Self.postgres, .postgresql)
+    }
+    #expect(throws: StructureDDLError.self) {
+      try build([Self.index("i", ["name"], order: Self.mixedOrder)], Self.postgres, .postgresql)
     }
   }
 
@@ -426,6 +440,8 @@ struct StructureDDLBuilderTests {
         index("i", ["title"], unique: true, method: "BTREE"),
         "ADD UNIQUE INDEX `i` (`title`) USING BTREE"
       ),
+      // MySQL has no NULLS clause
+      (index("o", ["title", "id"], order: mixedOrder), "ADD INDEX `o` (`title` DESC, `id`)"),
       (.dropIndex(name: "i"), "DROP INDEX `i`"),
       (.setTableComment("it's"), "COMMENT = 'it''s'"),
       (.setTableComment(nil), "COMMENT = ''"),
@@ -654,6 +670,11 @@ struct StructureDDLBuilderTests {
       (
         index("notes_body", ["body"], unique: true),
         #"CREATE UNIQUE INDEX "main"."notes_body" ON "notes" ("body")"#
+      ),
+      // SQLite has no NULLS clause
+      (
+        index("notes_order", ["tag", "body"], order: mixedOrder),
+        #"CREATE INDEX "main"."notes_order" ON "notes" ("tag" DESC, "body")"#
       ),
       (.dropIndex(name: "notes_tag"), #"DROP INDEX "main"."notes_tag""#),
       (.renameTable(newName: "memo"), #"ALTER TABLE "main"."notes" RENAME TO "memo""#),

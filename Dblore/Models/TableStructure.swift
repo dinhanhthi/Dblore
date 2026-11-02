@@ -69,6 +69,21 @@ nonisolated struct TableStructure: Sendable, Equatable {
     var isPartial: Bool
     /// Raw WHERE text of a partial index. Nil when not partial or not reported.
     var predicate: String?
+    /// One entry per key part, matching `keys` position by position. Empty when every key is
+    /// ASC with the engine's default NULLS order (see `storedOrder`).
+    var sortOrder: [KeyOrder] = []
+
+    struct KeyOrder: Sendable, Hashable {
+      var descending: Bool
+      /// Nil for the engine default for the direction (PostgreSQL: LAST for ASC, FIRST for
+      /// DESC). Only PostgreSQL has a NULLS clause.
+      var nullsFirst: Bool? = nil
+    }
+
+    /// `order` as stored: empty when every entry is ASC with the default NULLS order
+    static func storedOrder(_ order: [KeyOrder]) -> [KeyOrder] {
+      order.allSatisfy { $0 == KeyOrder(descending: false) } ? [] : order
+    }
 
     enum Key: Sendable, Equatable {
       case column(String)

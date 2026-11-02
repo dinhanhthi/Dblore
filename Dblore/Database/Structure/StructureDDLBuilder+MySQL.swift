@@ -84,7 +84,7 @@ nonisolated extension StructureDDLBuilder {
       case .createIndex(let index):
         addIndexes.append(
           "ADD \(index.isUnique ? "UNIQUE " : "")INDEX \(try q(index.name)) "
-            + "(\(try quotedList(index.columns, dialect: dialect, renamed: renamed)))"
+            + "(\(try indexColumnList(index, dialect: dialect, renamed: renamed)))"
             + (index.method.map { " USING \($0)" } ?? ""))
       case .dropIndex(let name):
         drops.append("DROP INDEX \(try q(name))")

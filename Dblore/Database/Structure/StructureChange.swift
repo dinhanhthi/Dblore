@@ -50,5 +50,8 @@ nonisolated enum StructureChange: Sendable, Equatable {
     var isUnique: Bool
     /// `btree`, `hash`, `gin`, ... (one word). Nil for the engine default.
     var method: String?
+    /// One entry per column, or empty for all ASC with the default NULLS order. NULLS is
+    /// written on PostgreSQL only.
+    var sortOrder: [TableStructure.Index.KeyOrder] = []
   }
 }

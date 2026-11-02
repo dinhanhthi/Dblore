@@ -63,7 +63,7 @@ struct TableStructureSQLiteTests {
     }
   }
 
-  @Test("Indexes: UNIQUE constraint, unique, expression and partial indexes")
+  @Test("Indexes: UNIQUE constraint, unique with a DESC key, expression and partial indexes")
   func indexes() async throws {
     try await withFixture { session in
       let child = try await introspector.tableStructure(
@@ -78,6 +78,10 @@ struct TableStructureSQLiteTests {
       let unique = try #require(byName["child_a_b"])
       #expect(unique.keys == [.column("a"), .column("b")])
       #expect(unique.isUnique && !unique.isPartial)
+      // SQLite has no NULLS clause: only the direction is read
+      #expect(unique.sortOrder == [.init(descending: false), .init(descending: true)])
+      // An all-ASC index keeps the order empty
+      #expect(try #require(byName["child_expr"]).sortOrder.isEmpty)
 
       let expression = try #require(byName["child_expr"])
       #expect(expression.keys == [.expression(nil), .column("n")])

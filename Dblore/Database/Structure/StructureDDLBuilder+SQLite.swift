@@ -46,7 +46,7 @@ nonisolated extension StructureDDLBuilder {
         createIndexes.append(
           "CREATE \(index.isUnique ? "UNIQUE " : "")INDEX "
             + "\(try q(structure.schema)).\(try q(index.name)) ON \(try q(structure.name)) "
-            + "(\(try quotedList(index.columns, dialect: dialect)))")
+            + "(\(try indexColumnList(index, dialect: dialect)))")
       case .dropIndex(let name):
         dropIndexes.append("DROP INDEX \(try q(structure.schema)).\(try q(name))")
       case .renameTable(let newName):

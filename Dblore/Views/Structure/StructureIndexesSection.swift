@@ -1,6 +1,6 @@
 // StructureIndexesSection.swift
-// Indexes of the structure editor: name, key columns, unique, method and partial predicate, with
-// drop / undo per row and a form that creates one on the working columns.
+// Indexes of the structure editor: name, key columns with their order, unique, method and partial
+// predicate, with drop / undo per row and a form that creates one on the working columns.
 
 import SwiftUI
 
@@ -12,6 +12,8 @@ struct StructureIndexesSection: View {
   @State private var newColumns: [String] = []
   @State private var newUnique = false
   @State private var newMethod = ""
+  /// Order per picked column; a column without an entry is ASC with the default NULLS order
+  @State private var newOrder: [String: TableStructure.Index.KeyOrder] = [:]
 
   fileprivate enum Width {
     static let marker: CGFloat = 8
@@ -83,6 +85,13 @@ struct StructureIndexesSection: View {
       }
       StructureColumnPicker(
         options: StructureColumnPicker.options(model.workingColumns), selection: $newColumns)
+      if !newColumns.isEmpty {
+        StructureIndexOrderPicker(
+          columns: newColumns, hasNulls: databaseType == .postgresql, order: $newOrder)
+      }
+    }
+    .onChange(of: newColumns) { _, names in
+      newOrder = newOrder.filter { names.contains($0.key) }
     }
   }
 
@@ -91,11 +100,13 @@ struct StructureIndexesSection: View {
     model.addIndex(
       StructureChange.NewIndex(
         name: newName.trimmingCharacters(in: .whitespaces), columns: newColumns,
-        isUnique: newUnique, method: method.isEmpty ? nil : method))
+        isUnique: newUnique, method: method.isEmpty ? nil : method,
+        sortOrder: newColumns.map { newOrder[$0] ?? .init(descending: false) }))
     newName = ""
     newColumns = []
     newUnique = false
     newMethod = ""
+    newOrder = [:]
   }
 }
 
@@ -141,11 +152,18 @@ private struct StructureIndexRow: View {
   }
 
   private var keys: String {
-    index.keys.map { key in
-      switch key {
-      case .column(let name): name
-      case .expression(let expression): expression ?? "(expression)"
+    index.keys.enumerated().map { position, key in
+      var text =
+        switch key {
+        case .column(let name): name
+        case .expression(let expression): expression ?? "(expression)"
+        }
+      if position < index.sortOrder.count {
+        let order = index.sortOrder[position]
+        if order.descending { text += " DESC" }
+        if let nullsFirst = order.nullsFirst { text += nullsFirst ? " NULLS FIRST" : " NULLS LAST" }
       }
+      return text
     }
     .joined(separator: ", ")
   }
@@ -208,6 +226,60 @@ struct StructureRowButton: View {
     .buttonStyle(GhostButtonStyle(iconOnly: true))
     .help(help)
     .accessibilityLabel(help)
+  }
+}
+
+/// ASC / DESC per picked column of a new index, plus NULLS (default / first / last) when the
+/// engine has a NULLS clause
+private struct StructureIndexOrderPicker: View {
+  typealias KeyOrder = TableStructure.Index.KeyOrder
+
+  let columns: [String]
+  let hasNulls: Bool
+  @Binding var order: [String: KeyOrder]
+
+  var body: some View {
+    ScrollView(.horizontal, showsIndicators: false) {
+      HStack(spacing: Spacing.md) {
+        Text("Order:")
+          .font(.small)
+          .foregroundColor(.foregroundSubtle)
+        ForEach(columns, id: \.self) { name in
+          HStack(spacing: Spacing.xs) {
+            Text(name)
+              .font(.monoSmall)
+            CapsuleDropdown(
+              title: entry(name).descending ? "DESC" : "ASC",
+              accessibilityLabel: "Order of \(name)",
+              options: [false, true],
+              optionTitle: { $0 ? "DESC" : "ASC" },
+              isSelected: { $0 == entry(name).descending },
+              onSelect: { order[name, default: KeyOrder(descending: false)].descending = $0 })
+            if hasNulls {
+              CapsuleDropdown(
+                title: Self.nullsTitle(entry(name).nullsFirst),
+                accessibilityLabel: "Nulls order of \(name)",
+                options: [nil, true, false],
+                optionTitle: Self.nullsTitle,
+                isSelected: { $0 == entry(name).nullsFirst },
+                onSelect: { order[name, default: KeyOrder(descending: false)].nullsFirst = $0 })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private func entry(_ name: String) -> KeyOrder {
+    order[name] ?? KeyOrder(descending: false)
+  }
+
+  private static func nullsTitle(_ nullsFirst: Bool?) -> String {
+    switch nullsFirst {
+    case nil: "Nulls default"
+    case true?: "Nulls first"
+    case false?: "Nulls last"
+    }
   }
 }
 

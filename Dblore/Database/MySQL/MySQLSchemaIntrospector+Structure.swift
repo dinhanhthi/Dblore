@@ -9,7 +9,8 @@
 // them and in expression defaults are undone (`MySQLCatalog.unescapedExpression`). A check has
 // no columns: neither engine lists the columns it references.
 // Functional index keys (EXPRESSION) are read on MySQL 8.0.13+; MariaDB has none. A prefix key
-// (`name(5)`) reads as the whole column. Checks come from CHECK_CONSTRAINTS on MySQL 8.0.16+
+// (`name(5)`) reads as the whole column. A key is DESC when its COLLATION is `D` (there is no
+// NULLS order). Checks come from CHECK_CONSTRAINTS on MySQL 8.0.16+
 // (matched to the table through TABLE_CONSTRAINTS) and MariaDB 10.2+ (its own TABLE_NAME column:
 // a column-level check is named after the column, so the name alone is not unique); older
 // servers give none.
@@ -102,19 +103,23 @@ nonisolated extension MySQLSchemaIntrospector {
       server.map { $0.flavor == .mysql && ($0.major, $0.minor, $0.patch) >= (8, 0, 13) } ?? false
     let sql = """
       SELECT INDEX_NAME, COLUMN_NAME, \(hasExpressions ? "EXPRESSION" : "NULL"), NON_UNIQUE,
-        INDEX_TYPE
+        INDEX_TYPE, COLLATION
       FROM information_schema.STATISTICS
       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
       ORDER BY INDEX_NAME, SEQ_IN_INDEX
       """
     var indexes: [TableStructure.Index] = []
+    var orders: [[TableStructure.Index.KeyOrder]] = []
     for row in try await rows(in: session, sql: sql, binds: binds) {
       guard let name = MySQLCatalogValue.string(row, 0) else { continue }
       let key: TableStructure.Index.Key =
         MySQLCatalogValue.string(row, 1).map { .column($0) }
         ?? .expression(MySQLCatalogValue.string(row, 2).map(MySQLCatalog.unescapedExpression))
+      let order = TableStructure.Index.KeyOrder(
+        descending: MySQLCatalogValue.string(row, 5) == "D")
       if indexes.last?.name == name {
         indexes[indexes.count - 1].keys.append(key)
+        orders[orders.count - 1].append(order)
         continue
       }
       indexes.append(
@@ -122,6 +127,10 @@ nonisolated extension MySQLSchemaIntrospector {
           name: name, keys: [key], isUnique: MySQLCatalogValue.int(row, 3) == 0,
           isPrimary: name == "PRIMARY", method: MySQLCatalogValue.string(row, 4)?.lowercased(),
           isPartial: false, predicate: nil))
+      orders.append([order])
+    }
+    for position in indexes.indices {
+      indexes[position].sortOrder = TableStructure.Index.storedOrder(orders[position])
     }
     return indexes
   }
