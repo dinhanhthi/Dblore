@@ -149,7 +149,8 @@ struct CopyObjectsRunTests {
 
   @Test(
     "Rows past the 4 MiB budget are sent in the next chunk, never read twice",
-    .timeLimit(.minutes(1)),
+    // 3 minutes: the 600-row case takes ~9 s alone but nears 60 s under full-suite load
+    .timeLimit(.minutes(3)),
     arguments: [
       // Ten 1 MiB BLOBs (2 MiB each toward the budget as hex): one read, two rows a chunk
       (10, "BLOB", "randomblob(1048576)", [500]),
@@ -306,13 +307,13 @@ struct CopyObjectsRunTests {
           target: target, recorder: nil
         ).run()
         #expect(result.rows == 3)
-        // quote_nullable: the session reads empty text as NULL
+        // An empty text reads as '', not NULL
         #expect(
           try await manager.executeInternal(
-            "SELECT id, flag, encode(data, 'hex'), quote_nullable(note) FROM c_\(suffix) ORDER BY id"
+            "SELECT id, flag, encode(data, 'hex'), note FROM c_\(suffix) ORDER BY id"
           ).rows == [
-            [.int(1), .bool(true), .string("00ff"), .string("''")],
-            [.int(2), .bool(false), .null, .string("NULL")],
+            [.int(1), .bool(true), .string("00ff"), .string("")],
+            [.int(2), .bool(false), .null, .null],
           ])
         // The identity continues after the copied ids
         #expect(

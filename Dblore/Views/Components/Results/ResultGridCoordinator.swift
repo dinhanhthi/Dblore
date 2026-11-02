@@ -52,7 +52,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static var sortedColumnColor: NSColor { NSColor(Color.accent.opacity(0.06)) }
   /// Result cell face. Tracks Settings → Results → Font Size (default: small system size).
   static var font: NSFont {
-    NSFont.monospacedSystemFont(ofSize: AppSettings.shared.resultFontSize, weight: .regular)
+    let size = AppSettings.shared.resultFontSize
+    return fontOrFallback(
+      unsafeBitCast(NSFont.monospacedSystemFont(ofSize: size, weight: .regular), to: NSFont?.self),
+      size: size)
   }
 
   private static let cellIdentifier = NSUserInterfaceItemIdentifier("ResultGridCell")
@@ -62,9 +65,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let rowNumberIdentifier = NSUserInterfaceItemIdentifier("rowNumber")
   /// One point under the result face (10pt at the default 11pt), so the gutter stays quieter.
   static var rowNumberFont: NSFont {
-    NSFont.monospacedDigitSystemFont(
-      ofSize: AppSettings.resultRowNumberFontSize(for: AppSettings.shared.resultFontSize),
-      weight: .regular)
+    let size = AppSettings.resultRowNumberFontSize(for: AppSettings.shared.resultFontSize)
+    return fontOrFallback(
+      unsafeBitCast(
+        NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), to: NSFont?.self),
+      size: size)
+  }
+
+  /// `font`, else a fixed-pitch or system face of `size`. The system font constructors are
+  /// declared nonnull, but a nil font is the one value that makes CoreText throw while copying
+  /// the attributes of `fitWidth`'s `size(withAttributes:)`, the crash seen under a loaded
+  /// parallel test run. Callers pass the constructor's result through `unsafeBitCast` so the
+  /// nil check is not optimized away.
+  static func fontOrFallback(_ font: NSFont?, size: CGFloat) -> NSFont {
+    font ?? NSFont.userFixedPitchFont(ofSize: size) ?? NSFont.systemFont(ofSize: size)
   }
 
   /// Settings → Results → Color Values by Type, set by the grid before each update

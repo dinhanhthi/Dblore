@@ -389,7 +389,10 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     case .int(let value):
       return String(value)
     case .double(let value):
-      return String(format: "%.2f", value)
+      // Shortest round-trip text, so distinct values never share a label
+      if value.isNaN { return "NaN" }
+      if value.isInfinite { return value > 0 ? "Infinity" : "-Infinity" }
+      return String(value)
     case .bool(let value):
       return value ? "true" : "false"
     case .null:

@@ -210,6 +210,13 @@ struct ResultGridCoordinatorTests {
       headerWidth: headerWidth, minWidth: minWidth)
   }
 
+  @Test("A nil grid font falls back to a font of the same size that measures text")
+  func nilFontFallsBack() {
+    let font = ResultGridCoordinator.fontOrFallback(nil, size: 11)
+    #expect(font.pointSize == 11)
+    #expect(("abc" as NSString).size(withAttributes: [.font: font]).width > 0)
+  }
+
   @Test("A staged cell commit calls the stage callback and not the immediate update")
   func stagedCommitUsesStageCallback() {
     let (coordinator, _) = makeGrid(sortColumn: "id")

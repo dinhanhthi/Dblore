@@ -124,10 +124,22 @@ struct EditTargetConnectionEpochTests {
     #expect(viewModel.editorResult?.rows.count == 1)
   }
 
+  /// A manager with an isolated recent list and the in-memory `store`: a protection change
+  /// writes through to the saved row, which must never be the test host's real list.
+  private static func manager(
+    defaults: UserDefaults, store: RecordingConnectionPasswordStore
+  ) -> WorkspaceManager {
+    WorkspaceManager(
+      workspace: Workspace(connectionConfig: ConnectionConfig()), restoreTabs: false,
+      defaults: defaults, passwords: store)
+  }
+
   @Test("Workspace disconnect clears edit targets in every tab")
   func workspaceDisconnectClearsTabs() async throws {
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: ConnectionConfig()), restoreTabs: false)
+    let suiteName = "EditTargetConnectionEpochTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let manager = Self.manager(defaults: defaults, store: RecordingConnectionPasswordStore())
     let first = try #require(manager.viewModel(for: manager.newNotebook()))
     let second = try #require(manager.viewModel(for: manager.newNotebook()))
     seed(first)
@@ -160,8 +172,10 @@ struct EditTargetConnectionEpochTests {
 
   @Test("A protection change does not clear edit targets (same connection)")
   func protectionChangeKeepsTargets() throws {
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: ConnectionConfig()), restoreTabs: false)
+    let suiteName = "EditTargetConnectionEpochTests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let manager = Self.manager(defaults: defaults, store: RecordingConnectionPasswordStore())
     let viewModel = try #require(manager.viewModel(for: manager.newNotebook()))
     seed(viewModel)
     var config = try #require(manager.workspace.connectionConfig)

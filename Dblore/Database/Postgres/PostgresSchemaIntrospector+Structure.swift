@@ -19,7 +19,7 @@ nonisolated extension PostgresSchemaIntrospector {
     let found = try await rows(
       in: session,
       sql: """
-        SELECT c.oid::int8, obj_description(c.oid, 'pg_class') FROM pg_class c
+        SELECT c.oid::int8, NULLIF(obj_description(c.oid, 'pg_class'), '') FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')
         """,
@@ -43,7 +43,8 @@ nonisolated extension PostgresSchemaIntrospector {
     let query = """
       SELECT a.attnum::int4, a.attname::text, format_type(a.atttypid, a.atttypmod),
         a.attnotnull, pg_get_expr(d.adbin, d.adrelid), a.attidentity::text,
-        COALESCE(to_jsonb(a) ->> 'attgenerated', ''), col_description(a.attrelid, a.attnum)
+        COALESCE(to_jsonb(a) ->> 'attgenerated', ''),
+        NULLIF(col_description(a.attrelid, a.attnum), '')
       FROM pg_attribute a
       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
       WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped

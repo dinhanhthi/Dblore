@@ -2,7 +2,8 @@
 // A join without aliases can return two columns with the same name. The category filter
 // is per result column index, so hiding a value in one column leaves rows that only
 // match that value in the other column on screen. An empty filter does not drop rows
-// and does not rewrite the loaded result's row count.
+// and does not rewrite the loaded result's row count. A double is one category per distinct
+// shortest text, so 1.001 and 1.004 stay apart.
 
 import AppKit
 import Foundation
@@ -43,24 +44,27 @@ struct ColumnValueFilterTests {
     #expect(result.rowCount == rows.count)
   }
 
-  @Test("Values the grid draws the same are one category")
-  func sameGridTextIsOneCategory() {
+  @Test(
+    "Doubles with distinct text are distinct categories; long JSON and same-second dates collapse")
+  func distinctDoublesAreDistinctCategories() {
     let columns = [ColumnInfo(name: "n", type: "float8")]
     let rows: [[CellValue]] = [[.double(1.001)], [.double(1.004)], [.double(2.5)]]
     let result = CellResult(columns: columns, rows: rows, rowCount: rows.count)
-    let collapsed = ColumnValueFilter.categoryKey(for: .double(1.001))
+    let hidden = ColumnValueFilter.categoryKey(for: .double(1.001))
 
-    #expect(collapsed == ColumnValueFilter.categoryKey(for: .double(1.004)))
-    #expect(CellValue.double(1.001).displayString == CellValue.double(1.004).displayString)
+    #expect(hidden != ColumnValueFilter.categoryKey(for: .double(1.004)))
+    #expect(CellValue.double(1.001).displayString == "1.001")
+    #expect(CellValue.double(1.004).displayString == "1.004")
+    #expect(CellValue.double(0.0001).displayString == "0.0001")
     let categories = ColumnValueFilter.categories(in: result, columnIndex: 0)
-    #expect(categories.count == 2)
-    #expect(categories.first { $0.key == collapsed }?.count == 2)
+    #expect(categories.count == 3)
+    #expect(categories.first { $0.key == hidden }?.count == 1)
 
     let filtered = ResultGridModel(
       result: result, sortColumn: nil, ascending: true,
-      valueFilter: ColumnValueFilter().settingHidden([collapsed], for: 0))
-    #expect(filtered.rowCount == 1)
-    #expect(filtered.row(at: 0) == [.double(2.5)])
+      valueFilter: ColumnValueFilter().settingHidden([hidden], for: 0))
+    let shown = (0..<filtered.rowCount).map { filtered.row(at: $0) }
+    #expect(shown == [[.double(1.004)], [.double(2.5)]])
     #expect(result.rowCount == rows.count)
 
     let stem = String(repeating: "a", count: 60)
@@ -81,6 +85,13 @@ struct ColumnValueFilterTests {
     #expect(
       ColumnValueFilter.categoryKey(for: .date(start))
         == ColumnValueFilter.categoryKey(for: .date(sameSecond)))
+  }
+
+  @Test("NaN and infinite doubles show as words")
+  func nonFiniteDoublesShowAsWords() {
+    #expect(CellValue.double(.nan).displayString == "NaN")
+    #expect(CellValue.double(.infinity).displayString == "Infinity")
+    #expect(CellValue.double(-.infinity).displayString == "-Infinity")
   }
 
   @Test("Bytea categories are the bytes, not a process-local hash")

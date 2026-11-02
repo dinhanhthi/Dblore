@@ -1493,8 +1493,9 @@ extension DatabaseConnectionManager {
   /// sequence (`'i'`) goes with its column, and the dump's CREATE TABLE recreates it. Dropped
   /// types: the types that are not enums, without a table's row type or an array type (the
   /// server refuses DROP TYPE on those without CASCADE, so the batch rolls back anyway). System
-  /// schemas are left out: `objectKey` never keys them. No column is ever empty text: the
-  /// session reads an empty value as NULL.
+  /// schemas are left out: `objectKey` never keys them. No column is ever NULL
+  /// (`checkPostgresDropTargets` reads five text cells): the type branch fills the last with
+  /// `'-'`.
   static func postgresDropTargetsQuery(_ drops: SQLRestorePlan.PostgresDrops) -> String {
     var branches: [String] = []
     if !drops.tables.isEmpty {

@@ -32,21 +32,27 @@ struct SidebarSchemaFilterMenu: View {
       Button("Show All") { onChange([]) }
         .disabled(hidden.isEmpty)
     } label: {
-      HStack(spacing: Spacing.xs) {
-        Image(systemName: hiddenLabel == nil ? "eye" : "eye.slash")
-          .font(.system(size: 11))
-          .foregroundStyle(hiddenLabel == nil ? Color.foregroundMuted : Color.accent)
-        if let hiddenLabel {
+      if let hiddenLabel {
+        HStack(spacing: Spacing.xs) {
+          eyeIcon
           Text(hiddenLabel)
             .font(.system(size: 11))
             .foregroundStyle(Color.foreground)
             .lineLimit(1)
         }
+        .padding(.horizontal, Spacing.sm)
+        .frame(height: SidebarFilterMetrics.controlHeight)
+        .background(Capsule().fill(Color.controlBackground))
+        .overlay(HairlineBorder(shape: Capsule()))
+      } else {
+        // Icon only: a circle, not an oval capsule
+        eyeIcon
+          .frame(
+            width: SidebarFilterMetrics.controlHeight, height: SidebarFilterMetrics.controlHeight
+          )
+          .background(Circle().fill(Color.controlBackground))
+          .overlay(HairlineBorder(shape: Circle()))
       }
-      .padding(.horizontal, Spacing.sm)
-      .frame(height: SidebarFilterMetrics.controlHeight)
-      .background(Capsule().fill(Color.controlBackground))
-      .overlay(HairlineBorder(shape: Capsule()))
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
@@ -55,6 +61,12 @@ struct SidebarSchemaFilterMenu: View {
     .fixedSize()
     .help(hiddenLabel.map { "Schemas: \($0)" } ?? "Show or Hide Schemas")
     .accessibilityLabel(hiddenLabel.map { "Schemas, \($0)" } ?? "Show or Hide Schemas")
+  }
+
+  private var eyeIcon: some View {
+    Image(systemName: hiddenLabel == nil ? "eye" : "eye.slash")
+      .font(.system(size: 11))
+      .foregroundStyle(hiddenLabel == nil ? Color.foregroundMuted : Color.accent)
   }
 
   /// On while `schema` is listed

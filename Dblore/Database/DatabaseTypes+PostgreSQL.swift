@@ -157,9 +157,9 @@ extension DatabaseConnectionManager {
   nonisolated static func parseCellValue(
     from cell: PostgresCell, extensionTypes: [UInt32: String] = [:]
   ) -> CellValue {
-    // Check for NULL first
-    // PostgresNIO represents NULL as nil bytes
-    guard let bytes = cell.bytes, bytes.readableBytes > 0 else {
+    // PostgresNIO represents NULL as nil bytes; zero bytes are a real value ('' text, empty
+    // bytea)
+    guard let bytes = cell.bytes else {
       return .null
     }
 
@@ -187,7 +187,8 @@ extension DatabaseConnectionManager {
 
     case .float4:
       if let value = try? cell.decode(Float.self, context: .default) {
-        return .double(Double(value))
+        // Through its shortest text, so a real 1.1 is 1.1, not 1.100000023841858
+        return .double(Double(String(value)) ?? Double(value))
       }
 
     case .float8:
