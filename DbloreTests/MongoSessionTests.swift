@@ -797,17 +797,17 @@ struct MongoSessionTests {
           == .init(affectedRows: 3, tag: "INSERT 3"))
       #expect(
         try await run("db.\(name).updateMany({g: 1}, {$set: {v: 1}})")
-          == .init(affectedRows: 2, tag: "UPDATE 2"))
+          == .init(affectedRows: 2, tag: "UPDATE 2", modifiedRows: 2))
       // Matched, not modified: the same update again still counts 2.
       #expect(
         try await run("db.\(name).updateMany({g: 1}, {$set: {v: 1}})")
-          == .init(affectedRows: 2, tag: "UPDATE 2"))
+          == .init(affectedRows: 2, tag: "UPDATE 2", modifiedRows: 0))
       #expect(
         try await run("db.\(name).updateOne({_id: 9}, {$set: {g: 5}}, {upsert: true})")
-          == .init(affectedRows: 1, tag: "UPDATE 1"))
+          == .init(affectedRows: 1, tag: "UPDATE 1", modifiedRows: 0))
       #expect(
         try await run("db.\(name).replaceOne({_id: 3}, {g: 7})")
-          == .init(affectedRows: 1, tag: "UPDATE 1"))
+          == .init(affectedRows: 1, tag: "UPDATE 1", modifiedRows: 1))
       #expect(
         try await run("db.\(name).aggregate([{$match: {g: 1}}, {$out: \"\(target)\"}])")
           == .init(affectedRows: 0, tag: "AGGREGATE"))

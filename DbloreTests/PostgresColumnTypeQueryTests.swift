@@ -73,6 +73,8 @@ struct PostgresColumnTypeQueryTests {
       _ = try await manager.executeInternal("CREATE SCHEMA \(other)")
       _ = try await manager.executeInternal("CREATE TABLE \(first).t (v NUMERIC(5,2))")
       _ = try await manager.executeInternal("CREATE TABLE \(other).t (v NUMERIC(12,4))")
+      // A PostgreSQL result without a row carries no columns (`showsNoResult`)
+      _ = try await manager.executeInternal("INSERT INTO \(other).t VALUES (1.5)")
 
       let result = try await manager.executeInternal("SELECT v FROM \(other).t")
 

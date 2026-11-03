@@ -97,14 +97,15 @@ struct MongoDataLiveTests {
     do {
       try await manager.connect(config: config)
       let policy = ProtectionPolicy(protectionLevel: .none)
-      let documents = (0..<3).map {
+      let documents = (0..<150).map {
         MongoValue.document([MongoValue.Field("_id", .int32(Int32($0)))])
       }
       _ = try await manager.executeGatedMongoCommands(
         [.insertMany(collection: name, documents: documents)], policy: policy,
-        connectionEpoch: await manager.connectionEpoch, expectedRows: [3])
+        connectionEpoch: await manager.connectionEpoch, expectedRows: [150])
 
-      // Pages of one document; the lock comes back once the first is handed out
+      // The find's first batch is the server's default (101 documents), then getMore pages
+      // of one; the lock comes back once the first batch is handed out
       let pages = Pages()
       do {
         _ = try await manager.streamMongoDocuments(
@@ -116,7 +117,7 @@ struct MongoDataLiveTests {
         }
         Issue.record("Expected the relocked stream to be refused")
       } catch DatabaseError.connectionLocked {}
-      #expect(await pages.sizes == [1])
+      #expect(await pages.sizes == [101])
     } catch {
       await manager.disconnect()
       await MongoSessionTests.drop(name)
