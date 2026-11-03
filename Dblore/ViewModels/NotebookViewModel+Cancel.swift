@@ -2,10 +2,11 @@
 //  NotebookViewModel+Cancel.swift
 //  Dblore
 //
-//  Cancel stops the server work: the running statement's connection is closed and reopened by
-//  the actor (`DatabaseConnectionManager.cancelRunningStatement`). The Swift task alone would
-//  leave the backend running. When that discards pending Protected changes or the user's open
-//  transaction, the user confirms first (the warning's button / "Keep running").
+//  Cancel stops the server work: the actor interrupts the running statement and keeps the
+//  connection, or closes and reopens it (`DatabaseConnectionManager.cancelRunningStatement`).
+//  The Swift task alone would leave the backend running. When that discards pending Protected
+//  changes or the user's open transaction, the user confirms first (the warning's button /
+//  "Keep running").
 //
 
 import AppKit
@@ -110,10 +111,12 @@ extension NotebookViewModel {
   }
 
   /// The editor Run button's prompt when nothing would be discarded: a server interrupt (MySQL,
-  /// MongoDB), an in-app engine's (SQLite, DuckDB) or a connection reset (PostgreSQL)
+  /// MongoDB), PostgreSQL's server cancel, an in-app engine's (SQLite, DuckDB) or a connection
+  /// reset
   private func stopPrompt(_ status: RunningStatementStatus) -> QueryCancelWarning {
     guard status.interrupts else { return .sessionReset }
-    return status.keepsTransaction ? .statementInterrupt : .inProcessInterrupt
+    if status.keepsTransaction { return .statementInterrupt }
+    return status.cancelsOnServer ? .serverCancel : .inProcessInterrupt
   }
 
   private func confirmCancel(_ warning: QueryCancelWarning) async -> Bool {

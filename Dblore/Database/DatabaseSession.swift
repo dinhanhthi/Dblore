@@ -82,7 +82,8 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
 
   /// Stop the running statement without closing the session. Callers use this when
   /// `capabilities.cancelStrategy` is `.interrupt`. A reconnect cancel closes the
-  /// session instead.
+  /// session instead. PostgreSQL closes its socket here (dump, Parquet export): its Cancel uses
+  /// `cancelBackend`.
   func interrupt() async
 
   /// After an interrupt cancel ended the running statement: whether the transaction opened
@@ -91,12 +92,48 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
   /// (`DatabaseType.interruptAbortsTransaction`): the manager rolls it back.
   func transactionOpenAfterInterrupt() async -> Bool?
 
+  /// PostgreSQL: what `cancelBackend` matches, read at once (Cancel reads it in the actor turn
+  /// it decides in, before anything else is queued): this session's backend and the statement
+  /// running now, the oldest one in flight. Nil when that cannot be matched (no pid read at
+  /// open, nothing running, an empty text). Default nil.
+  func prepareCancelBackend() -> CancelBackendTarget?
+
+  /// PostgreSQL: the token of the oldest statement in flight (the one running), for a cancel
+  /// that cannot be matched (`prepareCancelBackend` nil). Default nil.
+  func runningStatementToken() -> UInt64?
+
+  /// PostgreSQL: whether the statement `token` names (`CancelBackendTarget.token`,
+  /// `runningStatementToken`) is still in flight: a failed cancel resets the session only then.
+  /// Default false.
+  func statementInFlight(_ token: UInt64) -> Bool
+
+  /// PostgreSQL: stop `target`'s statement from a short side connection to the same server
+  /// (`pg_cancel_backend`) and keep this session. True only when the server cancelled this
+  /// session's backend while it ran that statement; false otherwise, and the caller resets the
+  /// session instead while that statement is still in flight. Default false.
+  func cancelBackend(_ target: CancelBackendTarget) async -> Bool
+
   /// User-facing text for a driver error.
   func formatError(_ error: Error) -> String
 }
 
 nonisolated extension DatabaseSession {
   func transactionOpenAfterInterrupt() async -> Bool? { nil }
+  func prepareCancelBackend() -> CancelBackendTarget? { nil }
+  func runningStatementToken() -> UInt64? { nil }
+  func statementInFlight(_ token: UInt64) -> Bool { false }
+  func cancelBackend(_ target: CancelBackendTarget) async -> Bool { false }
+}
+
+/// What PostgreSQL's server cancel matches (`DatabaseSession.prepareCancelBackend`)
+nonisolated struct CancelBackendTarget: Sendable, Equatable {
+  /// `pg_backend_pid()` and its `backend_start::text`, read at open
+  let pid: Int32
+  let backendStart: String
+  /// The text of the statement running now (`pg_stat_activity.query`)
+  let statement: String
+  /// That statement's entry among the ones in flight (`DatabaseSession.statementInFlight`)
+  var token: UInt64 = 0
 }
 
 /// Builds a session that is not open yet. `open()` connects. Throws when the engine cannot

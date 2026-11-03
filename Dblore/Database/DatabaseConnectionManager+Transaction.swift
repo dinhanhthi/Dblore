@@ -175,7 +175,8 @@ extension DatabaseConnectionManager {
       }
       // A cancel interrupted the connection while this COMMIT was in flight
       if commitsUserTransaction {
-        try await noteUserCommitAfterInterrupt(since: epoch, generation: cancelGeneration)
+        try await noteUserCommitAfterInterrupt(
+          since: epoch, generation: cancelGeneration, commitState: commitState)
       }
       if action != .run {
         recordPending(
@@ -292,7 +293,8 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// A COMMIT of a transaction a DuckDB interrupt cancel aborted (`settleInterruptAbort`)
+  /// A COMMIT of a transaction a DuckDB interrupt or PostgreSQL cancel aborted
+  /// (`settleInterruptAbort`)
   static let commitAfterInterruptError = DatabaseError.transactionAborted(
     "The commit may not have been applied: cancelling the running statement rolled back the "
       + "open transaction. Check the data before running it again.")

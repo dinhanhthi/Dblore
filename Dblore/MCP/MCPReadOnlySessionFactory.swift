@@ -202,6 +202,22 @@ nonisolated final class MCPReadOnlySession: DatabaseSession, @unchecked Sendable
     await inner.transactionOpenAfterInterrupt()
   }
 
+  func prepareCancelBackend() -> CancelBackendTarget? {
+    inner.prepareCancelBackend()
+  }
+
+  func runningStatementToken() -> UInt64? {
+    inner.runningStatementToken()
+  }
+
+  func statementInFlight(_ token: UInt64) -> Bool {
+    inner.statementInFlight(token)
+  }
+
+  func cancelBackend(_ target: CancelBackendTarget) async -> Bool {
+    await inner.cancelBackend(target)
+  }
+
   func formatError(_ error: Error) -> String {
     inner.formatError(error)
   }

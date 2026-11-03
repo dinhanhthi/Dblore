@@ -71,7 +71,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// An interrupt cancel (`CancelStrategy.interrupt`) stops only the statement: the session and
   /// its open transaction survive, so the cancel reports nothing rolled back. MySQL
   /// `KILL QUERY` and MongoDB `killOp` do. SQLite and DuckDB may roll back an explicit
-  /// transaction on interrupt; PostgreSQL reconnects.
+  /// transaction on interrupt; a PostgreSQL cancel aborts it.
   nonisolated var interruptKeepsTransaction: Bool {
     switch self {
     case .mysql, .mongodb: true
@@ -80,9 +80,10 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   }
 
   /// An interrupt cancel always aborts an open transaction, whatever the statement was doing
-  /// (DuckDB, reads too). SQLite rolls it back only when the interrupted statement was writing.
+  /// (DuckDB, reads too; PostgreSQL's `pg_cancel_backend`, whose aborted transaction then only
+  /// accepts a ROLLBACK). SQLite rolls it back only when the interrupted statement was writing.
   nonisolated var interruptAbortsTransaction: Bool {
-    self == .duckdb
+    self == .duckdb || self == .postgresql
   }
 
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
@@ -103,7 +104,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsFunctions: true,
         supportsServerCursor: true,
         supportsSessionBrakes: true,
-        cancelStrategy: .reconnect,
+        cancelStrategy: .interrupt,
         cappedReadResetsSession: true,
         supportsExplainJSON: true,
         supportsExplainAnalyze: true,

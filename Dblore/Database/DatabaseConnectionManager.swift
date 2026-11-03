@@ -805,7 +805,7 @@ actor DatabaseConnectionManager {
   /// Runs `body` with `saved`'s client certificate and SSH secret (the caller's scoped ones, else
   /// the Keychain's) scoped under the accounts of `session`, the config with the lease username,
   /// which both accounts include. `body` alone when `session` has no Vault source.
-  private func withLeaseAccounts<T: Sendable>(
+  func withLeaseAccounts<T: Sendable>(
     _ session: ConnectionConfig, saved: ConnectionConfig, _ body: () async throws -> T
   ) async throws -> T {
     guard session.vault != nil else { return try await body() }

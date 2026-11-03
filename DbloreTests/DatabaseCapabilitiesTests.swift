@@ -59,7 +59,7 @@ struct DatabaseCapabilitiesTests {
     supportsFunctions: true,
     supportsServerCursor: true,
     supportsSessionBrakes: true,
-    cancelStrategy: .reconnect,
+    cancelStrategy: .interrupt,
     cappedReadResetsSession: true,
     supportsExplainJSON: true,
     supportsExplainAnalyze: true,
