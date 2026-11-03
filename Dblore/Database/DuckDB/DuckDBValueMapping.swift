@@ -88,6 +88,16 @@ nonisolated indirect enum DuckDBTypeNode: Sendable {
       "UNION(" + members.map { "\($0.name) \($0.type.name)" }.joined(separator: ", ") + ")"
     }
   }
+
+  /// `ColumnInfo.wallClock`: TIMESTAMP, TIMESTAMP_S / _MS / _NS hold a wall clock (UTC micros);
+  /// TIMESTAMP WITH TIME ZONE is an instant.
+  var isWallClock: Bool {
+    guard case .scalar(let id) = self else { return false }
+    return [
+      DuckDBTypeID.timestamp, DuckDBTypeID.timestampS, DuckDBTypeID.timestampMS,
+      DuckDBTypeID.timestampNS,
+    ].contains(id)
+  }
 }
 
 /// Reads DuckDB logical types and vectors through the loaded C API. Runs on the session queue.

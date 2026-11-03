@@ -267,7 +267,7 @@ extension DataExporter {
       ? result.columns.map { column in
         ColumnInfo(
           name: prefixedIfFormula(column.name, splitsFields: splitsFields), type: column.type,
-          origin: column.origin, sourceName: column.sourceName)
+          origin: column.origin, sourceName: column.sourceName, wallClock: column.wallClock)
       } : result.columns
     return CellResult(
       columns: columns,

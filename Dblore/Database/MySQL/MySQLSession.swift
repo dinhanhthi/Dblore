@@ -772,7 +772,15 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
       column.orgTable.isEmpty || column.orgName.isEmpty || column.schema.isEmpty
       ? nil
       : ColumnSourceName(schema: column.schema, table: column.orgTable, column: column.orgName)
-    return ColumnInfo(name: column.name, type: typeName(column), sourceName: source)
+    return ColumnInfo(
+      name: column.name, type: typeName(column), sourceName: source,
+      wallClock: isWallClock(column.columnType))
+  }
+
+  /// `ColumnInfo.wallClock` of a result column: DATETIME holds a wall clock (decoded as UTC);
+  /// TIMESTAMP is an instant, read in the session's pinned `+00:00` zone.
+  static func isWallClock(_ type: MySQLProtocol.DataType) -> Bool {
+    type == .datetime || type == .datetime2
   }
 
   /// MySQL type name of a result column. Binary character set (63) marks byte strings.

@@ -74,7 +74,7 @@ extension DatabaseConnectionManager {
         ColumnInfo(
           name: column.name, type: column.type,
           origin: ordinal.map { ColumnOrigin(tableID: tableID, columnOrdinal: $0) },
-          sourceName: source))
+          sourceName: source, wallClock: column.wallClock))
     }
     return resolved
   }

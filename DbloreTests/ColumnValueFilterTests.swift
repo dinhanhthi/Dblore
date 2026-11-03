@@ -45,7 +45,7 @@ struct ColumnValueFilterTests {
   }
 
   @Test(
-    "Doubles with distinct text are distinct categories; long JSON and same-second dates collapse")
+    "Doubles and dates with distinct text are distinct categories; long JSON collapses")
   func distinctDoublesAreDistinctCategories() {
     let columns = [ColumnInfo(name: "n", type: "float8")]
     let rows: [[CellValue]] = [[.double(1.001)], [.double(1.004)], [.double(2.5)]]
@@ -79,12 +79,13 @@ struct ColumnValueFilterTests {
     #expect(hiddenJSON.rowCount == 1)
     #expect(hiddenJSON.row(at: 0) == [.json("other")])
 
+    // Regression A5: dates show their fraction, so values 0.2 s apart are two categories
     let start = Date(timeIntervalSinceReferenceDate: 100)
     let sameSecond = start.addingTimeInterval(0.2)
-    #expect(CellValue.date(start).displayString == CellValue.date(sameSecond).displayString)
+    #expect(CellValue.date(start).displayString != CellValue.date(sameSecond).displayString)
     #expect(
       ColumnValueFilter.categoryKey(for: .date(start))
-        == ColumnValueFilter.categoryKey(for: .date(sameSecond)))
+        != ColumnValueFilter.categoryKey(for: .date(sameSecond)))
   }
 
   @Test("NaN and infinite doubles show as words")

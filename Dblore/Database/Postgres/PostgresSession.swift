@@ -319,7 +319,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
         name: column.name,
         type: DatabaseConnectionManager.postgresDataTypeName(
           column.dataType, extensionTypes: extensionTypes),
-        origin: column)
+        origin: column, wallClock: DatabaseConnectionManager.postgresWallClock(column.dataType))
     }
   }
 
@@ -350,7 +350,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
               name: cell.columnName,
               type: DatabaseConnectionManager.postgresDataTypeName(
                 cell.dataType, extensionTypes: extensionTypes),
-              origin: stream.columns.dropFirst(index).first))
+              origin: stream.columns.dropFirst(index).first,
+              wallClock: DatabaseConnectionManager.postgresWallClock(cell.dataType)))
         }
       }
       collected.rows.append(

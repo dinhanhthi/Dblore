@@ -28,18 +28,21 @@ extension TableRef {
 
 extension ColumnInfo {
   /// Row description: table OID becomes `TableRef`, attribute number becomes `columnOrdinal`.
-  nonisolated init(name: String, type: String, origin: PostgresColumn?) {
+  nonisolated init(name: String, type: String, origin: PostgresColumn?, wallClock: Bool = false) {
     if let origin {
       self.init(
         name: name, type: type, tableOID: UInt32(bitPattern: origin.tableOID),
-        attributeNumber: origin.columnAttributeNumber)
+        attributeNumber: origin.columnAttributeNumber, wallClock: wallClock)
     } else {
-      self.init(name: name, type: type, origin: nil as ColumnOrigin?)
+      self.init(name: name, type: type, origin: nil as ColumnOrigin?, wallClock: wallClock)
     }
   }
 
   /// Same identity as a row description, for callers that already hold the OID and attribute number.
-  nonisolated init(name: String, type: String, tableOID: UInt32?, attributeNumber: Int16?) {
+  nonisolated init(
+    name: String, type: String, tableOID: UInt32?, attributeNumber: Int16?,
+    wallClock: Bool = false
+  ) {
     let columnOrigin: ColumnOrigin?
     if let tableOID, let attributeNumber {
       columnOrigin = ColumnOrigin(
@@ -47,7 +50,7 @@ extension ColumnInfo {
     } else {
       columnOrigin = nil
     }
-    self.init(name: name, type: type, origin: columnOrigin)
+    self.init(name: name, type: type, origin: columnOrigin, wallClock: wallClock)
   }
 
   /// `origin` when the column was read from a table. Nil for an expression, which PostgreSQL
@@ -151,6 +154,12 @@ extension DatabaseConnectionManager {
       // For other user-defined types, show "USER-DEFINED"
       return "USER-DEFINED"
     }
+  }
+
+  /// `ColumnInfo.wallClock` of a result column: a `timestamp` (without time zone) holds a wall
+  /// clock, decoded as UTC; `timestamptz` is an instant.
+  nonisolated static func postgresWallClock(_ dataType: PostgresDataType) -> Bool {
+    dataType == .timestamp
   }
 
   /// Parse a cell value from PostgresCell. `extensionTypes` as in `postgresDataTypeName`.
@@ -262,8 +271,22 @@ extension DatabaseConnectionManager {
       }
 
     case .timestamp, .timestamptz:
-      if let value = try? cell.decode(Date.self, context: .default) {
-        return .date(value)
+      if cell.format == .text {
+        if let text = try? cell.decode(String.self, context: .default) {
+          return timestampCell(text: text)
+        }
+      } else {
+        // timestamp_send's infinity is the Int64 bound, its word as for DATE, never a far date
+        var buffer = bytes
+        if buffer.readableBytes == 8,
+          let micros = buffer.readInteger(endianness: .big, as: Int64.self),
+          micros == .max || micros == .min
+        {
+          return .string(micros > 0 ? "infinity" : "-infinity")
+        }
+        if let value = try? cell.decode(Date.self, context: .default) {
+          return .date(value)
+        }
       }
 
     case .uuid:
@@ -373,6 +396,68 @@ extension DatabaseConnectionManager {
     if days == Int32.max { return "infinity" }
     if days == Int32.min { return "-infinity" }
     return CivilDate.text(daysSince1970: Int(days) + 10_957, bcSuffix: " BC")
+  }
+
+  /// timestamp_out / timestamptz_out text in the ISO DateStyle (`2026-10-15 12:00:00.123456`,
+  /// then `+07`, `-02:30` or `+00:53:28` for timestamptz, then ` BC`) as `.date`: a naive value
+  /// is its wall clock as UTC, like the binary format. `infinity` / `-infinity` stay words, as
+  /// for DATE; any other text (another DateStyle) is kept as is, never NULL.
+  private nonisolated static func timestampCell(text: String) -> CellValue {
+    if text == "infinity" || text == "-infinity" { return .string(text) }
+    return timestampDate(text).map(CellValue.date) ?? .string(text)
+  }
+
+  private nonisolated static func timestampDate(_ text: String) -> Date? {
+    var rest = Substring(text)
+    let isBC = rest.hasSuffix(" BC")
+    if isBC { rest = rest.dropLast(3) }
+    let halves = rest.split(separator: " ", omittingEmptySubsequences: false)
+    guard halves.count == 2 else { return nil }
+    let date = halves[0].split(separator: "-", omittingEmptySubsequences: false)
+    guard date.count == 3, date[0].count >= 4, date[1].count == 2, date[2].count == 2,
+      let year = number(date[0]), let month = number(date[1]), let day = number(date[2]),
+      (1...12).contains(month), (1...31).contains(day)
+    else { return nil }
+    var time = halves[1]
+    var offset = 0
+    if let signIndex = time.firstIndex(where: { $0 == "+" || $0 == "-" }) {
+      let fields = time[time.index(after: signIndex)...].split(
+        separator: ":", omittingEmptySubsequences: false)
+      guard (1...3).contains(fields.count), fields.allSatisfy({ $0.count == 2 }) else {
+        return nil
+      }
+      let values = fields.compactMap(number)
+      guard values.count == fields.count else { return nil }
+      offset = zip(values, [3_600, 60, 1]).reduce(0) { $0 + $1.0 * $1.1 }
+      if time[signIndex] == "-" { offset = -offset }
+      time = time[..<signIndex]
+    }
+    let clock = time.split(separator: ".", omittingEmptySubsequences: false)
+    guard (1...2).contains(clock.count) else { return nil }
+    let hms = clock[0].split(separator: ":", omittingEmptySubsequences: false)
+    guard hms.count == 3, hms.allSatisfy({ $0.count == 2 }),
+      let hour = number(hms[0]), let minute = number(hms[1]), let second = number(hms[2]),
+      hour < 24, minute < 60, second < 60
+    else { return nil }
+    var micros = 0
+    if clock.count == 2 {
+      let padded = clock[1] + String(repeating: "0", count: max(0, 6 - clock[1].count))
+      guard (1...6).contains(clock[1].count), let fraction = number(Substring(padded)) else {
+        return nil
+      }
+      micros = fraction
+    }
+    let days = CivilDate.daysSince1970(year: isBC ? 1 - year : year, month: month, day: day)
+    let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second - offset
+    return Date(timeIntervalSince1970: Double(seconds) + Double(micros) / 1_000_000)
+  }
+
+  /// ASCII digits only (no sign), at most 9 so the arithmetic never overflows.
+  private nonisolated static func number(_ text: Substring) -> Int? {
+    guard !text.isEmpty, text.count <= 9, text.allSatisfy({ $0.isASCII && $0.isNumber }) else {
+      return nil
+    }
+    return Int(text)
   }
 
   /// float8out's text: the shortest round-trip digits, fixed for decimal exponents -4...14

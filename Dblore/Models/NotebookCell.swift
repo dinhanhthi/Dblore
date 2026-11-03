@@ -304,18 +304,24 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
   /// MySQL: source names from the column definition, until the manager resolves `origin`.
   /// Never persisted.
   nonisolated let sourceName: ColumnSourceName?
+  /// A naive date-time column (PostgreSQL `timestamp`, MySQL DATETIME, DuckDB TIMESTAMP): its
+  /// `.date` values hold the stored wall clock as a UTC instant and show without a time zone.
+  /// Set once by the session that read the column; false (zoned) when unknown.
+  nonisolated let wallClock: Bool
 
   nonisolated init(
-    name: String, type: String, origin: ColumnOrigin? = nil, sourceName: ColumnSourceName? = nil
+    name: String, type: String, origin: ColumnOrigin? = nil, sourceName: ColumnSourceName? = nil,
+    wallClock: Bool = false
   ) {
     self.name = name
     self.type = type
     self.origin = origin
     self.sourceName = sourceName
+    self.wallClock = wallClock
   }
 
   private enum CodingKeys: String, CodingKey {
-    case name, type, origin, tableOID, attributeNumber
+    case name, type, origin, tableOID, attributeNumber, wallClock
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -333,6 +339,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
       self.origin = nil
     }
     sourceName = nil
+    wallClock = try container.decodeIfPresent(Bool.self, forKey: .wallClock) ?? false
   }
 
   nonisolated func encode(to encoder: Encoder) throws {
@@ -340,6 +347,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     try container.encode(name, forKey: .name)
     try container.encode(type, forKey: .type)
     try container.encodeIfPresent(origin, forKey: .origin)
+    if wallClock { try container.encode(true, forKey: .wallClock) }
   }
 }
 
@@ -371,18 +379,17 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     }
   }
 
-  // Cached date formatters for performance
-  private nonisolated static let displayDateFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .medium
-    formatter.timeStyle = .medium
-    return formatter
-  }()
-
   private nonisolated(unsafe) static let iso8601Formatter = ISO8601DateFormatter()
 
-  /// Display string for the value. Nonisolated: the notebook search scans it off the main actor
-  nonisolated var displayString: String {
+  /// Display string for the value, a date as zoned (`displayString(wallClock: false)`).
+  /// Nonisolated: the notebook search scans it off the main actor
+  nonisolated var displayString: String { displayString(wallClock: false) }
+
+  /// Display string for a value of a column whose `ColumnInfo.wallClock` is `wallClock`.
+  /// A date shows `yyyy-MM-dd HH:mm:ss[.ffffff]` (fraction without trailing zeros): naive
+  /// (`wallClock`) in UTC with no zone, so the stored wall clock; zoned in the Mac's time zone
+  /// followed by its offset, `±HH:MM`.
+  nonisolated func displayString(wallClock: Bool) -> String {
     switch self {
     case .string(let value):
       return value
@@ -406,10 +413,45 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
       }
       return value
     case .date(let value):
-      return Self.displayDateFormatter.string(from: value)
+      return Self.dateText(value, wallClock: wallClock)
     case .data(let value):
       return "<\(value.count) bytes>"
     }
+  }
+
+  /// `date` as `displayString(wallClock:)` text, built from whole microseconds in the proleptic
+  /// Gregorian calendar (the engines' own), so a stored `.123456` never shows as `.123455`.
+  /// A date beyond the microsecond range falls back to ISO 8601.
+  private nonisolated static func dateText(_ date: Date, wallClock: Bool) -> String {
+    // The default zone is the Mac's own unless set (TimeZone.current ignores a set default)
+    let offset = wallClock ? 0 : NSTimeZone.default.secondsFromGMT(for: date)
+    guard
+      let utcMicros = Int64(exactly: (date.timeIntervalSince1970 * 1_000_000).rounded()),
+      case (let micros, false) = utcMicros.addingReportingOverflow(Int64(offset) * 1_000_000)
+    else { return iso8601Formatter.string(from: date) }
+    let perDay: Int64 = 86_400_000_000
+    let days = micros >= 0 ? micros / perDay : (micros + 1) / perDay - 1
+    let ofDay = micros - days * perDay
+    let seconds = Int(ofDay / 1_000_000)
+    var text =
+      CivilDate.text(daysSince1970: Int(days), bcSuffix: "")
+      + String(format: " %02d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
+    let fraction = Int(ofDay % 1_000_000)
+    if fraction != 0 {
+      var digits = String(format: "%06d", fraction)
+      while digits.hasSuffix("0") { digits.removeLast() }
+      text += "." + digits
+    }
+    if !wallClock {
+      let magnitude = abs(offset)
+      text +=
+        (offset < 0 ? "-" : "+")
+        + String(format: "%02d:%02d", magnitude / 3_600, magnitude / 60 % 60)
+      // A local mean time offset before standard zones keeps its seconds
+      if magnitude % 60 != 0 { text += String(format: ":%02d", magnitude % 60) }
+    }
+    // Year 0 and before (1 BC and before), marked the way PostgreSQL prints it
+    return days < -719_162 ? text + " BC" : text
   }
 
   /// Full string representation (not truncated). Nonisolated: CSV export builds off the main actor

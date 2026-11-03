@@ -411,7 +411,7 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
       let type = mapping.node(consuming: library.columnLogicalType(read.result, index))
       read.types.append(type)
       let name = library.columnName(read.result, index).map { String(cString: $0) } ?? ""
-      columns.append(ColumnInfo(name: name, type: type.name))
+      columns.append(ColumnInfo(name: name, type: type.name, wallClock: type.isWallClock))
     }
     let id = UUID()
     reads[id] = read

@@ -635,7 +635,9 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       guard let origin = column.tableOrigin, let enrichedType = typeMap[origin] else {
         return column
       }
-      return ColumnInfo(name: column.name, type: enrichedType, origin: column.origin)
+      return ColumnInfo(
+        name: column.name, type: enrichedType, origin: column.origin,
+        wallClock: column.wallClock)
     }
   }
 

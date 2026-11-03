@@ -223,7 +223,7 @@ extension NotebookViewModel {
           origin: ordinals[read.name].map { ColumnOrigin(tableID: tableID, columnOrdinal: $0) },
           sourceName: source.map {
             ColumnSourceName(schema: $0.schema, table: $0.table, column: read.name)
-          })
+          }, wallClock: read.wallClock)
       }
     }
     // The edit target's key order; the cached key when the table did not resolve

@@ -30,6 +30,14 @@ struct DuckDBSessionUnitTests {
     #expect(calledOnMain.value == false)
     #expect(session.formatError(error) == "DuckDB plugin could not be loaded: plugin missing")
   }
+
+  @Test("Only the naive timestamp types are wall clock")
+  func wallClockTypes() {
+    #expect(DuckDBTypeNode.scalar(DuckDBTypeID.timestamp).isWallClock)
+    #expect(DuckDBTypeNode.scalar(DuckDBTypeID.timestampNS).isWallClock)
+    #expect(!DuckDBTypeNode.scalar(DuckDBTypeID.timestampTZ).isWallClock)
+    #expect(!DuckDBTypeNode.list(.scalar(DuckDBTypeID.timestamp)).isWallClock)
+  }
 }
 
 @Suite("DuckDB session", .requiresDuckDBPlugin, .serialized)

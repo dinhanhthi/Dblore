@@ -176,7 +176,7 @@ nonisolated enum MySQLValueConverter {
   private static func dateCell(_ parts: DateParts, isDate: Bool, decimals: UInt8) -> CellValue {
     guard isDate || parts.year == 0 || parts.month == 0 || parts.day == 0 else {
       let seconds =
-        daysSinceEpoch(year: parts.year, month: parts.month, day: parts.day) * 86_400
+        CivilDate.daysSince1970(year: parts.year, month: parts.month, day: parts.day) * 86_400
         + parts.hour * 3_600 + parts.minute * 60 + parts.second
       return .date(Date(timeIntervalSince1970: Double(seconds) + Double(parts.micros) / 1_000_000))
     }
@@ -186,16 +186,6 @@ nonisolated enum MySQLValueConverter {
       text += fractionText(micros: parts.micros, decimals: decimals)
     }
     return .string(text)
-  }
-
-  /// Days from 1970-01-01 in the proleptic Gregorian calendar (Howard Hinnant's algorithm).
-  private static func daysSinceEpoch(year: Int, month: Int, day: Int) -> Int {
-    let y = month <= 2 ? year - 1 : year
-    let era = (y >= 0 ? y : y - 399) / 400
-    let yearOfEra = y - era * 400
-    let dayOfYear = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1
-    let dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear
-    return era * 146_097 + dayOfEra - 719_468
   }
 
   /// Binary TIME: length 0 (zero), 8 or 12; is_negative, days u32 LE, hour, minute, second,

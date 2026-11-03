@@ -105,6 +105,13 @@ import Testing
     #expect(Self.cell(Self.binary(Array(bytes.prefix(7)), .datetime)) == whole)
   }
 
+  @Test func onlyDatetimeIsWallClock() {
+    #expect(MySQLSession.isWallClock(.datetime))
+    #expect(MySQLSession.isWallClock(.datetime2))
+    #expect(!MySQLSession.isWallClock(.timestamp))
+    #expect(!MySQLSession.isWallClock(.timestamp2))
+  }
+
   @Test func dateValue() {
     // No time and no time zone: the date text, never midnight UTC.
     let expected = CellValue.string("2024-01-02")
