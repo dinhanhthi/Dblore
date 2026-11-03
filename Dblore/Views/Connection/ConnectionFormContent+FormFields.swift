@@ -80,6 +80,11 @@ extension ConnectionFormContent {
             .foregroundColor(.foregroundMuted)
         case .vault:
           vaultFields()
+        case .ask:
+          Text(Self.askOnConnectNote)
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
 
@@ -289,8 +294,8 @@ extension ConnectionFormContent {
       }
 
       // The URI keeps no password: it moves here and is saved in the Keychain. A Vault source
-      // leases it instead.
-      if isMongoDB, connectionConfig.vault == nil {
+      // leases it instead; Ask on connect asks for it at each connect.
+      if isMongoDB, connectionConfig.vault == nil, !connectionConfig.askPasswordOnConnect {
         FormField(label: "Password") {
           PasswordInputField(password: $connectionConfig.password)
         }

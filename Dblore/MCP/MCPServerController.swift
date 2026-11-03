@@ -281,7 +281,9 @@ final class MCPServerController {
 
   /// The pool's lookup: an allowlisted entry with its password, read off the main actor; nil
   /// for a locked one (any identity it reaches, unlocked in the app or not), before its password
-  /// is read. A password the Keychain could not read throws (the pool refuses the row).
+  /// is read. A password the Keychain could not read throws (the pool refuses the row). An ask
+  /// on connect row reads none (a sibling row's under the same key must not connect it): the
+  /// pool refuses it (`refuseUnattended`).
   nonisolated static func entryLookup(
     settings: AppSettings,
     savedConnections: @escaping @MainActor @Sendable () -> [ConnectionHistoryEntry],
@@ -293,7 +295,7 @@ final class MCPServerController {
         !LockIdentity.all(entry.config).contains(where: lockSource.isLocked)
       else { return nil }
       if entry.config.databaseType.capabilities.usesPassword,
-        let saved = try password(entry.config)
+        !entry.config.askPasswordOnConnect, let saved = try password(entry.config)
       {
         entry.config.password = saved
       }

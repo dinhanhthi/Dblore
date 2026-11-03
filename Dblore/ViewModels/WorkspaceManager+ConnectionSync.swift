@@ -15,6 +15,7 @@
 //  as a runtime change.
 //
 
+import AppKit
 import Foundation
 
 /// A connect held by `WorkspaceManager.connect(config:defaultCommitStyle:)`
@@ -495,12 +496,17 @@ extension WorkspaceManager {
   ///   then writes them; otherwise the saved row's AI fields are kept.
   /// - Parameter fromForm: true when `config` comes from the connection form: the save writes its
   ///   color and group (nil clears them); otherwise the saved row's are kept.
+  /// - Parameter passwordPromptAnchor: where an ask-on-connect connection asks for its password
+  ///   (nil: this workspace's window). Every connect asks after the lock step when the config
+  ///   holds no typed password (`ConnectionPasswordPromptCoordinator.asks`), auto-connect too;
+  ///   a Reconnect or a new window that carries it asks nothing. Cancel throws `unlockRequired`
+  ///   with nothing connected: a connected workspace stays connected.
   func connect(
     config: ConnectionConfig, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
     isAutoConnect: Bool = false,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
-    aiFieldsEdited: Bool = false, fromForm: Bool = false
+    aiFieldsEdited: Bool = false, fromForm: Bool = false, passwordPromptAnchor: NSWindow? = nil
   ) async throws {
     lastUnlockConnectError = nil
     // The pin of a switched MongoDB connection holds on its own server only (Reconnect,
@@ -520,20 +526,33 @@ extension WorkspaceManager {
       config = try await unlockedForConnect(config)
     }
     if !isAutoConnect { await unlockAttachedFiles(of: config) }
-    guard
-      await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
-    else {
-      throw WorkspaceConnectError.pendingTransactionKept
-    }
-    // Checked again after the prompts, before the weakening unlock is asked
-    try throwIfKeychainKeyInUse(config)
-    if Self.connectRequiresUnlock(
-      current: workspace.connectionConfig,
-      saved: Self.savedTransportRow(for: config, defaults: defaults), new: config,
-      defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
-    {
-      holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
-      throw WorkspaceConnectError.unlockRequired
+    // Before the pending transaction is resolved and the old session dropped, so a Cancel
+    // changes nothing
+    let stateBeforePrompt = connectionState
+    config = try await askingPassword(config, for: .connect, anchor: passwordPromptAnchor)
+    do {
+      guard
+        await resolvePendingTransaction(
+          action: .disconnect, defaultCommitStyle: defaultCommitStyle)
+      else {
+        throw WorkspaceConnectError.pendingTransactionKept
+      }
+      // Checked again after the prompts, before the weakening unlock is asked
+      try throwIfKeychainKeyInUse(config)
+      if Self.connectRequiresUnlock(
+        current: workspace.connectionConfig,
+        saved: Self.savedTransportRow(for: config, defaults: defaults), new: config,
+        defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
+      {
+        holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+        throw WorkspaceConnectError.unlockRequired
+      }
+    } catch {
+      // The password prompt's "connecting" ends with the connect it was shown for
+      if connectionState == .connecting, stateBeforePrompt != .connecting {
+        connectionState = stateBeforePrompt
+      }
+      throw error
     }
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
@@ -560,21 +579,51 @@ extension WorkspaceManager {
   /// The Welcome form's connect on the workspace it just created. `weakeningUnlocked`: the Safe
   /// Mode unlock was granted on the Welcome window (`unlockWelcomeWeakening(of:)`), so the
   /// connect is held and completed at once, without asking again; otherwise it is `connect`.
+  /// Ask on connect asks on `passwordPromptAnchor` (the Welcome window: this workspace has no
+  /// window yet) in both cases.
   func connectFromWelcome(
     config: ConnectionConfig, aiFieldsEdited: Bool, weakeningUnlocked: Bool,
     defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
-    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
+    passwordPromptAnchor: NSWindow? = nil
   ) async throws {
     guard weakeningUnlocked else {
       try await connect(
         config: config, defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword,
-        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, fromForm: true,
+        passwordPromptAnchor: passwordPromptAnchor)
       return
     }
     await unlockAttachedFiles(of: config)
+    let config = try await askingPassword(config, for: .connect, anchor: passwordPromptAnchor)
     holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
     try await completePendingWeakeningConnect()
+  }
+
+  /// `config` with the password typed in the prompt (on `anchor`, else this workspace's window)
+  /// when it asks on connect and holds none; else as is. A connect shows "connecting" first,
+  /// unless the workspace is connected (it stays so until the new connect drops the session);
+  /// Cancel restores the state from before and throws `WorkspaceConnectError.unlockRequired`.
+  /// The password is in memory only: in the returned config, never stored.
+  func askingPassword(
+    _ config: ConnectionConfig, for action: ConnectionPasswordRequest.Action,
+    anchor: NSWindow? = nil
+  ) async throws -> ConnectionConfig {
+    guard ConnectionPasswordPromptCoordinator.asks(config) else { return config }
+    let anchor = anchor ?? NewWindowStore.shared.findWindow(for: id)
+    let shown = connectionState
+    guard action == .connect, !shown.isConnected else {
+      return try await passwordPrompt.withTypedPassword(config, for: action, anchor: anchor)
+    }
+    connectionState = .connecting
+    do {
+      return try await passwordPrompt.withTypedPassword(config, for: action, anchor: anchor)
+    } catch {
+      // Nothing connected: no "connecting" left on screen
+      connectionState = shown == .connecting ? .disconnected : shown
+      throw error
+    }
   }
 
   /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate, SSH

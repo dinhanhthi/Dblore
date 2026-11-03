@@ -425,16 +425,18 @@ struct AppWelcomeView: View {
     try await connectAndCreateWorkspaceForWelcome(config, aiFieldsEdited: aiFieldsEdited)
   }
 
-  /// A locked connection asks first and is tested with its saved password; cancel keeps the
-  /// form as it is.
+  /// A locked connection asks first and is tested with its saved password; Ask on connect asks
+  /// for the password on this window, used for this test only. Cancel keeps the form as it is.
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
     let blocked = LockCenter.shared.registry.refusal(for: config) != nil
     guard await unlock(config, reason: "Unlock this connection to test it") else {
       throw WorkspaceConnectError.unlockRequired
     }
+    let tested = try await ConnectionPasswordPromptCoordinator.shared.withTypedPassword(
+      blocked ? try recentManager.withSavedPassword(config) : config, for: .test,
+      anchor: hostWindow.window)
     let tempManager = Self.makeTestConnectionManager()
-    return try await tempManager.testConnection(
-      config: blocked ? try recentManager.withSavedPassword(config) : config)
+    return try await tempManager.testConnection(config: tested)
   }
 
   /// Test Connection before a workspace exists. Asks through the app-wide trust sheet.
@@ -458,8 +460,10 @@ struct AppWelcomeView: View {
     let windowManager = WorkspaceWindowManager.shared
     let manager = windowManager.newWorkspace(connection: config)
     do {
+      // Ask on connect asks on this window: the workspace has none yet
       try await manager.connectFromWelcome(
-        config: config, aiFieldsEdited: aiFieldsEdited, weakeningUnlocked: unlocked)
+        config: config, aiFieldsEdited: aiFieldsEdited, weakeningUnlocked: unlocked,
+        passwordPromptAnchor: hostWindow.window)
       isShowingConnectionSidebar = false
       onWorkspaceSelected?(manager.id)
     } catch {

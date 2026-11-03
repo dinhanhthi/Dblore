@@ -66,6 +66,8 @@ class WorkspaceManager: Identifiable {
   let passwords: any ConnectionPasswordStore
   /// Asks before a connect of a locked connection (tests pass a registry and prompter double)
   let lockCenter: LockCenter
+  /// Asks for an ask-on-connect connection's password (tests pass a presenter double)
+  let passwordPrompt: ConnectionPasswordPromptCoordinator
   /// AI chat state shared by the workspace: schema structure, plus the rows of the read-only
   /// queries it runs (shown to the user only, never sent to the AI provider)
   let aiAssistant = AIAssistantViewModel()
@@ -467,13 +469,15 @@ class WorkspaceManager: Identifiable {
     connectionManager: DatabaseConnectionManager = .withTrustPrompt(),
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    sanitizesFileConfig: Bool = true, lockCenter: LockCenter = .shared
+    sanitizesFileConfig: Bool = true, lockCenter: LockCenter = .shared,
+    passwordPrompt: ConnectionPasswordPromptCoordinator = .shared
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
     self.defaults = defaults
     self.passwords = passwords
     self.lockCenter = lockCenter
+    self.passwordPrompt = passwordPrompt
     // A config read from a file (`sanitizesFileConfig`; off for the app's in-memory config, see
     // `createNew(connection:)`): its AI policy never weakens the saved one, the form opens on the
     // saved color and group (a form connect writes what the form shows), its scripts and
@@ -973,14 +977,16 @@ class WorkspaceManager: Identifiable {
   }
 
   /// Test from a workspace form. A locked connection asks first (on this workspace's window) and
-  /// is tested with its saved password, read after the grant.
-  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
-  ///   tested or read)
+  /// is tested with its saved password, read after the grant. Ask on connect asks for the
+  /// password next, used for this test only (nothing keeps it).
+  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock or the password prompt
+  ///   was cancelled (nothing tested or read)
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     var config = config
     if lockCenter.registry.refusal(for: config) != nil {
       config = try await unlockedForConnect(config, to: "test it")
     }
+    config = try await askingPassword(config, for: .test)
     return try await connectionManager.testConnection(config: config)
   }
 

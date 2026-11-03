@@ -279,13 +279,17 @@ actor MCPConnectionPool {
   }
 
   /// Refuses what would otherwise fail on a missing secret or wait for a trust prompt, a
-  /// password command (an MCP client must not run the user's scripts) and a Vault connection
-  /// (its lease is renewed and revoked by a workspace). Shortcuts' Open Connection asks it too,
+  /// password command (an MCP client must not run the user's scripts), a connection that asks
+  /// for its password on connect (only the app window asks; the lookups read no Keychain
+  /// password for it) and a Vault connection (its lease is renewed and revoked by a workspace). Shortcuts' Open Connection asks it too,
   /// before it connects in a window.
   /// Reads the Keychain stores here, off the main actor.
   func refuseUnattended(_ config: ConnectionConfig) throws {
     if config.passwordCommandScript != nil, config.databaseType.capabilities.usesPassword {
       throw MCPConnectionError.passwordCommand
+    }
+    if config.askPasswordOnConnect, config.databaseType.capabilities.usesPassword {
+      throw MCPConnectionError.passwordAsksOnConnect
     }
     if config.vault != nil { throw VaultConnectionRefusal() }
     if config.clientCertificate != nil,

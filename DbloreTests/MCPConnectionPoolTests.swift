@@ -32,6 +32,16 @@ private final class EntryBook {
   }
 }
 
+/// How many times a lookup read a saved password.
+private final class KeychainReadCount: @unchecked Sendable {
+  private let lock = NSLock()
+  private var reads = 0
+
+  var count: Int { lock.withLock { reads } }
+
+  func increment() { lock.withLock { reads += 1 } }
+}
+
 /// A clock the test moves by hand.
 private final class ManualClock: @unchecked Sendable {
   private let lock = NSLock()
@@ -287,6 +297,42 @@ struct MCPConnectionPoolTests {
     }
     #expect(factory.sessions.isEmpty)
     await pool.closeAll()
+  }
+
+  @Test("An ask-on-connect row is refused before connecting and its Keychain password never read")
+  func askOnConnectRefusedWithoutKeychainRead() async throws {
+    var flagged = postgres(password: "", database: "ask")
+    flagged.askPasswordOnConnect = true
+    let entry = ConnectionHistoryEntry(config: flagged)
+    let name = "MCPConnectionPoolTests-\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+    let settings = AppSettings(defaults: suite)
+    settings.mcpAllowedConnectionIDs = [entry.id]
+    // A sibling row's password under the same Keychain key would connect it without asking
+    let reads = KeychainReadCount()
+    let password: @Sendable (ConnectionConfig) throws -> String? = { _ in
+      reads.increment()
+      return "sibling"
+    }
+    let mcp = MCPServerController.entryLookup(
+      settings: settings, savedConnections: { [entry] }, password: password,
+      lockSource: LockRegistry())
+    let id = entry.id
+    let shortcuts = HeadlessAccessRule(lockSource: LockRegistry()).entryLookup(
+      saved: { [entry] }, caller: { .shortcuts(enabled: true, allowlist: [id]) },
+      password: password)
+    for lookup in [mcp, shortcuts] {
+      let pool = MCPConnectionPool(
+        entry: lookup, sessionFactory: factory, certificates: certificates,
+        sshCredentials: sshCredentials, knownHosts: knownHosts, lockSource: LockRegistry())
+      await #expect(throws: MCPConnectionError.passwordAsksOnConnect) {
+        _ = try await manager(pool, id)
+      }
+      await pool.closeAll()
+    }
+    #expect(reads.count == 0)
+    #expect(factory.sessions.isEmpty)
   }
 
   @Test("A Vault connection is refused before connecting: its lease needs the app window")

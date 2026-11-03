@@ -236,6 +236,49 @@ struct ConnectionFormVaultDraftTests {
     #expect(ConnectionFormContent.withVaultRules(plain) == plain)
   }
 
+  @Test(
+    "Ask on connect clears Vault and the password command and blanks the password; another source clears it"
+  )
+  func askOnConnectSourceRules() {
+    typealias Form = ConnectionFormContent
+    var config = ConnectionConfig(
+      host: "db.test", port: 5432, database: "app", username: "u", password: "saved")
+    config.passwordCommandScript = "pw.sh"
+    let command = PasswordSourceDraft(
+      config: config, passwordBeforeVault: nil, choosesPasswordCommand: true)
+    #expect(command.source == .command)
+
+    let ask = Form.selecting(.ask, in: command)
+    #expect(ask.source == .ask)
+    #expect(ask.config.askPasswordOnConnect)
+    #expect(ask.config.passwordCommandScript == nil)
+    #expect(!ask.choosesPasswordCommand)
+    // Blanked, so Test and Connect ask; kept for a switch back
+    #expect(ask.config.password.isEmpty)
+    #expect(ask.passwordBeforeVault == "saved")
+
+    let saved = Form.selecting(.saved, in: ask)
+    #expect(saved.source == .saved)
+    #expect(!saved.config.askPasswordOnConnect)
+    #expect(saved.config.password == "saved")
+    #expect(saved.passwordBeforeVault == nil)
+
+    // Vault, then Ask on connect, then Vault again: the password Vault blanked is still kept
+    let askFromVault = Form.selecting(.ask, in: Form.selecting(.vault, in: saved))
+    #expect(askFromVault.config.vault == nil)
+    #expect(askFromVault.config.askPasswordOnConnect)
+    #expect(askFromVault.passwordBeforeVault == "saved")
+    let vault = Form.selecting(.vault, in: askFromVault)
+    #expect(vault.source == .vault)
+    #expect(!vault.config.askPasswordOnConnect)
+    #expect(Form.selecting(.saved, in: vault).config.password == "saved")
+
+    // A password that still reached an Ask on connect config (a pasted URI) is never submitted
+    var pasted = ask.config
+    pasted.password = "from-uri"
+    #expect(Form.withVaultRules(pasted).password.isEmpty)
+  }
+
   @Test("Test Vault leases with the draft's secret alone, reports user and TTL, and revokes")
   func testVaultUsesDraftAndRevokes() async throws {
     let client = VaultFormFakeClient()
