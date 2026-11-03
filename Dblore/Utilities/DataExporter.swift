@@ -70,17 +70,25 @@ enum DataExporter {
     return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
   }
 
-  /// One escaped TSV field. The formula prefix (text cells only, first scalar only: the
-  /// quoting keeps every line in this field) is added before escaping, so it lands inside the
-  /// quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`. A date is written as
+  /// One escaped TSV field. The formula prefix (text and decimal cells only, first scalar only:
+  /// the quoting keeps every line in this field) is added before escaping, so it lands inside
+  /// the quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`. A date is written as
   /// its column's text output (`wallClock`, the column's `ColumnInfo.wallClock`).
   static func tsvField(
     _ value: CellValue, wallClock: Bool = false, neutralizesFormulas: Bool
   ) -> String {
-    if neutralizesFormulas, case .string(let text) = value {
+    if neutralizesFormulas, let text = formulaCheckedText(value) {
       return escapeTSV(prefixedIfFormula(text, splitsFields: false))
     }
     return escapeTSV(value.outputString(wallClock: wallClock))
+  }
+
+  /// The text the copy formats check for a formula: a text or decimal cell's
+  private static func formulaCheckedText(_ value: CellValue) -> String? {
+    switch value {
+    case .string(let text), .decimal(let text): text
+    default: nil
+    }
   }
 
   /// Whether column `index` of `columns` is naive (`ColumnInfo.wallClock`); false past the end
@@ -133,13 +141,13 @@ enum DataExporter {
       .joined(separator: "\n")
   }
 
-  /// One CSV field quoted if needed. The formula prefix applies to text cells only, as in
-  /// `tsvField`. A field with a tab is quoted too, and a formula after a tab is prefixed: a
-  /// spreadsheet may split pasted text on tabs, and that piece must not run.
+  /// One CSV field quoted if needed. The formula prefix applies to text and decimal cells only,
+  /// as in `tsvField`. A field with a tab is quoted too, and a formula after a tab is prefixed:
+  /// a spreadsheet may split pasted text on tabs, and that piece must not run.
   private static func csvField(
     _ value: CellValue, wallClock: Bool = false, neutralizesFormulas: Bool
   ) -> String {
-    guard neutralizesFormulas, case .string(let text) = value else {
+    guard neutralizesFormulas, let text = formulaCheckedText(value) else {
       return escapeCSV(value.outputString(wallClock: wallClock), quote: .ifNeeded)
     }
     let field = prefixedAfterTabs(prefixedIfFormula(text, splitsFields: false))

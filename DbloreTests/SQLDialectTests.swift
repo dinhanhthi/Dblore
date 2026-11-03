@@ -209,6 +209,23 @@ struct SQLDialectTests {
     #expect(dialect.literal(value) == expected)
   }
 
+  /// Security: decimal text is written bare only when it is plain digits, or the cell's text
+  /// would run as SQL
+  @Test(
+    "A decimal is unquoted only as plain digits; any other text is a quoted string",
+    arguments: [SQLDialect.postgresql, .mysql, .sqlite, .duckdb])
+  func decimalLiterals(dialect: SQLDialect) {
+    for text in ["0", "-12.50", "12345678901234567890.123456789"] {
+      #expect(dialect.literal(.decimal(text)) == text)
+    }
+    for text in [
+      "1;DROP TABLE t", "1e5", "NaN", "Infinity", "-Infinity", "--1", " 1", "1 ", "+1", ".5",
+      "1.", "", "1)--", "１",
+    ] {
+      #expect(dialect.literal(.decimal(text)) == dialect.literal(.string(text)), "\(text)")
+    }
+  }
+
   @Test("Placeholders use the index as given", arguments: placeholderCases)
   func placeholder(dialect: SQLDialect, index: Int, expected: String) {
     #expect(dialect.placeholder(index) == expected)

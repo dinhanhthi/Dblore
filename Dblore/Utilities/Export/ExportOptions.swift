@@ -297,6 +297,10 @@ extension DataExporter {
       return .string(spacesForLineBreaks(text))
     case .json(let text):
       return .json(spacesForLineBreaks(text))
+    case .decimal(let text):
+      // Decimal text has no line break; changed text is no decimal
+      let flat = spacesForLineBreaks(text)
+      return flat == text ? value : .string(flat)
     default:
       return value
     }
@@ -312,13 +316,17 @@ extension DataExporter {
   /// CRLF and a starter with a combining mark count. Numbers stay numbers, and so does text that
   /// is only a signed number or a time offset (`-12.5`, `+3`, `-1e5`, `-05:00`). `splitsFields`
   /// (unquoted CSV) also checks each field start inside the value: after a line break, where a
-  /// reader begins a new row, and after a comma, where it begins a new field.
+  /// reader begins a new row, and after a comma, where it begins a new field. A decimal is
+  /// checked as text too; one that needs the prefix is no decimal and becomes that text.
   static func sanitizingFormula(_ value: CellValue, splitsFields: Bool) -> CellValue {
     switch value {
     case .string(let text):
       return .string(prefixedIfFormula(text, splitsFields: splitsFields))
     case .json(let text):
       return .json(prefixedIfFormula(text, splitsFields: splitsFields))
+    case .decimal(let text):
+      let prefixed = prefixedIfFormula(text, splitsFields: splitsFields)
+      return prefixed == text ? value : .string(prefixed)
     default:
       return value
     }

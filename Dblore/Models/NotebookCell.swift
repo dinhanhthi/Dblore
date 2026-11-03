@@ -367,17 +367,21 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
   case decimal(String)
 
   /// Empty value of the case a `columnType` value decodes to (`postgresDataTypeName` names):
-  /// the type a NULL cell of that column takes once it gets a value. Other types (arrays, uuid,
+  /// the type a NULL cell of that column takes once it gets a value. NUMERIC and DECIMAL, with
+  /// or without a modifier (`numeric(10,2)`), are exact decimal text. Other types (arrays, uuid,
   /// user-defined) are text.
   nonisolated static func placeholder(forColumnType columnType: String) -> CellValue {
-    switch columnType.uppercased() {
+    let upper = columnType.uppercased()
+    switch upper {
     case "BOOLEAN": return .bool(false)
     case "SMALLINT", "INTEGER", "BIGINT": return .int(0)
-    case "REAL", "DOUBLE PRECISION", "NUMERIC": return .double(0)
+    case "REAL", "DOUBLE PRECISION": return .double(0)
     case "DATE", "TIMESTAMP", "TIMESTAMPTZ": return .date(Date(timeIntervalSince1970: 0))
     case "JSON", "JSONB": return .json("")
     case "BYTEA": return .data(Data())
-    default: return .string("")
+    default:
+      let base = upper.prefix { $0 != "(" }.trimmingCharacters(in: .whitespaces)
+      return base == "NUMERIC" || base == "DECIMAL" ? .decimal("0") : .string("")
     }
   }
 
@@ -532,21 +536,17 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     }
   }
 
+  /// Numbers (`int`, `double`, `decimal`) order by exact value (`DecimalText.Number`), the rest
+  /// by type then value; NULL is last
   static func < (lhs: CellValue, rhs: CellValue) -> Bool {
     // Nulls always sort last
     if case .null = lhs { return false }
     if case .null = rhs { return true }
 
+    if let order = numericOrder(lhs, rhs) { return order < 0 }
+
     // Compare same types directly
     switch (lhs, rhs) {
-    case (.int(let l), .int(let r)):
-      return l < r
-    case (.double(let l), .double(let r)):
-      return l < r
-    case (.int(let l), .double(let r)):
-      return Double(l) < r
-    case (.double(let l), .int(let r)):
-      return l < Double(r)
     case (.string(let l), .string(let r)):
       return l.localizedStandardCompare(r) == .orderedAscending
     case (.bool(let l), .bool(let r)):
@@ -561,5 +561,179 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
       // Different types: compare by sort priority
       return lhs.sortPriority < rhs.sortPriority
     }
+  }
+
+  /// -1, 0 or 1 when both values are numbers, else nil. Plain Int and Double comparisons
+  /// decide every pair they can without disagreeing with `DecimalText.Number`'s order; the rest
+  /// (decimals, NaN, an Int and the Double it rounds to) compare as `DecimalText.Number`.
+  private nonisolated static func numericOrder(_ lhs: CellValue, _ rhs: CellValue) -> Int? {
+    switch (lhs, rhs) {
+    case (.int(let l), .int(let r)):
+      return l < r ? -1 : (l == r ? 0 : 1)
+    case (.double(let l), .double(let r)) where !l.isNaN && !r.isNaN:
+      return l < r ? -1 : (l == r ? 0 : 1)
+    case (.int(let l), .double(let r)) where !r.isNaN && Double(l) != r:
+      return Double(l) < r ? -1 : 1
+    case (.double(let l), .int(let r)) where !l.isNaN && l != Double(r):
+      return l < Double(r) ? -1 : 1
+    default:
+      guard let l = DecimalText.Number(lhs), let r = DecimalText.Number(rhs) else { return nil }
+      return DecimalText.compare(l, r)
+    }
+  }
+}
+
+/// Decimal text (`CellValue.decimal`): its grammar and its exact order, never through Double
+nonisolated enum DecimalText {
+  /// Plain decimal digits, `^-?[0-9]+(\.[0-9]+)?$` (ASCII digits only): the only decimal text
+  /// a SQL literal writes unquoted
+  static func isPlain(_ text: String) -> Bool {
+    var bytes = text.utf8[...]
+    if bytes.first == UInt8(ascii: "-") { bytes = bytes.dropFirst() }
+    let integer = bytes.prefix { isDigit($0) }
+    guard !integer.isEmpty else { return false }
+    let rest = bytes.dropFirst(integer.count)
+    if rest.isEmpty { return true }
+    guard rest.first == UInt8(ascii: ".") else { return false }
+    let fraction = rest.dropFirst()
+    return !fraction.isEmpty && fraction.allSatisfy(isDigit)
+  }
+
+  /// Text a `.decimal` may hold: plain digits (`isPlain`) or PostgreSQL NUMERIC's `NaN`,
+  /// `Infinity` and `-Infinity`, spelled as the server writes them. No exponent, no `+`, no
+  /// space: an edit, a new row and a saved notebook only make a `.decimal` of this text.
+  static func isValid(_ text: String) -> Bool {
+    isPlain(text) || text == "NaN" || text == "Infinity" || text == "-Infinity"
+  }
+
+  /// A number as one total order: -Infinity, then finite values by exact value, Infinity, NaN
+  /// (PostgreSQL's order; all NaNs equal), then decimal text that is no number, by its text.
+  nonisolated enum Number {
+    case negativeInfinity
+    case finite(Finite)
+    case positiveInfinity
+    case nan
+    case unparsed(String)
+
+    /// Nil for a value that is not a number. A double is the value of its shortest text
+    /// (`String(Double)`), so `.double(0.1)` equals `.decimal("0.1")`.
+    init?(_ value: CellValue) {
+      switch value {
+      case .int(let number):
+        self = Finite(String(number)).map(Number.finite) ?? .unparsed(String(number))
+      case .double(let number):
+        if number.isNaN {
+          self = .nan
+        } else if number.isInfinite {
+          self = number > 0 ? .positiveInfinity : .negativeInfinity
+        } else {
+          let text = String(number)
+          self = Finite(text).map(Number.finite) ?? .unparsed(text)
+        }
+      case .decimal(let text):
+        switch text {
+        case "NaN": self = .nan
+        case "Infinity": self = .positiveInfinity
+        case "-Infinity": self = .negativeInfinity
+        default: self = Finite(text).map(Number.finite) ?? .unparsed(text)
+        }
+      default:
+        return nil
+      }
+    }
+
+    fileprivate var rank: Int {
+      switch self {
+      case .negativeInfinity: 0
+      case .finite: 1
+      case .positiveInfinity: 2
+      case .nan: 3
+      case .unparsed: 4
+      }
+    }
+  }
+
+  /// A finite value as `±0.d₁d₂…dₙ × 10^point`: `digits` (ASCII) have no leading or trailing
+  /// zero, and are empty for zero (never negative)
+  nonisolated struct Finite {
+    let negative: Bool
+    let digits: [UInt8]
+    let point: Int
+
+    /// `[-+]digits[.digits][e[-+]digits]` (at least one mantissa digit, an exponent of at most
+    /// 6 digits after its leading zeros), as `String(Double)` writes too; nil otherwise
+    init?(_ text: String) {
+      var bytes = text.utf8[...]
+      let sign = bytes.first
+      let negative = sign == UInt8(ascii: "-")
+      if sign == UInt8(ascii: "-") || sign == UInt8(ascii: "+") { bytes = bytes.dropFirst() }
+      var digits: [UInt8] = []
+      digits.reserveCapacity(bytes.count)
+      var point = 0
+      var sawDigit = false
+      var inFraction = false
+      while let byte = bytes.first, byte != UInt8(ascii: "e"), byte != UInt8(ascii: "E") {
+        bytes = bytes.dropFirst()
+        if byte == UInt8(ascii: "."), !inFraction {
+          inFraction = true
+          continue
+        }
+        guard DecimalText.isDigit(byte) else { return nil }
+        sawDigit = true
+        if digits.isEmpty && byte == UInt8(ascii: "0") {
+          if inFraction { point -= 1 }
+          continue
+        }
+        digits.append(byte)
+        if !inFraction { point += 1 }
+      }
+      guard sawDigit else { return nil }
+      if !bytes.isEmpty {
+        bytes = bytes.dropFirst()
+        let exponentSign = bytes.first
+        if exponentSign == UInt8(ascii: "-") || exponentSign == UInt8(ascii: "+") {
+          bytes = bytes.dropFirst()
+        }
+        guard !bytes.isEmpty, bytes.allSatisfy(DecimalText.isDigit) else { return nil }
+        let significant = bytes.drop { $0 == UInt8(ascii: "0") }
+        guard significant.count <= 6 else { return nil }
+        let exponent = significant.reduce(0) { $0 * 10 + Int($1 - UInt8(ascii: "0")) }
+        point += exponentSign == UInt8(ascii: "-") ? -exponent : exponent
+      }
+      while digits.last == UInt8(ascii: "0") { digits.removeLast() }
+      self.negative = negative && !digits.isEmpty
+      self.digits = digits
+      self.point = digits.isEmpty ? 0 : point
+    }
+
+    fileprivate var sign: Int { digits.isEmpty ? 0 : (negative ? -1 : 1) }
+  }
+
+  /// -1, 0 or 1: `lhs` below, equal to or above `rhs`
+  static func compare(_ lhs: Number, _ rhs: Number) -> Int {
+    switch (lhs, rhs) {
+    case (.finite(let l), .finite(let r)):
+      return compare(l, r)
+    case (.unparsed(let l), .unparsed(let r)):
+      return l < r ? -1 : (l == r ? 0 : 1)
+    default:
+      return lhs.rank < rhs.rank ? -1 : (lhs.rank == rhs.rank ? 0 : 1)
+    }
+  }
+
+  private static func compare(_ lhs: Finite, _ rhs: Finite) -> Int {
+    guard lhs.sign == rhs.sign else { return lhs.sign < rhs.sign ? -1 : 1 }
+    guard lhs.sign != 0 else { return 0 }
+    guard lhs.point == rhs.point else { return lhs.point < rhs.point ? -lhs.sign : lhs.sign }
+    for (l, r) in zip(lhs.digits, rhs.digits) where l != r {
+      return l < r ? -lhs.sign : lhs.sign
+    }
+    // Same leading digits: the longer one has a further non-zero digit
+    guard lhs.digits.count != rhs.digits.count else { return 0 }
+    return lhs.digits.count < rhs.digits.count ? -lhs.sign : lhs.sign
+  }
+
+  fileprivate static func isDigit(_ byte: UInt8) -> Bool {
+    byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9")
   }
 }

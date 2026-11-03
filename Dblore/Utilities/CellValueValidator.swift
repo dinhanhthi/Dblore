@@ -74,7 +74,10 @@ struct CellValueValidator: Sendable {
     case .data:
       return validateBinaryData(input)
 
-    case .string, .decimal:
+    case .decimal:
+      return validateDecimal(input)
+
+    case .string:
       return .valid
     }
   }
@@ -100,6 +103,22 @@ struct CellValueValidator: Sendable {
 
     if Double(input) == nil {
       return .invalid("Invalid number format")
+    }
+
+    return .valid
+  }
+
+  /// Exact NUMERIC / DECIMAL text (`DecimalText.isValid`): plain digits with an optional `-`
+  /// and fraction, or `NaN`, `Infinity`, `-Infinity`. Those keywords pass for every engine (the
+  /// check has no connection): PostgreSQL NUMERIC stores them; another engine treats them as any
+  /// text sent to a number column.
+  nonisolated private static func validateDecimal(_ input: String) -> ValidationResult {
+    if input.isEmpty {
+      return .invalid("Value cannot be empty")
+    }
+
+    if !DecimalText.isValid(input) {
+      return .invalid("Invalid decimal format (use digits like -12.50)")
     }
 
     return .valid

@@ -139,8 +139,11 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       String(number)
     case .double(let number):
       doubleLiteral(number)
-    case .string(let text), .json(let text), .decimal(let text):
+    case .string(let text), .json(let text):
       quoteLiteral(text)
+    case .decimal(let text):
+      // Bare only as plain digits; NaN, Infinity and any other text are a quoted string
+      DecimalText.isPlain(text) ? text : quoteLiteral(text)
     case .date(let date):
       quoteLiteral(
         wallClock

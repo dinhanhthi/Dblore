@@ -115,11 +115,38 @@ struct CellValueValidatorTests {
       ("2", "INTEGER", true), ("2.5", "INTEGER", false), ("-3.5", "DOUBLE PRECISION", true),
       ("abc", "NUMERIC", false), ("true", "BOOLEAN", true), ("maybe", "BOOLEAN", false),
       ("{\"a\": 1}", "JSONB", true), ("{bad", "JSON", false), ("hello", "TEXT", true),
-      ("anything", "UUID", true), ("null1", "VARCHAR", true),
+      ("anything", "UUID", true), ("null1", "VARCHAR", true), ("-12.50", "numeric(10,2)", true),
+      ("1e400", "NUMERIC", false), ("nan", "DECIMAL(65,30)", false),
     ])
   func nullCellTakesColumnType(input: String, columnType: String, isValid: Bool) {
     let result = CellValueValidator.validate(input, for: .null, columnType: columnType)
     #expect(result.isValid == isValid, "'\(input)' as \(columnType)")
+  }
+
+  /// Security: decimal text may be written bare into SQL, so only plain decimals and
+  /// PostgreSQL's NaN / Infinity / -Infinity pass
+  @Test("A decimal takes plain digits with an optional minus and fraction, NaN or Infinity")
+  func decimalValidation() {
+    for input in ["0", "-12.50", "007", "12345678901234567890.123456789", "NaN", "-Infinity"] {
+      #expect(CellValueValidator.validate(input, for: .decimal("1")).isValid, "\(input)")
+    }
+    for input in ["", "1e400", "1e5", "nan", "inf", " 1", "1 ", "+1", ".5", "1.", "--1", "1;x"] {
+      #expect(!CellValueValidator.validate(input, for: .decimal("1")).isValid, "\(input)")
+    }
+  }
+
+  @Test("A new row's NUMERIC field stages exact decimal text; a DOUBLE field still takes 1e-7")
+  func newRowDecimalField() {
+    var field = NewRowField(name: "price", type: "NUMERIC(10,2)")
+    field.text = "12.50"
+    #expect(field.validationError == nil)
+    #expect(field.value(dialect: .postgresql) == .decimal("12.50"))
+    field.text = "1e5"
+    #expect(field.validationError != nil)
+    var double = NewRowField(name: "ratio", type: "DOUBLE PRECISION")
+    double.text = "1e-7"
+    #expect(double.validationError == nil)
+    #expect(double.value(dialect: .postgresql) == .string("1e-7"))
   }
 
   @Test("Empty or 'null' keeps a NULL cell NULL whatever the column type")

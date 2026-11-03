@@ -114,6 +114,18 @@ struct ExportOptionsTests {
     #expect(mixed.rows[0] == plain.map(CellValue.string) + formulas.map { .string("'" + $0) })
   }
 
+  /// Security: a decimal's text is guarded like a string's, a real signed decimal is not
+  @Test("A decimal holding formula text is prefixed; a signed decimal stays a decimal")
+  func sanitizesDecimalFormulaText() {
+    let result = grid(
+      columns: ["a", "b", "c"], rows: [[.decimal("=1+1"), .decimal("-1.5"), .decimal("2\n=3")]])
+    for format in [ExportFormat.excel, .csv] {
+      let options = ExportOptions(format: format, convertLineBreaksToSpace: true)
+      let guarded = DataExporter.applying(options, to: result)
+      #expect(guarded.rows[0] == [.string("'=1+1"), .decimal("-1.5"), .string("2 =3")])
+    }
+  }
+
   @Test("Without quotes, a formula cannot start the next physical line of a field")
   func neverQuoteNeutralizesEveryLine() {
     let result = grid(columns: ["note"], rows: [[.string("abc\r\n=HYPERLINK(\"x\")\n@y")]])

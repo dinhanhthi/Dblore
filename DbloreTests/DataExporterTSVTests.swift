@@ -48,6 +48,18 @@ struct DataExporterTSVTests {
         == "=sum\tn\td\n=1+1\t-5\t\(iso)\n")
   }
 
+  /// Security: copied decimal text gets the formula prefix as text does; numbers stay bare
+  @Test("Copied TSV and CSV prefix a decimal holding formula text, never a signed decimal")
+  func neutralizesDecimalFormulaText() {
+    let result = CellResult(
+      columns: [ColumnInfo(name: "a", type: "numeric"), ColumnInfo(name: "b", type: "numeric")],
+      rows: [[.decimal("=1+1"), .decimal("-1.5")]], rowCount: 1)
+    #expect(DataExporter.toTSV(result: result, neutralizesFormulas: true) == "a\tb\n'=1+1\t-1.5\n")
+    #expect(
+      DataExporter.copyText(result: result, format: .csv, neutralizesFormulas: true)
+        == "'=1+1,-1.5")
+  }
+
   @Test("Copy and CSV write a naive column's wall clock and a zoned column as ISO 8601 UTC")
   func dateOutputsFollowTheColumn() {
     // 2026-10-15 12:00:00.123 UTC

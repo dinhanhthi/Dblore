@@ -4,7 +4,8 @@
 import Foundation
 
 /// `CellValue`'s `Equatable` conformance is main-actor isolated, so staged values are
-/// compared here without using that conformance.
+/// compared here without using that conformance. A decimal is equal by its text, as `RowKey`
+/// hashes it: `1.50` and `1.5` differ (an edit between them changes the stored scale).
 private nonisolated func cellValuesEqual(_ lhs: CellValue, _ rhs: CellValue) -> Bool {
   switch (lhs, rhs) {
   case (.string(let left), .string(let right)): left == right
@@ -15,6 +16,7 @@ private nonisolated func cellValuesEqual(_ lhs: CellValue, _ rhs: CellValue) -> 
   case (.json(let left), .json(let right)): left == right
   case (.date(let left), .date(let right)): left == right
   case (.data(let left), .data(let right)): left == right
+  case (.decimal(let left), .decimal(let right)): left == right
   default: false
   }
 }

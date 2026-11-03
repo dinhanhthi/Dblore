@@ -421,7 +421,9 @@ enum DocumentCoder {
       return .null
     case "string":
       if let value = dict["value"] as? String {
-        return dict["decimal"] as? Bool == true ? .decimal(value) : .string(value)
+        // A flagged value that is not decimal text (a hostile file) stays a string
+        let isDecimal = dict["decimal"] as? Bool == true && DecimalText.isValid(value)
+        return isDecimal ? .decimal(value) : .string(value)
       }
     case "int":
       if let value = dict["value"] as? Int {

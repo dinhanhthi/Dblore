@@ -53,7 +53,8 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     case .integer:
       return CellValueValidator.validate(text, for: .int(0)).errorMessage
     case .decimal:
-      return CellValueValidator.validate(text, for: .double(0)).errorMessage
+      return CellValueValidator.validate(text, for: isExactDecimal ? .decimal("0") : .double(0))
+        .errorMessage
     case .boolean:
       return Bool(text) == nil ? "Invalid boolean value (use true/false)" : nil
     case .date:
@@ -71,9 +72,16 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     }
   }
 
+  /// NUMERIC / DECIMAL (`CellValue.placeholder(forColumnType:)` is `.decimal`), not a float type
+  private var isExactDecimal: Bool {
+    if case .decimal = CellValue.placeholder(forColumnType: type) { return true }
+    return false
+  }
+
   /// Value to stage on `dialect` (the connection's). Nil leaves the column out of the INSERT.
-  /// Decimals and dates keep the typed text so the database parses it without rounding. A
-  /// timestamp reads as any new row's (`NotebookViewModel.editedNewDate`), on SQLite as typed.
+  /// Decimals and dates keep the typed text so the database parses it without rounding: a
+  /// NUMERIC / DECIMAL value is `.decimal` text. A timestamp reads as any new row's
+  /// (`NotebookViewModel.editedNewDate`), on SQLite as typed.
   func value(dialect: SQLDialect) -> CellValue? {
     if isGenerated { return nil }
     if isNull { return .null }
@@ -82,6 +90,7 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     case .integer: return Int(text).map(CellValue.int) ?? .string(text)
     case .boolean: return Bool(text).map(CellValue.bool) ?? .string(text)
     case .json: return .json(text)
+    case .decimal where isExactDecimal && DecimalText.isValid(text): return .decimal(text)
     case .timestamp where dialect != .sqlite:
       return NotebookViewModel.editedNewDate(
         text, columnType: type, wallClock: wallClock, dialect: dialect)

@@ -244,6 +244,62 @@ struct DataModelDocumentTests {
     #expect(cell.result?.rows == [[.decimal(text)]])
   }
 
+  /// Contract: a build that only knows today's cell tags reads a decimal as its text, in place
+  @Test("A decimal cell is a plain string to a reader that ignores the flag; no cell shifts")
+  func decimalCellReadsAsStringWithoutFlag() throws {
+    let data = try DocumentCoder.encode(
+      decimalNotebook([[.decimal("19.90"), .int(1)], [.decimal("NaN"), .int(2)]]),
+      includeResultsOnSave: true)
+    let rows = try savedRows(data)
+    let oldTags: Set = ["null", "string", "int", "double", "bool", "json", "date", "data"]
+    #expect(rows.joined().allSatisfy { oldTags.contains($0["type"] as? String ?? "") })
+
+    let unflagged = try replacingSavedRows(
+      in: data, with: rows.map { row in row.map { $0.filter { $0.key != "decimal" } } })
+    let cell = try #require(try DocumentCoder.decode(from: unflagged).cells.first)
+    #expect(cell.result?.rows == [[.string("19.90"), .int(1)], [.string("NaN"), .int(2)]])
+  }
+
+  /// Security: a hostile file's flag never makes non-numeric text a decimal, which outputs may
+  /// write bare (SQL literals) or leave out of the formula guard
+  @Test("A flagged value that is not decimal text decodes as a string")
+  func flaggedNonDecimalDecodesAsString() throws {
+    let data = try DocumentCoder.encode(
+      decimalNotebook([[.decimal("1")]]), includeResultsOnSave: true)
+    let texts = [
+      "=HYPERLINK(\"https://example.com\")", "1e400", "nan", " 1", "1;DROP TABLE t", "",
+      "-12.50", "Infinity",
+    ]
+    let hostile = try replacingSavedRows(
+      in: data,
+      with: texts.map { [["type": "string", "value": $0, "decimal": true]] })
+    let cell = try #require(try DocumentCoder.decode(from: hostile).cells.first)
+    #expect(
+      cell.result?.rows
+        == texts.dropLast(2).map { [.string($0)] } + [[.decimal("-12.50")], [.decimal("Infinity")]])
+  }
+
+  private func decimalNotebook(_ rows: [[CellValue]]) -> DbloreNotebook {
+    let result = CellResult(
+      columns: (rows.first ?? []).indices.map { ColumnInfo(name: "c\($0)", type: "NUMERIC") },
+      rows: rows, rowCount: rows.count)
+    return DbloreNotebook(
+      id: UUID(), cells: [NotebookCell(content: "SELECT 1", result: result)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Decimal"),
+      connectionConfig: nil, settings: NotebookSettings())
+  }
+
+  /// `data` (a saved notebook) with its first cell's result rows replaced
+  private func replacingSavedRows(in data: Data, with rows: [[[String: Any]]]) throws -> Data {
+    var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    var cells = try #require(json["cells"] as? [[String: Any]])
+    var result = try #require(cells[0]["result"] as? [String: Any])
+    result["rows"] = rows
+    cells[0]["result"] = result
+    json["cells"] = cells
+    return try JSONSerialization.data(withJSONObject: json)
+  }
+
   @Test("Malformed statement result entries decode to an empty result")
   func malformedStatementResultDecodesEmpty() throws {
     let json: [String: Any] = [

@@ -442,6 +442,24 @@ struct InlineEditViewModelTests {
     #expect(
       NotebookViewModel.editedCellValue("hi", original: .null, columnType: "TEXT") == .string("hi"))
     #expect(NotebookViewModel.editedCellValue("", original: .null, columnType: "INTEGER") == .null)
+    // NUMERIC / DECIMAL, with or without a modifier, keep the typed text exactly
+    for type in ["NUMERIC", "numeric(10,2)", "decimal(65,30)", "DECIMAL ( 5 )"] {
+      #expect(
+        NotebookViewModel.editedCellValue("12.50", original: .null, columnType: type)
+          == .decimal("12.50"), "\(type)")
+    }
+    #expect(
+      NotebookViewModel.editedCellValue("0.5", original: .null, columnType: "REAL") == .double(0.5))
+  }
+
+  /// Security: only decimal text becomes a decimal, which SQL literals may write bare
+  @Test("A decimal edit keeps the typed text; other text stays a string")
+  func decimalEditKeepsText() {
+    #expect(
+      NotebookViewModel.editedCellValue("12345678901234567890.10", original: .decimal("1"))
+        == .decimal("12345678901234567890.10"))
+    #expect(
+      NotebookViewModel.editedCellValue("=1+1", original: .decimal("1")) == .string("=1+1"))
   }
 
   @Test("A string edit still binds and displays the typed text")
