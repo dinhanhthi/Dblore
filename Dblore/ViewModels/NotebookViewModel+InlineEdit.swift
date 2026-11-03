@@ -376,7 +376,8 @@ extension NotebookViewModel {
 
   /// A data-viewer page read with `state.pageSQL` made a plain single-table result again,
   /// before anything reads it: the length columns are moved into the truncation (full lengths
-  /// over `lazyPrefixBytes` by row key and column), and each prefixed column, an expression
+  /// over `lazyPrefixBytes` by row key and column: a keyless page's by the locator key of each
+  /// page row, never by values), and each prefixed column, an expression
   /// on every engine, gets the origin a plain read gives (table identity and ordinal from
   /// `EditTable.attributeNames`, MySQL source names) and its cached type when it has none.
   /// The cached edit table is used when there is one (the background read validates the
@@ -433,7 +434,11 @@ extension NotebookViewModel {
       ?? lazy.filter(\.isPrimaryKey).map(\.name)
     let keyIndexes = truncation.keyColumns.compactMap { names.firstIndex(of: $0) }
     let prefixed = lazy.indices.filter { lazy[$0].isPrefixed }
-    for row in result.rows {
+    // A keyless page has no key columns: its rows are only told apart by their locators
+    if truncation.rowLocator != nil, truncation.locators.count != result.rows.count {
+      throw LazyPageError.unexpectedShape
+    }
+    for (rowIndex, row) in result.rows.enumerated() {
       var lengths: [String: Int] = [:]
       for (offset, index) in prefixed.enumerated() {
         let length: Int?
@@ -454,7 +459,9 @@ extension NotebookViewModel {
         }
       }
       guard !lengths.isEmpty else { continue }
-      let key = RowChangeSet.RowKey(values: keyIndexes.map { row[$0] })
+      let key =
+        truncation.rowLocator == nil
+        ? RowChangeSet.RowKey(values: keyIndexes.map { row[$0] }) : truncation.locators[rowIndex]
       truncation.lengths[key, default: [:]].merge(lengths) { $1 }
     }
     var stripped = QueryResult(
@@ -783,6 +790,12 @@ extension NotebookViewModel {
       showToast(message, type: .error)
       return false
     }
+    // A keyless row's locator changes with every UPDATE: refused before any Confirm or Password
+    // dialog while staged changes exist (`sendInlineEdit` checks again before sending)
+    if target.rowLocator != nil, hasPendingStagedChanges {
+      showToast(Self.keylessStagedChangesPending, type: .error)
+      return false
+    }
 
     let step = RewindPlan.inlineStep(
       assignments: bound, primaryKeyColumns: target.primaryKeyColumns, rowData: rowData)
@@ -827,6 +840,15 @@ extension NotebookViewModel {
   nonisolated static let notEditableMessage =
     "This result is read-only: run the cell again to edit a single table with a primary key"
 
+  /// Shown when an immediate edit of a keyless row is sent while staged changes exist
+  nonisolated static let keylessStagedChangesPending =
+    "Commit or discard the staged changes first: this table has no primary key."
+
+  /// Why an UPDATE or DELETE by the locator of a keyless row matched no row (0 rows): the row
+  /// changed or moved since its page was read. Ends a sentence that names the failed write.
+  nonisolated static let keylessRowChangedMessage =
+    "the row changed since it was read, reload the data"
+
   /// Shown when Row Details applies more than one field of a MongoDB document at once
   nonisolated static let oneDocumentFieldMessage =
     "On MongoDB, Row Details applies one changed field at a time"
@@ -858,6 +880,13 @@ extension NotebookViewModel {
         return
       }
     }
+    // A keyless row's locator changes with every UPDATE: staged entries keyed by the old one
+    // would no longer match the re-read page, so nothing is sent while they exist
+    if target.rowLocator != nil, hasPendingStagedChanges {
+      restoreSidebar(edit.sidebarRestore)
+      showToast(Self.keylessStagedChangesPending, type: .error)
+      return
+    }
     let columnList = edit.columnNames.joined(separator: ", ")
     let started = Date()
     var updated = false
@@ -885,6 +914,8 @@ extension NotebookViewModel {
       if let cellId = edit.cellId {
         await runCell(id: cellId)
       } else if dataViewer != nil {
+        // Changes may have been staged while `executeGatedUpdate` was awaited, keyless target
+        // included: its row is found below by its page locator (`locator(_:)`)
         if hasPendingStagedChanges {
           // Refresh stored values without replacing the batch's generation or drafts.
           let count = edit.columnNames.count
@@ -945,8 +976,12 @@ extension NotebookViewModel {
       recordFailure(
         error, sql: edit.statement.sql, duration: Date().timeIntervalSince(started),
         source: .dataViewerEdit)
-      showToast(
-        "Failed to update '\(columnList)': \(error.localizedDescription)", type: .error)
+      // A keyless row read by a locator that names no row any more: changed or moved since
+      var reason = error.localizedDescription
+      if target.rowLocator != nil, case DatabaseError.editRowCountMismatch(0, _) = error {
+        reason = Self.keylessRowChangedMessage
+      }
+      showToast("Failed to update '\(columnList)': \(reason)", type: .error)
     }
     if updated { await onRelationsWritten?([edit.statement.sql], id, target.connectionEpoch) }
     await onStatementsExecuted?()

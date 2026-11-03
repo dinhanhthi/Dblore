@@ -16,10 +16,10 @@ extension NotebookViewModel {
   /// columns (`dataViewerAwaitsRowLocators`) is read once more with them.
   func loadDataViewerPage() async {
     while let current = dataViewer, let connectionManager, !isEditorQueryRunning {
-      let lazyColumns = dataViewerLazyColumns(current)
-      if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
       let rowLocator = dataViewerRowLocator(current)
       if current.rowLocator != rowLocator { dataViewer?.rowLocator = rowLocator }
+      let lazyColumns = dataViewerLazyColumns(current, rowLocator: rowLocator)
+      if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
       guard let state = dataViewer else { return }
       let key = state.loadKey
       guard let query = dataViewerQuery(state) else { return }
@@ -86,15 +86,16 @@ extension NotebookViewModel {
 
   /// The lazy columns of the viewed table from what is cached, never a catalog read: the
   /// sidebar's columns of the table, else the shown page's columns and edit target. Nil
-  /// (`SELECT *`) for MongoDB, a view, a table without a primary key, nothing cached, or a
-  /// shown page without an edit target (an error, or a table that cannot be edited). A page
-  /// shown before its table definition keeps the lazy columns it was read with.
-  private func dataViewerLazyColumns(_ state: DataViewerState) -> [DataViewerState.LazyColumn]? {
+  /// (`SELECT *`) for MongoDB, a view, a table without a primary key that the page does not
+  /// locate (`rowLocator`, the locator columns the same page reads: its cut cells are read by
+  /// them), nothing cached, or a shown page without an edit target (an error, or a table that
+  /// cannot be edited). A page shown before its table definition keeps the lazy columns it was
+  /// read with.
+  private func dataViewerLazyColumns(
+    _ state: DataViewerState, rowLocator: RowLocatorKind?
+  ) -> [DataViewerState.LazyColumn]? {
     if editorResult?.typesPending == true { return state.lazyColumns }
-    // A keyless table reads `SELECT *` (its row locators have no lazy reads yet)
-    guard !isMongoDataViewer, editorResult.map({ $0.editTarget != nil }) ?? true,
-      editorResult?.editTarget?.rowLocator == nil
-    else {
+    guard !isMongoDataViewer, editorResult.map({ $0.editTarget != nil }) ?? true else {
       return nil
     }
     var binaryValueColumns = Set<String>()
@@ -118,14 +119,14 @@ extension NotebookViewModel {
       return DataViewerState.lazyColumns(
         cached.map { ($0.name, $0.type, $0.isPrimaryKey) },
         databaseType: state.databaseType, orderColumns: state.orderColumns,
-        binaryValueColumns: binaryValueColumns)
+        binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
     }
     guard let result = editorResult, let target = result.editTarget else { return nil }
     let key = Set(target.primaryKeyColumns)
     return DataViewerState.lazyColumns(
       result.columns.map { ($0.name, $0.type, key.contains($0.name)) },
       databaseType: state.databaseType, orderColumns: state.orderColumns,
-      binaryValueColumns: binaryValueColumns)
+      binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
   }
 
   /// True for a data viewer on a MongoDB connection: pages are mongosh commands and the

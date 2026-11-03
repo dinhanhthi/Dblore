@@ -460,12 +460,26 @@ extension NotebookViewModel {
         await loadDataViewerPage()
       }
     } catch {
-      let message = Self.batchFailureMessage(error, batch: batch)
+      // A keyless row's locator that matched no row: it changed since the page was read (the
+      // set was made for this viewer's located rows and stays staged). The toast says so;
+      // History keeps the row count the database reported.
+      var shown = error
+      if batch.historySource == .dataViewerEdit, dataViewer?.changeSet?.rowLocator != nil,
+        case DatabaseError.batchStatementFailed(let index, let sql, let reason, let rolledBack) =
+          error,
+        reason.hasPrefix(DatabaseConnectionManager.unexpectedRowCountReason),
+        reason.hasSuffix("affected 0")
+      {
+        shown = DatabaseError.batchStatementFailed(
+          index: index, sqlPrefix: sql, reason: Self.keylessRowChangedMessage,
+          rolledBack: rolledBack)
+      }
+      let message = Self.batchFailureMessage(shown, batch: batch)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
-        source: batch.historySource, errorMessage: message,
+        source: batch.historySource, errorMessage: Self.batchFailureMessage(error, batch: batch),
         importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
-      showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
+      showToast(Self.batchToastMessage(shown, batch: batch, fullMessage: message), type: .error)
       failure = message
     }
     if !ranStatements.isEmpty {

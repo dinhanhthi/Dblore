@@ -139,6 +139,32 @@ struct LazyBinaryCellTests {
     }
   }
 
+  @Test("A keyless row is read by its locator terms with their casts, never by a dblore_ alias")
+  func locatorStatement() throws {
+    let source = LazyCellSource(
+      relation: #""public"."files""#, keyColumns: [], dialect: .postgresql, rowLocator: .pgLocator
+    ) { _, _ in QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0) }
+    let cell = LazyCell(
+      row: RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", "(0,2)", "700"])),
+      column: "body")
+    let read = try LazyCellLoader.statement(cell, source: source)
+    #expect(
+      read.sql == #"SELECT "body" FROM "public"."files" WHERE tableoid = :k1::oid"#
+        + " AND ctid = :k2::tid AND xmin = :k3::xid")
+    #expect(read.parameters == ["k1": .text("16384"), "k2": .text("(0,2)"), "k3": .text("700")])
+    _ = try ReadOnlyQueryGuard.check(read.sql, dialect: .postgresql)
+    // The named parameters stay apart from their casts
+    let rewritten = SQLParameterRewriter.rewrite(statement: read.sql, dialect: .postgresql)
+    #expect(rewritten.names == ["k1", "k2", "k3"])
+    #expect(rewritten.text.hasSuffix("tableoid = $1::oid AND ctid = $2::tid AND xmin = $3::xid"))
+
+    // A key without a locator is refused before anything is sent
+    #expect(throws: LazyCellLoadError.noKey) {
+      try LazyCellLoader.statement(
+        LazyCell(row: RowChangeSet.RowKey(values: [.int(1)]), column: "body"), source: source)
+    }
+  }
+
   @Test("A missing row is an error: nothing is loaded, copied or exported")
   func missingRowIsAnError() async throws {
     try await withItems { viewModel, manager, _ in
@@ -205,6 +231,25 @@ struct LazyBinaryCellTests {
       #expect(viewModel.editorResult?.rows[0][1] == Self.fullPayload(plain))
       #expect(viewModel.editorResult?.truncation?.lengths.isEmpty == true)
       #expect(viewModel.unloadedCells(in: try #require(viewModel.editorResult)).isEmpty)
+    }
+  }
+
+  @Test("The Cell Value viewer refuses a full value that no longer starts with the page's prefix")
+  func viewerRefusesChangedValue() async throws {
+    try await withItems { viewModel, manager, _ in
+      let lazy = try #require(viewModel.editorResult)
+      viewModel.showGridCellInSidebar(
+        row: lazy.rows[0], originalRow: 0, column: 1, result: lazy, cellId: nil)
+      let unloaded = try #require(viewModel.unloadedSidebarCell)
+      _ = try await manager.executeInternal(
+        "UPDATE items SET payload = zeroblob(70000) WHERE id = 1")
+
+      let message = await viewModel.loadSidebarCell(unloaded.cell, length: unloaded.length)
+      #expect(message?.contains("row changed since it was read") == true)
+      // Nothing stored: the sidebar and the page still hold the cut prefix
+      #expect(viewModel.unloadedSidebarCell?.cell == unloaded.cell)
+      #expect(viewModel.editorResult?.rows[0][1] == lazy.rows[0][1])
+      #expect(viewModel.unloadedCells(in: try #require(viewModel.editorResult)) == [0: [1: 70_000]])
     }
   }
 

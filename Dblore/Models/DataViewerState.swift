@@ -234,16 +234,17 @@ extension DataViewerState {
   }
 
   /// The lazy columns of a table with `columns` (in order), or nil for `SELECT *`: an engine
-  /// other than PostgreSQL, MySQL and SQLite, no primary key, or no binary column. Binary:
+  /// other than PostgreSQL, MySQL and SQLite, no primary key (unless `located`: the page reads
+  /// the row locators its cut cells are read by), or no binary column. Binary:
   /// PostgreSQL `bytea`, a MySQL or SQLite type naming BLOB or BINARY, and a SQLite column in
   /// `binaryValueColumns` (its loaded values were blobs: SQLite columns have no fixed type).
   /// Primary key and ORDER BY columns are never prefixed: the alias would shadow them.
   static func lazyColumns(
     _ columns: [(name: String, type: String, isPrimaryKey: Bool)], databaseType: DatabaseType,
-    orderColumns: [String], binaryValueColumns: Set<String> = []
+    orderColumns: [String], binaryValueColumns: Set<String> = [], located: Bool = false
   ) -> [LazyColumn]? {
     guard [.postgresql, .mysql, .sqlite].contains(databaseType),
-      columns.contains(where: \.isPrimaryKey)
+      located || columns.contains(where: \.isPrimaryKey)
     else { return nil }
     let lazy = columns.map { column in
       let type = column.type.lowercased()
