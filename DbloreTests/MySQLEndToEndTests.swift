@@ -220,6 +220,7 @@ struct MySQLEndToEndTests {
       #expect(viewModel.databaseForeignKeys.contains { $0.targetTable == parent })
 
       await viewModel.executeEditorQuery("SELECT id, parent_id FROM \(child)")
+      await viewModel.awaitResultTargets()
       let result = try #require(viewModel.editorResult)
       #expect(result.error == nil)
       #expect(result.editTarget != nil)

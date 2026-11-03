@@ -517,6 +517,8 @@ struct MySQLRowChangeSQLBuilderTests {
       viewModel.dataViewer = DataViewerState(
         schema: Self.database, name: "Mrc_Items", orderColumns: ["id"], databaseType: .mysql)
       await viewModel.loadDataViewerPage()
+      // The rows show first; the edit target lands after the catalog read
+      await viewModel.awaitResultTargets()
       try await body(viewModel, manager, observer)
     } catch {
       await Self.tearDown(manager, observer)

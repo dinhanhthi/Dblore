@@ -108,12 +108,12 @@ struct MySQLTableImportTests {
       #expect(
         result.rows == [
           [
-            .int(1), .string("1." + "5".padding(toLength: 30, withPad: "0", startingAt: 0)),
+            .int(1), .decimal("1." + "5".padding(toLength: 30, withPad: "0", startingAt: 0)),
             .int(1), .string("2024-01-02"),
             Self.instant("2024-01-02T03:04:05.000Z"), .string("Ada"),
           ],
           [
-            .int(2), .string("2." + "25".padding(toLength: 30, withPad: "0", startingAt: 0)),
+            .int(2), .decimal("2." + "25".padding(toLength: 30, withPad: "0", startingAt: 0)),
             .int(0), .string("2024-02-29"),
             Self.instant("2024-01-02T03:04:05.500Z"), .string("Bob"),
           ],
@@ -372,7 +372,7 @@ struct MySQLTableImportTests {
         #expect(await model.submit(to: viewModel), "\(model.errorMessage ?? "")")
         let result = try await manager.executeInternal(
           "SELECT COUNT(*), SUM(CHAR_LENGTH(body)) FROM \(table)")
-        #expect(result.rows == [[.int(1_000), .string("6000000")]])
+        #expect(result.rows == [[.int(1_000), .decimal("6000000")]])
       }
       opened = .success(())
     } catch {

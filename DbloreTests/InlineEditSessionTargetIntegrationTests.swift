@@ -142,6 +142,7 @@ struct InlineEditSessionTargetIntegrationTests {
     #expect(viewModel.canEdit(decoded) == false)
 
     _ = await viewModel.executeTask(ExecutionTask(cellId: cellId, query: "SELECT * FROM s6_rerun"))
+    await viewModel.awaitResultTargets(cellId: cellId)
     let rerun = try #require(viewModel.notebook.cells.first?.result)
     #expect(rerun.editTarget?.qualifiedName == "public.s6_rerun")
     #expect(viewModel.canEdit(rerun))

@@ -205,7 +205,10 @@ struct RunAllSessionResetTests {
     await runAll(viewModel)
 
     let cells = viewModel.notebook.cells
-    #expect(cells[0].result?.error?.contains("connection was reset") == true)
+    // A single statement refused before it was sent can simply run again
+    #expect(
+      cells[0].result?.error == NotebookViewModel.connectionChangedWhileWaitingMessage,
+      "cell 1: \(cells[0].result?.error ?? "no error")")
     #expect(
       cells[1].result?.error?.contains(
         "2 queued cells were not run because the connection was reset") == true,

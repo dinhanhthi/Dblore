@@ -86,22 +86,22 @@ struct RowStagingIntegrationTests {
     }
   }
 
-  @Test("A table without a primary key does not stage", .timeLimit(.minutes(1)))
-  func tableWithoutPrimaryKeyDoesNotStage() async throws {
+  @Test("A table without a primary key stages by its row locator", .timeLimit(.minutes(1)))
+  func tableWithoutPrimaryKeyStagesByLocator() async throws {
     try await withViewer(
       table: "p74_nopk", protectedMode: false,
       ddl: "CREATE TABLE p74_nopk (id int, name text)",
       seed: "INSERT INTO p74_nopk VALUES (1, 'a')"
     ) { viewModel, _, observer in
+      await viewModel.awaitResultTargets()
       let result = try #require(viewModel.editorResult)
       #expect(result.error == nil)
-      #expect(result.editTarget == nil)
-      #expect(
-        viewModel.stageEdit(row: 0, column: "name", value: .string("z"))?
-          .contains("Table has no primary key") == true)
+      #expect(result.editTarget?.rowLocator == .pgLocator)
+      #expect(viewModel.stageEdit(row: 0, column: "name", value: .string("z")) == nil)
+      await viewModel.commitStaged()
       #expect(viewModel.dataViewer?.changeSet == nil)
       #expect(
-        try await rows(observer, "SELECT name FROM p74_nopk") == [[.string("a")]])
+        try await rows(observer, "SELECT name FROM p74_nopk") == [[.string("z")]])
     }
   }
 
