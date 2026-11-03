@@ -3,7 +3,8 @@
 //  Dblore
 //
 //  Data-viewer row staging. Notebook grids still send a single-cell UPDATE immediately;
-//  only a data viewer with a primary-key edit target stages inserts, edits, and deletes.
+//  only a data viewer with a primary-key (or row-locator) edit target stages inserts, edits,
+//  and deletes.
 //  Commit sends bound statements through executeGatedBatch. The preview text is display
 //  and history only, and Safe Mode confirms that text before the batch is sent.
 //
@@ -101,7 +102,9 @@ extension NotebookViewModel {
     if stagesDocuments {
       return mongoDocumentTarget == nil ? MongoDocumentChangeError.notMongoTarget.message : nil
     }
-    if editorResult?.typesPending == true { return Self.readingTableDefinition }
+    if editorResult?.typesPending == true || dataViewerAwaitsRowLocators {
+      return Self.readingTableDefinition
+    }
     return stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
   }
 
@@ -675,23 +678,28 @@ extension NotebookViewModel {
   func keepingStagedGeneration(_ target: EditTarget?) -> EditTarget? {
     guard let target, let set = dataViewer?.changeSet, set.generation != target.generation,
       set.qualifiedName == target.qualifiedName, set.connectionEpoch == target.connectionEpoch,
-      set.primaryKeyColumns == target.primaryKeyColumns
+      set.primaryKeyColumns == target.primaryKeyColumns, set.rowLocator == target.rowLocator
     else { return target }
     return EditTarget(
       qualifiedName: target.qualifiedName, tableID: target.tableID,
       primaryKeyColumns: target.primaryKeyColumns, connectionEpoch: target.connectionEpoch,
       updateOnly: target.updateOnly, generation: set.generation, schema: target.schema,
-      name: target.name, generatedColumns: target.generatedColumns)
+      name: target.name, generatedColumns: target.generatedColumns,
+      rowLocator: target.rowLocator)
   }
 
-  /// Live data-viewer target with a primary key, when every column origin names that table.
+  /// Live data-viewer target with a primary key, or a keyless one whose page was read with its
+  /// row locators (`Truncation.locators`), when every column origin names that table.
   /// Notebook results are not a staging target. While the table definition is read
   /// (`typesPending`), the cached target a re-read showed at once, or nil.
   var stagedEditTarget: EditTarget? {
     guard dataViewer != nil, let result = editorResult, let target = result.editTarget,
-      !target.primaryKeyColumns.isEmpty, Self.columnTableID(result.columns) == target.tableID
+      Self.columnTableID(result.columns) == target.tableID
     else { return nil }
-    return target
+    if let kind = target.rowLocator {
+      return result.truncation?.rowLocator == kind ? target : nil
+    }
+    return target.primaryKeyColumns.isEmpty ? nil : target
   }
 
   var stagingDialect: SQLDialect {
@@ -831,6 +839,8 @@ extension NotebookViewModel {
   private func rowKey(at row: Int, target: EditTarget) -> RowChangeSet.RowKey? {
     guard let result = editorResult, row >= 0 else { return nil }
     if row < result.rows.count {
+      // A keyless row: its page locator, by page row (identical rows keep their own keys)
+      if let kind = target.rowLocator { return result.truncation?.locatorKey(row: row, kind: kind) }
       var values: [CellValue] = []
       values.reserveCapacity(target.primaryKeyColumns.count)
       for column in target.primaryKeyColumns {

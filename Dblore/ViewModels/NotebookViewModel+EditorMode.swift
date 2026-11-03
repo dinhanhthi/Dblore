@@ -104,6 +104,12 @@ extension NotebookViewModel {
     return refuseWhileTransactionPendingElsewhere() ? nil : epoch
   }
 
+  /// Aliases only a data-viewer page reads (`DataViewerState.lengthColumns`, `locatorColumns`):
+  /// an internal read of a query with one of them and no page state is refused
+  nonisolated static let pageOnlyAliases = [
+    "dblore_byte_length_", "dblore_tableoid", "dblore_ctid", "dblore_xmin", "dblore_rowid",
+  ]
+
   /// Execute query in editor mode; `maxRows` overrides the effective row cap (data viewer page).
   /// `source` is `.editor` for a user run and `.internal` for a data-viewer page, which is not
   /// recorded. `pageState` is the SQL data viewer state `query` is the `pageSQL` of, taken
@@ -159,10 +165,12 @@ extension NotebookViewModel {
     var runEpoch: UInt64?
 
     do {
-      // A lazy page always comes with its state, and as the state's own SQL; anything else
-      // would show its prefixes as whole values
+      // A lazy or keyless page always comes with its state, and as the state's own SQL;
+      // anything else would show its prefixes as whole values, or its locators as columns
       if let pageState, pageState.pageSQL != query { throw LazyPageError.unexpectedShape }
-      if pageState == nil, source == .internal, query.contains("dblore_byte_length_") {
+      if pageState == nil, source == .internal,
+        Self.pageOnlyAliases.contains(where: query.contains)
+      {
         throw LazyPageError.unexpectedShape
       }
       // Check if this is a multi-statement query
@@ -273,7 +281,7 @@ extension NotebookViewModel {
           timestamp: Date(),
           error: nil,
           wasLimited: result.wasLimited,
-          sourceQuery: query,
+          sourceQuery: pageState?.shownPageSQL ?? query,
           tableName: target?.qualifiedName,
           primaryKeyColumns: target?.primaryKeyColumns ?? [],
           affectedRows: result.affectedRows,
@@ -287,7 +295,11 @@ extension NotebookViewModel {
         editorResult = cellResult
         if pending {
           patchResultTargets(
-            [ResultTargetsRead(query: query, result: result, timestamp: cellResult.timestamp)],
+            [
+              ResultTargetsRead(
+                query: query, result: result, timestamp: cellResult.timestamp,
+                sourceQuery: cellResult.sourceQuery)
+            ],
             cellId: nil, epoch: epoch, connectionManager: connectionManager)
         }
 
@@ -312,7 +324,7 @@ extension NotebookViewModel {
       editorResult = CellResult.errorResult(
         Self.runErrorMessage(error, multipleStatements: multipleStatements),
         executionTime: executionTime,
-        sourceQuery: query,
+        sourceQuery: pageState?.shownPageSQL ?? query,
         aiSessionKey: aiSessionKey
       )
       recordFailure(error, sql: query, duration: executionTime, source: source)

@@ -120,6 +120,30 @@ struct CascadePreviewModelTests {
     #expect(tab.statements.contains { $0.hasPrefix("UPDATE") })
   }
 
+  @Test("A keyless target's staged delete is not counted: an empty key would read no rows")
+  func keylessDeleteIsNotCounted() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract(), rows: [[.int(3)]])
+    let (viewModel, _) = try await makeViewModel(factory)
+    let keyed = try #require(viewModel.editorResult?.editTarget)
+    viewModel.editorResult?.editTarget = EditTarget(
+      qualifiedName: keyed.qualifiedName, tableID: keyed.tableID, primaryKeyColumns: [],
+      connectionEpoch: keyed.connectionEpoch, updateOnly: true, schema: "public", name: "users",
+      rowLocator: .pgLocator)
+    viewModel.editorResult?.truncation = DataViewerState.Truncation(
+      rowLocator: .pgLocator,
+      locators: ["(0,1)", "(0,2)"].map {
+        RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", $0, "700"]))
+      })
+    #expect(viewModel.stageDelete(rows: [0]) == nil)
+
+    let impact = try #require(await viewModel.stagedDeleteImpact())
+
+    #expect(!impact.blocksCommit)
+    #expect(impact.note?.hasPrefix("Impact not computed") == true)
+    #expect(factory.sessions.count == 1)
+    #expect(!factory.statements.contains { $0.contains("COUNT(*)") })
+  }
+
   @Test("With a transaction open nothing is counted and the commit is not refused")
   func openTransactionSkipsCounts() async throws {
     let factory = FakeDatabaseSessionFactory(capabilities: .contract(), rows: [[.int(3)]])

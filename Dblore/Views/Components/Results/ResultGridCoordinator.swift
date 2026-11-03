@@ -91,6 +91,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// update
   private struct Key: Equatable {
     let timestamp: Date
+    /// Rows replaced under the same timestamp (the inline edit refresh) rebuild the model, so
+    /// its row values and page-row locator keys never trail the live result.
+    let dataRevision: Int
     let columnNames: [String]
     let rowCount: Int
     let sortColumn: String?
@@ -318,7 +321,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   {
     gridTableView = tableView
     let newKey = Key(
-      timestamp: result.timestamp, columnNames: result.columns.map(\.name),
+      timestamp: result.timestamp, dataRevision: result.dataRevision,
+      columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
       currentMatchId: currentMatch?.id,

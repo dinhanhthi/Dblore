@@ -557,11 +557,12 @@ extension WorkspaceManager {
 
   /// Reload every data-viewer page. A page read inside the transaction still shows those rows.
   /// Same reload as header Refresh (`totalRows` forgotten, then the page and the count), without
-  /// its Commit / Discard prompt: a staged edit stays on top of the reloaded page.
+  /// its Commit / Discard prompt: a staged edit stays on top of the reloaded page, and a page
+  /// with staged edits on located (keyless) rows is only marked stale
+  /// (`NotebookViewModel.reloadPageAfterRollback`).
   private func reloadDataViewersAfterRollback() async {
     for viewModel in viewModels.values where viewModel.dataViewer != nil {
-      viewModel.dataViewer?.totalRows = nil
-      await viewModel.loadDataViewerPage()
+      await viewModel.reloadPageAfterRollback()
     }
   }
 

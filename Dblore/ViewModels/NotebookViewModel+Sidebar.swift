@@ -306,6 +306,11 @@ extension NotebookViewModel {
       }
       return
     }
+    // Only the page row names a keyless row, and these are its values
+    if result.editTarget?.rowLocator != nil {
+      showToast(Self.notEditableMessage, type: .error)
+      return
+    }
     let column = result.columns[index]
     let originalValue = index < row.count ? row[index] : .null
     cellDetailEditTarget = result.editTarget
@@ -337,9 +342,24 @@ extension NotebookViewModel {
         showToast(RowChangeError.primaryKeyColumn(name).message, type: .error)
         return
       }
+      // A keyless row is named by the locator the live page read at `row`: an index into
+      // other rows (a grid of rows re-read since) would name another row
+      if result.editTarget?.rowLocator != nil,
+        result.timestamp != editorResult?.timestamp
+          || result.dataRevision != editorResult?.dataRevision
+      {
+        showToast(Self.notEditableMessage, type: .error)
+        return
+      }
       let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
-      let key = RowChangeSet.RowKey(values: result.primaryKeyColumns.compactMap { rowData[$0] })
-      if dataViewer?.changeSet?.deletes.contains(key) == true {
+      // A keyless row's key is its page locator: keyless rows never share an empty key
+      let key: RowChangeSet.RowKey? =
+        if let kind = result.editTarget?.rowLocator {
+          result.truncation?.locatorKey(row: row, kind: kind)
+        } else {
+          RowChangeSet.RowKey(values: result.primaryKeyColumns.compactMap { rowData[$0] })
+        }
+      if let key, dataViewer?.changeSet?.deletes.contains(key) == true {
         showToast(RowChangeError.deletedRow.message, type: .error)
         return
       }
@@ -349,7 +369,8 @@ extension NotebookViewModel {
         originalValue: original, tableName: result.tableName,
         rowData: rowData,
         primaryKeyColumns: result.primaryKeyColumns, cellId: nil,
-        connectionManager: connectionManager, wallClock: result.columns[index].wallClock)
+        connectionManager: connectionManager, wallClock: result.columns[index].wallClock,
+        pageRow: row)
       return
     }
     if let message = Self.gridDateRefusal(

@@ -181,9 +181,9 @@ class NotebookViewModel {
   var cellDetailBinaryFormat: BinaryDisplayFormat = .size
   /// `ColumnInfo.wallClock` of the sidebar cell's column: how its date shows and its text reads
   var cellDetailWallClock = false
-  /// `cellDetailWallClock` from before a cell edit swapped the Cell Value sidebar to `edited`:
-  /// `restoreSidebar` puts it back with the content it belongs to
-  var sidebarRestoreWallClock: (edited: SidebarContent, wallClock: Bool)?
+  /// `cellDetailWallClock` and `cellDetailRow` from before a cell edit swapped the Cell Value
+  /// sidebar to `edited`: `restoreSidebar` puts them back with the content they belong to
+  var sidebarRestoreWallClock: (edited: SidebarContent, wallClock: Bool, row: Int?)?
   /// Full values of the large binary cells the shown data-viewer page cut (session-only)
   let lazyCells = LazyCellLoader()
   /// Row shown in Row Details, with its drafts (session-only)

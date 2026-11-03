@@ -16,10 +16,11 @@ extension NotebookViewModel {
   /// True when a value of `result` can be edited in place: the result carries a live,
   /// server-validated edit target (never true for a result read from a file, nor while its
   /// table definition is still read, `typesPending`) whose primary key columns are all in the
-  /// result, and the connection is not read-only.
+  /// result (a keyless target: a data-viewer page read with its row locators), and the
+  /// connection is not read-only.
   func canEdit(_ result: CellResult) -> Bool {
     guard !result.typesPending, let target = result.editTarget else { return false }
-    return canEdit(target: target, columnNames: Set(result.columns.map(\.name)))
+    return canEdit(target: target, columnNames: Set(result.columns.map(\.name)), result: result)
   }
 
   /// Indexes of `result` columns that stay read-only in an editable result: generated columns.
@@ -38,12 +39,20 @@ extension NotebookViewModel {
     guard let target = cellDetailEditTarget, !target.generatedColumns.contains(columnName) else {
       return false
     }
-    return canEdit(target: target, columnNames: columnNames)
+    return canEdit(
+      target: target, columnNames: columnNames, result: liveResult(of: target, cellId: nil))
   }
 
-  private func canEdit(target: EditTarget, columnNames: Set<String>) -> Bool {
-    rowEditingUnsupportedReason == nil && protectionPolicy.protectionLevel != .readOnly
-      && !target.primaryKeyColumns.isEmpty
+  /// `result`: the live result of `target`, whose page locates the rows of a keyless target
+  private func canEdit(target: EditTarget, columnNames: Set<String>, result: CellResult?) -> Bool {
+    guard rowEditingUnsupportedReason == nil, protectionPolicy.protectionLevel != .readOnly else {
+      return false
+    }
+    // A keyless row is named by the locator its data-viewer page read for it
+    if let kind = target.rowLocator {
+      return dataViewer != nil && result?.truncation?.rowLocator == kind
+    }
+    return !target.primaryKeyColumns.isEmpty
       && target.primaryKeyColumns.allSatisfy(columnNames.contains)
   }
 
@@ -96,12 +105,30 @@ extension NotebookViewModel {
     let lookup = CellUpdateStatement.lookupRelation(columns: columns, table: table)
     guard Self.columnTableID(columns) == tableID else { return (nil, lookup) }
     let primaryKey = CellUpdateStatement.editablePrimaryKey(columns: columns, table: table)
-    guard !primaryKey.isEmpty else { return (nil, lookup) }
+    // A keyless table's rows are named by their locator, which only a data-viewer page reads
+    // (`DataViewerState.rowLocator`): any other result of it stays read-only
+    let rowLocator =
+      primaryKey.isEmpty && dataViewer != nil && Self.readsPlainColumns(columns, of: table)
+      ? table.rowLocator : nil
+    guard !primaryKey.isEmpty || rowLocator != nil else { return (nil, lookup) }
     let target = EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
-      name: table.name, generatedColumns: table.generatedColumns)
+      name: table.name, generatedColumns: table.generatedColumns, rowLocator: rowLocator)
     return (target, lookup)
+  }
+
+  /// True when every column is a plain column of `table` (its origin is the table and its
+  /// ordinal names it), as `CellUpdateStatement.editablePrimaryKey` requires of a keyed result
+  private static func readsPlainColumns(_ columns: [ColumnInfo], of table: EditTable) -> Bool {
+    let tableID = table.resolvedTableRef
+    return table.oid != 0 && !columns.isEmpty
+      && columns.allSatisfy { column in
+        guard let origin = column.origin, origin.tableID == tableID,
+          let attnum = Int16(exactly: origin.columnOrdinal)
+        else { return false }
+        return table.attributeNames[attnum] == column.name
+      }
   }
 
   // MARK: - Rows before the catalog
@@ -111,6 +138,9 @@ extension NotebookViewModel {
     let query: String
     let result: QueryResult
     let timestamp: Date
+    /// The `sourceQuery` of the shown result when it is not `query` (a keyless data-viewer page
+    /// shows its SQL without the locator columns, `DataViewerState.shownPageSQL`)
+    var sourceQuery: String? = nil
   }
 
   /// What a result of `query` shows at once, with no catalog query: the targets built from the
@@ -175,6 +205,11 @@ extension NotebookViewModel {
           connectionKept ? targets : (nil, nil), columns: connectionKept ? columns : nil,
           to: read, cellId: cellId)
       }
+      // A keyless table's first page, read before its target was known: read again with the
+      // locator columns (a page read in flight re-reads at its end, `loadDataViewerPage`)
+      if cellId == nil, self?.dataViewerAwaitsRowLocators == true {
+        await self?.loadDataViewerPage()
+      }
       // Done: the slot forgets it, unless a newer read replaced it
       if self?.resultTargetPatches[cellId]?.token == token {
         self?.resultTargetPatches[cellId] = nil
@@ -192,7 +227,7 @@ extension NotebookViewModel {
     var savedFieldsChanged = false
     func patched(_ result: CellResult?) -> CellResult? {
       guard var result, result.typesPending, result.timestamp == read.timestamp,
-        result.sourceQuery == read.query
+        result.sourceQuery == (read.sourceQuery ?? read.query)
       else { return nil }
       let saved = (result.columns, result.tableName, result.primaryKeyColumns)
       result.typesPending = false
@@ -346,15 +381,23 @@ extension NotebookViewModel {
   /// `EditTable.attributeNames`, MySQL source names) and its cached type when it has none.
   /// The cached edit table is used when there is one (the background read validates the
   /// target); only a table read for the first time waits for the catalog here.
-  /// A `SELECT *` page is returned as read. A lazy page that does not have the lazy columns, a
-  /// row of another width, or a length that is not a number throws
-  /// (`LazyPageError.unexpectedShape`): its prefixes must never show as whole values.
+  /// A keyless page's locator columns (`state.locatorColumns`, last) are moved first into the
+  /// truncation's page-row-indexed `locators`, for `SELECT *` pages too.
+  /// A `SELECT *` page without them is returned as read. A lazy page that does not have the lazy
+  /// columns, a row of another width, or a length that is not a number throws
+  /// (`LazyPageError.unexpectedShape`): its prefixes must never show as whole values; so does a
+  /// keyless page without its locator columns.
   /// `epoch` is the connection the page was read on; full values are read only there.
   func strippedDataViewerPage(
     _ result: QueryResult, state: DataViewerState, epoch: UInt64,
     connectionManager: DatabaseConnectionManager
   ) async throws -> (result: QueryResult, truncation: DataViewerState.Truncation?) {
-    guard let lazy = state.lazyColumns else { return (result, nil) }
+    var result = result
+    var located: DataViewerState.Truncation?
+    if state.rowLocator != nil {
+      (result, located) = try strippingRowLocators(result, state: state, epoch: epoch)
+    }
+    guard let lazy = state.lazyColumns else { return (result, located) }
     guard result.columns.map(\.name) == lazy.map(\.name) + state.lengthColumns,
       result.rows.allSatisfy({ $0.count == result.columns.count })
     else { throw LazyPageError.unexpectedShape }
@@ -382,7 +425,8 @@ extension NotebookViewModel {
     }
     // The edit target's key order; the cached key when the table did not resolve
     var truncation = DataViewerState.Truncation(
-      connectionEpoch: epoch, relation: state.relation, dialect: state.databaseType.dialect)
+      connectionEpoch: epoch, relation: state.relation, dialect: state.databaseType.dialect,
+      rowLocator: located?.rowLocator, locators: located?.locators ?? [])
     let names = lazy.map(\.name)
     truncation.keyColumns =
       table.map(\.primaryKeyColumns).flatMap { $0.allSatisfy(names.contains) ? $0 : nil }
@@ -421,6 +465,57 @@ extension NotebookViewModel {
     stripped.sessionReset = result.sessionReset
     stripped.skippedStatements = result.skippedStatements
     stripped.typesDeferred = result.typesDeferred
+    return (stripped, truncation)
+  }
+
+  /// `result` without the locator columns of `state` (last), and a truncation with the locator
+  /// key of each row in page order (`RowChangeSet.RowKey(locator:)`). A SQLite key keeps the
+  /// row's values for its `IS` terms, without the values a lazy page cut or its length columns.
+  /// Throws `LazyPageError.unexpectedShape` when the columns are not there or a locator is not
+  /// text or an integer.
+  private func strippingRowLocators(
+    _ result: QueryResult, state: DataViewerState, epoch: UInt64
+  ) throws -> (QueryResult, DataViewerState.Truncation) {
+    let aliases = state.locatorColumns
+    let kept = result.columns.count - aliases.count
+    guard kept > 0, result.columns.suffix(aliases.count).map(\.name) == aliases,
+      result.rows.allSatisfy({ $0.count == result.columns.count })
+    else { throw LazyPageError.unexpectedShape }
+    let columns = Array(result.columns.prefix(kept))
+    var keepsValues = false
+    if case .sqliteRowid = state.rowLocator { keepsValues = true }
+    let cut = Set(state.lazyColumns?.filter(\.isPrefixed).map(\.name) ?? [])
+      .union(state.lengthColumns)
+    var locators: [RowChangeSet.RowKey] = []
+    locators.reserveCapacity(result.rows.count)
+    for row in result.rows {
+      let texts = try row[kept...].map { value -> String in
+        switch value {
+        case .string(let text): return text
+        case .int(let number): return String(number)
+        default: throw LazyPageError.unexpectedShape
+        }
+      }
+      var values: [String: CellValue] = [:]
+      if keepsValues {
+        for (index, column) in columns.enumerated()
+        where !cut.contains(column.name) && values[column.name] == nil {
+          values[column.name] = row[index]
+        }
+      }
+      locators.append(RowChangeSet.RowKey(locator: RowLocatorValues(texts: texts, row: values)))
+    }
+    var stripped = QueryResult(
+      columns: columns, rows: result.rows.map { Array($0.prefix(kept)) },
+      rowCount: result.rowCount, executionTime: result.executionTime,
+      wasLimited: result.wasLimited, affectedRows: result.affectedRows)
+    stripped.truncated = result.truncated
+    stripped.sessionReset = result.sessionReset
+    stripped.skippedStatements = result.skippedStatements
+    stripped.typesDeferred = result.typesDeferred
+    let truncation = DataViewerState.Truncation(
+      connectionEpoch: epoch, relation: state.relation, dialect: state.databaseType.dialect,
+      rowLocator: state.rowLocator, locators: locators)
     return (stripped, truncation)
   }
 
@@ -511,6 +606,9 @@ extension NotebookViewModel {
   /// written back.
   /// - Parameter connectionManager: Optional connection manager from workspace for database updates
   /// - Parameter wallClock: the column's `ColumnInfo.wallClock`, how a date's text reads
+  /// - Parameter pageRow: the edited row's index into the result's rows, which names a keyless
+  ///   row (`submitInlineEdit`); nil: the sidebar cell's (`cellDetailRow`). The Cell Value
+  ///   sidebar this edit shows takes it as its row, so its next save names the row it shows.
   func handleCellValueEdit(
     columnName: String,
     columnType: String,
@@ -521,12 +619,15 @@ extension NotebookViewModel {
     primaryKeyColumns: [String],
     cellId: UUID?,
     connectionManager: DatabaseConnectionManager? = nil,
-    wallClock: Bool
+    wallClock: Bool,
+    pageRow: Int? = nil
   ) {
     let bindText = Self.bindText(for: newValue, original: originalValue)
     let editedValue = Self.editedCellValue(
       newValue, original: originalValue, columnType: columnType, wallClock: wallClock,
       dialect: sqlDialect)
+    // The row of the shown sidebar cell, before the restore below puts back an earlier one
+    let row = pageRow ?? cellDetailRow
 
     // Copy to clipboard (an explicit NULL has no text to copy)
     if let newValue {
@@ -558,9 +659,11 @@ extension NotebookViewModel {
         cellId: cellId
       )
       sidebarRestore = (edited: edited, original: rightSidebarContent)
-      sidebarRestoreWallClock = (edited: edited, wallClock: cellDetailWallClock)
+      sidebarRestoreWallClock = (edited: edited, wallClock: cellDetailWallClock, row: cellDetailRow)
       rightSidebarContent = edited
       cellDetailWallClock = wallClock
+      // Content and row move together: a sidebar save of this cell names this row
+      cellDetailRow = row
     }
 
     guard let connectionManager, var rowData else { return }
@@ -581,19 +684,20 @@ extension NotebookViewModel {
       assignments: [(column: columnName, value: bindText)], rowData: rowData,
       target: cellDetailEditTarget, cellId: cellId, connectionManager: connectionManager,
       documentValue: (columnType: columnType, text: newValue), sidebarRestore: sidebarRestore,
-      values: [columnName: editedValue])
+      values: [columnName: editedValue], pageRow: row)
     // A refused edit sends nothing: the sidebar shows the stored value again
     if !armed { restoreSidebar(sidebarRestore) }
   }
 
   /// A cell edit that stored nothing (refused, cancelled, dropped or failed): the Cell Value
   /// sidebar shows `restore.original` again while it still shows `restore.edited`, with the
-  /// column flag it had (`sidebarRestoreWallClock`)
+  /// column flag and row it had (`sidebarRestoreWallClock`)
   func restoreSidebar(_ restore: (edited: SidebarContent, original: SidebarContent?)?) {
     guard let restore, rightSidebarContent == restore.edited else { return }
     rightSidebarContent = restore.original
     if let saved = sidebarRestoreWallClock, saved.edited == restore.edited {
       cellDetailWallClock = saved.wallClock
+      cellDetailRow = saved.row
       sidebarRestoreWallClock = nil
     }
   }
@@ -605,15 +709,17 @@ extension NotebookViewModel {
   /// `documentValue` (its column type and the typed text) at `documentPath` (nil: the column).
   /// `sidebarRestore` goes with the edit, put back when it stores nothing. `values` is what each
   /// assignment's text reads as (`editedCellValue`): a date binds as its instant
-  /// (`boundAssignments`), the edit keeps the typed text. False: refused, nothing sent or armed
-  /// (on MongoDB also: the editor sheet opened on the stored value).
+  /// (`boundAssignments`), the edit keeps the typed text. A keyless target's row is named by the
+  /// locator its page read for `pageRow` (an index into the live result's rows), never by
+  /// `rowData`. False: refused, nothing sent or armed (on MongoDB also: the editor sheet opened
+  /// on the stored value).
   @discardableResult
   func submitInlineEdit(
     assignments: [(column: String, value: String?)], rowData: [String: CellValue],
     target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager,
     documentValue: (columnType: String, text: String?)? = nil, documentPath: [String]? = nil,
     sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil,
-    values: [String: CellValue] = [:]
+    values: [String: CellValue] = [:], pageRow: Int? = nil
   ) -> Bool {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
@@ -636,6 +742,17 @@ extension NotebookViewModel {
       showToast(Self.generatedColumnMessage(generated), type: .error)
       return false
     }
+    var locator: RowLocatorValues?
+    if let kind = target.rowLocator {
+      guard let pageRow,
+        let key = liveResult(of: target, cellId: cellId)?.truncation?.locatorKey(
+          row: pageRow, kind: kind)
+      else {
+        showToast(Self.notEditableMessage, type: .error)
+        return false
+      }
+      locator = key.locator
+    }
     // MongoDB: one `$set` through `executeGatedSequentialBatch`, never `executeGatedUpdate`
     if stagesDocuments {
       guard assignments.count == 1, let column = columnNames.first, let documentValue else {
@@ -654,7 +771,8 @@ extension NotebookViewModel {
       statement = try CellUpdateStatement.make(
         qualifiedName: target.qualifiedName, assignments: bound,
         primaryKeyColumns: target.primaryKeyColumns, rowData: rowData,
-        updateOnly: target.updateOnly, dialect: sqlDialect)
+        updateOnly: target.updateOnly, dialect: sqlDialect, rowLocator: target.rowLocator,
+        locator: locator)
     } catch {
       showToast(error.localizedDescription, type: .error)
       return false
@@ -776,22 +894,28 @@ extension NotebookViewModel {
           let columns = edit.columnNames.compactMap { name in
             result?.columns.firstIndex(where: { $0.name == name })
           }
+          // A keyless row is found by its page locator (`Truncation.locators`), never by values
+          func locator(_ row: Int) -> RowChangeSet.RowKey? {
+            target.rowLocator.flatMap { result?.truncation?.locatorKey(row: row, kind: $0) }
+          }
           if isLiveEditTarget(target, cellId: nil), let result,
             columns.count == count,
-            let row = result.rows.firstIndex(where: { values in
+            let row = result.rows.indices.first(where: { index in
               guard
                 let statement = try? CellUpdateStatement.make(
                   qualifiedName: target.qualifiedName, assignments: assignments,
                   primaryKeyColumns: target.primaryKeyColumns,
-                  rowData: CellResult.rowData(columns: result.columns, row: values),
-                  dialect: sqlDialect)
+                  rowData: CellResult.rowData(columns: result.columns, row: result.rows[index]),
+                  dialect: sqlDialect, rowLocator: target.rowLocator,
+                  locator: locator(index)?.locator)
               else { return false }
               return statement.values.dropFirst(count) == edit.statement.values.dropFirst(count)
             })
           {
             let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
-            let key = RowChangeSet.RowKey(
-              values: target.primaryKeyColumns.compactMap { rowData[$0] })
+            let key =
+              locator(row)
+              ?? RowChangeSet.RowKey(values: target.primaryKeyColumns.compactMap { rowData[$0] })
             for (name, (column, newValue)) in zip(edit.columnNames, zip(columns, newValues)) {
               let value = Self.editedCellValue(
                 newValue, original: result.rows[row][column],
@@ -912,6 +1036,8 @@ extension NotebookViewModel {
     updated.truncation = truncation
     if !isMongoDataViewer { resetLazyCells() }
     editorResult = updated
+    // The sidebar cell is re-read from the new rows, so it shows the row its next save names
+    syncCellDetail(cellId: nil, result: updated)
     syncRowDetail(cellId: nil, result: updated)
   }
 

@@ -59,6 +59,11 @@ struct ResultGridModel {
   private var generations: [Int] = []
   private var cachedKeyColumns: [String]?
   private var cachedKeyRows: [RowChangeSet.RowKey: [Int]] = [:]
+  /// Locator key of each loaded displayed row of a keyless data-viewer page
+  /// (`DataViewerState.Truncation.locators`, by index into `CellResult.rows`), nil when the
+  /// page has none. A locator change set is matched by these, never by row values.
+  private let locatorKeys: [RowChangeSet.RowKey]?
+  private var cachedLocatorRows: [RowChangeSet.RowKey: [Int]]?
   /// Full byte length of each cut cell by index into `CellResult.rows`, then result column
   private var unloaded: [Int: [Int: Int]]
 
@@ -89,6 +94,13 @@ struct ResultGridModel {
       : sorted.filter { valueFilter.includes(row: result.rows[$0], columns: result.columns) }
     loadedRows = originalRows.map { result.rows[$0] }
     self.originalRows = originalRows
+    if let truncation = result.truncation, truncation.rowLocator != nil,
+      truncation.locators.count == result.rows.count
+    {
+      locatorKeys = originalRows.map { truncation.locators[$0] }
+    } else {
+      locatorKeys = nil
+    }
     // Sized to the loaded result, so a filtered-out original row has no displayed row (-1)
     var displayedRowByOriginalRow = Array(repeating: -1, count: result.rows.count)
     for (displayedRow, originalRow) in originalRows.enumerated() {
@@ -514,7 +526,9 @@ struct ResultGridModel {
 
   private mutating func overlay(for set: RowChangeSet?) -> Staging {
     guard let set else { return Staging() }
-    let matches = rowsByKey(primaryKeyColumns: set.primaryKeyColumns)
+    let matches =
+      set.rowLocator != nil
+      ? rowsByLocator() : rowsByKey(primaryKeyColumns: set.primaryKeyColumns)
     var next = Staging()
     next.states = Array(repeating: .normal, count: loadedRows.count)
     next.editedColumns = Array(repeating: IndexSet(), count: loadedRows.count)
@@ -567,6 +581,18 @@ struct ResultGridModel {
     }
     cachedKeyColumns = primaryKeyColumns
     cachedKeyRows = map
+    return map
+  }
+
+  /// Locator lookup for the loaded page of a keyless table: each row by its own page locator, so
+  /// identical rows stay apart. Empty when the page has no locators.
+  private mutating func rowsByLocator() -> [RowChangeSet.RowKey: [Int]] {
+    if let cachedLocatorRows { return cachedLocatorRows }
+    var map: [RowChangeSet.RowKey: [Int]] = [:]
+    for (row, key) in (locatorKeys ?? []).enumerated() {
+      map[key, default: []].append(row)
+    }
+    cachedLocatorRows = map
     return map
   }
 

@@ -38,6 +38,20 @@ struct ResultGridCoordinatorTests {
     return (view as? NSTableCellView)?.textField
   }
 
+  @Test("Rows replaced under the same timestamp rebuild the model")
+  func dataRevisionRebuildsTheModel() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    #expect(
+      coordinator.update(tableView, result: result, sortColumn: nil, ascending: true) == false)
+    var refreshed = CellResult(
+      columns: result.columns,
+      rows: [[.int(3), .string("z")], [.int(1), .string("a")], [.int(2), .null]],
+      rowCount: 3, timestamp: result.timestamp)
+    refreshed.dataRevision = result.dataRevision + 1
+    #expect(coordinator.update(tableView, result: refreshed, sortColumn: nil, ascending: true))
+    #expect(coordinator.model?.value(row: 0, column: 1) == .string("z"))
+  }
+
   @Test("Rows and columns map through the coordinator, sorted rows included")
   func rowColumnMapping() {
     let unsorted = makeGrid(sortColumn: nil)

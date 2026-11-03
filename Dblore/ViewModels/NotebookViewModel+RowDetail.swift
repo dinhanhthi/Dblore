@@ -150,9 +150,14 @@ extension NotebookViewModel {
     }
 
     if dataViewer != nil {
-      let key = RowChangeSet.RowKey(
-        values: state.primaryKeyColumns.compactMap { state.rowData[$0] })
-      if dataViewer?.changeSet?.deletes.contains(key) == true {
+      // A keyless row's key is its page locator: keyless rows never share an empty key
+      let key: RowChangeSet.RowKey? =
+        if let kind = state.editTarget?.rowLocator {
+          editorResult?.truncation?.locatorKey(row: state.originalRow, kind: kind)
+        } else {
+          RowChangeSet.RowKey(values: state.primaryKeyColumns.compactMap { state.rowData[$0] })
+        }
+      if let key, dataViewer?.changeSet?.deletes.contains(key) == true {
         showToast(RowChangeError.deletedRow.message, type: .error)
         return
       }
@@ -170,7 +175,7 @@ extension NotebookViewModel {
     submitInlineEdit(
       assignments: dirty.map { (column: $0.name, value: $0.bindText) }, rowData: state.rowData,
       target: state.editTarget, cellId: cellId, connectionManager: connectionManager,
-      documentValue: documentValue, values: values)
+      documentValue: documentValue, values: values, pageRow: state.originalRow)
   }
 
   /// The bound `text` of `field` as a `CellValue`. The NULL toggle decides NULL (nil text): a
@@ -210,7 +215,10 @@ extension NotebookViewModel {
         qualifiedName: target.qualifiedName,
         assignments: Self.boundAssignments(assignments, values: values, dialect: sqlDialect),
         primaryKeyColumns: target.primaryKeyColumns, rowData: state.rowData,
-        updateOnly: target.updateOnly, dialect: sqlDialect),
+        updateOnly: target.updateOnly, dialect: sqlDialect, rowLocator: target.rowLocator,
+        locator: target.rowLocator.flatMap {
+          editorResult?.truncation?.locatorKey(row: state.originalRow, kind: $0)?.locator
+        }),
       statement == edit.statement
     else { return }
 

@@ -81,6 +81,9 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
   let connectionEpoch: UInt64
   /// Primary key columns in key order. Edits to these columns are refused.
   let primaryKeyColumns: [String]
+  /// The target's locator kind (`EditTarget.rowLocator`): rows are keyed by `RowKey(locator:)`.
+  /// Nil for a keyed target.
+  let rowLocator: RowLocatorKind?
 
   private(set) var inserts: [StagedInsert]
   private(set) var deletes: Set<RowKey>
@@ -197,6 +200,7 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     generation = target.generation
     connectionEpoch = target.connectionEpoch
     primaryKeyColumns = target.primaryKeyColumns
+    rowLocator = target.rowLocator
     inserts = []
     deletes = []
     edits = [:]
@@ -207,7 +211,8 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
   static func == (lhs: RowChangeSet, rhs: RowChangeSet) -> Bool {
     lhs.qualifiedName == rhs.qualifiedName && lhs.generation == rhs.generation
       && lhs.connectionEpoch == rhs.connectionEpoch
-      && lhs.primaryKeyColumns == rhs.primaryKeyColumns && lhs.inserts == rhs.inserts
+      && lhs.primaryKeyColumns == rhs.primaryKeyColumns && lhs.rowLocator == rhs.rowLocator
+      && lhs.inserts == rhs.inserts
       && lhs.deletes == rhs.deletes && editMapsEqual(lhs.edits, rhs.edits)
       && editMapsEqual(lhs.originals, rhs.originals) && lhs.serverDefaults == rhs.serverDefaults
   }
