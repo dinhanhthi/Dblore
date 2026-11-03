@@ -14,10 +14,11 @@ extension NotebookViewModel {
   // MARK: - Editability
 
   /// True when a value of `result` can be edited in place: the result carries a live,
-  /// server-validated edit target (never true for a result read from a file) whose primary key
-  /// columns are all in the result, and the connection is not read-only.
+  /// server-validated edit target (never true for a result read from a file, nor while its
+  /// table definition is still read, `typesPending`) whose primary key columns are all in the
+  /// result, and the connection is not read-only.
   func canEdit(_ result: CellResult) -> Bool {
-    guard let target = result.editTarget else { return false }
+    guard !result.typesPending, let target = result.editTarget else { return false }
     return canEdit(target: target, columnNames: Set(result.columns.map(\.name)))
   }
 
@@ -79,19 +80,164 @@ extension NotebookViewModel {
     guard !result.columns.isEmpty,
       let relation = CellUpdateStatement.singleRelation(in: query, dialect: sqlDialect),
       let tableID = Self.originTableID(result.columns),
-      let table = await editTable(relation, tableID: tableID, connectionManager),
-      table.connectionEpoch == epoch,
+      let table = await editTable(relation, tableID: tableID, connectionManager)
+    else { return (nil, nil) }
+    return targets(of: table, tableID: tableID, columns: result.columns, epoch: epoch)
+  }
+
+  /// The edit target and lookup relation of result `columns` read from `table` (`tableID`) on
+  /// connection `epoch`
+  private func targets(
+    of table: EditTable, tableID: TableRef, columns: [ColumnInfo], epoch: UInt64
+  ) -> ResultTargets {
+    guard table.connectionEpoch == epoch,
       CellUpdateStatement.isServerQualifiedName(table.qualifiedName, dialect: sqlDialect)
     else { return (nil, nil) }
-    let lookup = CellUpdateStatement.lookupRelation(columns: result.columns, table: table)
-    guard Self.columnTableID(result.columns) == tableID else { return (nil, lookup) }
-    let primaryKey = CellUpdateStatement.editablePrimaryKey(columns: result.columns, table: table)
+    let lookup = CellUpdateStatement.lookupRelation(columns: columns, table: table)
+    guard Self.columnTableID(columns) == tableID else { return (nil, lookup) }
+    let primaryKey = CellUpdateStatement.editablePrimaryKey(columns: columns, table: table)
     guard !primaryKey.isEmpty else { return (nil, lookup) }
     let target = EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
       name: table.name, generatedColumns: table.generatedColumns)
     return (target, lookup)
+  }
+
+  // MARK: - Rows before the catalog
+
+  /// One shown result whose catalog read runs in the background (`patchResultTargets`)
+  struct ResultTargetsRead {
+    let query: String
+    let result: QueryResult
+    let timestamp: Date
+  }
+
+  /// What a result of `query` shows at once, with no catalog query: the targets built from the
+  /// cached edit table (`cachedEditTable`), the columns with their cached PostgreSQL types
+  /// (`cachedColumnTypes`, else the driver's), and whether the background read
+  /// (`patchResultTargets`) must still resolve the column types and validate the target. A
+  /// MongoDB result resolves at once (no catalog).
+  func provisionalTargets(
+    for query: String, result: QueryResult, connectionManager: DatabaseConnectionManager,
+    epoch: UInt64
+  ) async -> (targets: ResultTargets, columns: [ColumnInfo], pending: Bool) {
+    if let config = notebook.connectionConfig,
+      config.databaseType.capabilities.queryLanguage == .mongosh
+    {
+      let targets = await resultTargets(
+        for: query, result: result, connectionManager: connectionManager, epoch: epoch)
+      return (targets, result.columns, false)
+    }
+    var columns = result.columns
+    if result.typesDeferred, let cached = await connectionManager.cachedColumnTypes(columns) {
+      columns = cached
+    }
+    guard !result.columns.isEmpty,
+      CellUpdateStatement.singleRelation(in: query, dialect: sqlDialect) != nil,
+      let tableID = Self.originTableID(result.columns)
+    else { return ((nil, nil), columns, result.typesDeferred) }
+    guard let table = await connectionManager.cachedEditTable(id: tableID) else {
+      return ((nil, nil), columns, true)
+    }
+    return (targets(of: table, tableID: tableID, columns: columns, epoch: epoch), columns, true)
+  }
+
+  /// Reads the catalog for `reads` in the background, after their rows are shown: the column
+  /// types (`typesDeferred`: always read fresh, so a type cached before another client altered
+  /// the column is replaced), then the validated edit target and lookup (a fresh read outside
+  /// a transaction, so a key changed by another client replaces a cached target). Each result
+  /// still shown for `cellId` (nil: the editor) with the same timestamp is patched; its rows,
+  /// page and load key stay, and nothing is read again. A result the slot replaced meanwhile is
+  /// left as shown. Inside a user transaction the read runs there, as the awaited read before
+  /// it did; a BEGIN sent after the rows showed can see it land inside that transaction.
+  func patchResultTargets(
+    _ reads: [ResultTargetsRead], cellId: UUID?, epoch: UInt64,
+    connectionManager: DatabaseConnectionManager
+  ) {
+    guard !reads.isEmpty else { return }
+    let token = UUID()
+    let task = Task { [weak self] in
+      for read in reads {
+        // Nil (not read, or failed): the shown types stay
+        var columns: [ColumnInfo]?
+        if read.result.typesDeferred {
+          columns = await connectionManager.freshColumnTypes(
+            read.result.columns, query: read.query)
+        }
+        guard
+          let targets = await self?.resultTargets(
+            for: read.query, result: read.result, connectionManager: connectionManager,
+            epoch: epoch)
+        else { return }
+        let connectionKept = await connectionManager.connectionEpoch == epoch
+        self?.applyResultTargets(
+          connectionKept ? targets : (nil, nil), columns: connectionKept ? columns : nil,
+          to: read, cellId: cellId)
+      }
+      // Done: the slot forgets it, unless a newer read replaced it
+      if self?.resultTargetPatches[cellId]?.token == token {
+        self?.resultTargetPatches[cellId] = nil
+      }
+    }
+    resultTargetPatches[cellId] = (token, task)
+  }
+
+  /// Patches the results of `read` still shown for `cellId` (nil columns: types kept)
+  private func applyResultTargets(
+    _ targets: ResultTargets, columns: [ColumnInfo]?, to read: ResultTargetsRead, cellId: UUID?
+  ) {
+    let target = cellId == nil ? keepingStagedGeneration(targets.editTarget) : targets.editTarget
+    // A saved field (types, table, key) changed: the document is edited
+    var savedFieldsChanged = false
+    func patched(_ result: CellResult?) -> CellResult? {
+      guard var result, result.typesPending, result.timestamp == read.timestamp,
+        result.sourceQuery == read.query
+      else { return nil }
+      let saved = (result.columns, result.tableName, result.primaryKeyColumns)
+      result.typesPending = false
+      if let columns { result.columns = columns }
+      result.editTarget = target
+      result.lookupRelation = targets.lookupRelation
+      result.tableName = target?.qualifiedName
+      result.primaryKeyColumns = target?.primaryKeyColumns ?? []
+      if saved != (result.columns, result.tableName, result.primaryKeyColumns) {
+        savedFieldsChanged = true
+      }
+      return result
+    }
+    func patched(_ statements: [StatementResult]) -> [StatementResult] {
+      statements.map { statement in
+        guard let result = patched(statement.result) else { return statement }
+        return StatementResult(
+          id: statement.id, queryText: statement.queryText, result: result,
+          statementIndex: statement.statementIndex)
+      }
+    }
+    let shown: CellResult?
+    if let cellId {
+      guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+      if let result = patched(notebook.cells[index].result) {
+        notebook.cells[index].result = result
+      }
+      notebook.cells[index].statementResults = patched(notebook.cells[index].statementResults)
+      shown = notebook.cells[index].result
+      // The saved result takes the enriched types too
+      if savedFieldsChanged { onDocumentChanged?() }
+    } else {
+      if let result = patched(editorResult) { editorResult = result }
+      editorStatementResults = patched(editorStatementResults)
+      shown = editorResult
+    }
+    guard shown?.timestamp == read.timestamp else { return }
+    syncCellDetail(cellId: cellId, result: shown)
+    syncRowDetail(cellId: cellId, result: shown)
+  }
+
+  /// Waits until the background catalog read of the result shown for `cellId` (nil: the
+  /// editor) has patched it (`typesPending` cleared)
+  func awaitResultTargets(cellId: UUID? = nil) async {
+    await resultTargetPatches[cellId]?.task.value
   }
 
   /// The collection of a result read by exactly one `find`, keyed by `_id`, or nil. Nil for
@@ -169,14 +315,19 @@ extension NotebookViewModel {
     return tableIDs.count == 1 ? tableIDs.first : nil
   }
 
-  /// `relation` resolved by the server, or, while the app transaction is pending (no catalog
-  /// query is sent), the table cached under the result columns' `tableID`. Nil when
+  /// `relation` resolved by the server (always a fresh catalog read: it validates a cached
+  /// target), or, while the app transaction is pending (no catalog query is sent) or when
+  /// `cachedFirst` finds it, the table cached under the result columns' `tableID`. Nil when
   /// `relation` does not name that table (`relationNamesTable`).
   private func editTable(
-    _ relation: String, tableID: TableRef, _ connectionManager: DatabaseConnectionManager
+    _ relation: String, tableID: TableRef, _ connectionManager: DatabaseConnectionManager,
+    cachedFirst: Bool = false
   ) async -> EditTable? {
     guard await connectionManager.relationNamesTable(relation, tableID: tableID) else {
       return nil
+    }
+    if cachedFirst, let cached = await connectionManager.cachedEditTable(id: tableID) {
+      return cached
     }
     if await connectionManager.isMetadataPaused {
       return await connectionManager.cachedEditTable(id: tableID)
@@ -193,6 +344,8 @@ extension NotebookViewModel {
   /// over `lazyPrefixBytes` by row key and column), and each prefixed column, an expression
   /// on every engine, gets the origin a plain read gives (table identity and ordinal from
   /// `EditTable.attributeNames`, MySQL source names) and its cached type when it has none.
+  /// The cached edit table is used when there is one (the background read validates the
+  /// target); only a table read for the first time waits for the catalog here.
   /// A `SELECT *` page is returned as read. A lazy page that does not have the lazy columns, a
   /// row of another width, or a length that is not a number throws
   /// (`LazyPageError.unexpectedShape`): its prefixes must never show as whole values.
@@ -209,7 +362,8 @@ extension NotebookViewModel {
     var table: EditTable?
     if let tableID = Self.originTableID(columns),
       let relation = CellUpdateStatement.singleRelation(in: state.pageSQL, dialect: sqlDialect),
-      let resolved = await editTable(relation, tableID: tableID, connectionManager),
+      let resolved = await editTable(
+        relation, tableID: tableID, connectionManager, cachedFirst: true),
       resolved.resolvedTableRef == tableID
     {
       table = resolved
@@ -266,6 +420,7 @@ extension NotebookViewModel {
     stripped.truncated = result.truncated
     stripped.sessionReset = result.sessionReset
     stripped.skippedStatements = result.skippedStatements
+    stripped.typesDeferred = result.typesDeferred
     return (stripped, truncation)
   }
 
@@ -471,6 +626,11 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return false
     }
+    // A target shown before the background catalog read is only the cached one
+    if liveResult(of: target, cellId: cellId)?.typesPending == true {
+      showToast(Self.readingTableDefinition, type: .warning)
+      return false
+    }
     let columnNames = assignments.map(\.column)
     if let generated = columnNames.first(where: target.generatedColumns.contains) {
       showToast(Self.generatedColumnMessage(generated), type: .error)
@@ -570,6 +730,15 @@ extension NotebookViewModel {
       restoreSidebar(edit.sidebarRestore)
       showToast(Self.notEditableMessage, type: .error)
       return
+    }
+    // Re-read while a confirmation was open: sent only once the catalog validated the target
+    if liveResult(of: target, cellId: edit.cellId)?.typesPending == true {
+      await awaitResultTargets(cellId: edit.cellId)
+      guard isLiveEditTarget(target, cellId: edit.cellId) else {
+        restoreSidebar(edit.sidebarRestore)
+        showToast(Self.notEditableMessage, type: .error)
+        return
+      }
     }
     let columnList = edit.columnNames.joined(separator: ", ")
     let started = Date()
@@ -736,6 +905,8 @@ extension NotebookViewModel {
     updated.skippedStatements = result.skippedStatements
     updated.skippedQueuedCells = result.skippedQueuedCells
     updated.aiSessionKey = result.aiSessionKey
+    // A pending target stays pending, so the background patch still matches and validates it
+    updated.typesPending = result.typesPending
     // Same run, new rows: the timestamp stays (display mode, filters), the revision moves
     updated.dataRevision = result.dataRevision + 1
     updated.truncation = truncation

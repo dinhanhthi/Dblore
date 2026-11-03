@@ -33,6 +33,10 @@ struct QueryResult: Sendable {
   nonisolated var sessionReset = false
   /// Statements of the script that were not run because the session was reset before them
   nonisolated var skippedStatements: [String] = []
+  /// PostgreSQL column types left as the driver reported them for the caller to read later
+  /// (`freshColumnTypes`): the app shows the rows first, with the cached types
+  /// (`cachedColumnTypes`, `deferEnrichment`)
+  nonisolated var typesDeferred = false
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,

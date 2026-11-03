@@ -111,6 +111,10 @@ class NotebookViewModel {
   /// Current Run All batch and the connection epoch its first cell started on (see
   /// `NotebookViewModel+QueueReset.swift`)
   @ObservationIgnored var runAllBatch: (id: UUID, epoch: UInt64)?
+  /// Background catalog reads of the shown results (`patchResultTargets`), by cell (nil: the
+  /// editor): the latest per result slot, removed once it finished
+  @ObservationIgnored var resultTargetPatches: [UUID?: (token: UUID, task: Task<Void, Never>)] =
+    [:]
   /// Last `notebook.connectionConfig` seen by `connectionConfigDidChange`
   @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
   @ObservationIgnored private var isApplyingWorkspaceConfig = false

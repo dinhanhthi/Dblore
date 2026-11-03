@@ -213,6 +213,7 @@ struct SQLiteWorkspaceTests {
     viewModel.dataViewer = DataViewerState(
       schema: "main", name: "gen", orderColumns: ["id"], databaseType: .sqlite)
     await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
     #expect(viewModel.editorResult?.editTarget?.generatedColumns == ["g"])
 
     #expect(await viewModel.stageDuplicate(rows: [0]) == nil)
@@ -222,6 +223,7 @@ struct SQLiteWorkspaceTests {
     #expect(!preview.contains("\"g\""))
 
     await viewModel.commitStaged()
+    await viewModel.awaitResultTargets()
 
     #expect(viewModel.dataViewer?.changeSet == nil)
     let stored = try await manager.executeInternal("SELECT id, g, name FROM gen ORDER BY id")
@@ -260,6 +262,7 @@ struct SQLiteWorkspaceTests {
     viewModel.dataViewer = DataViewerState(
       schema: "main", name: "items", orderColumns: ["id"], databaseType: .sqlite)
     await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
     let result = try #require(viewModel.editorResult)
     let column = try #require(result.columns.firstIndex { $0.name == "label" })
     if withStagedInsert {

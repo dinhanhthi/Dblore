@@ -511,10 +511,12 @@ struct RewindCaptureTests {
     viewModel.dataViewer = DataViewerState(
       schema: "main", name: "items", orderColumns: ["id"], databaseType: .sqlite)
     await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
 
     #expect(viewModel.stageEdit(row: 0, column: "label", value: .string("z")) == nil)
     #expect(viewModel.stageInsert(values: ["id": .int(10), "label": .string("n")]) == nil)
     await viewModel.commitStaged()
+    await viewModel.awaitResultTargets()
     #expect(viewModel.dataViewer?.changeSet == nil)
 
     let result = try #require(viewModel.editorResult)
@@ -538,6 +540,7 @@ struct RewindCaptureTests {
     #expect(inline.first?.before?["label"] == .some("NULL"))
     #expect(inline.first?.after?["label"] == .some("'w'"))
 
+    await viewModel.awaitResultTargets()
     viewModel.historySettings.rewindEnabled = false
     #expect(viewModel.stageEdit(row: 0, column: "label", value: .string("off")) == nil)
     await viewModel.commitStaged()

@@ -75,6 +75,7 @@ struct LazyBinaryCellTests {
     state.databaseType = .sqlite
     viewModel.dataViewer = state
     await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
     let plain = try #require(viewModel.editorResult)
     guard case .data(let full) = plain.rows[0][1] else {
       Issue.record("The large value was not read as bytes")
@@ -83,6 +84,7 @@ struct LazyBinaryCellTests {
     #expect(full.count == 70_000)
     viewModel.databaseTables = [Self.itemsTable]
     await viewModel.refreshDataViewer()
+    await viewModel.awaitResultTargets()
     #expect(
       viewModel.editorResult?.rows[0][1]
         == .data(Data(full.prefix(DataViewerState.lazyPrefixBytes))))
@@ -312,6 +314,7 @@ struct LazyBinaryCellTests {
       #expect(statements.first?.values == ["z", "1"])
 
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.dataViewer?.changeSet == nil)
       let stored = try await manager.executeInternal(
         "SELECT payload, label FROM items WHERE id = 1")
@@ -349,6 +352,7 @@ struct LazyBinaryCellTests {
         viewModel.stageEdits(rows: [1], column: "payload", values: [.value(.data(bytes))])
           == nil)
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.dataViewer?.changeSet == nil)
       let updated = try await manager.executeInternal(
         "SELECT typeof(payload), payload FROM items WHERE id = 2")
@@ -356,6 +360,7 @@ struct LazyBinaryCellTests {
 
       #expect(await viewModel.stageDuplicate(rows: [1]) == nil)
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       let inserted = try await manager.executeInternal(
         "SELECT typeof(payload), payload FROM items WHERE id = 3")
       #expect(inserted.rows.first == [.string("blob"), .data(bytes)])
@@ -367,6 +372,7 @@ struct LazyBinaryCellTests {
     try await withItems { viewModel, manager, plain in
       #expect(await viewModel.stageDuplicate(rows: [0]) == nil)
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.dataViewer?.changeSet == nil)
       let copy = try await manager.executeInternal(
         "SELECT typeof(payload), length(payload), payload FROM items WHERE id = 3")
@@ -605,6 +611,7 @@ struct LazyBinaryCellTests {
 
       // A lazy page SQL without its state, or not its state's SQL, is never shown
       await viewModel.executeEditorQuery(state.pageSQL, maxRows: 100, source: .internal)
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.error != nil)
       await viewModel.executeEditorQuery(
         state.pageSQL, maxRows: 100, source: .internal,
@@ -612,6 +619,7 @@ struct LazyBinaryCellTests {
       #expect(viewModel.editorResult?.error != nil)
       // Explain of the page SQL is a user run: not refused
       await viewModel.executeEditorQuery("EXPLAIN QUERY PLAN " + state.pageSQL)
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.error == nil)
     }
   }
@@ -639,6 +647,7 @@ struct LazyBinaryCellTests {
       for columns in [[id, payload], [id, payload, label, gone]] {
         viewModel.databaseTables = [DatabaseTable(schema: "main", name: "items", columns: columns)]
         await viewModel.refreshDataViewer()
+        await viewModel.awaitResultTargets()
         let page = try #require(viewModel.editorResult)
         #expect(page.error == nil)
         #expect(page.columns.map(\.name) == ["id", "payload", "label"])
@@ -648,11 +657,14 @@ struct LazyBinaryCellTests {
       // the shown page's columns, with no failure after
       viewModel.editorResult = nil
       await viewModel.refreshDataViewer()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.error != nil)
       await viewModel.refreshDataViewer()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.sourceQuery?.hasPrefix("SELECT * FROM ") == true)
       for _ in 0..<2 {
         await viewModel.refreshDataViewer()
+        await viewModel.awaitResultTargets()
         let page = try #require(viewModel.editorResult)
         #expect(page.error == nil)
         #expect(viewModel.unloadedCells(in: page) == [0: [1: 70_000]])

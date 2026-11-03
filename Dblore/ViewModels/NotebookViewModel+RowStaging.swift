@@ -66,6 +66,9 @@ extension NotebookViewModel {
   static let tableHasNoPrimaryKey = "Table has no primary key"
   /// Shown when the connection's protection level blocks data changes.
   static let connectionIsReadOnly = "This connection is read-only"
+  /// Shown while the rows are shown and the table definition is still read
+  /// (`CellResult.typesPending`)
+  static let readingTableDefinition = "Reading table definition"
 
   /// Why grid edits are refused for this engine (`supportsRowStaging`), or nil.
   /// Nil for MongoDB, whose flag stays false: it edits documents (`+DocumentStaging.swift`), and
@@ -98,6 +101,7 @@ extension NotebookViewModel {
     if stagesDocuments {
       return mongoDocumentTarget == nil ? MongoDocumentChangeError.notMongoTarget.message : nil
     }
+    if editorResult?.typesPending == true { return Self.readingTableDefinition }
     return stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
   }
 
@@ -299,6 +303,9 @@ extension NotebookViewModel {
       await commitStagedDocuments()
       return
     }
+    // A page shown before its table definition: Commit waits for it, then checks the set
+    // against the validated target
+    if editorResult?.typesPending == true { await awaitResultTargets() }
     guard discardsInvalidatedStagedSet() == false else { return }
     await fillMissingIntegerKeys()
     // The key lookup awaited: the set may be gone (Discard, its tab closed), the page may have
@@ -322,6 +329,20 @@ extension NotebookViewModel {
       guard await confirmCommitPastBlockers(impact) else { return }
       // The prompt awaited: the page may have reloaded or the staged deletes changed
       guard discardsInvalidatedStagedSet() == false else { return }
+      guard dataViewer?.changeSet?.deletes == checkedDeletes else {
+        showToast("The staged deletes changed. Commit again.", type: .warning)
+        return
+      }
+    }
+    // The awaits above may have let a re-read show a page before its table definition: the
+    // batch is built only against the validated target
+    while editorResult?.typesPending == true {
+      guard resultTargetPatches[nil] != nil else {
+        showToast(Self.readingTableDefinition, type: .warning)
+        return
+      }
+      await awaitResultTargets()
+      guard dataViewer?.changeSet != nil, discardsInvalidatedStagedSet() == false else { return }
       guard dataViewer?.changeSet?.deletes == checkedDeletes else {
         showToast("The staged deletes changed. Commit again.", type: .warning)
         return
@@ -647,8 +668,25 @@ extension NotebookViewModel {
     }
   }
 
+  /// `target`, with the generation of the staged set when the set was made for the same table
+  /// and key on the same connection: a re-read of the page (the Reload banner, or the target
+  /// validated after it) keeps the staged set and its Commit. Another key or connection keeps a
+  /// new generation, so the set is discarded at the next stage or Commit (`invalidated(by:)`).
+  func keepingStagedGeneration(_ target: EditTarget?) -> EditTarget? {
+    guard let target, let set = dataViewer?.changeSet, set.generation != target.generation,
+      set.qualifiedName == target.qualifiedName, set.connectionEpoch == target.connectionEpoch,
+      set.primaryKeyColumns == target.primaryKeyColumns
+    else { return target }
+    return EditTarget(
+      qualifiedName: target.qualifiedName, tableID: target.tableID,
+      primaryKeyColumns: target.primaryKeyColumns, connectionEpoch: target.connectionEpoch,
+      updateOnly: target.updateOnly, generation: set.generation, schema: target.schema,
+      name: target.name, generatedColumns: target.generatedColumns)
+  }
+
   /// Live data-viewer target with a primary key, when every column origin names that table.
-  /// Notebook results are not a staging target.
+  /// Notebook results are not a staging target. While the table definition is read
+  /// (`typesPending`), the cached target a re-read showed at once, or nil.
   var stagedEditTarget: EditTarget? {
     guard dataViewer != nil, let result = editorResult, let target = result.editTarget,
       !target.primaryKeyColumns.isEmpty, Self.columnTableID(result.columns) == target.tableID

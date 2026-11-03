@@ -174,42 +174,49 @@ extension NotebookViewModel {
           try await connectionManager
           .executeDetailed(
             userSQL: query, parameters: parameters, policy: protectionPolicy,
-            maxRows: maxRows, caller: id, expectedEpoch: expectedEpoch)
+            maxRows: maxRows, caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true)
         ranStatements = statementResults.map(\.queryText)
 
         totalExecutionTime = totalTime
 
         // Convert to StatementResult array with primary key columns
         var results: [StatementResult] = []
+        var pendingReads: [ResultTargetsRead] = []
         for (index, tuple) in statementResults.enumerated() {
-          // Session-only inline edit target (nil = not editable)
-          let (target, lookup) = await resultTargets(
+          // Session-only inline edit target (nil = not editable): what is cached at once, the
+          // catalog in the background
+          let ((target, lookup), columns, pending) = await provisionalTargets(
             for: tuple.queryText, result: tuple.result, connectionManager: connectionManager,
             epoch: epoch)
 
+          var result = CellResult(
+            columns: columns,
+            rows: tuple.result.rows,
+            executionTime: tuple.result.executionTime,
+            rowCount: tuple.result.rows.count,
+            timestamp: Date(),
+            error: nil,
+            wasLimited: tuple.result.wasLimited,
+            sourceQuery: tuple.queryText,
+            tableName: target?.qualifiedName,
+            primaryKeyColumns: target?.primaryKeyColumns ?? [],
+            affectedRows: tuple.result.affectedRows,
+            editTarget: target,
+            lookupRelation: lookup,
+            aiSessionKey: aiSessionKey
+          ).withCapInfo(from: tuple.result)
+          result.typesPending = pending
+          if pending {
+            pendingReads.append(
+              ResultTargetsRead(
+                query: tuple.queryText, result: tuple.result, timestamp: result.timestamp))
+          }
           results.append(
-            StatementResult(
-              queryText: tuple.queryText,
-              result: CellResult(
-                columns: tuple.result.columns,
-                rows: tuple.result.rows,
-                executionTime: tuple.result.executionTime,
-                rowCount: tuple.result.rows.count,
-                timestamp: Date(),
-                error: nil,
-                wasLimited: tuple.result.wasLimited,
-                sourceQuery: tuple.queryText,
-                tableName: target?.qualifiedName,
-                primaryKeyColumns: target?.primaryKeyColumns ?? [],
-                affectedRows: tuple.result.affectedRows,
-                editTarget: target,
-                lookupRelation: lookup,
-                aiSessionKey: aiSessionKey
-              ).withCapInfo(from: tuple.result),
-              statementIndex: index
-            ))
+            StatementResult(queryText: tuple.queryText, result: result, statementIndex: index))
         }
         editorStatementResults = results
+        patchResultTargets(
+          pendingReads, cellId: nil, epoch: epoch, connectionManager: connectionManager)
 
         // Select the last statement by default (psql behavior)
         selectedStatementIndex = editorStatementResults.count - 1
@@ -233,7 +240,7 @@ extension NotebookViewModel {
         runEpoch = epoch
         var result = try await connectionManager.execute(
           userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
-          caller: id, expectedEpoch: expectedEpoch)
+          caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true)
         ranStatements = [query]
         var truncation: DataViewerState.Truncation?
         if let pageState {
@@ -243,13 +250,15 @@ extension NotebookViewModel {
 
         let executionTime = Date().timeIntervalSince(startTime)
 
-        // Session-only inline edit target (nil = not editable)
-        let (target, lookup) = await resultTargets(
+        // Session-only inline edit target (nil = not editable): the rows are shown with what
+        // is cached (a re-read keeps its staged set's target), the catalog is read after
+        let ((cachedTarget, lookup), columns, pending) = await provisionalTargets(
           for: query, result: result, connectionManager: connectionManager, epoch: epoch)
 
         // The viewer moved to another table or page meanwhile: this page is not shown or
         // recorded (`loadDataViewerPage` reads the new one)
         if let pageState, dataViewer?.loadKey != pageState.loadKey { return }
+        let target = keepingStagedGeneration(cachedTarget)
 
         // Clear multi-statement state
         editorStatementResults = []
@@ -257,7 +266,7 @@ extension NotebookViewModel {
         totalExecutionTime = executionTime
 
         var cellResult = CellResult(
-          columns: result.columns,
+          columns: columns,
           rows: result.rows,
           executionTime: executionTime,
           rowCount: result.rows.count,
@@ -273,8 +282,14 @@ extension NotebookViewModel {
           aiSessionKey: aiSessionKey
         ).withCapInfo(from: result)
         cellResult.truncation = truncation
+        cellResult.typesPending = pending
         if pageState != nil { resetLazyCells() }
         editorResult = cellResult
+        if pending {
+          patchResultTargets(
+            [ResultTargetsRead(query: query, result: result, timestamp: cellResult.timestamp)],
+            cellId: nil, epoch: epoch, connectionManager: connectionManager)
+        }
 
         // Update View Query sidebar if it's open for editor mode
         updateEditorExecutedQuerySidebarIfNeeded(result: cellResult)

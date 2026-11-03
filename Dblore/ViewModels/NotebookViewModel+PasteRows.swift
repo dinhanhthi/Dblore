@@ -171,12 +171,14 @@ extension NotebookViewModel {
   /// default, as for + Row). The text is parsed and checked off the main actor. Refused, with
   /// nothing staged, on engines without row staging (DuckDB, MongoDB), read-only connections,
   /// a refused paste (`PastedRows.parse`), a value invalid for its column, or a table or page
-  /// that changed meanwhile.
+  /// that changed meanwhile. A page shown before its table definition waits for it.
   @discardableResult
   func stagePastedRows(_ text: String, columnOrder: [Int]? = nil) async -> String? {
     if let reason = unavailableFeatureMessage("Pasting rows", \.supportsRowStaging) {
       return reason
     }
+    // Read at once, staged once the table definition of a page shown before it has landed
+    if editorResult?.typesPending == true { await awaitResultTargets() }
     if let reason = rowStagingUnavailableReason { return reason }
     guard let target = stagedEditTarget, let result = editorResult else {
       return Self.tableHasNoPrimaryKey

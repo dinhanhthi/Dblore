@@ -76,6 +76,11 @@ actor DatabaseConnectionManager {
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
   /// Test hook after a batch statement returns, before the next one is sent.
   var batchCheckpointHook: (@Sendable (Int) async -> Void)?
+  /// Test hook awaited before an edit-table catalog read (`fetchEditTable`); nil in the app
+  var catalogReadHook: (@Sendable () async -> Void)?
+  /// Test hook answering the PostgreSQL column type catalog read (`enrichColumnTypes`) in place
+  /// of the server; nil in the app
+  var columnTypeReadHook: (@Sendable ([ColumnInfo]) async -> [ColumnInfo])?
   /// Advances when Cancel is requested, even if SQLite's interrupt misses between statements.
   var batchCancellationGeneration: UInt64 = 0
   /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
@@ -114,6 +119,9 @@ actor DatabaseConnectionManager {
   /// information_schema once per table. Cleared with `editTableCache` and on schema reload; a
   /// clear also rejects catalog reads still in flight (`MySQLTableColumnsCache.generation`).
   var mysqlTableColumns = MySQLTableColumnsCache()
+  /// PostgreSQL result column types by origin (table identity and attnum), read from the
+  /// catalog once (`enrichColumnTypes`). Cleared with `editTableCache`, never per table.
+  var columnTypeCache = ColumnTypeCache()
   /// MySQL temporary tables this session created (no catalog lists them); cleared with the
   /// session (`forgetConnection`)
   var mysqlTempTables = MySQLTempTableTracker()
@@ -933,6 +941,7 @@ actor DatabaseConnectionManager {
     schemaDirtyInUserTx = false
     editTableCache.removeAll()
     mysqlTableColumns.removeAll()
+    columnTypeCache.removeAll()
     mysqlTempTables.reset()
     return ForgottenSession(
       session: forgotten, connection: resources.connection, group: resources.group,

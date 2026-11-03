@@ -1654,6 +1654,7 @@ extension DatabaseConnectionManager {
     defer {
       editTableCache.removeAll()
       mysqlTableColumns.removeAll()
+      columnTypeCache.removeAll()
     }
     try await PerfSignpost.interval("restore.run") {
       switch engine {

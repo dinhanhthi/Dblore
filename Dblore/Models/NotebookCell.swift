@@ -160,7 +160,8 @@ struct StatementResult: Codable, Sendable, Identifiable {
 
 /// Result of executing a SQL cell
 struct CellResult: Codable, Sendable {
-  let columns: [ColumnInfo]
+  /// Replaced only by the background catalog read's enriched types (`typesPending`)
+  var columns: [ColumnInfo]
   let rows: [[CellValue]]
   let executionTime: TimeInterval
   let rowCount: Int
@@ -171,9 +172,9 @@ struct CellResult: Codable, Sendable {
   /// The original SQL query that produced this result
   let sourceQuery: String?
   /// Table name if this is a simple SELECT from a single table
-  let tableName: String?
+  var tableName: String?
   /// Primary key column names for the table (empty if no PK or unable to fetch)
-  let primaryKeyColumns: [String]
+  var primaryKeyColumns: [String]
   /// Number of rows affected by UPDATE/DELETE/INSERT (nil for SELECT queries)
   let affectedRows: Int?
   /// Validated inline-edit target of a live execution. Session-only: not coded, so a result
@@ -201,6 +202,9 @@ struct CellResult: Codable, Sendable {
   /// Session-only: an inline edit changed stored rows and this editor result was not re-read
   /// (not a single read the app may re-run), so it shows "Run again to refresh".
   var staleAfterEdit = false
+  /// Session-only: the rows are shown and the catalog is still read in the background for the
+  /// enriched column types and the validated edit target. Not editable until it lands.
+  var typesPending = false
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery

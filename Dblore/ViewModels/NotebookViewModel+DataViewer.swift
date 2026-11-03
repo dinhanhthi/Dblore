@@ -56,8 +56,10 @@ extension NotebookViewModel {
   /// The lazy columns of the viewed table from what is cached, never a catalog read: the
   /// sidebar's columns of the table, else the shown page's columns and edit target. Nil
   /// (`SELECT *`) for MongoDB, a view, a table without a primary key, nothing cached, or a
-  /// shown page without an edit target (an error, or a table that cannot be edited).
+  /// shown page without an edit target (an error, or a table that cannot be edited). A page
+  /// shown before its table definition keeps the lazy columns it was read with.
   private func dataViewerLazyColumns(_ state: DataViewerState) -> [DataViewerState.LazyColumn]? {
+    if editorResult?.typesPending == true { return state.lazyColumns }
     guard !isMongoDataViewer, editorResult.map({ $0.editTarget != nil }) ?? true else {
       return nil
     }

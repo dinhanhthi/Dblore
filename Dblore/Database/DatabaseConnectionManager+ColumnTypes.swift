@@ -12,8 +12,9 @@ extension DatabaseConnectionManager {
   // MARK: - Column Type Enrichment
 
   /// Enrich column type information with modifiers (precision, scale, length)
-  /// Uses information_schema to get detailed type info. Skipped (driver types kept) while the
-  /// app transaction is pending: a failing catalog query would abort it.
+  /// Uses information_schema to get detailed type info, always read fresh (MCP, CLI and the
+  /// app's own reads never take a cached type). Skipped (driver types kept) while the app
+  /// transaction is pending: a failing catalog query would abort it.
   /// MySQL: resolves the result column origins instead (`resolveMySQLOrigins`).
   func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
     // Only PostgreSQL has modifiers to add. SQLite keeps declared types; DuckDB has no
@@ -24,26 +25,53 @@ extension DatabaseConnectionManager {
     case .mysql: return await resolveMySQLOrigins(columns)
     case .sqlite, .duckdb, .mongodb, nil: return columns
     }
-    // Only proceed if we have columns and connection
-    guard !columns.isEmpty, !isMetadataPaused, _postgresConnection != nil,
-      Self.singleTableName(in: query) != nil
-    else {
-      return columns
-    }
+    guard !columns.isEmpty, Self.singleTableName(in: query) != nil else { return columns }
+    return await freshColumnTypes(columns, query: query) ?? columns
+  }
 
-    do {
-      return try await withSession { session in
-        guard let postgres = self.introspector as? PostgresSchemaIntrospector else {
-          return columns
+  /// PostgreSQL `columns` (as the driver reported them) with the types the catalog reports
+  /// now, stored in `columnTypeCache` next to the driver's types. Nil when no catalog query
+  /// may be sent (app transaction pending, no connection) or it failed.
+  func freshColumnTypes(_ columns: [ColumnInfo], query: String) async -> [ColumnInfo]? {
+    guard !isMetadataPaused else { return nil }
+    let epoch = connectionEpoch
+    let generation = columnTypeCache.generation
+    let enriched: [ColumnInfo]
+    if let hook = columnTypeReadHook {
+      enriched = await hook(columns)
+    } else {
+      guard _postgresConnection != nil else { return nil }
+      do {
+        enriched = try await withSession { session in
+          guard let postgres = self.introspector as? PostgresSchemaIntrospector else {
+            return columns
+          }
+          return try await postgres.enrichedColumns(columns, query: query, in: session)
         }
-        return try await postgres.enrichedColumns(columns, query: query, in: session)
+      } catch {
+        await AppLogger.shared.warning(
+          "Failed to enrich column types: \(error)", category: "Database")
+        return nil
       }
-    } catch {
-      // If enrichment fails, return original columns
-      await AppLogger.shared.warning(
-        "Failed to enrich column types: \(error)", category: "Database")
-      return columns
     }
+    if epoch == connectionEpoch {
+      columnTypeCache.store(driver: columns, enriched: enriched, readAt: generation)
+    }
+    return enriched
+  }
+
+  /// Whether a read the app shows before enriching it (`deferEnrichment`) keeps the driver's
+  /// types for the caller's background read (`freshColumnTypes`): a PostgreSQL read of one
+  /// table. False enriches now (other engines: MySQL origins resolve on the critical path).
+  func defersColumnTypes(_ columns: [ColumnInfo], query: String) -> Bool {
+    databaseType == .postgresql && !columns.isEmpty && Self.singleTableName(in: query) != nil
+  }
+
+  /// `columns` (as the driver reported them) with their cached PostgreSQL types, or nil: what
+  /// the app shows at once before its background read (`deferEnrichment`). A type cached while
+  /// the driver reported another one (the column was altered since) is never served.
+  func cachedColumnTypes(_ columns: [ColumnInfo]) -> [ColumnInfo]? {
+    columnTypeCache.columns(columns)
   }
 
   // MARK: - MySQL Column Origins
@@ -110,5 +138,64 @@ extension DatabaseConnectionManager {
         "Failed to resolve MySQL column origins: \(error)", category: "Database")
       return nil
     }
+  }
+}
+
+/// Enriched PostgreSQL result column types by origin (table identity and attnum), each with
+/// the type the driver reported when it was read, so a table read again shows its types
+/// without a catalog read. A hit needs the driver to report the same type now (a column altered
+/// to another base type misses); the app's background read refreshes the rest (modifiers). A
+/// clear also rejects enrichment reads still in flight (`generation`).
+nonisolated struct ColumnTypeCache: Sendable {
+  private struct Entry: Sendable {
+    let driver: String
+    let enriched: String
+  }
+
+  private var types: [ColumnOrigin: Entry] = [:]
+  private(set) var generation: UInt64 = 0
+
+  var isEmpty: Bool { types.isEmpty }
+
+  /// `columns` (driver types) with their cached types, or nil unless every column read from a
+  /// PostgreSQL table has one read while the driver reported its current type
+  func columns(_ columns: [ColumnInfo]) -> [ColumnInfo]? {
+    let read = columns.filter { $0.tableOrigin?.tableID.postgresOID != nil }
+    guard !read.isEmpty,
+      read.allSatisfy({ column in
+        column.tableOrigin.flatMap { types[$0] }?.driver == column.type
+      })
+    else { return nil }
+    return columns.map { column in
+      guard let origin = column.tableOrigin, let entry = types[origin] else { return column }
+      return ColumnInfo(
+        name: column.name, type: entry.enriched, origin: column.origin,
+        sourceName: column.sourceName, wallClock: column.wallClock)
+    }
+  }
+
+  /// Stores the `enriched` types of the `driver` columns (same order) read from a PostgreSQL
+  /// table, unless the cache was cleared since `generation` (read before the catalog query)
+  mutating func store(driver: [ColumnInfo], enriched: [ColumnInfo], readAt generation: UInt64) {
+    guard generation == self.generation, driver.count == enriched.count else { return }
+    for (read, column) in zip(driver, enriched) {
+      guard let origin = read.tableOrigin, origin == column.tableOrigin,
+        origin.tableID.postgresOID != nil
+      else { continue }
+      types[origin] = Entry(driver: read.type, enriched: column.type)
+    }
+  }
+
+  mutating func removeAll() {
+    types.removeAll()
+    generation &+= 1
+  }
+}
+
+extension DatabaseConnectionManager {
+  /// Test hook (see `columnTypeReadHook`): answers the PostgreSQL column type catalog read in
+  /// place of the server. Nil in the app.
+  func setColumnTypeReadHook(_ hook: (@Sendable ([ColumnInfo]) async -> [ColumnInfo])?) {
+    columnTypeReadHook = hook
   }
 }

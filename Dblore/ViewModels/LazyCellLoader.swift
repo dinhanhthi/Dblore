@@ -267,6 +267,7 @@ extension CellResult {
     replaced.skippedQueuedCells = skippedQueuedCells
     replaced.dataRevision = dataRevision
     replaced.truncation = truncation
+    replaced.typesPending = typesPending
     return replaced
   }
 }

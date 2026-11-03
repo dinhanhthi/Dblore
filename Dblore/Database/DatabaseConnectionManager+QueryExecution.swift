@@ -165,8 +165,11 @@ extension DatabaseConnectionManager {
   ///   - maxRows: Maximum number of rows to fetch
   ///   - inTransaction: A transaction is open (app or user): a plain read goes through a cursor
   ///   - binds: Values for the statement's placeholders. Never interpolated into `query`.
+  ///   - deferEnrichment: outside a transaction, PostgreSQL types stay the driver's, marked
+  ///     `typesDeferred` for the caller's background read (`execute(userSQL:deferEnrichment:)`)
   func executeSingleStatement(
-    _ query: String, maxRows: Int, inTransaction: Bool = false, binds: [SQLBindValue] = []
+    _ query: String, maxRows: Int, inTransaction: Bool = false, binds: [SQLBindValue] = [],
+    deferEnrichment: Bool = false
   ) async throws -> QueryResult {
     guard session != nil else {
       throw DatabaseError.notConnected
@@ -222,14 +225,22 @@ extension DatabaseConnectionManager {
       // Try to enrich column type information with modifiers. Not after a truncated read: the
       // catalog query would first wait for the rest of the result to drain. MySQL column
       // origins resolve either way (the capped statement was already killed or drained).
-      let enrichedColumns =
-        collected.truncated && config?.databaseType != .mysql
-        ? collected.columns : await enrichColumnTypes(columns: collected.columns, query: query)
+      // Deferred outside a transaction for the app's grid, which shows the rows first.
+      var enrichedColumns = collected.columns
+      var typesDeferred = false
+      if !collected.truncated || config?.databaseType == .mysql {
+        if deferEnrichment, !inTransaction, defersColumnTypes(collected.columns, query: query) {
+          typesDeferred = true
+        } else {
+          enrichedColumns = await enrichColumnTypes(columns: collected.columns, query: query)
+        }
+      }
       var result = QueryResult(
         columns: enrichedColumns, rows: collected.rows, rowCount: collected.rows.count,
         executionTime: executionTime, wasLimited: collected.truncated,
         affectedRows: 0)  // SELECT queries always have 0 affected rows
       result.truncated = collected.truncated
+      result.typesDeferred = typesDeferred
       return result
     } catch {
       throw queryFailure(error, query: query, startTime: startTime)

@@ -363,20 +363,21 @@ extension NotebookViewModel {
         let queryResult = try await Task {
           try await connectionManager.execute(
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
-            caller: caller, expectedEpoch: runEpoch)
+            caller: caller, expectedEpoch: runEpoch, deferEnrichment: true)
         }.value
         ranStatements = [task.query]
 
         executionCounter += 1
 
-        // Session-only, server-validated inline edit target (nil = not editable)
-        let (target, lookup) = await resultTargets(
+        // Session-only inline edit target (nil = not editable): the rows are shown with what
+        // is cached, the server validates it in the background (`patchResultTargets`)
+        let ((target, lookup), columns, pending) = await provisionalTargets(
           for: task.query, result: queryResult, connectionManager: connectionManager,
           epoch: epoch)
 
         // Convert QueryResult to CellResult
         result = CellResult(
-          columns: queryResult.columns,
+          columns: columns,
           rows: queryResult.rows,
           executionTime: queryResult.executionTime,
           rowCount: queryResult.rowCount,
@@ -390,9 +391,17 @@ extension NotebookViewModel {
           lookupRelation: lookup,
           aiSessionKey: aiSessionKey
         ).withCapInfo(from: queryResult)
+        result?.typesPending = pending
 
         carryCellDetailEditTarget(from: notebook.cells[index].result, to: result)
         notebook.cells[index].result = result
+        if pending, let result {
+          patchResultTargets(
+            [
+              ResultTargetsRead(query: task.query, result: queryResult, timestamp: result.timestamp)
+            ],
+            cellId: task.cellId, epoch: epoch, connectionManager: connectionManager)
+        }
         notebook.cells[index].executionCount = executionCounter
         // Clear multi-statement data for single statement
         notebook.cells[index].statementResults = []
