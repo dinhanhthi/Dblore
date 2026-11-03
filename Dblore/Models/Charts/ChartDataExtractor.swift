@@ -20,6 +20,23 @@ nonisolated struct ChartPoint: Equatable, Sendable {
 nonisolated struct ChartSeries: Equatable, Sendable {
   var points: [ChartPoint]
   var droppedCount: Int
+  /// The x column's `ColumnInfo.wallClock`: a date x is a naive wall clock (shown in UTC)
+  var xWallClock = false
+  /// Every date x came from a date-only text (a DATE read as `2025-01-01`), drawn at UTC midnight
+  var xDateOnly = false
+
+  /// Zone a date x axis is drawn in, the one the grid shows the column in: UTC for a naive
+  /// column or a date-only text, else the display zone
+  var xTimeZone: TimeZone {
+    xWallClock || xDateOnly ? .gmt : (CellValue.displayZone ?? NSTimeZone.default)
+  }
+
+  /// The grid's text of a date x value: `yyyy-MM-dd` for a date-only text
+  func xText(_ date: Date) -> String {
+    guard xDateOnly else { return CellValue.date(date).displayString(wallClock: xWallClock) }
+    let days = Int((date.timeIntervalSince1970 / 86_400).rounded(.down))
+    return CivilDate.text(daysSince1970: days, bcSuffix: " BC")
+  }
 }
 
 /// One small chart of a faceted spec. `removedByDownsample` counts the points LTTB left out.
@@ -66,6 +83,7 @@ nonisolated enum ChartDataExtractor {
     let xIndex = index(of: spec.xColumn, in: result.columns)
     let yIndexes = spec.yColumns.map { index(of: $0, in: result.columns) }
     let seriesIndex = index(of: spec.seriesColumn, in: result.columns)
+    let seriesWallClock = seriesIndex.map { result.columns[$0].wallClock } ?? false
     let temporal =
       xIsTemporal
       ?? xIndex.map { index in
@@ -76,10 +94,12 @@ nonisolated enum ChartDataExtractor {
     let nameYColumns = spec.yColumns.count > 1
     // One per extraction, not shared: extraction runs off the main thread
     let dateFormatter = ISO8601DateFormatter()
-    // A DATE column's `2025-01-01`, at local midnight so the axis shows that day
+    // A DATE column's `2025-01-01`, at UTC midnight: the axis draws it in UTC (`xDateOnly`)
     let dayFormatter = ISO8601DateFormatter()
     dayFormatter.formatOptions = [.withFullDate]
-    dayFormatter.timeZone = .current
+    dayFormatter.timeZone = .gmt
+    // True once a date x came from a date-only text, false once one came from anything else
+    var dateOnly: Bool?
 
     var categories: [String: Int] = [:]
     var droppedCount = 0
@@ -102,7 +122,8 @@ nonisolated enum ChartDataExtractor {
             temporal: temporal,
             categories: &categories,
             dateFormatter: dateFormatter,
-            dayFormatter: dayFormatter
+            dayFormatter: dayFormatter,
+            dateOnly: &dateOnly
           )
           resolvedX = true
         }
@@ -113,7 +134,7 @@ nonisolated enum ChartDataExtractor {
         let series = seriesName(
           yColumn: spec.yColumns[offset],
           split: splitBySeries
-            ? seriesLabel(cell(row, at: seriesIndex), dateFormatter: dateFormatter) : nil,
+            ? seriesLabel(cell(row, at: seriesIndex), wallClock: seriesWallClock) : nil,
           nameYColumns: nameYColumns
         )
         let point = ChartPoint(x: x, y: y, series: series)
@@ -133,7 +154,10 @@ nonisolated enum ChartDataExtractor {
       }
       points.append(contentsOf: downsample(samples, maxPoints: maxPoints))
     }
-    return ChartSeries(points: points, droppedCount: droppedCount)
+    return ChartSeries(
+      points: points, droppedCount: droppedCount,
+      xWallClock: xIndex.map { result.columns[$0].wallClock } ?? false,
+      xDateOnly: temporal && dateOnly == true)
   }
 
   /// Splits `result` per value of `spec.facetColumn` and runs `points` on each facet, so every
@@ -155,10 +179,10 @@ nonisolated enum ChartDataExtractor {
     var order: [String?] = []
     var rowsByFacet: [String?: [[CellValue]]] = [:]
     var omitted: Set<String?> = []
-    let dateFormatter = ISO8601DateFormatter()
+    let facetWallClock = result.columns[facetIndex].wallClock
     for (rowIndex, row) in result.rows.enumerated() {
       if rowIndex % cancellationStride == 0, Task.isCancelled { return nil }
-      let key = seriesLabel(cell(row, at: facetIndex), dateFormatter: dateFormatter)
+      let key = seriesLabel(cell(row, at: facetIndex), wallClock: facetWallClock)
       if rowsByFacet[key] == nil {
         guard order.count < maxFacets else {
           omitted.insert(key)
@@ -244,7 +268,8 @@ nonisolated enum ChartDataExtractor {
     temporal: Bool,
     categories: inout [String: Int],
     dateFormatter: ISO8601DateFormatter,
-    dayFormatter: ISO8601DateFormatter
+    dayFormatter: ISO8601DateFormatter,
+    dateOnly: inout Bool?
   ) -> ChartX? {
     guard xColumn != nil else { return .number(Double(rowIndex)) }
     guard let cell else { return nil }
@@ -252,17 +277,28 @@ nonisolated enum ChartDataExtractor {
     case .null:
       return nil
     case .date(let date):
+      dateOnly = false
       return .number(date.timeIntervalSince1970)
     case .int(let int):
+      dateOnly = false
       return .number(Double(int))
     case .double(let double) where double.isFinite:
+      dateOnly = false
       return .number(double)
     case .string(let text):
       if temporal {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let number = Double(trimmed), number.isFinite { return .number(number) }
-        if let date = dateFormatter.date(from: trimmed) ?? dayFormatter.date(from: trimmed) {
+        if let number = Double(trimmed), number.isFinite {
+          dateOnly = false
+          return .number(number)
+        }
+        if let date = dateFormatter.date(from: trimmed) {
+          dateOnly = false
           return .number(date.timeIntervalSince1970)
+        }
+        if let day = dayFormatter.date(from: trimmed) {
+          dateOnly = dateOnly ?? true
+          return .number(day.timeIntervalSince1970)
         }
         return nil
       }
@@ -279,9 +315,8 @@ nonisolated enum ChartDataExtractor {
     return index
   }
 
-  private static func seriesLabel(
-    _ value: CellValue?, dateFormatter: ISO8601DateFormatter
-  ) -> String? {
+  /// A date is the grid's text of its column (`wallClock` is the column's `ColumnInfo.wallClock`)
+  private static func seriesLabel(_ value: CellValue?, wallClock: Bool) -> String? {
     switch value {
     case .string(let text), .json(let text):
       return text
@@ -292,7 +327,7 @@ nonisolated enum ChartDataExtractor {
     case .bool(let flag):
       return flag ? "true" : "false"
     case .date(let date):
-      return dateFormatter.string(from: date)
+      return CellValue.date(date).displayString(wallClock: wallClock)
     case .data(let data):
       return data.base64EncodedString()
     case .none, .null:

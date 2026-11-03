@@ -294,28 +294,40 @@ struct ResultChartView: View {
   }
 
   private var plottedChart: some View {
-    Self.plot(series.points, kind: spec.kind, temporal: xIsTemporal)
+    Self.plot(series, kind: spec.kind, temporal: xIsTemporal)
   }
 
-  /// One chart of `points`. `scales` makes the small charts of a facet grid share their axes.
-  /// `legend` overrides the chart's own legend (a facet grid draws one shared legend).
+  /// One chart of `series`. `scales` makes the small charts of a facet grid share their axes.
+  /// `legend` overrides the chart's own legend (a facet grid draws one shared legend). A date
+  /// axis is drawn in the zone the grid shows its column in (`ChartSeries.xTimeZone`).
   @ViewBuilder
   fileprivate static func plot(
-    _ points: [ChartPoint], kind: ChartKind, temporal: Bool, scales: SharedScales? = nil,
+    _ series: ChartSeries, kind: ChartKind, temporal: Bool, scales: SharedScales? = nil,
     legend: Visibility? = nil
   ) -> some View {
-    let useVectorPlots = points.count > 1_000
-    switch samples(from: points, temporal: temporal) {
+    let useVectorPlots = series.points.count > 1_000
+    switch samples(from: series.points, temporal: temporal) {
     case .category(let points):
       AxisChart(
         samples: points, kind: kind, useVectorPlots: useVectorPlots, scales: scales,
         legendOverride: legend, readoutText: { categoryReadout($0, samples: points) }
       )
     case .date(let points):
+      let axis = ChartDateAxis(domain: dateDomain(points, scales: scales), zone: series.xTimeZone)
       AxisChart(
         samples: points, kind: kind, useVectorPlots: useVectorPlots, scales: scales,
-        legendOverride: legend, readoutText: { dateReadout($0, samples: points) }
+        legendOverride: legend,
+        readoutText: { dateReadout($0, samples: points, text: series.xText) }
       )
+      .chartXAxis {
+        AxisMarks(values: axis.values) { _ in
+          AxisGridLine()
+          AxisTick()
+          AxisValueLabel(format: axis.format)
+        }
+      }
+      .environment(\.timeZone, series.xTimeZone)
+      .environment(\.calendar, axis.calendar)
     case .number(let points):
       AxisChart(
         samples: points, kind: kind, useVectorPlots: useVectorPlots, scales: scales,
@@ -365,16 +377,28 @@ struct ResultChartView: View {
     return readoutLine(x: formatNumber(nearest.x), matches: samples.filter { $0.x == nearest.x })
   }
 
-  private static func dateReadout(_ selected: Date, samples: [PlotSample<Date>]) -> String {
+  /// `text` is the grid's text of a date of the x column (`ChartSeries.xText`)
+  private static func dateReadout(
+    _ selected: Date, samples: [PlotSample<Date>], text: (Date) -> String
+  ) -> String {
     guard
       let nearest = samples.min(by: {
         abs($0.x.timeIntervalSince(selected)) < abs($1.x.timeIntervalSince(selected))
       })
     else {
-      return hoverDateFormatter.string(from: selected)
+      return text(selected)
     }
-    let label = hoverDateFormatter.string(from: nearest.x)
-    return readoutLine(x: label, matches: samples.filter { $0.x == nearest.x })
+    return readoutLine(x: text(nearest.x), matches: samples.filter { $0.x == nearest.x })
+  }
+
+  /// The x range the axis spans: the facet grid's shared one, else the points'
+  private static func dateDomain(
+    _ samples: [PlotSample<Date>], scales: SharedScales?
+  ) -> ClosedRange<Date> {
+    if case .dates(let range) = scales?.x { return range }
+    let dates = samples.map(\.x)
+    guard let low = dates.min(), let high = dates.max() else { return Date()...Date() }
+    return low...high
   }
 
   private static func readoutLine<X>(x: String, matches: [PlotSample<X>]) -> String {
@@ -390,13 +414,104 @@ struct ResultChartView: View {
     }
     return String(format: "%.4g", value)
   }
+}
 
-  private static let hoverDateFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .medium
-    formatter.timeStyle = .short
-    return formatter
-  }()
+/// Ticks and labels of a date x axis, both in `zone`, the one the grid shows the column in
+/// (`ChartSeries.xTimeZone`): the automatic axis labels follow the Mac's zone, not the
+/// environment's. The step is the shortest that leaves at most `maxTicks` ticks over the span:
+/// times of day, then days, months and years. Steps start on a whole minute, hour, day, month
+/// or year of `zone`.
+nonisolated struct ChartDateAxis {
+  let values: [Date]
+  let format: Date.FormatStyle
+  let calendar: Calendar
+
+  static let maxTicks = 6
+
+  private struct Step {
+    var component: Calendar.Component
+    var count: Int
+    var seconds: Double
+  }
+
+  private static let day = 86_400.0
+  private static let year = 365.25 * day
+
+  private static let steps: [Step] =
+    [1, 5, 15, 30].map { Step(component: .second, count: $0, seconds: Double($0)) }
+    + [1, 5, 15, 30].map { Step(component: .minute, count: $0, seconds: Double($0) * 60) }
+    + [1, 3, 6, 12].map { Step(component: .hour, count: $0, seconds: Double($0) * 3_600) }
+    + [1, 2, 7, 14].map { Step(component: .day, count: $0, seconds: Double($0) * day) }
+    + [1, 3, 6].map { Step(component: .month, count: $0, seconds: Double($0) * year / 12) }
+    + [1, 2, 5, 10, 25, 50, 100, 250, 500, 1_000].map {
+      Step(component: .year, count: $0, seconds: Double($0) * year)
+    }
+
+  init(domain: ClosedRange<Date>, zone: TimeZone, locale: Locale = .autoupdatingCurrent) {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = zone
+    calendar.locale = locale
+    self.calendar = calendar
+    let base = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: zone)
+    let span = domain.upperBound.timeIntervalSince(domain.lowerBound)
+    // An infinite or zero span (absurd numbers in a date column, or one date) gets one tick
+    guard span > 0, span.isFinite else {
+      // One date: its day, and its time unless it is midnight
+      values = [domain.lowerBound]
+      let date = base.month(.abbreviated).day().year()
+      format =
+        calendar.startOfDay(for: domain.lowerBound) == domain.lowerBound
+        ? date : date.hour().minute()
+      return
+    }
+    let step =
+      Self.steps.first { span / $0.seconds <= Double(Self.maxTicks) }
+      ?? Step(
+        component: .year,
+        count: Int(min((span / (Double(Self.maxTicks) * Self.year)).rounded(.up), 1_000_000)),
+        seconds: 0)
+    let ticks = Self.ticks(domain, step: step, calendar: calendar)
+    values = ticks.isEmpty ? [domain.lowerBound] : ticks
+    switch step.component {
+    case .second: format = base.hour().minute().second()
+    case .minute: format = base.hour().minute()
+    case .hour: format = span > Self.day ? base.month(.abbreviated).day().hour() : base.hour()
+    case .day: format = base.month(.abbreviated).day()
+    case .month: format = base.month(.abbreviated).year()
+    default: format = base.year()
+    }
+  }
+
+  /// Every multiple of `step` from the start of the enclosing minute, hour, day, month or year
+  /// (for a year step, the last year that is a multiple of its count) that falls in `domain`
+  private static func ticks(
+    _ domain: ClosedRange<Date>, step: Step, calendar: Calendar
+  ) -> [Date] {
+    let anchor: Date?
+    switch step.component {
+    case .second: anchor = calendar.dateInterval(of: .minute, for: domain.lowerBound)?.start
+    case .minute: anchor = calendar.dateInterval(of: .hour, for: domain.lowerBound)?.start
+    case .hour: anchor = calendar.startOfDay(for: domain.lowerBound)
+    case .day: anchor = calendar.dateInterval(of: .month, for: domain.lowerBound)?.start
+    case .month: anchor = calendar.dateInterval(of: .year, for: domain.lowerBound)?.start
+    default:
+      let year = calendar.component(.year, from: domain.lowerBound)
+      let first = year - ((year % step.count) + step.count) % step.count
+      anchor = calendar.date(from: DateComponents(year: first, month: 1, day: 1))
+    }
+    guard let anchor else { return [] }
+    var ticks: [Date] = []
+    // Bounded: the anchor is at most one enclosing unit before the domain
+    for multiple in 0..<10_000 {
+      guard
+        let tick = calendar.date(
+          byAdding: step.component, value: multiple * step.count, to: anchor),
+        tick <= domain.upperBound
+      else { break }
+      if tick >= domain.lowerBound { ticks.append(tick) }
+    }
+    return ticks
+  }
 }
 
 /// Chart for one x type. `chartXSelection` (macOS 14) drives the hover readout.
@@ -583,7 +698,7 @@ private struct ChartFacetGrid: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         ResultChartView.plot(
-          facet.series.points, kind: kind, temporal: facets.xIsTemporal, scales: scales,
+          facet.series, kind: kind, temporal: facets.xIsTemporal, scales: scales,
           legend: .hidden
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)

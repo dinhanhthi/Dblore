@@ -66,7 +66,7 @@ final class CrossTableSearchModel: Identifiable {
 
   /// What one statement returned
   nonisolated enum Outcome: Sendable {
-    case rows([[CellValue]])
+    case rows([[CellValue]], columns: [ColumnInfo])
     case timedOut
     case cancelled
     case failed(String)
@@ -182,7 +182,7 @@ final class CrossTableSearchModel: Identifiable {
         }
         guard let statement else {
           // No column with a text form: nothing to search
-          self?.record(target, nil, .rows([]), run: current)
+          self?.record(target, nil, .rows([], columns: []), run: current)
           continue
         }
         if side == nil {
@@ -273,9 +273,9 @@ final class CrossTableSearchModel: Identifiable {
     let status: TableResult.Status
     var matches: [Match] = []
     switch outcome {
-    case .rows(let rows):
+    case .rows(let rows, let columns):
       guard let statement, !rows.isEmpty else { return }
-      matches = Self.matches(rows, statement: statement)
+      matches = Self.matches(rows, columns: columns, statement: statement)
       status = .matched
     case .timedOut: status = .timedOut
     case .failed(let message): status = .failed(message)
@@ -307,9 +307,11 @@ final class CrossTableSearchModel: Identifiable {
   }
 
   /// The display texts and the matched column of each row (the last cell is the 1-based index
-  /// of the first searched column that matched)
-  private static func matches(
-    _ rows: [[CellValue]], statement: CrossTableSearchQueryBuilder.Statement
+  /// of the first searched column that matched). A text is the grid's text of its result column
+  /// (`columns`, the display columns first).
+  static func matches(
+    _ rows: [[CellValue]], columns: [ColumnInfo],
+    statement: CrossTableSearchQueryBuilder.Statement
   ) -> [Match] {
     let displayCount = statement.displayColumns.count
     return rows.enumerated().map { offset, row in
@@ -317,8 +319,11 @@ final class CrossTableSearchModel: Identifiable {
       let column =
         statement.searchedColumns.indices.contains(index - 1)
         ? statement.searchedColumns[index - 1] : statement.searchedColumns[0]
-      return Match(
-        id: offset, values: row.prefix(displayCount).map(\.displayString), column: column)
+      let values = row.prefix(displayCount).enumerated().map { position, value in
+        value.displayString(
+          wallClock: columns.indices.contains(position) && columns[position].wallClock)
+      }
+      return Match(id: offset, values: values, column: column)
     }
   }
 
@@ -369,7 +374,7 @@ final class CrossTableSearchModel: Identifiable {
           userSQL: statement.sql, parameters: statement.parameters,
           policy: ProtectionPolicy(protectionLevel: .readOnly),
           maxRows: CrossTableSearchQueryBuilder.rowLimit)
-        continuation.yield(.rows(result.rows))
+        continuation.yield(.rows(result.rows, columns: result.columns))
       } catch {
         // A lost session is forgotten (`markSessionLost`): the side is no longer connected
         let lost: Bool

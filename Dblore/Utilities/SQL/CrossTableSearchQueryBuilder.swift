@@ -4,10 +4,12 @@
 // DuckDB `VARCHAR`) and compared with the value: a case-insensitive `LIKE` (`ILIKE` on
 // PostgreSQL and DuckDB, `LOWER()` on both sides on SQLite and MySQL) with `%`, `_` and the
 // escape character escaped and an `ESCAPE` clause (contains), or `=` (equals). Binary and
-// spatial columns are skipped. The value is always the `:v` bind (the gate rewrites it per
-// dialect), never SQL text, and every identifier is quoted. Columns are joined with OR, at most
-// `rowLimit` rows. The result's last column is the 1-based index of the first searched column
-// that matched. A statement is returned only once it passed `ReadOnlyQueryGuard`.
+// spatial columns are skipped. The shown (display) columns are selected as they are, not cast,
+// so they decode and show as in the grid (a timestamp as a date in its column's zone). The value
+// is always the `:v` bind (the gate rewrites it per dialect), never SQL text, and every
+// identifier is quoted. Columns are joined with OR, at most `rowLimit` rows. The result's last
+// column is the 1-based index of the first searched column that matched. A statement is
+// returned only once it passed `ReadOnlyQueryGuard`.
 
 import Foundation
 
@@ -78,9 +80,7 @@ nonisolated enum CrossTableSearchQueryBuilder {
       case .equals: return "\(subject) = \(placeholder)"
       }
     }
-    let selected = try display.map {
-      textCast(try dialect.quoteIdentifier($0.name), dialect: dialect)
-    }
+    let selected = try display.map { try dialect.quoteIdentifier($0.name) }
     let matchIndex =
       "CASE "
       + predicates.enumerated().map { "WHEN \($1) THEN \($0 + 1)" }.joined(separator: " ")

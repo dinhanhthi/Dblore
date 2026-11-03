@@ -52,7 +52,7 @@ struct CrossTableSearchQueryBuilderTests {
         dialect: .postgresql))
     #expect(
       postgres.sql
-        == #"SELECT CAST("co""l`x" AS text), CASE WHEN CAST("co""l`x" AS text) = :v THEN 1 END "#
+        == #"SELECT "co""l`x", CASE WHEN CAST("co""l`x" AS text) = :v THEN 1 END "#
         + #"FROM "my""schema"."ta""ble" WHERE CAST("co""l`x" AS text) = :v LIMIT 50"#)
 
     let mysql = try #require(
@@ -115,6 +115,28 @@ struct CrossTableSearchQueryBuilderTests {
     #expect(exact.sql.contains(equals))
     #expect(!exact.sql.contains("LOWER("))
     #expect(!exact.sql.contains("LIKE"))
+  }
+
+  @Test(
+    "Shown columns are selected uncast so they decode as in the grid (regression A5)",
+    arguments: dialects)
+  func displayColumnsAreNotCast(dialect: SQLDialect) throws {
+    let columns: [Builder.Column] = [
+      .init(name: "naive", type: "timestamp"),
+      .init(name: "zoned", type: "timestamptz"),
+      .init(name: "v", type: "integer"),
+    ]
+    let statement = try #require(
+      try Builder.statement(
+        schema: "", table: "ts_chart", columns: columns, value: "2026-10-15", mode: .contains,
+        dialect: dialect))
+    let quoted = try columns.map { try dialect.quoteIdentifier($0.name) }
+    #expect(statement.displayColumns == ["naive", "zoned", "v"])
+    #expect(statement.sql.hasPrefix("SELECT \(quoted.joined(separator: ", ")), CASE WHEN "))
+    // The match still compares each column's text
+    for name in quoted {
+      #expect(statement.sql.contains("CAST(\(name) AS "))
+    }
   }
 
   @Test("MongoDB has no SQL search statement")
