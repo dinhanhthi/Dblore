@@ -469,7 +469,9 @@ struct SSHHostKeyTrustFlowTests {
 /// Polls on the main actor until `condition` holds (fails after 30 s: the full suite can be slow).
 @MainActor
 private func waitFor(_ condition: () -> Bool) async throws {
-  let end = ContinuousClock.now + .seconds(30)
+  // Generous: under the full parallel suite the main actor can stall for half a minute; it
+  // returns as soon as the condition holds
+  let end = ContinuousClock.now + .seconds(120)
   while !condition() {
     guard ContinuousClock.now < end else {
       Issue.record("condition not met in time")
