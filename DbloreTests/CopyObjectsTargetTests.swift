@@ -1,9 +1,11 @@
 // CopyObjectsTargetTests.swift
 // The writable Copy Objects target (`makeCopyTargetManager`): a locked row is refused before any
 // password is read, Read-only and Schema-only rows before connecting (fake sessions, nothing
-// opened), and a SQLite row saved with Protected mode on commits the copy on its own transaction:
-// once the manager is closed, a new connection reads the rows (real SQLite file in the temporary
-// folder, no server).
+// opened), an ask-on-connect row no connected workspace holds, or one that also has a password
+// command, before any Keychain read, script or connect (a held typed password connects it), and
+// a SQLite row saved with Protected mode on commits the copy on its own
+// transaction: once the manager is closed, a new connection reads the rows (real SQLite file in
+// the temporary folder, no server).
 
 import Foundation
 import Testing
@@ -31,6 +33,87 @@ struct CopyObjectsTargetTests {
       Issue.record("Expected connectionLocked")
     } catch DatabaseError.connectionLocked {
       // Refused before the password was read
+    }
+    #expect(reads.withLock { $0 } == 0)
+    #expect(factory.sessions.isEmpty)
+  }
+
+  @Test("An ask-on-connect target no workspace holds is refused before any Keychain read")
+  @MainActor
+  func askOnConnectRefusedBeforeKeychain() async throws {
+    var config = Self.postgres(level: .none)
+    config.askPasswordOnConnect = true
+    let reads = OSAllocatedUnfairLock(initialState: 0)
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    do {
+      _ = try await DatabaseConnectionManager.makeCopyTargetManager(
+        config: config,
+        password: { _ in
+          reads.withLock { $0 += 1 }
+          return "secret"
+        },
+        heldPassword: { _ in nil },
+        makeManager: {
+          DatabaseConnectionManager(sessionFactory: factory, lockSource: LockRegistry())
+        })
+      Issue.record("Expected the ask-on-connect refusal")
+    } catch {
+      #expect(
+        error.localizedDescription
+          == "This connection asks for its password when it connects. Connect it in a "
+          + "workspace, then try again.")
+    }
+    #expect(reads.withLock { $0 } == 0)
+    #expect(factory.sessions.isEmpty)
+  }
+
+  @Test("An ask-on-connect target connects with the held password and reads no Keychain item")
+  @MainActor
+  func askOnConnectUsesHeldPassword() async throws {
+    var config = Self.postgres(level: .none)
+    config.askPasswordOnConnect = true
+    let reads = OSAllocatedUnfairLock(initialState: 0)
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    let target = try await DatabaseConnectionManager.makeCopyTargetManager(
+      config: config,
+      password: { _ in
+        reads.withLock { $0 += 1 }
+        return "secret"
+      },
+      heldPassword: { _ in "typed" },
+      makeManager: {
+        DatabaseConnectionManager(sessionFactory: factory, lockSource: LockRegistry())
+      })
+    await target.manager.disconnect()
+    #expect(factory.configs.map(\.password) == ["typed"])
+    #expect(reads.withLock { $0 } == 0)
+  }
+
+  @Test("An ask-on-connect target that also has a password command is refused before it runs")
+  @MainActor
+  func askOnConnectWithPasswordCommandRefused() async throws {
+    var config = Self.postgres(level: .none)
+    config.askPasswordOnConnect = true
+    // A missing script: had it run, its own error would show instead of the refusal
+    config.passwordCommandScript = "missing-password.sh"
+    let reads = OSAllocatedUnfairLock(initialState: 0)
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    do {
+      let target = try await DatabaseConnectionManager.makeCopyTargetManager(
+        config: config,
+        password: { _ in
+          reads.withLock { $0 += 1 }
+          return "secret"
+        },
+        heldPassword: { _ in "typed" },
+        makeManager: {
+          DatabaseConnectionManager(sessionFactory: factory, lockSource: LockRegistry())
+        })
+      await target.manager.disconnect()
+      Issue.record("Expected the mixed password sources refusal")
+    } catch {
+      #expect(
+        error.localizedDescription == DatabaseError.passwordSourcesMixed.localizedDescription)
     }
     #expect(reads.withLock { $0 } == 0)
     #expect(factory.sessions.isEmpty)

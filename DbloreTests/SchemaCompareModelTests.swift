@@ -7,7 +7,9 @@
 // statement says what ran and what did not (nothing, when it was rolled back); a ticked drop
 // asks first, cannot be skipped by the Safe Mode answer, and once sent closes the table's tabs;
 // changing a side clears the result; a new selection clears the last run's report; a second
-// compare started before the first runs is ignored. On the app's manager (fake sessions) the
+// compare started before the first runs is ignored. An ask-on-connect source reads no Keychain
+// item: it uses the typed password of a workspace connected to the same saved identity only,
+// else connects nothing and says to connect it first. On the app's manager (fake sessions) the
 // source connection is a separate session that only reads and is closed, and the tab's session
 // gets nothing from it; a MySQL source on another database keeps the tab's unremembered
 // certificate.
@@ -15,6 +17,7 @@
 import Foundation
 import Security
 import Testing
+import os
 
 @testable import Dblore
 
@@ -155,17 +158,27 @@ struct SchemaCompareModelTests {
       databaseType: .postgresql, host: "staging", port: 5432, database: "app", username: "u",
       sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false))
 
+  /// `savedEntry` with Ask on connect: no saved password
+  private static let askEntry: ConnectionHistoryEntry = {
+    var config = savedEntry.config
+    config.askPasswordOnConnect = true
+    return ConnectionHistoryEntry(config: config)
+  }()
+
   private static func model(
     _ database: any SchemaCompareDatabase, targetSchemas: [String] = ["public"],
-    password: @escaping @Sendable (ConnectionConfig) throws -> String? = { _ in nil }
+    source: ConnectionHistoryEntry = savedEntry,
+    password: @escaping @Sendable (ConnectionConfig) throws -> String? = { _ in nil },
+    heldPassword: @escaping @MainActor (ConnectionConfig) -> String? = { _ in nil }
   ) -> SchemaCompareModel {
     let model = SchemaCompareModel(
       context: SchemaCompareContext(
         database: database, databaseType: .postgresql,
         policy: { ProtectionPolicy(protectionLevel: .none) }, commitStyle: { .immediate },
-        caller: caller, recordHistory: { _ in }, password: password),
-      targetSchemas: targetSchemas, targetSchema: "public", savedConnections: [savedEntry])
-    model.sourceConnection = .saved(savedEntry.id)
+        caller: caller, recordHistory: { _ in }, password: password,
+        heldPassword: heldPassword),
+      targetSchemas: targetSchemas, targetSchema: "public", savedConnections: [source])
+    model.sourceConnection = .saved(source.id)
     model.sourceSchema = "public"
     return model
   }
@@ -262,6 +275,124 @@ struct SchemaCompareModelTests {
       model.compareErrorDetail
         == DatabaseError.passwordStoreUnreadable(name: name).localizedDescription)
     #expect(model.items.isEmpty && !model.canRun)
+  }
+
+  private static let askRefusal =
+    "Source: This connection asks for its password when it connects. Connect it in a "
+    + "workspace, then try again."
+
+  @Test func anAskOnConnectSourceWithNoConnectedWorkspaceRefusesBeforeAnyConnect() async throws {
+    let (target, source) = Self.fakes()
+    let reads = OSAllocatedUnfairLock(initialState: 0)
+    let model = Self.model(target, source: Self.askEntry) { _ in
+      reads.withLock { $0 += 1 }
+      return "saved"
+    }
+    await model.compare()
+    // No Keychain read and no connect: the row's password exists only in a connected workspace
+    #expect(reads.withLock { $0 } == 0)
+    #expect(await target.openedConfigs.isEmpty)
+    #expect(await source.calls.isEmpty)
+    #expect(model.compareError == Self.askRefusal)
+    #expect(model.items.isEmpty && !model.canRun)
+  }
+
+  @Test func anAskOnConnectSourceUsesOnlyThePasswordOfAWorkspaceConnectedToIt() async throws {
+    let suite = "SchemaCompareModelTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    let workspace = WorkspaceManager(
+      workspace: Workspace(connectionConfig: nil), restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(sessionFactory: factory),
+      defaults: defaults, sanitizesFileConfig: false)
+    var connected = Self.askEntry.config
+    connected.password = "typed"
+    workspace.workspace.connectionConfig = connected
+    workspace.activeTypedPassword = "typed"
+    workspace.connectionState = .connected
+    let windows = WorkspaceWindowManager()
+    windows.workspaces[workspace.id] = workspace
+    let held: @MainActor (ConnectionConfig) -> String? = {
+      windows.typedPasswordOfConnectedWorkspace(for: $0)
+    }
+    let reads = OSAllocatedUnfairLock(initialState: 0)
+    let keychain: @Sendable (ConnectionConfig) throws -> String? = { _ in
+      reads.withLock { $0 += 1 }
+      return "saved"
+    }
+
+    // The same saved identity: that workspace's typed password, no Keychain read
+    let (target, source) = Self.fakes()
+    let model = Self.model(
+      target, source: Self.askEntry, password: keychain, heldPassword: held)
+    await model.compare()
+    #expect(model.compareError == nil)
+    #expect(await target.openedConfigs.first??.password == "typed")
+    #expect(await source.disconnected)
+
+    // Another user on the same server: never that workspace's password
+    var other = Self.askEntry.config
+    other.username = "other"
+    let (otherTarget, _) = Self.fakes()
+    let otherModel = Self.model(
+      otherTarget, source: ConnectionHistoryEntry(config: other), password: keychain,
+      heldPassword: held)
+    await otherModel.compare()
+    #expect(await otherTarget.openedConfigs.isEmpty)
+    #expect(otherModel.compareError == Self.askRefusal)
+
+    // The same identity through another SSH tunnel or TLS setting: another endpoint
+    #expect(held(Self.askEntry.config) == "typed")
+    var tunneled = Self.askEntry.config
+    tunneled.sshTunnel = SSHTunnelConfig(host: "bastion-a", username: "jump")
+    #expect(held(tunneled) == nil)
+    workspace.workspace.connectionConfig?.sshTunnel = tunneled.sshTunnel
+    #expect(held(tunneled) == "typed")
+    #expect(held(Self.askEntry.config) == nil)
+    var otherBastion = tunneled
+    otherBastion.sshTunnel?.host = "bastion-b"
+    #expect(held(otherBastion) == nil)
+    workspace.workspace.connectionConfig?.sslMode = .verifyFull
+    #expect(held(tunneled) == nil)
+    workspace.workspace.connectionConfig = connected
+
+    // Session lost: the copy kept for the banner's Reconnect is not lent out
+    workspace.connectionState = .disconnected
+    let (lostTarget, _) = Self.fakes()
+    let lostModel = Self.model(
+      lostTarget, source: Self.askEntry, password: keychain, heldPassword: held)
+    await lostModel.compare()
+    #expect(await lostTarget.openedConfigs.isEmpty)
+    #expect(lostModel.compareError == Self.askRefusal)
+    #expect(reads.withLock { $0 } == 0)
+  }
+
+  @Test func anAskOnConnectSourceThatAlsoHasAnotherPasswordSourceIsRefused() async throws {
+    var command = Self.askEntry.config
+    command.passwordCommandScript = "missing-password.sh"
+    var vault = Self.askEntry.config
+    vault.vault = VaultSource(
+      address: "https://vault.invalid", mount: "database", role: "app", authMethod: .token)
+    for config in [command, vault] {
+      let (target, source) = Self.fakes()
+      let reads = OSAllocatedUnfairLock(initialState: 0)
+      let model = Self.model(
+        target, source: ConnectionHistoryEntry(config: config),
+        password: { _ in
+          reads.withLock { $0 += 1 }
+          return "saved"
+        },
+        heldPassword: { _ in "typed" })
+      await model.compare()
+      // Refused before the held password, the command or a Vault lease is used
+      #expect(
+        model.compareError
+          == "Source: " + DatabaseError.passwordSourcesMixed.localizedDescription)
+      #expect(reads.withLock { $0 } == 0)
+      #expect(await target.openedConfigs.isEmpty)
+      #expect(await source.calls.isEmpty)
+    }
   }
 
   @Test func aRunThatStopsAtAFailingStatementSaysWhatRanAndWhatDidNot() async throws {

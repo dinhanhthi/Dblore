@@ -496,6 +496,42 @@ class WorkspaceWindowManager {
     workspaces[id]
   }
 
+  /// The password typed for the ask-on-connect saved row `config`, held in memory by a workspace
+  /// connected to it now: the same saved identity (`ConnectionHistoryEntry.isSavedRow(of:)`:
+  /// Keychain key, engine, host, port, database and username) reached the same way
+  /// (`sharesEndpoint`: SSH tunnel and TLS). Nil for a row without the flag, or when no such
+  /// workspace is connected (one that lost its session holds the password for its banner
+  /// Reconnect only; a disconnect blanks the workspace config's copy first, so a workspace still
+  /// disconnecting lends nothing). Never another connection's password.
+  func typedPasswordOfConnectedWorkspace(for config: ConnectionConfig) -> String? {
+    guard config.askPasswordOnConnect else { return nil }
+    for manager in allWorkspaces where manager.connectionState.isConnected {
+      guard let typed = manager.activeTypedPassword, !typed.isEmpty,
+        let connected = manager.workspace.connectionConfig, connected.askPasswordOnConnect,
+        connected.password == typed,
+        ConnectionHistoryEntry(config: connected).isSavedRow(of: config),
+        Self.sharesEndpoint(connected, config)
+      else { continue }
+      return typed
+    }
+    return nil
+  }
+
+  /// Whether `a` and `b` reach their server the same way: the same SSH bastion (none, or the
+  /// same host, port and username: behind a tunnel `host` is the server as the bastion sees it)
+  /// and the same TLS (mode; client certificate and custom CA: present, subject, CA). How the
+  /// bastion is signed in to (password or key, the key's algorithm and fingerprint) and the
+  /// certificate's expiry (whole seconds in a workspace file) are not compared: they do not
+  /// change where the password goes.
+  private static func sharesEndpoint(_ a: ConnectionConfig, _ b: ConnectionConfig) -> Bool {
+    a.sslMode == b.sslMode && (a.clientCertificate == nil) == (b.clientCertificate == nil)
+      && a.clientCertificate?.subject == b.clientCertificate?.subject
+      && a.clientCertificate?.hasCA == b.clientCertificate?.hasCA
+      && (a.sshTunnel == nil) == (b.sshTunnel == nil)
+      && a.sshTunnel?.host == b.sshTunnel?.host && a.sshTunnel?.port == b.sshTunnel?.port
+      && a.sshTunnel?.username == b.sshTunnel?.username
+  }
+
   // MARK: - Window Management
   // Note: Window opening is now handled by view layer using openWindow(value: workspaceId)
   // The WorkspaceWindowManager only manages workspace state, not windows

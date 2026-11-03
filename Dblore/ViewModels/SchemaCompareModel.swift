@@ -6,7 +6,9 @@
 // closing. A MySQL source in another database of the same server also gets its own connection
 // (MySQL lists only the connected database's tables). A locked saved source asks to unlock
 // before its password is read; a cancelled unlock reads and compares nothing, and a saved
-// password the Keychain cannot read is reported and opens nothing.
+// password the Keychain cannot read is reported and opens nothing. An ask-on-connect source
+// reads no Keychain item and runs no password command: it uses the password typed in a
+// workspace connected to it, or connects nothing and says to connect it in a workspace first.
 // Compare reads the source, then the target (`SchemaSnapshotLoader`, with progress and Cancel),
 // diffs them (`SchemaDiff`) and builds the script for the ticked items
 // (`SchemaMigrationScriptBuilder`), off the main actor; ticking an item builds it again and
@@ -80,18 +82,62 @@ struct SchemaCompareContext {
   /// A saved connection's password, called off the main actor (the Keychain in the app)
   var password: @Sendable (ConnectionConfig) throws -> String? =
     SchemaCompareContext.keychainPassword
+  /// An ask-on-connect saved connection's typed password, held by a workspace connected to it
+  var heldPassword: @MainActor (ConnectionConfig) -> String? =
+    SchemaCompareContext.connectedWorkspacePassword
   /// Asks before a locked saved connection is read (tests pass a registry and prompter double)
   var lockCenter: LockCenter = .shared
   /// The window the unlock prompt opens on (over the sheet attached to it)
   var unlockAnchor: @MainActor () -> NSWindow? = { nil }
 
+  /// Nil for an ask-on-connect row: it has no saved password, and another row's item under the
+  /// same key must never connect it.
   /// - Throws: `ConnectionPasswordError.unreadable` when a saved password may exist but the
   ///   Keychain could not read it
   nonisolated static func keychainPassword(_ config: ConnectionConfig) throws -> String? {
-    SessionManager.isRunningAsTestHost
+    SessionManager.isRunningAsTestHost || config.askPasswordOnConnect
       ? nil
       : try KeychainConnectionPasswordStore.readPassword(
         forKey: ConnectionKeychainKey.password(for: config))
+  }
+
+  /// The password typed for an ask-on-connect row in a workspace connected to it (in memory)
+  @MainActor static func connectedWorkspacePassword(_ config: ConnectionConfig) -> String? {
+    WorkspaceWindowManager.shared.typedPasswordOfConnectedWorkspace(for: config)
+  }
+
+  /// The password a side connection to the saved row `identity` uses, read off the main actor.
+  /// An ask-on-connect row uses `held` (`heldPassword`, read on the main actor) and never reads
+  /// the Keychain or runs a password command; one that also has a Vault source or a password
+  /// command is refused. Otherwise its password command's output when it has one (it is not the
+  /// live connection, so there is no resolved password to reuse), else `password`'s (the
+  /// Keychain's; nil: none saved). Every side read of a saved row's password goes through here.
+  /// - Throws: `DatabaseError.passwordNotHeldByWorkspace` for an ask-on-connect row without
+  ///   `held`; `DatabaseError.passwordSourcesMixed` for one with another password source;
+  ///   `DatabaseError.passwordStoreUnreadable` when a saved password may exist but could not be
+  ///   read: never connect with an empty one instead
+  @concurrent nonisolated static func sidePassword(
+    for identity: ConnectionConfig, held: String?,
+    password: @Sendable (ConnectionConfig) throws -> String?
+  ) async throws -> String? {
+    if identity.askPasswordOnConnect {
+      // Exclusive sources (`SessionManager` refuses such a save): the other one would replace
+      // the typed password, so a legacy, imported or hand-edited mixed row reads nothing
+      guard identity.vault == nil, identity.passwordCommandScript == nil else {
+        throw DatabaseError.passwordSourcesMixed
+      }
+      guard let held, !held.isEmpty else { throw DatabaseError.passwordNotHeldByWorkspace }
+      return held
+    }
+    if let command = identity.passwordCommandScript {
+      return try await ConnectionScriptRunner.app.password(from: command, for: identity)
+    }
+    do {
+      return try password(identity)
+    } catch {
+      throw DatabaseError.passwordStoreUnreadable(
+        name: identity.name.isEmpty ? identity.displayString : identity.name)
+    }
   }
 }
 
@@ -428,7 +474,13 @@ final class SchemaCompareModel: Identifiable {
         try Task.checkCancellation()
       }
       do {
-        config = try await Self.withSavedPassword(entry.config, password: context.password)
+        config = try await Self.withSavedPassword(
+          entry.config, held: context.heldPassword(entry.config), password: context.password)
+      } catch DatabaseError.passwordNotHeldByWorkspace {
+        // Nothing was attempted: not a failed connect
+        throw CompareFailure.source(Self.message(DatabaseError.passwordNotHeldByWorkspace))
+      } catch DatabaseError.passwordSourcesMixed {
+        throw CompareFailure.source(Self.message(DatabaseError.passwordSourcesMixed))
       } catch {
         try Self.rethrowIfCancelled(error)
         throw CompareFailure.sourceConnection(name: name, reason: Self.message(error))
@@ -724,27 +776,18 @@ final class SchemaCompareModel: Identifiable {
     (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
   }
 
-  /// The saved connection with its password, read off the main actor: printed by its password
-  /// command when it has one (it is not the live connection, so there is no resolved password to
-  /// reuse), else the Keychain's.
-  /// - Throws: `DatabaseError.passwordStoreUnreadable` when a saved password may exist but the
-  ///   Keychain could not read it: never connect with an empty one instead
+  /// The saved connection with its password, read off the main actor
+  /// (`SchemaCompareContext.sidePassword`: `held` for an ask-on-connect row)
   @concurrent nonisolated private static func withSavedPassword(
-    _ config: ConnectionConfig, password: @Sendable (ConnectionConfig) throws -> String?
+    _ config: ConnectionConfig, held: String?,
+    password: @Sendable (ConnectionConfig) throws -> String?
   ) async throws -> ConnectionConfig {
     var config = config
     guard config.databaseType.capabilities.usesPassword else { return config }
-    if let command = config.passwordCommandScript {
-      config.password = try await ConnectionScriptRunner.app.password(from: command, for: config)
-    } else {
-      let saved: String?
-      do {
-        saved = try password(config)
-      } catch {
-        throw DatabaseError.passwordStoreUnreadable(
-          name: config.name.isEmpty ? config.displayString : config.name)
-      }
-      if let saved { config.password = saved }
+    if let saved = try await SchemaCompareContext.sidePassword(
+      for: config, held: held, password: password)
+    {
+      config.password = saved
     }
     return config
   }

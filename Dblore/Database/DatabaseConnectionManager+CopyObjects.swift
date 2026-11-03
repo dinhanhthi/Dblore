@@ -2,7 +2,8 @@
 // The writable connection Copy Objects writes into: a saved PostgreSQL, MySQL / MariaDB or SQLite
 // row, opened on its own single-use manager that the caller closes after the copy (no pool). A
 // locked row is refused before any Keychain read; Read-only and Schema-only rows, DuckDB,
-// MongoDB and a saved password the Keychain cannot read before connecting. The manager connects
+// MongoDB, a saved password the Keychain cannot read, and an ask-on-connect row no connected
+// workspace holds the typed password of (no Keychain read) before connecting. The manager connects
 // with a copy of the row whose Protected mode is off (protection level, Safe Mode and commit
 // style unchanged), and every run call passes
 // `CopyObjectsTarget.policy`, so the copy commits on its own transaction instead of waiting in a
@@ -52,6 +53,11 @@ extension DatabaseConnectionManager {
   /// another database of it. `password` reads a saved password off the main actor (the Keychain
   /// in the app); a password command runs instead when the row has one. A saved password the
   /// Keychain could not read throws `DatabaseError.passwordStoreUnreadable` before any connect.
+  /// An ask-on-connect row reads neither: it uses `heldPassword` (the password typed in a
+  /// workspace connected to it), or throws `DatabaseError.passwordNotHeldByWorkspace` before any
+  /// connect; one that also has a Vault source or a password command throws
+  /// `DatabaseError.passwordSourcesMixed` before anything runs
+  /// (`SchemaCompareContext.sidePassword`).
   /// `makeManager` makes the unconnected manager: the app's host-key trust prompt by default,
   /// and its lock source is the one checked here.
   @MainActor
@@ -59,6 +65,8 @@ extension DatabaseConnectionManager {
     config: ConnectionConfig, identity: ConnectionConfig? = nil,
     password: @escaping @Sendable (ConnectionConfig) throws -> String? = SchemaCompareContext
       .keychainPassword,
+    heldPassword: @MainActor (ConnectionConfig) -> String? = SchemaCompareContext
+      .connectedWorkspacePassword,
     makeManager: @MainActor () -> DatabaseConnectionManager = { .withTrustPrompt() }
   ) async throws -> CopyObjectsTarget {
     let identity = identity ?? config
@@ -76,7 +84,8 @@ extension DatabaseConnectionManager {
     case .schemaOnly: throw CopyObjectsTargetError.schemaOnly
     case .none: break
     }
-    var connected = try await withSavedSecrets(config, identity: identity, password: password)
+    var connected = try await withSavedSecrets(
+      config, identity: identity, held: heldPassword(identity), password: password)
     connected.config.protectedMode = false
     do {
       if connected.material == nil, connected.sshCredential == nil {
@@ -97,32 +106,22 @@ extension DatabaseConnectionManager {
         protectedMode: false))
   }
 
-  /// `config` with `identity`'s password, and `identity`'s certificate and SSH secret under
-  /// `config`'s accounts when those differ (nil when they are the same: the session reads
-  /// `config`'s own saved items)
+  /// `config` with `identity`'s password (`SchemaCompareContext.sidePassword`: `held` for an
+  /// ask-on-connect row), and `identity`'s certificate and SSH secret under `config`'s accounts
+  /// when those differ (nil when they are the same: the session reads `config`'s own saved items)
   @concurrent nonisolated private static func withSavedSecrets(
-    _ config: ConnectionConfig, identity: ConnectionConfig,
+    _ config: ConnectionConfig, identity: ConnectionConfig, held: String?,
     password: @Sendable (ConnectionConfig) throws -> String?
   ) async throws -> (
     config: ConnectionConfig, material: ClientCertificateStoreFactory.ConnectionMaterial?,
     sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
   ) {
     var config = config
-    if config.databaseType.capabilities.usesPassword {
-      if let command = identity.passwordCommandScript {
-        config.password = try await ConnectionScriptRunner.app.password(
-          from: command, for: identity)
-      } else {
-        let saved: String?
-        do {
-          saved = try password(identity)
-        } catch {
-          // Never connect with an empty password instead
-          throw DatabaseError.passwordStoreUnreadable(
-            name: identity.name.isEmpty ? identity.displayString : identity.name)
-        }
-        if let saved { config.password = saved }
-      }
+    if config.databaseType.capabilities.usesPassword,
+      let saved = try await SchemaCompareContext.sidePassword(
+        for: identity, held: held, password: password)
+    {
+      config.password = saved
     }
     var material: ClientCertificateStoreFactory.ConnectionMaterial?
     let account = ClientCertificateStoreFactory.account(for: config)

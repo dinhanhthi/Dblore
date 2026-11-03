@@ -5,8 +5,9 @@
 // (no second connection to its file), which is never closed here. TARGET: a saved PostgreSQL,
 // MySQL / MariaDB or SQLite connection. Read-only and Schema-only rows are refused when picked,
 // before anything is read; a locked row asks to unlock before its password is read (a cancelled
-// unlock clears the pick); then the row opens on its own writable manager
-// (`makeCopyTargetManager`, Protected mode off).
+// unlock clears the pick); an ask-on-connect row uses the password typed in a workspace connected
+// to it, or opens nothing and says to connect it first; then the row opens on its own writable
+// manager (`makeCopyTargetManager`, Protected mode off).
 // The plan is built off the main actor from the structures of the ticked tables only (each read
 // once while the source is open) and the target's names. The preview shows its warnings and the
 // planned DDL, which the user may edit (Reset puts the planned DDL back). Copy checks the edited
@@ -41,6 +42,9 @@ struct CopyObjectsContext {
   /// A saved connection's password, called off the main actor (the Keychain in the app)
   var password: @Sendable (ConnectionConfig) throws -> String? =
     SchemaCompareContext.keychainPassword
+  /// An ask-on-connect target's typed password, held by a workspace connected to it
+  var heldPassword: @MainActor (ConnectionConfig) -> String? =
+    SchemaCompareContext.connectedWorkspacePassword
   /// Asks before a locked target is read
   var lockCenter: LockCenter = .shared
   /// The window the unlock prompt opens on (over the sheet attached to it)
@@ -411,8 +415,19 @@ final class CopyObjectsModel: Identifiable {
         else { throw UnlockCancelled() }
         try Task.checkCancellation()
       }
-      return try await DatabaseConnectionManager.makeCopyTargetManager(
-        config: entry.config, password: context.password, makeManager: context.makeTargetManager)
+      do {
+        return try await DatabaseConnectionManager.makeCopyTargetManager(
+          config: entry.config, password: context.password, heldPassword: context.heldPassword,
+          makeManager: context.makeTargetManager)
+      } catch let error as DatabaseError {
+        switch error {
+        // The text names no connection: say it is the target, not the user's own
+        case .passwordNotHeldByWorkspace, .passwordSourcesMixed:
+          throw TargetRefusal(
+            name: entry.shortDisplayName, reason: error.localizedDescription)
+        default: throw error
+        }
+      }
     }
     targetTask = task
     do {
@@ -594,6 +609,13 @@ final class CopyObjectsModel: Identifiable {
 
   /// A cancelled unlock of a locked target
   private struct UnlockCancelled: Error {}
+
+  /// A target refusal whose text does not name the connection: "Target <name>: <reason>"
+  private struct TargetRefusal: LocalizedError {
+    let name: String
+    let reason: String
+    var errorDescription: String? { "Target \(name): \(reason)" }
+  }
 
   private static func engine(
     _ type: DatabaseType?, server: MySQLServerInfo?

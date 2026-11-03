@@ -130,6 +130,13 @@ enum DatabaseError: LocalizedError {
   /// An ask-on-connect connection reached a connect or test without its typed password: nothing
   /// was attempted
   case passwordRequiredOnConnect
+  /// A side read (Schema Compare, Copy Objects) of an ask-on-connect saved row found no workspace
+  /// connected to it that holds its typed password: nothing was read or attempted
+  case passwordNotHeldByWorkspace
+  /// A side read of a saved row that asks for its password on connect but also has a Vault
+  /// source or a password command (a legacy, imported or hand-edited row): the other source
+  /// would replace the typed password, so nothing was read, run or attempted
+  case passwordSourcesMixed
   /// The user trusted the unknown SSH host key but the pin could not be saved: not connected
   case sshHostKeyPinFailed(host: String, port: Int)
   /// The SSH server rejected the user name, password or key
@@ -230,6 +237,12 @@ enum DatabaseError: LocalizedError {
         + "connection and enter the password again."
     case .passwordRequiredOnConnect:
       return "This connection asks for its password when it connects."
+    case .passwordNotHeldByWorkspace:
+      return "This connection asks for its password when it connects. Connect it in a "
+        + "workspace, then try again."
+    case .passwordSourcesMixed:
+      return "This connection asks for its password when it connects but also has a Vault "
+        + "source or a password command. Edit it to keep one password source, then try again."
     case .sshHostKeyPinFailed(let host, let port):
       return "The SSH host key for \(host):\(port) was trusted but could not be saved to the "
         + "Keychain, so the connection was not opened. Unlock the Keychain and connect again."

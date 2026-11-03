@@ -33,6 +33,7 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
+  private var madeConfigs: [ConnectionConfig] = []
 
   init(
     capabilities: DatabaseCapabilities, columns: [ColumnInfo] = [], rows: [[CellValue]] = [],
@@ -68,8 +69,16 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
       writeLimits: writeLimits)
     lock.lock()
     made.append(session)
+    madeConfigs.append(config)
     lock.unlock()
     return session
+  }
+
+  /// The config of each session made, in order.
+  var configs: [ConnectionConfig] {
+    lock.lock()
+    defer { lock.unlock() }
+    return madeConfigs
   }
 
   var sessions: [FakeDatabaseSession] {
