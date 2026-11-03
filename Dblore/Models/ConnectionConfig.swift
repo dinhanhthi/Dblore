@@ -387,6 +387,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var sshTunnel: SSHTunnelConfig?
   /// Credentials leased from Vault on connect; `password` is then never encoded.
   var vault: VaultSource?
+  /// The password is typed on each connect and kept in memory only: never read from nor written
+  /// to the Keychain, never encoded. Exclusive with `vault` and `passwordCommandScript`.
+  var askPasswordOnConnect = false
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
@@ -540,6 +543,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case sshTunnel
     // Absent on connections saved before Vault sources
     case vault
+    // Absent unless set
+    case askPasswordOnConnect
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
@@ -583,6 +588,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       ClientCertificateInfo.self, forKey: .clientCertificate)
     sshTunnel = try container.decodeIfPresent(SSHTunnelConfig.self, forKey: .sshTunnel)
     vault = try container.decodeIfPresent(VaultSource.self, forKey: .vault)
+    askPasswordOnConnect =
+      try container.decodeIfPresent(Bool.self, forKey: .askPasswordOnConnect) ?? false
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
@@ -677,13 +684,17 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encode(port, forKey: .port)
     try container.encode(database, forKey: .database)
     try container.encode(username, forKey: .username)
-    // A Vault connection's password is a lease's: it never reaches a saved row, a workspace
-    // file or Recents
-    try container.encode(vault == nil ? password : "", forKey: .password)
+    // A Vault connection's password is a lease's, an ask-on-connect one is typed: it never
+    // reaches a saved row, a workspace file or Recents
+    try container.encode(
+      vault == nil && !askPasswordOnConnect ? password : "", forKey: .password)
     try container.encode(sslMode, forKey: .sslMode)
     try container.encodeIfPresent(clientCertificate, forKey: .clientCertificate)
     try container.encodeIfPresent(sshTunnel, forKey: .sshTunnel)
     try container.encodeIfPresent(vault, forKey: .vault)
+    if askPasswordOnConnect {
+      try container.encode(askPasswordOnConnect, forKey: .askPasswordOnConnect)
+    }
     try container.encode(rememberConnection, forKey: .rememberConnection)
     try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
     try container.encode(protectionLevel, forKey: .protectionLevel)

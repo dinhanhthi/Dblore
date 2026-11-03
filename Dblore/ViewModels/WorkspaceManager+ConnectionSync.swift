@@ -174,13 +174,14 @@ extension WorkspaceManager {
   }
 
   /// An opened file's `config` with the TLS mode, SSH tunnel, client certificate (which also
-  /// decides whether the saved custom CA is used), connection string and Vault source (address,
-  /// CA, mount, role, auth method) of its saved row (`hasSavedTransport`), even where the file's
-  /// are stronger: the saved row is the user's choice, and a file never picks how a saved
-  /// password travels nor where a Vault secret goes. Remember off in the file changes nothing.
-  /// Without that row they stay the file's (auto-connect then reads no password), but its Vault
-  /// source is dropped and a connection string that reaches another host, port or TLS mode than
-  /// the config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
+  /// decides whether the saved custom CA is used), connection string, Vault source (address,
+  /// CA, mount, role, auth method) and ask-on-connect flag of its saved row
+  /// (`hasSavedTransport`), even where the file's are stronger: the saved row is the user's
+  /// choice, and a file never picks how a saved password travels nor where a Vault secret goes.
+  /// Remember off in the file changes nothing. Without that row they stay the file's
+  /// (auto-connect then reads no password), but its Vault source and ask-on-connect flag are
+  /// dropped and a connection string that reaches another host, port or TLS mode than the
+  /// config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
   static func keepingSavedTransport(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -191,8 +192,10 @@ extension WorkspaceManager {
       config.clientCertificate = saved.clientCertificate
       config.mongoURI = saved.mongoURI
       config.vault = saved.vault
+      config.askPasswordOnConnect = saved.askPasswordOnConnect
     } else {
       config.vault = nil
+      config.askPasswordOnConnect = false
       if let uri = config.mongoURI {
         config.mongoURI = try? MongoURIParser.checkedMongoURI(
           uri, host: config.host, port: config.port, engine: config.databaseType,
@@ -610,8 +613,8 @@ extension WorkspaceManager {
   }
 
   /// `config` once its blocked lock is unlocked, with its saved password when it uses one, has
-  /// no password command nor Vault source and none typed (a locked row loads without it).
-  /// Nothing is read before the grant.
+  /// no password command, Vault source nor ask on connect and none typed (a locked row loads
+  /// without it). Nothing is read before the grant.
   /// - Parameter action: what the prompt says the unlock is for ("connect", "test it")
   /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
   ///   changed, no error to show); `DatabaseError.passwordStoreUnreadable` when the Keychain
@@ -626,7 +629,7 @@ extension WorkspaceManager {
         anchor: NewWindowStore.shared.findWindow(for: id))
     else { throw WorkspaceConnectError.unlockRequired }
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.vault == nil, config.password.isEmpty,
+      config.vault == nil, !config.askPasswordOnConnect, config.password.isEmpty,
       lockCenter.registry.refusal(for: config) == nil
     else { return config }
     let saved: String?

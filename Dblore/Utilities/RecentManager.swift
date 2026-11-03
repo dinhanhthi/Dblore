@@ -302,15 +302,16 @@ class RecentManager {
     connectionsRevision += 1
   }
 
-  /// `config` with its saved password when it uses one, has no password command or Vault
-  /// source and none typed, and no lock it reaches is blocked: a locked row comes without its
-  /// password, and an edit or connect after the unlock needs it (a save with an empty
-  /// password deletes it). No saved password returns `config` as it is.
+  /// `config` with its saved password when it uses one, has no password command, Vault source
+  /// nor ask on connect and none typed, and no lock it reaches is blocked: a locked row comes
+  /// without its password, and an edit or connect after the unlock needs it (a save with an
+  /// empty password deletes it). No saved password returns `config` as it is.
   /// - Throws: `DatabaseError.passwordStoreUnreadable` when a saved password may exist but the
   ///   Keychain could not read it (locked or denied): never connect with an empty one instead
   func withSavedPassword(_ config: ConnectionConfig) throws -> ConnectionConfig {
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.vault == nil, config.password.isEmpty, registry.refusal(for: config) == nil
+      config.vault == nil, !config.askPasswordOnConnect, config.password.isEmpty,
+      registry.refusal(for: config) == nil
     else { return config }
     let password: String?
     do {

@@ -95,6 +95,7 @@ struct DataModelConnectionConfigTests {
     #expect(decoded.aiRules == "")
     #expect(decoded.colorTag == nil)
     #expect(decoded.groupName == nil)
+    #expect(decoded.askPasswordOnConnect == false)
   }
 
   @Test(

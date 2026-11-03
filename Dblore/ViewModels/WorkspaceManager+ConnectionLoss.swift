@@ -78,9 +78,13 @@ extension WorkspaceManager {
       .joined(separator: " ")
   }
 
-  /// Banner Reconnect: connect again with the workspace connection (errors as a toast)
+  /// Banner Reconnect: connect again with the workspace connection (errors as a toast), with the
+  /// password typed for it when it asks on connect (held through the loss: nothing is asked)
   func reconnectAfterConnectionLoss() async {
-    guard let config = workspace.connectionConfig else { return }
+    guard var config = workspace.connectionConfig else { return }
+    if config.askPasswordOnConnect, config.password.isEmpty, let typed = activeTypedPassword {
+      config.password = typed
+    }
     await reconnect(
       config, certificate: activeUnrememberedCertificate,
       sshCredential: activeUnrememberedSSHCredential)
@@ -130,6 +134,18 @@ extension WorkspaceManager {
     if !connectionState.isConnected {
       activeUnrememberedCertificate = nil
       activeUnrememberedSSHCredential = nil
+      dropTypedPassword()
     }
+  }
+
+  /// Drops an ask-on-connect connection's typed password from the workspace's configs (they
+  /// hold it only while connected), and `activeTypedPassword` too unless `keepingHeldCopy` (a
+  /// session loss, for the banner Reconnect).
+  func dropTypedPassword(keepingHeldCopy: Bool = false) {
+    if !keepingHeldCopy { activeTypedPassword = nil }
+    if workspace.connectionConfig?.askPasswordOnConnect == true {
+      workspace.connectionConfig?.password = ""
+    }
+    if editingConnectionConfig.askPasswordOnConnect { editingConnectionConfig.password = "" }
   }
 }

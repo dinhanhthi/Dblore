@@ -345,17 +345,26 @@ actor DatabaseConnectionManager {
       config: config, extraAllowedPaths: extraAllowedPaths, checkingOpenedFile: true)
   }
 
+  /// An ask-on-connect config of an engine that uses a password, without its typed password:
+  /// refused by connect and Test (a stale flag on a file engine blocks nothing).
+  private static func lacksTypedPassword(_ config: ConnectionConfig) -> Bool {
+    config.askPasswordOnConnect && config.databaseType.capabilities.usesPassword
+      && config.password.isEmpty
+  }
+
   /// `connect` without the lock check, for this manager's own resets
   /// (`reconnectWithActiveCertificate`): a relock never drops a live session.
   /// `checkingOpenedFile`: refuse the locked file a bookmark resolves to (`connect` only).
   /// A Vault connection's session gets the lease's username and password; `config` and the
   /// published config keep the saved ones. `keepingLease` (internal resets only): a held lease
   /// of an equal key is reused, never revoked; otherwise the held lease is revoked once the
-  /// current session is closed, and a new one is taken.
+  /// current session is closed, and a new one is taken. An ask-on-connect config without its
+  /// typed password is refused before anything closes or opens: never an empty-password login.
   private func connectUnchecked(
     config: ConnectionConfig, extraAllowedPaths: [String], checkingOpenedFile: Bool = false,
     keepingLease: Bool = false
   ) async throws {
+    if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
     let config = config.resolvingBrakes(
       await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
@@ -481,12 +490,13 @@ actor DatabaseConnectionManager {
   /// connected config only: never saved, and gone with the connection. Side managers and
   /// internal resets copy that connected config, so they reuse the password and run no script.
   /// The post-disconnect script pairs with a pre-connect script that ran: it runs when the
-  /// connect then fails, or once the connection closes. A locked identity is refused before
-  /// any script runs.
+  /// connect then fails, or once the connection closes. A locked identity, and an ask-on-connect
+  /// config without its typed password, are refused before anything closes or any script runs.
   func connectRunningScripts(
     config: ConnectionConfig, extraAllowedPaths: [String] = []
   ) async throws {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
+    if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
     let pending = config.postDisconnectScript.map {
       PendingScript(runner: scripts, name: $0, config: config)
     }
@@ -590,9 +600,11 @@ actor DatabaseConnectionManager {
   /// Performs a real connection AND executes a test query to verify credentials. A password
   /// command supplies the password, as on connect; no other script runs. A locked identity is
   /// refused before the password command. A Vault connection probes with a lease of its own,
-  /// revoked after the probe: this manager's lease and session are left alone.
+  /// revoked after the probe: this manager's lease and session are left alone. An
+  /// ask-on-connect config without its typed password is refused as on connect.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
+    if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
     let config = try await withPasswordCommand(config)
     guard config.vault != nil else { return try await probe(config) }
     let lease = try await vaultLeasing.take(for: config)

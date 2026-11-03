@@ -90,11 +90,12 @@ class SessionManager {
     publishLocks(entries, defaults: defaults, registry: registry)
 
     // Load passwords for engines that store one. Others are not queried, nor is a Vault row
-    // (it leases its password), nor a row whose lock is not unlocked in this session: it loads
+    // (it leases its password), nor an ask-on-connect row (a password still under its key never
+    // connects it without asking), nor a row whose lock is not unlocked in this session: it loads
     // without its password until then.
     for i in 0..<entries.count
     where entries[i].config.databaseType.capabilities.usesPassword
-      && entries[i].config.vault == nil
+      && entries[i].config.vault == nil && !entries[i].config.askPasswordOnConnect
       && registry.refusal(for: entries[i].config) == nil
     {
       let key = entries[i].keychainKey
@@ -176,7 +177,8 @@ class SessionManager {
 
   /// Add or update connection in history. Only this connection's own row (`isSavedRow(of:)`) is
   /// replaced. Refused (false, nothing changed) when another saved connection uses its Keychain
-  /// key (`keyUsedByAnotherIdentity`): that row and its password are never touched.
+  /// key (`keyUsedByAnotherIdentity`): that row and its password are never touched; and when it
+  /// mixes password sources (`mixesPasswordSources`).
   @discardableResult
   static func saveConnection(
     _ config: ConnectionConfig,
@@ -188,6 +190,7 @@ class SessionManager {
     vaultSecrets: any VaultSecretStore = VaultCredentialStore.shared,
     registry: LockRegistry = .shared
   ) -> Bool {
+    guard !mixesPasswordSources(config) else { return false }
     var config = singleLineName(config)
     guard config.rememberConnection else {
       // If remember is disabled, don't add to history
@@ -242,12 +245,14 @@ class SessionManager {
     // The form's typed or moved Vault secret, only on this accepted, remembered save
     VaultCredentialStore.persistOperationSecret(for: config, to: vaultSecrets)
     if config.databaseType.capabilities.usesPassword {
-      if config.vault != nil {
-        // A Vault row's password is a lease's: none is kept under its key, unless another
-        // row on that key still uses a saved password
-        if !history.contains(where: {
-          $0.id != newEntry.id && $0.keychainKey == newEntry.keychainKey && $0.config.vault == nil
-        }), !unreadable.contains(newEntry.keychainKey) {
+      if config.vault != nil || config.askPasswordOnConnect {
+        // A Vault row's password is a lease's, an ask-on-connect one is typed on connect: none
+        // is kept under its key, unless another row on that key still uses a saved password
+        if !keyHasSavedPassword(
+          newEntry.keychainKey, in: history, excluding: newEntry.id,
+          rawKeys: undecodableRowKeys(defaults: defaults)),
+          !unreadable.contains(newEntry.keychainKey)
+        {
           passwords.deletePassword(forKey: newEntry.keychainKey)
         }
       } else if !config.password.isEmpty {
@@ -405,7 +410,8 @@ class SessionManager {
   /// Another row of the edited target's identity is merged into it. Refused (false, nothing
   /// changed) while the row, the edited target or a merged row reaches a lock not unlocked in
   /// this session, and when another saved connection uses the target's Keychain key
-  /// (`keyUsedByAnotherIdentity`).
+  /// (`keyUsedByAnotherIdentity`), and when the edit mixes password sources
+  /// (`mixesPasswordSources`).
   @discardableResult
   static func replaceConnection(
     id: UUID,
@@ -418,6 +424,7 @@ class SessionManager {
     vaultSecrets: any VaultSecretStore = VaultCredentialStore.shared,
     registry: LockRegistry = .shared
   ) -> Bool {
+    guard !mixesPasswordSources(config) else { return false }
     var config = singleLineName(config)
     let loaded = historyWithUnreadablePasswords(
       defaults: defaults, passwords: passwords, registry: registry)
@@ -514,8 +521,15 @@ class SessionManager {
       deleteStoredPassword(for: previous, passwords: passwords)
     }
     if config.databaseType.capabilities.usesPassword {
-      // A Vault row keeps no saved password: its password is a lease's
-      if config.password.isEmpty || config.vault != nil {
+      if config.askPasswordOnConnect {
+        // Typed on connect: none is kept, unless another row on the key still uses one
+        if !keyHasSavedPassword(newKey, in: history, excluding: id, rawKeys: rawKeys),
+          !unreadable.contains(newKey)
+        {
+          passwords.deletePassword(forKey: newKey)
+        }
+      } else if config.password.isEmpty || config.vault != nil {
+        // A Vault row keeps no saved password: its password is a lease's
         if !unreadable.contains(newKey) { passwords.deletePassword(forKey: newKey) }
       } else {
         passwords.savePassword(config.password, forKey: newKey)
@@ -722,6 +736,26 @@ class SessionManager {
     rawKeys: Set<String>
   ) -> Bool {
     rawKeys.contains(key) || history.contains { $0.id != rowID && $0.keychainKey == key }
+  }
+
+  /// Whether a row other than `rowID` on Keychain key `key` still uses a saved password (neither
+  /// a Vault nor an ask-on-connect row), or a saved row this build cannot decode (`rawKeys`, from
+  /// `undecodableRowKeys`) uses the key: its password may be that row's.
+  private static func keyHasSavedPassword(
+    _ key: String, in history: [ConnectionHistoryEntry], excluding rowID: UUID,
+    rawKeys: Set<String>
+  ) -> Bool {
+    rawKeys.contains(key)
+      || history.contains {
+        $0.id != rowID && $0.keychainKey == key && $0.config.vault == nil
+          && !$0.config.askPasswordOnConnect
+      }
+  }
+
+  /// Ask on connect with a Vault source or a password command: the sources are exclusive (the
+  /// other would fill the password, and nothing would be asked), so such a save is refused.
+  private static func mixesPasswordSources(_ config: ConnectionConfig) -> Bool {
+    config.askPasswordOnConnect && (config.vault != nil || config.passwordCommandScript != nil)
   }
 
   /// Keychain keys of the saved rows this build cannot decode. Reads no Keychain item.

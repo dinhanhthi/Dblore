@@ -131,6 +131,10 @@ class WorkspaceManager: Identifiable {
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// Unremembered SSH secret for the current workspace connection and its banner Reconnect.
   var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  /// Password typed for the current ask-on-connect connection, in memory only: kept through a
+  /// session loss for its banner Reconnect (the workspace's configs drop it on every disconnect,
+  /// `dropTypedPassword`)
+  var activeTypedPassword: String?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
   /// Auto-connect stopped on a locked connection: "Locked: unlock to connect" with Unlock
@@ -869,6 +873,7 @@ class WorkspaceManager: Identifiable {
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     activeUnrememberedCertificate = nil
     activeUnrememberedSSHCredential = nil
+    activeTypedPassword = nil
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
@@ -929,6 +934,7 @@ class WorkspaceManager: Identifiable {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential
       }
+      if config.askPasswordOnConnect { activeTypedPassword = config.password }
       if savesConnection {
         workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
       }
@@ -958,6 +964,8 @@ class WorkspaceManager: Identifiable {
       await connectionManager.disconnect()
       releaseDuckDBFileAccess()
       connectionState = .disconnected
+      // Disconnected: the previous session's typed password goes from the workspace's configs
+      dropTypedPassword()
       invalidateEditTargetsInTabs()
       await refreshPendingTransaction()
       throw error
@@ -1018,11 +1026,11 @@ class WorkspaceManager: Identifiable {
 
     var configWithPassword = config
     // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
-    // unless a password command prints it or a Vault lease brings it on connect. Only the key
-    // of this config is read (`Workspace.keychainKey`), never one a file names for another
-    // connection.
+    // unless a password command prints it, a Vault lease brings it on connect or it is asked
+    // on connect (the saved row's flag, `keepingSavedTransport`). Only the key of this config is
+    // read (`Workspace.keychainKey`), never one a file names for another connection.
     if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.vault == nil
+      config.vault == nil, !config.askPasswordOnConnect
     {
       let password: String?
       do {
@@ -1885,6 +1893,7 @@ class WorkspaceManager: Identifiable {
   /// it held (workspace closed). `keepsSessions`: an open window with the same workspace id
   /// holds them under that id (a second file of it refused at open)
   func releaseFileAccess(keepsSessions: Bool = false) {
+    activeTypedPassword = nil
     activeUnrememberedCertificate = nil
     pendingWeakeningCertificate = nil
     activeUnrememberedSSHCredential = nil

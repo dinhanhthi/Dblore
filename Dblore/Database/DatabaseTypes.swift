@@ -127,6 +127,9 @@ enum DatabaseError: LocalizedError {
   /// The saved password of connection `name` exists but could not be read from the Keychain:
   /// nothing was opened, changed or deleted
   case passwordStoreUnreadable(name: String)
+  /// An ask-on-connect connection reached a connect or test without its typed password: nothing
+  /// was attempted
+  case passwordRequiredOnConnect
   /// The user trusted the unknown SSH host key but the pin could not be saved: not connected
   case sshHostKeyPinFailed(host: String, port: Int)
   /// The SSH server rejected the user name, password or key
@@ -225,6 +228,8 @@ enum DatabaseError: LocalizedError {
       return "The saved password for \(name) could not be read from the Keychain, so nothing "
         + "was opened, changed or deleted. Unlock the Keychain and try again, or edit the "
         + "connection and enter the password again."
+    case .passwordRequiredOnConnect:
+      return "This connection asks for its password when it connects."
     case .sshHostKeyPinFailed(let host, let port):
       return "The SSH host key for \(host):\(port) was trusted but could not be saved to the "
         + "Keychain, so the connection was not opened. Unlock the Keychain and connect again."
