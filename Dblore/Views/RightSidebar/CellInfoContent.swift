@@ -552,6 +552,7 @@ struct CellInfoContent: View {
     case .json: return "JSON"
     case .date: return "Date"
     case .data: return "Binary Data"
+    case .decimal: return "Decimal"
     }
   }
 
@@ -585,7 +586,7 @@ struct CellInfoContent: View {
   /// UTF-8 bytes of the value's whole text, counted without building it; 0 for a short scalar
   private var fullTextBytes: Int {
     switch value {
-    case .string(let text), .json(let text):
+    case .string(let text), .json(let text), .decimal(let text):
       text.utf8.count
     case .data(let data):
       (data.count + 2) / 3 * 4
@@ -970,7 +971,7 @@ enum CellValuePreview: Sendable {
         let parsed = try? GeometryWKB.parse(hex: text)
       else { return nil }
       return .geometry(GeometrySketch(parsed))
-    case .int, .double, .bool, .null, .json, .date:
+    case .int, .double, .bool, .null, .json, .date, .decimal:
       return nil
     }
   }

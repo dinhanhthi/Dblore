@@ -254,7 +254,7 @@ nonisolated enum ChartDataExtractor {
       number = double
     case .string(let text):
       number = Double(text.trimmingCharacters(in: .whitespacesAndNewlines))
-    case .null, .bool, .json, .date, .data:
+    case .null, .bool, .json, .date, .data, .decimal:
       number = nil
     }
     guard let number, number.isFinite else { return nil }
@@ -303,7 +303,7 @@ nonisolated enum ChartDataExtractor {
         return nil
       }
       return .category(index: categoryIndex(for: text, in: &categories), label: text)
-    case .bool, .json, .data, .double:
+    case .bool, .json, .data, .double, .decimal:
       return nil
     }
   }
@@ -318,7 +318,7 @@ nonisolated enum ChartDataExtractor {
   /// A date is the grid's text of its column (`wallClock` is the column's `ColumnInfo.wallClock`)
   private static func seriesLabel(_ value: CellValue?, wallClock: Bool) -> String? {
     switch value {
-    case .string(let text), .json(let text):
+    case .string(let text), .json(let text), .decimal(let text):
       return text
     case .int(let int):
       return String(int)

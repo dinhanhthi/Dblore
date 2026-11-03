@@ -802,7 +802,7 @@ enum DataExporter {
     _ value: CellValue, wallClock: Bool
   ) -> (type: String, data: String)? {
     switch value {
-    case .string(let str):
+    case .string(let str), .decimal(let str):
       return ("String", escapeXML(str))
     case .int(let int):
       return (isSpreadsheetExact(int) ? "Number" : "String", String(int))
@@ -827,7 +827,7 @@ enum DataExporter {
     _ value: CellValue, wallClock: Bool
   ) -> (type: String, value: String)? {
     switch value {
-    case .string(let str):
+    case .string(let str), .decimal(let str):
       return ("inlineStr", "<is><t>\(escapeXML(str))</t></is>")
     case .int(let int) where !isSpreadsheetExact(int):
       return ("inlineStr", "<is><t>\(int)</t></is>")
@@ -868,7 +868,7 @@ enum DataExporter {
 
   private static func cellValueToJSON(_ value: CellValue) -> Any {
     switch value {
-    case .string(let str):
+    case .string(let str), .decimal(let str):
       return str
     case .int(let int):
       return int

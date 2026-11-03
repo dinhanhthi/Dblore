@@ -243,7 +243,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Numbers are right-aligned, other values left-aligned, as in the result table
   static func alignment(for value: CellValue) -> NSTextAlignment {
     switch value {
-    case .int, .double: .right
+    case .int, .double, .decimal: .right
     default: .left
     }
   }
@@ -252,7 +252,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// NULL has its own and binary stays neutral.
   static func typeColor(for value: CellValue) -> NSColor? {
     switch value {
-    case .int, .double: numberTextColor
+    case .int, .double, .decimal: numberTextColor
     case .string: stringTextColor
     case .date: dateTextColor
     case .bool: booleanTextColor
@@ -1188,7 +1188,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static func editsInSidebar(_ value: CellValue) -> Bool {
     switch value {
     case .data: true
-    case .string(let text), .json(let text): text.utf8.count > maxInlineEditBytes
+    case .string(let text), .json(let text), .decimal(let text):
+      text.utf8.count > maxInlineEditBytes
     case .int, .double, .bool, .null, .date: false
     }
   }

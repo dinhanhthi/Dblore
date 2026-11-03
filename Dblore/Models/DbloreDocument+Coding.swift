@@ -421,7 +421,7 @@ enum DocumentCoder {
       return .null
     case "string":
       if let value = dict["value"] as? String {
-        return .string(value)
+        return dict["decimal"] as? Bool == true ? .decimal(value) : .string(value)
       }
     case "int":
       if let value = dict["value"] as? Int {
@@ -478,6 +478,9 @@ enum DocumentCoder {
       return encodedDate(date, dateFormatter: dateFormatter)
     case .data(let data):
       return ["type": "data", "value": data.base64EncodedString()]
+    case .decimal(let text):
+      // Older builds read the string and ignore the flag
+      return ["type": "string", "value": text, "decimal": true]
     }
   }
 

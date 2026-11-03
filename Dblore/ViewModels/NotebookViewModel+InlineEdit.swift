@@ -786,6 +786,8 @@ extension NotebookViewModel {
       return micros(date) == micros(stored) ? original : .date(date)
     case .data:
       return Data(base64Encoded: newValue).map(CellValue.data) ?? .string(newValue)
+    case .decimal:
+      return .decimal(newValue)
     }
   }
 

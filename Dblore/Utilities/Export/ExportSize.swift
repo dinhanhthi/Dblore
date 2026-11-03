@@ -138,7 +138,7 @@ enum ExportSize {
       return ""
     }
     switch value {
-    case .string(let text), .json(let text):
+    case .string(let text), .json(let text), .decimal(let text):
       return text
     case .int(let number):
       return String(number)

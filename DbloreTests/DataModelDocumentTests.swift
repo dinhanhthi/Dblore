@@ -224,6 +224,26 @@ struct DataModelDocumentTests {
     #expect(cell.pinnedResult?.result.columns.map(\.wallClock) == [true, false])
   }
 
+  @Test("A decimal cell saves as a flagged string (older builds read the text) and reopens exact")
+  func decimalCellRoundTrip() throws {
+    let text = "12345678901234567890.123456789"
+    let result = CellResult(
+      columns: [ColumnInfo(name: "amount", type: "NUMERIC")], rows: [[.decimal(text)]],
+      rowCount: 1)
+    let notebook = DbloreNotebook(
+      id: UUID(), cells: [NotebookCell(content: "SELECT 1", result: result)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Decimal"),
+      connectionConfig: nil, settings: NotebookSettings())
+    let data = try DocumentCoder.encode(notebook, includeResultsOnSave: true)
+    let saved = try #require(try savedRows(data).first?.first)
+    #expect(saved["type"] as? String == "string")
+    #expect(saved["value"] as? String == text)
+    #expect(saved["decimal"] as? Bool == true)
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.result?.rows == [[.decimal(text)]])
+  }
+
   @Test("Malformed statement result entries decode to an empty result")
   func malformedStatementResultDecodesEmpty() throws {
     let json: [String: Any] = [

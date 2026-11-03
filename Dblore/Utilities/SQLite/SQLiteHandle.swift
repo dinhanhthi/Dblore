@@ -191,7 +191,7 @@ nonisolated final class SQLiteHandle {
         try check(sqlite3_bind_null(statement, index))
       case .bool(let flag):
         try check(sqlite3_bind_int(statement, index, flag ? 1 : 0))
-      case .string(let text), .json(let text):
+      case .string(let text), .json(let text), .decimal(let text):
         try bind(text: text, index: index)
       case .date(let date):
         try bind(text: Self.iso8601Text(date), index: index)

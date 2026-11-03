@@ -154,6 +154,9 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
       case .data(let data):
         hasher.combine(7)
         hasher.combine(data)
+      case .decimal(let text):
+        hasher.combine(8)
+        hasher.combine(text)
       }
     }
   }

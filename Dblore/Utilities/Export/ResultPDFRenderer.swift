@@ -384,7 +384,7 @@ nonisolated enum ResultPDFRenderer {
       return flag ? "true" : "false"
     case .null:
       return "NULL"
-    case .json(let text):
+    case .json(let text), .decimal(let text):
       return text
     case .date(let date):
       return ISO8601DateFormatter().string(from: date)

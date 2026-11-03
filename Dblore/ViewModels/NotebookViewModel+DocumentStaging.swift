@@ -372,7 +372,7 @@ extension NotebookViewModel {
     case .date(let date): return .date(MongoBSONMapping.millis(of: date))
     case .data(let data): return .binary(subtype: 0, data: data)
     case .json(let text): return (try? MongoRelaxedJSON.parse(text)) ?? .string(text)
-    case .string(let text):
+    case .string(let text), .decimal(let text):
       switch columnType {
       case "objectId":
         return MongoObjectId(hex: text).map(MongoValue.objectId) ?? .string(text)

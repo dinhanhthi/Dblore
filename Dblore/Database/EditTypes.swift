@@ -281,7 +281,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     case .int(let number): return String(number)
     case .double(let number): return String(number)
     case .bool(let flag): return mysql ? (flag ? "1" : "0") : (flag ? "true" : "false")
-    case .string(let text), .json(let text): return text
+    case .string(let text), .json(let text), .decimal(let text): return text
     case .date(let date):
       let text = DateBindText.string(from: date)
       guard mysql else { return text }

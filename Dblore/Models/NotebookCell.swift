@@ -363,6 +363,8 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
   case json(String)
   case date(Date)
   case data(Data)
+  /// Exact NUMERIC / DECIMAL text, never rounded through Double
+  case decimal(String)
 
   /// Empty value of the case a `columnType` value decodes to (`postgresDataTypeName` names):
   /// the type a NULL cell of that column takes once it gets a value. Other types (arrays, uuid,
@@ -416,6 +418,8 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
       return Self.dateText(value, wallClock: wallClock)
     case .data(let value):
       return "<\(value.count) bytes>"
+    case .decimal(let value):
+      return value
     }
   }
 
@@ -496,6 +500,8 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
       return Self.dateText(value, wallClock: wallClock, iso: !wallClock)
     case .data(let value):
       return value.base64EncodedString()
+    case .decimal(let value):
+      return value
     }
   }
 
@@ -522,6 +528,7 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     case .string: return 4
     case .json: return 5
     case .data: return 6
+    case .decimal: return 2
     }
   }
 

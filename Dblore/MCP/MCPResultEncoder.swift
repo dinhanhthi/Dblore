@@ -118,7 +118,7 @@ nonisolated enum MCPResultEncoder {
       case .int(let number): self = .int(number)
       case .double(let number): self = number.isFinite ? .double(number) : .text("\(number)")
       case .bool(let flag): self = .bool(flag)
-      case .string(let text), .json(let text): self = Self.textCell(text)
+      case .string(let text), .json(let text), .decimal(let text): self = Self.textCell(text)
       case .date: self = .text(value.outputString(wallClock: wallClock))
       case .data(let data):
         // Only the bytes the base64 prefix shows are encoded

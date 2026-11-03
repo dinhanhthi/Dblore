@@ -98,7 +98,7 @@ nonisolated enum ParquetExport {
       case .date: next = .timestamp
       case .data: next = .blob
       case .json: next = .json
-      case .string(let text):
+      case .string(let text), .decimal(let text):
         next = .varchar
         texts.append(text)
       }

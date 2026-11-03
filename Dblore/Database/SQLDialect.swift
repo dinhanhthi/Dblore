@@ -139,7 +139,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       String(number)
     case .double(let number):
       doubleLiteral(number)
-    case .string(let text), .json(let text):
+    case .string(let text), .json(let text), .decimal(let text):
       quoteLiteral(text)
     case .date(let date):
       quoteLiteral(

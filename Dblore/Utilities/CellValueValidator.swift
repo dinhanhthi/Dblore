@@ -74,7 +74,7 @@ struct CellValueValidator: Sendable {
     case .data:
       return validateBinaryData(input)
 
-    case .string:
+    case .string, .decimal:
       return .valid
     }
   }
