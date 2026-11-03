@@ -332,6 +332,8 @@ final class CrossTableSearchModel: Identifiable {
     case .int(let number): number
     case .string(let text): Int(text)
     case .double(let number): Int(exactly: number)
+    // The match index is an integer literal, never NUMERIC
+    case .decimal: nil
     default: nil
     }
   }

@@ -297,6 +297,8 @@ extension NotebookViewModel {
     case .string(let text): Int(text)
     case .double(let value): Int(exactly: value)
     case .bool(let flag): flag ? 1 : 0
+    // A COUNT is never NUMERIC
+    case .decimal: nil
     default: nil
     }
   }

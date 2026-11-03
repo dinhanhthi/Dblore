@@ -37,6 +37,9 @@ nonisolated enum StagedIntegerKey {
       number
     case .string(let text), .json(let text):
       Int(text)
+    // An integer key column never holds NUMERIC: a decimal is no integer key
+    case .decimal:
+      nil
     default:
       nil
     }

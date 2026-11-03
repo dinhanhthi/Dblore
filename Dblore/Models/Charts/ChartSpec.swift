@@ -109,7 +109,7 @@ nonisolated struct ChartSpec: Codable, Equatable, Sendable {
       switch value {
       case .null:
         continue
-      case .int, .double:
+      case .int, .double, .decimal:
         sawNumber = true
       default:
         return false

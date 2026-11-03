@@ -71,6 +71,8 @@ struct StagedIntegerKeyTests {
     #expect(StagedIntegerKey.parseLookup([.int(1), .null])?.hasDefault == true)
     #expect(StagedIntegerKey.parseLookup([.int(1), .null])?.serverMax == nil)
     #expect(StagedIntegerKey.parseLookup([.string("nope"), .int(1)]) == nil)
+    // A decimal is never an integer key, not even one with integer text
+    #expect(StagedIntegerKey.parseLookup([.bool(true), .decimal("5")]) == nil)
     #expect(StagedIntegerKey.parseLookup(nil) == nil)
   }
 }
