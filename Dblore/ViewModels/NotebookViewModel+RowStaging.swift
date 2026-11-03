@@ -715,7 +715,8 @@ extension NotebookViewModel {
     typesText: Bool = false
   ) -> String? {
     guard let target = stagedEditTarget else { return Self.rowNotOnPage }
-    let columnType = editorResult?.columns.first { $0.name == column }?.type ?? ""
+    let info = editorResult?.columns.first { $0.name == column }
+    let columnType = info?.type ?? ""
     var keyed: [(key: RowChangeSet.RowKey, original: CellValue, value: StagedCellValue)] = []
     for cell in cells {
       guard let key = rowKey(at: cell.row, target: target) else { return Self.rowNotOnPage }
@@ -724,7 +725,10 @@ extension NotebookViewModel {
         ?? .null
       var value = cell.value
       if typesText, case .value(.string(let text)) = value {
-        value = .value(Self.editedCellValue(text, original: original, columnType: columnType))
+        value = .value(
+          Self.editedCellValue(
+            text, original: original, columnType: columnType, wallClock: info?.wallClock ?? false,
+            dialect: sqlDialect))
       }
       keyed.append((key, original, value))
     }

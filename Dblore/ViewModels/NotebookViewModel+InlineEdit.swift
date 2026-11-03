@@ -355,6 +355,7 @@ extension NotebookViewModel {
   /// whatever its Display As format, so decoded MessagePack, Protobuf, hex or UUID text is never
   /// written back.
   /// - Parameter connectionManager: Optional connection manager from workspace for database updates
+  /// - Parameter wallClock: the column's `ColumnInfo.wallClock`, how a date's text reads
   func handleCellValueEdit(
     columnName: String,
     columnType: String,
@@ -364,9 +365,13 @@ extension NotebookViewModel {
     rowData: [String: CellValue]?,
     primaryKeyColumns: [String],
     cellId: UUID?,
-    connectionManager: DatabaseConnectionManager? = nil
+    connectionManager: DatabaseConnectionManager? = nil,
+    wallClock: Bool
   ) {
     let bindText = Self.bindText(for: newValue, original: originalValue)
+    let editedValue = Self.editedCellValue(
+      newValue, original: originalValue, columnType: columnType, wallClock: wallClock,
+      dialect: sqlDialect)
 
     // Copy to clipboard (an explicit NULL has no text to copy)
     if let newValue {
@@ -391,14 +396,16 @@ extension NotebookViewModel {
       let edited = SidebarContent.cellInfo(
         columnName: columnName,
         columnType: columnType,
-        value: Self.editedCellValue(newValue, original: originalValue, columnType: columnType),
+        value: editedValue,
         tableName: tableName,
         rowData: rowData,
         primaryKeyColumns: primaryKeyColumns,
         cellId: cellId
       )
       sidebarRestore = (edited: edited, original: rightSidebarContent)
+      sidebarRestoreWallClock = (edited: edited, wallClock: cellDetailWallClock)
       rightSidebarContent = edited
+      cellDetailWallClock = wallClock
     }
 
     guard let connectionManager, var rowData else { return }
@@ -407,19 +414,33 @@ extension NotebookViewModel {
     // not re-read yet (Confirm, a stale result) left that column behind. A key keeps the stored
     // value the WHERE needs.
     if !primaryKeyColumns.contains(columnName) { rowData[columnName] = originalValue }
+    if let message = Self.gridDateRefusal(
+      newValue, original: originalValue, columnType: columnType, wallClock: wallClock,
+      dialect: sqlDialect)
+    {
+      showToast(message, type: .error)
+      restoreSidebar(sidebarRestore)
+      return
+    }
     let armed = submitInlineEdit(
       assignments: [(column: columnName, value: bindText)], rowData: rowData,
       target: cellDetailEditTarget, cellId: cellId, connectionManager: connectionManager,
-      documentValue: (columnType: columnType, text: newValue), sidebarRestore: sidebarRestore)
+      documentValue: (columnType: columnType, text: newValue), sidebarRestore: sidebarRestore,
+      values: [columnName: editedValue])
     // A refused edit sends nothing: the sidebar shows the stored value again
     if !armed { restoreSidebar(sidebarRestore) }
   }
 
   /// A cell edit that stored nothing (refused, cancelled, dropped or failed): the Cell Value
-  /// sidebar shows `restore.original` again while it still shows `restore.edited`
+  /// sidebar shows `restore.original` again while it still shows `restore.edited`, with the
+  /// column flag it had (`sidebarRestoreWallClock`)
   func restoreSidebar(_ restore: (edited: SidebarContent, original: SidebarContent?)?) {
     guard let restore, rightSidebarContent == restore.edited else { return }
     rightSidebarContent = restore.original
+    if let saved = sidebarRestoreWallClock, saved.edited == restore.edited {
+      cellDetailWallClock = saved.wallClock
+      sidebarRestoreWallClock = nil
+    }
   }
 
   /// Gate shared by a cell edit and Row Details Apply: ONE UPDATE setting every `assignments`
@@ -427,14 +448,17 @@ extension NotebookViewModel {
   /// target), which must be live for `cellId`, checked by the protection gate, confirmed when
   /// the commit style asks, then sent. On MongoDB the one assignment is sent as a `$set` of
   /// `documentValue` (its column type and the typed text) at `documentPath` (nil: the column).
-  /// `sidebarRestore` goes with the edit, put back when it stores nothing. False: refused,
-  /// nothing sent or armed (on MongoDB also: the editor sheet opened on the stored value).
+  /// `sidebarRestore` goes with the edit, put back when it stores nothing. `values` is what each
+  /// assignment's text reads as (`editedCellValue`): a date binds as its instant
+  /// (`boundAssignments`), the edit keeps the typed text. False: refused, nothing sent or armed
+  /// (on MongoDB also: the editor sheet opened on the stored value).
   @discardableResult
   func submitInlineEdit(
     assignments: [(column: String, value: String?)], rowData: [String: CellValue],
     target: EditTarget?, cellId: UUID?, connectionManager: DatabaseConnectionManager,
     documentValue: (columnType: String, text: String?)? = nil, documentPath: [String]? = nil,
-    sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil
+    sidebarRestore: (edited: SidebarContent, original: SidebarContent?)? = nil,
+    values: [String: CellValue] = [:]
   ) -> Bool {
     if let reason = rowEditingUnsupportedReason {
       showToast(reason, type: .error)
@@ -464,10 +488,11 @@ extension NotebookViewModel {
         sidebarRestore: sidebarRestore)
     }
 
+    let bound = Self.boundAssignments(assignments, values: values, dialect: sqlDialect)
     let statement: CellUpdateStatement
     do {
       statement = try CellUpdateStatement.make(
-        qualifiedName: target.qualifiedName, assignments: assignments,
+        qualifiedName: target.qualifiedName, assignments: bound,
         primaryKeyColumns: target.primaryKeyColumns, rowData: rowData,
         updateOnly: target.updateOnly, dialect: sqlDialect)
     } catch {
@@ -482,7 +507,7 @@ extension NotebookViewModel {
     }
 
     let step = RewindPlan.inlineStep(
-      assignments: assignments, primaryKeyColumns: target.primaryKeyColumns, rowData: rowData)
+      assignments: bound, primaryKeyColumns: target.primaryKeyColumns, rowData: rowData)
     let edit = PendingInlineEdit(
       statement: statement, columnNames: columnNames, tableName: target.qualifiedName,
       cellId: cellId, connectionManager: connectionManager,
@@ -599,7 +624,10 @@ extension NotebookViewModel {
             let key = RowChangeSet.RowKey(
               values: target.primaryKeyColumns.compactMap { rowData[$0] })
             for (name, (column, newValue)) in zip(edit.columnNames, zip(columns, newValues)) {
-              let value = Self.editedCellValue(newValue, original: result.rows[row][column])
+              let value = Self.editedCellValue(
+                newValue, original: result.rows[row][column],
+                columnType: result.columns[column].type,
+                wallClock: result.columns[column].wallClock, dialect: sqlDialect)
               if var changes = dataViewer?.changeSet, changes.edits[key]?[name] != nil {
                 try changes.stageEdit(row: key, column: name, value: value, original: value)
                 dataViewer?.changeSet = changes.isEmpty ? nil : changes
@@ -717,10 +745,15 @@ extension NotebookViewModel {
   }
 
   /// The edited text as a `CellValue` of the original's type (sidebar display and staged edits).
-  /// Nil is NULL, whatever the original type. A NULL original takes `columnType`'s type.
+  /// Nil is NULL, whatever the original type. A NULL original takes `columnType`'s type (a date
+  /// as `editedNewDate` on `dialect`, the connection's). A date reads the text its column shows
+  /// (`CellValueValidator.date(from:wallClock:)`, `wallClock` is the column's
+  /// `ColumnInfo.wallClock`), then ISO 8601; text of the stored date's own microsecond is that
+  /// stored value (a decoded date's Double may differ from the parsed one).
   /// Nonisolated: Paste Rows types its values off the main actor.
   nonisolated static func editedCellValue(
-    _ newValue: String?, original: CellValue, columnType: String = ""
+    _ newValue: String?, original: CellValue, columnType: String = "", wallClock: Bool = false,
+    dialect: SQLDialect = .postgresql
   ) -> CellValue {
     guard let newValue else { return .null }
     switch original {
@@ -737,13 +770,83 @@ extension NotebookViewModel {
       let placeholder = CellValue.placeholder(forColumnType: columnType)
       // A NULL bytea cell binds the typed text as bytea input, not base64 (`CellUpdateStatement`)
       if case .data = placeholder { return .data(Data(newValue.utf8)) }
+      if case .date = placeholder {
+        return editedNewDate(
+          newValue, columnType: columnType, wallClock: wallClock, dialect: dialect)
+      }
       return editedCellValue(newValue, original: placeholder)
     case .json:
       return .json(newValue)
-    case .date:
-      return ISO8601DateFormatter().date(from: newValue).map(CellValue.date) ?? .string(newValue)
+    case .date(let stored):
+      guard
+        let date = CellValueValidator.date(from: newValue, wallClock: wallClock)
+          ?? ISO8601DateFormatter().date(from: newValue)
+      else { return .string(newValue) }
+      let micros = { (date: Date) in (date.timeIntervalSince1970 * 1_000_000).rounded() }
+      return micros(date) == micros(stored) ? original : .date(date)
     case .data:
       return Data(base64Encoded: newValue).map(CellValue.data) ?? .string(newValue)
+    }
+  }
+
+  /// `text` typed for a date column of `columnType` with no stored value (a NULL cell, a new or
+  /// pasted row): a timestamp reads as a stored date's text is
+  /// (`CellValueValidator.date(from:wallClock:)`) on an engine that decodes dates (PostgreSQL,
+  /// MySQL and MariaDB, DuckDB), so the same text is the same instant whether the cell held a
+  /// value or not. A DATE is a calendar day, not an instant: its text, other text, and any text
+  /// on SQLite (whose dates are text) is sent as typed for the server to read, ISO 8601 aside.
+  nonisolated static func editedNewDate(
+    _ text: String, columnType: String, wallClock: Bool, dialect: SQLDialect
+  ) -> CellValue {
+    if columnType.uppercased() != "DATE",
+      dialect == .postgresql || dialect == .mysql || dialect == .duckdb,
+      let date = CellValueValidator.date(from: text, wallClock: wallClock)
+    {
+      return .date(date)
+    }
+    return ISO8601DateFormatter().date(from: text).map(CellValue.date) ?? .string(text)
+  }
+
+  /// Why `text` typed in a grid cell holding `original` (a column of `columnType`) cannot be
+  /// sent on `dialect`, checked as the Cell Value sidebar does (`CellValueValidator`): date text
+  /// (`yyyy-MM-dd` first) of a timestamp that reads as no instant, such as a wall clock the
+  /// display zone skips or an impossible date, which the server would otherwise read in its
+  /// session's zone. Nil for any other text (keywords like `now` or `infinity`, BC dates), a
+  /// DATE column, SQLite (whose dates are text) and MongoDB (which reads its own dates).
+  nonisolated static func gridDateRefusal(
+    _ text: String?, original: CellValue, columnType: String, wallClock: Bool,
+    dialect: SQLDialect
+  ) -> String? {
+    guard let text, dialect != .sqlite, dialect != .mongodb, columnType.uppercased() != "DATE",
+      text.prefixMatch(of: /[0-9]{4}-[0-9]{2}-[0-9]{2}/) != nil, !text.hasSuffix(" BC")
+    else { return nil }
+    switch original {
+    case .date: break
+    case .null:
+      guard case .date = CellValue.placeholder(forColumnType: columnType) else { return nil }
+    default: return nil
+    }
+    return CellValueValidator.validate(
+      text, for: original, columnType: columnType, wallClock: wallClock
+    ).errorMessage
+  }
+
+  /// `assignments` as the UPDATE binds them: the text of a column whose edited value
+  /// (`values`, `editedCellValue`) is a date binds as that instant
+  /// (`CellUpdateStatement.inputText`: UTC plain text on MySQL, right under its `+00:00`
+  /// session, else ISO 8601 UTC), as a staged edit does, so the server stores the time the
+  /// editor showed whatever its session zone. Any other text, and any text on SQLite (whose
+  /// dates are text), binds as typed.
+  nonisolated static func boundAssignments(
+    _ assignments: [(column: String, value: String?)], values: [String: CellValue],
+    dialect: SQLDialect
+  ) -> [(column: String, value: String?)] {
+    if dialect == .sqlite { return assignments }
+    return assignments.map { assignment in
+      guard assignment.value != nil, case .date(let date)? = values[assignment.column] else {
+        return assignment
+      }
+      return (assignment.column, CellUpdateStatement.inputText(.date(date), dialect: dialect))
     }
   }
 }

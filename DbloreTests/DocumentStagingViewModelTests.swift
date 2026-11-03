@@ -578,6 +578,36 @@ struct DocumentStagingViewModelTests {
     await fixture.manager.disconnect()
   }
 
+  /// Regression A5: the grid and the sidebar start a date's edit from its display text
+  @Test("A date field edited from its display text sets the instant it shows")
+  func dateEditFromDisplayText() async throws {
+    let at = Date(timeIntervalSince1970: 1_700_000_000.123)
+    let fixture = try await Self.dataViewer(
+      columns: Self.columns + [ColumnInfo(name: "when", type: "date")],
+      rows: Self.rows.map { $0 + [.date(at)] })
+    let viewModel = fixture.viewModel
+    let zone = try #require(TimeZone(secondsFromGMT: 7 * 3_600))
+    try CellValue.$displayZone.withValue(zone) {
+      let text = CellValue.date(at).displayString(wallClock: false)
+      #expect(text == "2023-11-15 05:13:20.123+07:00")
+      // Unchanged text is the stored millisecond; zone-less text is the display zone's clock
+      for same in [text, "2023-11-15 05:13:20.123", "2023-11-14T22:13:20.123Z"] {
+        #expect(
+          try NotebookViewModel.parsedDocumentValue(same, columnType: "date")
+            == .date(1_700_000_000_123), "\(same)")
+      }
+      try Self.gridEdit(
+        viewModel, row: 0, column: "when",
+        text: text.replacingOccurrences(of: " 05:", with: " 06:"))
+    }
+    #expect(fixture.toasts.messages.isEmpty)
+    #expect(
+      viewModel.pendingStagedBatch?.mongoCommands == [
+        Self.setCommand(Self.first, "when", .date(1_700_000_000_123 + 3_600_000))
+      ])
+    await fixture.manager.disconnect()
+  }
+
   @Test("A $set on _id is refused before anything is sent")
   func idEditRefused() async throws {
     let fixture = try await Self.dataViewer()
@@ -589,7 +619,7 @@ struct DocumentStagingViewModelTests {
       columnName: "_id", columnType: "objectId", newValue: Self.second,
       originalValue: .string(Self.first), tableName: "users",
       rowData: CellResult.rowData(columns: result.columns, row: result.rows[0]),
-      primaryKeyColumns: ["_id"], cellId: nil, connectionManager: fixture.manager)
+      primaryKeyColumns: ["_id"], cellId: nil, connectionManager: fixture.manager, wallClock: false)
     #expect(fixture.toasts.messages.last == MongoDocumentChangeError.idField.message)
     #expect(viewModel.pendingStagedBatch == nil)
     #expect(fixture.factory.statements.count == sent)
@@ -611,7 +641,7 @@ struct DocumentStagingViewModelTests {
         columnName: column, columnType: type, newValue: text,
         originalValue: rowData[column] ?? .null,
         tableName: "users", rowData: rowData, primaryKeyColumns: ["_id"], cellId: nil,
-        connectionManager: fixture.manager)
+        connectionManager: fixture.manager, wallClock: false)
     }
     viewModel.rightSidebarContent = shown
 

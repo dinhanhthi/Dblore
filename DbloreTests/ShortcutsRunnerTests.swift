@@ -146,6 +146,44 @@ struct ShortcutsRunnerTests {
     await runner.pool.closeAll()
   }
 
+  /// Regression A5: Add Row reads naive timestamp text as the wall clock it shows, never as
+  /// local time shifted to UTC, and zoned text as the display zone's time; text for a type with
+  /// no date value (or SQLite's) stays as typed
+  @Test(
+    "Add Row stores naive timestamp text as its wall clock",
+    arguments: [
+      (DatabaseType.postgresql, "timestamp", nil, true, 1_792_065_600),
+      (.postgresql, "timestamp(6) without time zone", nil, true, 1_792_065_600),
+      (.postgresql, "timestamp(3) with time zone", nil, false, 1_792_040_400),
+      (.postgresql, "timestamp with time zone", nil, false, 1_792_040_400),
+      (.postgresql, "timestamptz", nil, false, 1_792_040_400),
+      (.mysql, "datetime", "datetime(6)", true, nil),
+      (.mysql, "timestamp", "timestamp", false, 1_792_040_400),
+      (.mysql, "timestamp", "timestamp(6)", false, 1_792_040_400),
+      (.duckdb, "TIMESTAMP_NS", nil, true, nil), (.sqlite, "TIMESTAMP", nil, false, nil),
+    ] as [(DatabaseType, String, String?, Bool, Double?)])
+  func addRowNaiveTimestamp(
+    engine: DatabaseType, dataType: String, columnType: String?, wallClock: Bool,
+    stagedDate: Double?
+  ) throws {
+    let type = columnType ?? dataType
+    #expect(ShortcutsRunner.isWallClock(type: type, engine: engine) == wallClock)
+    let structure = TableStructure(
+      tableID: .postgresql(oid: 1), schema: "s", name: "t",
+      columns: [
+        TableStructure.Column(
+          ordinal: 1, name: "at", dataType: dataType, isNullable: true, columnType: columnType)
+      ], indexes: [], constraints: [])
+    let text = "2026-10-15 12:00:00"
+    let typed = try CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      try ShortcutsRunner.cellValues(["at": text], structure: structure, engine: engine)["at"]
+    }
+    // The instant of the wall clock or display zone time, or the text as typed for the server
+    #expect(
+      typed == (stagedDate.map { .date(Date(timeIntervalSince1970: $0)) } ?? .string(text)))
+    if wallClock { #expect(typed?.displayString(wallClock: true) == text) }
+  }
+
   @Test("Open Connection refuses a row with a pre-connect or post-disconnect script")
   func openRefusesConnectionScripts() async throws {
     var preConnect = Self.entry(name: "Pre")

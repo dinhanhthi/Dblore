@@ -124,7 +124,7 @@ struct InlineEditSessionOnlyTests {
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: "new", originalValue: .string("old"),
       tableName: "victim", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
-      connectionManager: DatabaseConnectionManager())
+      connectionManager: DatabaseConnectionManager(), wallClock: false)
   }
 
   @Test("Decoded document with tableName/primaryKeyColumns in the result -> canEdit false")
@@ -181,7 +181,8 @@ struct InlineEditSessionOnlyTests {
       qualifiedName: "public.users", tableID: .postgresql(oid: 16_400), primaryKeyColumns: ["id"])
     viewModel.showCellDetail(
       columnName: "name", columnType: "text", value: .string("old"), tableName: "users",
-      rowData: rowData, primaryKeyColumns: ["id"], editTarget: stale, cellId: cellId)
+      rowData: rowData, primaryKeyColumns: ["id"], editTarget: stale, cellId: cellId,
+      wallClock: false)
     WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel)
     #expect(WorkspaceWindowManager.shared.toastState.currentToast?.type == .error)
@@ -197,7 +198,8 @@ struct InlineEditSessionOnlyTests {
     #expect(viewModel.canEdit(live))
     viewModel.showCellDetail(
       columnName: "name", columnType: "text", value: .string("old"), tableName: "users",
-      rowData: rowData, primaryKeyColumns: ["id"], editTarget: target, cellId: cellId)
+      rowData: rowData, primaryKeyColumns: ["id"], editTarget: target, cellId: cellId,
+      wallClock: false)
     WorkspaceWindowManager.shared.dismissToast()
     edit(viewModel)
     // Refusals toast synchronously; an accepted edit is sent in a Task

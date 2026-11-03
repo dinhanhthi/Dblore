@@ -38,6 +38,8 @@ nonisolated enum PastedRows {
   struct Column: Sendable {
     var name: String
     var type: String
+    /// `ColumnInfo.wallClock`: a naive timestamp reads its text as the stored wall clock
+    var wallClock = false
   }
 
   /// Tab-separated when the text has a tab, else comma-separated. A first row whose every
@@ -86,10 +88,12 @@ nonisolated enum PastedRows {
     return Parsed(columnIndexes: hasHeader ? named : Array(columnOrder.prefix(width)), rows: rows)
   }
 
-  /// One insert per pasted row (`parse`), each value checked and typed (`cellValue`).
-  /// Generated columns are left out. A refused value names its row and column.
+  /// One insert per pasted row (`parse`), each value checked and typed (`cellValue`, on the
+  /// connection's `dialect`). Generated columns are left out. A refused value names its row and
+  /// column.
   static func inserts(
-    _ text: String, columns: [Column], columnOrder: [Int], generatedColumns: Set<String>
+    _ text: String, columns: [Column], columnOrder: [Int], generatedColumns: Set<String>,
+    dialect: SQLDialect
   ) throws(PasteRowsRefusal) -> [[String: CellValue]] {
     let parsed = try parse(text, columnNames: columns.map(\.name), columnOrder: columnOrder)
     var inserts: [[String: CellValue]] = []
@@ -100,7 +104,8 @@ nonisolated enum PastedRows {
         let column = columns[columnIndex]
         if generatedColumns.contains(column.name) { continue }
         do {
-          values[column.name] = try cellValue(field, columnType: column.type)
+          values[column.name] = try cellValue(
+            field, columnType: column.type, wallClock: column.wallClock, dialect: dialect)
         } catch {
           throw PasteRowsRefusal(
             message: "Row \(rowIndex + 1), column \"\(column.name)\": \(error.message)")
@@ -118,17 +123,23 @@ nonisolated enum PastedRows {
   /// edited cell. Known limits: Copy Rows does not quote a text cell holding NULL, so that cell
   /// pastes back as SQL NULL; and with Settings' formula neutralizing on (the default), Copy Rows
   /// writes a text cell starting with = + - or @ with a leading ', which pastes back as part of
-  /// the value.
-  static func cellValue(_ field: Field, columnType: String) throws(PasteRowsRefusal) -> CellValue {
+  /// the value. A date is read as a new value on `dialect` (`NotebookViewModel.editedNewDate`).
+  static func cellValue(
+    _ field: Field, columnType: String, wallClock: Bool = false, dialect: SQLDialect
+  ) throws(PasteRowsRefusal) -> CellValue {
     if !field.quoted, field.text == "NULL" { return .null }
     if field.text.isEmpty {
       return TableImportModel.hasTextAffinity(columnType) ? .string("") : .null
     }
     let placeholder = CellValue.placeholder(forColumnType: columnType)
     if case .invalid(let message) = CellValueValidator.validate(
-      field.text, for: placeholder, columnType: columnType)
+      field.text, for: placeholder, columnType: columnType, wallClock: wallClock)
     {
       throw PasteRowsRefusal(message: message)
+    }
+    if case .date = placeholder {
+      return NotebookViewModel.editedNewDate(
+        field.text, columnType: columnType, wallClock: wallClock, dialect: dialect)
     }
     return NotebookViewModel.editedCellValue(
       field.text, original: placeholder, columnType: columnType)
@@ -170,13 +181,17 @@ extension NotebookViewModel {
     guard let target = stagedEditTarget, let result = editorResult else {
       return Self.tableHasNoPrimaryKey
     }
-    let columns = result.columns.map { PastedRows.Column(name: $0.name, type: $0.type) }
+    let columns = result.columns.map {
+      PastedRows.Column(name: $0.name, type: $0.type, wallClock: $0.wallClock)
+    }
     let order = (columnOrder ?? Array(columns.indices)).filter(columns.indices.contains)
     let generatedColumns = target.generatedColumns
+    let dialect = sqlDialect
     let read = await Task.detached(priority: .userInitiated) {
       Result { () throws(PasteRowsRefusal) in
         try PastedRows.inserts(
-          text, columns: columns, columnOrder: order, generatedColumns: generatedColumns)
+          text, columns: columns, columnOrder: order, generatedColumns: generatedColumns,
+          dialect: dialect)
       }
     }.value
     let inserts: [[String: CellValue]]

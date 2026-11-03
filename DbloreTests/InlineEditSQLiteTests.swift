@@ -86,7 +86,7 @@ struct InlineEditSQLiteTests {
       tableName: result.tableName,
       rowData: CellResult.rowData(columns: result.columns, row: result.rows[0]),
       primaryKeyColumns: result.primaryKeyColumns, cellId: nil,
-      connectionManager: viewModel.connectionManager)
+      connectionManager: viewModel.connectionManager, wallClock: false)
   }
 
   /// Edits the cell the Cell Value sidebar shows with `text` (nil: Set NULL), passing its value
@@ -103,7 +103,7 @@ struct InlineEditSQLiteTests {
     viewModel.handleCellValueEdit(
       columnName: column, columnType: type, newValue: text, originalValue: value,
       tableName: table, rowData: rowData, primaryKeyColumns: keys, cellId: cellId,
-      connectionManager: viewModel.connectionManager)
+      connectionManager: viewModel.connectionManager, wallClock: false)
   }
 
   /// Shows `payload` of the first row of the editor result in the Cell Value sidebar

@@ -55,7 +55,8 @@ extension NotebookViewModel {
         name: column.name, type: column.type,
         isPrimaryKey: primaryKey.contains(column.name) || info?.isPrimaryKey == true,
         isNullable: info?.isNullable ?? true, isIdentity: info?.isIdentity ?? false,
-        isGenerated: generated.contains(column.name) || info?.isGenerated == true)
+        isGenerated: generated.contains(column.name) || info?.isGenerated == true,
+        wallClock: column.wallClock)
     }
     for (column, value) in await automaticIntegerKeyValues() {
       guard let index = fields.firstIndex(where: { $0.name == column }) else { continue }
@@ -75,7 +76,7 @@ extension NotebookViewModel {
   /// reopening the sidebar cannot add the same row twice. A refused insert keeps it open.
   func applyAddRow() {
     guard !addRowHasErrors else { return }
-    if let message = stageInsert(values: NewRowField.values(addRowFields)) {
+    if let message = stageInsert(values: NewRowField.values(addRowFields, dialect: sqlDialect)) {
       showToast(message, type: .error)
       return
     }

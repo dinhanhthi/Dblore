@@ -54,7 +54,8 @@ extension NotebookViewModel {
       let field = NewRowField(
         name: column.name, type: column.type, isPrimaryKey: isPrimaryKey,
         isNullable: info?.isNullable ?? true, isIdentity: info?.isIdentity ?? false,
-        isGenerated: generated.contains(column.name) || info?.isGenerated == true)
+        isGenerated: generated.contains(column.name) || info?.isGenerated == true,
+        wallClock: column.wallClock)
       let isReadOnly =
         !editable || readOnlyIndexes.contains(index) || field.isGenerated
         || (isPrimaryKey && stagedInsertIndex == nil)
@@ -136,7 +137,7 @@ extension NotebookViewModel {
       }
       let row = result.rows.count + insertIndex
       for field in dirty {
-        let value = Self.rowDetailValue(field.bindText, of: field)
+        let value = Self.rowDetailValue(field.bindText, of: field, dialect: sqlDialect)
         if let message = stageEdit(row: row, column: field.name, value: value) {
           showToast(message, type: .error)
           return
@@ -163,18 +164,28 @@ extension NotebookViewModel {
     cellDetailEditTarget = state.editTarget
     let documentValue =
       dirty.count == 1 ? (columnType: dirty[0].field.type, text: dirty[0].bindText) : nil
+    let values = Dictionary(
+      dirty.map { ($0.name, Self.rowDetailValue($0.bindText, of: $0, dialect: sqlDialect)) },
+      uniquingKeysWith: { first, _ in first })
     submitInlineEdit(
       assignments: dirty.map { (column: $0.name, value: $0.bindText) }, rowData: state.rowData,
       target: state.editTarget, cellId: cellId, connectionManager: connectionManager,
-      documentValue: documentValue)
+      documentValue: documentValue, values: values)
   }
 
   /// The bound `text` of `field` as a `CellValue`. The NULL toggle decides NULL (nil text): a
   /// NULL original is typed by the column, not read as NULL, so "" or "null" stay text.
-  private static func rowDetailValue(_ text: String?, of field: RowDetailField) -> CellValue {
+  /// `dialect` is the connection's (`editedNewDate`).
+  private static func rowDetailValue(
+    _ text: String?, of field: RowDetailField, dialect: SQLDialect
+  ) -> CellValue {
     let original =
       field.original == .null ? .placeholder(forColumnType: field.field.type) : field.original
-    return editedCellValue(text, original: original)
+    if field.original == .null, let text, case .date = original {
+      return editedNewDate(
+        text, columnType: field.field.type, wallClock: field.field.wallClock, dialect: dialect)
+    }
+    return editedCellValue(text, original: original, wallClock: field.field.wallClock)
   }
 
   /// Shown when Apply targets a staged insert that is no longer staged
@@ -189,9 +200,15 @@ extension NotebookViewModel {
     else { return }
     // Same table, columns and key: the panel's row rebuilds the very statement that was sent
     let assignments = zip(edit.columnNames, edit.setInputValues).map { (column: $0, value: $1) }
+    var values: [String: CellValue] = [:]
+    for (name, text) in assignments {
+      guard let field = state.fields.first(where: { $0.name == name }) else { continue }
+      values[name] = Self.rowDetailValue(text, of: field, dialect: sqlDialect)
+    }
     guard
       let statement = try? CellUpdateStatement.make(
-        qualifiedName: target.qualifiedName, assignments: assignments,
+        qualifiedName: target.qualifiedName,
+        assignments: Self.boundAssignments(assignments, values: values, dialect: sqlDialect),
         primaryKeyColumns: target.primaryKeyColumns, rowData: state.rowData,
         updateOnly: target.updateOnly, dialect: sqlDialect),
       statement == edit.statement
@@ -200,7 +217,7 @@ extension NotebookViewModel {
     var rowData = state.rowData
     let fields = state.fields.map { field in
       guard let index = edit.columnNames.firstIndex(of: field.name) else { return field }
-      let value = Self.rowDetailValue(edit.setInputValues[index], of: field)
+      let value = Self.rowDetailValue(edit.setInputValues[index], of: field, dialect: sqlDialect)
       rowData[field.name] = value
       return RowDetailField(field: field.field, original: value, isReadOnly: field.isReadOnly)
     }

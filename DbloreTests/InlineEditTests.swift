@@ -266,11 +266,12 @@ struct InlineEditViewModelTests {
     viewModel.showCellDetail(
       columnName: "name", columnType: "text", value: .string("old"), tableName: tableName,
       rowData: rowData, primaryKeyColumns: primaryKeyColumns,
-      editTarget: viewModel.notebook.cells.first?.result?.editTarget, cellId: cellId)
+      editTarget: viewModel.notebook.cells.first?.result?.editTarget, cellId: cellId,
+      wallClock: false)
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: "new", originalValue: .string("old"),
       tableName: tableName, rowData: rowData, primaryKeyColumns: primaryKeyColumns,
-      cellId: cellId, connectionManager: DatabaseConnectionManager())
+      cellId: cellId, connectionManager: DatabaseConnectionManager(), wallClock: false)
   }
 
   // MARK: canEdit
@@ -423,7 +424,7 @@ struct InlineEditViewModelTests {
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: nil, originalValue: .int(3),
       tableName: "users", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
-      connectionManager: nil)
+      connectionManager: nil, wallClock: false)
     guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
       Issue.record("sidebar did not update")
       return
@@ -453,7 +454,7 @@ struct InlineEditViewModelTests {
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: "new", originalValue: .string("old"),
       tableName: "users", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
-      connectionManager: nil)
+      connectionManager: nil, wallClock: false)
     guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
       Issue.record("sidebar did not update")
       return

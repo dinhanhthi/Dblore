@@ -26,7 +26,7 @@ extension NotebookViewModel {
     showSidebar(content: .jsonViewer(json: json, path: path))
   }
 
-  /// Show cell value details in sidebar
+  /// Show cell value details in sidebar. `wallClock` is the column's `ColumnInfo.wallClock`.
   func showCellDetail(
     columnName: String,
     columnType: String,
@@ -36,10 +36,12 @@ extension NotebookViewModel {
     primaryKeyColumns: [String] = [],
     editTarget: EditTarget? = nil,
     cellId: UUID? = nil,
-    binaryFormat: BinaryDisplayFormat = .size
+    binaryFormat: BinaryDisplayFormat = .size,
+    wallClock: Bool
   ) {
     cellDetailEditTarget = editTarget
     cellDetailBinaryFormat = binaryFormat
+    cellDetailWallClock = wallClock
     showSidebar(
       content: .cellInfo(
         columnName: columnName,
@@ -223,7 +225,8 @@ extension NotebookViewModel {
         primaryKeyColumns: result.primaryKeyColumns,
         editTarget: result.editTarget,
         cellId: cellId,
-        binaryFormat: binaryFormat
+        binaryFormat: binaryFormat,
+        wallClock: column.wallClock
       )
       cellDetailRow = originalRow
     }
@@ -271,6 +274,7 @@ extension NotebookViewModel {
     let row = result.rows[rowIndex]
     cellDetailEditTarget = result.editTarget
     cellDetailRow = rowIndex
+    cellDetailWallClock = result.columns[column].wallClock
     rightSidebarContent = .cellInfo(
       columnName: columnName,
       columnType: result.columns[column].type,
@@ -314,7 +318,8 @@ extension NotebookViewModel {
       rowData: CellResult.rowData(columns: result.columns, row: row),
       primaryKeyColumns: result.primaryKeyColumns,
       cellId: cellId,
-      connectionManager: connectionManager
+      connectionManager: connectionManager,
+      wallClock: column.wallClock
     )
   }
 
@@ -344,10 +349,26 @@ extension NotebookViewModel {
         originalValue: original, tableName: result.tableName,
         rowData: rowData,
         primaryKeyColumns: result.primaryKeyColumns, cellId: nil,
-        connectionManager: connectionManager)
+        connectionManager: connectionManager, wallClock: result.columns[index].wallClock)
       return
     }
-    let value = Self.editedCellValue(newValue, original: original)
+    if let message = Self.gridDateRefusal(
+      newValue, original: original, columnType: result.columns[index].type,
+      wallClock: result.columns[index].wallClock, dialect: sqlDialect)
+    {
+      showToast(message, type: .error)
+      return
+    }
+    var value = Self.editedCellValue(
+      newValue, original: original, wallClock: result.columns[index].wallClock)
+    // A new row's date reads as a stored date's text does (`editedNewDate`)
+    if original == .null, value != .null,
+      case .date = CellValue.placeholder(forColumnType: result.columns[index].type)
+    {
+      value = Self.editedNewDate(
+        newValue, columnType: result.columns[index].type,
+        wallClock: result.columns[index].wallClock, dialect: sqlDialect)
+    }
     if let message = stageEdit(row: row, column: name, value: value) {
       showToast(message, type: .error)
     }

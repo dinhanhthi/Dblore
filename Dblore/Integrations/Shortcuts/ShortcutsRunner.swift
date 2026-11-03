@@ -244,9 +244,13 @@ nonisolated struct ShortcutsRunner: Sendable {
           tableID: structure.tableID, primaryKeyColumns: [],
           connectionEpoch: await manager.connectionEpoch)
         var set = RowChangeSet(target: target)
-        set.stageInsert(values: try Self.cellValues(parsed, structure: structure))
+        let engine = config.databaseType
+        set.stageInsert(
+          values: try Self.cellValues(parsed, structure: structure, engine: engine))
         let columns = structure.columns.map {
-          ColumnInfo(name: $0.name, type: $0.columnType ?? $0.dataType)
+          let type = $0.columnType ?? $0.dataType
+          return ColumnInfo(
+            name: $0.name, type: type, wallClock: Self.isWallClock(type: type, engine: engine))
         }
         let text = try RowChangeSQLBuilder.previewText(
           for: set, target: target, columns: columns, dialect: dialect)
@@ -309,9 +313,11 @@ nonisolated struct ShortcutsRunner: Sendable {
   }
 
   /// `values` typed for their columns as pasted rows are (`PastedRows.cellValue`, a JSON string
-  /// is quoted text). Unknown names (exact match) and generated columns are refused.
+  /// is quoted text), a naive timestamp of `engine` as its wall clock and a zoned one in the
+  /// display zone, whatever its precision or spelling (`dateColumnType`). Unknown names (exact
+  /// match) and generated columns are refused.
   static func cellValues(
-    _ values: [String: String?], structure: TableStructure
+    _ values: [String: String?], structure: TableStructure, engine: DatabaseType
   ) throws -> [String: CellValue] {
     let columns = Dictionary(
       structure.columns.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
@@ -326,13 +332,47 @@ nonisolated struct ShortcutsRunner: Sendable {
         continue
       }
       do {
+        let type = column.columnType ?? column.dataType
         typed[name] = try PastedRows.cellValue(
-          .init(text: text, quoted: true), columnType: column.columnType ?? column.dataType)
+          .init(text: text, quoted: true), columnType: dateColumnType(type),
+          wallClock: isWallClock(type: type, engine: engine), dialect: engine.dialect)
       } catch {
         throw Refusal.invalidValue(column: name, message: error.message)
       }
     }
     return typed
+  }
+
+  /// `ColumnInfo.wallClock` of a catalog column type, the result columns' rule read from the
+  /// type name without its `(n)` precision: PostgreSQL `timestamp [without time zone]`, MySQL
+  /// DATETIME, DuckDB TIMESTAMP, TIMESTAMP_S, _MS and _NS.
+  static func isWallClock(type: String, engine: DatabaseType) -> Bool {
+    let name = normalizedTypeName(type)
+    switch engine {
+    case .postgresql: return name == "TIMESTAMP" || name == "TIMESTAMP WITHOUT TIME ZONE"
+    case .mysql: return name == "DATETIME"
+    case .duckdb:
+      return ["TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS"].contains(name)
+    default: return false
+    }
+  }
+
+  /// A timestamp type as the date check (`CellValue.placeholder(forColumnType:)`) spells it:
+  /// `TIMESTAMP` or `TIMESTAMPTZ` for any precision, `WITH` / `WITHOUT TIME ZONE` spelling or
+  /// case (MySQL `timestamp(6)`, PostgreSQL `timestamp(3) with time zone`). Any other type
+  /// unchanged.
+  static func dateColumnType(_ type: String) -> String {
+    switch normalizedTypeName(type) {
+    case "TIMESTAMP", "TIMESTAMP WITHOUT TIME ZONE": "TIMESTAMP"
+    case "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE": "TIMESTAMPTZ"
+    default: type
+    }
+  }
+
+  /// `type` upper-cased, without its `(n)` precision, single-spaced
+  private static func normalizedTypeName(_ type: String) -> String {
+    type.uppercased().replacing(/\(\s*\d+\s*\)/, with: "")
+      .split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
   }
 
   /// `reference` as `schema.table` first, else the one table of that name (from the catalog,

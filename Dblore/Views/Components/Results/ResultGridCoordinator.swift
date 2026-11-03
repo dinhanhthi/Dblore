@@ -1220,13 +1220,23 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     // The raw value has no marks to repaint, and a repaint mid-edit would reset the caret
     (cellView as? ResultGridCell)?.hasInvisibleMarks = false
     textField.isEditable = true
-    textField.stringValue = model.value(row: row, column: column).fullString
+    textField.stringValue = editText(model.value(row: row, column: column), column)
     textField.textColor = Self.textColor
     return tableView.window?.makeFirstResponder(textField) ?? false
   }
 
+  /// The text the inline editor starts from: the full value, a date as the grid shows it in
+  /// its column (`ColumnInfo.wallClock`), which the edit reads back
+  private func editText(_ value: CellValue, _ column: Int) -> String {
+    guard case .date = value else { return value.fullString }
+    let columns = model?.columns ?? []
+    return value.displayString(
+      wallClock: columns.indices.contains(column) && columns[column].wallClock)
+  }
+
   /// Delivers an edit of a displayed row to `onCommitEdit`, or to `onStageEdit` when
-  /// `stagesEdits` is set. Nothing when not editable or when the text is the unchanged full value.
+  /// `stagesEdits` is set. Nothing when not editable or when the text is the unchanged value's
+  /// editor text (`editText`).
   func commitEdit(row: Int, column: Int, newValue: String) {
     guard let model, row >= 0, row < model.rowCount, column < model.columns.count else { return }
     commit(
@@ -1236,9 +1246,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   private func commit(rowValues: [CellValue], column: Int, newValue: String, pageIndex: Int?) {
     let original = column < rowValues.count ? rowValues[column] : .null
-    guard isEditable, !readOnlyColumns.contains(column), newValue != original.fullString else {
-      return
-    }
+    guard isEditable, !readOnlyColumns.contains(column), newValue != editText(original, column)
+    else { return }
     if stagesEdits {
       guard let pageIndex else { return }
       onStageEdit?(pageIndex, column, newValue)

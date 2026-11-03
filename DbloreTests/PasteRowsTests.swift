@@ -39,6 +39,28 @@ struct PasteRowsTests {
       ])
   }
 
+  /// Regression A5: a naive timestamp pastes as the wall clock its text shows, not as the Mac's
+  /// local time (the read runs detached, so it sees the Mac's own zone, not a task's)
+  @Test("A naive timestamp pastes as its wall clock")
+  func naiveTimestampPastesAsWallClock() async {
+    let viewModel = makeViewModel()
+    viewModel.editorResult = CellResult(
+      columns: [
+        ColumnInfo(name: "id", type: "INTEGER", origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 1)),
+        ColumnInfo(
+          name: "at", type: "TIMESTAMP", origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2),
+          wallClock: true),
+      ],
+      rows: [[.int(1), .null]], rowCount: 1, editTarget: viewModel.editorResult?.editTarget)
+    let reason = await paste(viewModel, "id\tat\n7\t2026-10-15 12:00:00.5\n")
+
+    #expect(reason == nil)
+    #expect(
+      inserts(viewModel) == [
+        ["id": .int(7), "at": .date(Date(timeIntervalSince1970: 1_792_065_600.5))]
+      ])
+  }
+
   @Test("Without a header, fields follow the grid's on-screen column order")
   func positionalFieldsFollowOnScreenOrder() async {
     let viewModel = makeViewModel()
