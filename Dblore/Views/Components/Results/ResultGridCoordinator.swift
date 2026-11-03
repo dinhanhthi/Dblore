@@ -754,9 +754,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     else { return }
     let cells = model.unloadedCells(rows: IndexSet(integer: target.row), columns: [target.column])
     withLoadedCells(cells) { model, _ in
+      // The column's text output, not the grid's local text, so the pasted date is unambiguous
+      let wallClock =
+        model.columns.indices.contains(target.column) && model.columns[target.column].wallClock
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(
-        model.value(row: target.row, column: target.column).fullString, forType: .string)
+        model.value(row: target.row, column: target.column).outputString(wallClock: wallClock),
+        forType: .string)
     }
   }
 

@@ -107,6 +107,123 @@ struct DataModelDocumentTests {
     #expect(decoded.cells.first?.chartSpec == spec)
   }
 
+  // MARK: - Timestamps (microseconds and the wall-clock column flag)
+
+  /// 2026-10-15 12:00:00 UTC
+  private static let noonSeconds: Double = 1_792_065_600
+
+  /// A notebook whose result and pin hold `dates` in a naive and a zoned column
+  private func timestampNotebook(_ dates: [Date]) -> DbloreNotebook {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: dates.map { [.date($0), .date($0)] },
+      rowCount: dates.count)
+    let pin = PinnedResult(
+      result: result, pinnedAt: Date(timeIntervalSince1970: Self.noonSeconds), sourceQuery: nil)
+    return DbloreNotebook(
+      id: UUID(),
+      cells: [NotebookCell(content: "SELECT 1", result: result, pinnedResult: pin)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Timestamps"),
+      connectionConfig: nil,
+      settings: NotebookSettings())
+  }
+
+  /// The `rows` of the cell's saved result
+  private func savedRows(_ data: Data) throws -> [[[String: Any]]] {
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let cells = try #require(json["cells"] as? [[String: Any]])
+    let result = try #require(cells.first?["result"] as? [String: Any])
+    return try #require(result["rows"] as? [[[String: Any]]])
+  }
+
+  @Test("A date keeps its microseconds through value + micros; whole seconds write no micros")
+  func dateMicrosRoundTrip() throws {
+    let dates = [
+      Date(timeIntervalSince1970: Self.noonSeconds + 0.123456),
+      Date(timeIntervalSince1970: Self.noonSeconds),
+      Date(timeIntervalSince1970: -0.5),
+    ]
+    let data = try DocumentCoder.encode(timestampNotebook(dates), includeResultsOnSave: true)
+    let rows = try savedRows(data)
+    #expect(
+      rows.map { $0[0]["value"] as? String } == [
+        "2026-10-15T12:00:00Z", "2026-10-15T12:00:00Z", "1969-12-31T23:59:59Z",
+      ])
+    #expect(rows.map { $0[0]["micros"] as? Int } == [123_456, nil, 500_000])
+
+    let decoded = try DocumentCoder.decode(from: data)
+    let cell = try #require(decoded.cells.first)
+    for result in [cell.result, cell.pinnedResult?.result] {
+      let rows = try #require(result?.rows)
+      #expect(
+        rows.map { $0[0].outputString(wallClock: true) } == [
+          "2026-10-15 12:00:00.123456", "2026-10-15 12:00:00", "1969-12-31 23:59:59.5",
+        ])
+    }
+  }
+
+  @Test("A plain ISO 8601 reader (older builds) still decodes every saved date cell")
+  func olderReaderKeepsEveryDateCell() throws {
+    let dates = [
+      Date(timeIntervalSince1970: Self.noonSeconds + 0.123456),
+      Date(timeIntervalSince1970: -0.5),
+    ]
+    let data = try DocumentCoder.encode(timestampNotebook(dates), includeResultsOnSave: true)
+    let plain = ISO8601DateFormatter()
+    for row in try savedRows(data) {
+      let parsed = row.compactMap { ($0["value"] as? String).flatMap(plain.date(from:)) }
+      #expect(parsed.count == row.count)
+    }
+  }
+
+  @Test("A date without micros reads whole seconds; a value with a fraction reads too")
+  func dateWithoutMicrosDecodes() throws {
+    let json: [String: Any] = [
+      "cells": [
+        [
+          "content": "SELECT 1",
+          "result": [
+            "columns": [["name": "at", "type": "timestamptz"]],
+            "rows": [
+              [["type": "date", "value": "2026-10-15T12:00:00Z"]],
+              [["type": "date", "value": "2026-10-15T12:00:00.123456Z"]],
+              [["type": "date", "value": "2026-10-15T12:00:00Z", "micros": 1_000_000]],
+              // Beyond the microsecond range: whole seconds, no trap
+              [["type": "date", "value": "300000-01-01T00:00:00Z", "micros": 5]],
+            ],
+          ],
+        ]
+      ]
+    ]
+    let notebook = try DocumentCoder.decode(
+      from: try JSONSerialization.data(withJSONObject: json))
+    let rows = try #require(notebook.cells.first?.result?.rows)
+    #expect(
+      rows.prefix(3).map { $0.map { $0.outputString(wallClock: false) } } == [
+        ["2026-10-15T12:00:00Z"], ["2026-10-15T12:00:00.123456Z"], ["2026-10-15T12:00:00Z"],
+      ])
+    #expect(rows.last == [.date(Date(timeIntervalSince1970: 9_404_918_380_800))])
+  }
+
+  @Test("The wall-clock column key round-trips in results and pins; absent reads zoned")
+  func wallClockColumnKeyRoundTrip() throws {
+    let data = try DocumentCoder.encode(
+      timestampNotebook([Date(timeIntervalSince1970: Self.noonSeconds)]),
+      includeResultsOnSave: true)
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let cells = try #require(json["cells"] as? [[String: Any]])
+    let columns = try #require(
+      (cells.first?["result"] as? [String: Any])?["columns"] as? [[String: Any]])
+    #expect(columns.map { $0["wallClock"] as? Bool } == [true, nil])
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.result?.columns.map(\.wallClock) == [true, false])
+    #expect(cell.pinnedResult?.result.columns.map(\.wallClock) == [true, false])
+  }
+
   @Test("Malformed statement result entries decode to an empty result")
   func malformedStatementResultDecodesEmpty() throws {
     let json: [String: Any] = [

@@ -464,12 +464,15 @@ struct ResultGridModel {
   /// Tab-separated selected cells (no header, no trailing newline), full values like the
   /// TSV copy, `columns` (model column indices) in the given order. A value with a tab,
   /// newline or quote is quoted with quotes doubled, as in CSV. `neutralizesFormulas`
-  /// prefixes formula-like text cells as in CSV; other cell types stay raw.
+  /// prefixes formula-like text cells as in CSV; other cell types stay raw. A date is its
+  /// column's text output (`CellValue.outputString(wallClock:)`), not the grid's local text.
   func tsv(rows: IndexSet, columns: [Int], neutralizesFormulas: Bool) -> String {
     rows.map { row in
       columns.map {
         DataExporter.tsvField(
-          value(row: row, column: $0), neutralizesFormulas: neutralizesFormulas)
+          value(row: row, column: $0),
+          wallClock: self.columns.indices.contains($0) && self.columns[$0].wallClock,
+          neutralizesFormulas: neutralizesFormulas)
       }
       .joined(separator: "\t")
     }

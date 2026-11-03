@@ -423,12 +423,16 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
   /// process-wide default zone under suites running beside it. Nil is `NSTimeZone.default`.
   @TaskLocal nonisolated static var displayZone: TimeZone?
 
-  /// `date` as `displayString(wallClock:)` text, built from whole microseconds in the proleptic
-  /// Gregorian calendar (the engines' own), so a stored `.123456` never shows as `.123455`.
+  /// `date` as `displayString(wallClock:)` text, or with `iso` as the zoned `outputString`
+  /// (UTC, `T` separator, `Z`), built from whole microseconds in the proleptic Gregorian
+  /// calendar (the engines' own), so a stored `.123456` never shows as `.123455`.
   /// A date beyond the microsecond range falls back to ISO 8601.
-  private nonisolated static func dateText(_ date: Date, wallClock: Bool) -> String {
+  private nonisolated static func dateText(
+    _ date: Date, wallClock: Bool, iso: Bool = false
+  ) -> String {
     // The default zone is the Mac's own unless set (TimeZone.current ignores a set default)
-    let offset = wallClock ? 0 : (displayZone ?? NSTimeZone.default).secondsFromGMT(for: date)
+    let offset =
+      wallClock || iso ? 0 : (displayZone ?? NSTimeZone.default).secondsFromGMT(for: date)
     guard
       let utcMicros = Int64(exactly: (date.timeIntervalSince1970 * 1_000_000).rounded()),
       case (let micros, false) = utcMicros.addingReportingOverflow(Int64(offset) * 1_000_000)
@@ -444,14 +448,17 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     let seconds = Int(ofDay / 1_000_000)
     var text =
       CivilDate.text(daysSince1970: Int(days), bcSuffix: "")
-      + String(format: " %02d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
+      + (iso ? "T" : " ")
+      + String(format: "%02d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
     let fraction = Int(ofDay % 1_000_000)
     if fraction != 0 {
       var digits = String(format: "%06d", fraction)
       while digits.hasSuffix("0") { digits.removeLast() }
       text += "." + digits
     }
-    if !wallClock {
+    if iso {
+      text += "Z"
+    } else if !wallClock {
       let magnitude = abs(offset)
       text +=
         (offset < 0 ? "-" : "+")
@@ -463,8 +470,15 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     return days < -719_162 ? text + " BC" : text
   }
 
-  /// Full string representation (not truncated). Nonisolated: CSV export builds off the main actor
-  nonisolated var fullString: String {
+  /// Full string representation (not truncated), a date as zoned (`outputString(wallClock:
+  /// false)`). Nonisolated: CSV export builds off the main actor
+  nonisolated var fullString: String { outputString(wallClock: false) }
+
+  /// Full text of a value of a column whose `ColumnInfo.wallClock` is `wallClock`, for text
+  /// outputs (copy, CSV/TSV/JSON/XLSX exports): unambiguous wherever it is pasted. A date is
+  /// naive `yyyy-MM-dd HH:mm:ss[.ffffff]` (the stored wall clock, no zone) or zoned ISO 8601 UTC
+  /// `yyyy-MM-ddTHH:mm:ss[.ffffff]Z`, fraction without trailing zeros.
+  nonisolated func outputString(wallClock: Bool) -> String {
     switch self {
     case .string(let value):
       return value
@@ -479,7 +493,7 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     case .json(let value):
       return value
     case .date(let value):
-      return Self.iso8601Formatter.string(from: value)
+      return Self.dateText(value, wallClock: wallClock, iso: !wallClock)
     case .data(let value):
       return value.base64EncodedString()
     }

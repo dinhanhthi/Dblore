@@ -61,7 +61,7 @@ private let sharedLiteralCases: [(CellValue, String)] = [
   (.string("a'b'c"), "'a''b''c'"),
   (.json(#"{"a":1}"#), #"'{"a":1}'"#),
   (.json(#"{"a":"o'b"}"#), #"'{"a":"o''b"}'"#),
-  (.date(sampleDate), "'2020-01-02T03:04:05Z'"),
+  (.date(sampleDate), "'2020-01-02T03:04:05.000000Z'"),
 ]
 
 private let sharedLiteralDialectCases: [(SQLDialect, CellValue, String)] = [
@@ -183,6 +183,23 @@ struct SQLDialectTests {
     arguments: sharedLiteralDialectCases)
   func sharedLiterals(dialect: SQLDialect, value: CellValue, expected: String) {
     #expect(dialect.literal(value) == expected)
+  }
+
+  @Test("A date literal keeps its microseconds: naive is the wall clock, zoned the bind form")
+  func dateLiteralsKeepFractions() {
+    // 2026-10-15 12:00:00.123456 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123456))
+    for dialect in [SQLDialect.postgresql, .duckdb, .mysql, .sqlite] {
+      #expect(dialect.literal(date, wallClock: true) == "'2026-10-15 12:00:00.123456'")
+    }
+    #expect(SQLDialect.postgresql.literal(date) == "'2026-10-15T12:00:00.123456Z'")
+    #expect(
+      SQLDialect.postgresql.literal(date, wallClock: false) == "'2026-10-15T12:00:00.123456Z'")
+    #expect(SQLDialect.duckdb.literal(date) == "'2026-10-15T12:00:00.123456Z'")
+    // MySQL reads the text in the session's UTC zone, so no zone is written
+    #expect(SQLDialect.mysql.literal(date) == "'2026-10-15 12:00:00.123456'")
+    // Other values ignore the flag
+    #expect(SQLDialect.postgresql.literal(.int(1), wallClock: true) == "1")
   }
 
   @Test(

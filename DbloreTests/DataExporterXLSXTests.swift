@@ -36,6 +36,27 @@ struct DataExporterXLSXTests {
     #expect(note.childCount == 0)
   }
 
+  @Test("Dates are text cells: a naive column's wall clock, a zoned column as ISO 8601 UTC")
+  func writesDatesPerColumn() throws {
+    // 2026-10-15 12:00:00.123 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123))
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[date, date]],
+      rowCount: 1)
+    let sheet = try worksheet(of: try #require(DataExporter.toXLSX(result: result)))
+
+    let naive = try cell("A2", in: sheet)
+    #expect(naive.attribute(forName: "t")?.stringValue == "inlineStr")
+    #expect(text(of: naive) == "2026-10-15 12:00:00.123")
+    let zoned = try cell("B2", in: sheet)
+    #expect(zoned.attribute(forName: "t")?.stringValue == "inlineStr")
+    #expect(text(of: zoned) == "2026-10-15T12:00:00.123Z")
+  }
+
   /// Unzips `xl/worksheets/sheet1.xml` from the XLSX bytes
   private func worksheet(of xlsx: Data) throws -> XMLDocument {
     let file = FileManager.default.temporaryDirectory.appendingPathComponent(

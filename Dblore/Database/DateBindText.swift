@@ -1,7 +1,8 @@
 // DateBindText.swift
 // PostgreSQL bind text for a decoded `.date`: UTC ISO 8601 with exactly six fractional digits,
 // rounded to the nearest microsecond, so a `timestamp`/`timestamptz` key matches its row.
-// Used by inline-edit primary keys and foreign key lookups. SQLite never decodes `.date`.
+// Used by inline-edit primary keys, foreign key lookups and zoned date literals (Copy as
+// INSERT). SQLite never decodes `.date`.
 
 import Foundation
 
@@ -22,5 +23,13 @@ nonisolated enum DateBindText {
     }
     let whole = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
     return whole.dropLast() + String(format: ".%06lldZ", fraction)
+  }
+
+  /// `string(from:)` as `dialect` reads it: MySQL `yyyy-MM-dd HH:mm:ss.ffffff` with no zone
+  /// (the session is UTC), every other dialect unchanged.
+  static func string(from date: Date, dialect: SQLDialect) -> String {
+    let text = string(from: date)
+    guard dialect == .mysql else { return text }
+    return String(text.dropLast()).replacingOccurrences(of: "T", with: " ")
   }
 }

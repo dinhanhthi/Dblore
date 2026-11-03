@@ -26,7 +26,10 @@ enum DataExporter {
     }
 
     for row in result.rows {
-      let values = row.map { escapeCSV($0.fullString, quote: quote) }
+      let values = row.enumerated().map { index, value in
+        escapeCSV(
+          value.outputString(wallClock: isWallClock(result.columns, index)), quote: quote)
+      }
       csv += values.joined(separator: ",") + "\n"
     }
 
@@ -47,7 +50,11 @@ enum DataExporter {
 
     // Data rows
     for row in result.rows {
-      let values = row.map { tsvField($0, neutralizesFormulas: neutralizesFormulas) }
+      let values = row.enumerated().map { index, value in
+        tsvField(
+          value, wallClock: isWallClock(result.columns, index),
+          neutralizesFormulas: neutralizesFormulas)
+      }
       tsv += values.joined(separator: "\t") + "\n"
     }
 
@@ -65,12 +72,20 @@ enum DataExporter {
 
   /// One escaped TSV field. The formula prefix (text cells only, first scalar only: the
   /// quoting keeps every line in this field) is added before escaping, so it lands inside the
-  /// quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`.
-  static func tsvField(_ value: CellValue, neutralizesFormulas: Bool) -> String {
+  /// quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`. A date is written as
+  /// its column's text output (`wallClock`, the column's `ColumnInfo.wallClock`).
+  static func tsvField(
+    _ value: CellValue, wallClock: Bool = false, neutralizesFormulas: Bool
+  ) -> String {
     if neutralizesFormulas, case .string(let text) = value {
       return escapeTSV(prefixedIfFormula(text, splitsFields: false))
     }
-    return escapeTSV(value.fullString)
+    return escapeTSV(value.outputString(wallClock: wallClock))
+  }
+
+  /// Whether column `index` of `columns` is naive (`ColumnInfo.wallClock`); false past the end
+  nonisolated private static func isWallClock(_ columns: [ColumnInfo], _ index: Int) -> Bool {
+    columns.indices.contains(index) && columns[index].wallClock
   }
 
   /// Grid selection copy in `format`, rows joined by LF with no trailing line break (JSON and
@@ -86,7 +101,11 @@ enum DataExporter {
         tsvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
       }
       let rows = result.rows.map { row in
-        row.map { tsvField($0, neutralizesFormulas: neutralizesFormulas) }
+        row.enumerated().map { index, value in
+          tsvField(
+            value, wallClock: isWallClock(result.columns, index),
+            neutralizesFormulas: neutralizesFormulas)
+        }
       }
       return lines(header: format == .tsvWithHeaders ? header : nil, rows: rows, separator: "\t")
     case .csv, .csvWithHeaders:
@@ -94,7 +113,11 @@ enum DataExporter {
         csvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
       }
       let rows = result.rows.map { row in
-        row.map { csvField($0, neutralizesFormulas: neutralizesFormulas) }
+        row.enumerated().map { index, value in
+          csvField(
+            value, wallClock: isWallClock(result.columns, index),
+            neutralizesFormulas: neutralizesFormulas)
+        }
       }
       return lines(header: format == .csvWithHeaders ? header : nil, rows: rows, separator: ",")
     case .json:
@@ -113,9 +136,11 @@ enum DataExporter {
   /// One CSV field quoted if needed. The formula prefix applies to text cells only, as in
   /// `tsvField`. A field with a tab is quoted too, and a formula after a tab is prefixed: a
   /// spreadsheet may split pasted text on tabs, and that piece must not run.
-  private static func csvField(_ value: CellValue, neutralizesFormulas: Bool) -> String {
+  private static func csvField(
+    _ value: CellValue, wallClock: Bool = false, neutralizesFormulas: Bool
+  ) -> String {
     guard neutralizesFormulas, case .string(let text) = value else {
-      return escapeCSV(value.fullString, quote: .ifNeeded)
+      return escapeCSV(value.outputString(wallClock: wallClock), quote: .ifNeeded)
     }
     let field = prefixedAfterTabs(prefixedIfFormula(text, splitsFields: false))
     guard field.unicodeScalars.contains("\t") else { return escapeCSV(field, quote: .ifNeeded) }
@@ -251,7 +276,10 @@ enum DataExporter {
         worksheet += "    <row r=\"\(rowNum)\">\n"
         for (colIndex, value) in row.enumerated() {
           let cellRef = columnLetter(colIndex) + String(rowNum)
-          guard let (cellType, cellValue) = cellValueToXLSXCell(value) else {
+          guard
+            let (cellType, cellValue) = cellValueToXLSXCell(
+              value, wallClock: isWallClock(result.columns, colIndex))
+          else {
             worksheet += "      <c r=\"\(cellRef)\"/>\n"
             continue
           }
@@ -323,8 +351,11 @@ enum DataExporter {
     // Data rows
     for row in result.rows {
       xml += "   <Row>\n"
-      for value in row {
-        guard let (type, data) = cellValueToExcelXML(value) else {
+      for (index, value) in row.enumerated() {
+        guard
+          let (type, data) = cellValueToExcelXML(
+            value, wallClock: isWallClock(result.columns, index))
+        else {
           xml += "    <Cell/>\n"
           continue
         }
@@ -353,7 +384,11 @@ enum DataExporter {
       let members = keys.indices.compactMap { index -> (String, String)? in
         let value = index < row.count ? row[index] : .null
         if !includeNull && value.isNull { return nil }
-        let json = valuesAsString ? jsonString(value.fullString) : jsonValue(value, pretty: pretty)
+        let wallClock = isWallClock(result.columns, index)
+        let json =
+          valuesAsString
+          ? jsonString(value.outputString(wallClock: wallClock))
+          : jsonValue(value, wallClock: wallClock, pretty: pretty)
         return (keys[index], json)
       }
       return jsonContainer(
@@ -379,9 +414,12 @@ enum DataExporter {
   }
 
   /// One cell as JSON text. Only a finite double (its number format) and a parsed `.json` value
-  /// go through `JSONSerialization`; the rest is written here as it would write it.
-  private static func jsonValue(_ value: CellValue, pretty: Bool) -> String {
+  /// go through `JSONSerialization`; the rest is written here as it would write it. A date is
+  /// its column's text output (`wallClock`).
+  private static func jsonValue(_ value: CellValue, wallClock: Bool, pretty: Bool) -> String {
     switch value {
+    case .date:
+      return jsonString(value.outputString(wallClock: wallClock))
     case .int(let int):
       return String(int)
     case .bool(let bool):
@@ -469,7 +507,9 @@ enum DataExporter {
     }
 
     for row in result.rows {
-      let values = row.map { "| \(escapeMarkdown($0.fullString)) " }
+      let values = row.enumerated().map { index, value in
+        "| \(escapeMarkdown(value.outputString(wallClock: isWallClock(result.columns, index)))) "
+      }
       markdown += values.joined() + "|\n"
     }
 
@@ -739,9 +779,6 @@ enum DataExporter {
       .replacingOccurrences(of: "\r", with: "<br>")
   }
 
-  /// Shared by every writer: a formatter per date cell made large exports slow.
-  private static let isoDateFormatter = ISO8601DateFormatter()
-
   private static func escapeXML(_ value: String) -> String {
     var escaped = value
     escaped = escaped.replacingOccurrences(of: "&", with: "&amp;")
@@ -759,8 +796,11 @@ enum DataExporter {
   }
 
   /// nil for NULL, written as an empty cell. An integer a spreadsheet would round and a NaN or
-  /// infinity (no number cell holds them) are text, with the grid's words for the latter.
-  private static func cellValueToExcelXML(_ value: CellValue) -> (type: String, data: String)? {
+  /// infinity (no number cell holds them) are text, with the grid's words for the latter. A date
+  /// is text, its column's text output (`wallClock`).
+  private static func cellValueToExcelXML(
+    _ value: CellValue, wallClock: Bool
+  ) -> (type: String, data: String)? {
     switch value {
     case .string(let str):
       return ("String", escapeXML(str))
@@ -774,9 +814,8 @@ enum DataExporter {
       return nil
     case .json(let json):
       return ("String", escapeXML(json))
-    case .date(let date):
-      // Use ISO8601 format for dates in Excel
-      return ("String", escapeXML(isoDateFormatter.string(from: date)))
+    case .date:
+      return ("String", escapeXML(value.outputString(wallClock: wallClock)))
     case .data(let data):
       return ("String", escapeXML(data.base64EncodedString()))
     }
@@ -784,7 +823,9 @@ enum DataExporter {
 
   /// Convert cell value to XLSX cell format: nil for NULL (an empty cell), text for the values
   /// `cellValueToExcelXML` writes as text
-  private static func cellValueToXLSXCell(_ value: CellValue) -> (type: String, value: String)? {
+  private static func cellValueToXLSXCell(
+    _ value: CellValue, wallClock: Bool
+  ) -> (type: String, value: String)? {
     switch value {
     case .string(let str):
       return ("inlineStr", "<is><t>\(escapeXML(str))</t></is>")
@@ -802,9 +843,9 @@ enum DataExporter {
       return nil
     case .json(let json):
       return ("inlineStr", "<is><t>\(escapeXML(json))</t></is>")
-    case .date(let date):
+    case .date:
       return (
-        "inlineStr", "<is><t>\(escapeXML(isoDateFormatter.string(from: date)))</t></is>"
+        "inlineStr", "<is><t>\(escapeXML(value.outputString(wallClock: wallClock)))</t></is>"
       )
     case .data(let data):
       return ("inlineStr", "<is><t>\(escapeXML(data.base64EncodedString()))</t></is>")
@@ -850,8 +891,8 @@ enum DataExporter {
         return jsonObject
       }
       return json
-    case .date(let date):
-      return isoDateFormatter.string(from: date)
+    case .date:
+      return value.fullString
     case .data(let data):
       return data.base64EncodedString()
     }

@@ -127,6 +127,32 @@ import Testing
         == "2026-10-15 09:30:00.123-02:30")
   }
 
+  @Test("Text outputs: naive is the wall clock with no zone, zoned is ISO 8601 UTC with Z")
+  func outputStringShapes() {
+    let value = CellValue.date(Date(timeIntervalSince1970: Self.noonSeconds + 0.123456))
+    let whole = CellValue.date(Date(timeIntervalSince1970: Self.noonSeconds))
+    let tenth = CellValue.date(Date(timeIntervalSince1970: Self.noonSeconds + 0.1))
+    for zone in ["Asia/Ho_Chi_Minh", "America/St_Johns", "UTC"] {
+      let naive = Self.inZone(zone) {
+        [value, whole, tenth].map { $0.outputString(wallClock: true) }
+      }
+      #expect(
+        naive == ["2026-10-15 12:00:00.123456", "2026-10-15 12:00:00", "2026-10-15 12:00:00.1"])
+      let zoned = Self.inZone(zone) {
+        [value, whole, tenth].map { $0.outputString(wallClock: false) }
+      }
+      #expect(
+        zoned == ["2026-10-15T12:00:00.123456Z", "2026-10-15T12:00:00Z", "2026-10-15T12:00:00.1Z"])
+      #expect(Self.inZone(zone) { value.fullString } == "2026-10-15T12:00:00.123456Z")
+    }
+    #expect(
+      CellValue.date(Date(timeIntervalSince1970: -0.5)).fullString == "1969-12-31T23:59:59.5Z")
+    // Other values are their full text either way
+    for other: CellValue in [.int(5), .double(1.5), .data(Data([1, 2])), .null, .json("{}")] {
+      #expect(other.outputString(wallClock: true) == other.fullString)
+    }
+  }
+
   @Test("A date next to the microsecond limits shows text instead of trapping")
   func extremeDatesDoNotTrap() {
     let beforeEpoch = CellValue.date(Date(timeIntervalSince1970: -0.5))
@@ -135,6 +161,7 @@ import Testing
     for seconds in [-9_223_372_036_854.775, -9_223_372_036_800.0, 9_223_372_036_854.775] {
       let text = CellValue.date(Date(timeIntervalSince1970: seconds)).displayString(wallClock: true)
       #expect(!text.isEmpty)
+      #expect(!CellValue.date(Date(timeIntervalSince1970: seconds)).fullString.isEmpty)
     }
   }
 }

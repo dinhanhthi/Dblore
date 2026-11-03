@@ -48,6 +48,39 @@ struct DataExporterSQLTests {
         == #"INSERT INTO "t" ("id") VALUES (3), (1);"#)
   }
 
+  @Test("INSERT writes a naive column's wall clock and a zoned column's bind form, per dialect")
+  func insertDateLiteralsFollowTheColumn() {
+    // 2026-10-15 12:00:00.123 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123))
+    let result = QueryResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[date, date]], rowCount: 1, executionTime: 0)
+    #expect(
+      SQLInsertRenderer.insertScript(result: result, table: "t", dialect: .postgresql)
+        == #"INSERT INTO "t" ("naive", "zoned") VALUES "#
+        + "('2026-10-15 12:00:00.123', '2026-10-15T12:00:00.123000Z');")
+    #expect(
+      SQLInsertRenderer.insertScript(result: result, table: "t", dialect: .mysql)
+        == "INSERT INTO `t` (`naive`, `zoned`) VALUES "
+        + "('2026-10-15 12:00:00.123', '2026-10-15 12:00:00.123000');")
+    // A row longer than its columns writes the extra date zoned
+    let short = QueryResult(
+      columns: [ColumnInfo(name: "naive", type: "timestamp", wallClock: true)],
+      rows: [[date, date]], rowCount: 1, executionTime: 0)
+    #expect(
+      SQLInsertRenderer.insertScript(
+        result: short, table: "t", dialect: .postgresql, includeColumns: false)
+        == #"INSERT INTO "t" VALUES ('2026-10-15 12:00:00.123', '2026-10-15T12:00:00.123000Z');"#)
+    // The cell-result path (Copy as INSERT, SQL export) keeps the column flag
+    let cell = CellResult(columns: result.columns, rows: result.rows, rowCount: 1, tableName: "t")
+    #expect(
+      DataExporter.sqlInsert(result: cell, dialect: .postgresql).contains(
+        "('2026-10-15 12:00:00.123', '2026-10-15T12:00:00.123000Z')"))
+  }
+
   @Test("pdfData is non-empty and PDFDocument has at least one page")
   func pdfDataHasAPage() {
     let result = CellResult(
