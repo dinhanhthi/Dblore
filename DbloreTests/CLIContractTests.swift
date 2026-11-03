@@ -282,6 +282,29 @@ struct CLIContractTests {
     #expect(object["notice"] as? String == CLIOutput.dataNotice)
   }
 
+  @Test("Dates reach the tool as text: naive wall clock without a zone, zoned ISO 8601 UTC")
+  func dateShapes() throws {
+    // 2026-10-15 12:00:00 UTC, then with .123 and .123456 fractions
+    let noon = 1_792_065_600.0
+    let read = MCPReadResult(
+      columns: [
+        MCPResultColumn(name: "naive", type: "timestamp", wallClock: true),
+        MCPResultColumn(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [0, 0.123, 0.123456].map { fraction in
+        let date = CellValue.date(Date(timeIntervalSince1970: noon + fraction))
+        return [date, date]
+      },
+      rowsTruncated: false)
+    let result = try CLIOutput.decodeRows(MCPResultEncoder.encodeRows(read))
+    #expect(
+      result.rows == [
+        [.text("2026-10-15 12:00:00"), .text("2026-10-15T12:00:00Z")],
+        [.text("2026-10-15 12:00:00.123"), .text("2026-10-15T12:00:00.123Z")],
+        [.text("2026-10-15 12:00:00.123456"), .text("2026-10-15T12:00:00.123456Z")],
+      ])
+  }
+
   @Test("The tool's data notice is the app's")
   func dataNoticeMatches() {
     #expect(CLIOutput.dataNotice == MCPResultEncoder.dataNotice)

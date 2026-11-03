@@ -4,7 +4,7 @@
 // `maxCellCharacters` becomes `{truncated, value}` and binary whose base64 would be longer
 // `{base64, truncated}` (MCP managers already cut cells as rows arrive, `CappedReadLimits`, so
 // the full length is not known here). NULL is `null` and an empty string `""`; binary is
-// `{base64, bytes}`.
+// `{base64, bytes}`; a date is its column's `CellValue.outputString(wallClock:)` text.
 
 import Foundation
 
@@ -39,8 +39,9 @@ nonisolated enum MCPResultEncoder {
   static func encodeRows(_ result: MCPReadResult) -> String {
     var cut = 0
     let rows = result.rows.map { row in
-      row.map { value -> Cell in
-        let cell = Cell(value)
+      row.enumerated().map { index, value -> Cell in
+        let wallClock = index < result.columns.count && result.columns[index].wallClock
+        let cell = Cell(value, wallClock: wallClock)
         if cell.isTruncated { cut += 1 }
         return cell
       }
@@ -111,14 +112,14 @@ nonisolated enum MCPResultEncoder {
       case base64, bytes, truncated, value
     }
 
-    init(_ value: CellValue) {
+    init(_ value: CellValue, wallClock: Bool) {
       switch value {
       case .null: self = .null
       case .int(let number): self = .int(number)
       case .double(let number): self = number.isFinite ? .double(number) : .text("\(number)")
       case .bool(let flag): self = .bool(flag)
       case .string(let text), .json(let text): self = Self.textCell(text)
-      case .date(let date): self = .text(date.formatted(.iso8601))
+      case .date: self = .text(value.outputString(wallClock: wallClock))
       case .data(let data):
         // Only the bytes the base64 prefix shows are encoded
         let shown = MCPResultEncoder.maxCellCharacters / 4 * 3

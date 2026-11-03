@@ -52,7 +52,7 @@ struct ShortcutsRunnerTests {
   }
 
   private func runner(
-    _ rows: [ConnectionHistoryEntry],
+    _ rows: [ConnectionHistoryEntry], factory: FakeDatabaseSessionFactory? = nil,
     password: @escaping @Sendable (ConnectionConfig) throws -> String? = { _ in nil }
   ) -> ShortcutsRunner {
     let allowed = Set(rows.map(\.id))
@@ -60,7 +60,7 @@ struct ShortcutsRunnerTests {
       rule: HeadlessAccessRule(gate: AIAccessGate(), lockSource: LockRegistry()),
       saved: { rows }, caller: { .shortcuts(enabled: true, allowlist: allowed) },
       defaultCommitStyle: { .immediate }, recorder: history, historyEnabled: { true },
-      password: password, sessionFactory: factory)
+      password: password, sessionFactory: factory ?? self.factory)
   }
 
   @Test(
@@ -94,6 +94,26 @@ struct ShortcutsRunnerTests {
     #expect(factory.sessions.count == 1)
     #expect(csv.hasPrefix("n\r\n1\r\n1 row."))
     #expect(csv.hasSuffix(MCPResultEncoder.dataNotice))
+    await runner.pool.closeAll()
+  }
+
+  @Test("Run Query writes a naive column's wall clock and a zoned column as ISO 8601 UTC")
+  func runQueryDateShapes() async throws {
+    // 2026-10-15 12:00:00.123 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123))
+    let dates = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[date, date]])
+    let entry = Self.entry()
+    let runner = runner([entry], factory: dates)
+    let csv = try await runner.runQuery(
+      connectionID: entry.id, sql: "SELECT naive, zoned FROM orders")
+    #expect(
+      csv.hasPrefix("naive,zoned\r\n2026-10-15 12:00:00.123,2026-10-15T12:00:00.123Z\r\n1 row."))
     await runner.pool.closeAll()
   }
 

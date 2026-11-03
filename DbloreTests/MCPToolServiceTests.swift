@@ -643,6 +643,32 @@ struct MCPToolServiceTests {
     await pool.closeAll()
   }
 
+  @Test("run_query writes a naive column's wall clock and a zoned column as ISO 8601 UTC")
+  func sqlReadSourceDateShapes() async throws {
+    // 2026-10-15 12:00:00.123 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123))
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[date, date]])
+    let entry = Self.entry()
+    let id = entry.id
+    let pool = MCPConnectionPool(
+      entry: { $0 == id ? entry : nil }, sessionFactory: factory,
+      certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
+      knownHosts: InMemorySSHKnownHostStore())
+    let read = try await MCPSQLReadSource(pool: pool).runRead(
+      MCPReadRequest(connectionID: id, sql: "SELECT naive, zoned FROM t", maxRows: 10))
+    await pool.closeAll()
+
+    #expect(read.columns.map(\.wallClock) == [true, false])
+    let text = MCPResultEncoder.encodeRows(read)
+    #expect(text.contains(#""rows":[["2026-10-15 12:00:00.123","2026-10-15T12:00:00.123Z"]]"#))
+  }
+
   @Test("execute_write is refused when the commit style falls back to Review, protected mode off")
   func reviewFallbackRefusesWrite() async {
     let writes = RecordingWriteSource()

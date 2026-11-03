@@ -168,8 +168,9 @@ nonisolated struct ShortcutsRunner: Sendable {
     var cutByBytes = false
     for row in result.rows {
       var cut = 0
-      let fields = row.map { value -> String in
-        let (field, wasCut) = cell(value)
+      let fields = row.enumerated().map { index, value -> String in
+        let wallClock = index < result.columns.count && result.columns[index].wallClock
+        let (field, wasCut) = cell(value, wallClock: wallClock)
         if wasCut { cut += 1 }
         return DataExporter.escapeCSV(field, quote: .ifNeeded)
       }
@@ -201,15 +202,16 @@ nonisolated struct ShortcutsRunner: Sendable {
     fields.joined(separator: ",") + "\r\n"
   }
 
-  /// The cell's text, cut by position (the pool already cut it a little past the limit)
-  private static func cell(_ value: CellValue) -> (text: String, cut: Bool) {
+  /// The cell's text (a date in its column's output form), cut by position (the pool already
+  /// cut it a little past the limit)
+  private static func cell(_ value: CellValue, wallClock: Bool) -> (text: String, cut: Bool) {
     let max = MCPResultEncoder.maxCellCharacters
     if case .data(let data) = value {
       let shown = max / 4 * 3
       guard data.count > shown else { return (data.base64EncodedString(), false) }
       return (Data(data.prefix(shown)).base64EncodedString(), true)
     }
-    let text = value.fullString
+    let text = value.outputString(wallClock: wallClock)
     guard let end = text.index(text.startIndex, offsetBy: max, limitedBy: text.endIndex),
       end < text.endIndex
     else { return (text, false) }
