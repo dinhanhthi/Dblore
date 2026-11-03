@@ -77,7 +77,7 @@ struct SQLiteIntrospectorTests {
     }
   }
 
-  @Test("editTable requires a declared primary key, including WITHOUT ROWID")
+  @Test("editTable keys by the declared primary key, including WITHOUT ROWID; keyless by rowid")
   func editTableRequiresDeclaredPrimaryKey() async throws {
     try await withFixture { session in
       let parent = try #require(try await introspector.editTable(named: "parent", in: session))
@@ -100,12 +100,61 @@ struct SQLiteIntrospectorTests {
           Int16(6): "b",
         ])
 
-      let notes = try await introspector.editTable(named: "notes", in: session)
-      let pair = try await introspector.editTable(named: "pair", in: session)
+      #expect(parent.rowLocator == nil)
+      #expect(child.rowLocator == nil)
+
+      // No primary key: rows are named by rowid, plus `IS` on the typed columns
+      let notes = try #require(try await introspector.editTable(named: "notes", in: session))
+      let pair = try #require(try await introspector.editTable(named: "pair", in: session))
+      #expect(notes.primaryKeyColumns.isEmpty)
+      #expect(notes.rowLocator == .sqliteRowid(alias: .rowid, matchColumns: ["body"]))
+      #expect(pair.rowLocator == .sqliteRowid(alias: .rowid, matchColumns: ["x", "y"]))
+      #expect(notes.qualifiedName == "\"main\".\"notes\"")
       let view = try await introspector.editTable(named: "child_view", in: session)
-      #expect(notes == nil)
-      #expect(pair == nil)
       #expect(view == nil)
+    }
+  }
+
+  @Test(
+    "A keyless table's locator: affinity-filtered columns, shadowed rowid alias, virtual refused")
+  func keylessRowidLocator() async throws {
+    try await withDatabase { session in
+      let statements = [
+        """
+        CREATE TABLE typed (
+          a, b REAL, c TEXT, d BLOB, e VARCHAR(10), f DECIMAL(10,2), g FLOATING POINT,
+          h DOUBLE PRECISION, i BOOLEAN
+        )
+        """,
+        "CREATE TABLE shadow_one (\"RowID\" TEXT, v INT)",
+        "CREATE TABLE shadow_two (rowid, _ROWID_ TEXT, x)",
+        "CREATE TABLE shadow_all (rowid, _rowid_, oid)",
+        "CREATE VIRTUAL TABLE docs USING fts5(title, body)",
+        "CREATE TABLE keyed (k TEXT PRIMARY KEY, v) WITHOUT ROWID",
+        "CREATE TABLE strict_any (a ANY, b TEXT, c INTEGER) STRICT",
+      ]
+      for sql in statements {
+        _ = try await session.command(sql, binds: [])
+      }
+      // SQLite affinity rules: INT, then CHAR/CLOB/TEXT, then BLOB or no type, then
+      // REAL/FLOA/DOUB, else NUMERIC. Untyped and BLOB columns are left out.
+      let typed = try #require(try await introspector.editTable(named: "typed", in: session))
+      #expect(
+        typed.rowLocator
+          == .sqliteRowid(alias: .rowid, matchColumns: ["b", "c", "e", "f", "g", "h", "i"]))
+      let one = try #require(try await introspector.editTable(named: "shadow_one", in: session))
+      #expect(
+        one.rowLocator == .sqliteRowid(alias: .underscoredRowid, matchColumns: ["RowID", "v"]))
+      let two = try #require(try await introspector.editTable(named: "shadow_two", in: session))
+      #expect(two.rowLocator == .sqliteRowid(alias: .oid, matchColumns: ["_ROWID_"]))
+      #expect(try await introspector.editTable(named: "shadow_all", in: session) == nil)
+      #expect(try await introspector.editTable(named: "docs", in: session) == nil)
+      let keyed = try #require(try await introspector.editTable(named: "keyed", in: session))
+      #expect(keyed.primaryKeyColumns == ["k"])
+      #expect(keyed.rowLocator == nil)
+      // A STRICT table's ANY column has no affinity: a text bind never equals a stored number
+      let strict = try #require(try await introspector.editTable(named: "strict_any", in: session))
+      #expect(strict.rowLocator == .sqliteRowid(alias: .rowid, matchColumns: ["b", "c"]))
     }
   }
 

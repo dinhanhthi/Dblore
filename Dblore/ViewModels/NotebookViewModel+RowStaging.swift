@@ -699,7 +699,7 @@ extension NotebookViewModel {
       ?? .postgresql
   }
 
-  /// Throws `RowChangeError.noRowKey` for an UPDATE or DELETE the builder cannot key.
+  /// Throws `RowChangeError.noRowKey` or `.noRowLocator` for an UPDATE or DELETE the builder cannot key.
   private func stagedBatch() throws -> PendingStagedBatch? {
     guard let target = stagedEditTarget, let set = dataViewer?.changeSet, !set.isEmpty,
       set.invalidated(by: target) == nil

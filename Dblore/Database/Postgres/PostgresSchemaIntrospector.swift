@@ -585,10 +585,12 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       return nil
     }
     let primaryKey = keyPositions.sorted { $0.position < $1.position }.map(\.name)
+    // No primary key: rows are named by tableoid + ctid + xmin. A partitioned table is never
+    // `UPDATE ONLY` (its rows live in the partitions); tableoid names the partition.
     return EditTable(
       oid: oid, attributeNames: names, primaryKeyColumns: primaryKey, qualifiedName: qualifiedName,
       updateOnly: relationKind == "r", schema: catalogSchema, name: catalogName,
-      generatedColumns: generated)
+      generatedColumns: generated, rowLocator: primaryKey.isEmpty ? .pgLocator : nil)
   }
 
   func enrichColumnTypes(

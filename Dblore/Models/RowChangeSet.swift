@@ -50,6 +50,8 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
   case primaryKeyColumn(String)
   /// An UPDATE or DELETE on `table` (its SQL name), which has no key to name one row.
   case noRowKey(table: String)
+  /// An UPDATE or DELETE on a locator target whose row has no locator that fits.
+  case noRowLocator
   /// A cell set to DEFAULT on an engine whose UPDATE has no `DEFAULT` (`supportsDefaultInUpdate`).
   case serverDefaultUnsupported
 
@@ -62,6 +64,9 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
     case .noRowKey(let table):
       "Rows of \(table) can't be updated or deleted here: the table has no primary key that "
         + "identifies a row."
+    case .noRowLocator:
+      "This row can't be updated or deleted here: the row's position was not read; reload the "
+        + "data."
     case .serverDefaultUnsupported:
       "This database can't set a cell to its column default in an UPDATE."
     }
@@ -100,30 +105,47 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     }
   }
 
-  /// Primary-key values in `primaryKeyColumns` order, or a staged insert named by `tempID`.
+  /// Primary-key values in `primaryKeyColumns` order, a keyless row's locator, or a staged
+  /// insert named by `tempID`.
   nonisolated struct RowKey: Hashable, Sendable {
-    /// Primary-key values. Empty when `tempID` names an insert.
+    /// Primary-key values, or the locator texts as `.string` for a locator key. Empty when
+    /// `tempID` names an insert.
     let values: [CellValue]
     /// Set when this key names a staged insert instead of an existing row.
     let tempID: UUID?
+    /// The page row's locator (keyless target): its WHERE terms. Two locator keys are equal
+    /// when their texts are equal exactly; the SQLite `row` values ride along and do not count.
+    let locator: RowLocatorValues?
 
     init(values: [CellValue]) {
       self.values = values
       self.tempID = nil
+      self.locator = nil
     }
 
     init(tempID: UUID) {
       self.values = []
       self.tempID = tempID
+      self.locator = nil
+    }
+
+    /// The key of the page row `locator` was read from (`RowLocatorValues`)
+    init(locator: RowLocatorValues) {
+      self.values = locator.texts.map(CellValue.string)
+      self.tempID = nil
+      self.locator = locator
     }
 
     static func == (lhs: RowKey, rhs: RowKey) -> Bool {
-      guard lhs.tempID == rhs.tempID, lhs.values.count == rhs.values.count else { return false }
+      guard lhs.tempID == rhs.tempID, (lhs.locator == nil) == (rhs.locator == nil),
+        lhs.values.count == rhs.values.count
+      else { return false }
       return zip(lhs.values, rhs.values).allSatisfy { cellValuesEqual($0, $1) }
     }
 
     func hash(into hasher: inout Hasher) {
       hasher.combine(tempID)
+      hasher.combine(locator == nil)
       hasher.combine(values.count)
       for value in values {
         Self.combine(value, into: &hasher)

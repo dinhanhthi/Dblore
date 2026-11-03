@@ -548,7 +548,7 @@ struct RewindCaptureTests {
     #expect(try fixture.store.count() == 2)
   }
 
-  @Test("No plan for an engine without Data Rewind, or a target without its table name")
+  @Test("No plan for an engine without Data Rewind, a target without its table name or a locator")
   func noPlanOutsideKeyedSQLTargets() {
     let target = EditTarget(
       qualifiedName: "\"main\".\"items\"", tableID: .sqlite(schema: "main", table: "items"),
@@ -565,6 +565,17 @@ struct RewindCaptureTests {
     #expect(
       RewindPlan.make(
         target: unnamed, resultColumns: Self.columns, editKind: .staged, steps: steps,
+        engine: .sqlite, enabled: true) == nil)
+    // Keyless rows: no entry and no error (Rewind by locator is not built)
+    let keyless = EditTarget(
+      qualifiedName: target.qualifiedName, tableID: target.tableID, primaryKeyColumns: [],
+      schema: "main", name: "items", rowLocator: .sqliteRowid(alias: .rowid, matchColumns: []))
+    let locatorSteps = [
+      RewindPlan.Step(operation: .delete, keyBefore: [.string("1")], keyAfter: nil)
+    ]
+    #expect(
+      RewindPlan.make(
+        target: keyless, resultColumns: Self.columns, editKind: .staged, steps: locatorSteps,
         engine: .sqlite, enabled: true) == nil)
   }
 }

@@ -137,6 +137,36 @@ struct InlineEditTargetTests {
     #expect(targets.lookupRelation?.baseColumns == ["id", "customer_id", nil])
   }
 
+  @Test("PostgreSQL keyless plain and partitioned tables get a locator; inheritance parents none")
+  func postgresKeylessLocator() async throws {
+    // pg_class + pg_attribute rows of `editTable`: oid, attnum, attname, key position,
+    // format('%I.%I'), relkind, relhassubclass, nspname, relname, generated
+    func table(relkind: String, subclass: Bool, keyPosition: Int = 0) async throws -> EditTable? {
+      let session = FakeDatabaseSession(
+        capabilities: .contract(), columns: [],
+        rows: [
+          [
+            .int(16_384), .int(1), .string("body"), .int(keyPosition), .string("public.notes"),
+            .string(relkind), .bool(subclass), .string("public"), .string("notes"), .bool(false),
+          ]
+        ],
+        slowQueries: false)
+      return try await PostgresSchemaIntrospector().editTable(named: "notes", in: session)
+    }
+    let plain = try #require(try await table(relkind: "r", subclass: false))
+    #expect(plain.primaryKeyColumns.isEmpty)
+    #expect(plain.rowLocator == .pgLocator)
+    #expect(plain.updateOnly)
+    let partitioned = try #require(try await table(relkind: "p", subclass: true))
+    #expect(partitioned.rowLocator == .pgLocator)
+    // Child rows live in the partitions: never UPDATE ONLY
+    #expect(!partitioned.updateOnly)
+    #expect(try await table(relkind: "r", subclass: true) == nil)
+    let keyed = try #require(try await table(relkind: "r", subclass: false, keyPosition: 1))
+    #expect(keyed.primaryKeyColumns == ["body"])
+    #expect(keyed.rowLocator == nil)
+  }
+
   @Test("A pending transaction resolves the edit target from the column table identity")
   @MainActor
   func pendingTransactionResolvesColumnTableIdentity() async {

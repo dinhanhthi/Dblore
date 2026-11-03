@@ -94,6 +94,102 @@ struct RowChangeSQLBuilderTests {
     }
   }
 
+  @Test("A PostgreSQL keyless row is named by tableoid, ctid and xmin, cast in bind order")
+  func postgresLocatorWhere() throws {
+    let editTarget = EditTarget(
+      qualifiedName: #""public"."t""#, tableID: .postgresql(oid: 1), primaryKeyColumns: [],
+      rowLocator: .pgLocator)
+    var set = RowChangeSet(target: editTarget)
+    // Two identical keyless rows: their locators tell them apart
+    let first = RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", "(0,1)", "742"]))
+    let second = RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16390", "(0,1)", "742"]))
+    #expect(first != second)
+    set.stageDelete(row: first)
+    try set.stageEdit(row: second, column: "name", value: .string("b"), original: .string("a"))
+
+    let statements = try RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+    #expect(
+      statements.map(\.sql) == [
+        #"DELETE FROM "public"."t" WHERE tableoid = $1::oid AND ctid = $2::tid AND xmin = $3::xid"#,
+        #"UPDATE "public"."t" SET "name" = $1 WHERE tableoid = $2::oid AND ctid = $3::tid"#
+          + " AND xmin = $4::xid",
+      ])
+    #expect(statements[0].values == ["16384", "(0,1)", "742"])
+    #expect(statements[1].values == ["b", "16390", "(0,1)", "742"])
+    #expect(statements.allSatisfy { $0.expectedRows == 1 && $0.rowCheck == nil })
+    #expect(
+      try RowChangeSQLBuilder.previewText(
+        for: set, target: editTarget, columns: columns(), dialect: .postgresql
+      ).hasPrefix(
+        #"DELETE FROM "public"."t" WHERE tableoid = '16384'::oid AND ctid = '(0,1)'::tid"#))
+  }
+
+  @Test("A SQLite keyless row is named by rowid and IS on its loaded typed, non-binary values")
+  func sqliteLocatorWhere() throws {
+    let editTarget = EditTarget(
+      qualifiedName: #""main"."t""#, tableID: .sqlite(schema: "main", table: "t"),
+      primaryKeyColumns: [],
+      rowLocator: .sqliteRowid(alias: .underscoredRowid, matchColumns: ["b", "n", "bin"]))
+    // `a` is untyped (BLOB affinity) so not a match column, `bin` holds bytes
+    let row: [String: CellValue] = [
+      "a": .int(1), "b": .double(2.5), "n": .null, "bin": .data(Data([1])), "name": .string("a"),
+    ]
+    var set = RowChangeSet(target: editTarget)
+    set.stageDelete(row: RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["7"], row: row)))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["8"], row: row)), column: "name",
+      value: .string("b"), original: .string("a"))
+
+    let statements = try RowChangeSQLBuilder.statements(
+      for: set, target: editTarget, columns: columns(), dialect: .sqlite)
+    #expect(
+      statements.map(\.sql) == [
+        #"DELETE FROM "main"."t" WHERE _rowid_ = ?1 AND "b" IS ?2 AND "n" IS ?3"#,
+        #"UPDATE "main"."t" SET "name" = ?1 WHERE _rowid_ = ?2 AND "b" IS ?3 AND "n" IS ?4"#,
+      ])
+    #expect(statements[0].values == ["7", "2.5", nil])
+    #expect(statements[1].values == ["b", "8", "2.5", nil])
+    // A locator does not fit another engine: refused, never a WHERE-less statement
+    #expect(throws: RowChangeError.noRowLocator) {
+      try RowChangeSQLBuilder.statements(
+        for: set, target: editTarget, columns: columns(), dialect: .mysql)
+    }
+  }
+
+  @Test("A single-cell UPDATE on a locator target takes the side locator, never 'no primary key'")
+  func cellUpdateByLocator() throws {
+    let rowData: [String: CellValue] = ["a": .int(1), "b": .double(2.5), "name": .string("x")]
+    let postgres = try CellUpdateStatement.make(
+      qualifiedName: #""public"."t""#, assignments: [(column: "name", value: "y")],
+      primaryKeyColumns: [], rowData: rowData, updateOnly: true, dialect: .postgresql,
+      rowLocator: .pgLocator, locator: RowLocatorValues(texts: ["16384", "(0,3)", "900"]))
+    #expect(
+      postgres.sql
+        == #"UPDATE ONLY "public"."t" SET "name" = $1 WHERE tableoid = $2::oid"#
+        + " AND ctid = $3::tid AND xmin = $4::xid")
+    #expect(postgres.values == ["y", "16384", "(0,3)", "900"])
+    #expect(postgres.rowCheck == nil)
+
+    let sqlite = try CellUpdateStatement.make(
+      qualifiedName: #""main"."t""#, assignments: [(column: "name", value: "y")],
+      primaryKeyColumns: [], rowData: rowData, dialect: .sqlite,
+      rowLocator: .sqliteRowid(alias: .rowid, matchColumns: ["b", "name"]),
+      locator: RowLocatorValues(texts: ["5"], row: rowData))
+    #expect(
+      sqlite.sql
+        == #"UPDATE "main"."t" SET "name" = ?1 WHERE rowid = ?2 AND "b" IS ?3 AND "name" IS ?4"#)
+    #expect(sqlite.values == ["y", "5", "2.5", "x"])
+
+    // No locator for the row: refused with its own reason
+    let error = #expect(throws: DatabaseError.self) {
+      try CellUpdateStatement.make(
+        qualifiedName: #""public"."t""#, assignments: [(column: "name", value: "y")],
+        primaryKeyColumns: [], rowData: rowData, rowLocator: .pgLocator, locator: nil)
+    }
+    #expect(error?.localizedDescription.contains("primary key") == false)
+  }
+
   @Test("A column name with a quote is doubled")
   func quotedColumnDoublesEmbeddedQuote() throws {
     let editTarget = target()
