@@ -61,6 +61,8 @@ class WorkspaceManager: Identifiable {
 
   /// Single database connection for entire workspace
   let connectionManager: DatabaseConnectionManager
+  /// Timed write unlock of the connection (session only, see `WriteUnlockController`)
+  let writeUnlock: WriteUnlockController
   /// Where the recent list and its passwords are read and saved (tests pass isolated stores)
   let defaults: UserDefaults
   let passwords: any ConnectionPasswordStore
@@ -474,6 +476,7 @@ class WorkspaceManager: Identifiable {
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
+    self.writeUnlock = WriteUnlockController(connectionManager: connectionManager)
     self.defaults = defaults
     self.passwords = passwords
     self.lockCenter = lockCenter
@@ -891,6 +894,8 @@ class WorkspaceManager: Identifiable {
     dropCrossTableSearch()
     if !isAutoConnect { await supersedeAutoConnect() }
     connectGeneration &+= 1
+    // The write unlock belongs to the previous session (the actor forgets its copy too)
+    writeUnlock.end()
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()

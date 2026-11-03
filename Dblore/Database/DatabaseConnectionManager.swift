@@ -178,6 +178,11 @@ actor DatabaseConnectionManager {
   private nonisolated let leaseSlot = OSAllocatedUnfairLock<VaultLeaseSlot?>(initialState: nil)
   /// Why the Vault lease of the last lost connection ended (cleared on connect / disconnect)
   private(set) var lastLeaseEnd: VaultLeaseEnd?
+  /// End of the timed write unlock of this session (`unlockWrites(for:)`), never in `config`
+  /// and never saved; cleared when the session is forgotten or the protection level changes
+  private(set) var writeUnlockExpiry: Date?
+  /// Clock of the write unlock expiry (tests pass a fake one)
+  nonisolated let now: @Sendable () -> Date
 
   /// `sshHostKeyPrompt` asks the user to trust an unknown SSH host key; the default declines.
   init(
@@ -185,9 +190,11 @@ actor DatabaseConnectionManager {
     sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
     readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true,
     scripts: ConnectionScriptRunner = .app, lockSource: LockRegistry = .shared,
-    servesMCP: Bool = false, vaultLeasing: VaultLeasing = .app
+    servesMCP: Bool = false, vaultLeasing: VaultLeasing = .app,
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.vaultLeasing = vaultLeasing
+    self.now = now
     self.scripts = scripts
     self.lockSource = lockSource
     self.servesMCP = servesMCP
@@ -943,6 +950,7 @@ actor DatabaseConnectionManager {
       as: txState.endingKind == .commit || userCommitsInFlight > 0 ? nil : .discarded)
     session = nil
     config = nil
+    writeUnlockExpiry = nil
     activeUnrememberedVaultSecret = nil
     sqliteReadOnlyReason = nil
     attachWarnings = []
@@ -1001,9 +1009,33 @@ actor DatabaseConnectionManager {
   // MARK: - Connected Protection
 
   /// Protection of the config this actor connected with (`.none` when not connected).
-  /// The execution gate enforces the stricter of this and the caller's policy.
+  /// The execution gate enforces the stricter of this and the caller's policy. A running write
+  /// unlock lowers Read-only to Schema only (`ProtectionPolicy.unlockingWrites`).
   var connectedPolicy: ProtectionPolicy {
-    ProtectionPolicy(config: config)
+    ProtectionPolicy(config: config).unlockingWrites(isWriteUnlocked)
+  }
+
+  /// A timed write unlock of this session runs now. Never on an MCP manager.
+  var isWriteUnlocked: Bool {
+    guard !servesMCP, let writeUnlockExpiry else { return false }
+    return now() < writeUnlockExpiry
+  }
+
+  /// Starts (or restarts) the write unlock of this session for `duration`. Returns its end, or
+  /// nil when refused: an MCP manager, not connected, or a connected config the unlock cannot
+  /// write (`ProtectionPolicy.writeUnlockRefusal`). Nothing is written to `config`.
+  func unlockWrites(for duration: TimeInterval) -> Date? {
+    guard !servesMCP, let config, ProtectionPolicy.writeUnlockRefusal(for: config) == nil else {
+      return nil
+    }
+    let expiry = now().addingTimeInterval(duration)
+    writeUnlockExpiry = expiry
+    return expiry
+  }
+
+  /// Ends the write unlock of this session (no-op when none runs)
+  func lockWrites() {
+    writeUnlockExpiry = nil
   }
 
   /// Apply a runtime change of the connection's protection settings (protection level,
@@ -1011,6 +1043,8 @@ actor DatabaseConnectionManager {
   /// connected. `connectedPolicy` still reads only `protectedMode` from that config.
   func updateConnectedProtection(from newConfig: ConnectionConfig) {
     guard config != nil else { return }
+    // A changed level ends the write unlock: raising it back never inherits the old one
+    if config?.protectionLevel != newConfig.protectionLevel { writeUnlockExpiry = nil }
     config?.protectionLevel = newConfig.protectionLevel
     config?.safeMode = newConfig.safeMode
     config?.protectedMode = newConfig.protectedMode

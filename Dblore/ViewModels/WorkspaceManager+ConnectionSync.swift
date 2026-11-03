@@ -40,6 +40,7 @@ extension WorkspaceManager {
       guard let self else { return false }
       return !self.pendingTransaction.isIdle
     }
+    viewModel.writeUnlock = writeUnlock
   }
 
   /// A tab changed the protection level, commit style, Safe Mode or protected mode of the
@@ -61,6 +62,8 @@ extension WorkspaceManager {
     current.protectedMode = config.protectedMode
     current.commitStyle = config.commitStyle
     guard current != previous else { return }
+    // A changed level ends the write unlock (the actor ends its copy too)
+    if current.protectionLevel != previous.protectionLevel { writeUnlock.end() }
     workspace.connectionConfig = current
     editingConnectionConfig.protectionLevel = current.protectionLevel
     editingConnectionConfig.safeMode = current.safeMode

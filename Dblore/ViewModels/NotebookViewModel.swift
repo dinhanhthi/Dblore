@@ -94,6 +94,9 @@ class NotebookViewModel {
   /// Workspace mode: true while a transaction is pending. A commit-style change is refused
   /// until Commit or Rollback; the transaction is not committed automatically.
   @ObservationIgnored var isCommitStyleChangeBlocked: @MainActor () -> Bool = { false }
+  /// Workspace mode: the connection's timed write unlock (`protectionPolicy` honors it). Set
+  /// by `WorkspaceManager`.
+  @ObservationIgnored weak var writeUnlock: WriteUnlockController?
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
@@ -466,9 +469,11 @@ class NotebookViewModel {
   // MARK: - Query Confirmation
 
   /// Protection policy of this notebook's connection, built per execution because the
-  /// protection level can change at runtime. Passed to the database execution gate.
+  /// protection level can change at runtime. Passed to the database execution gate. A running
+  /// write unlock lowers Read-only to Schema only, as the connection actor does.
   var protectionPolicy: ProtectionPolicy {
     ProtectionPolicy(config: notebook.connectionConfig)
+      .unlockingWrites(writeUnlock?.isActive == true)
   }
 
   /// Rows read per statement (notebook cells, editor, Run All, inline-edit refresh): the

@@ -34,6 +34,8 @@ extension WorkspaceManager {
   /// A capped read or a cancel closed and reopened the shared session (still connected): every tab lost
   /// its temp tables and SET values. The result itself shows the details.
   func sessionWasReset(_ event: SessionResetEvent) {
+    // The reopened session starts locked again (the actor forgot its unlock with the old one)
+    writeUnlock.end()
     // The closed session took its transaction along: the tables written in it were rolled back.
     // When the reset ended none, a held table had no transaction to roll back with (the mirror
     // lagged): its write was committed, so its tabs are marked rather than missed.

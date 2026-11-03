@@ -405,6 +405,7 @@ extension WorkspaceManager {
       activeUnrememberedSSHCredential = nil
     }
     dropTypedPassword(keepingHeldCopy: preserveCertificateForReconnect)
+    writeUnlock.end()
     autoConnectTask?.cancel()
     cancelSchemaLoad()
     // Before the session closes: a structure read failing on the closed connection must find the
