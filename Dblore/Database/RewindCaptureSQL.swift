@@ -1,8 +1,8 @@
 // RewindCaptureSQL.swift
 // The Data Rewind row read: one row by primary key, every column in text form, and the way
 // back from that stored text to binds for the inverse statements.
-// - PostgreSQL reads `'v' || col::text` (the session reads an empty text cell as NULL, so the
-//   one-character prefix keeps '' apart from NULL) and binds the text as an untyped `$n`.
+// - PostgreSQL reads `'v' || col::text` (the one-character prefix keeps '' apart from NULL:
+//   text concatenated with NULL stays NULL) and binds the text as an untyped `$n`.
 // - MySQL reads `HEX(col)` for byte, BIT and spatial columns, bound back as `UNHEX(?)`, and
 //   `CAST(col AS CHAR)` for the rest, bound back as text.
 // - SQLite reads `quote(col)` and keeps the literal, so the storage class survives: `NULL`,

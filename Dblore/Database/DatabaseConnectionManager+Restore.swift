@@ -68,6 +68,15 @@ nonisolated struct SQLRestoreProgress: Sendable, Equatable {
   var statementCount: Int
 }
 
+/// How far reading and planning a restore file is (`DatabaseBackupModel.readPlan`)
+nonisolated enum SQLRestoreReadProgress: Sendable, Equatable {
+  /// `bytesRead` of the file's `byteCount`
+  case reading(bytesRead: Int, byteCount: Int)
+  /// The first `statementsPlanned` of the script's `statementCount` pieces are checked; 0 of 0
+  /// while the script is split
+  case planning(statementsPlanned: Int, statementCount: Int)
+}
+
 /// Why a restore was refused or did not finish cleanly. Every case but `sessionNotReset` and
 /// `restoreFailedSessionClosed` means nothing was executed (the `standardStrings` cases follow
 /// only the `SHOW standard_conforming_strings` read, the drop target and foreign key cases only
@@ -202,8 +211,9 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
 /// A dump script read once (pure, off the actor): the statements to send, as classified for the
 /// gate, and their counts for the confirmation. `executeGatedRestore` runs it as is.
 nonisolated struct SQLRestorePlan: Sendable {
-  /// The splitter holds the script as Unicode scalars (about 4 bytes each): 64 MiB of SQL costs
-  /// about 256 MiB at peak
+  /// The splitter holds the script as Unicode scalars (about 4 bytes each), alone: the script's
+  /// text is freed once they are built, and they are freed once split. 64 MiB of SQL costs about
+  /// 256 MiB of scalars plus the statements' text, up to about 400 MiB at peak
   static let maxScriptBytes = 64 * 1024 * 1024
   /// First line of every dump (`SQLDumpAssembler.header`), followed by the engine's raw value
   static let headerPrefix = "-- Dblore SQL dump 1 engine="
@@ -263,7 +273,12 @@ nonisolated struct SQLRestorePlan: Sendable {
   ///   SQLite or DuckDB script, the first statement a dump never writes, or a DROP of an object
   ///   the script does not create after it); `CancellationError` when the task planning it is
   ///   cancelled
-  init(script: String, engine: DatabaseType) throws {
+  /// `script` is consumed: a caller that hands over its only copy (`consume`) has it freed
+  /// before the split. `progress` gets the statements checked, every 4,096 and at the end.
+  init(
+    script: consuming String, engine: DatabaseType,
+    progress: (SQLRestoreReadProgress) -> Void = { _ in }
+  ) throws {
     let bytes = script.utf8.count
     guard bytes <= Self.maxScriptBytes else { throw SQLRestoreError.tooLarge(bytes: bytes) }
     switch engine {
@@ -271,11 +286,21 @@ nonisolated struct SQLRestorePlan: Sendable {
     case .mongodb: throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
     let version = try Self.checkHeader(script, engine: engine)
-    // Both read statements as C strings: a NUL would cut the statement the whitelist approved
-    if engine == .sqlite || engine == .duckdb, script.unicodeScalars.contains("\0") {
-      throw SQLRestoreError.containsNUL
-    }
     let dialect = engine.dialect
+    progress(.planning(statementsPlanned: 0, statementCount: 0))
+    let pieces: [String]
+    do {
+      // One buffer at a time: the text goes once its scalars are built, they go once split
+      var scalars: [Unicode.Scalar] = []
+      scalars.reserveCapacity(bytes)
+      scalars.append(contentsOf: script.unicodeScalars)
+      _ = consume script
+      // Both read statements as C strings: a NUL would cut the statement the whitelist approved
+      if engine == .sqlite || engine == .duckdb, scalars.contains("\0") {
+        throw SQLRestoreError.containsNUL
+      }
+      pieces = SQLTokenizer(dialect: dialect).splitStatements(scalars: scalars)
+    }
     var statements: [ClassifiedStatement] = []
     var kinds: [SQLRestoreStatementKind] = []
     var options: [String] = []
@@ -285,9 +310,12 @@ nonisolated struct SQLRestorePlan: Sendable {
     // Each DROP's targets, checked once the loop ends against the last CREATE of each object
     var drops: [(index: Int, target: DropTarget)] = []
     var lastCreated: [ObjectKey: Int] = [:]
-    for piece in SQLTokenizer(dialect: dialect).splitStatements(script) {
+    for (planned, piece) in pieces.enumerated() {
       // A file read cancelled while it is planned stops here
       try Task.checkCancellation()
+      if planned.isMultiple(of: 4_096) {
+        progress(.planning(statementsPlanned: planned, statementCount: pieces.count))
+      }
       guard let classified = SQLStatementClassifier.classifyStatement(piece, dialect: dialect)
       else { continue }
       let accepted = try Self.accept(
@@ -303,6 +331,7 @@ nonisolated struct SQLRestorePlan: Sendable {
       kinds.append(accepted.kind)
       options += accepted.options
     }
+    progress(.planning(statementsPlanned: pieces.count, statementCount: pieces.count))
     // A DROP only clears the way for an object of the same kind and name created after it
     for drop in drops where lastCreated[drop.target.key, default: -1] < drop.index {
       throw Self.refusal(
@@ -1493,8 +1522,9 @@ extension DatabaseConnectionManager {
   /// sequence (`'i'`) goes with its column, and the dump's CREATE TABLE recreates it. Dropped
   /// types: the types that are not enums, without a table's row type or an array type (the
   /// server refuses DROP TYPE on those without CASCADE, so the batch rolls back anyway). System
-  /// schemas are left out: `objectKey` never keys them. No column is ever empty text: the
-  /// session reads an empty value as NULL.
+  /// schemas are left out: `objectKey` never keys them. No column is ever NULL
+  /// (`checkPostgresDropTargets` reads five text cells): the type branch fills the last with
+  /// `'-'`.
   static func postgresDropTargetsQuery(_ drops: SQLRestorePlan.PostgresDrops) -> String {
     var branches: [String] = []
     if !drops.tables.isEmpty {
@@ -1653,6 +1683,7 @@ extension DatabaseConnectionManager {
     defer {
       editTableCache.removeAll()
       mysqlTableColumns.removeAll()
+      columnTypeCache.removeAll()
     }
     try await PerfSignpost.interval("restore.run") {
       switch engine {

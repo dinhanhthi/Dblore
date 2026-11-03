@@ -69,6 +69,31 @@ struct ResultSelectionSummaryTests {
     #expect(text.nonNullCount == 2)
   }
 
+  @Test("Decimal cells sum exactly; NaN and Infinity are not values")
+  func decimalCells() throws {
+    let result = try summary(
+      [
+        .decimal("12345678901234567890.12"), .decimal("0.01"), .decimal("NaN"),
+        .decimal("-Infinity"),
+      ],
+      type: "numeric")
+    #expect(result.numericCount == 2)
+    #expect(result.nonNullCount == 4)
+    #expect(result.sum == Decimal(string: "12345678901234567890.13"))
+    #expect(result.minimum == Decimal(string: "0.01"))
+    #expect(result.isMixed)
+  }
+
+  @Test("A decimal past Decimal's range is no value, so the sum and bounds stay finite")
+  func hugeDecimalIsNoValue() throws {
+    let huge = "9" + String(repeating: "0", count: 170)
+    let result = try summary([.decimal(huge), .decimal("2.5")], type: "numeric")
+    #expect(result.numericCount == 1)
+    #expect(result.sum == Decimal(string: "2.5"))
+    #expect(result.minimum == Decimal(string: "2.5"))
+    #expect(result.maximum == Decimal(string: "2.5"))
+  }
+
   @Test("Text with trailing garbage is not a number")
   func lenientTextIsRejected() throws {
     let result = try summary(

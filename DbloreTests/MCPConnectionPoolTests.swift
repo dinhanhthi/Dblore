@@ -3,6 +3,7 @@
 // without a prompt when a secret or trust decision is missing, closed when idle.
 
 import Foundation
+import Security
 import Testing
 
 @testable import Dblore
@@ -29,6 +30,16 @@ private final class EntryBook {
   func entry(_ id: UUID) -> ConnectionHistoryEntry? {
     entries[id]
   }
+}
+
+/// How many times a lookup read a saved password.
+private final class KeychainReadCount: @unchecked Sendable {
+  private let lock = NSLock()
+  private var reads = 0
+
+  var count: Int { lock.withLock { reads } }
+
+  func increment() { lock.withLock { reads += 1 } }
 }
 
 /// A clock the test moves by hand.
@@ -215,6 +226,34 @@ struct MCPConnectionPoolTests {
     await pool.closeAll()
   }
 
+  @Test("An unreadable saved password is refused, never sent empty; a missing one still connects")
+  func unreadablePasswordRefused() async throws {
+    let unreadable = ConnectionHistoryEntry(config: postgres(password: "", database: "locked"))
+    let missing = ConnectionHistoryEntry(config: postgres(password: "", database: "trust"))
+    let name = "MCPConnectionPoolTests-\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+    let settings = AppSettings(defaults: suite)
+    settings.mcpAllowedConnectionIDs = [unreadable.id, missing.id]
+    let locked = unreadable.config
+    let lookup = MCPServerController.entryLookup(
+      settings: settings, savedConnections: { [unreadable, missing] },
+      password: { config in
+        guard config == locked else { return nil }
+        throw ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)
+      }, lockSource: LockRegistry())
+    let pool = MCPConnectionPool(
+      entry: lookup, sessionFactory: factory, certificates: certificates,
+      sshCredentials: sshCredentials, knownHosts: knownHosts, lockSource: LockRegistry())
+    await #expect(throws: MCPConnectionError.passwordStoreUnreadable) {
+      _ = try await manager(pool, unreadable.id)
+    }
+    #expect(factory.sessions.isEmpty)
+    #expect(try await manager(pool, missing.id).config?.password == "")
+    #expect(factory.sessions.count == 1)
+    await pool.closeAll()
+  }
+
   @Test("Sessions get the MCP statement timeout; a shorter one of the connection is kept")
   func statementTimeoutCapped() async throws {
     let pool = pool()
@@ -258,6 +297,42 @@ struct MCPConnectionPoolTests {
     }
     #expect(factory.sessions.isEmpty)
     await pool.closeAll()
+  }
+
+  @Test("An ask-on-connect row is refused before connecting and its Keychain password never read")
+  func askOnConnectRefusedWithoutKeychainRead() async throws {
+    var flagged = postgres(password: "", database: "ask")
+    flagged.askPasswordOnConnect = true
+    let entry = ConnectionHistoryEntry(config: flagged)
+    let name = "MCPConnectionPoolTests-\(UUID().uuidString)"
+    let suite = try #require(UserDefaults(suiteName: name))
+    defer { suite.removePersistentDomain(forName: name) }
+    let settings = AppSettings(defaults: suite)
+    settings.mcpAllowedConnectionIDs = [entry.id]
+    // A sibling row's password under the same Keychain key would connect it without asking
+    let reads = KeychainReadCount()
+    let password: @Sendable (ConnectionConfig) throws -> String? = { _ in
+      reads.increment()
+      return "sibling"
+    }
+    let mcp = MCPServerController.entryLookup(
+      settings: settings, savedConnections: { [entry] }, password: password,
+      lockSource: LockRegistry())
+    let id = entry.id
+    let shortcuts = HeadlessAccessRule(lockSource: LockRegistry()).entryLookup(
+      saved: { [entry] }, caller: { .shortcuts(enabled: true, allowlist: [id]) },
+      password: password)
+    for lookup in [mcp, shortcuts] {
+      let pool = MCPConnectionPool(
+        entry: lookup, sessionFactory: factory, certificates: certificates,
+        sshCredentials: sshCredentials, knownHosts: knownHosts, lockSource: LockRegistry())
+      await #expect(throws: MCPConnectionError.passwordAsksOnConnect) {
+        _ = try await manager(pool, id)
+      }
+      await pool.closeAll()
+    }
+    #expect(reads.count == 0)
+    #expect(factory.sessions.isEmpty)
   }
 
   @Test("A Vault connection is refused before connecting: its lease needs the app window")

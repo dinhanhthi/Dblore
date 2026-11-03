@@ -29,7 +29,9 @@ nonisolated enum SQLInsertRenderer {
     var offset = 0
     while offset < result.rows.count {
       let end = min(offset + size, result.rows.count)
-      let tuples = result.rows[offset..<end].map { tuple($0, dialect: dialect) }
+      let tuples = result.rows[offset..<end].map {
+        tuple($0, columns: result.columns, dialect: dialect)
+      }
       statements.append(header + " " + tuples.joined(separator: ", ") + ";")
       offset = end
     }
@@ -68,8 +70,15 @@ nonisolated enum SQLInsertRenderer {
     return "table_name"
   }
 
-  private static func tuple(_ row: [CellValue], dialect: SQLDialect) -> String {
-    "(" + row.map { dialect.literal($0) }.joined(separator: ", ") + ")"
+  /// `row` as literals, a date as its column's (`ColumnInfo.wallClock`; zoned past the end)
+  private static func tuple(
+    _ row: [CellValue], columns: [ColumnInfo], dialect: SQLDialect
+  ) -> String {
+    let literals = row.enumerated().map { index, value in
+      dialect.literal(
+        value, wallClock: columns.indices.contains(index) && columns[index].wallClock)
+    }
+    return "(" + literals.joined(separator: ", ") + ")"
   }
 
   /// `dialect.quoteIdentifier`, or the same doubled-quote text when the name contains a NUL.

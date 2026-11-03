@@ -6,7 +6,6 @@
 import AppKit
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// Manages multiple workspace windows.
 /// This is the top-level manager for the entire application.
@@ -64,9 +63,60 @@ class WorkspaceWindowManager {
     }
   }
 
-  /// Pending workspace ID to open in a window (set by menu commands)
+  /// Pending workspace ID a Welcome window takes (set only by `showPendingWorkspace`)
   /// Observed by AppWindowView to open workspace in current or new window
   var pendingWorkspaceId: UUID?
+
+  /// The window already showing a workspace (tests answer without one)
+  @ObservationIgnored var findWorkspaceWindow: @MainActor (UUID) -> NSWindow? = {
+    NewWindowStore.shared.findWindow(for: $0)
+  }
+
+  /// Whether the window whose `AppWindowView` takes a pending id shows Welcome
+  @ObservationIgnored var hasWelcomeHandler: @MainActor () -> Bool = {
+    guard let window = WorkspaceWindowManager.pendingHandlerWindow() else { return false }
+    return NewWindowStore.shared.registration(for: window) == .welcome
+  }
+
+  /// Opens a workspace window (tests open none)
+  @ObservationIgnored var openWorkspaceWindow: @MainActor (UUID) -> Void = {
+    NewWindowStore.shared.openWorkspaceWindow(workspaceId: $0)
+  }
+
+  /// Shows workspace `id` in a window that surely shows it (menus, Finder, Shortcuts, a moved
+  /// tab, Settings): the window already showing it comes to the front; else a Welcome window
+  /// that would take the pending id replaces itself; else (no window, or a front window that
+  /// shows its own workspace and would leave the id unread) a workspace window opens at once.
+  /// A window closing with the workspace's earlier open is never reused: it closes right after.
+  func showPendingWorkspace(_ id: UUID) {
+    if let window = findWorkspaceWindow(id), window.isOpenDbloreDocumentWindow,
+      !NewWindowStore.shared.isClosing(window)
+    {
+      NewWindowStore.shared.clearPendingDetach(workspaceId: id)
+      window.makeKeyAndOrderFront(nil)
+    } else if hasWelcomeHandler() {
+      pendingWorkspaceId = id
+      // Safety net: that Welcome window clears the id as it takes it. Still pending a moment
+      // later (a short sleep, not one main-queue hop, which can run before SwiftUI sees the
+      // change) means no window took it: open one.
+      Task {
+        try? await Task.sleep(for: .milliseconds(300))
+        guard pendingWorkspaceId == id, findWorkspaceWindow(id) == nil else { return }
+        pendingWorkspaceId = nil
+        openWorkspaceWindow(id)
+      }
+    } else {
+      openWorkspaceWindow(id)
+    }
+  }
+
+  /// The window whose `AppWindowView` handles a pending workspace id, in its order: the key
+  /// document window, else the main window, else the first visible document window
+  private static func pendingHandlerWindow() -> NSWindow? {
+    if let key = NSApp.keyWindow, key.isDbloreDocumentWindow { return key }
+    return NSApp.mainWindow
+      ?? NSApp.orderedWindows.first { $0.isVisible && $0.isDbloreDocumentWindow }
+  }
 
   /// Whether app is showing welcome screen (no workspaces open)
   var isShowingWelcome: Bool {
@@ -387,32 +437,6 @@ class WorkspaceWindowManager {
     }
   }
 
-  /// Open workspace with file panel
-  func openWorkspaceWithPanel() async {
-    let panel = NSOpenPanel()
-    panel.allowedContentTypes = UTType.sqlWorkspaceOpenTypes
-    panel.allowsMultipleSelection = false
-    panel.canChooseDirectories = false
-    panel.message = "Select a workspace file to open"
-
-    let response: NSApplication.ModalResponse
-    if let window = NSApp.keyWindow {
-      response = await panel.beginSheetModal(for: window)
-    } else {
-      response = await withCheckedContinuation { continuation in
-        panel.begin { result in
-          continuation.resume(returning: result)
-        }
-      }
-    }
-
-    if response == .OK, let url = panel.url,
-      let id = await requestWorkspaceReportingError(url: url)
-    {
-      pendingWorkspaceId = id
-    }
-  }
-
   /// Close a workspace
   func closeWorkspace(id: UUID, force: Bool = false) async -> Bool {
     guard let manager = workspaces[id] else { return true }
@@ -470,6 +494,42 @@ class WorkspaceWindowManager {
   /// Get workspace by ID
   func workspace(for id: UUID) -> WorkspaceManager? {
     workspaces[id]
+  }
+
+  /// The password typed for the ask-on-connect saved row `config`, held in memory by a workspace
+  /// connected to it now: the same saved identity (`ConnectionHistoryEntry.isSavedRow(of:)`:
+  /// Keychain key, engine, host, port, database and username) reached the same way
+  /// (`sharesEndpoint`: SSH tunnel and TLS). Nil for a row without the flag, or when no such
+  /// workspace is connected (one that lost its session holds the password for its banner
+  /// Reconnect only; a disconnect blanks the workspace config's copy first, so a workspace still
+  /// disconnecting lends nothing). Never another connection's password.
+  func typedPasswordOfConnectedWorkspace(for config: ConnectionConfig) -> String? {
+    guard config.askPasswordOnConnect else { return nil }
+    for manager in allWorkspaces where manager.connectionState.isConnected {
+      guard let typed = manager.activeTypedPassword, !typed.isEmpty,
+        let connected = manager.workspace.connectionConfig, connected.askPasswordOnConnect,
+        connected.password == typed,
+        ConnectionHistoryEntry(config: connected).isSavedRow(of: config),
+        Self.sharesEndpoint(connected, config)
+      else { continue }
+      return typed
+    }
+    return nil
+  }
+
+  /// Whether `a` and `b` reach their server the same way: the same SSH bastion (none, or the
+  /// same host, port and username: behind a tunnel `host` is the server as the bastion sees it)
+  /// and the same TLS (mode; client certificate and custom CA: present, subject, CA). How the
+  /// bastion is signed in to (password or key, the key's algorithm and fingerprint) and the
+  /// certificate's expiry (whole seconds in a workspace file) are not compared: they do not
+  /// change where the password goes.
+  private static func sharesEndpoint(_ a: ConnectionConfig, _ b: ConnectionConfig) -> Bool {
+    a.sslMode == b.sslMode && (a.clientCertificate == nil) == (b.clientCertificate == nil)
+      && a.clientCertificate?.subject == b.clientCertificate?.subject
+      && a.clientCertificate?.hasCA == b.clientCertificate?.hasCA
+      && (a.sshTunnel == nil) == (b.sshTunnel == nil)
+      && a.sshTunnel?.host == b.sshTunnel?.host && a.sshTunnel?.port == b.sshTunnel?.port
+      && a.sshTunnel?.username == b.sshTunnel?.username
   }
 
   // MARK: - Window Management

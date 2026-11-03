@@ -4,7 +4,8 @@
 // `maxCellCharacters` becomes `{truncated, value}` and binary whose base64 would be longer
 // `{base64, truncated}` (MCP managers already cut cells as rows arrive, `CappedReadLimits`, so
 // the full length is not known here). NULL is `null` and an empty string `""`; binary is
-// `{base64, bytes}`.
+// `{base64, bytes}`; a date is its column's `CellValue.outputString(wallClock:)` text. A decimal
+// is a JSON number when `jsonNumber` holds it exactly, else its exact text.
 
 import Foundation
 
@@ -39,8 +40,9 @@ nonisolated enum MCPResultEncoder {
   static func encodeRows(_ result: MCPReadResult) -> String {
     var cut = 0
     let rows = result.rows.map { row in
-      row.map { value -> Cell in
-        let cell = Cell(value)
+      row.enumerated().map { index, value -> Cell in
+        let wallClock = index < result.columns.count && result.columns[index].wallClock
+        let cell = Cell(value, wallClock: wallClock)
         if cell.isTruncated { cut += 1 }
         return cell
       }
@@ -50,6 +52,18 @@ nonisolated enum MCPResultEncoder {
         columns: result.columns.map { ["name": $0.name, "type": $0.type] }, notice: dataNotice,
         rowCount: rows.count, rows: rows, rowsTruncated: result.rowsTruncated,
         truncatedCells: cut))
+  }
+
+  /// Finite decimal text as a `Decimal` when a JSON number keeps its value exactly: at most 15
+  /// significant digits and a decimal exponent (`digits × 10^exponent`) inside −128…127, the
+  /// range `Decimal` holds. Checked on the text, so no digit is lost; nil otherwise (more digits,
+  /// a larger or smaller exponent, NaN, ±Infinity). Trailing scale zeros are not kept (`19.90`
+  /// is the number 19.9).
+  private static func jsonNumber(_ text: String) -> Decimal? {
+    guard let finite = DecimalText.Finite(text), finite.digits.count <= 15,
+      (-128...127).contains(finite.point - finite.digits.count)
+    else { return nil }
+    return Decimal(string: text)
   }
 
   private static func encode(_ value: some Encodable) -> String {
@@ -101,6 +115,8 @@ nonisolated enum MCPResultEncoder {
     case null
     case int(Int)
     case double(Double)
+    /// Written as plain digits (`JSONEncoder` writes a `Decimal` without an exponent)
+    case decimal(Decimal)
     case bool(Bool)
     case text(String)
     case cut(prefix: String)
@@ -111,14 +127,16 @@ nonisolated enum MCPResultEncoder {
       case base64, bytes, truncated, value
     }
 
-    init(_ value: CellValue) {
+    init(_ value: CellValue, wallClock: Bool) {
       switch value {
       case .null: self = .null
       case .int(let number): self = .int(number)
       case .double(let number): self = number.isFinite ? .double(number) : .text("\(number)")
       case .bool(let flag): self = .bool(flag)
       case .string(let text), .json(let text): self = Self.textCell(text)
-      case .date(let date): self = .text(date.formatted(.iso8601))
+      case .decimal(let text):
+        self = MCPResultEncoder.jsonNumber(text).map(Cell.decimal) ?? Self.textCell(text)
+      case .date: self = .text(value.outputString(wallClock: wallClock))
       case .data(let data):
         // Only the bytes the base64 prefix shows are encoded
         let shown = MCPResultEncoder.maxCellCharacters / 4 * 3
@@ -154,6 +172,9 @@ nonisolated enum MCPResultEncoder {
         var container = encoder.singleValueContainer()
         try container.encode(number)
       case .double(let number):
+        var container = encoder.singleValueContainer()
+        try container.encode(number)
+      case .decimal(let number):
         var container = encoder.singleValueContainer()
         try container.encode(number)
       case .bool(let flag):

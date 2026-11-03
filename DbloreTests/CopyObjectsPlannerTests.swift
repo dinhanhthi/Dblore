@@ -3,7 +3,8 @@
 // target gets inline foreign keys with deferred checks and an inline CHECK, a unique constraint is
 // not planned again as an index and indexes come before foreign keys, a PostgreSQL table lands in
 // SQLite's main, repeated MySQL index names become distinct on PostgreSQL and FULLTEXT is skipped,
-// repeated foreign-key names become distinct on MySQL and SET DEFAULT is dropped there.
+// repeated foreign-key names become distinct on MySQL and SET DEFAULT is dropped there. An index
+// keeps DESC / NULLS on PostgreSQL; SQLite drops NULLS and MySQL 5.7 drops DESC, each warned.
 // A CHECK or index expression that calls an unsafe function (attribute notation and SQLite's
 // load_extension / readfile included) or has a subquery is skipped with a warning; an
 // allowlisted one is copied. Known MySQL constraint names are renamed. Hostile
@@ -64,11 +65,12 @@ struct CopyObjectsPlannerTests {
   }
 
   private static func index(
-    _ name: String, _ columns: [String], unique: Bool = false, method: String? = nil
+    _ name: String, _ columns: [String], unique: Bool = false, method: String? = nil,
+    order: [Index.KeyOrder] = []
   ) -> Index {
     Index(
       name: name, keys: columns.map { .column($0) }, isUnique: unique, isPrimary: false,
-      method: method, isPartial: false, predicate: nil)
+      method: method, isPartial: false, predicate: nil, sortOrder: order)
   }
 
   /// a.b_id -> b and b.a_id -> a
@@ -208,6 +210,47 @@ struct CopyObjectsPlannerTests {
     #expect(Set(names).count == 4)
     #expect(plan.indexStatements.allSatisfy { !$0.contains("body") })
     #expect(plan.warnings.contains { $0.contains("\"body\"") && $0.contains("FULLTEXT") })
+  }
+
+  @Test("Index order: PostgreSQL keeps DESC NULLS LAST; SQLite drops NULLS, MySQL 5.7 DESC")
+  func indexOrder() throws {
+    let tables = [
+      Self.table(
+        "events", columns: [("id", "integer"), ("at", "timestamp")],
+        constraints: [Self.primaryKey("id")],
+        indexes: [
+          Self.index(
+            "events_at", ["at", "id"],
+            order: [.init(descending: true, nullsFirst: false), .init(descending: false)])
+        ])
+    ]
+    let plan = { (target: Engine, schema: String) in
+      try CopyObjectsPlanner.plan(
+        tables, source: .postgresql, target: target, targetSchema: schema, existingNames: [])
+    }
+    let postgres = try plan(.postgresql, "copy")
+    #expect(
+      postgres.indexStatements == [
+        #"CREATE INDEX "events_at" ON "copy"."events" ("at" DESC NULLS LAST, "id")"#
+      ])
+    #expect(postgres.warnings.isEmpty)
+    #expect(
+      try CopyObjectsDDLCheck.check(postgres.editableDDL, plan: postgres).postRows
+        == postgres.indexStatements)
+    let sqlite = try plan(Self.sqlite, "main")
+    #expect(
+      sqlite.indexStatements == [#"CREATE INDEX "main"."events_at" ON "events" ("at" DESC, "id")"#])
+    #expect(sqlite.warnings.count == 1)
+    #expect(sqlite.warnings.contains { $0.contains("\"events_at\"") && $0.contains("NULLS") })
+    #expect(
+      try CopyObjectsDDLCheck.check(sqlite.editableDDL, plan: sqlite).postRows
+        == sqlite.indexStatements)
+    let mysql57 = try plan(
+      .mysql(MySQLServerInfo(flavor: .mysql, major: 5, minor: 7, patch: 44)), "shop")
+    #expect(mysql57.indexStatements == ["CREATE INDEX `events_at` ON `shop`.`events` (`at`, `id`)"])
+    #expect(mysql57.warnings.contains { $0.contains("\"events_at\"") && $0.contains("DESC") })
+    // MySQL 8 keeps DESC
+    #expect(try plan(Self.mysql, "shop").indexStatements[0].contains("`at` DESC, `id`"))
   }
 
   @Test("MySQL target: repeated foreign-key names become distinct and SET DEFAULT is dropped")

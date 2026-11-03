@@ -221,9 +221,8 @@ nonisolated struct CopyObjectsTableRead: Sendable {
 
   // MARK: - Reads
 
-  /// Text in the engine's own form behind a `v` (PostgreSQL, MySQL and DuckDB sessions may read
-  /// an empty text as NULL; text concatenated with NULL stays NULL), or bytes as hex. SQLite
-  /// values are read as stored.
+  /// Text in the engine's own form behind a `v` (the prefix keeps '' apart from NULL; text
+  /// concatenated with NULL stays NULL), or bytes as hex. SQLite values are read as stored.
   private static func valueRead(
     _ name: String, binary: Bool, form: CopyObjectsTypeMapping.ValueForm, source: Engine
   ) -> String {

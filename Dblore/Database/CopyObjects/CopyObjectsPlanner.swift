@@ -17,7 +17,10 @@
 // as CREATE [UNIQUE] INDEX on every target. Partial indexes, expression keys without text,
 // FULLTEXT and SPATIAL are skipped; across engines only column keys with the btree (or no) method
 // are copied, with no method written; on a MySQL target a key on a TEXT / BLOB column of a MySQL
-// source is skipped. Each skip is a warning. PostgreSQL and SQLite index names share one namespace
+// source is skipped. Each skip is a warning. A key keeps DESC, and on a PostgreSQL target a NULLS
+// FIRST / LAST that is not the default for the direction; NULLS on another target, and DESC on a
+// MySQL before 8.0 or MariaDB before 10.8 target (which build the key ascending), are dropped
+// with a warning. PostgreSQL and SQLite index names share one namespace
 // per schema / database: an index or unique-constraint name that is already used (by the plan or
 // by the target) or starts with sqlite_ becomes <table>_<name>, cut to 63 bytes with a short hash.
 // On a SQLite target a constraint name starting with sqlite_ is dropped instead. MySQL and
@@ -382,6 +385,7 @@ nonisolated enum CopyObjectsPlanner {
         warn(table.name, "\(what) on a TEXT or BLOB column is skipped.")
         return nil
       }
+      applyOrder(index.sortOrder, to: &keys, warning: what, table: table.name)
 
       let name = indexName(index.name, table: table.name)
       let unique = index.isUnique ? "UNIQUE " : ""
@@ -398,6 +402,40 @@ nonisolated enum CopyObjectsPlanner {
         // SQLite qualifies the index; its table is looked up in the index's database
         return "CREATE \(unique)INDEX \(try qualified(name)) ON "
           + "\(try dialect.quoteIdentifier(table.name)) (\(list))"
+      }
+    }
+
+    /// Each key's DESC and (PostgreSQL target) non-default NULLS; one warning per dropped clause
+    private mutating func applyOrder(
+      _ order: [TableStructure.Index.KeyOrder], to keys: inout [String], warning what: String,
+      table: String
+    ) {
+      var server: MySQLServerInfo?
+      if case .mysql(let info) = target { server = info }
+      let keepsDescending = server?.supportsDescendingIndexKeys ?? true
+      var droppedDescending = false
+      var droppedNulls = false
+      for position in keys.indices where position < order.count {
+        let key = order[position]
+        if key.descending {
+          if keepsDescending { keys[position] += " DESC" } else { droppedDescending = true }
+        }
+        guard key.effectiveNullsFirst != key.descending else { continue }
+        if dialect == .postgresql {
+          keys[position] += key.effectiveNullsFirst ? " NULLS FIRST" : " NULLS LAST"
+        } else {
+          droppedNulls = true
+        }
+      }
+      if droppedDescending, let server {
+        let name = server.flavor == .mysql ? "MySQL" : "MariaDB"
+        warn(
+          table,
+          "\(what) is copied without DESC: \(name) \(server.major).\(server.minor) builds every "
+            + "key ascending.")
+      }
+      if droppedNulls {
+        warn(table, "\(what) is copied without NULLS FIRST / LAST, which only PostgreSQL has.")
       }
     }
 

@@ -3,6 +3,7 @@
 // frontmost window (or the sheet already on it, e.g. the connection form), so it shows above
 // any SwiftUI sheet. The changed-key alert attaches to the top-level window instead: a sheet
 // it could sit on (the Safe Mode unlock) may be closing, and AppKit queues the alert behind it.
+// Its Cancel is the default (Return and Escape); Replace Pin is never the default.
 // Host-key data is external input: shown as plain text.
 
 import AppKit
@@ -76,7 +77,10 @@ final class AppKitSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
   private var sheet: NSWindow?
   private var decide: (@MainActor (Bool) -> Void)?
   private var hostObservers: [any NSObjectProtocol] = []
-  private var showsChangedAlert = false
+  /// The open changed-key alert and its answer. AppKit may keep a closed window's alert
+  /// handler: it holds only this id, never the caller's retry.
+  private var changedAlertID: UUID?
+  private var changedAnswer: (@MainActor (Bool) -> Void)?
   private var changedAlertObserver: (any NSObjectProtocol)?
 
   func presentTrust(
@@ -109,47 +113,62 @@ final class AppKitSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
     closeSheet()
   }
 
-  func presentHostKeyChanged(_ change: SSHHostKeyChange) {
-    guard !showsChangedAlert else { return }
+  func presentHostKeyChanged(
+    _ change: SSHHostKeyChange, answered: @escaping @MainActor (_ replace: Bool) -> Void
+  ) -> Bool {
+    guard changedAlertID == nil else { return false }
     let alert = NSAlert()
     alert.alertStyle = .critical
     alert.messageText = "SSH host key changed"
     alert.informativeText =
       DatabaseError.sshHostKeyChanged(
         host: change.host, port: change.port, expected: change.expected,
-        presented: change.presented
+        presented: change.presented, presentedAlgorithm: change.presentedAlgorithm
       ).localizedDescription
     let fingerprints = NSTextField(
-      wrappingLabelWithString: "Expected:  \(change.expected)\nPresented: \(change.presented)")
+      wrappingLabelWithString: "Expected:  \(change.expected)\nPresented: \(change.presented) "
+        + "(\(change.presentedAlgorithm))")
     fingerprints.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
     fingerprints.isSelectable = true
     fingerprints.preferredMaxLayoutWidth = 360
     fingerprints.frame.size = fingerprints.fittingSize
     alert.accessoryView = fingerprints
-    alert.addButton(withTitle: "OK")
+    // The first button is the default (Return); one titled Cancel also takes Escape
+    alert.addButton(withTitle: "Cancel")
+    let replaceButton = alert.addButton(withTitle: "Replace Pin")
+    replaceButton.keyEquivalent = ""
+    replaceButton.hasDestructiveAction = true
     guard let root = Self.rootWindow() else {
-      alert.runModal()
-      return
+      answered(alert.runModal() == .alertSecondButtonReturn)
+      return true
     }
-    showsChangedAlert = true
+    let id = UUID()
+    changedAlertID = id
+    changedAnswer = answered
     // Closing the window drops its queued or shown alert, possibly without the completion
-    // handler: reopen the gate then too, so a later changed key still alerts.
+    // handler: end it then too (not replaced), so the retry goes and a later changed key alerts.
     changedAlertObserver = NotificationCenter.default.addObserver(
       forName: NSWindow.willCloseNotification, object: root, queue: .main
     ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.changedAlertEnded() }
+      MainActor.assumeIsolated { self?.changedAlertEnded(id, replace: false) }
     }
-    alert.beginSheetModal(for: root) { [weak self] _ in
-      self?.changedAlertEnded()
+    alert.beginSheetModal(for: root) { [weak self] response in
+      self?.changedAlertEnded(id, replace: response == .alertSecondButtonReturn)
     }
+    return true
   }
 
-  private func changedAlertEnded() {
-    showsChangedAlert = false
+  /// Ends alert `id` once (the completion handler and the window close can both report it).
+  private func changedAlertEnded(_ id: UUID, replace: Bool) {
+    guard changedAlertID == id else { return }
+    let answer = changedAnswer
+    changedAlertID = nil
+    changedAnswer = nil
     if let changedAlertObserver {
       NotificationCenter.default.removeObserver(changedAlertObserver)
     }
     changedAlertObserver = nil
+    answer?(replace)
   }
 
   private func finish(_ trusted: Bool) {

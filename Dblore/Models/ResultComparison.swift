@@ -277,6 +277,7 @@ nonisolated enum ResultComparison {
     case json(String)
     case date(Date)
     case data(Data)
+    case decimal(String)
 
     init(_ row: [CellValue], _ column: Int) {
       guard row.indices.contains(column) else {
@@ -292,6 +293,7 @@ nonisolated enum ResultComparison {
       case .json(let value): self = .json(value)
       case .date(let value): self = .date(value)
       case .data(let value): self = .data(value)
+      case .decimal(let value): self = .decimal(value)
       }
     }
   }

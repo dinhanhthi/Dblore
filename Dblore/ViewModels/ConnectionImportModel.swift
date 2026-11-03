@@ -399,6 +399,6 @@ final class ConnectionImportModel {
 /// Returns no passwords, so loading history for the preview reads nothing from the Keychain.
 struct NoPasswordStore: ConnectionPasswordStore {
   func savePassword(_ password: String, forKey key: String) {}
-  func loadPassword(forKey key: String) -> String? { nil }
+  func readPassword(forKey key: String) -> String? { nil }
   func deletePassword(forKey key: String) {}
 }

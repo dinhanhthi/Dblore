@@ -215,7 +215,7 @@ final class LockSettingsModel {
     }
     Task {
       if let id = await windows.requestWorkspaceReportingError(url: entry.fileURL) {
-        windows.pendingWorkspaceId = id
+        windows.showPendingWorkspace(id)
       }
     }
   }

@@ -25,12 +25,14 @@ struct NewRowField: Identifiable, Equatable, Sendable {
   let isIdentity: Bool
   /// Generated column: never written
   let isGenerated: Bool
+  /// `ColumnInfo.wallClock`: a naive timestamp, shown and read as its stored wall clock
+  let wallClock: Bool
   var text = ""
   var isNull = false
 
   init(
     name: String, type: String, isPrimaryKey: Bool = false, isNullable: Bool = true,
-    isIdentity: Bool = false, isGenerated: Bool = false
+    isIdentity: Bool = false, isGenerated: Bool = false, wallClock: Bool = false
   ) {
     self.name = name
     self.type = type
@@ -39,6 +41,7 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     self.isNullable = isNullable && !isPrimaryKey
     self.isIdentity = isIdentity
     self.isGenerated = isGenerated
+    self.wallClock = wallClock
   }
 
   /// Why the field cannot be staged, or nil
@@ -50,14 +53,16 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     case .integer:
       return CellValueValidator.validate(text, for: .int(0)).errorMessage
     case .decimal:
-      return CellValueValidator.validate(text, for: .double(0)).errorMessage
+      return CellValueValidator.validate(text, for: isExactDecimal ? .decimal("0") : .double(0))
+        .errorMessage
     case .boolean:
       return Bool(text) == nil ? "Invalid boolean value (use true/false)" : nil
     case .date:
       return Self.isPlainDate(text) ? nil : "Invalid date format (use yyyy-MM-dd)"
     case .timestamp:
       if Self.isPlainDate(text) { return nil }
-      return CellValueValidator.validate(text, for: .date(Date())).errorMessage
+      return CellValueValidator.validate(text, for: .date(Date()), wallClock: wallClock)
+        .errorMessage
     case .json:
       return CellValueValidator.validate(text, for: .json("")).errorMessage
     case .uuid:
@@ -67,9 +72,17 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     }
   }
 
-  /// Value to stage. Nil leaves the column out of the INSERT.
-  /// Decimals and dates keep the typed text so the database parses it without rounding.
-  var value: CellValue? {
+  /// NUMERIC / DECIMAL (`CellValue.placeholder(forColumnType:)` is `.decimal`), not a float type
+  private var isExactDecimal: Bool {
+    if case .decimal = CellValue.placeholder(forColumnType: type) { return true }
+    return false
+  }
+
+  /// Value to stage on `dialect` (the connection's). Nil leaves the column out of the INSERT.
+  /// Decimals and dates keep the typed text so the database parses it without rounding: a
+  /// NUMERIC / DECIMAL value is `.decimal` text. A timestamp reads as any new row's
+  /// (`NotebookViewModel.editedNewDate`), on SQLite as typed.
+  func value(dialect: SQLDialect) -> CellValue? {
     if isGenerated { return nil }
     if isNull { return .null }
     if text.isEmpty { return nil }
@@ -77,15 +90,20 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     case .integer: return Int(text).map(CellValue.int) ?? .string(text)
     case .boolean: return Bool(text).map(CellValue.bool) ?? .string(text)
     case .json: return .json(text)
+    case .decimal where isExactDecimal:
+      return DecimalText.exactText(typed: text).map(CellValue.decimal) ?? .string(text)
+    case .timestamp where dialect != .sqlite:
+      return NotebookViewModel.editedNewDate(
+        text, columnType: type, wallClock: wallClock, dialect: dialect)
     case .decimal, .date, .timestamp, .uuid, .text: return .string(text)
     }
   }
 
-  /// Values of every field that has one, keyed by column name
-  static func values(_ fields: [NewRowField]) -> [String: CellValue] {
+  /// Values of every field that has one, keyed by column name (`value(dialect:)`)
+  static func values(_ fields: [NewRowField], dialect: SQLDialect) -> [String: CellValue] {
     var values: [String: CellValue] = [:]
     for field in fields {
-      if let value = field.value { values[field.name] = value }
+      if let value = field.value(dialect: dialect) { values[field.name] = value }
     }
     return values
   }

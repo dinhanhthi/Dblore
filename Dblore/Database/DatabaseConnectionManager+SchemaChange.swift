@@ -69,6 +69,7 @@ extension DatabaseConnectionManager {
     defer {
       editTableCache.removeAll()
       mysqlTableColumns.removeAll()
+      columnTypeCache.removeAll()
     }
     let start = Date()
     if config?.databaseType == .mysql {

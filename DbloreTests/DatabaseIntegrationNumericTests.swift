@@ -64,8 +64,8 @@ struct DatabaseIntegrationNumericTests {
 
   // MARK: - NUMERIC Decoding Integration Tests
 
-  @Test("NUMERIC(10,2) values decode correctly to Double - Integration Test")
-  func numericDecimalDecodesToDoubleIntegration() async throws {
+  @Test("NUMERIC(10,2) values decode to their exact text - Integration Test")
+  func numericDecimalDecodesExactIntegration() async throws {
     let manager = DatabaseConnectionManager()
     let tableName = "test_numeric_decimal_\(UUID().uuidString.prefix(8))"
 
@@ -83,13 +83,7 @@ struct DatabaseIntegrationNumericTests {
       #expect(rowsCount > 0, "Should return at least one row")
       #expect(firstRowColumnsCount > 0, "Row should have at least one column")
 
-      if let priceValue = priceValue, case .double(let price) = priceValue {
-        #expect(
-          abs(price - 1329.98) < 0.01,
-          "NUMERIC(10,2) value 1329.98 should decode to Double correctly")
-      } else {
-        Issue.record("Expected .double value, got \(String(describing: priceValue))")
-      }
+      #expect(priceValue == .decimal("1329.98"), "NUMERIC(10,2) 1329.98 should decode exactly")
 
       try await dropNumericTestTable(manager: manager, tableName: tableName)
       await manager.disconnect()
@@ -100,8 +94,8 @@ struct DatabaseIntegrationNumericTests {
     }
   }
 
-  @Test("NUMERIC(15,4) high precision values decode correctly - Integration Test")
-  func numericHighPrecisionDecodesToDoubleIntegration() async throws {
+  @Test("NUMERIC(15,4) high precision values decode exactly - Integration Test")
+  func numericHighPrecisionDecodesExactIntegration() async throws {
     let manager = DatabaseConnectionManager()
     let tableName = "test_numeric_precision_\(UUID().uuidString.prefix(8))"
 
@@ -118,11 +112,7 @@ struct DatabaseIntegrationNumericTests {
 
       #expect(rowsCount > 0, "Should return at least one row")
 
-      if let quantityValue = quantityValue, case .double(let quantity) = quantityValue {
-        #expect(abs(quantity - 123456789.1234) < 0.0001, "NUMERIC(15,4) should decode correctly")
-      } else {
-        Issue.record("Expected .double value, got \(String(describing: quantityValue))")
-      }
+      #expect(quantityValue == .decimal("123456789.1234"), "NUMERIC(15,4) should decode exactly")
 
       try await dropNumericTestTable(manager: manager, tableName: tableName)
       await manager.disconnect()
@@ -171,8 +161,8 @@ struct DatabaseIntegrationNumericTests {
     }
   }
 
-  @Test("Negative NUMERIC values decode correctly - Integration Test")
-  func negativeNumericDecodesToDoubleIntegration() async throws {
+  @Test("Negative NUMERIC values decode exactly - Integration Test")
+  func negativeNumericDecodesExactIntegration() async throws {
     let manager = DatabaseConnectionManager()
     let tableName = "test_numeric_negative_\(UUID().uuidString.prefix(8))"
 
@@ -189,12 +179,7 @@ struct DatabaseIntegrationNumericTests {
 
       #expect(rowsCount > 0, "Should return at least one row")
 
-      if let negativeValue = negativeValue, case .double(let value) = negativeValue {
-        #expect(abs(value - (-1329.98)) < 0.01, "Negative NUMERIC should decode correctly")
-        #expect(value < 0, "Value should be negative")
-      } else {
-        Issue.record("Expected .double value, got \(String(describing: negativeValue))")
-      }
+      #expect(negativeValue == .decimal("-1329.98"), "Negative NUMERIC should decode exactly")
 
       try await dropNumericTestTable(manager: manager, tableName: tableName)
       await manager.disconnect()
@@ -205,7 +190,7 @@ struct DatabaseIntegrationNumericTests {
     }
   }
 
-  @Test("Zero NUMERIC value decodes to 0.0 - Integration Test")
+  @Test("Zero NUMERIC value decodes to 0.00, its scale kept - Integration Test")
   func zeroNumericDecodesToZeroIntegration() async throws {
     let manager = DatabaseConnectionManager()
     let tableName = "test_numeric_zero_\(UUID().uuidString.prefix(8))"
@@ -222,11 +207,7 @@ struct DatabaseIntegrationNumericTests {
 
       #expect(rowsCount > 0, "Should return at least one row")
 
-      if let priceValue = priceValue, case .double(let value) = priceValue {
-        #expect(abs(value - 0.0) < 0.0001, "Zero NUMERIC should decode to 0.0")
-      } else {
-        Issue.record("Expected .double value, got \(String(describing: priceValue))")
-      }
+      #expect(priceValue == .decimal("0.00"), "Zero NUMERIC(10,2) should decode to 0.00")
 
       try await dropNumericTestTable(manager: manager, tableName: tableName)
       await manager.disconnect()
@@ -237,8 +218,8 @@ struct DatabaseIntegrationNumericTests {
     }
   }
 
-  @Test("Very large NUMERIC values decode correctly - Integration Test")
-  func veryLargeNumericDecodesToDoubleIntegration() async throws {
+  @Test("Very large NUMERIC values decode exactly - Integration Test")
+  func veryLargeNumericDecodesExactIntegration() async throws {
     let manager = DatabaseConnectionManager()
     let tableName = "test_numeric_large_\(UUID().uuidString.prefix(8))"
 
@@ -255,16 +236,8 @@ struct DatabaseIntegrationNumericTests {
 
       #expect(rowsCount > 0, "Should return at least one row")
 
-      if let largeValue = largeValue, case .double(let value) = largeValue {
-        #expect(
-          value > 99999999999998.0,
-          "Very large NUMERIC should decode (may lose precision in Double)")
-        #expect(
-          value <= 100000000000001.0,
-          "Very large NUMERIC should be in expected range (allowing for rounding)")
-      } else {
-        Issue.record("Expected .double value, got \(String(describing: largeValue))")
-      }
+      #expect(
+        largeValue == .decimal("99999999999999.99"), "Very large NUMERIC should decode exactly")
 
       try await dropNumericTestTable(manager: manager, tableName: tableName)
       await manager.disconnect()

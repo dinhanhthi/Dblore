@@ -4,6 +4,8 @@
 //
 //  Hot change of a live connection's protection level and security level.
 //  Lowering under a password Safe Mode waits for the unlock; nothing changes before that.
+//  A Read-only connection can unlock writes for 1 or 5 minutes (session only) from the
+//  protection menu, after the Safe Mode authentication.
 //
 
 import SwiftUI
@@ -12,6 +14,7 @@ import SwiftUI
 private enum PendingSafetyChange: Equatable {
   case protection(ConnectionProtectionLevel)
   case commitStyle(CommitStyle)
+  case writeUnlock(WriteUnlockDuration)
 }
 
 /// Protection and security menus for the connected database.
@@ -104,12 +107,35 @@ struct ConnectionSafetyMenus: View {
     SafetyOptionMenu(
       arrowEdge: prominent ? .top : .bottom, rows: protectionRows, help: .protectionLevel
     ) {
-      menuLabel(
-        protection.displayName, icon: protection.iconName,
-        iconColor: SafetyOptionStyle.color(for: protection),
-        tone: SafetyOptionStyle.footerTone(for: protection))
+      if let writeUnlock, writeUnlock.expiry != nil {
+        menuLabel(
+          "Writes unlocked \(WriteUnlockControl.countdown(writeUnlock.remainingSeconds))",
+          icon: "lock.open.fill", iconColor: .warning, tone: .warning)
+      } else {
+        menuLabel(
+          protection.displayName, icon: protection.iconName,
+          iconColor: SafetyOptionStyle.color(for: protection),
+          tone: SafetyOptionStyle.footerTone(for: protection))
+      }
+    } footer: { dismiss in
+      if let writeUnlock, writeUnlock.expiry != nil || offersWriteUnlock {
+        WriteUnlockControl(controller: writeUnlock) { duration in
+          dismiss()
+          selectWriteUnlock(duration)
+        }
+      }
     }
     .help(protection.description)
+  }
+
+  /// The tab's workspace write unlock (nil outside a workspace)
+  private var writeUnlock: WriteUnlockController? { viewModel.writeUnlock }
+
+  /// Only where `ProtectionPolicy.writeUnlockRefusal` allows it (a Read-only row that is not
+  /// DuckDB or a read-only SQLite file)
+  private var offersWriteUnlock: Bool {
+    guard let config = viewModel.notebook.connectionConfig else { return false }
+    return ProtectionPolicy.writeUnlockRefusal(for: config) == nil
   }
 
   private var protectionRows: [SafetyOptionRow] {
@@ -178,12 +204,35 @@ struct ConnectionSafetyMenus: View {
     pending = .commitStyle(style)
   }
 
+  /// The click returns at once: Touch ID runs off the click, and the Safe Mode sheet opens
+  /// when it did not unlock
+  private func selectWriteUnlock(_ duration: WriteUnlockDuration) {
+    guard let writeUnlock else { return }
+    let config = viewModel.notebook.connectionConfig
+    Task {
+      switch await writeUnlock.requestUnlock(duration, config: config) {
+      case .started: break
+      case .needsPassword: pending = .writeUnlock(duration)
+      case .refused: viewModel.showToast(Self.writeUnlockRefusedMessage, type: .warning)
+      }
+    }
+  }
+
+  private static let writeUnlockRefusedMessage = "Writes cannot be unlocked on this connection."
+
   private func applyPending() {
     switch pending {
     case .protection(let level):
       viewModel.applyProtectionLevel(level)
     case .commitStyle(let style):
       viewModel.applyConnectionCommitStyle(style)
+    case .writeUnlock(let duration):
+      if let writeUnlock {
+        Task {
+          guard await !writeUnlock.start(duration) else { return }
+          viewModel.showToast(Self.writeUnlockRefusedMessage, type: .warning)
+        }
+      }
     case nil:
       break
     }
@@ -198,6 +247,9 @@ struct ConnectionSafetyMenus: View {
     case .commitStyle(let style):
       return
         "Safe Mode requires verification to lower this connection's commit style to \"\(style.title)\"."
+    case .writeUnlock(let duration):
+      return
+        "Safe Mode requires verification to unlock writes on this connection for \(duration.title)."
     case nil:
       return ""
     }
@@ -209,6 +261,8 @@ struct ConnectionSafetyMenus: View {
       return "Lower the connection protection level"
     case .commitStyle:
       return "Lower this connection's commit style"
+    case .writeUnlock:
+      return WriteUnlockController.authenticationReason
     case nil:
       return "Change connection safety"
     }
@@ -353,12 +407,14 @@ enum SafetyMenuHelp {
   }
 }
 
-struct SafetyOptionMenu<Label: View>: View {
+struct SafetyOptionMenu<Label: View, Footer: View>: View {
   var arrowEdge: Edge = .bottom
   let rows: [SafetyOptionRow]
   /// Header "?". Opening it does not select a row.
   var help: SafetyMenuHelp? = nil
   @ViewBuilder var label: () -> Label
+  /// Under the rows; gets the popover's dismiss
+  @ViewBuilder var footer: (_ dismiss: @escaping () -> Void) -> Footer
   @State private var isOpen = false
 
   var body: some View {
@@ -371,12 +427,72 @@ struct SafetyOptionMenu<Label: View>: View {
     .fixedSize(horizontal: true, vertical: true)
     .linkPointer()
     .popover(isPresented: $isOpen, arrowEdge: arrowEdge) {
-      SafetyOptionList(rows: rows, help: help) {
-        isOpen = false
+      VStack(alignment: .leading, spacing: 0) {
+        SafetyOptionList(rows: rows, help: help) {
+          isOpen = false
+        }
+        footer { isOpen = false }
       }
       // Opaque like a menu. The default popover glass turns dark over the editor.
       .presentationBackground(Color.cardBackground)
     }
+  }
+}
+
+extension SafetyOptionMenu where Footer == EmptyView {
+  init(
+    arrowEdge: Edge = .bottom, rows: [SafetyOptionRow], help: SafetyMenuHelp? = nil,
+    @ViewBuilder label: @escaping () -> Label
+  ) {
+    self.init(
+      arrowEdge: arrowEdge, rows: rows, help: help, label: label, footer: { _ in EmptyView() })
+  }
+}
+
+/// Footer of the protection menu on a connection that can unlock writes: "Unlock writes"
+/// (1 or 5 min), or the countdown and Lock now while an unlock runs.
+private struct WriteUnlockControl: View {
+  let controller: WriteUnlockController
+  let onSelect: (WriteUnlockDuration) -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      Rectangle()
+        .fill(Color.border)
+        .frame(height: 1)
+      HStack(spacing: Spacing.sm) {
+        if controller.expiry != nil {
+          Image(systemName: "lock.open.fill")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color.warning)
+          Text("Writes unlocked \(Self.countdown(controller.remainingSeconds))")
+            .font(.small)
+            .monospacedDigit()
+            .foregroundStyle(Color.foreground)
+          Spacer(minLength: Spacing.sm)
+          Button("Lock now") {
+            Task { await controller.lockNow() }
+          }
+          .buttonStyle(SecondaryButtonStyle())
+        } else {
+          Text("Data writes, schema stays locked")
+            .font(.small)
+            .foregroundStyle(Color.foregroundMuted)
+          Spacer(minLength: Spacing.sm)
+          CapsuleDropdown(
+            title: "Unlock writes", options: WriteUnlockDuration.allCases,
+            optionTitle: \.title, isSelected: { _ in false }, onSelect: onSelect)
+        }
+      }
+      .padding(.horizontal, Spacing.sm)
+    }
+    .padding(.horizontal, Spacing.xs)
+    .padding(.bottom, Spacing.sm)
+  }
+
+  /// "m:ss"
+  static func countdown(_ seconds: Int) -> String {
+    String(format: "%d:%02d", seconds / 60, seconds % 60)
   }
 }
 

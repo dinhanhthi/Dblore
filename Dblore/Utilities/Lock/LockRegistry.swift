@@ -153,6 +153,8 @@ nonisolated final class LockRegistry: Sendable {
   /// Posted on the main actor after `setLockedConnections` changed the locked set; the object is
   /// the registry
   static let didChangeLocks = Notification.Name("ace.thi.dblore.lockRegistry.didChangeLocks")
+  /// Posted on the main actor after a `grant` unlocked something new; the object is the registry
+  static let didGrant = Notification.Name("ace.thi.dblore.lockRegistry.didGrant")
 
   private struct State {
     var locked: Set<LockIdentity> = []
@@ -251,7 +253,8 @@ nonisolated final class LockRegistry: Sendable {
   /// Unlocks `identity` until `revoke` or `relockAll`; a file database's grant covers its
   /// file's other names too (the `fileID`s published for its path)
   func grant(_ identity: LockIdentity) {
-    state.withLock { _ = $0.grants.insert(identity) }
+    let added = state.withLock { $0.grants.insert(identity).inserted }
+    if added { postDidGrant() }
   }
 
   /// `grant` only when no `relockAll()` landed since `generation` was read (one step, so a
@@ -265,8 +268,9 @@ nonisolated final class LockRegistry: Sendable {
   /// so a revoke of such a path covers it again. An identity that is not locked is not granted:
   /// locking it later still asks.
   func grant(_ identities: Set<LockIdentity>, ifGeneration generation: Int) -> Bool {
-    state.withLock { state in
-      guard state.generation == generation else { return false }
+    let (granted, added) = state.withLock { state in
+      guard state.generation == generation else { return (false, false) }
+      let before = state.grants
       for identity in identities {
         let paths = state.fileIDs.filter { $0.value.contains(identity) }.keys
         if !paths.isEmpty {
@@ -275,7 +279,16 @@ nonisolated final class LockRegistry: Sendable {
           state.grants.insert(identity)
         }
       }
-      return true
+      return (true, state.grants != before)
+    }
+    if added { postDidGrant() }
+    return granted
+  }
+
+  /// Tells open forms (`didGrant`) that an unlock landed; posted outside the state lock
+  private func postDidGrant() {
+    Task { @MainActor in
+      NotificationCenter.default.post(name: Self.didGrant, object: self)
     }
   }
 

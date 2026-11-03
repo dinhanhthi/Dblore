@@ -76,7 +76,8 @@ nonisolated struct SSHHostKeyPolicy: SSHHostKeyValidating {
       return
     case .changed(let stored):
       throw DatabaseError.sshHostKeyChanged(
-        host: host, port: port, expected: stored.fingerprint, presented: fingerprint)
+        host: host, port: port, expected: stored.fingerprint, presented: fingerprint,
+        presentedAlgorithm: algorithm)
     case .unknown:
       try await unknown()
     }

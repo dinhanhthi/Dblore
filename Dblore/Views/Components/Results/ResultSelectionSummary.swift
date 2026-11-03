@@ -4,8 +4,10 @@
 //
 //  Summary of the selected result cells. The grid selects whole rows, so the cells are the
 //  selected rows in the last clicked column; without a clicked column only the rows are counted.
-//  Numbers are summed in Decimal: `.int` and `.double` cells, and text cells of a numeric column
-//  type (an exact DECIMAL read as text). A column with other values summarizes its numeric
+//  Numbers are summed in Decimal: `.int`, `.double` and finite `.decimal` cells, and text cells
+//  of a numeric column type (an exact DECIMAL read as text). Decimal keeps 38 significant digits:
+//  a longer NUMERIC is rounded to them, and one past Decimal's range (about 1e165) is no value.
+//  NaN and Infinity are no values either. A column with other values summarizes its numeric
 //  cells only and says so. Above `detachedThreshold` cells the work runs in a detached task.
 //
 
@@ -131,6 +133,9 @@ nonisolated struct ResultSelectionSummary: Equatable, Sendable {
       let trimmed = text.trimmingCharacters(in: .whitespaces)
       guard numericColumn, isPlainNumber(trimmed) else { return nil }
       return Decimal(string: trimmed, locale: posix)
+    case .decimal(let text):
+      guard DecimalText.isPlain(text) else { return nil }
+      return Decimal(string: text, locale: posix)
     default:
       return nil
     }

@@ -75,6 +75,7 @@ struct LazyBinaryCellTests {
     state.databaseType = .sqlite
     viewModel.dataViewer = state
     await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
     let plain = try #require(viewModel.editorResult)
     guard case .data(let full) = plain.rows[0][1] else {
       Issue.record("The large value was not read as bytes")
@@ -83,6 +84,7 @@ struct LazyBinaryCellTests {
     #expect(full.count == 70_000)
     viewModel.databaseTables = [Self.itemsTable]
     await viewModel.refreshDataViewer()
+    await viewModel.awaitResultTargets()
     #expect(
       viewModel.editorResult?.rows[0][1]
         == .data(Data(full.prefix(DataViewerState.lazyPrefixBytes))))
@@ -134,6 +136,32 @@ struct LazyBinaryCellTests {
     let nullKey = LazyCell(row: RowChangeSet.RowKey(values: [.int(7), .null]), column: "body")
     #expect(throws: LazyCellLoadError.noKey) {
       try LazyCellLoader.statement(nullKey, source: source)
+    }
+  }
+
+  @Test("A keyless row is read by its locator terms with their casts, never by a dblore_ alias")
+  func locatorStatement() throws {
+    let source = LazyCellSource(
+      relation: #""public"."files""#, keyColumns: [], dialect: .postgresql, rowLocator: .pgLocator
+    ) { _, _ in QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0) }
+    let cell = LazyCell(
+      row: RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", "(0,2)", "700"])),
+      column: "body")
+    let read = try LazyCellLoader.statement(cell, source: source)
+    #expect(
+      read.sql == #"SELECT "body" FROM "public"."files" WHERE tableoid = :k1::oid"#
+        + " AND ctid = :k2::tid AND xmin = :k3::xid")
+    #expect(read.parameters == ["k1": .text("16384"), "k2": .text("(0,2)"), "k3": .text("700")])
+    _ = try ReadOnlyQueryGuard.check(read.sql, dialect: .postgresql)
+    // The named parameters stay apart from their casts
+    let rewritten = SQLParameterRewriter.rewrite(statement: read.sql, dialect: .postgresql)
+    #expect(rewritten.names == ["k1", "k2", "k3"])
+    #expect(rewritten.text.hasSuffix("tableoid = $1::oid AND ctid = $2::tid AND xmin = $3::xid"))
+
+    // A key without a locator is refused before anything is sent
+    #expect(throws: LazyCellLoadError.noKey) {
+      try LazyCellLoader.statement(
+        LazyCell(row: RowChangeSet.RowKey(values: [.int(1)]), column: "body"), source: source)
     }
   }
 
@@ -203,6 +231,25 @@ struct LazyBinaryCellTests {
       #expect(viewModel.editorResult?.rows[0][1] == Self.fullPayload(plain))
       #expect(viewModel.editorResult?.truncation?.lengths.isEmpty == true)
       #expect(viewModel.unloadedCells(in: try #require(viewModel.editorResult)).isEmpty)
+    }
+  }
+
+  @Test("The Cell Value viewer refuses a full value that no longer starts with the page's prefix")
+  func viewerRefusesChangedValue() async throws {
+    try await withItems { viewModel, manager, _ in
+      let lazy = try #require(viewModel.editorResult)
+      viewModel.showGridCellInSidebar(
+        row: lazy.rows[0], originalRow: 0, column: 1, result: lazy, cellId: nil)
+      let unloaded = try #require(viewModel.unloadedSidebarCell)
+      _ = try await manager.executeInternal(
+        "UPDATE items SET payload = zeroblob(70000) WHERE id = 1")
+
+      let message = await viewModel.loadSidebarCell(unloaded.cell, length: unloaded.length)
+      #expect(message?.contains("row changed since it was read") == true)
+      // Nothing stored: the sidebar and the page still hold the cut prefix
+      #expect(viewModel.unloadedSidebarCell?.cell == unloaded.cell)
+      #expect(viewModel.editorResult?.rows[0][1] == lazy.rows[0][1])
+      #expect(viewModel.unloadedCells(in: try #require(viewModel.editorResult)) == [0: [1: 70_000]])
     }
   }
 
@@ -312,6 +359,7 @@ struct LazyBinaryCellTests {
       #expect(statements.first?.values == ["z", "1"])
 
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.dataViewer?.changeSet == nil)
       let stored = try await manager.executeInternal(
         "SELECT payload, label FROM items WHERE id = 1")
@@ -349,6 +397,7 @@ struct LazyBinaryCellTests {
         viewModel.stageEdits(rows: [1], column: "payload", values: [.value(.data(bytes))])
           == nil)
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.dataViewer?.changeSet == nil)
       let updated = try await manager.executeInternal(
         "SELECT typeof(payload), payload FROM items WHERE id = 2")
@@ -356,6 +405,7 @@ struct LazyBinaryCellTests {
 
       #expect(await viewModel.stageDuplicate(rows: [1]) == nil)
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       let inserted = try await manager.executeInternal(
         "SELECT typeof(payload), payload FROM items WHERE id = 3")
       #expect(inserted.rows.first == [.string("blob"), .data(bytes)])
@@ -367,6 +417,7 @@ struct LazyBinaryCellTests {
     try await withItems { viewModel, manager, plain in
       #expect(await viewModel.stageDuplicate(rows: [0]) == nil)
       await viewModel.commitStaged()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.dataViewer?.changeSet == nil)
       let copy = try await manager.executeInternal(
         "SELECT typeof(payload), length(payload), payload FROM items WHERE id = 3")
@@ -605,6 +656,7 @@ struct LazyBinaryCellTests {
 
       // A lazy page SQL without its state, or not its state's SQL, is never shown
       await viewModel.executeEditorQuery(state.pageSQL, maxRows: 100, source: .internal)
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.error != nil)
       await viewModel.executeEditorQuery(
         state.pageSQL, maxRows: 100, source: .internal,
@@ -612,6 +664,7 @@ struct LazyBinaryCellTests {
       #expect(viewModel.editorResult?.error != nil)
       // Explain of the page SQL is a user run: not refused
       await viewModel.executeEditorQuery("EXPLAIN QUERY PLAN " + state.pageSQL)
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.error == nil)
     }
   }
@@ -639,6 +692,7 @@ struct LazyBinaryCellTests {
       for columns in [[id, payload], [id, payload, label, gone]] {
         viewModel.databaseTables = [DatabaseTable(schema: "main", name: "items", columns: columns)]
         await viewModel.refreshDataViewer()
+        await viewModel.awaitResultTargets()
         let page = try #require(viewModel.editorResult)
         #expect(page.error == nil)
         #expect(page.columns.map(\.name) == ["id", "payload", "label"])
@@ -648,11 +702,14 @@ struct LazyBinaryCellTests {
       // the shown page's columns, with no failure after
       viewModel.editorResult = nil
       await viewModel.refreshDataViewer()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.error != nil)
       await viewModel.refreshDataViewer()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.sourceQuery?.hasPrefix("SELECT * FROM ") == true)
       for _ in 0..<2 {
         await viewModel.refreshDataViewer()
+        await viewModel.awaitResultTargets()
         let page = try #require(viewModel.editorResult)
         #expect(page.error == nil)
         #expect(viewModel.unloadedCells(in: page) == [0: [1: 70_000]])

@@ -1,6 +1,7 @@
 // RowStagingViewModelTests.swift
-// Data-viewer row staging on NotebookViewModel. No database: a disconnected
-// connection manager only records whether commit reached executeGatedBatch.
+// Data-viewer row staging on NotebookViewModel. No database server: a disconnected
+// connection manager only records whether commit reached executeGatedBatch (one keyless
+// page reads a temporary SQLite file).
 
 import Foundation
 import Testing
@@ -242,7 +243,366 @@ struct RowStagingViewModelTests {
     #expect(toasts.contains { $0.contains("table changed") })
   }
 
+  @Test("Two identical keyless rows: deleting one leaves the other editable, drawn apart")
+  func keylessRowsHaveTheirOwnKeys() throws {
+    let viewModel = makeKeylessViewModel()
+    let result = try #require(viewModel.editorResult)
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+
+    #expect(viewModel.stageDelete(rows: [0]) == nil)
+    #expect(viewModel.stageEdit(row: 1, column: "nickname", value: .string("neo")) == nil)
+    #expect(
+      viewModel.stageEdit(row: 0, column: "nickname", value: .string("x"))
+        == RowChangeError.deletedRow.message)
+    viewModel.handleStagedGridCellEdit(row: 0, column: 1, newValue: "x", result: result)
+    #expect(toasts == [RowChangeError.deletedRow.message])
+    let set = try #require(viewModel.dataViewer?.changeSet)
+    #expect(set.deletes.count == 1)
+    #expect(set.edits.count == 1)
+    let preview = viewModel.previewStagedSQL()
+    #expect(preview.contains("(0,1)"))
+    #expect(preview.contains("(0,2)"))
+
+    var grid = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+    grid.apply(changeSet: set)
+    #expect(grid.rowState(at: 0) == .deleted)
+    #expect(grid.rowState(at: 1) == .edited)
+  }
+
+  @Test("Reload asks to resolve staged keyless edits first; a keyed page re-reads and keeps them")
+  func reloadBannerResolvesKeylessEditsFirst() async {
+    let viewModel = makeKeylessViewModel()
+    #expect(viewModel.stageEdit(row: 1, column: "nickname", value: .string("neo")) == nil)
+    let staged = viewModel.dataViewer?.changeSet
+
+    let reload = Task { await viewModel.reloadStaleDataViewer() }
+    for _ in 0..<1000 where !viewModel.stagedLeavePromptVisible { await Task.yield() }
+    #expect(viewModel.stagedLeavePromptVisible)
+    #expect(viewModel.editorResult?.error == nil)
+    viewModel.resolveStagedLeavePrompt(.cancel)
+    await reload.value
+    // Cancel: nothing read, the staged edit stays on the page it was made on
+    #expect(viewModel.editorResult?.error == nil)
+    #expect(viewModel.dataViewer?.changeSet == staged)
+
+    let keyed = makeViewModel(primaryKey: ["id"])
+    #expect(keyed.stageEdit(row: 0, column: "nickname", value: .string("neo")) == nil)
+    let keyedStaged = keyed.dataViewer?.changeSet
+    await keyed.reloadStaleDataViewer()
+    #expect(!keyed.stagedLeavePromptVisible)
+    // Read again (this manager is not connected: the page shows its error)
+    #expect(keyed.editorResult?.error != nil)
+    #expect(keyed.dataViewer?.changeSet == keyedStaged)
+  }
+
+  @Test("The Rollback reload never asks: a keyless page with staged edits is only marked stale")
+  func rollbackReloadMarksKeylessPageStale() async {
+    let viewModel = makeKeylessViewModel()
+    #expect(viewModel.stageEdit(row: 1, column: "nickname", value: .string("neo")) == nil)
+    let staged = viewModel.dataViewer?.changeSet
+
+    await viewModel.reloadPageAfterRollback()
+
+    #expect(!viewModel.stagedLeavePromptVisible)
+    #expect(viewModel.editorResult?.error == nil)
+    #expect(viewModel.dataViewer?.changeSet == staged)
+    #expect(viewModel.dataViewer?.isStale == true)
+
+    let keyed = makeViewModel(primaryKey: ["id"])
+    #expect(keyed.stageEdit(row: 0, column: "nickname", value: .string("neo")) == nil)
+    let keyedStaged = keyed.dataViewer?.changeSet
+    await keyed.reloadPageAfterRollback()
+    #expect(!keyed.stagedLeavePromptVisible)
+    #expect(keyed.editorResult?.error != nil)
+    #expect(keyed.dataViewer?.changeSet == keyedStaged)
+    #expect(keyed.dataViewer?.isStale == false)
+  }
+
+  @Test("A keyless sidebar save names the row the sidebar shows; a grid of older rows is refused")
+  func keylessSidebarSaveNamesTheShownRow() throws {
+    let viewModel = makeKeylessViewModel()
+    viewModel.notebook.connectionConfig?.applyCommitStyle(.confirm)
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    let result = try #require(viewModel.editorResult)
+    viewModel.showGridCellInSidebar(
+      row: result.rows[0], originalRow: 0, column: 1, result: result, cellId: nil)
+
+    // A grid edit of row 1 shows row 1 in the sidebar; Cancel puts row 0 back with its row
+    viewModel.handleStagedGridCellEdit(row: 1, column: 1, newValue: "neo", result: result)
+    #expect(viewModel.pendingInlineEdit?.statement.values.contains("(0,2)") == true)
+    #expect(viewModel.cellDetailRow == 1)
+    viewModel.cancelPendingQuery()
+    #expect(viewModel.cellDetailRow == 0)
+    viewModel.handleStagedGridCellEdit(row: 1, column: 1, newValue: "neo", result: result)
+
+    // The sidebar's own save of the cell it shows names row 1, never row 0
+    guard
+      case .cellInfo(let name, let type, let value, let table, let rowData, let keys, let id) =
+        viewModel.rightSidebarContent
+    else {
+      Issue.record("The sidebar shows no cell")
+      return
+    }
+    viewModel.handleCellValueEdit(
+      columnName: name, columnType: type, newValue: "trinity", originalValue: value,
+      tableName: table, rowData: rowData, primaryKeyColumns: keys, cellId: id,
+      connectionManager: viewModel.connectionManager, wallClock: false)
+    let values = viewModel.pendingInlineEdit?.statement.values ?? []
+    #expect(values.contains("(0,2)"))
+    #expect(!values.contains("(0,1)"))
+    #expect(toasts.isEmpty)
+
+    // The grid's rows are older than the live page: its row index is refused
+    viewModel.editorResult?.dataRevision += 1
+    viewModel.handleStagedGridCellEdit(row: 0, column: 1, newValue: "x", result: result)
+    #expect(toasts == [NotebookViewModel.notEditableMessage])
+    #expect(viewModel.pendingInlineEdit?.statement.values.contains("(0,1)") == false)
+  }
+
+  @Test("A keyless SQLite page shows SQL without locators and its re-read refreshes the sidebar")
+  func keylessPageSQLAndSidebarRefresh() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-keyless-\(UUID().uuidString).sqlite")
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    try await manager.connect(config: config)
+    do {
+      for statement in ["CREATE TABLE notes (body TEXT)", "INSERT INTO notes VALUES ('a'), ('b')"] {
+        _ = try await manager.executeInternal(statement)
+      }
+      var notebook = DbloreNotebook.newDocument()
+      notebook.connectionConfig = config
+      let viewModel = NotebookViewModel(notebook: notebook)
+      viewModel.viewMode = .editor
+      viewModel.connectionManager = manager
+      var state = DataViewerState(schema: "main", name: "notes", orderColumns: [])
+      state.databaseType = .sqlite
+      viewModel.dataViewer = state
+      await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
+      await viewModel.awaitResultTargets()
+
+      // Located and editable, while the SQL shown and pinned has no locator column
+      let result = try #require(viewModel.editorResult)
+      let target = try #require(result.editTarget)
+      #expect(target.rowLocator != nil)
+      #expect(result.truncation?.rowLocator == target.rowLocator)
+      #expect(!result.typesPending)
+      #expect(viewModel.canEdit(result))
+      let shown = try #require(result.sourceQuery)
+      #expect(!shown.contains("dblore_"))
+
+      // The re-read after an edit under a staged batch: the sidebar cell shows its row's value
+      viewModel.showGridCellInSidebar(
+        row: result.rows[0], originalRow: 0, column: 0, result: result, cellId: nil)
+      _ = try await manager.executeInternal("UPDATE notes SET body = 'c' WHERE body = 'a'")
+      await viewModel.refreshDataViewerRows(
+        target: target, connectionManager: manager, done: "Cell updated")
+      if case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent {
+        #expect(value == .string("c"))
+      } else {
+        Issue.record("The sidebar shows no cell")
+      }
+      #expect(viewModel.cellDetailRow == 0)
+
+      // A locator read without its page state is never run as a plain query
+      await viewModel.executeEditorQuery(
+        #"SELECT rowid AS "dblore_rowid", * FROM notes"#, source: .internal)
+      #expect(
+        viewModel.editorResult?.error
+          == NotebookViewModel.LazyPageError.unexpectedShape.errorDescription)
+    } catch {
+      await manager.disconnect()
+      throw error
+    }
+    await manager.disconnect()
+  }
+
+  @Test("A keyless lazy blob loads by its locator before Duplicate Row stages it, never the prefix")
+  func keylessDuplicateLoadsTheCutValue() async throws {
+    try await withKeylessSQLite([
+      "CREATE TABLE files (name TEXT, data BLOB)",
+      "INSERT INTO files VALUES ('a', randomblob(70000))",
+    ]) { viewModel, _ in
+      let result = try #require(viewModel.editorResult)
+      #expect(result.truncation?.rowLocator != nil)
+      // The page holds the value's prefix only, keyed by the row's locator
+      #expect(viewModel.unloadedCells(in: result) == [0: [1: 70_000]])
+
+      #expect(await viewModel.stageDuplicate(rows: [0]) == nil)
+
+      let insert = try #require(viewModel.dataViewer?.changeSet?.inserts.first)
+      guard case .data(let data)? = insert.values["data"] else {
+        Issue.record("The copy has no blob")
+        return
+      }
+      #expect(data.count == 70_000)
+      #expect(insert.values["name"] == .string("a"))
+    }
+  }
+
+  @Test("A reused rowid naming a row with another blob is refused: Duplicate Row stages nothing")
+  func keylessStaleLocatorLoadIsRefused() async throws {
+    try await withKeylessSQLite([
+      "CREATE TABLE files (name TEXT, data BLOB)",
+      "INSERT INTO files VALUES ('a', randomblob(70000))",
+    ]) { viewModel, manager in
+      var toasts: [String] = []
+      viewModel.toastPresenter = { message, _ in toasts.append(message) }
+      let result = try #require(viewModel.editorResult)
+      // Same rowid, same name and length: only the bytes tell the rows apart
+      _ = try await manager.executeInternal("DELETE FROM files")
+      _ = try await manager.executeInternal("INSERT INTO files VALUES ('a', zeroblob(70000))")
+
+      #expect(await viewModel.stageDuplicate(rows: [0]) == nil)
+      #expect(viewModel.dataViewer?.changeSet == nil)
+      #expect(toasts.contains { $0.contains("row changed since it was read") })
+      #expect(viewModel.unloadedCells(in: try #require(viewModel.editorResult)) == [0: [1: 70_000]])
+      #expect(viewModel.editorResult?.rows[0][1] == result.rows[0][1])
+    }
+  }
+
+  @Test("Keyless edits: commit and edit again after the re-read; a changed row is a conflict")
+  func keylessCommitReloadAndConflict() async throws {
+    try await withKeylessSQLite([
+      "CREATE TABLE notes (body TEXT)", "INSERT INTO notes VALUES ('a'), ('b'), ('c')",
+    ]) { viewModel, manager in
+      viewModel.notebook.connectionConfig?.applyCommitStyle(.confirm)
+      var toasts: [String] = []
+      viewModel.toastPresenter = { message, _ in toasts.append(message) }
+      @MainActor func confirm() async {
+        if viewModel.pendingInlineEdit != nil || viewModel.pendingStagedBatch != nil {
+          await viewModel.executePendingQuery()
+        }
+        // The re-read page is editable once its table definition is validated
+        await viewModel.awaitResultTargets()
+      }
+      @MainActor func stored() async throws -> [CellValue] {
+        try await manager.executeInternal("SELECT body FROM notes ORDER BY rowid").rows.map {
+          $0[0]
+        }
+      }
+      @MainActor func edit(row: Int, to text: String) async throws {
+        let result = try #require(viewModel.editorResult)
+        viewModel.handleStagedGridCellEdit(row: row, column: 0, newValue: text, result: result)
+        await confirm()
+      }
+
+      // Stage an edit and a pasted row, commit: the page is read again, nothing stays staged
+      #expect(viewModel.stageEdit(row: 0, column: "body", value: .string("a2")) == nil)
+      #expect(await viewModel.stagePastedRows("d") == nil)
+      await viewModel.commitStaged()
+      await confirm()
+      #expect(viewModel.dataViewer?.changeSet == nil)
+      #expect(try await stored() == [.string("a2"), .string("b"), .string("c"), .string("d")])
+      #expect(viewModel.editorResult?.rows.first?.first == .string("a2"))
+
+      // The same row twice in a row: each edit names it by the locator of its re-read page
+      try await edit(row: 0, to: "a3")
+      try await edit(row: 0, to: "a4")
+      #expect(try await stored().first == .string("a4"))
+      #expect(toasts.isEmpty)
+
+      // Staged changes pending: an immediate edit of a keyless row is refused before sending
+      #expect(viewModel.stageDelete(rows: [3]) == nil)
+      viewModel.handleStagedGridCellEdit(
+        row: 1, column: 0, newValue: "b2", result: try #require(viewModel.editorResult))
+      // Refused before the Confirm dialog: nothing waits for it
+      #expect(viewModel.pendingInlineEdit == nil)
+      #expect(viewModel.queryConfirmationState.pendingQuery.isEmpty)
+      await confirm()
+      #expect(toasts == [NotebookViewModel.keylessStagedChangesPending])
+      #expect(try await stored()[1] == .string("b"))
+      viewModel.discardStaged()
+
+      // Another writer changed the row since the page was read: 0 rows, the conflict text
+      toasts = []
+      _ = try await manager.executeInternal("UPDATE notes SET body = 'x' WHERE body = 'b'")
+      try await edit(row: 1, to: "b2")
+      #expect(toasts.count == 1)
+      #expect(toasts.first?.contains("row changed since it was read, reload") == true)
+      #expect(try await stored()[1] == .string("x"))
+
+      toasts = []
+      _ = try await manager.executeInternal("UPDATE notes SET body = 'y' WHERE body = 'c'")
+      #expect(viewModel.stageEdit(row: 2, column: "body", value: .string("c2")) == nil)
+      await viewModel.commitStaged()
+      await confirm()
+      #expect(toasts.contains { $0.contains("row changed since it was read, reload") })
+      #expect(viewModel.dataViewer?.changeSet?.isEmpty == false)
+      #expect(try await stored()[2] == .string("y"))
+    }
+  }
+
   private static let usersID = TableRef.postgresql(oid: 1)
+
+  /// A data viewer on the table `statements` creates first (`CREATE TABLE <name> ...`) in a new
+  /// temporary SQLite file, its keyless page read with its row locators; the file is removed
+  /// after `body`
+  private func withKeylessSQLite(
+    _ statements: [String],
+    body: @MainActor (NotebookViewModel, DatabaseConnectionManager) async throws -> Void
+  ) async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-keyless-\(UUID().uuidString).sqlite")
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    try await manager.connect(config: config)
+    do {
+      for statement in statements { _ = try await manager.executeInternal(statement) }
+      let table = try #require(statements.first?.split(separator: " ").dropFirst(2).first)
+      var notebook = DbloreNotebook.newDocument()
+      notebook.connectionConfig = config
+      let viewModel = NotebookViewModel(notebook: notebook)
+      viewModel.viewMode = .editor
+      viewModel.connectionManager = manager
+      var state = DataViewerState(schema: "main", name: String(table), orderColumns: [])
+      state.databaseType = .sqlite
+      viewModel.dataViewer = state
+      await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
+      await viewModel.awaitResultTargets()
+      #expect(viewModel.stagedEditTarget?.rowLocator != nil)
+      try await body(viewModel, manager)
+    } catch {
+      await manager.disconnect()
+      throw error
+    }
+    await manager.disconnect()
+  }
+
+  /// Two identical rows of a keyless table, each located by its own tableoid, ctid and xmin
+  /// (the page's side locator table)
+  private func makeKeylessViewModel() -> NotebookViewModel {
+    let viewModel = makeViewModel(
+      primaryKey: [], rows: [[.int(1), .string("same")], [.int(1), .string("same")]])
+    viewModel.editorResult?.editTarget = EditTarget(
+      qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: [],
+      updateOnly: true, rowLocator: .pgLocator)
+    viewModel.editorResult?.truncation = DataViewerState.Truncation(
+      rowLocator: .pgLocator,
+      locators: ["(0,1)", "(0,2)"].map {
+        RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", $0, "700"]))
+      })
+    viewModel.dataViewer?.rowLocator = .pgLocator
+    return viewModel
+  }
 
   private func makeViewModel(
     primaryKey: [String], epoch: UInt64 = 0, safeMode: SafeMode = .silent,

@@ -34,6 +34,8 @@ extension WorkspaceManager {
   /// A capped read or a cancel closed and reopened the shared session (still connected): every tab lost
   /// its temp tables and SET values. The result itself shows the details.
   func sessionWasReset(_ event: SessionResetEvent) {
+    // The reopened session starts locked again (the actor forgot its unlock with the old one)
+    writeUnlock.end()
     // The closed session took its transaction along: the tables written in it were rolled back.
     // When the reset ended none, a held table had no transaction to roll back with (the mirror
     // lagged): its write was committed, so its tabs are marked rather than missed.
@@ -78,13 +80,28 @@ extension WorkspaceManager {
       .joined(separator: " ")
   }
 
-  /// Banner Reconnect: connect again with the workspace connection (errors as a toast)
+  /// Banner Reconnect: connect again with the workspace connection (errors as a toast), with the
+  /// password typed for it when it asks on connect (held through the loss: nothing is asked)
   func reconnectAfterConnectionLoss() async {
-    guard let config = workspace.connectionConfig else { return }
-    let scoped = activeUnrememberedCertificate.map {
+    guard var config = workspace.connectionConfig else { return }
+    if config.askPasswordOnConnect, config.password.isEmpty, let typed = activeTypedPassword {
+      config.password = typed
+    }
+    await reconnect(
+      config, certificate: activeUnrememberedCertificate,
+      sshCredential: activeUnrememberedSSHCredential)
+  }
+
+  /// The Reconnect with the unremembered secrets it started with (the connect clears the
+  /// workspace's), so a changed SSH host key's Replace Pin can run it again.
+  private func reconnect(
+    _ config: ConnectionConfig, certificate: ClientCertificateStoreFactory.ConnectionMaterial?,
+    sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  ) async {
+    let scoped = certificate.map {
       ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
     }
-    let scopedSSH = activeUnrememberedSSHCredential.map {
+    let scopedSSH = sshCredential.map {
       SSHCredentialStoreFactory.ScopedSSHCredential(
         account: $0.account, credential: $0.credential)
     }
@@ -105,8 +122,12 @@ extension WorkspaceManager {
       // banner and its Reconnect stay
       connectionLostMessage = lostMessage
     } catch {
-      WorkspaceWindowManager.shared.showToast(
-        "Reconnect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)
+      let message = SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task {
+          await self?.reconnect(config, certificate: certificate, sshCredential: sshCredential)
+        }
+      }
+      WorkspaceWindowManager.shared.showToast("Reconnect failed: \(message)", type: .error)
     }
   }
 
@@ -115,6 +136,18 @@ extension WorkspaceManager {
     if !connectionState.isConnected {
       activeUnrememberedCertificate = nil
       activeUnrememberedSSHCredential = nil
+      dropTypedPassword()
     }
+  }
+
+  /// Drops an ask-on-connect connection's typed password from the workspace's configs (they
+  /// hold it only while connected), and `activeTypedPassword` too unless `keepingHeldCopy` (a
+  /// session loss, for the banner Reconnect).
+  func dropTypedPassword(keepingHeldCopy: Bool = false) {
+    if !keepingHeldCopy { activeTypedPassword = nil }
+    if workspace.connectionConfig?.askPasswordOnConnect == true {
+      workspace.connectionConfig?.password = ""
+    }
+    if editingConnectionConfig.askPasswordOnConnect { editingConnectionConfig.password = "" }
   }
 }

@@ -131,6 +131,7 @@ struct DataViewerLoadTests {
   func lazyNeedsCachedColumns() async throws {
     try await withLazyViewModel { viewModel in
       await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.sourceQuery?.hasPrefix("SELECT * FROM ") == true)
       #expect(viewModel.editorResult?.truncation == nil)
     }
@@ -140,12 +141,14 @@ struct DataViewerLoadTests {
   func lazyPageKeepsEditTarget() async throws {
     try await withLazyViewModel { viewModel in
       await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
       let plain = try #require(viewModel.editorResult)
       #expect(plain.editTarget != nil)
       #expect(plain.lookupRelation != nil)
 
       viewModel.databaseTables = [Self.itemsTable]
       await viewModel.refreshDataViewer()
+      await viewModel.awaitResultTargets()
       let lazy = try #require(viewModel.editorResult)
       #expect(lazy.sourceQuery?.contains("substr(") == true)
       #expect(lazy.columns == plain.columns)
@@ -173,12 +176,14 @@ struct DataViewerLoadTests {
     try await withLazyViewModel { viewModel in
       viewModel.databaseTables = [Self.itemsTable]
       await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
       let first = try #require(viewModel.editorResult?.sourceQuery)
       #expect(first.contains("dblore_byte_length_1"))
       #expect(viewModel.editorResult?.columns.map(\.name) == ["id", "payload", "label"])
 
       viewModel.databaseTables = []
       await viewModel.refreshDataViewer()
+      await viewModel.awaitResultTargets()
       #expect(viewModel.editorResult?.sourceQuery == first)
       #expect(viewModel.dataViewer?.pageSQL == first)
     }
@@ -189,6 +194,7 @@ struct DataViewerLoadTests {
     try await withLazyViewModel { viewModel in
       viewModel.databaseTables = [Self.itemsTable]
       await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
       let target = try #require(viewModel.editorResult?.editTarget)
       let manager = try #require(viewModel.connectionManager)
       _ = try await manager.executeInternal(

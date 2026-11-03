@@ -253,4 +253,150 @@ struct DataViewerStateTests {
     viewer = lazy(.postgresql)
     #expect(viewer.loadKey == key)
   }
+
+  // MARK: - Row locators (keyless tables)
+
+  @Test("A keyless page reads its locator as dblore_* columns, stripped into one key per page row")
+  func locatorPageAndStrip() async throws {
+    var postgres = state()
+    postgres.rowLocator = .pgLocator
+    #expect(
+      postgres.pageSQL
+        == #"SELECT *, tableoid::text AS "dblore_tableoid", ctid::text AS "dblore_ctid", "#
+        + #"xmin::text AS "dblore_xmin" FROM "public"."users" LIMIT 100"#)
+    #expect(CellUpdateStatement.singleRelation(in: postgres.pageSQL) == #""public"."users""#)
+
+    var sqlite = state(schema: "main", name: "notes")
+    sqlite.databaseType = .sqlite
+    let kind = RowLocatorKind.sqliteRowid(alias: .rowid, matchColumns: ["body"])
+    sqlite.rowLocator = kind
+    #expect(sqlite.pageSQL == #"SELECT *, rowid AS "dblore_rowid" FROM "main"."notes" LIMIT 100"#)
+
+    // Two identical rows: the strip keys them by their own rowid, by page row
+    let viewModel = NotebookViewModel()
+    let page = QueryResult(
+      columns: [
+        ColumnInfo(name: "body", type: "TEXT"), ColumnInfo(name: "dblore_rowid", type: ""),
+      ],
+      rows: [[.string("same"), .int(1)], [.string("same"), .int(2)]], rowCount: 2,
+      executionTime: 0)
+    let (stripped, truncation) = try await viewModel.strippedDataViewerPage(
+      page, state: sqlite, epoch: 1, connectionManager: DatabaseConnectionManager())
+    #expect(stripped.columns.map(\.name) == ["body"])
+    #expect(stripped.rows == [[.string("same")], [.string("same")]])
+    #expect(truncation?.rowLocator == kind)
+    #expect(truncation?.locators.map(\.values) == [[.string("1")], [.string("2")]])
+    #expect(truncation?.locators.first?.locator?.row["body"] == .string("same"))
+    #expect(
+      truncation?.locatorKey(row: 1, kind: kind) != truncation?.locatorKey(row: 0, kind: kind))
+
+    // A page without the locator columns it asked for is never shown as editable
+    let missing = QueryResult(
+      columns: [page.columns[0]], rows: page.rows.map { [$0[0]] }, rowCount: 2, executionTime: 0)
+    await #expect(throws: NotebookViewModel.LazyPageError.unexpectedShape) {
+      _ = try await viewModel.strippedDataViewerPage(
+        missing, state: sqlite, epoch: 1, connectionManager: DatabaseConnectionManager())
+    }
+  }
+
+  @Test("First open of a keyless table: one automatic re-read adds the locator, editing after it")
+  func firstKeylessPageReReadsOnce() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-keyless-\(UUID().uuidString).sqlite")
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    for statement in [
+      "CREATE TABLE notes (body TEXT)", "INSERT INTO notes VALUES ('same'), ('same')",
+    ] {
+      _ = try await manager.executeInternal(statement)
+    }
+    let reads = StatementCounter()
+    await manager.setScriptCheckpointHook { checkpoint in
+      if case .beforeStatement = checkpoint { await reads.increment() }
+    }
+    let gate = CatalogHold()
+    await gate.hold()
+    await manager.setCatalogReadHook { await gate.pass() }
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.viewMode = .editor
+    viewModel.connectionManager = manager
+    var viewer = DataViewerState(schema: "main", name: "notes", orderColumns: [])
+    viewer.databaseType = .sqlite
+    viewModel.dataViewer = viewer
+
+    // The first page is a plain `*`: nothing is known of the table yet
+    await viewModel.loadDataViewerPage()
+    let first = try #require(viewModel.editorResult)
+    #expect(first.rows.count == 2)
+    #expect(first.truncation?.rowLocator == nil)
+    #expect(!viewModel.canEdit(first))
+
+    await gate.release()
+    let deadline = ContinuousClock.now + .seconds(3)
+    while ContinuousClock.now < deadline {
+      if let shown = viewModel.editorResult, !shown.typesPending,
+        shown.truncation?.rowLocator != nil
+      {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(5))
+    }
+    let shown = try #require(viewModel.editorResult)
+    #expect(shown.columns.map(\.name) == ["body"])
+    #expect(shown.truncation?.locators.count == 2)
+    #expect(viewModel.canEdit(shown))
+    #expect(viewModel.rowStagingUnavailableReason == nil)
+    // The keyless target alone, on the page read without the locator columns: not editable
+    var unlocated = first
+    unlocated.editTarget = shown.editTarget
+    unlocated.typesPending = false
+    #expect(shown.editTarget?.rowLocator != nil)
+    #expect(!viewModel.canEdit(unlocated))
+    // The page, its count, and one re-read with the locator columns
+    #expect(await reads.value == 3)
+
+    // The second of the identical rows is edited, the first is left alone
+    #expect(viewModel.stageEdit(row: 1, column: "body", value: .string("other")) == nil)
+    await viewModel.commitStaged()
+    #expect(!viewModel.hasPendingStagedChanges)
+    let stored = try await manager.executeInternal("SELECT body FROM notes ORDER BY rowid")
+    #expect(stored.rows == [[.string("same")], [.string("other")]])
+
+    await gate.release()
+    await manager.disconnect()
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+      try? FileManager.default.removeItem(atPath: url.path + suffix)
+    }
+  }
+}
+
+/// Statements sent through the user path (`setScriptCheckpointHook`)
+private actor StatementCounter {
+  private(set) var value = 0
+  func increment() { value += 1 }
+}
+
+/// Holds every edit-table catalog read while closed
+private actor CatalogHold {
+  private var holding = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+
+  func pass() async {
+    guard holding else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func hold() { holding = true }
+
+  func release() {
+    holding = false
+    let resumed = waiters
+    waiters = []
+    for waiter in resumed { waiter.resume() }
+  }
 }

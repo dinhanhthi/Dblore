@@ -1,5 +1,6 @@
 // FakeDatabaseSession.swift
-// In-memory session for contract tests. Scripts rows, errors, close events, and slow queries.
+// In-memory session for contract tests. Scripts rows, errors, close events, slow queries and
+// PostgreSQL's side-connection cancel (pid, answer, statements in flight).
 // It cannot bypass the actor's gate: user SQL reaches here only after the actor allows it.
 
 import Foundation
@@ -32,6 +33,7 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
+  private var madeConfigs: [ConnectionConfig] = []
 
   init(
     capabilities: DatabaseCapabilities, columns: [ColumnInfo] = [], rows: [[CellValue]] = [],
@@ -67,8 +69,16 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
       writeLimits: writeLimits)
     lock.lock()
     made.append(session)
+    madeConfigs.append(config)
     lock.unlock()
     return session
+  }
+
+  /// The config of each session made, in order.
+  var configs: [ConnectionConfig] {
+    lock.lock()
+    defer { lock.unlock() }
+    return madeConfigs
   }
 
   var sessions: [FakeDatabaseSession] {
@@ -117,6 +127,14 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   /// Slow reads waiting for `interrupt`, which ends them all
   private var slowContinuations: [CheckedContinuation<Void, Error>] = []
   private var interruptReport: (@Sendable () async -> Bool?)?
+  /// `prepareCancelBackend` / `cancelBackend`: the pid read at connect (nil: never read) and
+  /// what the server answers
+  private var cancelPID: Int32? = 1
+  private var cancelResult: @Sendable () async -> Bool = { true }
+  private var cancelTargetsSeen: [CancelBackendTarget] = []
+  /// `query` / `command` calls that have not answered yet, oldest first
+  private var inFlight: [(token: UInt64, sql: String)] = []
+  private var nextToken: UInt64 = 0
   /// `interrupt` leaves the slow reads waiting until `releaseSlowReads` (see
   /// `holdSlowReadsOnInterrupt`)
   private var interruptHolds = false
@@ -129,11 +147,14 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private var queryDidStart = false
   private var failingCommand: String?
   private var failingCommands: [String] = []
+  /// The next `command` containing `text` answers with `tag` (`tagNextCommand`)
+  private var scriptedTag: (text: String, tag: String)?
   private var queryHook: (@Sendable (String) async -> Void)?
 
   private(set) var didOpen = false
   private(set) var didClose = false
   private(set) var interruptCount = 0
+  private(set) var cancelBackendCount = 0
   private(set) var openCursorCount = 0
   private(set) var closeCursorCount = 0
   private(set) var fetchCounts: [Int] = []
@@ -216,6 +237,8 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
 
   func query(_ sql: String, binds: [SQLBindValue]) async throws -> SessionRowSource {
     record(sql, binds: binds, query: true)
+    let token = beginInFlight(sql)
+    defer { endInFlight(token) }
     if let hook = takeQueryHook() { await hook(sql) }
     if let failingQuery, sql.contains(failingQuery) { throw FakeQueryError() }
     if slowQueries, lock.withLock({ slowOnly.map { sql.contains($0) } ?? true }) {
@@ -226,10 +249,13 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
 
   func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
     record(sql, binds: binds, query: false)
+    let token = beginInFlight(sql)
+    defer { endInFlight(token) }
     if takeCommandHold(sql) {
       await withCheckedContinuation { wait in lock.withLock { heldCommands.append(wait) } }
     }
     if takeFailingCommand(sql) { throw FakeQueryError() }
+    if let tag = takeScriptedTag(sql) { return CommandResult(affectedRows: 0, tag: tag) }
     var result =
       commandRows?(sql).map { CommandResult(affectedRows: $0, tag: "FAKE \($0)") }
       ?? Self.commandResult(sql)
@@ -253,6 +279,20 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   }
 
   func writeLimits() async -> MongoWriteLimits { limits }
+
+  /// The next `command` whose SQL contains `text` answers with `tag` (once), e.g. a PostgreSQL
+  /// COMMIT of an aborted transaction answering ROLLBACK
+  func tagNextCommand(containing text: String, as tag: String) {
+    lock.withLock { scriptedTag = (text, tag) }
+  }
+
+  private func takeScriptedTag(_ sql: String) -> String? {
+    lock.withLock {
+      guard let scripted = scriptedTag, sql.contains(scripted.text) else { return nil }
+      scriptedTag = nil
+      return scripted.tag
+    }
+  }
 
   /// The next `command` whose SQL contains `text` throws `FakeQueryError` (once).
   func failNextCommand(containing text: String) {
@@ -352,11 +392,57 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   ) async throws {}
 
   func interrupt() async {
-    let holds = lock.withLock { interruptHolds }
-    if holds {
-      lock.withLock { interruptCount += 1 }
-      return
+    lock.withLock { interruptCount += 1 }
+    stopSlowReads()
+  }
+
+  /// PostgreSQL's side-connection cancel: nil without a pid or with nothing in flight, else the
+  /// oldest statement in flight
+  func prepareCancelBackend() -> CancelBackendTarget? {
+    lock.withLock {
+      guard let pid = cancelPID, let oldest = inFlight.first else { return nil }
+      return CancelBackendTarget(
+        pid: pid, backendStart: "fake", statement: oldest.sql, token: oldest.token)
     }
+  }
+
+  func runningStatementToken() -> UInt64? {
+    lock.withLock { inFlight.first?.token }
+  }
+
+  func statementInFlight(_ token: UInt64) -> Bool {
+    lock.withLock { inFlight.contains { $0.token == token } }
+  }
+
+  /// The scripted answer; true stops the slow reads as `interrupt` does
+  func cancelBackend(_ target: CancelBackendTarget) async -> Bool {
+    let result = lock.withLock {
+      cancelBackendCount += 1
+      cancelTargetsSeen.append(target)
+      return cancelResult
+    }
+    guard await result() else { return false }
+    stopSlowReads()
+    return true
+  }
+
+  /// What each `cancelBackend` was asked to match, in order
+  var cancelTargets: [CancelBackendTarget] {
+    lock.withLock { cancelTargetsSeen }
+  }
+
+  /// What `prepareCancelBackend` sees and `cancelBackend` answers (default: pid 1,
+  /// cancelled). `result` runs in the caller's task, so it sees its task-local values
+  func scriptCancelBackend(pid: Int32?, result: @escaping @Sendable () async -> Bool) {
+    lock.withLock {
+      cancelPID = pid
+      cancelResult = result
+    }
+  }
+
+  /// Ends the slow reads, unless `holdSlowReadsOnInterrupt` keeps them waiting
+  private func stopSlowReads() {
+    guard !lock.withLock({ interruptHolds }) else { return }
     for pending in takeSlowWaits() { pending.resume(throwing: CancellationError()) }
   }
 
@@ -464,7 +550,6 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
 
   private func takeSlowWaits() -> [CheckedContinuation<Void, Error>] {
     lock.lock()
-    interruptCount += 1
     let pending = slowContinuations
     slowContinuations = []
     lock.unlock()
@@ -477,6 +562,18 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     recordedBinds.append(binds)
     if query { queriesRecorded.append(sql) }
     lock.unlock()
+  }
+
+  private func beginInFlight(_ sql: String) -> UInt64 {
+    lock.withLock {
+      nextToken &+= 1
+      inFlight.append((token: nextToken, sql: sql))
+      return nextToken
+    }
+  }
+
+  private func endInFlight(_ token: UInt64) {
+    lock.withLock { inFlight.removeAll { $0.token == token } }
   }
 
   /// Records `command` and returns its index.

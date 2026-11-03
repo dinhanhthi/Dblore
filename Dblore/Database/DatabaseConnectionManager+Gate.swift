@@ -44,13 +44,17 @@ extension DatabaseConnectionManager {
   /// unless the connection is still that one (`DatabaseError.sessionChanged`).
   /// `parameters` nil sends `userSQL` unchanged. A dictionary rewrites each statement's
   /// `:name` placeholders and binds those values.
+  /// `deferEnrichment` (the app's grid only): PostgreSQL column types are returned as the driver
+  /// reported them, outside any transaction, marked `typesDeferred` for the caller to enrich
+  /// after showing the rows. The default awaits the enrichment (MCP, CLI, internal reads).
   func execute(
     userSQL: String, parameters: [String: SQLBindValue]? = nil, policy: ProtectionPolicy,
-    maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil
+    maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil,
+    deferEnrichment: Bool = false
   ) async throws -> QueryResult {
     let run = try await runUserSQL(
       userSQL, parameters: parameters, policy: policy, maxRows: maxRows, caller: caller,
-      expectedEpoch: expectedEpoch)
+      expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
     return Self.combined(run.results.map(\.result), totalTime: run.totalTime)
   }
 
@@ -58,33 +62,36 @@ extension DatabaseConnectionManager {
   /// Throws `DatabaseError.blockedByProtection` before anything is sent if ANY statement
   /// violates `policy`. Under Protected mode, writes run in the app transaction (same `caller`
   /// rule as `execute`, same `expectedEpoch` check). `parameters` nil sends `userSQL`
-  /// unchanged; a dictionary rewrites `:name` the same way `execute` does.
+  /// unchanged; a dictionary rewrites `:name` the same way `execute` does. Same
+  /// `deferEnrichment` as `execute`.
   func executeDetailed(
     userSQL: String, parameters: [String: SQLBindValue]? = nil, policy: ProtectionPolicy,
-    maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil
+    maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil,
+    deferEnrichment: Bool = false
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     try await runUserSQL(
       userSQL, parameters: parameters, policy: policy, maxRows: maxRows, caller: caller,
-      expectedEpoch: expectedEpoch)
+      expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
   }
 
   /// `parameters` nil keeps the authorize path. A dictionary rewrites first, then uses the
   /// same effective policy; missing names are refused only after that policy allows the script.
   private func runUserSQL(
     _ userSQL: String, parameters: [String: SQLBindValue]?, policy: ProtectionPolicy,
-    maxRows: Int, caller: UUID?, expectedEpoch: UInt64?
+    maxRows: Int, caller: UUID?, expectedEpoch: UInt64?, deferEnrichment: Bool
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     try refuseIfRelocked(config)
     guard let parameters else {
       let (statements, protectedMode) = try authorize(userSQL, policy: policy)
       return try await runUserStatements(
         statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
-        expectedEpoch: expectedEpoch)
+        expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
     }
     let plan = try planNamedParameters(userSQL, parameters: parameters, policy: policy)
     return try await runUserStatements(
       plan.statements, protectedMode: plan.protectedMode, maxRows: maxRows, caller: caller,
-      expectedEpoch: expectedEpoch, binds: plan.binds, originalTexts: plan.originalTexts)
+      expectedEpoch: expectedEpoch, binds: plan.binds, originalTexts: plan.originalTexts,
+      deferEnrichment: deferEnrichment)
   }
 
   private func planNamedParameters(

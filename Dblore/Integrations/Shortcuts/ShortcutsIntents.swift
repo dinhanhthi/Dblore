@@ -10,7 +10,6 @@
 // need the user (missing secret, unpinned SSH host key), so nothing here asks.
 
 import AppIntents
-import AppKit
 import Foundation
 
 /// A saved connection, by its saved row's id
@@ -78,49 +77,13 @@ struct OpenConnectionIntent: AppIntent {
   }
 
   /// A workspace for `entry`, connected as the Welcome window's saved rows are, in a window
-  /// that surely shows it: a Welcome window that would take the pending id (the one
-  /// `AppWindowView` picks) replaces itself, as its own rows do; otherwise (no window, a cold
-  /// launch before the first window, or a front window that only shows its own workspace and
-  /// would leave the id unread) a new workspace window opens at once.
+  /// that surely shows it (`WorkspaceWindowManager.showPendingWorkspace`)
   @MainActor private static func open(_ entry: ConnectionHistoryEntry) {
     let seed = entry.config
-    let windows = WorkspaceWindowManager.shared
-    let manager = windows.newWorkspace(connection: seed)
-    let store = NewWindowStore.shared
-    if let front = pendingHandlerWindow(), store.registration(for: front) == .welcome {
-      windows.pendingWorkspaceId = manager.id
-      // Safety net: that Welcome window clears the id as it takes it. Still pending a moment
-      // later (a short sleep, not one main-queue hop, which can run before SwiftUI sees the
-      // change) means no window took it: open one.
-      Task {
-        try? await Task.sleep(for: .milliseconds(300))
-        guard windows.pendingWorkspaceId == manager.id, store.findWindow(for: manager.id) == nil
-        else { return }
-        windows.pendingWorkspaceId = nil
-        store.openWorkspaceWindow(workspaceId: manager.id)
-      }
-    } else {
-      store.openWorkspaceWindow(workspaceId: manager.id)
-    }
-    Task {
-      let config = RecentManager.shared.withSavedPassword(seed)
-      do {
-        try await manager.connect(config: config)
-      } catch WorkspaceConnectError.unlockRequired {
-        return
-      } catch {
-        await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
-        manager.presentConnectErrorIfActionable(error, config: config)
-      }
-    }
-  }
-
-  /// The window whose `AppWindowView` handles a pending workspace id, in its order: the key
-  /// document window, else the main window, else the first visible document window
-  @MainActor private static func pendingHandlerWindow() -> NSWindow? {
-    if let key = NSApp.keyWindow, key.isDbloreDocumentWindow { return key }
-    return NSApp.mainWindow
-      ?? NSApp.orderedWindows.first { $0.isVisible && $0.isDbloreDocumentWindow }
+    let manager = WorkspaceWindowManager.shared.newWorkspace(connection: seed)
+    WorkspaceWindowManager.shared.showPendingWorkspace(manager.id)
+    // A saved password the Keychain could not read connects nothing: the form says why
+    Task { await manager.connectSavedConnection(seed) }
   }
 }
 

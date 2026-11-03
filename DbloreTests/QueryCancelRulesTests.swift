@@ -1,6 +1,7 @@
 // QueryCancelRulesTests.swift
-// C3: cancelling a running query closes the connection, so the ViewModel first warns when that
-// discards pending Protected changes or the user's open transaction (pure rule).
+// C3: cancelling a running query rolls back what is open (or closes the connection), so the
+// ViewModel first warns when that discards pending Protected changes or the user's open
+// transaction (pure rule).
 
 import Foundation
 import Testing
@@ -110,6 +111,20 @@ struct QueryCancelRulesTests {
       #expect(pending.map(\.title) == ["Cancelling may roll back 1 pending change"])
       #expect(pending.map(\.buttonTitle) == [QueryCancelWarning.stopTitle])
     }
+  }
+
+  /// PostgreSQL's server cancel keeps the connection and rolls back what is open: the editor
+  /// Run button says so (and the reset fallback); staged changes get the definite warning
+  @Test(
+    "PostgreSQL: the prompt says the server stops the statement and the connection is kept",
+    .timeLimit(.minutes(1)))
+  @MainActor
+  func serverCancelPrompt() async throws {
+    let idle = try await cancelPrompts(type: .postgresql, staged: false, alwaysConfirm: true)
+    #expect(idle == [.serverCancel])
+    let pending = try await cancelPrompts(type: .postgresql, staged: true, alwaysConfirm: false)
+    #expect(pending.map(\.title) == ["Cancelling will roll back 1 pending change"])
+    #expect(pending.map(\.buttonTitle) == [QueryCancelWarning.confirmTitle])
   }
 
   @Test("Interrupt: SQLite may roll back the open transaction, DuckDB will; never closed")

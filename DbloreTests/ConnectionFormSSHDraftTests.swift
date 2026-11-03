@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -382,6 +383,71 @@ struct ConnectionFormSSHDraftTests {
       draft.preparedCredential(original: original, new: edited, store: store, registry: registry)
         == .password("pw"))
     #expect(store.loads == 1)
+  }
+
+  @Test("A relocked row's held remember-off SSH secret is not used until the unlock")
+  func heldCredentialWaitsForUnlock() {
+    let store = InMemorySSHCredentialStore()
+    let original = Self.tunneledConfig()
+    let held = SSHCredentialStoreFactory.ConnectionCredential(
+      account: SSHCredentialStoreFactory.account(for: original)!, credential: .password("held"))
+    let draft = SSHFormDraft(from: original)
+    var edited = Self.tunneledConfig(host: "db2.internal")
+    edited.sshTunnel = draft.preparedConfig
+    let registry = LockRegistry()
+    registry.setLockedConnections([LockIdentity(original)])
+    for new in [original, edited] {
+      #expect(
+        draft.preparedCredential(
+          original: original, new: new, store: store, held: held, registry: registry) == nil)
+    }
+    #expect(registry.grant(LockIdentity.all(original), ifGeneration: registry.generation))
+    for new in [original, edited] {
+      #expect(
+        draft.preparedCredential(
+          original: original, new: new, store: store, held: held, registry: registry)
+          == .password("held"))
+    }
+  }
+
+  @Test("A grant posts didGrant, and the form's refresh on it brings back the held SSH method")
+  func heldMethodRefreshesOnGrant() async throws {
+    let store = InMemorySSHCredentialStore()
+    let original = Self.tunneledConfig()
+    let held = SSHCredentialStoreFactory.ConnectionCredential(
+      account: SSHCredentialStoreFactory.account(for: original)!, credential: .password("held"))
+    let draft = SSHFormDraft(from: original)
+    let registry = LockRegistry()
+    registry.setLockedConnections([LockIdentity(original)])
+    // What `refreshSSHStoredMethod` reads: the held secret's method, else the stored one's
+    let method = {
+      SSHFormDraft.heldCredential(for: original, held: held, registry: registry)
+        .map(SSHFormDraft.method(of:))
+        ?? SSHFormDraft.storedMethod(for: original, store: store, registry: registry)
+    }
+    #expect(method() == nil)
+    #expect(!draft.isValid(storedMethod: draft.usableStoredMethod(method(), original: original)))
+
+    var refreshed: [SSHTunnelConfig.AuthMethod?] = []
+    let observer = ConnectionFormContent.lockChanges(of: registry).sink { note in
+      guard note.name == LockRegistry.didGrant else { return }
+      MainActor.assumeIsolated { refreshed.append(method()) }
+    }
+    defer { observer.cancel() }
+    #expect(registry.grant(LockIdentity.all(original), ifGeneration: registry.generation))
+    for _ in 0..<200 where refreshed.isEmpty {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(refreshed == [.password])
+    #expect(
+      draft.isValid(
+        storedMethod: draft.usableStoredMethod(refreshed.last ?? nil, original: original)))
+    // Another registry's grant reaches no form of this one
+    let other = LockRegistry()
+    other.setLockedConnections([LockIdentity(original)])
+    #expect(other.grant(LockIdentity.all(original), ifGeneration: other.generation))
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(refreshed.count == 1)
   }
 
   @Test("Editing the DB host keeps the SSH credential after the old account is pruned")

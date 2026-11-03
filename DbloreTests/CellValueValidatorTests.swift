@@ -115,11 +115,46 @@ struct CellValueValidatorTests {
       ("2", "INTEGER", true), ("2.5", "INTEGER", false), ("-3.5", "DOUBLE PRECISION", true),
       ("abc", "NUMERIC", false), ("true", "BOOLEAN", true), ("maybe", "BOOLEAN", false),
       ("{\"a\": 1}", "JSONB", true), ("{bad", "JSON", false), ("hello", "TEXT", true),
-      ("anything", "UUID", true), ("null1", "VARCHAR", true),
+      ("anything", "UUID", true), ("null1", "VARCHAR", true), ("-12.50", "numeric(10,2)", true),
+      ("1e-07", "NUMERIC", true), ("1e1001", "NUMERIC", false), ("nan", "DECIMAL(65,30)", false),
     ])
   func nullCellTakesColumnType(input: String, columnType: String, isValid: Bool) {
     let result = CellValueValidator.validate(input, for: .null, columnType: columnType)
     #expect(result.isValid == isValid, "'\(input)' as \(columnType)")
+  }
+
+  /// Security: decimal text may be written bare into SQL, so only plain decimals and
+  /// PostgreSQL's NaN / Infinity / -Infinity pass
+  @Test("A decimal takes plain digits with an optional minus and fraction, NaN or Infinity")
+  func decimalValidation() {
+    for input in [
+      "0", "-12.50", "007", "12345678901234567890.123456789", "NaN", "-Infinity", "1e-07",
+      "2.5E+3",
+    ] {
+      #expect(CellValueValidator.validate(input, for: .decimal("1")).isValid, "\(input)")
+    }
+    for input in [
+      "", "1e1001", "1e", "1e5.5", "nan", "inf", " 1", "1 ", "+1", ".5", "1.", "--1", "1;x",
+    ] {
+      #expect(!CellValueValidator.validate(input, for: .decimal("1")).isValid, "\(input)")
+    }
+  }
+
+  @Test("A new row's NUMERIC field stages exact decimal text, exponents as plain digits")
+  func newRowDecimalField() {
+    var field = NewRowField(name: "price", type: "NUMERIC(10,2)")
+    field.text = "12.50"
+    #expect(field.validationError == nil)
+    #expect(field.value(dialect: .postgresql) == .decimal("12.50"))
+    field.text = "1e-07"
+    #expect(field.validationError == nil)
+    #expect(field.value(dialect: .postgresql) == .decimal("0.0000001"))
+    field.text = "1e1001"
+    #expect(field.validationError != nil)
+    var double = NewRowField(name: "ratio", type: "DOUBLE PRECISION")
+    double.text = "1e-7"
+    #expect(double.validationError == nil)
+    #expect(double.value(dialect: .postgresql) == .string("1e-7"))
   }
 
   @Test("Empty or 'null' keeps a NULL cell NULL whatever the column type")
@@ -226,6 +261,157 @@ struct CellValueValidatorTests {
       let result = CellValueValidator.validate(input, for: .date(Date()))
       #expect(result.isValid, "'\(input)' should be valid PostgreSQL timestamp")
       #expect(result.errorMessage == nil)
+    }
+  }
+
+  /// 2026-10-15 12:00:00 UTC plus `micros`, built as the parser builds an instant
+  private static func noon(micros: Int64 = 0) -> Date {
+    Date(timeIntervalSince1970: Double(1_792_065_600 * 1_000_000 + micros) / 1_000_000)
+  }
+
+  /// Regression A5: the editor shows `displayString(wallClock:)` and must read it back as the
+  /// same instant, whatever the zone the app shows dates in
+  @Test(
+    "Displayed timestamp text parses back to the same value under any zone",
+    arguments: ["UTC", "Asia/Ho_Chi_Minh", "America/St_Johns", "America/Los_Angeles"])
+  func displayedTimestampRoundTrips(zone: String) {
+    CellValue.$displayZone.withValue(TimeZone(identifier: zone)!) {
+      for date in [Self.noon(), Self.noon(micros: 123_456), Self.noon(micros: 500)] {
+        for wallClock in [true, false] {
+          let text = CellValue.date(date).displayString(wallClock: wallClock)
+          #expect(CellValueValidator.validate(text, for: .date(date)).isValid, "\(text)")
+          #expect(
+            NotebookViewModel.editedCellValue(text, original: .date(date), wallClock: wallClock)
+              == .date(date), "\(text) in \(zone)")
+        }
+      }
+    }
+  }
+
+  @Test("Zoned text reads its offset or Z, and no zone as the display zone; naive text as UTC")
+  func timestampZones() {
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      let noon = CellValue.date(Self.noon())
+      let cases: [(String, Bool)] = [
+        ("2026-10-15 09:30:00-02:30", false), ("2026-10-15 19:00:00+0700", false),
+        ("2026-10-15 19:00:00+07", false), ("2026-10-15 12:00:00Z", false),
+        ("2026-10-15T12:00:00Z", false), ("2026-10-15 19:00:00", false),
+        ("2026-10-15 12:00:00", true),
+      ]
+      for (text, wallClock) in cases {
+        #expect(CellValueValidator.validate(text, for: noon).isValid, "\(text)")
+        #expect(
+          NotebookViewModel.editedCellValue(text, original: noon, wallClock: wallClock) == noon,
+          "\(text)")
+      }
+      #expect(!CellValueValidator.validate("2026-10-15 12:00:00.1234567", for: noon).isValid)
+    }
+  }
+
+  /// Regression A5: PostgreSQL decodes a timestamp as seconds since 2000-01-01, a Double that
+  /// differs from the parser's for many microseconds; the value's own text is that value
+  @Test("A PostgreSQL-decoded timestamp read from its own text is the stored value")
+  func postgresDecodedTimestampReadsAsItself() {
+    let since2000 = Date(timeIntervalSince1970: 946_684_800)
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      var differs = false
+      for micros: Int64 in [2, 3, 7, 123_456, 999_999] {
+        // The decode formula of the PostgreSQL driver
+        let decoded = Date(
+          timeInterval: Double(845_380_800_000_000 + micros) / 1_000_000, since: since2000)
+        differs = differs || decoded != Self.noon(micros: micros)
+        for wallClock in [true, false] {
+          let text = CellValue.date(decoded).displayString(wallClock: wallClock)
+          #expect(
+            NotebookViewModel.editedCellValue(text, original: .date(decoded), wallClock: wallClock)
+              == .date(decoded), "\(text)")
+        }
+      }
+      #expect(differs)
+    }
+  }
+
+  /// Regression A5: a wall clock the zone skips (spring forward) is no time at all
+  @Test("A zone-less zoned time in a DST gap is refused; naive text is not")
+  func dstGapRefused() {
+    CellValue.$displayZone.withValue(TimeZone(identifier: "America/Los_Angeles")!) {
+      let text = "2026-03-08 02:30:00"
+      #expect(CellValueValidator.date(from: text, wallClock: false) == nil)
+      #expect(!CellValueValidator.validate(text, for: .date(Self.noon())).isValid)
+      #expect(CellValueValidator.date(from: text, wallClock: true) != nil)
+      // A naive column has no gap: every new-row path accepts its wall clock
+      #expect(CellValueValidator.validate(text, for: .date(Self.noon()), wallClock: true).isValid)
+      #expect(
+        CellValueValidator.validate(text, for: .null, columnType: "TIMESTAMP", wallClock: true)
+          .isValid)
+      var field = NewRowField(name: "at", type: "TIMESTAMP", wallClock: true)
+      field.text = text
+      #expect(field.validationError == nil)
+      field = NewRowField(name: "at", type: "TIMESTAMPTZ")
+      field.text = text
+      #expect(field.validationError != nil)
+      #expect(
+        (try? PastedRows.cellValue(
+          .init(text: text, quoted: true), columnType: "TIMESTAMP", wallClock: true,
+          dialect: .postgresql)) != nil)
+      // The repeated hour of fall back keeps its wall clock: accepted
+      #expect(CellValueValidator.date(from: "2026-11-01 01:30:00", wallClock: false) != nil)
+    }
+  }
+
+  /// Regression A5 (round 5): the common minute-only form reads with zero seconds
+  @Test("A minute-only time reads with zero seconds; a fraction needs seconds")
+  func minuteOnlyTime() {
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      let noon = Date(timeIntervalSince1970: 1_792_065_600)
+      #expect(CellValueValidator.date(from: "2026-10-15 19:00", wallClock: false) == noon)
+      #expect(CellValueValidator.date(from: "2026-10-15T19:00+07:00", wallClock: false) == noon)
+      #expect(CellValueValidator.date(from: "2026-10-15 12:00Z", wallClock: false) == noon)
+      #expect(CellValueValidator.date(from: "2026-10-15 12:00", wallClock: true) == noon)
+      #expect(CellValueValidator.validate("2026-10-15 19:00", for: .date(noon)).isValid)
+      #expect(CellValueValidator.date(from: "2026-10-15 19:00.5", wallClock: false) == nil)
+      #expect(!CellValueValidator.validate("2026-10-15 19:00.5", for: .date(noon)).isValid)
+    }
+  }
+
+  @Test("Digits other than ASCII 0-9 are refused in a timestamp")
+  func nonASCIIDigitsRefused() {
+    for text in [
+      "2026-10-15 12:00:00.\u{0661}\u{0662}", "2026-10-15 12:00:00+\u{0660}\u{0667}:00",
+      "\u{0662}026-10-15 12:00:00", "2026-10-15 12:00:00+\u{FF10}\u{FF17}",
+    ] {
+      #expect(CellValueValidator.date(from: text, wallClock: true) == nil, "\(text)")
+    }
+  }
+
+  /// Regression A5: text typed for a date with no stored value reads as a stored value's text
+  /// does (zone-less zoned text in the display zone), except on SQLite, whose dates are text
+  @Test(
+    "New zoned date text reads in the display zone; SQLite keeps it as typed",
+    arguments: [SQLDialect.postgresql, .mysql, .duckdb, .sqlite])
+  func newZonedDateText(dialect: SQLDialect) {
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      let text = "2026-10-15 19:00:00"
+      let expected: CellValue = dialect == .sqlite ? .string(text) : .date(Self.noon())
+      #expect(
+        NotebookViewModel.editedNewDate(
+          text, columnType: "TIMESTAMPTZ", wallClock: false, dialect: dialect) == expected)
+      #expect(
+        NotebookViewModel.editedCellValue(
+          text, original: .null, columnType: "TIMESTAMPTZ", dialect: dialect) == expected)
+      #expect(
+        (try? PastedRows.cellValue(
+          .init(text: text, quoted: true), columnType: "TIMESTAMPTZ", dialect: dialect))
+          == expected)
+      // A naive column reads its wall clock as UTC; a DATE stays text
+      #expect(
+        NotebookViewModel.editedNewDate(
+          "2026-10-15 12:00:00", columnType: "TIMESTAMP", wallClock: true, dialect: dialect)
+          == (dialect == .sqlite ? .string("2026-10-15 12:00:00") : .date(Self.noon())))
+      #expect(
+        NotebookViewModel.editedNewDate(
+          "2026-10-15", columnType: "DATE", wallClock: false, dialect: dialect)
+          == .string("2026-10-15"))
     }
   }
 

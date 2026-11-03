@@ -179,7 +179,7 @@ struct InlineEditSessionTargetIntegrationTests {
     viewModel.handleCellValueEdit(
       columnName: "v", columnType: "text", newValue: "edited", originalValue: .string("a"),
       tableName: "t", rowData: ["id": .int(1), "v": .string("a")], primaryKeyColumns: ["id"],
-      cellId: nil, connectionManager: manager)
+      cellId: nil, connectionManager: manager, wallClock: false)
 
     // Staged (setting off by default): wait for the pending edit, then commit it
     var pending: [StatementSummary] = []

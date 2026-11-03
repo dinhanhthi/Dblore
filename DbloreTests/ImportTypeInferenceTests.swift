@@ -41,6 +41,30 @@ struct ImportTypeInferenceTests {
     #expect(ImportTypeInference.infer(rows: [["+5", "-0"]], columnCount: 2) == [.text, .integer])
   }
 
+  /// DECIMAL(65,30) on MySQL holds 35 integer and 30 fraction digits; scientific notation is
+  /// text so its value is never rounded or rejected
+  @Test("Decimals that would not fit DECIMAL(65,30), and scientific notation, are text")
+  func decimalBounds() {
+    let integer35 = String(repeating: "9", count: 35)
+    let fraction30 = String(repeating: "1", count: 30)
+    let fits: [String] = [
+      "1.5", "-12.25", "123456789012345678901234.5", "\(integer35).\(fraction30)",
+      "-\(integer35)", "0.\(fraction30)",
+    ]
+    for value in fits {
+      #expect(ImportTypeInference.infer(rows: [[value]], columnCount: 1) == [.decimal], "\(value)")
+    }
+    let tooWide: [String] = [
+      "1e40", "3.2e-45", "1E5", "-1e5", "1.5e+3", "1\(integer35)", "0.\(fraction30)1",
+    ]
+    for value in tooWide {
+      #expect(ImportTypeInference.infer(rows: [[value]], columnCount: 1) == [.text], "\(value)")
+    }
+    // One exponent value makes the whole column text
+    #expect(ImportTypeInference.infer(rows: [["1.5"], ["2e3"]], columnCount: 1) == [.text])
+  }
+
+  /// Decimals keep every digit: never a binary float type (SQLite has no exact decimal type)
   @Test("Database types match the inferred kind")
   func sqlTypes() {
     let kinds: [ImportTypeInference.Kind] = [
@@ -52,11 +76,11 @@ struct ImportTypeInferenceTests {
       ])
     #expect(
       kinds.map { $0.sqlType(dialect: .sqlite) } == [
-        "INTEGER", "REAL", "INTEGER", "TEXT", "TEXT", "TEXT",
+        "INTEGER", "TEXT", "INTEGER", "TEXT", "TEXT", "TEXT",
       ])
     #expect(
       kinds.map { $0.sqlType(dialect: .mysql) } == [
-        "BIGINT", "DOUBLE", "BOOLEAN", "DATE", "DATETIME(6)", "LONGTEXT",
+        "BIGINT", "DECIMAL(65,30)", "BOOLEAN", "DATE", "DATETIME(6)", "LONGTEXT",
       ])
     #expect(
       kinds.map { $0.sqlType(dialect: .duckdb) } == [

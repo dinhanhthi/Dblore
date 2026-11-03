@@ -268,6 +268,9 @@ nonisolated struct CLIClient: Sendable {
       + "with Remember on.",
     "The SSH server's host key is not trusted yet. Connect once in Dblore and trust it.",
     "This connection uses a password command; open it in Dblore instead.",
+    "This connection asks for its password when it connects; open it in Dblore instead.",
+    "The connection's saved password could not be read from the Keychain (locked or access "
+      + "denied), so nothing was opened. Unlock the Keychain and try again.",
     "Vault connections need the app window.",
     "MCP connections are read-only: only queries are sent.",
     "MCP connections do not use server-side cursors.",

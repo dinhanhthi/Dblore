@@ -16,6 +16,8 @@ nonisolated enum CLICell: Decodable, Equatable, Sendable {
   case bool(Bool)
   case int(Int)
   case double(Double)
+  /// A non-integer number that fits `Decimal`, printed as its plain digits (never an exponent)
+  case decimal(Decimal)
   case text(String)
   /// `{"truncated": true, "value": <first 2,000 characters>}`
   case cutText(String)
@@ -40,6 +42,13 @@ nonisolated enum CLICell: Decodable, Equatable, Sendable {
       }
       if let number = try? single.decode(Int.self) {
         self = .int(number)
+        return
+      }
+      // `JSONDecoder` refuses a `Decimal` whose exponent is outside −128…127 (a double such as
+      // 1e+300 or 5e-324 stays a Double, printed as before), but rounds a mantissa past 38
+      // digits without failing; Dblore writes at most 17 significant digits.
+      if let number = try? single.decode(Decimal.self) {
+        self = .decimal(number)
         return
       }
       if let number = try? single.decode(Double.self) {
@@ -68,6 +77,7 @@ nonisolated enum CLICell: Decodable, Equatable, Sendable {
     case .bool(let flag): flag ? "true" : "false"
     case .int(let number): String(number)
     case .double(let number): String(number)
+    case .decimal(let number): number.description
     case .text(let text), .cutText(let text): text
     case .binary(let base64, _), .cutBinary(let base64): base64
     }
@@ -77,7 +87,7 @@ nonisolated enum CLICell: Decodable, Equatable, Sendable {
   var json: String {
     switch self {
     case .null: "null"
-    case .bool, .int, .double: plainText ?? "null"
+    case .bool, .int, .double, .decimal: plainText ?? "null"
     case .text(let text): CLIOutput.jsonString(text)
     case .cutText(let text): "{\"truncated\":true,\"value\":\(CLIOutput.jsonString(text))}"
     case .binary(let base64, let bytes):

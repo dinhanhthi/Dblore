@@ -103,15 +103,39 @@ with the tool's decoders, the five output formats, the flags, the exit codes (0 
 2 Dblore not running or its MCP server off or busy, 3 refused, 4 query error) and the hello proof. Change the app's
 answers and the tool together.
 
+Cells follow `MCPResultEncoder`: a date is `CellValue.outputString(wallClock:)` (naive columns
+`yyyy-MM-dd HH:mm:ss[.ffffff]`, zoned ISO 8601 UTC with the fraction), and a decimal is a JSON
+number only with at most 15 significant digits, else its exact text; the tool prints a decoded
+`Decimal` as plain digits. A refusal exits 3 when its text is in `CLIClient.refusalTexts`, ends with "Nothing was sent to the database." or starts with "Missing or invalid argument: " (`CLIClient.isRefusal`).
+
 - The tool talks only to Dblore's MCP server on `127.0.0.1`. Before it sends its token it posts a
   fresh nonce to `/cli/hello` and checks
   `HMAC-SHA256(proofKey, "dblore-cli-hello-v1" || nonce || port)` against the port it dialed.
 - Its credentials are a 0600 file in `~/Library/Application Support/Dblore CLI/` (0700), not the
   login Keychain: each update re-signs the tool with a new CDHash, and the Keychain then prompts
   for and refuses the items the old binary wrote.
+- The tool, the MCP server and Shortcuts open connections through `MCPConnectionPool`, whose
+  `refuseUnattended` refuses password-command, Ask on connect and Vault rows and missing
+  secrets. Their managers never get a typed password, a timed write unlock or a Replace Pin
+  action.
 - `scripts/build-release.sh` fails unless the exported helper has the Developer ID authority, the
   Team ID, the hardened runtime and a timestamp. Check a local build with
   `codesign -dv --verbose=4 <app>/Contents/Helpers/dblore`.
+
+## Result values and keyless rows
+
+Producers set `ColumnInfo.wallClock` once on naive timestamp columns (PostgreSQL `timestamp`,
+MySQL `DATETIME`, DuckDB `TIMESTAMP`), and every rebuild of a `ColumnInfo` keeps it; a missing
+flag means zoned. Exact NUMERIC and DECIMAL values are `CellValue.decimal(String)`, never a
+`Double`; a SQL literal writes one unquoted only when `DecimalText.isPlain` holds. Notebook files
+add keys older builds ignore: `wallClock` on a column, `micros` on a date cell (`value` keeps
+whole seconds) and `decimal: true` on a string cell (read back only for valid decimal text).
+
+A PostgreSQL or SQLite table without a primary key is edited by `RowLocatorKind`: PostgreSQL
+`tableoid`, `ctid` and `xmin`, SQLite `rowid` plus every loaded non-binary column compared with
+`IS`. The data viewer reads them under `dblore_*` aliases, strips them before the grid and
+indexes them by page row, never by values; an UPDATE or DELETE that matches no row is a conflict.
+MySQL/MariaDB introspection returns no locator, so those tables still need a primary key.
 
 ## SQL dump format
 

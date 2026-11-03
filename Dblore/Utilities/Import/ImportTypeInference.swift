@@ -12,16 +12,17 @@ nonisolated enum ImportTypeInference {
     func sqlType(dialect: SQLDialect) -> String {
       switch dialect {
       case .sqlite:
+        // Decimals as TEXT: SQLite has no exact decimal type, and REAL keeps about 15 digits
         switch self {
         case .integer, .boolean: "INTEGER"
-        case .decimal: "REAL"
-        case .date, .timestamp, .text: "TEXT"
+        case .date, .timestamp, .text, .decimal: "TEXT"
         }
       case .mysql:
-        // DOUBLE, not bare DECIMAL (which is DECIMAL(10,0) and drops fractions)
+        // The widest exact DECIMAL, not DOUBLE (about 15 digits) or bare DECIMAL (which is
+        // DECIMAL(10,0) and drops fractions)
         switch self {
         case .integer: "BIGINT"
-        case .decimal: "DOUBLE"
+        case .decimal: "DECIMAL(65,30)"
         case .boolean: "BOOLEAN"
         case .date: "DATE"
         case .timestamp: "DATETIME(6)"
@@ -103,9 +104,11 @@ nonisolated enum ImportTypeInference {
       && value.range(of: #"^-?(?:0|[1-9][0-9]*)$"#, options: .regularExpression) != nil
   }
 
+  /// Plain notation that fits MySQL's DECIMAL(65,30): up to 35 integer and 30 fraction digits.
+  /// Scientific notation (`1e40`, `3.2e-45`) is text, so its value is never rounded or rejected.
   private static func isDecimal(_ value: String) -> Bool {
     value.range(
-      of: #"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$"#,
+      of: #"^-?(?:0|[1-9][0-9]{0,34})(?:\.[0-9]{1,30})?$"#,
       options: .regularExpression
     ) != nil
   }

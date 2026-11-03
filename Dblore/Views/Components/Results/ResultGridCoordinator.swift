@@ -52,7 +52,10 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static var sortedColumnColor: NSColor { NSColor(Color.accent.opacity(0.06)) }
   /// Result cell face. Tracks Settings → Results → Font Size (default: small system size).
   static var font: NSFont {
-    NSFont.monospacedSystemFont(ofSize: AppSettings.shared.resultFontSize, weight: .regular)
+    let size = AppSettings.shared.resultFontSize
+    return fontOrFallback(
+      unsafeBitCast(NSFont.monospacedSystemFont(ofSize: size, weight: .regular), to: NSFont?.self),
+      size: size)
   }
 
   private static let cellIdentifier = NSUserInterfaceItemIdentifier("ResultGridCell")
@@ -62,9 +65,20 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static let rowNumberIdentifier = NSUserInterfaceItemIdentifier("rowNumber")
   /// One point under the result face (10pt at the default 11pt), so the gutter stays quieter.
   static var rowNumberFont: NSFont {
-    NSFont.monospacedDigitSystemFont(
-      ofSize: AppSettings.resultRowNumberFontSize(for: AppSettings.shared.resultFontSize),
-      weight: .regular)
+    let size = AppSettings.resultRowNumberFontSize(for: AppSettings.shared.resultFontSize)
+    return fontOrFallback(
+      unsafeBitCast(
+        NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular), to: NSFont?.self),
+      size: size)
+  }
+
+  /// `font`, else a fixed-pitch or system face of `size`. The system font constructors are
+  /// declared nonnull, but a nil font is the one value that makes CoreText throw while copying
+  /// the attributes of `fitWidth`'s `size(withAttributes:)`, the crash seen under a loaded
+  /// parallel test run. Callers pass the constructor's result through `unsafeBitCast` so the
+  /// nil check is not optimized away.
+  static func fontOrFallback(_ font: NSFont?, size: CGFloat) -> NSFont {
+    font ?? NSFont.userFixedPitchFont(ofSize: size) ?? NSFont.systemFont(ofSize: size)
   }
 
   /// Settings → Results → Color Values by Type, set by the grid before each update
@@ -77,6 +91,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// update
   private struct Key: Equatable {
     let timestamp: Date
+    /// Rows replaced under the same timestamp (the inline edit refresh) rebuild the model, so
+    /// its row values and page-row locator keys never trail the live result.
+    let dataRevision: Int
     let columnNames: [String]
     let rowCount: Int
     let sortColumn: String?
@@ -229,7 +246,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Numbers are right-aligned, other values left-aligned, as in the result table
   static func alignment(for value: CellValue) -> NSTextAlignment {
     switch value {
-    case .int, .double: .right
+    case .int, .double, .decimal: .right
     default: .left
     }
   }
@@ -238,7 +255,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// NULL has its own and binary stays neutral.
   static func typeColor(for value: CellValue) -> NSColor? {
     switch value {
-    case .int, .double: numberTextColor
+    case .int, .double, .decimal: numberTextColor
     case .string: stringTextColor
     case .date: dateTextColor
     case .bool: booleanTextColor
@@ -304,7 +321,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   {
     gridTableView = tableView
     let newKey = Key(
-      timestamp: result.timestamp, columnNames: result.columns.map(\.name),
+      timestamp: result.timestamp, dataRevision: result.dataRevision,
+      columnNames: result.columns.map(\.name),
       rowCount: result.rows.count, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
       currentMatchId: currentMatch?.id,
@@ -740,9 +758,13 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     else { return }
     let cells = model.unloadedCells(rows: IndexSet(integer: target.row), columns: [target.column])
     withLoadedCells(cells) { model, _ in
+      // The column's text output, not the grid's local text, so the pasted date is unambiguous
+      let wallClock =
+        model.columns.indices.contains(target.column) && model.columns[target.column].wallClock
       NSPasteboard.general.clearContents()
       NSPasteboard.general.setString(
-        model.value(row: target.row, column: target.column).fullString, forType: .string)
+        model.value(row: target.row, column: target.column).outputString(wallClock: wallClock),
+        forType: .string)
     }
   }
 
@@ -1170,7 +1192,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   static func editsInSidebar(_ value: CellValue) -> Bool {
     switch value {
     case .data: true
-    case .string(let text), .json(let text): text.utf8.count > maxInlineEditBytes
+    case .string(let text), .json(let text), .decimal(let text):
+      text.utf8.count > maxInlineEditBytes
     case .int, .double, .bool, .null, .date: false
     }
   }
@@ -1206,13 +1229,23 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     // The raw value has no marks to repaint, and a repaint mid-edit would reset the caret
     (cellView as? ResultGridCell)?.hasInvisibleMarks = false
     textField.isEditable = true
-    textField.stringValue = model.value(row: row, column: column).fullString
+    textField.stringValue = editText(model.value(row: row, column: column), column)
     textField.textColor = Self.textColor
     return tableView.window?.makeFirstResponder(textField) ?? false
   }
 
+  /// The text the inline editor starts from: the full value, a date as the grid shows it in
+  /// its column (`ColumnInfo.wallClock`), which the edit reads back
+  private func editText(_ value: CellValue, _ column: Int) -> String {
+    guard case .date = value else { return value.fullString }
+    let columns = model?.columns ?? []
+    return value.displayString(
+      wallClock: columns.indices.contains(column) && columns[column].wallClock)
+  }
+
   /// Delivers an edit of a displayed row to `onCommitEdit`, or to `onStageEdit` when
-  /// `stagesEdits` is set. Nothing when not editable or when the text is the unchanged full value.
+  /// `stagesEdits` is set. Nothing when not editable or when the text is the unchanged value's
+  /// editor text (`editText`).
   func commitEdit(row: Int, column: Int, newValue: String) {
     guard let model, row >= 0, row < model.rowCount, column < model.columns.count else { return }
     commit(
@@ -1222,9 +1255,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
 
   private func commit(rowValues: [CellValue], column: Int, newValue: String, pageIndex: Int?) {
     let original = column < rowValues.count ? rowValues[column] : .null
-    guard isEditable, !readOnlyColumns.contains(column), newValue != original.fullString else {
-      return
-    }
+    guard isEditable, !readOnlyColumns.contains(column), newValue != editText(original, column)
+    else { return }
     if stagesEdits {
       guard let pageIndex else { return }
       onStageEdit?(pageIndex, column, newValue)

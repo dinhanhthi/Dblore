@@ -166,6 +166,35 @@ struct RowDetailTests {
     #expect(viewModel.rowDetail?.fields[4].text == "2024-02-28")
   }
 
+  /// Regression A5: a timestamp field shows the grid's text, so opening it never dirties it
+  @Test("A timestamp opens as its display text, clean and valid")
+  func timestampOpensAsDisplayText() {
+    let at = Date(timeIntervalSince1970: Double(1_792_065_600_123_456) / 1_000_000)
+    let base = makeResult()
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      for (index, wallClock) in [true, false].enumerated() {
+        let viewModel = makeViewModel()
+        let result = CellResult(
+          columns: base.columns + [
+            ColumnInfo(
+              name: "at", type: "timestamp",
+              origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 5), wallClock: wallClock)
+          ],
+          rows: base.rows.map { $0 + [.date(at)] }, rowCount: 2, tableName: "users",
+          primaryKeyColumns: ["id"], editTarget: base.editTarget)
+        viewModel.showRowDetail(
+          row: result.rows[0], originalRow: 0, result: result, cellId: nil)
+
+        let field = viewModel.rowDetail?.fields[4]
+        #expect(
+          field?.text
+            == ["2026-10-15 12:00:00.123456", "2026-10-15 19:00:00.123456+07:00"][index])
+        #expect(field?.isDirty == false)
+        #expect(field?.validationError == nil)
+      }
+    }
+  }
+
   @Test("An unset key of a staged insert is NULL but not an error while untouched")
   func unsetStagedKeyIsNotAnError() {
     let viewModel = makeViewModel()

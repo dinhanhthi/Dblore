@@ -64,10 +64,10 @@ struct CollectedRows: Sendable {
 }
 
 /// Bounds on what a capped read keeps, applied to each row as it arrives (MCP managers): text
-/// longer than `maxCellCharacters` keeps `maxCellCharacters + 1` characters and binary longer
-/// than its base64 would be keeps `maxCellCharacters / 4 * 3 + 1` bytes (one past, so the reader
-/// can still tell it was cut), and the read stops, truncated, once the kept cells would pass
-/// `maxResultBytes`. A row is held whole only while it is cut.
+/// (decimal text too) longer than `maxCellCharacters` keeps `maxCellCharacters + 1` characters
+/// and binary longer than its base64 would be keeps `maxCellCharacters / 4 * 3 + 1` bytes (one
+/// past, so the reader can still tell it was cut), and the read stops, truncated, once the kept
+/// cells would pass `maxResultBytes`. A row is held whole only while it is cut.
 nonisolated struct CappedReadLimits: Sendable, Equatable {
   let maxCellCharacters: Int
   let maxResultBytes: Int
@@ -80,12 +80,13 @@ nonisolated struct CappedReadLimits: Sendable, Equatable {
         switch cell {
         case .string(let text): .string(cutText(text))
         case .json(let text): .json(cutText(text))
+        case .decimal(let text): .decimal(cutText(text))
         case .data(let data):
           .data(data.count > maxBinaryBytes ? Data(Array(data.prefix(maxBinaryBytes))) : data)
         default: cell
         }
       switch kept {
-      case .string(let text), .json(let text): bytes += text.utf8.count
+      case .string(let text), .json(let text), .decimal(let text): bytes += text.utf8.count
       case .data(let data): bytes += data.count
       default: bytes += 8
       }

@@ -1,7 +1,8 @@
 // QueryCancelTests.swift
-// C3: Cancel stops the server work (close + reconnect with the current config, the only way
-// with PostgresNIO 1.33.1), warns first when pending Protected changes would be discarded, and
-// the server `statement_timeout` (not a client-side timeout) is the brake for long statements.
+// C3: Cancel stops the server work (pg_cancel_backend from a side connection, which keeps the
+// session; close + reconnect only when that fails), warns first when pending Protected changes
+// would be discarded, and the server `statement_timeout` (not a client-side timeout) is the brake
+// for long statements.
 // Resets never produce a false "Connection lost". Against the docker test database (TEST_DB_*
 // env, port 5435 in CI/autopilot). A second, unprotected manager observes the backends.
 
@@ -131,7 +132,7 @@ struct QueryCancelTests {
   // MARK: - Cancel stops the server work
 
   @Test(
-    "Cancel pg_sleep(30): returns in < 5s, the backend is gone, the next query works",
+    "Cancel pg_sleep(30): returns in < 5s, the statement stops, the same backend answers",
     .timeLimit(.minutes(1)))
   func cancelStopsBackend() async throws {
     let table = "c3_cancel_sleep"
@@ -161,9 +162,7 @@ struct QueryCancelTests {
         #expect(Date().timeIntervalSince(start) < 5)
         #expect(isCancelled(statement), "got \(statement)")
         if case .threw(let error) = statement {
-          #expect(
-            error.localizedDescription.contains(
-              "Query cancelled — connection was reset (temp tables, SET, search_path lost)"))
+          #expect(error.localizedDescription == "Query cancelled. The connection was kept.")
         }
       }
       #expect(events.isEmpty, "unexpected session-lost events: \(events)")
@@ -173,7 +172,7 @@ struct QueryCancelTests {
       #expect(await manager.isConnected)
       let next = try await manager.execute(userSQL: "SELECT 1", policy: open)
       #expect(next.rows.first?.first == .int(1))
-      #expect(try await backendPid(manager) != pid)
+      #expect(try await backendPid(manager) == pid)
     } catch {
       Issue.record(error)
     }
@@ -217,6 +216,12 @@ struct QueryCancelTests {
       #expect(
         try await observer.executeInternal("SELECT v FROM \(table) WHERE id = 1")
           .rows.first?.first == .int(10))
+      // The session was kept: same backend, no transaction left open
+      #expect(try await backendPid(manager) == pid)
+      #expect(
+        try await observer.executeInternal(
+          "SELECT state FROM pg_stat_activity WHERE pid = \(pid)"
+        ).rows.first?.first == .string("idle"))
     } catch {
       Issue.record(error)
     }
@@ -243,9 +248,9 @@ struct QueryCancelTests {
   }
 
   @Test(
-    "A second Cancel with the status read before the first reset is refused (idle to idle)",
+    "A second Cancel with the status read before a reconnect is refused (idle to idle)",
     .timeLimit(.minutes(1)))
-  func secondCancelAfterResetRefused() async throws {
+  func secondCancelAfterReconnectRefused() async throws {
     let table = "c3_cancel_twice"
     let (manager, observer) = try await setUp(table, protectedMode: false)
     var pid: String?
@@ -265,6 +270,9 @@ struct QueryCancelTests {
         expectedEpoch: seen.epoch)
       #expect(firstOutcome == .cancelled)
       _ = await first.value
+      // The cancel kept the session; a reset since (idle to idle) changes the connection
+      #expect(try await backendPid(manager) == firstPid)
+      try await manager.connect(config: Self.config(protectedMode: false))
 
       // A new statement runs on the reopened session
       pid = try await backendPid(manager)

@@ -4,7 +4,8 @@
 import Foundation
 
 /// `CellValue`'s `Equatable` conformance is main-actor isolated, so staged values are
-/// compared here without using that conformance.
+/// compared here without using that conformance. A decimal is equal by its text, as `RowKey`
+/// hashes it: `1.50` and `1.5` differ (an edit between them changes the stored scale).
 private nonisolated func cellValuesEqual(_ lhs: CellValue, _ rhs: CellValue) -> Bool {
   switch (lhs, rhs) {
   case (.string(let left), .string(let right)): left == right
@@ -15,6 +16,7 @@ private nonisolated func cellValuesEqual(_ lhs: CellValue, _ rhs: CellValue) -> 
   case (.json(let left), .json(let right)): left == right
   case (.date(let left), .date(let right)): left == right
   case (.data(let left), .data(let right)): left == right
+  case (.decimal(let left), .decimal(let right)): left == right
   default: false
   }
 }
@@ -48,6 +50,8 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
   case primaryKeyColumn(String)
   /// An UPDATE or DELETE on `table` (its SQL name), which has no key to name one row.
   case noRowKey(table: String)
+  /// An UPDATE or DELETE on a locator target whose row has no locator that fits.
+  case noRowLocator
   /// A cell set to DEFAULT on an engine whose UPDATE has no `DEFAULT` (`supportsDefaultInUpdate`).
   case serverDefaultUnsupported
 
@@ -60,6 +64,9 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
     case .noRowKey(let table):
       "Rows of \(table) can't be updated or deleted here: the table has no primary key that "
         + "identifies a row."
+    case .noRowLocator:
+      "This row can't be updated or deleted here: the row's position was not read; reload the "
+        + "data."
     case .serverDefaultUnsupported:
       "This database can't set a cell to its column default in an UPDATE."
     }
@@ -74,6 +81,9 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
   let connectionEpoch: UInt64
   /// Primary key columns in key order. Edits to these columns are refused.
   let primaryKeyColumns: [String]
+  /// The target's locator kind (`EditTarget.rowLocator`): rows are keyed by `RowKey(locator:)`.
+  /// Nil for a keyed target.
+  let rowLocator: RowLocatorKind?
 
   private(set) var inserts: [StagedInsert]
   private(set) var deletes: Set<RowKey>
@@ -98,30 +108,47 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     }
   }
 
-  /// Primary-key values in `primaryKeyColumns` order, or a staged insert named by `tempID`.
+  /// Primary-key values in `primaryKeyColumns` order, a keyless row's locator, or a staged
+  /// insert named by `tempID`.
   nonisolated struct RowKey: Hashable, Sendable {
-    /// Primary-key values. Empty when `tempID` names an insert.
+    /// Primary-key values, or the locator texts as `.string` for a locator key. Empty when
+    /// `tempID` names an insert.
     let values: [CellValue]
     /// Set when this key names a staged insert instead of an existing row.
     let tempID: UUID?
+    /// The page row's locator (keyless target): its WHERE terms. Two locator keys are equal
+    /// when their texts are equal exactly; the SQLite `row` values ride along and do not count.
+    let locator: RowLocatorValues?
 
     init(values: [CellValue]) {
       self.values = values
       self.tempID = nil
+      self.locator = nil
     }
 
     init(tempID: UUID) {
       self.values = []
       self.tempID = tempID
+      self.locator = nil
+    }
+
+    /// The key of the page row `locator` was read from (`RowLocatorValues`)
+    init(locator: RowLocatorValues) {
+      self.values = locator.texts.map(CellValue.string)
+      self.tempID = nil
+      self.locator = locator
     }
 
     static func == (lhs: RowKey, rhs: RowKey) -> Bool {
-      guard lhs.tempID == rhs.tempID, lhs.values.count == rhs.values.count else { return false }
+      guard lhs.tempID == rhs.tempID, (lhs.locator == nil) == (rhs.locator == nil),
+        lhs.values.count == rhs.values.count
+      else { return false }
       return zip(lhs.values, rhs.values).allSatisfy { cellValuesEqual($0, $1) }
     }
 
     func hash(into hasher: inout Hasher) {
       hasher.combine(tempID)
+      hasher.combine(locator == nil)
       hasher.combine(values.count)
       for value in values {
         Self.combine(value, into: &hasher)
@@ -154,6 +181,9 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
       case .data(let data):
         hasher.combine(7)
         hasher.combine(data)
+      case .decimal(let text):
+        hasher.combine(8)
+        hasher.combine(text)
       }
     }
   }
@@ -170,6 +200,7 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
     generation = target.generation
     connectionEpoch = target.connectionEpoch
     primaryKeyColumns = target.primaryKeyColumns
+    rowLocator = target.rowLocator
     inserts = []
     deletes = []
     edits = [:]
@@ -180,7 +211,8 @@ nonisolated struct RowChangeSet: Sendable, Equatable {
   static func == (lhs: RowChangeSet, rhs: RowChangeSet) -> Bool {
     lhs.qualifiedName == rhs.qualifiedName && lhs.generation == rhs.generation
       && lhs.connectionEpoch == rhs.connectionEpoch
-      && lhs.primaryKeyColumns == rhs.primaryKeyColumns && lhs.inserts == rhs.inserts
+      && lhs.primaryKeyColumns == rhs.primaryKeyColumns && lhs.rowLocator == rhs.rowLocator
+      && lhs.inserts == rhs.inserts
       && lhs.deletes == rhs.deletes && editMapsEqual(lhs.edits, rhs.edits)
       && editMapsEqual(lhs.originals, rhs.originals) && lhs.serverDefaults == rhs.serverDefaults
   }

@@ -31,4 +31,16 @@ struct ResultCompareViewTests {
     #expect(pinned.names == ["id", "name", "score"])
     #expect(pinned.sideOnly.isEmpty)
   }
+
+  @Test("A date shows the grid text of its column: naive the wall clock (regression A5)")
+  func dateShowsTheGridText() {
+    let noon = Date(timeIntervalSince1970: 1_792_065_600)  // 2026-10-15 12:00:00 UTC
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      #expect(ResultComparePane.text(.date(noon), wallClock: true) == "2026-10-15 12:00:00")
+      #expect(
+        ResultComparePane.text(.date(noon), wallClock: false) == "2026-10-15 19:00:00+07:00")
+    }
+    // JSON keeps its text (the grid shows a `{...}` preview)
+    #expect(ResultComparePane.text(.json("{\"a\":1}"), wallClock: false) == "{\"a\":1}")
+  }
 }

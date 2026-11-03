@@ -427,9 +427,17 @@ final class TableImportModel {
     let format = self.format
     let hasHeader = self.hasHeader
     let encoding = previewEncoding
+    // The parse's share done moves the bar from 0.1 to 0.6 (never back)
+    let report: @Sendable (Double) -> Void = { [weak self] share in
+      Task { @MainActor in
+        guard let self, self.operationID == operationID, self.parseTask != nil else { return }
+        self.progress = max(self.progress, 0.1 + 0.5 * share)
+      }
+    }
     let parse = Task.detached(priority: .userInitiated) {
       try Self.parse(
-        url: fileURL, format: format, hasHeader: hasHeader, rowLimit: nil, encoding: encoding)
+        url: fileURL, format: format, hasHeader: hasHeader, rowLimit: nil, encoding: encoding,
+        progress: report)
     }
     parseTask = parse
     let parsed = try await parse.value
@@ -577,30 +585,66 @@ final class TableImportModel {
     return true
   }
 
+  /// The whole file, parsed. `progress` gets the share done (0 to 1): the read is the first
+  /// fifth, the parse the rest (delimited text only; a JSON parse reports only its end).
   private nonisolated static func parse(
     url: URL, format: TableImportFormat, hasHeader: Bool, rowLimit: Int?,
-    encoding: String.Encoding?
+    encoding: String.Encoding?, progress: (Double) -> Void
   ) throws -> ParsedImportFile {
     try Task.checkCancellation()
     let accessed = url.startAccessingSecurityScopedResource()
     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+    switch format {
+    case .json:
+      let parsed = try parse(
+        data: readFile(url, progress: progress), format: format, hasHeader: hasHeader,
+        rowLimit: rowLimit, encoding: encoding)
+      progress(1)
+      return parsed
+    case .csv, .tsv:
+      // The file's bytes are freed once decoded: the parse holds only the text
+      let (text, textEncoding) = try DelimitedTextReader.decode(
+        readFile(url, progress: progress), encoding: encoding)
+      try Task.checkCancellation()
+      let table = try DelimitedTextReader.read(
+        text: text, encoding: textEncoding,
+        options: .init(
+          delimiter: format == .tsv ? "\t" : nil, hasHeader: hasHeader, rowLimit: rowLimit,
+          encoding: encoding),
+        progress: { progress(0.2 + 0.8 * $0) })
+      return ParsedImportFile(
+        columns: table.columns, rows: table.rows.map { $0.map(Optional.some) },
+        encoding: table.encoding)
+    }
+  }
+
+  /// The file's bytes (refused over `maxImportFileBytes`), `progress` 0 to 0.2 as they are read
+  private nonisolated static func readFile(
+    _ url: URL, progress: (Double) -> Void
+  ) throws -> Data {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
     let maxBytes = DelimitedTextReader.maxImportFileBytes
-    guard try handle.seekToEnd() <= maxBytes else { throw TableImportError.fileTooLarge }
+    let size = try handle.seekToEnd()
+    guard size <= maxBytes else { throw TableImportError.fileTooLarge }
     try handle.seek(toOffset: 0)
     var data = Data()
+    data.reserveCapacity(Int(size))
     while true {
       try Task.checkCancellation()
-      let chunk =
-        try handle.read(upToCount: min(1_024 * 1_024, maxBytes + 1 - data.count))
-        ?? Data()
-      if chunk.isEmpty { break }
-      data.append(chunk)
+      // `read` returns each chunk autoreleased: without the pool every chunk would stay until
+      // the whole read ends, a second copy of the file
+      let appended = try autoreleasepool {
+        let chunk =
+          try handle.read(upToCount: min(1_024 * 1_024, maxBytes + 1 - data.count)) ?? Data()
+        data.append(chunk)
+        return chunk.count
+      }
+      if appended == 0 { break }
       guard data.count <= maxBytes else { throw TableImportError.fileTooLarge }
+      progress(0.2 * min(Double(data.count) / Double(max(size, 1)), 1))
     }
-    return try parse(
-      data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit, encoding: encoding)
+    return data
   }
 
   /// Read only enough bytes for the preview. Full import still reparses the entire file.

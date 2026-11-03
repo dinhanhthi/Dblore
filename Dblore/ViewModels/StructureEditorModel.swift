@@ -450,7 +450,14 @@ final class StructureEditorModel {
 
   // MARK: - Staging indexes and constraints
 
+  /// Stages `index`. Its order keeps NULLS on PostgreSQL only (the other engines have no NULLS
+  /// clause) and is stored empty when every column is ASC with the default NULLS order.
   func addIndex(_ index: StructureChange.NewIndex) {
+    var index = index
+    if context.databaseType != .postgresql {
+      index.sortOrder = index.sortOrder.map { .init(descending: $0.descending) }
+    }
+    index.sortOrder = TableStructure.Index.storedOrder(index.sortOrder)
     stage { $0.append(.createIndex(index)) }
   }
 
@@ -556,7 +563,8 @@ final class StructureEditorModel {
       return WorkingIndex(
         index: TableStructure.Index(
           name: new.name, keys: new.columns.map { .column($0) }, isUnique: new.isUnique,
-          isPrimary: false, method: new.method, isPartial: false, predicate: nil),
+          isPrimary: false, method: new.method, isPartial: false, predicate: nil,
+          sortOrder: new.sortOrder),
         state: .added, id: .added(name: new.name, occurrence: occurrence))
     }
     return loaded + added

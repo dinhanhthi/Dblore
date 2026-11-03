@@ -316,7 +316,8 @@ extension NotebookViewModel {
 
   /// The value of `text` typed for a field of BSON `columnType`. Nil for a type that is not
   /// edited as text (`primitiveDocumentTypes`); `text` nil is null. An objectId takes 24 hex
-  /// digits and stays an ObjectId.
+  /// digits and stays an ObjectId. A date reads the text the grid shows it as
+  /// (`CellValueValidator.date(from:wallClock:)`, zoned), then ISO 8601.
   nonisolated static func parsedDocumentValue(
     _ text: String?, columnType: String
   ) throws(DataViewerState.DocumentEditorError) -> MongoValue? {
@@ -341,7 +342,11 @@ extension NotebookViewModel {
       guard let flag = Bool(trimmed.lowercased()) else { throw refuse("true or false") }
       return .bool(flag)
     case "date":
-      guard let date = Self.isoDate(trimmed) else { throw refuse("an ISO 8601 date") }
+      // The grid's own text (zoned: a BSON date is an instant), then ISO 8601
+      guard
+        let date = CellValueValidator.date(from: trimmed, wallClock: false)
+          ?? Self.isoDate(trimmed)
+      else { throw refuse("a date as shown or in ISO 8601") }
       return .date(MongoBSONMapping.millis(of: date))
     case "objectId":
       guard let id = MongoObjectId(hex: trimmed) else {
@@ -367,7 +372,7 @@ extension NotebookViewModel {
     case .date(let date): return .date(MongoBSONMapping.millis(of: date))
     case .data(let data): return .binary(subtype: 0, data: data)
     case .json(let text): return (try? MongoRelaxedJSON.parse(text)) ?? .string(text)
-    case .string(let text):
+    case .string(let text), .decimal(let text):
       switch columnType {
       case "objectId":
         return MongoObjectId(hex: text).map(MongoValue.objectId) ?? .string(text)

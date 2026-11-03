@@ -40,7 +40,15 @@ nonisolated struct SQLTokenizer: Sendable {
     if dialect == .mongodb {
       return MongoshSplitter.split(sql)
     }
-    let scalars = Array(sql.unicodeScalars)
+    return splitStatements(scalars: Array(sql.unicodeScalars))
+  }
+
+  /// `splitStatements` of text already held as Unicode scalars (a restore builds them once and
+  /// frees its text)
+  func splitStatements(scalars: [Unicode.Scalar]) -> [String] {
+    if dialect == .mongodb {
+      return MongoshSplitter.split(Self.text(scalars, scalars.indices))
+    }
     if dialect == .mysql {
       return mysqlSplitStatements(scalars)
     }
@@ -83,19 +91,29 @@ nonisolated struct SQLTokenizer: Sendable {
         i = lexeme.range.upperBound
         continue scan
       case .word, .number, .symbol:
-        if !hasContent, let directive = Self.delimiterDirective(scalars, lexeme.range) {
-          Self.appendTrimmed(scalars, start..<i, to: &statements)
-          delimiter = directive.delimiter
-          start = directive.end
-          i = directive.end
-          continue scan
-        }
-        for p in lexeme.range where scalars[p...].starts(with: delimiter) {
-          Self.appendTrimmed(scalars, start..<p, to: &statements)
-          start = p + delimiter.count
-          i = start
-          hasContent = false
-          continue scan
+        // After a cut inside a word or number, its rest is the next lexeme (lexing it again
+        // ends at the same place), so a word holding the delimiter many times is scanned once
+        var range = lexeme.range
+        cut: while true {
+          if !hasContent, let directive = Self.delimiterDirective(scalars, range) {
+            Self.appendTrimmed(scalars, start..<range.lowerBound, to: &statements)
+            delimiter = directive.delimiter
+            start = directive.end
+            i = directive.end
+            continue scan
+          }
+          for p in range where scalars[p...].starts(with: delimiter) {
+            Self.appendTrimmed(scalars, start..<p, to: &statements)
+            start = p + delimiter.count
+            hasContent = false
+            if start < range.upperBound {
+              range = start..<range.upperBound
+              continue cut
+            }
+            i = start
+            continue scan
+          }
+          break cut
         }
       case .quoted, .dollarString, .executableComment:
         break
@@ -134,7 +152,10 @@ nonisolated struct SQLTokenizer: Sendable {
   private static func delimiterDirective(
     _ scalars: [Unicode.Scalar], _ range: Range<Int>
   ) -> (delimiter: [Unicode.Scalar], end: Int)? {
-    guard asciiUppercased(text(scalars, range)) == "DELIMITER" else { return nil }
+    // The length first: the text of a long word is not built for every cut inside it
+    guard range.count == 9, asciiUppercased(text(scalars, range)) == "DELIMITER" else {
+      return nil
+    }
     var j = range.upperBound
     while j < scalars.count, scalars[j] == " " || scalars[j] == "\t" { j += 1 }
     guard j > range.upperBound else { return nil }

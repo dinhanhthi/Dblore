@@ -40,6 +40,15 @@ class WorkspaceManager: Identifiable {
   var schemaLoadTask: Task<Void, Never>?
   /// Page loads of the restored data viewers started by the last connect
   @ObservationIgnored var dataViewerLoadTasks: [Task<Void, Never>] = []
+  /// Set by a DuckDB connect until a user run waited for its loads (see
+  /// `settleDuckDBConnectLoadsBeforeRun`)
+  @ObservationIgnored var duckDBConnectLoadsPending: UUID?
+  /// How long a run waits for the connect's loads (see `settleDuckDBConnectLoadsBeforeRun`)
+  @ObservationIgnored var connectLoadsSettleLimit: Duration = .seconds(30)
+  /// Bumped when a connect starts, synchronously and before it touches the connection: a user
+  /// run or confirmation dialog checked before is never sent on the connection it opens (see
+  /// `connectGenerationForRun`)
+  @ObservationIgnored var connectGeneration: UInt64 = 0
   /// Bumped by every load start and cancel: a load that is no longer the latest is superseded
   var schemaLoadGeneration = 0
   /// The connection epoch the sidebar schema was read with; nil until a load since the last
@@ -52,11 +61,15 @@ class WorkspaceManager: Identifiable {
 
   /// Single database connection for entire workspace
   let connectionManager: DatabaseConnectionManager
+  /// Timed write unlock of the connection (session only, see `WriteUnlockController`)
+  let writeUnlock: WriteUnlockController
   /// Where the recent list and its passwords are read and saved (tests pass isolated stores)
   let defaults: UserDefaults
   let passwords: any ConnectionPasswordStore
   /// Asks before a connect of a locked connection (tests pass a registry and prompter double)
   let lockCenter: LockCenter
+  /// Asks for an ask-on-connect connection's password (tests pass a presenter double)
+  let passwordPrompt: ConnectionPasswordPromptCoordinator
   /// AI chat state shared by the workspace: schema structure, plus the rows of the read-only
   /// queries it runs (shown to the user only, never sent to the AI provider)
   let aiAssistant = AIAssistantViewModel()
@@ -122,6 +135,10 @@ class WorkspaceManager: Identifiable {
   var activeUnrememberedCertificate: ClientCertificateStoreFactory.ConnectionMaterial?
   /// Unremembered SSH secret for the current workspace connection and its banner Reconnect.
   var activeUnrememberedSSHCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  /// Password typed for the current ask-on-connect connection, in memory only: kept through a
+  /// session loss for its banner Reconnect (the workspace's configs drop it on every disconnect,
+  /// `dropTypedPassword`)
+  var activeTypedPassword: String?
   /// The server closed the session: shown with Reconnect (WorkspaceManager+ConnectionLoss.swift)
   var connectionLostMessage: String?
   /// Auto-connect stopped on a locked connection: "Locked: unlock to connect" with Unlock
@@ -454,13 +471,16 @@ class WorkspaceManager: Identifiable {
     connectionManager: DatabaseConnectionManager = .withTrustPrompt(),
     defaults: UserDefaults = .standard,
     passwords: any ConnectionPasswordStore = KeychainConnectionPasswordStore(),
-    sanitizesFileConfig: Bool = true, lockCenter: LockCenter = .shared
+    sanitizesFileConfig: Bool = true, lockCenter: LockCenter = .shared,
+    passwordPrompt: ConnectionPasswordPromptCoordinator = .shared
   ) {
     self.id = workspace.id
     self.connectionManager = connectionManager
+    self.writeUnlock = WriteUnlockController(connectionManager: connectionManager)
     self.defaults = defaults
     self.passwords = passwords
     self.lockCenter = lockCenter
+    self.passwordPrompt = passwordPrompt
     // A config read from a file (`sanitizesFileConfig`; off for the app's in-memory config, see
     // `createNew(connection:)`): its AI policy never weakens the saved one, the form opens on the
     // saved color and group (a form connect writes what the form shows), its scripts and
@@ -811,6 +831,13 @@ class WorkspaceManager: Identifiable {
     return editorDocuments[tabId]
   }
 
+  /// The open notebook, script and note documents of the tab files at `url`
+  func fileDocuments(at url: URL) -> [any FileConflictPresenting] {
+    let path = url.standardizedFileURL.path
+    return tabs.filter { $0.fileURL?.standardizedFileURL.path == path }
+      .compactMap { fileDocument(for: $0.id) }
+  }
+
   /// Save of a notebook or script whose file changed on disk since the tab last read or wrote
   /// it, or whose "modified" alert is still up: nothing is written over that change, and the
   /// tab's conflict alert asks which version to keep
@@ -853,6 +880,7 @@ class WorkspaceManager: Identifiable {
     let suppliedSSHCredential = SSHCredentialStoreFactory.currentCredential(for: config)
     activeUnrememberedCertificate = nil
     activeUnrememberedSSHCredential = nil
+    activeTypedPassword = nil
     // A load of the previous connection must not assign its schema during the connect
     cancelSchemaLoad()
     schemaConnectionEpoch = nil  // Sidebar actions hide until the new load lands
@@ -865,9 +893,17 @@ class WorkspaceManager: Identifiable {
     // A search running with its sheet hidden must not reach the new server
     dropCrossTableSearch()
     if !isAutoConnect { await supersedeAutoConnect() }
+    connectGeneration &+= 1
+    // The write unlock belongs to the previous session (the actor forgets its copy too)
+    writeUnlock.end()
     connectionState = .connecting
     // The actor disconnects first, so current edit targets die even if the connect fails
     invalidateEditTargetsInTabs()
+    // An open confirmation was built for the previous connection: nothing it confirmed is sent
+    for viewModel in viewModels.values {
+      viewModel.cancelPendingQuery()
+      viewModel.cancelRunAllCells()
+    }
     // Their transaction ends with the previous connection
     heldWrittenRelations = [:]
 
@@ -880,6 +916,10 @@ class WorkspaceManager: Identifiable {
           config: config, extraAllowedPaths: keepsDuckDBFiles ? duckDBAllowedPaths : [])
       }
       if !keepsDuckDBFiles { releaseDuckDBFileAccess() }
+      // Before `.connected`: the first runs on the one DuckDB connection wait for the loads
+      // started below (none of the previous connect's are left to settle at once)
+      dataViewerLoadTasks = []
+      duckDBConnectLoadsPending = config.databaseType == .duckdb ? UUID() : nil
       // A file created by "New File…" gets its bookmark on connect
       var config = config
       if config.fileBookmark == nil, let bookmark = await connectionManager.config?.fileBookmark {
@@ -903,6 +943,7 @@ class WorkspaceManager: Identifiable {
         activeUnrememberedCertificate = suppliedCertificate
         activeUnrememberedSSHCredential = suppliedSSHCredential
       }
+      if config.askPasswordOnConnect { activeTypedPassword = config.password }
       if savesConnection {
         workspace.connectionKeychainKey = ConnectionKeychainKey.password(for: config)
       }
@@ -928,9 +969,12 @@ class WorkspaceManager: Identifiable {
       // The schema loads in the background; tabs get it when the load finishes
       startSchemaLoad()
     } catch {
+      duckDBConnectLoadsPending = nil
       await connectionManager.disconnect()
       releaseDuckDBFileAccess()
       connectionState = .disconnected
+      // Disconnected: the previous session's typed password goes from the workspace's configs
+      dropTypedPassword()
       invalidateEditTargetsInTabs()
       await refreshPendingTransaction()
       throw error
@@ -938,14 +982,16 @@ class WorkspaceManager: Identifiable {
   }
 
   /// Test from a workspace form. A locked connection asks first (on this workspace's window) and
-  /// is tested with its saved password, read after the grant.
-  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
-  ///   tested or read)
+  /// is tested with its saved password, read after the grant. Ask on connect asks for the
+  /// password next, used for this test only (nothing keeps it).
+  /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock or the password prompt
+  ///   was cancelled (nothing tested or read)
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     var config = config
     if lockCenter.registry.refusal(for: config) != nil {
       config = try await unlockedForConnect(config, to: "test it")
     }
+    config = try await askingPassword(config, for: .test)
     return try await connectionManager.testConnection(config: config)
   }
 
@@ -991,15 +1037,29 @@ class WorkspaceManager: Identifiable {
 
     var configWithPassword = config
     // File engines (SQLite, DuckDB) have no password; PostgreSQL gets it from the Keychain,
-    // unless a password command prints it or a Vault lease brings it on connect. Only the key
-    // of this config is read (`Workspace.keychainKey`), never one a file names for another
-    // connection.
+    // unless a password command prints it, a Vault lease brings it on connect or it is asked
+    // on connect (the saved row's flag, `keepingSavedTransport`). Only the key of this config is
+    // read (`Workspace.keychainKey`), never one a file names for another connection.
     if config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.vault == nil
+      config.vault == nil, !config.askPasswordOnConnect
     {
-      guard let keychainKey = workspace.keychainKey,
-        let password = passwords.loadPassword(forKey: keychainKey)
-      else {
+      let password: String?
+      do {
+        password = try workspace.keychainKey.flatMap { try passwords.readPassword(forKey: $0) }
+      } catch {
+        // Locked or denied: connect nothing, and the form says why
+        await AppLogger.shared.warning(
+          "Auto-connect: the saved password could not be read", category: "Workspace")
+        if !Task.isCancelled {
+          connectionState = .disconnected
+          presentConnectErrorIfActionable(
+            DatabaseError.passwordStoreUnreadable(
+              name: config.name.isEmpty ? config.displayString : config.name),
+            config: config)
+        }
+        return
+      }
+      guard let password else {
         // No stored password: never leave the UI on "connecting"
         if !Task.isCancelled { connectionState = .disconnected }
         return
@@ -1054,13 +1114,20 @@ class WorkspaceManager: Identifiable {
       autoConnectTask = Task { await autoConnectIfNeeded() }
       return
     }
+    await connectReportingFailure(config)
+  }
+
+  /// `unlockAndConnect`'s connect; a changed SSH host key's Replace Pin runs it again.
+  private func connectReportingFailure(_ config: ConnectionConfig) async {
     do {
       try await connect(config: config)
     } catch WorkspaceConnectError.unlockRequired {
       // Cancelled: still locked, nothing to show
     } catch {
-      WorkspaceWindowManager.shared.showToast(
-        "Connect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)
+      let message = SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task { await self?.connectReportingFailure(config) }
+      }
+      WorkspaceWindowManager.shared.showToast("Connect failed: \(message)", type: .error)
       presentConnectErrorIfActionable(error, config: config)
     }
   }
@@ -1077,10 +1144,13 @@ class WorkspaceManager: Identifiable {
     isConnectionFormModalVisible = true
   }
 
-  /// A connect outside the form (auto-connect, a Welcome recent card) failed with an error the
-  /// form offers an action for (missing plugin): open the form showing the error and its button.
+  /// A connect outside the form (auto-connect, a Welcome recent card, Shortcuts) failed with an
+  /// error the form offers an action for (missing plugin): open the form showing the error and
+  /// its button. A saved password the Keychain could not read opens it too, showing why (the
+  /// user can unlock the Keychain and retry, or type the password).
   func presentConnectErrorIfActionable(_ error: any Error, config: ConnectionConfig) {
-    guard ConnectionErrorAction.action(for: error) != nil else { return }
+    let unreadable = if case DatabaseError.passwordStoreUnreadable = error { true } else { false }
+    guard unreadable || ConnectionErrorAction.action(for: error) != nil else { return }
     editingConnectionConfig = config
     connectionFormDraftGeneration += 1
     connectionFormOpensOnDraft = true
@@ -1639,6 +1709,10 @@ class WorkspaceManager: Identifiable {
     }
     viewModel.isAIAllowed = { [weak self] in self?.isAIAllowed() ?? false }
     viewModel.aiInlineSchema = { [weak self] prefix in await self?.aiInlineSchema(prefix: prefix) }
+    viewModel.connectGenerationForRun = { [weak self] in self?.connectGenerationForRun() }
+    viewModel.awaitConnectLoads = { [weak self] admitted in
+      await self?.settleDuckDBConnectLoadsBeforeRun(admitted: admitted) ?? true
+    }
     // Resolved at completion: the tab is registered after this returns
     viewModel.notificationTab = { [weak self, weak viewModel] in
       guard let self, let viewModel,
@@ -1830,6 +1904,7 @@ class WorkspaceManager: Identifiable {
   /// it held (workspace closed). `keepsSessions`: an open window with the same workspace id
   /// holds them under that id (a second file of it refused at open)
   func releaseFileAccess(keepsSessions: Bool = false) {
+    activeTypedPassword = nil
     activeUnrememberedCertificate = nil
     pendingWeakeningCertificate = nil
     activeUnrememberedSSHCredential = nil

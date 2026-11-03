@@ -1,8 +1,8 @@
 // PostgresSession+SSHTunnel.swift
 // PostgreSQL over an SSH direct-tcpip channel. The SSH secret is loaded here, at every open and
-// probe, so each reconnect path (cancel, capped read, banner, session loss) rebuilds the
-// tunnel. The tunnel owns its event loop; teardown order is PostgreSQL, then SSH (which shuts
-// its loop down).
+// probe, so each reconnect path (cancel fallback, capped read, banner, session loss) rebuilds the
+// tunnel; a cancel's side connection opens one more channel on the open tunnel. The tunnel owns
+// its event loop; teardown order is PostgreSQL, then SSH (which shuts its loop down).
 
 import Foundation
 import Logging
@@ -133,6 +133,17 @@ extension PostgresSession {
     await DetachedPostgresSession.closeBounded(conn)
   }
 
+  /// `cancelBackend`'s side connection: a new direct-tcpip channel on this session's open tunnel,
+  /// so the cancel needs no second SSH login. The channel is `side`'s before the PostgreSQL
+  /// startup, so a remote that never answers it is closed once the bound passed. Throws
+  /// `ConnectionClosedError` once the tunnel is gone, `CancellationError` once abandoned.
+  func openCancelConnection(
+    tls: PostgresConnection.Configuration.TLS, side: CancelSideConnection
+  ) async throws -> PostgresConnection {
+    guard let tunnel = openTunnel else { throw ConnectionClosedError() }
+    return try await connectPostgres(through: tunnel, tls: tls) { side.adopt(channel: $0) }
+  }
+
   /// Typed errors pass through; anything else becomes `connectionFailed` like a direct open.
   private static func tunnelFailure(_ error: any Error) -> any Error {
     switch error {
@@ -154,12 +165,18 @@ extension PostgresSession {
 
   /// One attempt: a fresh direct-tcpip channel to the database host as seen from the bastion.
   /// TLS verifies the database host name, not the bastion's.
+  /// `adopt` sees the channel before the startup; false closes it and throws `CancellationError`.
   private func connectPostgres(
-    through tunnel: any SSHTunneling, tls: PostgresConnection.Configuration.TLS
+    through tunnel: any SSHTunneling, tls: PostgresConnection.Configuration.TLS,
+    adopt: (any Channel) -> Bool = { _ in true }
   ) async throws -> PostgresConnection {
     let channel = try await tunnel.openDirectTCPIP(
       targetHost: config.host, targetPort: config.port)
-    let configuration = Self.tunneledConfiguration(channel: channel, config: config, tls: tls)
+    guard adopt(channel) else {
+      channel.close(promise: nil)
+      throw CancellationError()
+    }
+    let configuration = Self.channelConfiguration(channel: channel, config: config, tls: tls)
     do {
       return try await PostgresConnection.connect(
         on: channel.eventLoop, configuration: configuration, id: 1,
@@ -170,19 +187,6 @@ extension PostgresSession {
     }
   }
 
-  /// The configuration for one tunneled attempt. Same TLS mode and context as a direct
-  /// connection; the TLS name is the database host (as a direct connection derives it), never
-  /// the bastion.
-  static func tunneledConfiguration(
-    channel: any Channel, config: ConnectionConfig, tls: PostgresConnection.Configuration.TLS
-  ) -> PostgresConnection.Configuration {
-    var configuration = PostgresConnection.Configuration(
-      establishedChannel: channel, tls: tls, username: config.username,
-      password: config.password, database: config.database)
-    configuration.options.tlsServerName = tlsServerName(for: config.host)
-    return configuration
-  }
-
   /// Verify Full checks the certificate against `tlsServerName`, and with none (an IP literal,
   /// which SNI refuses) against the peer address: for an SSH channel that is the bastion's
   /// address, not the database server's. Refused rather than checked against the wrong host.
@@ -191,16 +195,5 @@ extension PostgresSession {
     throw DatabaseError.connectionFailed(
       "Verify Full over SSH needs the database server's host name, not an IP address. Enter "
         + "the name in its certificate, or choose Verify CA.")
-  }
-
-  /// The SNI and verification name for `host`. Nil for an IP literal (not valid in SNI),
-  /// matching what PostgresNIO does for a direct TCP connection.
-  static func tlsServerName(for host: String) -> String? {
-    var ipv4 = in_addr()
-    var ipv6 = in6_addr()
-    let isIP = host.withCString {
-      inet_pton(AF_INET, $0, &ipv4) == 1 || inet_pton(AF_INET6, $0, &ipv6) == 1
-    }
-    return isIP ? nil : host
   }
 }

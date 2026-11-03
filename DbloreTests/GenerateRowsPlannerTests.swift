@@ -150,6 +150,14 @@ struct GenerateRowsPlannerTests {
       structure: keyed, dialect: .postgresql, read: reader(max: ["id": .int(41)]))
     #expect(try rows(plan, count: 3, seed: 5).map { $0[0] } == ["42", "43", "44"])
 
+    // A decimal MAX is rounded down exactly, as a double one is
+    let priced = table(
+      [column("id", "numeric(10,2)"), column("title", "text")],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    let pricedPlan = try await Planner.plan(
+      structure: priced, dialect: .postgresql, read: reader(max: ["id": .decimal("41.50")]))
+    #expect(try rows(pricedPlan, count: 2, seed: 5).map { $0[0] } == ["42", "43"])
+
     let tags = table(
       [column("post_id", "integer"), column("tag_id", "integer")],
       constraints: [

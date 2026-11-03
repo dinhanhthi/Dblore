@@ -164,7 +164,7 @@ extension WorkspaceManager {
     }
     // Set only after the transfer succeeded, so a failed move never leaks it into a later open
     NewWindowStore.shared.setPendingDetach(workspaceId: newManager.id, point: dropPoint)
-    WorkspaceWindowManager.shared.pendingWorkspaceId = newManager.id
+    WorkspaceWindowManager.shared.showPendingWorkspace(newManager.id)
     guard connectionState == .connected, let config else { return }
     do {
       try await newManager.connect(config: config)

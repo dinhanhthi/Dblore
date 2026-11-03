@@ -259,7 +259,7 @@ struct ResultCompareView: View {
 }
 
 /// One side of the row compare view
-private struct ResultComparePane: View {
+struct ResultComparePane: View {
   let title: String
   /// Small secondary text after the title (where the pin is kept)
   var note: String? = nil
@@ -403,8 +403,10 @@ private struct ResultComparePane: View {
         .font(.monoSmall)
         .frame(width: Self.markerWidth, height: Self.rowHeight)
       ForEach(Array(columns.names.enumerated()), id: \.offset) { _, name in
-        let value = columnIndex[name].flatMap { values.indices.contains($0) ? values[$0] : nil }
-        Text(value.map(Self.text) ?? "")
+        let index = columnIndex[name]
+        let value = index.flatMap { values.indices.contains($0) ? values[$0] : nil }
+        let wallClock = index.map { result.columns[$0].wallClock } ?? false
+        Text(value.map { Self.text($0, wallClock: wallClock) } ?? "")
           .font(.monoSmall)
           .foregroundStyle(value == .null ? Color.foregroundSubtle : Color.foreground)
           .lineLimit(1)
@@ -426,10 +428,11 @@ private struct ResultComparePane: View {
     }
   }
 
+  /// The grid's text of `value` in a column whose `ColumnInfo.wallClock` is `wallClock`, but
   /// JSON shows its text (the grid shows a `{...}` preview)
-  private static func text(_ value: CellValue) -> String {
+  nonisolated static func text(_ value: CellValue, wallClock: Bool) -> String {
     if case .json(let json) = value { return json }
-    return value.displayString
+    return value.displayString(wallClock: wallClock)
   }
 
   private static func firstIndexByName(_ names: [String]) -> [String: Int] {

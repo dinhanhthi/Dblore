@@ -33,6 +33,24 @@ struct RowChangeSetTests {
     #expect(set.isEmpty)
   }
 
+  /// Regression: decimal keys and values compared unequal, so a staged edit on a NUMERIC key
+  /// was never found again and an edit back to the original stayed staged
+  @Test("A decimal key finds its row's edits; a decimal edited back to its text clears")
+  func decimalKeysAndValuesCompareByText() throws {
+    var set = RowChangeSet(target: sampleTarget())
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.decimal("10.50")]), column: "name",
+      value: .string("b"), original: .string("a"))
+    let row = RowChangeSet.RowKey(values: [.decimal("10.50")])
+    #expect(set.edits[row]?["name"] == .string("b"))
+
+    try set.stageEdit(row: row, column: "price", value: .decimal("1.5"), original: .decimal("1.50"))
+    #expect(set.edits[row]?["price"] == .decimal("1.5"))
+    try set.stageEdit(
+      row: row, column: "price", value: .decimal("1.50"), original: .decimal("1.50"))
+    #expect(set.edits[row]?["price"] == nil)
+  }
+
   @Test("revert drops staged edits and deletes, and revertAll clears inserts")
   func revertRowsAndRevertAll() throws {
     var set = RowChangeSet(target: sampleTarget())

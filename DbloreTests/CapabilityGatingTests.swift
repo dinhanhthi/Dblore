@@ -227,7 +227,7 @@ struct CapabilityGatingTests {
   }
 }
 
-/// Records password save/load/delete. Never opens the Keychain.
+/// Records password save/read/delete. Never opens the Keychain.
 @MainActor
 final class RecordingConnectionPasswordStore: ConnectionPasswordStore {
   private(set) var savedKeys: [String] = []
@@ -240,7 +240,7 @@ final class RecordingConnectionPasswordStore: ConnectionPasswordStore {
     passwords[key] = password
   }
 
-  func loadPassword(forKey key: String) -> String? {
+  func readPassword(forKey key: String) throws -> String? {
     loadedKeys.append(key)
     return passwords[key]
   }

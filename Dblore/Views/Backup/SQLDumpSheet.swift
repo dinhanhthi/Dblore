@@ -124,6 +124,12 @@ struct SQLDumpSheet: View {
             + "left out too. A table whose foreign key points to a table left out does not "
             + "restore on its own. Structure off keeps only the rows, to restore them into "
             + "the database they came from.")
+        if counts.dataOnly > 0 {
+          note(
+            "Structure off: the target table keeps its triggers and each restored row fires "
+              + "them, so a trigger that logs or counts rows adds its own on top of the dumped "
+              + "ones.")
+        }
         note(dropNote)
       }
     }
@@ -362,8 +368,9 @@ struct SQLDumpSheet: View {
     SQLDumpDDL.ObjectName(schema: table.schema, name: table.name)
   }
 
-  /// Listed tables with each flag on, and with Structure or Data on (chosen for the dump)
-  private var counts: (structure: Int, data: Int, drop: Int, chosen: Int) {
+  /// Listed tables with each flag on, with Structure or Data on (chosen for the dump), and with
+  /// only Data on
+  private var counts: (structure: Int, data: Int, drop: Int, chosen: Int, dataOnly: Int) {
     // Only the overrides of listed tables: a reload may have dropped one while the sheet is open
     var listed = overrides
     if !overrides.isEmpty {
@@ -375,7 +382,8 @@ struct SQLDumpSheet: View {
       (isOn(baseline) ? plain : 0) + listed.values.filter(isOn).count
     }
     return (
-      count(\.structure), count(\.data), count(\.drop), count { $0.structure || $0.data }
+      count(\.structure), count(\.data), count(\.drop), count { $0.structure || $0.data },
+      count { $0.data && !$0.structure }
     )
   }
 

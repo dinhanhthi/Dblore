@@ -102,6 +102,7 @@ extension DatabaseConnectionManager {
 
   private func fetchEditTable(named tableName: String) async throws -> EditTable? {
     let epoch = connectionEpoch
+    await catalogReadHook?()
     guard
       var table = try await withCatalogSession({ session in
         try await self.introspector.editTable(named: tableName, in: session)
@@ -113,17 +114,28 @@ extension DatabaseConnectionManager {
     return table
   }
 
-  /// The edit table stored under `tableID` before the pending app transaction, for results read
-  /// inside it (no catalog query can be sent there). nil unless the app transaction is pending
-  /// (`.appTx`), the table was resolved on the current connection, and no statement that may
-  /// change the schema ran since (`ProtectedTransactionRules.invalidatesEditTables` clears the
-  /// cache). Column origins still come from the result's RowDescription and are checked
-  /// against it (`CellUpdateStatement.editablePrimaryKey`).
+  /// The edit table last resolved under `tableID`, with no catalog query: for results read
+  /// inside the pending app transaction (no catalog query can be sent there), and for the target
+  /// a result shows at once outside it, which the app checks against the catalog in the
+  /// background before any edit is sent (DDL from another client is not seen by the clears).
+  /// nil unless the table was resolved on the current connection and nothing this manager ran
+  /// since may have changed the schema (a schema change, a restore,
+  /// `ProtectedTransactionRules.invalidatesEditTables` and disconnect clear the cache). Column
+  /// origins still come from the result's RowDescription and are checked against it
+  /// (`CellUpdateStatement.editablePrimaryKey`).
   func cachedEditTable(id tableID: TableRef) -> EditTable? {
-    guard case .appTx = txState, let table = editTableCache[tableID],
-      table.connectionEpoch == connectionEpoch
-    else { return nil }
+    guard let table = editTableCache[tableID], table.connectionEpoch == connectionEpoch else {
+      return nil
+    }
     return table
+  }
+}
+
+extension DatabaseConnectionManager {
+  /// Test hook (see `catalogReadHook`): lets a test hold the edit-table catalog read. Nil in
+  /// the app.
+  func setCatalogReadHook(_ hook: (@Sendable () async -> Void)?) {
+    catalogReadHook = hook
   }
 }
 

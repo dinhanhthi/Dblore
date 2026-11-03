@@ -281,6 +281,54 @@ struct StructureEditorModelTests {
     #expect(kept.method == "hash")
   }
 
+  @Test("An added index keeps its column order; NULLS on PostgreSQL only; defaults store none")
+  func addedIndexKeepsOrder() async throws {
+    typealias KeyOrder = TableStructure.Index.KeyOrder
+    let order = [KeyOrder(descending: true, nullsFirst: false), KeyOrder(descending: false)]
+    let index = StructureChange.NewIndex(
+      name: "by_name", columns: ["name", "id"], isUnique: false, method: nil, sortOrder: order)
+
+    let postgres = makeModel(FakeStructureDatabase(structure: Self.items))
+    await postgres.load()
+    postgres.addIndex(index)
+    #expect(postgres.changes == [.createIndex(index)])
+    #expect(postgres.workingIndexes.last?.index.sortOrder == order)
+    #expect(
+      postgres.previewStatements.last?.hasSuffix("(\"name\" DESC NULLS LAST, \"id\")") == true)
+
+    let sqlite = makeModel(FakeStructureDatabase(structure: Self.items), type: .sqlite)
+    await sqlite.load()
+    sqlite.addIndex(index)
+    var withoutNulls = index
+    withoutNulls.sortOrder = [KeyOrder(descending: true), KeyOrder(descending: false)]
+    #expect(sqlite.changes == [.createIndex(withoutNulls)])
+
+    // Untouched controls (or a NULLS choice SQLite has no clause for) store no order
+    var defaults = index
+    defaults.name = "by_id"
+    defaults.sortOrder = [
+      KeyOrder(descending: false, nullsFirst: true), KeyOrder(descending: false),
+    ]
+    sqlite.addIndex(defaults)
+    defaults.sortOrder = []
+    #expect(sqlite.changes.last == .createIndex(defaults))
+  }
+
+  @Test("An unrelated edit keeps a loaded DESC index as it is")
+  func unrelatedEditKeepsLoadedIndexOrder() async throws {
+    let order = [TableStructure.Index.KeyOrder(descending: true, nullsFirst: false)]
+    var structure = Self.items
+    structure.indexes[0].sortOrder = order
+    let model = makeModel(FakeStructureDatabase(structure: structure))
+    await model.load()
+    model.addColumn(Self.newColumn("note", "text"))
+
+    #expect(model.workingIndexes.first?.index.sortOrder == order)
+    #expect(model.workingIndexes.first?.state == .unchanged)
+    #expect(!model.previewStatements.isEmpty)
+    #expect(!model.previewStatements.contains { $0.contains("INDEX") })
+  }
+
   @Test("A builder error shows inline and disables Apply")
   func builderErrorDisablesApply() async throws {
     let model = makeModel(FakeStructureDatabase(structure: Self.items))

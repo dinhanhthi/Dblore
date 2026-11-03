@@ -73,6 +73,8 @@ nonisolated struct MCPColumnDescription: Sendable, Equatable {
 nonisolated struct MCPResultColumn: Sendable, Equatable {
   let name: String
   let type: String
+  /// `ColumnInfo.wallClock`: dates of this column are written as their stored wall clock
+  var wallClock = false
 }
 
 nonisolated struct MCPReadRequest: Sendable, Equatable {
@@ -1398,7 +1400,9 @@ nonisolated struct MCPSQLReadSource: MCPReadSource {
         userSQL: request.sql, policy: ProtectionPolicy(protectionLevel: .readOnly),
         maxRows: request.maxRows)
       return MCPReadResult(
-        columns: result.columns.map { MCPResultColumn(name: $0.name, type: $0.type) },
+        columns: result.columns.map {
+          MCPResultColumn(name: $0.name, type: $0.type, wallClock: $0.wallClock)
+        },
         rows: result.rows, rowsTruncated: result.truncated || result.wasLimited)
     }
   }

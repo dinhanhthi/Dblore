@@ -602,8 +602,9 @@ extension NotebookViewModel {
           return matches
         }
 
-        let columnName = result.columns[columnIndex].name
-        let valueText = cellValue.displayString
+        let column = result.columns[columnIndex]
+        let columnName = column.name
+        let valueText = cellValue.displayString(wallClock: column.wallClock)
 
         if let range = sourceMatchRanges(
           in: valueText, query: query, caseSensitive: caseSensitive, wholeWord: wholeWord,

@@ -134,6 +134,11 @@ extension NotebookViewModel {
     else { return nil }
     let keys = set.deletes.filter { $0.tempID == nil }.map(\.values)
     guard !keys.isEmpty else { return nil }
+    // A keyless target has no key to count related rows by (an empty one reads as none), yet
+    // a foreign key can still reference the table through a UNIQUE constraint
+    guard target.rowLocator == nil else {
+      return .notComputed("Related rows are not counted for a table without a primary key.")
+    }
     // Later statements of the batch can remove a blocker before a deferred check
     let alsoWrites = !set.edits.isEmpty || !set.inserts.isEmpty
     guard let connectionManager else { return .notComputed("Not connected.") }
@@ -297,6 +302,8 @@ extension NotebookViewModel {
     case .string(let text): Int(text)
     case .double(let value): Int(exactly: value)
     case .bool(let flag): flag ? 1 : 0
+    // A COUNT is never NUMERIC
+    case .decimal: nil
     default: nil
     }
   }

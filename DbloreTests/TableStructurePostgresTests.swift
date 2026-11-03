@@ -3,7 +3,7 @@
 // 5435): identity, serial and generated columns, table and column comments, composite and constraint-backed
 // indexes, expression and partial indexes, a cross-schema multi-column foreign key with actions,
 // a check, and names that need quoting. Each test creates two schemas of its own, dropped on
-// every path.
+// every path. `PostgresIndexOrderTests` decodes `indoption` without a server.
 
 import Foundation
 import Testing
@@ -206,5 +206,23 @@ struct TableStructurePostgresTests {
       protectedMode: false,
       statementTimeoutSeconds: 45
     )
+  }
+}
+
+/// `pg_index.indoption` bits to a key order, without a server: NULLS is kept only when it is not
+/// the default for the direction (LAST for ASC, FIRST for DESC).
+@Suite("PostgresIndexOrderTests")
+struct PostgresIndexOrderTests {
+  @Test(
+    "indoption: 0x1 DESC, 0x2 NULLS FIRST; the default NULLS for the direction is nil",
+    arguments: [
+      (0, TableStructure.Index.KeyOrder(descending: false)),
+      // DESC without 0x2 is DESC NULLS LAST, not the DESC default
+      (1, TableStructure.Index.KeyOrder(descending: true, nullsFirst: false)),
+      (2, TableStructure.Index.KeyOrder(descending: false, nullsFirst: true)),
+      (3, TableStructure.Index.KeyOrder(descending: true)),
+    ] as [(Int, TableStructure.Index.KeyOrder)])
+  func keyOrder(option: Int, expected: TableStructure.Index.KeyOrder) {
+    #expect(PostgresSchemaIntrospector.keyOrder(indoption: option) == expected)
   }
 }

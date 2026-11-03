@@ -63,6 +63,33 @@ nonisolated struct ProtectionPolicy: Sendable {
       safeMode: safeMode,
       protectedMode: protectedMode || other.protectedMode)
   }
+
+  /// `self` while a timed write unlock runs (`writesUnlocked`): Read-only lowers to Schema only
+  /// (data writes allowed, schema changes still blocked), never to None. Other levels and every
+  /// other field stay as they are.
+  func unlockingWrites(_ writesUnlocked: Bool) -> ProtectionPolicy {
+    guard writesUnlocked, protectionLevel == .readOnly else { return self }
+    return ProtectionPolicy(
+      protectionLevel: .schemaOnly, safeMode: safeMode, protectedMode: protectedMode)
+  }
+
+  /// Why `config` cannot get a timed write unlock, or nil when it can. Only a Read-only row is
+  /// unlocked (a Schema only row already writes data). A DuckDB row with Read-only protection
+  /// opens its file read-only (`DuckDBSession`), and a SQLite `readOnlyFile` row opens it
+  /// read-only too: lowering the gate would not make either writable, and the unlock never
+  /// reopens a session.
+  static func writeUnlockRefusal(for config: ConnectionConfig) -> String? {
+    guard config.protectionLevel == .readOnly else {
+      return "Only a Read-only connection can unlock writes."
+    }
+    if config.databaseType == .duckdb {
+      return "A Read-only DuckDB connection opens its file read-only. Edit the connection to write."
+    }
+    if config.databaseType == .sqlite, config.readOnlyFile {
+      return "This SQLite file is open read-only. Edit the connection to write."
+    }
+    return nil
+  }
 }
 
 extension ConnectionProtectionLevel {

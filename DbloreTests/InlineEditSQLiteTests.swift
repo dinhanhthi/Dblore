@@ -67,6 +67,7 @@ struct InlineEditSQLiteTests {
     viewModel.historySettings = settings
     do {
       await viewModel.executeEditorQuery("SELECT id, payload, note FROM items")
+      await viewModel.awaitResultTargets()
       try await body(viewModel, manager, toasts)
     } catch {
       await manager.disconnect()
@@ -86,7 +87,7 @@ struct InlineEditSQLiteTests {
       tableName: result.tableName,
       rowData: CellResult.rowData(columns: result.columns, row: result.rows[0]),
       primaryKeyColumns: result.primaryKeyColumns, cellId: nil,
-      connectionManager: viewModel.connectionManager)
+      connectionManager: viewModel.connectionManager, wallClock: false)
   }
 
   /// Edits the cell the Cell Value sidebar shows with `text` (nil: Set NULL), passing its value
@@ -103,7 +104,7 @@ struct InlineEditSQLiteTests {
     viewModel.handleCellValueEdit(
       columnName: column, columnType: type, newValue: text, originalValue: value,
       tableName: table, rowData: rowData, primaryKeyColumns: keys, cellId: cellId,
-      connectionManager: viewModel.connectionManager)
+      connectionManager: viewModel.connectionManager, wallClock: false)
   }
 
   /// Shows `payload` of the first row of the editor result in the Cell Value sidebar
@@ -185,6 +186,7 @@ struct InlineEditSQLiteTests {
         _ = try await manager.executeInternal(statement)
       }
       await viewModel.executeEditorQuery("SELECT id, payload FROM locked")
+      await viewModel.awaitResultTargets()
       try showPayload(viewModel)
       let locked = "SELECT typeof(payload), hex(payload) FROM locked WHERE id = 1"
 

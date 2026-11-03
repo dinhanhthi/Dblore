@@ -38,6 +38,7 @@ nonisolated struct ShortcutsRunner: Sendable {
     case unknownColumns([String])
     case generatedColumn(String)
     case invalidValue(column: String, message: String)
+    case decimalTooLong(column: String)
     case tableNotFound
     case ambiguousTable
     case opensWithScripts
@@ -65,6 +66,9 @@ nonisolated struct ShortcutsRunner: Sendable {
         "\"\(column)\" is a generated column and cannot be written."
       case .invalidValue(let column, let message):
         "Column \"\(column)\": \(message)"
+      case .decimalTooLong(let column):
+        "The number for \"\(column)\" is too long once its exponent is written out: write the "
+          + "value as plain digits in a JSON string, such as \"0.00000025\"."
       case .tableNotFound:
         "No table with that name was found."
       case .ambiguousTable:
@@ -86,7 +90,8 @@ nonisolated struct ShortcutsRunner: Sendable {
 
   /// `saved`: every saved connection, without passwords. `caller`: the Shortcuts settings as
   /// they are now. `password`: a connection's saved password, read off the main actor only
-  /// after the rule allowed it. `sessionFactory` nil: the app's sessions.
+  /// after the rule allowed it; throws when the Keychain could not read it (the row is refused).
+  /// `sessionFactory` nil: the app's sessions.
   init(
     rule: HeadlessAccessRule = HeadlessAccessRule(),
     saved: @escaping @Sendable () async -> [ConnectionHistoryEntry],
@@ -94,7 +99,7 @@ nonisolated struct ShortcutsRunner: Sendable {
     defaultCommitStyle: @escaping @Sendable () async -> CommitStyle,
     recorder: any QueryHistoryRecording,
     historyEnabled: @escaping @Sendable () async -> Bool,
-    password: @escaping @Sendable (ConnectionConfig) -> String?,
+    password: @escaping @Sendable (ConnectionConfig) throws -> String?,
     sessionFactory: (any DatabaseSessionFactory)? = nil,
     idleTimeout: Duration = .seconds(60)
   ) {
@@ -167,8 +172,9 @@ nonisolated struct ShortcutsRunner: Sendable {
     var cutByBytes = false
     for row in result.rows {
       var cut = 0
-      let fields = row.map { value -> String in
-        let (field, wasCut) = cell(value)
+      let fields = row.enumerated().map { index, value -> String in
+        let wallClock = index < result.columns.count && result.columns[index].wallClock
+        let (field, wasCut) = cell(value, wallClock: wallClock)
         if wasCut { cut += 1 }
         return DataExporter.escapeCSV(field, quote: .ifNeeded)
       }
@@ -200,15 +206,16 @@ nonisolated struct ShortcutsRunner: Sendable {
     fields.joined(separator: ",") + "\r\n"
   }
 
-  /// The cell's text, cut by position (the pool already cut it a little past the limit)
-  private static func cell(_ value: CellValue) -> (text: String, cut: Bool) {
+  /// The cell's text (a date in its column's output form), cut by position (the pool already
+  /// cut it a little past the limit)
+  private static func cell(_ value: CellValue, wallClock: Bool) -> (text: String, cut: Bool) {
     let max = MCPResultEncoder.maxCellCharacters
     if case .data(let data) = value {
       let shown = max / 4 * 3
       guard data.count > shown else { return (data.base64EncodedString(), false) }
       return (Data(data.prefix(shown)).base64EncodedString(), true)
     }
-    let text = value.fullString
+    let text = value.outputString(wallClock: wallClock)
     guard let end = text.index(text.startIndex, offsetBy: max, limitedBy: text.endIndex),
       end < text.endIndex
     else { return (text, false) }
@@ -243,9 +250,13 @@ nonisolated struct ShortcutsRunner: Sendable {
           tableID: structure.tableID, primaryKeyColumns: [],
           connectionEpoch: await manager.connectionEpoch)
         var set = RowChangeSet(target: target)
-        set.stageInsert(values: try Self.cellValues(parsed, structure: structure))
+        let engine = config.databaseType
+        set.stageInsert(
+          values: try Self.cellValues(parsed, structure: structure, engine: engine))
         let columns = structure.columns.map {
-          ColumnInfo(name: $0.name, type: $0.columnType ?? $0.dataType)
+          let type = $0.columnType ?? $0.dataType
+          return ColumnInfo(
+            name: $0.name, type: type, wallClock: Self.isWallClock(type: type, engine: engine))
         }
         let text = try RowChangeSQLBuilder.previewText(
           for: set, target: target, columns: columns, dialect: dialect)
@@ -283,23 +294,34 @@ nonisolated struct ShortcutsRunner: Sendable {
     return policy
   }
 
-  /// Column name to value text, nil for JSON null. Numbers keep their JSON text; true and false
-  /// read as such; arrays and objects are refused.
-  static func parseValues(_ json: String) throws -> [String: String?] {
+  /// One column's value as `parseValues` reads it
+  struct ParsedValue: Equatable, Sendable {
+    /// The value's text, nil for JSON null: a number's `NSNumber` text, `true` / `false`
+    var text: String?
+    /// A JSON number's own token text (`19.90`, `2.5e-7`), nil for any other value
+    var numberToken: String?
+  }
+
+  /// Column name to value, its text nil for JSON null. Numbers keep their `NSNumber` text and
+  /// their token as written; true and false read as such; arrays and objects are refused.
+  static func parseValues(_ json: String) throws -> [String: ParsedValue] {
     guard
       let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
     else { throw Refusal.valuesNotObject }
-    var values: [String: String?] = [:]
+    // A key the scan reads otherwise than JSONSerialization keeps its NSNumber text
+    let tokens = NumberTokenScanner.tokens(json) ?? [:]
+    var values: [String: ParsedValue] = [:]
     for (column, value) in object {
       switch value {
       case is NSNull:
-        values[column] = .some(nil)
+        values[column] = ParsedValue(text: nil)
       case let text as String:
-        values[column] = text
+        values[column] = ParsedValue(text: text)
       case let number as NSNumber:
         values[column] =
           CFGetTypeID(number) == CFBooleanGetTypeID()
-          ? (number.boolValue ? "true" : "false") : number.stringValue
+          ? ParsedValue(text: number.boolValue ? "true" : "false")
+          : ParsedValue(text: number.stringValue, numberToken: tokens[column])
       default:
         throw Refusal.nestedValue(column: column)
       }
@@ -307,31 +329,87 @@ nonisolated struct ShortcutsRunner: Sendable {
     return values
   }
 
-  /// `values` typed for their columns as pasted rows are (`PastedRows.cellValue`, a JSON string
-  /// is quoted text). Unknown names (exact match) and generated columns are refused.
+  /// `cellValues(_:structure:engine:)` for texts alone (no number token)
   static func cellValues(
-    _ values: [String: String?], structure: TableStructure
+    _ values: [String: String?], structure: TableStructure, engine: DatabaseType
+  ) throws -> [String: CellValue] {
+    try cellValues(
+      values.mapValues { ParsedValue(text: $0) }, structure: structure, engine: engine)
+  }
+
+  /// `values` typed for their columns as pasted rows are (`PastedRows.cellValue`, a JSON string
+  /// is quoted text), a naive timestamp of `engine` as its wall clock and a zoned one in the
+  /// display zone, whatever its precision or spelling (`dateColumnType`). Unknown names (exact
+  /// match) and generated columns are refused. A JSON number going into a NUMERIC / DECIMAL
+  /// column (`CellValue.placeholder(forColumnType:)` is `.decimal`) binds its own token text,
+  /// an exponent written out as plain digits, never through Double; an exponent too long to
+  /// write out refuses the row, and a token that is no plain number keeps its NSNumber text.
+  static func cellValues(
+    _ values: [String: ParsedValue], structure: TableStructure, engine: DatabaseType
   ) throws -> [String: CellValue] {
     let columns = Dictionary(
       structure.columns.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
     let unknown = values.keys.filter { columns[$0] == nil }.sorted()
     guard unknown.isEmpty else { throw Refusal.unknownColumns(unknown) }
     var typed: [String: CellValue] = [:]
-    for (name, text) in values {
+    for (name, value) in values {
       guard let column = columns[name] else { continue }
       guard column.generated == nil else { throw Refusal.generatedColumn(name) }
-      guard let text else {
+      guard var text = value.text else {
         typed[name] = .null
         continue
       }
+      let type = column.columnType ?? column.dataType
+      if let token = value.numberToken,
+        case .decimal = CellValue.placeholder(forColumnType: type)
+      {
+        switch DecimalText.plain(fromNumberToken: token) {
+        case .plain(let plain): text = plain
+        case .tooLong: throw Refusal.decimalTooLong(column: name)
+        case .notANumber: break
+        }
+      }
       do {
         typed[name] = try PastedRows.cellValue(
-          .init(text: text, quoted: true), columnType: column.columnType ?? column.dataType)
+          .init(text: text, quoted: true), columnType: dateColumnType(type),
+          wallClock: isWallClock(type: type, engine: engine), dialect: engine.dialect)
       } catch {
         throw Refusal.invalidValue(column: name, message: error.message)
       }
     }
     return typed
+  }
+
+  /// `ColumnInfo.wallClock` of a catalog column type, the result columns' rule read from the
+  /// type name without its `(n)` precision: PostgreSQL `timestamp [without time zone]`, MySQL
+  /// DATETIME, DuckDB TIMESTAMP, TIMESTAMP_S, _MS and _NS.
+  static func isWallClock(type: String, engine: DatabaseType) -> Bool {
+    let name = normalizedTypeName(type)
+    switch engine {
+    case .postgresql: return name == "TIMESTAMP" || name == "TIMESTAMP WITHOUT TIME ZONE"
+    case .mysql: return name == "DATETIME"
+    case .duckdb:
+      return ["TIMESTAMP", "TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP_NS"].contains(name)
+    default: return false
+    }
+  }
+
+  /// A timestamp type as the date check (`CellValue.placeholder(forColumnType:)`) spells it:
+  /// `TIMESTAMP` or `TIMESTAMPTZ` for any precision, `WITH` / `WITHOUT TIME ZONE` spelling or
+  /// case (MySQL `timestamp(6)`, PostgreSQL `timestamp(3) with time zone`). Any other type
+  /// unchanged.
+  static func dateColumnType(_ type: String) -> String {
+    switch normalizedTypeName(type) {
+    case "TIMESTAMP", "TIMESTAMP WITHOUT TIME ZONE": "TIMESTAMP"
+    case "TIMESTAMPTZ", "TIMESTAMP WITH TIME ZONE": "TIMESTAMPTZ"
+    default: type
+    }
+  }
+
+  /// `type` upper-cased, without its `(n)` precision, single-spaced
+  private static func normalizedTypeName(_ type: String) -> String {
+    type.uppercased().replacing(/\(\s*\d+\s*\)/, with: "")
+      .split(separator: " ", omittingEmptySubsequences: true).joined(separator: " ")
   }
 
   /// `reference` as `schema.table` first, else the one table of that name (from the catalog,
@@ -428,9 +506,9 @@ extension ShortcutsRunner {
       recorder: NotebookViewModel.defaultHistoryRecorder(),
       historyEnabled: { await MainActor.run { settings.historyEnabled } },
       password: { config in
-        SessionManager.isRunningAsTestHost
+        try SessionManager.isRunningAsTestHost
           ? nil
-          : KeychainConnectionPasswordStore.loadPassword(
+          : KeychainConnectionPasswordStore.readPassword(
             forKey: ConnectionKeychainKey.password(for: config))
       })
     closeRevoked(pool: runner.pool, settings: settings, allowed: usable(settings))
@@ -454,6 +532,136 @@ extension ShortcutsRunner {
         closeRevoked(pool: pool, settings: settings, allowed: now)
         for id in allowed.subtracting(now) { await pool.close(id: id) }
       }
+    }
+  }
+}
+
+/// Each key's number token text in the flat JSON object Add Row reads, as written: keys decoded
+/// with JSON's escapes, string values skipped whole (their digits are never numbers). A repeated
+/// key has no token, so its column keeps the value JSONSerialization chose (the first one on
+/// macOS 27, which no rule pins). Nil for text that is not such an object, a nested value
+/// included.
+nonisolated enum NumberTokenScanner {
+  static func tokens(_ json: String) -> [String: String]? {
+    var cursor = Cursor(bytes: Array(json.utf8))
+    return cursor.object()
+  }
+
+  private struct Cursor {
+    let bytes: [UInt8]
+    var index = 0
+
+    init(bytes: [UInt8]) { self.bytes = bytes }
+
+    mutating func object() -> [String: String]? {
+      var tokens: [String: String] = [:]
+      var keys: Set<String> = []
+      var repeated: Set<String> = []
+      skipSpace()
+      guard take(UInt8(ascii: "{")) else { return nil }
+      skipSpace()
+      if take(UInt8(ascii: "}")) { return atEnd() ? tokens : nil }
+      while true {
+        skipSpace()
+        guard let key = string() else { return nil }
+        if !keys.insert(key).inserted { repeated.insert(key) }
+        skipSpace()
+        guard take(UInt8(ascii: ":")) else { return nil }
+        skipSpace()
+        guard let byte = peek() else { return nil }
+        if byte == UInt8(ascii: "\"") {
+          guard string() != nil else { return nil }
+          tokens[key] = nil
+        } else if byte == UInt8(ascii: "-") || Self.isDigit(byte) {
+          tokens[key] = run { Self.isDigit($0) || Self.numberMarks.contains($0) }
+        } else {
+          let word = run { $0 >= UInt8(ascii: "a") && $0 <= UInt8(ascii: "z") }
+          guard ["true", "false", "null"].contains(word) else { return nil }
+          tokens[key] = nil
+        }
+        skipSpace()
+        if take(UInt8(ascii: ",")) { continue }
+        guard take(UInt8(ascii: "}")), atEnd() else { return nil }
+        return tokens.filter { !repeated.contains($0.key) }
+      }
+    }
+
+    /// A JSON string at the cursor, decoded (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX`)
+    private mutating func string() -> String? {
+      guard take(UInt8(ascii: "\"")) else { return nil }
+      var units: [UInt16] = []
+      var raw: [UInt8] = []
+      func flush() {
+        units += String(decoding: raw, as: UTF8.self).utf16
+        raw.removeAll()
+      }
+      while let byte = peek() {
+        index += 1
+        switch byte {
+        case UInt8(ascii: "\""):
+          flush()
+          return String(decoding: units, as: UTF16.self)
+        case UInt8(ascii: "\\"):
+          flush()
+          guard let escape = peek() else { return nil }
+          index += 1
+          switch escape {
+          case UInt8(ascii: "\""), UInt8(ascii: "\\"), UInt8(ascii: "/"):
+            units.append(UInt16(escape))
+          case UInt8(ascii: "b"): units.append(0x08)
+          case UInt8(ascii: "f"): units.append(0x0C)
+          case UInt8(ascii: "n"): units.append(0x0A)
+          case UInt8(ascii: "r"): units.append(0x0D)
+          case UInt8(ascii: "t"): units.append(0x09)
+          case UInt8(ascii: "u"):
+            guard index + 4 <= bytes.count,
+              let unit = UInt16(
+                String(decoding: bytes[index..<index + 4], as: UTF8.self), radix: 16)
+            else { return nil }
+            units.append(unit)
+            index += 4
+          default: return nil
+          }
+        default:
+          raw.append(byte)
+        }
+      }
+      return nil
+    }
+
+    private mutating func run(_ belongs: (UInt8) -> Bool) -> String {
+      let start = index
+      while let byte = peek(), belongs(byte) { index += 1 }
+      return String(decoding: bytes[start..<index], as: UTF8.self)
+    }
+
+    private mutating func skipSpace() {
+      while let byte = peek(),
+        byte == UInt8(ascii: " ") || byte == UInt8(ascii: "\t") || byte == UInt8(ascii: "\n")
+          || byte == UInt8(ascii: "\r")
+      {
+        index += 1
+      }
+    }
+
+    private mutating func take(_ byte: UInt8) -> Bool {
+      guard peek() == byte else { return false }
+      index += 1
+      return true
+    }
+
+    private func peek() -> UInt8? { index < bytes.count ? bytes[index] : nil }
+
+    private mutating func atEnd() -> Bool {
+      skipSpace()
+      return index == bytes.count
+    }
+
+    /// Bytes of a JSON number besides its digits
+    private static let numberMarks: Set<UInt8> = Set("-+.eE".utf8)
+
+    private static func isDigit(_ byte: UInt8) -> Bool {
+      byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9")
     }
   }
 }

@@ -49,19 +49,20 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Results grid**: sort, search, filter, freeze leading columns (table tabs), edit values
   inline, add rows from a form, follow foreign keys, inspect cells as JSON, pin a result to
   compare re-runs, see Count, Sum and Avg of a selection, and highlight cells or rows with
-  several rules at once.
-  Before a delete, Preview SQL lists the rows it removes by cascade, nulls or leaves pointing at
-  it, and a change to a table without a primary key is refused instead of dropped. Set a value,
-  NULL, DEFAULT or a fresh UUID on several cells in one change, choose what Cmd+C copies (TSV,
-  CSV, JSON or Markdown, with formulas neutralized for spreadsheets), and see invisible
-  characters as marks. Paste rows from the clipboard as staged inserts, and a Reload banner shows
-  when another tab changed the table
+  several rules at once. NUMERIC and DECIMAL values stay exact, a timestamp without a time zone
+  shows its stored wall clock and a zoned one Mac local time with its offset, both with
+  fractions. PostgreSQL and SQLite table tabs edit tables without a primary key by row location
+  (MySQL/MariaDB still need one). Before a delete, Preview SQL lists the rows it removes by
+  cascade, nulls or leaves pointing at it. Set a value, NULL, DEFAULT or a fresh UUID on several
+  cells in one change, choose what Cmd+C copies (TSV, CSV, JSON or Markdown, with formulas
+  neutralized for spreadsheets), and see invisible characters as marks. Paste rows from the
+  clipboard as staged inserts, and a Reload banner shows when another tab changed the table
 - **Binary values**: show a binary column as hex, UUID, MessagePack or Protobuf with Display
   As. Table tabs read binary cells up to 64 KB; a longer value shows as "not loaded" and is
-  loaded by its key when you open or copy it, and never written back unloaded
-- **Data Rewind**: edits made in the data viewer keep the rows before and after, so you can
-  preview and run the SQL that puts them back (PostgreSQL, MySQL, SQLite). The copies stay on
-  this Mac and are never backed up
+  loaded by its key or row location when you open or copy it, and never written back unloaded
+- **Data Rewind**: edits made in the data viewer on a table with a primary key keep the rows
+  before and after, so you can preview and run the SQL that puts them back (PostgreSQL, MySQL,
+  SQLite). The copies stay on this Mac and are never backed up
 - **Charts**: switch any result between grid and chart, or split a chart into one small chart
   per value of a column
 - **Geometry and vector viewers**: draw PostGIS and MySQL geometry values, and summarize
@@ -76,7 +77,9 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB database to a
   `.sql` file, choosing Structure, Data and Drop per table, and restore it
 - **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
-  transactions, Touch ID to unlock
+  transactions, Touch ID to unlock. A Read-only connection can unlock data writes for 1 or 5
+  minutes while its schema stays locked (never for MCP, the command line or Shortcuts; not for
+  Read-only DuckDB or read-only SQLite files)
 - **Lock**: lock a saved connection, a SQLite or DuckDB file or a whole workspace behind Touch
   ID, the Mac password or a Lock password. A locked workspace's files are encrypted on disk, and
   locked items relock on sleep, screen lock, idle time or quit. Changing the Lock password keeps
@@ -105,8 +108,11 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **SQL snippets**: trigger words that expand to templates with tab stops
 - **Connections**: export chosen connections (and favorites) to a file and import it back
   without passwords. Optional scripts run before connecting and after disconnecting, a
-  password command supplies the password for one connect, and a HashiCorp Vault source leases a
-  login on every connect, renewed while connected and revoked on disconnect
+  password command supplies the password for one connect, a HashiCorp Vault source leases a
+  login on every connect, renewed while connected and revoked on disconnect, and Ask on connect
+  asks for the password each time and keeps it in memory only. An unreadable Keychain password
+  stops the connect, TCP keepalive guards idle connections, and a changed SSH host key can be
+  replaced with Replace Pin once both fingerprints are shown
 - **Connection colors and groups**: tell connections apart at a glance and group them on the
   welcome screen
 - **Keyboard-first**: run cells and queries without leaving the keys, find and replace in
@@ -116,7 +122,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 
 ## Databases
 
-- **PostgreSQL**: SSL, client certificates, SSH tunnels, read-only mode, and import from
+- **PostgreSQL**: SSL, client certificates, SSH tunnels, read-only mode, Cancel that stops the
+  statement and keeps the connection, and import from
   DBeaver, TablePlus, DataGrip, `.pgpass` or a URI
 - **MySQL and MariaDB**: TLS, client certificates, SSH tunnels, staged edits by primary key
   and an EXPLAIN plan tree on MySQL. When the server asks for the full password, Dblore

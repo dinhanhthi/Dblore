@@ -107,6 +107,199 @@ struct DataModelDocumentTests {
     #expect(decoded.cells.first?.chartSpec == spec)
   }
 
+  // MARK: - Timestamps (microseconds and the wall-clock column flag)
+
+  /// 2026-10-15 12:00:00 UTC
+  private static let noonSeconds: Double = 1_792_065_600
+
+  /// A notebook whose result and pin hold `dates` in a naive and a zoned column
+  private func timestampNotebook(_ dates: [Date]) -> DbloreNotebook {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: dates.map { [.date($0), .date($0)] },
+      rowCount: dates.count)
+    let pin = PinnedResult(
+      result: result, pinnedAt: Date(timeIntervalSince1970: Self.noonSeconds), sourceQuery: nil)
+    return DbloreNotebook(
+      id: UUID(),
+      cells: [NotebookCell(content: "SELECT 1", result: result, pinnedResult: pin)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Timestamps"),
+      connectionConfig: nil,
+      settings: NotebookSettings())
+  }
+
+  /// The `rows` of the cell's saved result
+  private func savedRows(_ data: Data) throws -> [[[String: Any]]] {
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let cells = try #require(json["cells"] as? [[String: Any]])
+    let result = try #require(cells.first?["result"] as? [String: Any])
+    return try #require(result["rows"] as? [[[String: Any]]])
+  }
+
+  @Test("A date keeps its microseconds through value + micros; whole seconds write no micros")
+  func dateMicrosRoundTrip() throws {
+    let dates = [
+      Date(timeIntervalSince1970: Self.noonSeconds + 0.123456),
+      Date(timeIntervalSince1970: Self.noonSeconds),
+      Date(timeIntervalSince1970: -0.5),
+    ]
+    let data = try DocumentCoder.encode(timestampNotebook(dates), includeResultsOnSave: true)
+    let rows = try savedRows(data)
+    #expect(
+      rows.map { $0[0]["value"] as? String } == [
+        "2026-10-15T12:00:00Z", "2026-10-15T12:00:00Z", "1969-12-31T23:59:59Z",
+      ])
+    #expect(rows.map { $0[0]["micros"] as? Int } == [123_456, nil, 500_000])
+
+    let decoded = try DocumentCoder.decode(from: data)
+    let cell = try #require(decoded.cells.first)
+    for result in [cell.result, cell.pinnedResult?.result] {
+      let rows = try #require(result?.rows)
+      #expect(
+        rows.map { $0[0].outputString(wallClock: true) } == [
+          "2026-10-15 12:00:00.123456", "2026-10-15 12:00:00", "1969-12-31 23:59:59.5",
+        ])
+    }
+  }
+
+  @Test("A plain ISO 8601 reader (older builds) still decodes every saved date cell")
+  func olderReaderKeepsEveryDateCell() throws {
+    let dates = [
+      Date(timeIntervalSince1970: Self.noonSeconds + 0.123456),
+      Date(timeIntervalSince1970: -0.5),
+    ]
+    let data = try DocumentCoder.encode(timestampNotebook(dates), includeResultsOnSave: true)
+    let plain = ISO8601DateFormatter()
+    for row in try savedRows(data) {
+      let parsed = row.compactMap { ($0["value"] as? String).flatMap(plain.date(from:)) }
+      #expect(parsed.count == row.count)
+    }
+  }
+
+  @Test("A date without micros reads whole seconds; a value with a fraction reads too")
+  func dateWithoutMicrosDecodes() throws {
+    let json: [String: Any] = [
+      "cells": [
+        [
+          "content": "SELECT 1",
+          "result": [
+            "columns": [["name": "at", "type": "timestamptz"]],
+            "rows": [
+              [["type": "date", "value": "2026-10-15T12:00:00Z"]],
+              [["type": "date", "value": "2026-10-15T12:00:00.123456Z"]],
+              [["type": "date", "value": "2026-10-15T12:00:00Z", "micros": 1_000_000]],
+              // Beyond the microsecond range: whole seconds, no trap
+              [["type": "date", "value": "300000-01-01T00:00:00Z", "micros": 5]],
+            ],
+          ],
+        ]
+      ]
+    ]
+    let notebook = try DocumentCoder.decode(
+      from: try JSONSerialization.data(withJSONObject: json))
+    let rows = try #require(notebook.cells.first?.result?.rows)
+    #expect(
+      rows.prefix(3).map { $0.map { $0.outputString(wallClock: false) } } == [
+        ["2026-10-15T12:00:00Z"], ["2026-10-15T12:00:00.123456Z"], ["2026-10-15T12:00:00Z"],
+      ])
+    #expect(rows.last == [.date(Date(timeIntervalSince1970: 9_404_918_380_800))])
+  }
+
+  @Test("The wall-clock column key round-trips in results and pins; absent reads zoned")
+  func wallClockColumnKeyRoundTrip() throws {
+    let data = try DocumentCoder.encode(
+      timestampNotebook([Date(timeIntervalSince1970: Self.noonSeconds)]),
+      includeResultsOnSave: true)
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let cells = try #require(json["cells"] as? [[String: Any]])
+    let columns = try #require(
+      (cells.first?["result"] as? [String: Any])?["columns"] as? [[String: Any]])
+    #expect(columns.map { $0["wallClock"] as? Bool } == [true, nil])
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.result?.columns.map(\.wallClock) == [true, false])
+    #expect(cell.pinnedResult?.result.columns.map(\.wallClock) == [true, false])
+  }
+
+  @Test("A decimal cell saves as a flagged string (older builds read the text) and reopens exact")
+  func decimalCellRoundTrip() throws {
+    let text = "12345678901234567890.123456789"
+    let result = CellResult(
+      columns: [ColumnInfo(name: "amount", type: "NUMERIC")], rows: [[.decimal(text)]],
+      rowCount: 1)
+    let notebook = DbloreNotebook(
+      id: UUID(), cells: [NotebookCell(content: "SELECT 1", result: result)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Decimal"),
+      connectionConfig: nil, settings: NotebookSettings())
+    let data = try DocumentCoder.encode(notebook, includeResultsOnSave: true)
+    let saved = try #require(try savedRows(data).first?.first)
+    #expect(saved["type"] as? String == "string")
+    #expect(saved["value"] as? String == text)
+    #expect(saved["decimal"] as? Bool == true)
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.result?.rows == [[.decimal(text)]])
+  }
+
+  /// Contract: a build that only knows today's cell tags reads a decimal as its text, in place
+  @Test("A decimal cell is a plain string to a reader that ignores the flag; no cell shifts")
+  func decimalCellReadsAsStringWithoutFlag() throws {
+    let data = try DocumentCoder.encode(
+      decimalNotebook([[.decimal("19.90"), .int(1)], [.decimal("NaN"), .int(2)]]),
+      includeResultsOnSave: true)
+    let rows = try savedRows(data)
+    let oldTags: Set = ["null", "string", "int", "double", "bool", "json", "date", "data"]
+    #expect(rows.joined().allSatisfy { oldTags.contains($0["type"] as? String ?? "") })
+
+    let unflagged = try replacingSavedRows(
+      in: data, with: rows.map { row in row.map { $0.filter { $0.key != "decimal" } } })
+    let cell = try #require(try DocumentCoder.decode(from: unflagged).cells.first)
+    #expect(cell.result?.rows == [[.string("19.90"), .int(1)], [.string("NaN"), .int(2)]])
+  }
+
+  /// Security: a hostile file's flag never makes non-numeric text a decimal, which outputs may
+  /// write bare (SQL literals) or leave out of the formula guard
+  @Test("A flagged value that is not decimal text decodes as a string")
+  func flaggedNonDecimalDecodesAsString() throws {
+    let data = try DocumentCoder.encode(
+      decimalNotebook([[.decimal("1")]]), includeResultsOnSave: true)
+    let texts = [
+      "=HYPERLINK(\"https://example.com\")", "1e400", "nan", " 1", "1;DROP TABLE t", "",
+      "-12.50", "Infinity",
+    ]
+    let hostile = try replacingSavedRows(
+      in: data,
+      with: texts.map { [["type": "string", "value": $0, "decimal": true]] })
+    let cell = try #require(try DocumentCoder.decode(from: hostile).cells.first)
+    #expect(
+      cell.result?.rows
+        == texts.dropLast(2).map { [.string($0)] } + [[.decimal("-12.50")], [.decimal("Infinity")]])
+  }
+
+  private func decimalNotebook(_ rows: [[CellValue]]) -> DbloreNotebook {
+    let result = CellResult(
+      columns: (rows.first ?? []).indices.map { ColumnInfo(name: "c\($0)", type: "NUMERIC") },
+      rows: rows, rowCount: rows.count)
+    return DbloreNotebook(
+      id: UUID(), cells: [NotebookCell(content: "SELECT 1", result: result)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Decimal"),
+      connectionConfig: nil, settings: NotebookSettings())
+  }
+
+  /// `data` (a saved notebook) with its first cell's result rows replaced
+  private func replacingSavedRows(in data: Data, with rows: [[[String: Any]]]) throws -> Data {
+    var json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    var cells = try #require(json["cells"] as? [[String: Any]])
+    var result = try #require(cells[0]["result"] as? [String: Any])
+    result["rows"] = rows
+    cells[0]["result"] = result
+    json["cells"] = cells
+    return try JSONSerialization.data(withJSONObject: json)
+  }
+
   @Test("Malformed statement result entries decode to an empty result")
   func malformedStatementResultDecodesEmpty() throws {
     let json: [String: Any] = [

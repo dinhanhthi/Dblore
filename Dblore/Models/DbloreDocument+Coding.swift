@@ -316,7 +316,9 @@ enum DocumentCoder {
       for colDict in columnsArray {
         let name = colDict["name"] as? String ?? ""
         let type = colDict["type"] as? String ?? ""
-        columns.append(ColumnInfo(name: name, type: type))
+        // Absent (files from older builds) is zoned
+        let wallClock = colDict["wallClock"] as? Bool ?? false
+        columns.append(ColumnInfo(name: name, type: type, wallClock: wallClock))
       }
     }
 
@@ -371,8 +373,11 @@ enum DocumentCoder {
     ]
 
     // Encode columns
-    let columnsArray = result.columns.map { column in
-      ["name": column.name, "type": column.type]
+    // `wallClock` only when set, as `ColumnInfo` encodes it; older builds ignore the key
+    let columnsArray = result.columns.map { column -> [String: Any] in
+      var columnDict: [String: Any] = ["name": column.name, "type": column.type]
+      if column.wallClock { columnDict["wallClock"] = true }
+      return columnDict
     }
     dict["columns"] = columnsArray
 
@@ -416,7 +421,9 @@ enum DocumentCoder {
       return .null
     case "string":
       if let value = dict["value"] as? String {
-        return .string(value)
+        // A flagged value that is not decimal text (a hostile file) stays a string
+        let isDecimal = dict["decimal"] as? Bool == true && DecimalText.isValid(value)
+        return isDecimal ? .decimal(value) : .string(value)
       }
     case "int":
       if let value = dict["value"] as? Int {
@@ -436,7 +443,7 @@ enum DocumentCoder {
       }
     case "date":
       if let value = dict["value"] as? String,
-        let date = dateFormatter.date(from: value)
+        let date = decodedDate(value, micros: dict["micros"], dateFormatter: dateFormatter)
       {
         return .date(date)
       }
@@ -470,9 +477,53 @@ enum DocumentCoder {
     case .json(let json):
       return ["type": "json", "value": json]
     case .date(let date):
-      return ["type": "date", "value": dateFormatter.string(from: date)]
+      return encodedDate(date, dateFormatter: dateFormatter)
     case .data(let data):
       return ["type": "data", "value": data.base64EncodedString()]
+    case .decimal(let text):
+      // Older builds read the string and ignore the flag
+      return ["type": "string", "value": text, "decimal": true]
     }
+  }
+
+  /// A date cell: `value` is the whole second (floored) in the plain ISO 8601 form every build
+  /// reads, so an older build still decodes the cell and no row shifts left; `micros`
+  /// (1-999999, left out when 0) is the rest, which older builds ignore. A date beyond the
+  /// microsecond range writes `value` alone.
+  private nonisolated static func encodedDate(
+    _ date: Date, dateFormatter: ISO8601DateFormatter
+  ) -> [String: Any] {
+    guard let total = Int64(exactly: (date.timeIntervalSince1970 * 1_000_000).rounded()) else {
+      return ["type": "date", "value": dateFormatter.string(from: date)]
+    }
+    var (seconds, micros) = total.quotientAndRemainder(dividingBy: 1_000_000)
+    if micros < 0 {
+      seconds -= 1
+      micros += 1_000_000
+    }
+    var dict: [String: Any] = [
+      "type": "date",
+      "value": dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds))),
+    ]
+    if micros != 0 { dict["micros"] = Int(micros) }
+    return dict
+  }
+
+  /// The date of a saved cell: `value` plus `micros` when that is 0-999999 (no `micros` is
+  /// whole seconds), or a `value` that carries its own fraction (up to six digits). Nil when
+  /// `value` is no date.
+  private nonisolated static func decodedDate(
+    _ value: String, micros: Any?, dateFormatter: ISO8601DateFormatter
+  ) -> Date? {
+    guard let whole = dateFormatter.date(from: value) else {
+      return CellValueValidator.date(from: value, wallClock: true)
+    }
+    // A year the parser takes but microseconds cannot hold keeps its whole seconds
+    guard let micros = micros as? Int, (0...999_999).contains(micros),
+      let seconds = Int64(exactly: whole.timeIntervalSince1970.rounded(.down)),
+      case (let scaled, false) = seconds.multipliedReportingOverflow(by: 1_000_000),
+      case (let total, false) = scaled.addingReportingOverflow(Int64(micros))
+    else { return whole }
+    return Date(timeIntervalSince1970: Double(total) / 1_000_000)
   }
 }

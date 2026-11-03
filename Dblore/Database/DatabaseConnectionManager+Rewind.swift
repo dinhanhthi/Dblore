@@ -38,7 +38,8 @@ nonisolated struct RewindPlan: Sendable, Equatable {
   }
 
   /// The plan for `steps` on `target`, or nil: recording is off, the engine has no Data Rewind,
-  /// the target has no key or table name, or there is nothing to read.
+  /// the target has no key or table name (a keyless locator target included: Rewind by locator
+  /// is not built, so its edits record no entry and raise no error), or there is nothing to read.
   static func make(
     target: EditTarget, resultColumns: [ColumnInfo], editKind: RewindEntry.EditKind,
     steps: [Step], engine: DatabaseType?, enabled: Bool
@@ -48,9 +49,9 @@ nonisolated struct RewindPlan: Sendable, Equatable {
     case .postgresql, .mysql, .sqlite: break
     case .duckdb, .mongodb: return nil
     }
-    guard !target.primaryKeyColumns.isEmpty, target.name != nil, !steps.isEmpty else {
-      return nil
-    }
+    guard target.rowLocator == nil, !target.primaryKeyColumns.isEmpty, target.name != nil,
+      !steps.isEmpty
+    else { return nil }
     var seen: Set<String> = []
     let columns = resultColumns.compactMap { column in
       seen.insert(column.name).inserted

@@ -59,6 +59,11 @@ struct ResultGridModel {
   private var generations: [Int] = []
   private var cachedKeyColumns: [String]?
   private var cachedKeyRows: [RowChangeSet.RowKey: [Int]] = [:]
+  /// Locator key of each loaded displayed row of a keyless data-viewer page
+  /// (`DataViewerState.Truncation.locators`, by index into `CellResult.rows`), nil when the
+  /// page has none. A locator change set is matched by these, never by row values.
+  private let locatorKeys: [RowChangeSet.RowKey]?
+  private var cachedLocatorRows: [RowChangeSet.RowKey: [Int]]?
   /// Full byte length of each cut cell by index into `CellResult.rows`, then result column
   private var unloaded: [Int: [Int: Int]]
 
@@ -89,6 +94,13 @@ struct ResultGridModel {
       : sorted.filter { valueFilter.includes(row: result.rows[$0], columns: result.columns) }
     loadedRows = originalRows.map { result.rows[$0] }
     self.originalRows = originalRows
+    if let truncation = result.truncation, truncation.rowLocator != nil,
+      truncation.locators.count == result.rows.count
+    {
+      locatorKeys = originalRows.map { truncation.locators[$0] }
+    } else {
+      locatorKeys = nil
+    }
     // Sized to the loaded result, so a filtered-out original row has no displayed row (-1)
     var displayedRowByOriginalRow = Array(repeating: -1, count: result.rows.count)
     for (displayedRow, originalRow) in originalRows.enumerated() {
@@ -436,7 +448,8 @@ struct ResultGridModel {
     {
       return Self.flattened(text)
     }
-    return Self.flattened(value.displayString)
+    let wallClock = columns.indices.contains(column) && columns[column].wallClock
+    return Self.flattened(value.displayString(wallClock: wallClock))
   }
 
   /// `text` on one line, at most `maxDisplayLength` characters plus "…"
@@ -463,12 +476,15 @@ struct ResultGridModel {
   /// Tab-separated selected cells (no header, no trailing newline), full values like the
   /// TSV copy, `columns` (model column indices) in the given order. A value with a tab,
   /// newline or quote is quoted with quotes doubled, as in CSV. `neutralizesFormulas`
-  /// prefixes formula-like text cells as in CSV; other cell types stay raw.
+  /// prefixes formula-like text cells as in CSV; other cell types stay raw. A date is its
+  /// column's text output (`CellValue.outputString(wallClock:)`), not the grid's local text.
   func tsv(rows: IndexSet, columns: [Int], neutralizesFormulas: Bool) -> String {
     rows.map { row in
       columns.map {
         DataExporter.tsvField(
-          value(row: row, column: $0), neutralizesFormulas: neutralizesFormulas)
+          value(row: row, column: $0),
+          wallClock: self.columns.indices.contains($0) && self.columns[$0].wallClock,
+          neutralizesFormulas: neutralizesFormulas)
       }
       .joined(separator: "\t")
     }
@@ -510,7 +526,9 @@ struct ResultGridModel {
 
   private mutating func overlay(for set: RowChangeSet?) -> Staging {
     guard let set else { return Staging() }
-    let matches = rowsByKey(primaryKeyColumns: set.primaryKeyColumns)
+    let matches =
+      set.rowLocator != nil
+      ? rowsByLocator() : rowsByKey(primaryKeyColumns: set.primaryKeyColumns)
     var next = Staging()
     next.states = Array(repeating: .normal, count: loadedRows.count)
     next.editedColumns = Array(repeating: IndexSet(), count: loadedRows.count)
@@ -563,6 +581,18 @@ struct ResultGridModel {
     }
     cachedKeyColumns = primaryKeyColumns
     cachedKeyRows = map
+    return map
+  }
+
+  /// Locator lookup for the loaded page of a keyless table: each row by its own page locator, so
+  /// identical rows stay apart. Empty when the page has no locators.
+  private mutating func rowsByLocator() -> [RowChangeSet.RowKey: [Int]] {
+    if let cachedLocatorRows { return cachedLocatorRows }
+    var map: [RowChangeSet.RowKey: [Int]] = [:]
+    for (row, key) in (locatorKeys ?? []).enumerated() {
+      map[key, default: []].append(row)
+    }
+    cachedLocatorRows = map
     return map
   }
 

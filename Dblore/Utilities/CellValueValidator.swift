@@ -36,9 +36,10 @@ struct CellValueValidator: Sendable {
   ///   - input: The input string to validate
   ///   - valueType: The target CellValue type
   ///   - columnType: The column's type, checked instead when `valueType` is NULL
+  ///   - wallClock: the column's `ColumnInfo.wallClock`: zone-less date text is its wall clock
   /// - Returns: ValidationResult indicating if input is valid or error message
   nonisolated static func validate(
-    _ input: String, for valueType: CellValue, columnType: String = ""
+    _ input: String, for valueType: CellValue, columnType: String = "", wallClock: Bool = false
   ) -> ValidationResult {
     // String type accepts anything
     if case .string = valueType {
@@ -59,19 +60,22 @@ struct CellValueValidator: Sendable {
       let placeholder = CellValue.placeholder(forColumnType: columnType)
       // A NULL bytea cell binds the typed text as bytea input, not base64
       if case .data = placeholder { return .valid }
-      return validate(input, for: placeholder)
+      return validate(input, for: placeholder, wallClock: wallClock)
 
     case .json:
       return validateJSON(input)
 
     case .date:
-      return validateDate(input)
+      return validateDate(input, wallClock: wallClock)
 
     case .bool:
       return validateBoolean(input)
 
     case .data:
       return validateBinaryData(input)
+
+    case .decimal:
+      return validateDecimal(input)
 
     case .string:
       return .valid
@@ -104,6 +108,26 @@ struct CellValueValidator: Sendable {
     return .valid
   }
 
+  /// Exact NUMERIC / DECIMAL text (`DecimalText.exactText(typed:)`): plain digits with an
+  /// optional `-` and fraction, the same with an exponent (written out as plain digits, at most
+  /// 1,000 characters), or `NaN`, `Infinity`, `-Infinity`. Those keywords pass for every engine
+  /// (the check has no connection): PostgreSQL NUMERIC stores them; another engine treats them
+  /// as any text sent to a number column.
+  nonisolated private static func validateDecimal(_ input: String) -> ValidationResult {
+    if input.isEmpty {
+      return .invalid("Value cannot be empty")
+    }
+
+    if DecimalText.plain(fromNumberToken: input) == .tooLong {
+      return .invalid("Too many digits once the exponent is written out: type plain digits")
+    }
+    if DecimalText.exactText(typed: input) == nil {
+      return .invalid("Invalid decimal format (use digits like -12.50)")
+    }
+
+    return .valid
+  }
+
   nonisolated private static func validateJSON(_ input: String) -> ValidationResult {
     if input.isEmpty {
       return .invalid("JSON cannot be empty")
@@ -119,7 +143,9 @@ struct CellValueValidator: Sendable {
     return .valid
   }
 
-  nonisolated private static func validateDate(_ input: String) -> ValidationResult {
+  nonisolated private static func validateDate(
+    _ input: String, wallClock: Bool
+  ) -> ValidationResult {
     if input.isEmpty {
       return .invalid("Date cannot be empty")
     }
@@ -131,33 +157,75 @@ struct CellValueValidator: Sendable {
       return .valid
     }
 
+    // The editor's own text (the grid's display text), then ISO 8601
+    if date(from: input, wallClock: wallClock) != nil { return .valid }
     let iso8601Formatter = ISO8601DateFormatter()
-    let dateFormatter = DateFormatter()
-    dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-
-    // Try ISO8601 format first
-    if let parsedDate = iso8601Formatter.date(from: input) {
-      // Verify the formatted date matches the input EXACTLY (to catch extra characters)
-      let formatted = iso8601Formatter.string(from: parsedDate)
-      if formatted == input {
-        return .valid
-      } else {
-        return .invalid("Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
-      }
-    }
-
-    // Try PostgreSQL timestamp format
-    if let parsedDate = dateFormatter.date(from: input) {
-      // Verify the formatted date matches the input EXACTLY (to catch extra characters)
-      let formatted = dateFormatter.string(from: parsedDate)
-      if formatted == input {
-        return .valid
-      } else {
-        return .invalid("Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
-      }
+    if let parsedDate = iso8601Formatter.date(from: input),
+      iso8601Formatter.string(from: parsedDate) == input
+    {
+      return .valid
     }
 
     return .invalid("Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)")
+  }
+
+  /// The instant of a date-time typed as `CellValue.displayString(wallClock:)` shows it:
+  /// `yyyy-MM-dd HH:mm:ss` (`T` also separates; `HH:mm` alone is zero seconds), an optional
+  /// fraction of 1 to 6 digits after the seconds and an optional zone: `Z`, `±HH:MM`, `±HHMM` or `±HH` (`±HH:MM:SS`, as a local mean time offset
+  /// shows). Without a zone the text is a wall clock: UTC for a naive column (`wallClock`), else
+  /// the zone zoned dates show in. Nil for any other text (ASCII digits only), an impossible
+  /// date or time, or a zone-less zoned time that zone skips.
+  nonisolated static func date(from text: String, wallClock: Bool) -> Date? {
+    let pattern =
+      /([0-9]{4})-([0-9]{2})-([0-9]{2})[ T]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.([0-9]{1,6}))?)?(Z|[+-][0-9]{2}(?::?[0-9]{2}(?::[0-9]{2})?)?)?/
+    guard let match = text.wholeMatch(of: pattern),
+      let year = Int(match.1), let month = Int(match.2), let day = Int(match.3),
+      let hour = Int(match.4), let minute = Int(match.5),
+      let second = match.6.map({ Int($0) }) ?? 0,
+      (1...12).contains(month), (1...31).contains(day), hour < 24, minute < 60, second < 60
+    else { return nil }
+    let days = CivilDate.daysSince1970(year: year, month: month, day: day)
+    // A day past the month's end (2026-02-30) rolls into the next month: refused
+    guard
+      CivilDate.text(daysSince1970: days, bcSuffix: "") == match.1 + "-" + match.2 + "-" + match.3
+    else { return nil }
+    let digits = match.7.map(String.init) ?? ""
+    let fraction = Int64(digits.padding(toLength: 6, withPad: "0", startingAt: 0)) ?? 0
+    let wallMicros =
+      (Int64(days) * 86_400 + Int64(hour * 3_600 + minute * 60 + second)) * 1_000_000 + fraction
+    let offset: Int
+    if let zone = match.8 {
+      guard let seconds = offsetSeconds(String(zone)) else { return nil }
+      offset = seconds
+    } else if wallClock {
+      offset = 0
+    } else {
+      // The wall clock's offset, read again at the instant it gives so a DST change between them
+      // is taken into account
+      let local = CellValue.displayZone ?? NSTimeZone.default
+      let guess = local.secondsFromGMT(for: Date(timeIntervalSince1970: Double(wallMicros) / 1e6))
+      let instant = Double(wallMicros - Int64(guess) * 1_000_000) / 1e6
+      offset = local.secondsFromGMT(for: Date(timeIntervalSince1970: instant))
+      // A wall clock the zone skips (spring forward) shows another time again: refused
+      let result = Date(timeIntervalSince1970: Double(wallMicros - Int64(offset) * 1_000_000) / 1e6)
+      guard local.secondsFromGMT(for: result) == offset else { return nil }
+    }
+    return Date(timeIntervalSince1970: Double(wallMicros - Int64(offset) * 1_000_000) / 1_000_000)
+  }
+
+  /// `Z`, `±HH`, `±HHMM`, `±HH:MM` or `±HH:MM:SS` as seconds east of UTC; nil past 15:59:59
+  private nonisolated static func offsetSeconds(_ zone: String) -> Int? {
+    if zone == "Z" { return 0 }
+    let digits = zone.dropFirst().filter(\.isNumber)
+    let parts = stride(from: 0, to: digits.count, by: 2).map { start in
+      Int(String(digits.dropFirst(start).prefix(2))) ?? 0
+    }
+    let hours = parts[0]
+    let minutes = parts.count > 1 ? parts[1] : 0
+    let seconds = parts.count > 2 ? parts[2] : 0
+    guard hours < 16, minutes < 60, seconds < 60 else { return nil }
+    let magnitude = hours * 3_600 + minutes * 60 + seconds
+    return zone.hasPrefix("-") ? -magnitude : magnitude
   }
 
   private nonisolated static let plainDateFormatter: DateFormatter = {

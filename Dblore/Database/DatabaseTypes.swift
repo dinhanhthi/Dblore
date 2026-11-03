@@ -33,6 +33,10 @@ struct QueryResult: Sendable {
   nonisolated var sessionReset = false
   /// Statements of the script that were not run because the session was reset before them
   nonisolated var skippedStatements: [String] = []
+  /// PostgreSQL column types left as the driver reported them for the caller to read later
+  /// (`freshColumnTypes`): the app shows the rows first, with the cached types
+  /// (`cachedColumnTypes`, `deferEnrichment`)
+  nonisolated var typesDeferred = false
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,
@@ -114,10 +118,25 @@ enum DatabaseError: LocalizedError {
   case sshCredentialMissing
   /// The user did not confirm the unknown SSH host key, so nothing was pinned
   case sshHostKeyNotTrusted(host: String, fingerprint: String)
-  /// The SSH host key differs from the pinned one: the connection is blocked
-  case sshHostKeyChanged(host: String, port: Int, expected: String, presented: String)
+  /// The SSH host key differs from the pinned one: the connection is blocked. `presented` and
+  /// `presentedAlgorithm` are the server's key, which the warning's Replace Pin stores.
+  case sshHostKeyChanged(
+    host: String, port: Int, expected: String, presented: String, presentedAlgorithm: String)
   /// The pinned SSH host key exists but could not be read: the connection is blocked
   case sshHostKeyStoreUnreadable(host: String, port: Int)
+  /// The saved password of connection `name` exists but could not be read from the Keychain:
+  /// nothing was opened, changed or deleted
+  case passwordStoreUnreadable(name: String)
+  /// An ask-on-connect connection reached a connect or test without its typed password: nothing
+  /// was attempted
+  case passwordRequiredOnConnect
+  /// A side read (Schema Compare, Copy Objects) of an ask-on-connect saved row found no workspace
+  /// connected to it that holds its typed password: nothing was read or attempted
+  case passwordNotHeldByWorkspace
+  /// A side read of a saved row that asks for its password on connect but also has a Vault
+  /// source or a password command (a legacy, imported or hand-edited row): the other source
+  /// would replace the typed password, so nothing was read, run or attempted
+  case passwordSourcesMixed
   /// The user trusted the unknown SSH host key but the pin could not be saved: not connected
   case sshHostKeyPinFailed(host: String, port: Int)
   /// The SSH server rejected the user name, password or key
@@ -202,14 +221,28 @@ enum DatabaseError: LocalizedError {
     case .sshHostKeyNotTrusted(let host, let fingerprint):
       return "The SSH host key of \(host) (\(fingerprint)) was not trusted, so the connection "
         + "was not opened. Connect again and confirm the fingerprint if it is correct."
-    case .sshHostKeyChanged(let host, let port, let expected, let presented):
+    case .sshHostKeyChanged(let host, let port, let expected, let presented, _):
       return "The SSH host key for \(host):\(port) changed. Expected \(expected), got "
         + "\(presented). This can mean a man-in-the-middle attack. If the server key was "
-        + "legitimately replaced, remove the pin in Settings > Data and connect again."
+        + "legitimately replaced, verify the new fingerprint with your server administrator, "
+        + "then connect from a Dblore window and choose Replace Pin (MCP, the command line and "
+        + "Shortcuts cannot replace a pin), or remove the pin in Settings > Data."
     case .sshHostKeyStoreUnreadable(let host, let port):
       return "The pinned SSH host key for \(host):\(port) could not be read from the Keychain, "
         + "so the connection was blocked. Unlock the Keychain and try again, or remove the pin "
         + "in Settings > Data and connect again to confirm the fingerprint."
+    case .passwordStoreUnreadable(let name):
+      return "The saved password for \(name) could not be read from the Keychain, so nothing "
+        + "was opened, changed or deleted. Unlock the Keychain and try again, or edit the "
+        + "connection and enter the password again."
+    case .passwordRequiredOnConnect:
+      return "This connection asks for its password when it connects."
+    case .passwordNotHeldByWorkspace:
+      return "This connection asks for its password when it connects. Connect it in a "
+        + "workspace, then try again."
+    case .passwordSourcesMixed:
+      return "This connection asks for its password when it connects but also has a Vault "
+        + "source or a password command. Edit it to keep one password source, then try again."
     case .sshHostKeyPinFailed(let host, let port):
       return "The SSH host key for \(host):\(port) was trusted but could not be saved to the "
         + "Keychain, so the connection was not opened. Unlock the Keychain and connect again."

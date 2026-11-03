@@ -142,9 +142,9 @@ struct KeychainScopeTests {
     SessionManager.saveConnection(postgres, defaults: defaults, passwords: store)
     SessionManager.saveConnection(mysql, defaults: defaults, passwords: store)
 
-    #expect(store.loadPassword(forKey: "db.example:3306:app:ada") == "pg-secret")
+    #expect(try store.readPassword(forKey: "db.example:3306:app:ada") == "pg-secret")
     #expect(
-      store.loadPassword(forKey: "v2|5:MySQL|10:db.example|4:3306|3:app|3:ada") == "my-secret")
+      try store.readPassword(forKey: "v2|5:MySQL|10:db.example|4:3306|3:app|3:ada") == "my-secret")
     let history = SessionManager.loadHistory(defaults: defaults, passwords: store)
     #expect(Set(history.map(\.config.password)) == ["pg-secret", "my-secret"])
   }

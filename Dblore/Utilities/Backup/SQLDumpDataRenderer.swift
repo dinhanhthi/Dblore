@@ -2,9 +2,9 @@
 // Data reads and value literals of a SQL dump. Every value is read as text per column and never
 // decoded into a `CellValue` number or date (which loses NUMERIC precision and fractional
 // seconds):
-// - PostgreSQL selects `'v' || "col"::text`. The session reads an empty text cell as NULL, so
-//   each value carries a one-character prefix that `literal` removes; NULL stays NULL (text
-//   concatenated with NULL is NULL). The text becomes a quoted string literal (`bytea` is its
+// - PostgreSQL selects `'v' || "col"::text`. Each value carries a one-character prefix that
+//   `literal` removes, so '' and NULL never read alike; NULL stays NULL (text concatenated
+//   with NULL is NULL). The text becomes a quoted string literal (`bytea` is its
 //   `\x...` form, which `SET LOCAL bytea_output = 'hex'` pins).
 // - MySQL selects `HEX(col)` for binary, blob, bit and spatial columns (written `X'...'`) and
 //   `CAST(col AS CHAR)` for the rest (written as a quoted string, backslash-escaped). The

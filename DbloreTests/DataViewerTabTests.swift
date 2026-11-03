@@ -263,7 +263,10 @@ struct DataViewerTabTests {
     let deadline = ContinuousClock.now + .seconds(5)
     while ContinuousClock.now < deadline {
       if !viewer.isEditorQueryRunning {
-        if viewer.dataViewer?.totalRows != nil, viewer.editorResult != nil { return }
+        if viewer.dataViewer?.totalRows != nil, viewer.editorResult != nil {
+          await viewer.awaitResultTargets()
+          return
+        }
         await viewer.loadDataViewerPage()
       }
       await Task.yield()

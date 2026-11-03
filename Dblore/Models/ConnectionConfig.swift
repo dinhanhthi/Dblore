@@ -71,7 +71,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// An interrupt cancel (`CancelStrategy.interrupt`) stops only the statement: the session and
   /// its open transaction survive, so the cancel reports nothing rolled back. MySQL
   /// `KILL QUERY` and MongoDB `killOp` do. SQLite and DuckDB may roll back an explicit
-  /// transaction on interrupt; PostgreSQL reconnects.
+  /// transaction on interrupt; a PostgreSQL cancel aborts it.
   nonisolated var interruptKeepsTransaction: Bool {
     switch self {
     case .mysql, .mongodb: true
@@ -80,9 +80,10 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   }
 
   /// An interrupt cancel always aborts an open transaction, whatever the statement was doing
-  /// (DuckDB, reads too). SQLite rolls it back only when the interrupted statement was writing.
+  /// (DuckDB, reads too; PostgreSQL's `pg_cancel_backend`, whose aborted transaction then only
+  /// accepts a ROLLBACK). SQLite rolls it back only when the interrupted statement was writing.
   nonisolated var interruptAbortsTransaction: Bool {
-    self == .duckdb
+    self == .duckdb || self == .postgresql
   }
 
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
@@ -103,7 +104,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsFunctions: true,
         supportsServerCursor: true,
         supportsSessionBrakes: true,
-        cancelStrategy: .reconnect,
+        cancelStrategy: .interrupt,
         cappedReadResetsSession: true,
         supportsExplainJSON: true,
         supportsExplainAnalyze: true,
@@ -386,6 +387,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var sshTunnel: SSHTunnelConfig?
   /// Credentials leased from Vault on connect; `password` is then never encoded.
   var vault: VaultSource?
+  /// The password is typed on each connect and kept in memory only: never read from nor written
+  /// to the Keychain, never encoded. Exclusive with `vault` and `passwordCommandScript`.
+  var askPasswordOnConnect = false
   var rememberConnection: Bool
   var timeoutSeconds: Int
   var protectionLevel: ConnectionProtectionLevel  // Replaces readOnly and blockSchemaChanges
@@ -539,6 +543,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case sshTunnel
     // Absent on connections saved before Vault sources
     case vault
+    // Absent unless set
+    case askPasswordOnConnect
     case rememberConnection, timeoutSeconds, name, safeMode
     case protectedMode, commitStyle, statementTimeoutSeconds, lockTimeoutSeconds
     case idleInTransactionTimeoutSeconds, rowCapOverride
@@ -582,6 +588,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       ClientCertificateInfo.self, forKey: .clientCertificate)
     sshTunnel = try container.decodeIfPresent(SSHTunnelConfig.self, forKey: .sshTunnel)
     vault = try container.decodeIfPresent(VaultSource.self, forKey: .vault)
+    askPasswordOnConnect =
+      try container.decodeIfPresent(Bool.self, forKey: .askPasswordOnConnect) ?? false
     rememberConnection = try container.decode(Bool.self, forKey: .rememberConnection)
     timeoutSeconds = try container.decode(Int.self, forKey: .timeoutSeconds)
     name = try container.decode(String.self, forKey: .name)
@@ -676,13 +684,17 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encode(port, forKey: .port)
     try container.encode(database, forKey: .database)
     try container.encode(username, forKey: .username)
-    // A Vault connection's password is a lease's: it never reaches a saved row, a workspace
-    // file or Recents
-    try container.encode(vault == nil ? password : "", forKey: .password)
+    // A Vault connection's password is a lease's, an ask-on-connect one is typed: it never
+    // reaches a saved row, a workspace file or Recents
+    try container.encode(
+      vault == nil && !askPasswordOnConnect ? password : "", forKey: .password)
     try container.encode(sslMode, forKey: .sslMode)
     try container.encodeIfPresent(clientCertificate, forKey: .clientCertificate)
     try container.encodeIfPresent(sshTunnel, forKey: .sshTunnel)
     try container.encodeIfPresent(vault, forKey: .vault)
+    if askPasswordOnConnect {
+      try container.encode(askPasswordOnConnect, forKey: .askPasswordOnConnect)
+    }
     try container.encode(rememberConnection, forKey: .rememberConnection)
     try container.encode(timeoutSeconds, forKey: .timeoutSeconds)
     try container.encode(protectionLevel, forKey: .protectionLevel)
@@ -831,7 +843,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   }
 
   /// Display string for connection info
-  var displayString: String {
+  nonisolated var displayString: String {
     "\(database)@\(host):\(port)"
   }
 

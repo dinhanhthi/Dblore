@@ -388,8 +388,9 @@ nonisolated enum GenerateRowsPlanner {
     return BoundStatement(sql: sql, values: [], expectedRows: nil, classified: classified.first)
   }
 
-  /// A MAX as a whole number, rounded down; nil for NULL (an empty table). A value past `Int`
-  /// (or one that is not a number) gives `.max`, so the key runs out rather than repeats.
+  /// A MAX as a whole number, rounded down (a decimal exactly, from its text); nil for NULL (an
+  /// empty table). A value past `Int` (or one that is not a number, NaN and Infinity too) gives
+  /// `.max`, so the key runs out rather than repeats.
   private static func integer(_ value: CellValue?) -> Int? {
     switch value {
     case .null, nil: nil
@@ -397,7 +398,19 @@ nonisolated enum GenerateRowsPlanner {
     case .double(let number): Int(exactly: number.rounded(.down)) ?? .max
     case .string(let text):
       Int(text) ?? Double(text).flatMap { Int(exactly: $0.rounded(.down)) } ?? .max
+    case .decimal(let text): wholePart(text) ?? .max
     default: .max
     }
+  }
+
+  /// Plain decimal text (`DecimalText.isPlain`) rounded down, nil past `Int` or for other text
+  private static func wholePart(_ text: String) -> Int? {
+    guard DecimalText.isPlain(text) else { return nil }
+    let parts = text.split(separator: ".", maxSplits: 1)
+    guard let whole = Int(parts[0]) else { return nil }
+    let hasFraction = parts.count == 2 && parts[1].contains { $0 != "0" }
+    guard hasFraction, text.hasPrefix("-") else { return whole }
+    let (below, overflow) = whole.subtractingReportingOverflow(1)
+    return overflow ? nil : below
   }
 }

@@ -69,21 +69,33 @@ nonisolated enum DelimitedTextReader {
   }
 
   static func read(_ data: Data, options: Options = Options()) throws -> Table {
+    let (text, encoding) = try decode(data, encoding: options.encoding)
+    return try read(text: text, encoding: encoding, options: options)
+  }
+
+  /// `text` already decoded (`decode`), so a caller can free a file's bytes before the parse.
+  /// `progress` gets the share of `text` parsed (0 to 1), about every 64K characters.
+  static func read(
+    text: String, encoding: String.Encoding, options: Options = Options(),
+    progress: (Double) -> Void = { _ in }
+  ) throws -> Table {
     try PerfSignpost.interval("import.delimited") {
-      try parse(data, options: options)
+      try parse(text, encoding: encoding, options: options, progress: progress)
     }
   }
 
   private static let candidates: [Character] = [",", ";", "\t", "|"]
   private static let detectionRows = 20
 
-  private static func parse(_ data: Data, options: Options) throws -> Table {
-    let (text, encoding) = try decodedText(data, encoding: options.encoding)
+  private static func parse(
+    _ text: String, encoding: String.Encoding, options: Options, progress: (Double) -> Void
+  ) throws -> Table {
     try Task.checkCancellation()
     let delimiter = options.delimiter ?? detectDelimiter(in: text, options: options)
     let scalar = delimiter.unicodeScalars[delimiter.unicodeScalars.startIndex]
     let parsed = try records(
-      in: text, delimiter: scalar, maxRecords: recordCap(options), options: options)
+      in: text, delimiter: scalar, maxRecords: recordCap(options), options: options,
+      progress: progress)
     var table = try makeTable(
       records: parsed.records, delimiter: delimiter, hasHeader: options.hasHeader,
       maxCells: options.maxCells)
@@ -136,7 +148,8 @@ nonisolated enum DelimitedTextReader {
   }
 
   private static func records(
-    in text: String, delimiter: Unicode.Scalar, maxRecords: Int?, options: Options
+    in text: String, delimiter: Unicode.Scalar, maxRecords: Int?, options: Options,
+    progress: (Double) -> Void = { _ in }
   ) throws -> (records: [[String]], quoted: [[Bool]]) {
     if let maxRecords, maxRecords <= 0 { return ([], []) }
     var records: [[String]] = []
@@ -154,6 +167,9 @@ nonisolated enum DelimitedTextReader {
     let scalars = text.unicodeScalars
     var index = scalars.startIndex
     var scalarCount = 0
+    // UTF-8 bytes read so far, for `progress` (not counting a skipped second scalar)
+    var bytesRead = 0
+    let byteCount = Double(max(text.utf8.count, 1))
 
     func appendField() throws {
       guard row.count < options.maxCells - totalFields else {
@@ -198,9 +214,11 @@ nonisolated enum DelimitedTextReader {
     while index < scalars.endIndex {
       scalarCount += 1
       if scalarCount.isMultiple(of: 4_096) { try Task.checkCancellation() }
+      if scalarCount.isMultiple(of: 65_536) { progress(Double(bytesRead) / byteCount) }
       if let maxRecords, records.count >= maxRecords { break }
       let scalar = scalars[index]
       index = scalars.index(after: index)
+      bytesRead += UTF8.width(scalar)
       if inQuotes {
         if scalar == "\"" {
           if index < scalars.endIndex, scalars[index] == "\"" {
@@ -238,6 +256,7 @@ nonisolated enum DelimitedTextReader {
     }
     if inQuotes { throw DelimitedTextError.unclosedQuote }
     if sawContent || !row.isEmpty { try finishRecord() }
+    progress(1)
     return (records, quotedRecords)
   }
 
@@ -272,15 +291,12 @@ nonisolated enum DelimitedTextReader {
     return row + Array(repeating: "", count: width - row.count)
   }
 
-  private static func decodedText(
+  /// `data` as text: UTF-8 (a leading BOM dropped), else Latin-1; `encoding` as in `Options`
+  static func decode(
     _ data: Data, encoding: String.Encoding?
   ) throws -> (String, String.Encoding) {
-    let payload: Data
-    if data.starts(with: [0xEF, 0xBB, 0xBF]) {
-      payload = Data(data.dropFirst(3))
-    } else {
-      payload = data
-    }
+    // A slice shares the bytes (no copy of the file)
+    let payload = data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data
     if encoding != .isoLatin1, let text = String(data: payload, encoding: .utf8) {
       return (text, .utf8)
     }

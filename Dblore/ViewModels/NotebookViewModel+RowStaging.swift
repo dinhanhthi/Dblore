@@ -3,7 +3,8 @@
 //  Dblore
 //
 //  Data-viewer row staging. Notebook grids still send a single-cell UPDATE immediately;
-//  only a data viewer with a primary-key edit target stages inserts, edits, and deletes.
+//  only a data viewer with a primary-key (or row-locator) edit target stages inserts, edits,
+//  and deletes.
 //  Commit sends bound statements through executeGatedBatch. The preview text is display
 //  and history only, and Safe Mode confirms that text before the batch is sent.
 //
@@ -66,6 +67,9 @@ extension NotebookViewModel {
   static let tableHasNoPrimaryKey = "Table has no primary key"
   /// Shown when the connection's protection level blocks data changes.
   static let connectionIsReadOnly = "This connection is read-only"
+  /// Shown while the rows are shown and the table definition is still read
+  /// (`CellResult.typesPending`)
+  static let readingTableDefinition = "Reading table definition"
 
   /// Why grid edits are refused for this engine (`supportsRowStaging`), or nil.
   /// Nil for MongoDB, whose flag stays false: it edits documents (`+DocumentStaging.swift`), and
@@ -97,6 +101,9 @@ extension NotebookViewModel {
     if protectionPolicy.protectionLevel == .readOnly { return Self.connectionIsReadOnly }
     if stagesDocuments {
       return mongoDocumentTarget == nil ? MongoDocumentChangeError.notMongoTarget.message : nil
+    }
+    if editorResult?.typesPending == true || dataViewerAwaitsRowLocators {
+      return Self.readingTableDefinition
     }
     return stagedEditTarget == nil ? Self.tableHasNoPrimaryKey : nil
   }
@@ -299,6 +306,9 @@ extension NotebookViewModel {
       await commitStagedDocuments()
       return
     }
+    // A page shown before its table definition: Commit waits for it, then checks the set
+    // against the validated target
+    if editorResult?.typesPending == true { await awaitResultTargets() }
     guard discardsInvalidatedStagedSet() == false else { return }
     await fillMissingIntegerKeys()
     // The key lookup awaited: the set may be gone (Discard, its tab closed), the page may have
@@ -322,6 +332,20 @@ extension NotebookViewModel {
       guard await confirmCommitPastBlockers(impact) else { return }
       // The prompt awaited: the page may have reloaded or the staged deletes changed
       guard discardsInvalidatedStagedSet() == false else { return }
+      guard dataViewer?.changeSet?.deletes == checkedDeletes else {
+        showToast("The staged deletes changed. Commit again.", type: .warning)
+        return
+      }
+    }
+    // The awaits above may have let a re-read show a page before its table definition: the
+    // batch is built only against the validated target
+    while editorResult?.typesPending == true {
+      guard resultTargetPatches[nil] != nil else {
+        showToast(Self.readingTableDefinition, type: .warning)
+        return
+      }
+      await awaitResultTargets()
+      guard dataViewer?.changeSet != nil, discardsInvalidatedStagedSet() == false else { return }
       guard dataViewer?.changeSet?.deletes == checkedDeletes else {
         showToast("The staged deletes changed. Commit again.", type: .warning)
         return
@@ -436,12 +460,26 @@ extension NotebookViewModel {
         await loadDataViewerPage()
       }
     } catch {
-      let message = Self.batchFailureMessage(error, batch: batch)
+      // A keyless row's locator that matched no row: it changed since the page was read (the
+      // set was made for this viewer's located rows and stays staged). The toast says so;
+      // History keeps the row count the database reported.
+      var shown = error
+      if batch.historySource == .dataViewerEdit, dataViewer?.changeSet?.rowLocator != nil,
+        case DatabaseError.batchStatementFailed(let index, let sql, let reason, let rolledBack) =
+          error,
+        reason.hasPrefix(DatabaseConnectionManager.unexpectedRowCountReason),
+        reason.hasSuffix("affected 0")
+      {
+        shown = DatabaseError.batchStatementFailed(
+          index: index, sqlPrefix: sql, reason: Self.keylessRowChangedMessage,
+          rolledBack: rolledBack)
+      }
+      let message = Self.batchFailureMessage(shown, batch: batch)
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
-        source: batch.historySource, errorMessage: message,
+        source: batch.historySource, errorMessage: Self.batchFailureMessage(error, batch: batch),
         importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
-      showToast(Self.batchToastMessage(error, batch: batch, fullMessage: message), type: .error)
+      showToast(Self.batchToastMessage(shown, batch: batch, fullMessage: message), type: .error)
       failure = message
     }
     if !ranStatements.isEmpty {
@@ -647,13 +685,35 @@ extension NotebookViewModel {
     }
   }
 
-  /// Live data-viewer target with a primary key, when every column origin names that table.
-  /// Notebook results are not a staging target.
+  /// `target`, with the generation of the staged set when the set was made for the same table
+  /// and key on the same connection: a re-read of the page (the Reload banner, or the target
+  /// validated after it) keeps the staged set and its Commit. Another key or connection keeps a
+  /// new generation, so the set is discarded at the next stage or Commit (`invalidated(by:)`).
+  func keepingStagedGeneration(_ target: EditTarget?) -> EditTarget? {
+    guard let target, let set = dataViewer?.changeSet, set.generation != target.generation,
+      set.qualifiedName == target.qualifiedName, set.connectionEpoch == target.connectionEpoch,
+      set.primaryKeyColumns == target.primaryKeyColumns, set.rowLocator == target.rowLocator
+    else { return target }
+    return EditTarget(
+      qualifiedName: target.qualifiedName, tableID: target.tableID,
+      primaryKeyColumns: target.primaryKeyColumns, connectionEpoch: target.connectionEpoch,
+      updateOnly: target.updateOnly, generation: set.generation, schema: target.schema,
+      name: target.name, generatedColumns: target.generatedColumns,
+      rowLocator: target.rowLocator)
+  }
+
+  /// Live data-viewer target with a primary key, or a keyless one whose page was read with its
+  /// row locators (`Truncation.locators`), when every column origin names that table.
+  /// Notebook results are not a staging target. While the table definition is read
+  /// (`typesPending`), the cached target a re-read showed at once, or nil.
   var stagedEditTarget: EditTarget? {
     guard dataViewer != nil, let result = editorResult, let target = result.editTarget,
-      !target.primaryKeyColumns.isEmpty, Self.columnTableID(result.columns) == target.tableID
+      Self.columnTableID(result.columns) == target.tableID
     else { return nil }
-    return target
+    if let kind = target.rowLocator {
+      return result.truncation?.rowLocator == kind ? target : nil
+    }
+    return target.primaryKeyColumns.isEmpty ? nil : target
   }
 
   var stagingDialect: SQLDialect {
@@ -661,7 +721,7 @@ extension NotebookViewModel {
       ?? .postgresql
   }
 
-  /// Throws `RowChangeError.noRowKey` for an UPDATE or DELETE the builder cannot key.
+  /// Throws `RowChangeError.noRowKey` or `.noRowLocator` for an UPDATE or DELETE the builder cannot key.
   private func stagedBatch() throws -> PendingStagedBatch? {
     guard let target = stagedEditTarget, let set = dataViewer?.changeSet, !set.isEmpty,
       set.invalidated(by: target) == nil
@@ -715,7 +775,8 @@ extension NotebookViewModel {
     typesText: Bool = false
   ) -> String? {
     guard let target = stagedEditTarget else { return Self.rowNotOnPage }
-    let columnType = editorResult?.columns.first { $0.name == column }?.type ?? ""
+    let info = editorResult?.columns.first { $0.name == column }
+    let columnType = info?.type ?? ""
     var keyed: [(key: RowChangeSet.RowKey, original: CellValue, value: StagedCellValue)] = []
     for cell in cells {
       guard let key = rowKey(at: cell.row, target: target) else { return Self.rowNotOnPage }
@@ -724,7 +785,10 @@ extension NotebookViewModel {
         ?? .null
       var value = cell.value
       if typesText, case .value(.string(let text)) = value {
-        value = .value(Self.editedCellValue(text, original: original, columnType: columnType))
+        value = .value(
+          Self.editedCellValue(
+            text, original: original, columnType: columnType, wallClock: info?.wallClock ?? false,
+            dialect: sqlDialect))
       }
       keyed.append((key, original, value))
     }
@@ -789,6 +853,8 @@ extension NotebookViewModel {
   private func rowKey(at row: Int, target: EditTarget) -> RowChangeSet.RowKey? {
     guard let result = editorResult, row >= 0 else { return nil }
     if row < result.rows.count {
+      // A keyless row: its page locator, by page row (identical rows keep their own keys)
+      if let kind = target.rowLocator { return result.truncation?.locatorKey(row: row, kind: kind) }
       var values: [CellValue] = []
       values.reserveCapacity(target.primaryKeyColumns.count)
       for column in target.primaryKeyColumns {

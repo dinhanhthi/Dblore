@@ -106,7 +106,8 @@ struct DatabaseSessionContractTests {
     #expect(await connection.isConnected == false)
   }
 
-  @Test("Cancel calls interrupt when the session's cancel strategy is interrupt")
+  /// PostgreSQL's interrupt is `cancelBackend` (a side connection), never the closing `interrupt`
+  @Test("Cancel interrupts when the session's cancel strategy is interrupt")
   func cancelCallsInterrupt() async throws {
     let factory = FakeDatabaseSessionFactory(
       capabilities: .contract(cancelStrategy: .interrupt), slowQueries: true)
@@ -124,7 +125,8 @@ struct DatabaseSessionContractTests {
       expectedEpoch: status.epoch)
 
     #expect(outcome == .cancelled)
-    #expect(session.interruptCount == 1)
+    #expect(session.cancelBackendCount == 1)
+    #expect(session.interruptCount == 0)
     #expect(factory.sessions.count == 1)
     #expect(await connection.connectionEpoch == status.epoch)
     let error = await #expect(throws: DatabaseError.self) { try await running.value }

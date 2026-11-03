@@ -48,6 +48,64 @@ struct DataExporterTSVTests {
         == "=sum\tn\td\n=1+1\t-5\t\(iso)\n")
   }
 
+  /// Security: copied decimal text gets the formula prefix as text does; numbers stay bare
+  @Test("Copied TSV and CSV prefix a decimal holding formula text, never a signed decimal")
+  func neutralizesDecimalFormulaText() {
+    let result = CellResult(
+      columns: [ColumnInfo(name: "a", type: "numeric"), ColumnInfo(name: "b", type: "numeric")],
+      rows: [[.decimal("=1+1"), .decimal("-1.5")]], rowCount: 1)
+    #expect(DataExporter.toTSV(result: result, neutralizesFormulas: true) == "a\tb\n'=1+1\t-1.5\n")
+    #expect(
+      DataExporter.copyText(result: result, format: .csv, neutralizesFormulas: true)
+        == "'=1+1,-1.5")
+  }
+
+  @Test("Copy and CSV write a naive column's wall clock and a zoned column as ISO 8601 UTC")
+  func dateOutputsFollowTheColumn() {
+    // 2026-10-15 12:00:00.123 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123))
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[date, date]],
+      rowCount: 1)
+    let naive = "2026-10-15 12:00:00.123"
+    let zoned = "2026-10-15T12:00:00.123Z"
+    CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      #expect(
+        DataExporter.toTSV(result: result, neutralizesFormulas: false)
+          == "naive\tzoned\n\(naive)\t\(zoned)\n")
+      #expect(DataExporter.toCSV(result: result) == "naive,zoned\n\(naive),\(zoned)\n")
+      #expect(
+        DataExporter.copyText(result: result, format: .csv, neutralizesFormulas: false)
+          == "\(naive),\(zoned)")
+      #expect(
+        DataExporter.copyText(result: result, format: .tsvWithHeaders, neutralizesFormulas: true)
+          == "naive\tzoned\n\(naive)\t\(zoned)")
+      #expect(
+        DataExporter.toJSON(result: result, pretty: false)
+          == #"[{"naive":"\#(naive)","zoned":"\#(zoned)"}]"#)
+      #expect(
+        DataExporter.toJSON(result: result, pretty: false, valuesAsString: true)
+          == #"[{"naive":"\#(naive)","zoned":"\#(zoned)"}]"#)
+      let xml = DataExporter.toExcelXML(result: result)
+      #expect(xml.contains("<Data ss:Type=\"String\">\(naive)</Data>"))
+      #expect(xml.contains("<Data ss:Type=\"String\">\(zoned)</Data>"))
+      #expect(
+        DataExporter.toMarkdown(result: result).hasSuffix("| \(naive) | \(zoned) |\n"))
+      let model = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+      #expect(
+        model.tsv(rows: IndexSet([0]), columns: [1, 0], neutralizesFormulas: false)
+          == "\(zoned)\t\(naive)")
+      #expect(
+        model.copyText(
+          rows: IndexSet([0]), columns: [1, 0], format: .csv, neutralizesFormulas: false)
+          == "\(zoned),\(naive)")
+    }
+  }
+
   @Test("Copied TSV escapes headers like cells, and leaves JSON cells raw")
   func escapesHeadersAndKeepsJSON() {
     let result = CellResult(
@@ -55,13 +113,13 @@ struct DataExporterTSVTests {
         ColumnInfo(name: "x\t=HYPERLINK(\"y\")", type: "text"),
         ColumnInfo(name: "x\n=1", type: "text"),
       ],
-      rows: [[.json("-5"), .string("-5")]],
+      rows: [[.json("-5"), .string("-5+1")]],
       rowCount: 1)
     #expect(
       DataExporter.toTSV(result: result, neutralizesFormulas: true)
-        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t'-5\n")
+        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t'-5+1\n")
     #expect(
       DataExporter.toTSV(result: result, neutralizesFormulas: false)
-        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t-5\n")
+        == "\"x\t=HYPERLINK(\"\"y\"\")\"\t\"x\n=1\"\n-5\t-5+1\n")
   }
 }

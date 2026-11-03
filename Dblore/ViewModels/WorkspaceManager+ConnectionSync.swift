@@ -15,6 +15,7 @@
 //  as a runtime change.
 //
 
+import AppKit
 import Foundation
 
 /// A connect held by `WorkspaceManager.connect(config:defaultCommitStyle:)`
@@ -39,6 +40,7 @@ extension WorkspaceManager {
       guard let self else { return false }
       return !self.pendingTransaction.isIdle
     }
+    viewModel.writeUnlock = writeUnlock
   }
 
   /// A tab changed the protection level, commit style, Safe Mode or protected mode of the
@@ -60,6 +62,8 @@ extension WorkspaceManager {
     current.protectedMode = config.protectedMode
     current.commitStyle = config.commitStyle
     guard current != previous else { return }
+    // A changed level ends the write unlock (the actor ends its copy too)
+    if current.protectionLevel != previous.protectionLevel { writeUnlock.end() }
     workspace.connectionConfig = current
     editingConnectionConfig.protectionLevel = current.protectionLevel
     editingConnectionConfig.safeMode = current.safeMode
@@ -174,13 +178,14 @@ extension WorkspaceManager {
   }
 
   /// An opened file's `config` with the TLS mode, SSH tunnel, client certificate (which also
-  /// decides whether the saved custom CA is used), connection string and Vault source (address,
-  /// CA, mount, role, auth method) of its saved row (`hasSavedTransport`), even where the file's
-  /// are stronger: the saved row is the user's choice, and a file never picks how a saved
-  /// password travels nor where a Vault secret goes. Remember off in the file changes nothing.
-  /// Without that row they stay the file's (auto-connect then reads no password), but its Vault
-  /// source is dropped and a connection string that reaches another host, port or TLS mode than
-  /// the config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
+  /// decides whether the saved custom CA is used), connection string, Vault source (address,
+  /// CA, mount, role, auth method) and ask-on-connect flag of its saved row
+  /// (`hasSavedTransport`), even where the file's are stronger: the saved row is the user's
+  /// choice, and a file never picks how a saved password travels nor where a Vault secret goes.
+  /// Remember off in the file changes nothing. Without that row they stay the file's
+  /// (auto-connect then reads no password), but its Vault source and ask-on-connect flag are
+  /// dropped and a connection string that reaches another host, port or TLS mode than the
+  /// config is dropped (`MongoURIParser.checkedMongoURI`, the connection-file import rule).
   static func keepingSavedTransport(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -191,8 +196,10 @@ extension WorkspaceManager {
       config.clientCertificate = saved.clientCertificate
       config.mongoURI = saved.mongoURI
       config.vault = saved.vault
+      config.askPasswordOnConnect = saved.askPasswordOnConnect
     } else {
       config.vault = nil
+      config.askPasswordOnConnect = false
       if let uri = config.mongoURI {
         config.mongoURI = try? MongoURIParser.checkedMongoURI(
           uri, host: config.host, port: config.port, engine: config.databaseType,
@@ -456,7 +463,7 @@ extension WorkspaceManager {
   }
 
   /// Engine, host, port and username match (strings trimmed, case-insensitive)
-  nonisolated private static func isSameServer(
+  nonisolated static func isSameServer(
     _ lhs: ConnectionConfig, _ rhs: ConnectionConfig
   )
     -> Bool
@@ -492,12 +499,17 @@ extension WorkspaceManager {
   ///   then writes them; otherwise the saved row's AI fields are kept.
   /// - Parameter fromForm: true when `config` comes from the connection form: the save writes its
   ///   color and group (nil clears them); otherwise the saved row's are kept.
+  /// - Parameter passwordPromptAnchor: where an ask-on-connect connection asks for its password
+  ///   (nil: this workspace's window). Every connect asks after the lock step when the config
+  ///   holds no typed password (`ConnectionPasswordPromptCoordinator.asks`), auto-connect too;
+  ///   a Reconnect or a new window that carries it asks nothing. Cancel throws `unlockRequired`
+  ///   with nothing connected: a connected workspace stays connected.
   func connect(
     config: ConnectionConfig, defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
     isAutoConnect: Bool = false,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
-    aiFieldsEdited: Bool = false, fromForm: Bool = false
+    aiFieldsEdited: Bool = false, fromForm: Bool = false, passwordPromptAnchor: NSWindow? = nil
   ) async throws {
     lastUnlockConnectError = nil
     // The pin of a switched MongoDB connection holds on its own server only (Reconnect,
@@ -517,20 +529,33 @@ extension WorkspaceManager {
       config = try await unlockedForConnect(config)
     }
     if !isAutoConnect { await unlockAttachedFiles(of: config) }
-    guard
-      await resolvePendingTransaction(action: .disconnect, defaultCommitStyle: defaultCommitStyle)
-    else {
-      throw WorkspaceConnectError.pendingTransactionKept
-    }
-    // Checked again after the prompts, before the weakening unlock is asked
-    try throwIfKeychainKeyInUse(config)
-    if Self.connectRequiresUnlock(
-      current: workspace.connectionConfig,
-      saved: Self.savedTransportRow(for: config, defaults: defaults), new: config,
-      defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
-    {
-      holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
-      throw WorkspaceConnectError.unlockRequired
+    // Before the pending transaction is resolved and the old session dropped, so a Cancel
+    // changes nothing
+    let stateBeforePrompt = connectionState
+    config = try await askingPassword(config, for: .connect, anchor: passwordPromptAnchor)
+    do {
+      guard
+        await resolvePendingTransaction(
+          action: .disconnect, defaultCommitStyle: defaultCommitStyle)
+      else {
+        throw WorkspaceConnectError.pendingTransactionKept
+      }
+      // Checked again after the prompts, before the weakening unlock is asked
+      try throwIfKeychainKeyInUse(config)
+      if Self.connectRequiresUnlock(
+        current: workspace.connectionConfig,
+        saved: Self.savedTransportRow(for: config, defaults: defaults), new: config,
+        defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
+      {
+        holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+        throw WorkspaceConnectError.unlockRequired
+      }
+    } catch {
+      // The password prompt's "connecting" ends with the connect it was shown for
+      if connectionState == .connecting, stateBeforePrompt != .connecting {
+        connectionState = stateBeforePrompt
+      }
+      throw error
     }
     pendingWeakeningConnect = nil
     pendingWeakeningCertificate = nil
@@ -557,21 +582,51 @@ extension WorkspaceManager {
   /// The Welcome form's connect on the workspace it just created. `weakeningUnlocked`: the Safe
   /// Mode unlock was granted on the Welcome window (`unlockWelcomeWeakening(of:)`), so the
   /// connect is held and completed at once, without asking again; otherwise it is `connect`.
+  /// Ask on connect asks on `passwordPromptAnchor` (the Welcome window: this workspace has no
+  /// window yet) in both cases.
   func connectFromWelcome(
     config: ConnectionConfig, aiFieldsEdited: Bool, weakeningUnlocked: Bool,
     defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
-    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
+    passwordPromptAnchor: NSWindow? = nil
   ) async throws {
     guard weakeningUnlocked else {
       try await connect(
         config: config, defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword,
-        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, fromForm: true,
+        passwordPromptAnchor: passwordPromptAnchor)
       return
     }
     await unlockAttachedFiles(of: config)
+    let config = try await askingPassword(config, for: .connect, anchor: passwordPromptAnchor)
     holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
     try await completePendingWeakeningConnect()
+  }
+
+  /// `config` with the password typed in the prompt (on `anchor`, else this workspace's window)
+  /// when it asks on connect and holds none; else as is. A connect shows "connecting" first,
+  /// unless the workspace is connected (it stays so until the new connect drops the session);
+  /// Cancel restores the state from before and throws `WorkspaceConnectError.unlockRequired`.
+  /// The password is in memory only: in the returned config, never stored.
+  func askingPassword(
+    _ config: ConnectionConfig, for action: ConnectionPasswordRequest.Action,
+    anchor: NSWindow? = nil
+  ) async throws -> ConnectionConfig {
+    guard ConnectionPasswordPromptCoordinator.asks(config) else { return config }
+    let anchor = anchor ?? NewWindowStore.shared.findWindow(for: id)
+    let shown = connectionState
+    guard action == .connect, !shown.isConnected else {
+      return try await passwordPrompt.withTypedPassword(config, for: action, anchor: anchor)
+    }
+    connectionState = .connecting
+    do {
+      return try await passwordPrompt.withTypedPassword(config, for: action, anchor: anchor)
+    } catch {
+      // Nothing connected: no "connecting" left on screen
+      connectionState = shown == .connecting ? .disconnected : shown
+      throw error
+    }
   }
 
   /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate, SSH
@@ -610,11 +665,12 @@ extension WorkspaceManager {
   }
 
   /// `config` once its blocked lock is unlocked, with its saved password when it uses one, has
-  /// no password command nor Vault source and none typed (a locked row loads without it).
-  /// Nothing is read before the grant.
+  /// no password command, Vault source nor ask on connect and none typed (a locked row loads
+  /// without it). Nothing is read before the grant.
   /// - Parameter action: what the prompt says the unlock is for ("connect", "test it")
   /// - Throws: `WorkspaceConnectError.unlockRequired` when the unlock was cancelled (nothing
-  ///   changed, no error to show)
+  ///   changed, no error to show); `DatabaseError.passwordStoreUnreadable` when the Keychain
+  ///   could not read the saved password (never continue with an empty one)
   func unlockedForConnect(
     _ config: ConnectionConfig, to action: String = "connect"
   ) async throws -> ConnectionConfig {
@@ -625,13 +681,47 @@ extension WorkspaceManager {
         anchor: NewWindowStore.shared.findWindow(for: id))
     else { throw WorkspaceConnectError.unlockRequired }
     guard config.databaseType.capabilities.usesPassword, config.passwordCommandScript == nil,
-      config.vault == nil, config.password.isEmpty,
-      lockCenter.registry.refusal(for: config) == nil,
-      let password = passwords.loadPassword(forKey: ConnectionKeychainKey.password(for: config))
+      config.vault == nil, !config.askPasswordOnConnect, config.password.isEmpty,
+      lockCenter.registry.refusal(for: config) == nil
     else { return config }
+    let saved: String?
+    do {
+      saved = try passwords.readPassword(forKey: ConnectionKeychainKey.password(for: config))
+    } catch {
+      throw DatabaseError.passwordStoreUnreadable(name: name)
+    }
+    guard let password = saved else { return config }
     var config = config
     config.password = password
     return config
+  }
+
+  /// Connects saved row `seed` as a Welcome recent card and the Shortcuts Open Connection do:
+  /// with its saved password (a locked row asks first and reads it after the grant). A saved
+  /// password the Keychain could not read connects nothing: the form opens on the error. A
+  /// cancelled unlock leaves the workspace disconnected, without an error.
+  /// `offersHostKeyReplace` (Welcome's saved rows only, never Shortcuts): a changed SSH host
+  /// key shows its alert, whose Replace Pin connects the row again (reading its saved password
+  /// again: the retry never holds the one read here).
+  func connectSavedConnection(
+    _ seed: ConnectionConfig, recents: RecentManager = .shared, offersHostKeyReplace: Bool = false
+  ) async {
+    var config = seed
+    do {
+      config = try recents.withSavedPassword(seed)
+      try await connect(config: config)
+    } catch WorkspaceConnectError.unlockRequired {
+      return
+    } catch {
+      await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
+      presentConnectErrorIfActionable(error, config: config)
+      guard offersHostKeyReplace else { return }
+      _ = SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task {
+          await self?.connectSavedConnection(seed, recents: recents, offersHostKeyReplace: true)
+        }
+      }
+    }
   }
 
   /// Connect with the held config after a successful Safe Mode unlock. No-op without one.
@@ -676,17 +766,84 @@ extension WorkspaceManager {
 
   /// The unlock sheet's connect. A failure closes the sheet; the form that started it stays
   /// open and shows `lastUnlockConnectError`. A changed SSH host key also shows the blocking
-  /// alert. True once connected.
+  /// alert. True once connected. The settings are the Safe Mode gate's, which Replace Pin's
+  /// retry passes again (`connect`).
   func completePendingWeakeningConnectReportingFailure(
-    coordinator: SSHHostKeyTrustCoordinator = .shared
+    coordinator: SSHHostKeyTrustCoordinator = .shared,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
   ) async -> Bool {
     lastUnlockConnectError = nil
+    // The connect clears what it holds: Replace Pin's retry gets this copy, which only the
+    // coordinator keeps, while its alert is open
+    let held = pendingWeakeningConnect.map {
+      HeldConnect(
+        config: $0, certificate: pendingWeakeningCertificate,
+        sshCredential: pendingWeakeningSSHCredential, vaultSecret: pendingWeakeningVaultSecret,
+        aiFieldsEdited: pendingWeakeningAIFieldsEdited, fromForm: pendingWeakeningFromForm,
+        defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
+    }
     do {
       try await completePendingWeakeningConnect()
       return true
     } catch {
-      lastUnlockConnectError = coordinator.report(error)
+      lastUnlockConnectError = coordinator.report(error) { [weak self] in
+        guard let held else { return }
+        Task { await self?.retryHeldConnect(held, coordinator: coordinator) }
+      }
       return false
+    }
+  }
+
+  /// A held connect with the secrets of the operation that started it.
+  private struct HeldConnect {
+    let config: ConnectionConfig
+    let certificate: ClientCertificateMaterial?
+    let sshCredential: SSHStoredCredential?
+    let vaultSecret: VaultCredentialStore.ConnectionSecret?
+    let aiFieldsEdited: Bool
+    let fromForm: Bool
+    let defaultCommitStyle: CommitStyle
+    let hasPassword: Bool
+    let hasTouchID: Bool
+  }
+
+  /// Replace Pin after the unlock sheet's connect: the same connect through `connect`, with the
+  /// held secrets in scope, so a weakening asks for a new unlock (the sheet shows again). Another
+  /// failure shows in the form, as the sheet's does.
+  private func retryHeldConnect(
+    _ held: HeldConnect, coordinator: SSHHostKeyTrustCoordinator
+  ) async {
+    let config = held.config
+    let scopedMaterial = held.certificate.map {
+      ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: config), material: $0)
+    }
+    let scopedSSH = SSHCredentialStoreFactory.scoped(held.sshCredential, for: config)
+    let scopedVault = held.vaultSecret.map(VaultCredentialStore.ScopedSecret.init)
+    defer {
+      scopedMaterial?.clear()
+      scopedSSH?.clear()
+      scopedVault?.clear()
+    }
+    do {
+      try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
+        try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+          try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+            try await connect(
+              config: config, defaultCommitStyle: held.defaultCommitStyle,
+              hasPassword: held.hasPassword, hasTouchID: held.hasTouchID,
+              aiFieldsEdited: held.aiFieldsEdited, fromForm: held.fromForm)
+          }
+        }
+      }
+    } catch WorkspaceConnectError.unlockRequired {
+      // Held again for the unlock sheet
+    } catch {
+      lastUnlockConnectError = coordinator.report(error) { [weak self] in
+        Task { await self?.retryHeldConnect(held, coordinator: coordinator) }
+      }
     }
   }
 

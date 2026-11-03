@@ -141,7 +141,16 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
       let oid = UInt32(exactly: rootpage), oid != 0
     else { return nil }
     let described = try await describe(schema: relation.schema, table: relation.table, in: session)
-    guard !described.primaryKey.isEmpty else { return nil }
+    // No primary key: rows are named by rowid (a WITHOUT ROWID table always declares a key; a
+    // virtual table has rootpage 0, refused above). A real column of that name hides an alias.
+    var rowLocator: RowLocatorKind?
+    if described.primaryKey.isEmpty {
+      let names = Set(described.columns.map { $0.name.lowercased() })
+      guard let alias = SQLiteRowidAlias.allCases.first(where: { !names.contains($0.rawValue) })
+      else { return nil }
+      rowLocator = .sqliteRowid(
+        alias: alias, matchColumns: Self.locatorMatchColumns(described.columns))
+    }
     return EditTable(
       oid: oid,
       attributeNames: described.attributeNames,
@@ -151,7 +160,29 @@ nonisolated struct SQLiteSchemaIntrospector: SchemaIntrospector {
       tableRef: .sqlite(schema: relation.schema, table: relation.table),
       schema: relation.schema,
       name: relation.table,
-      generatedColumns: Set(described.columns.filter(\.isGenerated).map(\.name)))
+      generatedColumns: Set(described.columns.filter(\.isGenerated).map(\.name)),
+      rowLocator: rowLocator)
+  }
+
+  /// Columns a keyless row's WHERE compares with `IS` (`RowLocatorKind.sqliteRowid`), in table
+  /// order: those whose declared type gives TEXT, INTEGER, REAL or NUMERIC affinity. SQLite's
+  /// affinity rules, first match wins: INT is INTEGER; CHAR, CLOB or TEXT is TEXT; BLOB or no
+  /// type is BLOB; REAL, FLOA or DOUB is REAL; anything else NUMERIC. Binds are text, which a
+  /// BLOB-affinity column never converts (a stored number would never match), so those are out,
+  /// as is a STRICT table's `ANY` column, which has no affinity either. The rowid still names
+  /// the row.
+  static func locatorMatchColumns(_ columns: [DatabaseColumn]) -> [String] {
+    columns.filter { column in
+      guard !column.isHidden else { return false }
+      let type = column.type.uppercased()
+      if type.trimmingCharacters(in: .whitespacesAndNewlines) == "ANY" {
+        return false
+      }
+      if type.contains("INT") || ["CHAR", "CLOB", "TEXT"].contains(where: type.contains) {
+        return true
+      }
+      return !type.contains("BLOB") && !type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }.map(\.name)
   }
 
   func rowCount(schema: String, table: String, in session: any DatabaseSession) async throws -> Int

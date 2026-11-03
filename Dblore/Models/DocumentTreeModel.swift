@@ -167,6 +167,7 @@ nonisolated struct DocumentTreeModel: Sendable {
     case .date(let date): .date(MongoBSONMapping.millis(of: date))
     case .data(let data): .binary(subtype: 0, data: data)
     case .json(let text): (try? MongoRelaxedJSON.parse(text)) ?? .string(text)
+    case .decimal(let text): .string(text)
     }
   }
 

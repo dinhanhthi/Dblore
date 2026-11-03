@@ -17,6 +17,8 @@ struct CellInfoContent: View {
   /// Display As format of the cell's column: a binary value in a decoded format shows as a tree
   /// (or its hex / UUID text) instead of base64; Edit and Copy stay on the raw value
   var binaryFormat: BinaryDisplayFormat = .size
+  /// `ColumnInfo.wallClock` of the cell's column: a date is edited as the grid shows it there
+  var wallClock = false
 
   @State private var isCopied = false
   @State private var isEditing = false
@@ -550,6 +552,7 @@ struct CellInfoContent: View {
     case .json: return "JSON"
     case .date: return "Date"
     case .data: return "Binary Data"
+    case .decimal: return "Decimal"
     }
   }
 
@@ -583,7 +586,7 @@ struct CellInfoContent: View {
   /// UTF-8 bytes of the value's whole text, counted without building it; 0 for a short scalar
   private var fullTextBytes: Int {
     switch value {
-    case .string(let text), .json(let text):
+    case .string(let text), .json(let text), .decimal(let text):
       text.utf8.count
     case .data(let data):
       (data.count + 2) / 3 * 4
@@ -620,14 +623,16 @@ struct CellInfoContent: View {
       return
     }
     guard bytes > Self.maxShownBytes else {
-      let (text, error) = Self.editableText(value, columnType: columnType)
+      let (text, error) = Self.editableText(value, columnType: columnType, wallClock: wallClock)
       beginEdit(text: text, error: error)
       return
     }
     let value = value
     let columnType = columnType
+    let wallClock = wallClock
     editTask = Task {
-      let (text, error) = await Self.loadEditableText(value, columnType: columnType)
+      let (text, error) = await Self.loadEditableText(
+        value, columnType: columnType, wallClock: wallClock)
       // A newer value or a cancel replaced this one
       guard !Task.isCancelled else { return }
       editTask = nil
@@ -648,21 +653,29 @@ struct CellInfoContent: View {
     editTask = nil
   }
 
-  /// Whole text of a value and why it does not validate
-  nonisolated private static func editableText(
-    _ value: CellValue, columnType: String
+  /// Whole text of a value and why it does not validate: a date as the grid shows it in its
+  /// column (`wallClock`, the column's `ColumnInfo.wallClock`), which the edit reads back
+  nonisolated static func editableText(
+    _ value: CellValue, columnType: String, wallClock: Bool
   ) -> (text: String, error: String?) {
-    let text = value.fullString
+    let text: String
+    if case .date = value {
+      text = value.displayString(wallClock: wallClock)
+    } else {
+      text = value.fullString
+    }
     return (
-      text, CellValueValidator.validate(text, for: value, columnType: columnType).errorMessage
+      text,
+      CellValueValidator.validate(text, for: value, columnType: columnType, wallClock: wallClock)
+        .errorMessage
     )
   }
 
   /// `editableText` of a large value; `@concurrent` leaves the main actor
   @concurrent nonisolated private static func loadEditableText(
-    _ value: CellValue, columnType: String
+    _ value: CellValue, columnType: String, wallClock: Bool
   ) async -> (text: String, error: String?) {
-    editableText(value, columnType: columnType)
+    editableText(value, columnType: columnType, wallClock: wallClock)
   }
 
   private func saveBooleanEdit() {
@@ -721,7 +734,8 @@ struct CellInfoContent: View {
 
   private func validateInput(_ input: String) {
     // Use CellValueValidator helper
-    let result = CellValueValidator.validate(input, for: value, columnType: columnType)
+    let result = CellValueValidator.validate(
+      input, for: value, columnType: columnType, wallClock: wallClock)
     validationError = result.errorMessage
   }
 
@@ -957,7 +971,7 @@ enum CellValuePreview: Sendable {
         let parsed = try? GeometryWKB.parse(hex: text)
       else { return nil }
       return .geometry(GeometrySketch(parsed))
-    case .int, .double, .bool, .null, .json, .date:
+    case .int, .double, .bool, .null, .json, .date, .decimal:
       return nil
     }
   }

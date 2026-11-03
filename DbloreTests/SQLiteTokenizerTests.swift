@@ -153,6 +153,43 @@ extension SQLiteTokenizerTests {
     #expect(SQLTokenizer.splitStatements(trigger, dialect: .duckdb).count == 2)
   }
 
+  /// The split must stay linear in the script's size: a dump is split in one pass. The bounds are
+  /// far above a linear split (milliseconds in a Debug build) and far below a quadratic one
+  /// (minutes): a MySQL word that holds the delimiter many times was split again from each cut.
+  @Test("Splitting a large script stays linear on every dialect", .timeLimit(.minutes(3)))
+  func splitIsLinear() {
+    let body = String(repeating: "  x := x + 1; -- step\n  y := 'a;b';\n", count: 5_000)
+    let segment = String(repeating: "a", count: 43) + "$$"
+    let cases: [(SQLDialect, String, Int)] = [
+      // ~200 KB function body (one statement)
+      (.postgresql, "CREATE FUNCTION f() RETURNS void AS $$\nBEGIN\n\(body)END;\n$$;\n", 1),
+      // ~200 KB trigger body (one statement)
+      (
+        .sqlite,
+        "CREATE TRIGGER t AFTER INSERT ON a BEGIN\n"
+          + String(repeating: "  INSERT INTO b VALUES (1, 'x;y');\n", count: 6_000) + "END;\n",
+        1
+      ),
+      // ~200 KB word that holds the delimiter 4,500 times (`$` is a word character)
+      (.mysql, "DELIMITER $$\n" + String(repeating: segment, count: 4_500), 4_500),
+      // ~4.5 MiB of rows
+      (
+        .sqlite,
+        String(repeating: "INSERT INTO t VALUES (1, 'abcdefghij', 2.5);\n", count: 100_000),
+        100_000
+      ),
+    ]
+    let clock = ContinuousClock()
+    for (dialect, script, count) in cases {
+      var statements: [String] = []
+      let elapsed = clock.measure {
+        statements = SQLTokenizer(dialect: dialect).splitStatements(script)
+      }
+      #expect(statements.count == count)
+      #expect(elapsed < .seconds(script.utf8.count > 1_000_000 ? 30 : 5), "\(dialect)")
+    }
+  }
+
   /// Statements as SQLite reads them: each ends at the first `;` where `sqlite3_complete` of the
   /// text since the previous end is true. Trimmed like `splitStatements`; blank pieces dropped.
   static func referenceSplit(_ script: String) -> [String] {

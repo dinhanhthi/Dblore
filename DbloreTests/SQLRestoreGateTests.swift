@@ -1325,9 +1325,8 @@ struct SQLRestoreGateTests {
       return
     }
     #expect(session.statements == [DatabaseConnectionManager.standardStringsQuery])
-    // Cancel reopened the session: nothing reached the new one either
-    #expect(factory.sessions.count == 2)
-    #expect(factory.sessions.last?.statements == [])
+    // Cancel kept the session (cancelled from a side connection): nothing else reached it
+    #expect(factory.sessions.count == 1)
     #expect(await manager.transactionSnapshot() == .idle)
   }
 
@@ -1344,8 +1343,7 @@ struct SQLRestoreGateTests {
       return
     }
     #expect(session.statements == [DatabaseConnectionManager.standardStringsQuery])
-    #expect(factory.sessions.count == 2)
-    #expect(factory.sessions.last?.statements == [])
+    #expect(factory.sessions.count == 1)
     #expect(await manager.transactionSnapshot() == .idle)
   }
 

@@ -12,10 +12,13 @@ extension NotebookViewModel {
   /// Load the current page (and the row count while unknown). A request made while a run is in
   /// flight is dropped by the guard, so the page is loaded again when the state changed meanwhile.
   /// The page read now shows what other tabs wrote (`isStale` cleared before it is read, so a
-  /// write landing meanwhile marks it again).
+  /// write landing meanwhile marks it again). A keyless table's page shown without its locator
+  /// columns (`dataViewerAwaitsRowLocators`) is read once more with them.
   func loadDataViewerPage() async {
     while let current = dataViewer, let connectionManager, !isEditorQueryRunning {
-      let lazyColumns = dataViewerLazyColumns(current)
+      let rowLocator = dataViewerRowLocator(current)
+      if current.rowLocator != rowLocator { dataViewer?.rowLocator = rowLocator }
+      let lazyColumns = dataViewerLazyColumns(current, rowLocator: rowLocator)
       if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
       guard let state = dataViewer else { return }
       let key = state.loadKey
@@ -49,15 +52,49 @@ extension NotebookViewModel {
         if let result { storeDataViewerTotal(DataViewerState.total(from: result), for: state) }
       }
 
-      guard let current = dataViewer, current.loadKey != key else { return }
+      guard let current = dataViewer else { return }
+      // The target known now asks for locator columns this read did not have (a read that was
+      // refused already had them: no second try)
+      let addsLocators =
+        dataViewerAwaitsRowLocators && dataViewerRowLocator(current) != state.rowLocator
+      guard current.loadKey != key || addsLocators else { return }
     }
+  }
+
+  /// The locator columns the next page of the viewed table reads (`DataViewerState.rowLocator`):
+  /// the shown edit target's, never from a catalog read; the ones the page was read with while
+  /// its table definition is read. Nil for a table with a primary key, no target, or a table with
+  /// a column named like a locator alias.
+  private func dataViewerRowLocator(_ state: DataViewerState) -> RowLocatorKind? {
+    guard let result = editorResult else { return state.rowLocator }
+    if result.typesPending { return state.rowLocator }
+    guard !isMongoDataViewer, let kind = result.editTarget?.rowLocator else { return nil }
+    var located = state
+    located.rowLocator = kind
+    let names = Set(result.columns.map { $0.name.lowercased() })
+    return located.locatorColumns.contains(where: names.contains) ? nil : kind
+  }
+
+  /// The shown page is of a keyless table but was read without its locator columns (its first
+  /// page, read before its edit target was known): editing waits for the re-read that adds them
+  var dataViewerAwaitsRowLocators: Bool {
+    guard let state = dataViewer, let result = editorResult, result.error == nil,
+      !result.typesPending, let kind = dataViewerRowLocator(state)
+    else { return false }
+    return result.truncation?.rowLocator != kind
   }
 
   /// The lazy columns of the viewed table from what is cached, never a catalog read: the
   /// sidebar's columns of the table, else the shown page's columns and edit target. Nil
-  /// (`SELECT *`) for MongoDB, a view, a table without a primary key, nothing cached, or a
-  /// shown page without an edit target (an error, or a table that cannot be edited).
-  private func dataViewerLazyColumns(_ state: DataViewerState) -> [DataViewerState.LazyColumn]? {
+  /// (`SELECT *`) for MongoDB, a view, a table without a primary key that the page does not
+  /// locate (`rowLocator`, the locator columns the same page reads: its cut cells are read by
+  /// them), nothing cached, or a shown page without an edit target (an error, or a table that
+  /// cannot be edited). A page shown before its table definition keeps the lazy columns it was
+  /// read with.
+  private func dataViewerLazyColumns(
+    _ state: DataViewerState, rowLocator: RowLocatorKind?
+  ) -> [DataViewerState.LazyColumn]? {
+    if editorResult?.typesPending == true { return state.lazyColumns }
     guard !isMongoDataViewer, editorResult.map({ $0.editTarget != nil }) ?? true else {
       return nil
     }
@@ -82,14 +119,14 @@ extension NotebookViewModel {
       return DataViewerState.lazyColumns(
         cached.map { ($0.name, $0.type, $0.isPrimaryKey) },
         databaseType: state.databaseType, orderColumns: state.orderColumns,
-        binaryValueColumns: binaryValueColumns)
+        binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
     }
     guard let result = editorResult, let target = result.editTarget else { return nil }
     let key = Set(target.primaryKeyColumns)
     return DataViewerState.lazyColumns(
       result.columns.map { ($0.name, $0.type, key.contains($0.name)) },
       databaseType: state.databaseType, orderColumns: state.orderColumns,
-      binaryValueColumns: binaryValueColumns)
+      binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
   }
 
   /// True for a data viewer on a MongoDB connection: pages are mongosh commands and the
@@ -248,13 +285,42 @@ extension NotebookViewModel {
   }
 
   /// Banner Reload after another tab wrote the table: the page and the count are read again
-  /// with the staged change set kept on top (no Commit / Discard prompt). A page of a state the
-  /// viewer has left meanwhile is dropped by its load key. `isStale` stays set until the read
-  /// starts: while a run is in flight nothing is read and the banner stays.
+  /// with the staged change set kept on top (no Commit / Discard prompt). Staged changes on
+  /// located rows (a keyless table) are resolved first (`confirmLeaveStagedChanges`): a changed
+  /// row reads with another locator, so its staged entry would vanish from the grid while Commit
+  /// still sends it. A page of a state the viewer has left meanwhile is dropped by its load key.
+  /// `isStale` stays set until the read starts: while a run is in flight nothing is read and the
+  /// banner stays.
   func reloadStaleDataViewer() async {
     guard dataViewer != nil, connectionManager != nil, !isEditorQueryRunning else { return }
+    if stagesLocatedRows {
+      guard await confirmLeaveStagedChanges(), dataViewer != nil, !isEditorQueryRunning else {
+        return
+      }
+    }
     dataViewer?.totalRows = nil
     await loadDataViewerPage()
+  }
+
+  /// The Rollback reload of this data viewer (`WorkspaceManager`): the page and the count are
+  /// read again with the staged set kept, never after a prompt (a background tab cannot answer
+  /// one, and Rollback must not wait). Staged changes on located rows keep their page instead:
+  /// Rollback brought back other locators, so the page is only marked stale and the Reload
+  /// banner asks first; a Commit of them meanwhile ends in a conflict, never a wrong row.
+  func reloadPageAfterRollback() async {
+    guard dataViewer != nil else { return }
+    if stagesLocatedRows {
+      dataViewer?.isStale = true
+      return
+    }
+    dataViewer?.totalRows = nil
+    await loadDataViewerPage()
+  }
+
+  /// Staged changes keyed by row locators (a keyless table's `RowChangeSet`)
+  private var stagesLocatedRows: Bool {
+    guard let set = dataViewer?.changeSet else { return false }
+    return set.rowLocator != nil && !set.isEmpty
   }
 
   /// Reload the current page and recount the rows. Staged changes must be resolved first.

@@ -27,6 +27,11 @@ struct AppWelcomeView: View {
   @State private var editingConnectionConfig = ConnectionFormContent.newFormDraft()
   /// Set while the connection form is editing one recent card. Nil creates a workspace.
   @State private var editingConnectionId: UUID?
+  /// The edited card's saved password could not be read when the form opened: Save keeps it
+  /// while the password field stays empty (`RecentManager.keepingSavedPassword`)
+  @State private var editingPasswordUnread = false
+  /// Shown in the form until Connect, Save or Test (why the password field is empty)
+  @State private var editFormNotice: String?
   /// Recent workspace whose name and file path are being edited.
   /// Kept after close so the panel keeps its content while it slides out.
   @State private var editingWorkspace: WorkspaceHistoryEntry?
@@ -120,6 +125,7 @@ struct AppWelcomeView: View {
       showsRecentHistory: false,
       onTestConnection: testConnectionForWelcome,
       onConnect: submitConnectionForm,
+      unlockConnectError: $editFormNotice,
       onOpenPluginSettings: { openSettings(section: .plugins) }
     )
     // Over the form, whose Connect waits for it
@@ -259,21 +265,14 @@ struct AppWelcomeView: View {
     // Now, so the connect's unlock prompt finds this window before the view registers it
     if let window { NewWindowStore.shared.register(window, workspaceId: manager.id) }
 
-    // Auto-connect
+    // Auto-connect. A locked row asks first (the connect hold) and connects with its saved
+    // password; cancel leaves the workspace disconnected, without a toast. A row unlocked since
+    // the list loaded reads its password here. The window now shows the workspace: its form
+    // shows a missing plugin (with the install) or a saved password the Keychain could not read.
+    // A changed SSH host key shows its alert; Replace Pin connects again.
     Task {
-      // A locked row asks first (the connect hold) and connects with its saved password; cancel
-      // leaves the workspace disconnected, without a toast. A row unlocked since the list
-      // loaded reads its password here.
-      let config = recentManager.withSavedPassword(seed)
-      do {
-        try await manager.connect(config: config)
-      } catch WorkspaceConnectError.unlockRequired {
-        return
-      } catch {
-        await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
-        // The window now shows the workspace: its form offers the plugin install
-        manager.presentConnectErrorIfActionable(error, config: config)
-      }
+      await manager.connectSavedConnection(
+        seed, recents: recentManager, offersHostKeyReplace: true)
     }
   }
 
@@ -320,6 +319,8 @@ struct AppWelcomeView: View {
   private func showConnectionForm() {
     // Reset config and show sidebar
     editingConnectionId = nil
+    editingPasswordUnread = false
+    editFormNotice = nil
     editingConnectionConfig = ConnectionFormContent.newFormDraft()
     isShowingConnectionSidebar = true
   }
@@ -344,13 +345,27 @@ struct AppWelcomeView: View {
     }
   }
 
-  /// A locked row asks first and then opens with its saved password; cancel does nothing
+  /// A locked row asks first and then opens with its saved password; cancel does nothing. A
+  /// saved password the Keychain could not read opens the form without it and says so; Save
+  /// then keeps it unless a new one is typed (`editingPasswordUnread`).
   private func editConnection(_ entry: ConnectionHistoryEntry) {
     Task {
       guard await unlock(entry.config, reason: "Unlock \(entry.shortDisplayName) to edit it")
       else { return }
       editingConnectionId = entry.id
-      editingConnectionConfig = recentManager.withSavedPassword(entry.config)
+      do {
+        editingConnectionConfig = try recentManager.withSavedPassword(entry.config)
+        editingPasswordUnread = false
+        editFormNotice = nil
+      } catch {
+        var config = entry.config
+        config.password = ""
+        editingConnectionConfig = config
+        editingPasswordUnread = true
+        editFormNotice =
+          "The saved password could not be read from the Keychain. Save keeps it; type a "
+          + "password to replace it."
+      }
       isShowingConnectionSidebar = true
     }
   }
@@ -375,7 +390,11 @@ struct AppWelcomeView: View {
       }
     }
     if let id = editingConnectionId {
-      let row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
+      var row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
+      // Opened without its unreadable password and none typed: keep it, never save it empty
+      if editingPasswordUnread, let edited {
+        row = try recentManager.keepingSavedPassword(row, of: edited.config)
+      }
       if row.rememberConnection,
         SessionManager.keyUsedByAnotherIdentity(
           row, excluding: id, defaults: RecentManager.sharedDefaults)
@@ -400,21 +419,24 @@ struct AppWelcomeView: View {
         }
         throw SessionManagerError.saveFailed
       }
+      editingPasswordUnread = false
       return
     }
     try await connectAndCreateWorkspaceForWelcome(config, aiFieldsEdited: aiFieldsEdited)
   }
 
-  /// A locked connection asks first and is tested with its saved password; cancel keeps the
-  /// form as it is.
+  /// A locked connection asks first and is tested with its saved password; Ask on connect asks
+  /// for the password on this window, used for this test only. Cancel keeps the form as it is.
   private func testConnectionForWelcome(_ config: ConnectionConfig) async throws -> Bool {
     let blocked = LockCenter.shared.registry.refusal(for: config) != nil
     guard await unlock(config, reason: "Unlock this connection to test it") else {
       throw WorkspaceConnectError.unlockRequired
     }
+    let tested = try await ConnectionPasswordPromptCoordinator.shared.withTypedPassword(
+      blocked ? try recentManager.withSavedPassword(config) : config, for: .test,
+      anchor: hostWindow.window)
     let tempManager = Self.makeTestConnectionManager()
-    return try await tempManager.testConnection(
-      config: blocked ? recentManager.withSavedPassword(config) : config)
+    return try await tempManager.testConnection(config: tested)
   }
 
   /// Test Connection before a workspace exists. Asks through the app-wide trust sheet.
@@ -438,8 +460,10 @@ struct AppWelcomeView: View {
     let windowManager = WorkspaceWindowManager.shared
     let manager = windowManager.newWorkspace(connection: config)
     do {
+      // Ask on connect asks on this window: the workspace has none yet
       try await manager.connectFromWelcome(
-        config: config, aiFieldsEdited: aiFieldsEdited, weakeningUnlocked: unlocked)
+        config: config, aiFieldsEdited: aiFieldsEdited, weakeningUnlocked: unlocked,
+        passwordPromptAnchor: hostWindow.window)
       isShowingConnectionSidebar = false
       onWorkspaceSelected?(manager.id)
     } catch {
@@ -451,7 +475,8 @@ struct AppWelcomeView: View {
   /// Shows the Safe Mode unlock sheet for `savedRow` and waits for it; true once unlocked
   private func unlockWeakening(of savedRow: ConnectionConfig) async -> Bool {
     finishWeakeningUnlock(granted: false)
-    let storedPassword = recentManager.withSavedPassword(savedRow).password
+    // Unreadable: no database password to verify with (the sheet then offers none)
+    let storedPassword = (try? recentManager.withSavedPassword(savedRow))?.password ?? ""
     return await withCheckedContinuation { continuation in
       weakeningUnlock = WeakeningUnlockRequest(
         storedDatabasePassword: storedPassword,

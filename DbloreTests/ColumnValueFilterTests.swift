@@ -2,7 +2,9 @@
 // A join without aliases can return two columns with the same name. The category filter
 // is per result column index, so hiding a value in one column leaves rows that only
 // match that value in the other column on screen. An empty filter does not drop rows
-// and does not rewrite the loaded result's row count.
+// and does not rewrite the loaded result's row count. A double is one category per distinct
+// shortest text, so 1.001 and 1.004 stay apart. A naive date column (`ColumnInfo.wallClock`)
+// shows, filters and searches its stored wall clock in any time zone.
 
 import AppKit
 import Foundation
@@ -13,6 +15,14 @@ import Testing
 @Suite("Column value filter")
 @MainActor
 struct ColumnValueFilterTests {
+  /// 2026-10-15 12:00:00.123 UTC
+  private static let noon = Date(timeIntervalSince1970: 1_792_065_600 + 0.123)
+
+  /// `body` with zoned dates shown in `identifier`, for this task only.
+  private static func inZone<T>(_ identifier: String, _ body: () -> T) -> T {
+    CellValue.$displayZone.withValue(TimeZone(identifier: identifier)!) { body() }
+  }
+
   @Test("Same-named columns filter by index; an empty filter keeps every loaded row")
   func duplicateNamesFilterByColumnIndex() {
     let columns = [
@@ -43,24 +53,27 @@ struct ColumnValueFilterTests {
     #expect(result.rowCount == rows.count)
   }
 
-  @Test("Values the grid draws the same are one category")
-  func sameGridTextIsOneCategory() {
+  @Test(
+    "Doubles and dates with distinct text are distinct categories; long JSON collapses")
+  func distinctDoublesAreDistinctCategories() {
     let columns = [ColumnInfo(name: "n", type: "float8")]
     let rows: [[CellValue]] = [[.double(1.001)], [.double(1.004)], [.double(2.5)]]
     let result = CellResult(columns: columns, rows: rows, rowCount: rows.count)
-    let collapsed = ColumnValueFilter.categoryKey(for: .double(1.001))
+    let hidden = ColumnValueFilter.categoryKey(for: .double(1.001))
 
-    #expect(collapsed == ColumnValueFilter.categoryKey(for: .double(1.004)))
-    #expect(CellValue.double(1.001).displayString == CellValue.double(1.004).displayString)
+    #expect(hidden != ColumnValueFilter.categoryKey(for: .double(1.004)))
+    #expect(CellValue.double(1.001).displayString == "1.001")
+    #expect(CellValue.double(1.004).displayString == "1.004")
+    #expect(CellValue.double(0.0001).displayString == "0.0001")
     let categories = ColumnValueFilter.categories(in: result, columnIndex: 0)
-    #expect(categories.count == 2)
-    #expect(categories.first { $0.key == collapsed }?.count == 2)
+    #expect(categories.count == 3)
+    #expect(categories.first { $0.key == hidden }?.count == 1)
 
     let filtered = ResultGridModel(
       result: result, sortColumn: nil, ascending: true,
-      valueFilter: ColumnValueFilter().settingHidden([collapsed], for: 0))
-    #expect(filtered.rowCount == 1)
-    #expect(filtered.row(at: 0) == [.double(2.5)])
+      valueFilter: ColumnValueFilter().settingHidden([hidden], for: 0))
+    let shown = (0..<filtered.rowCount).map { filtered.row(at: $0) }
+    #expect(shown == [[.double(1.004)], [.double(2.5)]])
     #expect(result.rowCount == rows.count)
 
     let stem = String(repeating: "a", count: 60)
@@ -75,12 +88,70 @@ struct ColumnValueFilterTests {
     #expect(hiddenJSON.rowCount == 1)
     #expect(hiddenJSON.row(at: 0) == [.json("other")])
 
+    // Regression A5: dates show their fraction, so values 0.2 s apart are two categories
     let start = Date(timeIntervalSinceReferenceDate: 100)
     let sameSecond = start.addingTimeInterval(0.2)
-    #expect(CellValue.date(start).displayString == CellValue.date(sameSecond).displayString)
+    #expect(CellValue.date(start).displayString != CellValue.date(sameSecond).displayString)
     #expect(
       ColumnValueFilter.categoryKey(for: .date(start))
-        == ColumnValueFilter.categoryKey(for: .date(sameSecond)))
+        != ColumnValueFilter.categoryKey(for: .date(sameSecond)))
+  }
+
+  @Test("A naive date label is the stored wall clock in any zone; a zoned label has the offset")
+  func naiveDateLabelIsWallClock() {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[.date(Self.noon), .date(Self.noon)], [.null, .null]], rowCount: 2)
+    for zone in ["Asia/Ho_Chi_Minh", "America/St_Johns"] {
+      let labels = Self.inZone(zone) {
+        ColumnValueFilter.categories(in: result, columnIndex: 0).map(\.label)
+      }
+      #expect(labels == ["2026-10-15 12:00:00.123", "NULL"])
+    }
+    let zoned = Self.inZone("Asia/Ho_Chi_Minh") {
+      ColumnValueFilter.categories(in: result, columnIndex: 1).first?.label
+    }
+    #expect(zoned == "2026-10-15 19:00:00.123+07:00")
+
+    // The grid draws the same text, and the popover's key hides that row
+    Self.inZone("Asia/Ho_Chi_Minh") {
+      let grid = ResultGridModel(result: result, sortColumn: nil, ascending: true)
+      #expect(grid.displayText(row: 0, column: 0) == "2026-10-15 12:00:00.123")
+      let key = ColumnValueFilter.categories(in: result, columnIndex: 0)[0].key
+      let filtered = ResultGridModel(
+        result: result, sortColumn: nil, ascending: true,
+        valueFilter: ColumnValueFilter().settingHidden([key], for: 0))
+      #expect(filtered.rowCount == 1)
+      #expect(filtered.row(at: 0) == [.null, .null])
+    }
+  }
+
+  @Test("In-result search matches the naive wall clock the grid shows")
+  func searchMatchesNaiveWallClock() async {
+    let viewModel = NotebookViewModel()
+    viewModel.notebook.cells = [NotebookCell(cellType: .sql, content: "SELECT at FROM t")]
+    viewModel.notebook.cells[0].result = CellResult(
+      columns: [ColumnInfo(name: "at", type: "timestamp", wallClock: true)],
+      rows: [[.date(Self.noon)]], rowCount: 1)
+    await CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      await viewModel.performSearch(query: "12:00", caseSensitive: false)
+      #expect(
+        viewModel.searchState.matches.map(\.matchType) == [
+          .tableData(rowIndex: 0, columnName: "at")
+        ])
+      await viewModel.performSearch(query: "19:00", caseSensitive: false)
+      #expect(viewModel.searchState.matches.isEmpty)
+    }
+  }
+
+  @Test("NaN and infinite doubles show as words")
+  func nonFiniteDoublesShowAsWords() {
+    #expect(CellValue.double(.nan).displayString == "NaN")
+    #expect(CellValue.double(.infinity).displayString == "Infinity")
+    #expect(CellValue.double(-.infinity).displayString == "-Infinity")
   }
 
   @Test("Bytea categories are the bytes, not a process-local hash")

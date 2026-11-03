@@ -28,7 +28,9 @@ nonisolated struct BoundStatement: Equatable, Sendable {
 /// Builds bound DML, then a display-only preview, for a `RowChangeSet`.
 /// Statement order is every DELETE, then every UPDATE, then every INSERT.
 /// Throws `RowChangeError.noRowKey` when the set has an UPDATE or DELETE and the target no key,
-/// and `serverDefaultUnsupported` for a DEFAULT cell the dialect cannot write.
+/// `noRowLocator` when a locator target's row has no locator that fits, and
+/// `serverDefaultUnsupported` for a DEFAULT cell the dialect cannot write. A locator target
+/// (`EditTarget.rowLocator`) names rows by `RowKey.locator` and gets no MySQL row check.
 nonisolated enum RowChangeSQLBuilder {
   static func statements(
     for set: RowChangeSet, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
@@ -60,8 +62,10 @@ nonisolated enum RowChangeSQLBuilder {
   private static func drafts(
     for set: RowChangeSet, target: EditTarget, columns: [ColumnInfo], dialect: SQLDialect
   ) throws -> [StatementDraft] {
-    // Without a key a WHERE would match every row: no UPDATE or DELETE (no ctid-style edits).
-    if target.primaryKeyColumns.isEmpty, !set.deletes.isEmpty || !set.edits.isEmpty {
+    // Without a key or a locator a WHERE would match every row: no UPDATE or DELETE.
+    if target.primaryKeyColumns.isEmpty, target.rowLocator == nil,
+      !set.deletes.isEmpty || !set.edits.isEmpty
+    {
       throw RowChangeError.noRowKey(table: target.qualifiedName)
     }
     let relation = relationName(target)
@@ -69,7 +73,8 @@ nonisolated enum RowChangeSQLBuilder {
     var result: [StatementDraft] = []
     result.reserveCapacity(set.deletes.count + set.edits.count + set.inserts.count)
     for row in set.deletes {
-      var draft = delete(row, relation: relation, only: only, target: target, dialect: dialect)
+      var draft = try delete(
+        row, relation: relation, only: only, target: target, dialect: dialect)
       draft.rewindStep = RewindPlan.Step(operation: .delete, keyBefore: row.values, keyAfter: nil)
       result.append(draft)
     }
@@ -77,7 +82,7 @@ nonisolated enum RowChangeSQLBuilder {
       throw RowChangeError.serverDefaultUnsupported
     }
     for (row, changes) in set.edits {
-      if var update = update(
+      if var update = try update(
         row, changes: changes, originals: set.originals[row] ?? [:],
         defaults: set.serverDefaults[row] ?? [], relation: relation, only: only, target: target,
         columns: columns, dialect: dialect)
@@ -102,14 +107,14 @@ nonisolated enum RowChangeSQLBuilder {
   private static func delete(
     _ row: RowChangeSet.RowKey, relation: String, only: Bool, target: EditTarget,
     dialect: SQLDialect
-  ) -> StatementDraft {
+  ) throws -> StatementDraft {
     var draft = StatementDraft()
     draft.text("DELETE FROM")
     if only {
       draft.text(" ONLY")
     }
     draft.text(" \(relation)")
-    appendWhere(row.values, columns: target.primaryKeyColumns, to: &draft, dialect: dialect)
+    try appendWhere(row, target: target, to: &draft, dialect: dialect)
     return draft
   }
 
@@ -117,7 +122,7 @@ nonisolated enum RowChangeSQLBuilder {
     _ row: RowChangeSet.RowKey, changes: [String: CellValue], originals: [String: CellValue],
     defaults: Set<String>, relation: String, only: Bool, target: EditTarget,
     columns: [ColumnInfo], dialect: SQLDialect
-  ) -> StatementDraft? {
+  ) throws -> StatementDraft? {
     let keys = Set(target.primaryKeyColumns)
     let edited = columns.filter { column in
       guard let value = changes[column.name], !keys.contains(column.name),
@@ -145,11 +150,11 @@ nonisolated enum RowChangeSQLBuilder {
         draft.value(changes[column.name] ?? .null)
       }
     }
-    appendWhere(row.values, columns: target.primaryKeyColumns, to: &draft, dialect: dialect)
-    if dialect == .mysql {
+    try appendWhere(row, target: target, to: &draft, dialect: dialect)
+    if dialect == .mysql, target.rowLocator == nil {
       var check = StatementDraft()
       check.text("SELECT 1 FROM \(relation)")
-      appendWhere(row.values, columns: target.primaryKeyColumns, to: &check, dialect: dialect)
+      try appendWhere(row, target: target, to: &check, dialect: dialect)
       check.text(" FOR UPDATE")
       let bound = check.bound(dialect: dialect)
       draft.rowCheck = RowExistenceCheck(sql: bound.sql, values: bound.values)
@@ -207,9 +212,30 @@ nonisolated enum RowChangeSQLBuilder {
     return draft
   }
 
+  /// ` WHERE` naming `row`: its primary-key values in key order, or for a locator target the
+  /// row's `RowLocatorKind` terms (a row with no locator that fits is refused, never left
+  /// without a WHERE).
   private static func appendWhere(
-    _ values: [CellValue], columns: [String], to draft: inout StatementDraft, dialect: SQLDialect
-  ) {
+    _ row: RowChangeSet.RowKey, target: EditTarget, to draft: inout StatementDraft,
+    dialect: SQLDialect
+  ) throws {
+    if let kind = target.rowLocator {
+      guard let locator = row.locator, let terms = kind.terms(locator, dialect: dialect) else {
+        throw RowChangeError.noRowLocator
+      }
+      draft.text(" WHERE ")
+      for (index, term) in terms.enumerated() {
+        if index > 0 {
+          draft.text(" AND ")
+        }
+        draft.text(term.lead)
+        draft.value(term.value)
+        draft.text(term.trail)
+      }
+      return
+    }
+    let values = row.values
+    let columns = target.primaryKeyColumns
     guard !columns.isEmpty else { return }
     draft.text(" WHERE ")
     for (index, column) in columns.enumerated() {

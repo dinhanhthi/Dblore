@@ -4,7 +4,8 @@
 //
 // The pragmas do not expose CHECK constraints (left empty: the structure editor does not edit
 // them on SQLite), generated column expressions, expression index text, constraint names, or
-// comments. A partial index predicate is read from its CREATE INDEX text only when the word
+// comments. A key part is DESC when pragma_index_xinfo says so (there is no NULLS order).
+// A partial index predicate is read from its CREATE INDEX text only when the word
 // WHERE occurs there once and there is no comment; otherwise the index is partial without text.
 // AUTOINCREMENT: the single INTEGER PRIMARY KEY column of a table whose CREATE TABLE text has
 // the AUTOINCREMENT keyword (SQLite allows it nowhere else). Hidden virtual-table columns
@@ -106,10 +107,15 @@ nonisolated extension SQLiteSchemaIntrospector {
       // Key columns only; an expression part (cid -2) has no name
       let parts = try await rows(
         in: session,
-        sql: "SELECT name FROM pragma_index_xinfo(?, ?) WHERE key = 1 ORDER BY seqno",
+        sql: """
+          SELECT name, "desc" FROM pragma_index_xinfo(?, ?) WHERE key = 1 ORDER BY seqno
+          """,
         binds: [.text(name), .text(schema)])
       let keys: [TableStructure.Index.Key] = parts.map {
         SQLiteCatalogValue.string($0, 0).map { .column($0) } ?? .expression(nil)
+      }
+      let order = parts.map {
+        TableStructure.Index.KeyOrder(descending: SQLiteCatalogValue.int($0, 1) == 1)
       }
       let predicate =
         isPartial ? try await partialPredicate(index: name, schema: schema, in: session) : nil
@@ -117,7 +123,8 @@ nonisolated extension SQLiteSchemaIntrospector {
         (
           TableStructure.Index(
             name: name, keys: keys, isUnique: SQLiteCatalogValue.int(row, 1) == 1,
-            isPrimary: origin == "pk", method: nil, isPartial: isPartial, predicate: predicate),
+            isPrimary: origin == "pk", method: nil, isPartial: isPartial, predicate: predicate,
+            sortOrder: TableStructure.Index.storedOrder(order)),
           origin
         ))
     }

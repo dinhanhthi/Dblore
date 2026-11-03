@@ -120,8 +120,16 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     return try quoteIdentifier(schema) + "." + quotedName
   }
 
-  /// SQL literal for a result cell. JSON is quoted text, not a PostgreSQL json cast.
+  /// SQL literal for a result cell. JSON is quoted text, not a PostgreSQL json cast. A date
+  /// is zoned (`literal(_:wallClock: false)`).
   func literal(_ value: CellValue) -> String {
+    literal(value, wallClock: false)
+  }
+
+  /// SQL literal for a cell of a column whose `ColumnInfo.wallClock` is `wallClock`. A naive
+  /// date is its stored wall clock (`CellValue.outputString(wallClock: true)`); a zoned date is
+  /// its bind text (`DateBindText`: UTC with six fractional digits, MySQL without a zone).
+  func literal(_ value: CellValue, wallClock: Bool) -> String {
     switch value {
     case .null:
       "NULL"
@@ -133,8 +141,13 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       doubleLiteral(number)
     case .string(let text), .json(let text):
       quoteLiteral(text)
+    case .decimal(let text):
+      // Bare only as plain digits; NaN, Infinity and any other text are a quoted string
+      DecimalText.isPlain(text) ? text : quoteLiteral(text)
     case .date(let date):
-      quoteLiteral(ISO8601DateFormatter().string(from: date))
+      quoteLiteral(
+        wallClock
+          ? value.outputString(wallClock: true) : DateBindText.string(from: date, dialect: self))
     case .data(let data):
       dataLiteral(data)
     }

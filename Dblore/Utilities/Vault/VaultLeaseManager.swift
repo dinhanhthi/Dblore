@@ -113,9 +113,10 @@ nonisolated struct VaultLeasing: Sendable {
   var store: any VaultSecretStore = VaultCredentialStore.shared
 
   /// Signs in with `config`'s Vault secret (`VaultCredentialStore.lookup(for:)`, so an
-  /// operation's scoped secret wins; nothing is sent when it is bound to other Vault settings)
-  /// and reads one lease. Its renewal is not started. A lease that arrives once the task is
-  /// cancelled is revoked, and so is a login token that got no lease.
+  /// operation's scoped secret wins; nothing is sent when it is bound to other Vault settings or
+  /// the Keychain could not read it) and reads one lease. Its renewal is not started. A lease
+  /// that arrives once the task is cancelled is revoked, and so is a login token that got no
+  /// lease.
   func take(for config: ConnectionConfig) async throws -> VaultLeaseManager {
     guard let source = config.vault else { throw VaultLeaseError.secretMissing }
     let secret: VaultSecret
@@ -123,6 +124,9 @@ nonisolated struct VaultLeasing: Sendable {
     case .found(let found): secret = found
     case .destinationChanged: throw VaultLeaseError.destinationChanged
     case .missing: throw VaultLeaseError.secretMissing
+    case .unreadable:
+      throw DatabaseError.passwordStoreUnreadable(
+        name: config.name.isEmpty ? config.displayString : config.name)
     }
     let client = try makeClient(source)
     let token: String

@@ -339,6 +339,72 @@ struct SQLiteSessionTests {
     }
   }
 
+  @Test("A keyless UPDATE by rowid and typed IS values changes exactly the one row it read")
+  func keylessUpdateChangesOneRow() async throws {
+    try await withWritableDatabase { session in
+      _ = try await session.command("CREATE TABLE t(a, b REAL, c)", binds: [])
+      // Two identical rows (rowid tells them apart), an integer stored into the REAL column
+      _ = try await session.command(
+        "INSERT INTO t VALUES (1, 2.5, 'x'), (1, 2.5, 'x'), (2, 3, 'y')", binds: [])
+      let table = try #require(
+        try await SQLiteSchemaIntrospector().editTable(named: "t", in: session))
+      let kind = try #require(table.rowLocator)
+      let target = EditTarget(
+        qualifiedName: table.qualifiedName, tableID: .sqlite(schema: "main", table: "t"),
+        primaryKeyColumns: [], rowLocator: kind)
+      let read = try await collect(session, "SELECT rowid, a, b, c FROM t ORDER BY rowid")
+      let columns = Array(read.columns.dropFirst())
+      let locators = read.rows.map { row in
+        RowLocatorValues(
+          texts: [CellUpdateStatement.inputText(row[0], dialect: .sqlite) ?? ""],
+          row: Dictionary(uniqueKeysWithValues: zip(columns.map(\.name), row.dropFirst())))
+      }
+
+      // Staged path: the second of the two identical rows
+      var set = RowChangeSet(target: target)
+      try set.stageEdit(
+        row: RowChangeSet.RowKey(locator: locators[1]), column: "c", value: .string("staged"),
+        original: .string("x"))
+      let staged = try #require(
+        try RowChangeSQLBuilder.statements(
+          for: set, target: target, columns: columns, dialect: .sqlite
+        ).first)
+      #expect(staged.sql == #"UPDATE "main"."t" SET "c" = ?1 WHERE rowid = ?2 AND "b" IS ?3"#)
+      #expect(try await session.command(staged.sql, binds: staged.binds).affectedRows == 1)
+
+      // Single-cell path: the row whose integer was stored as REAL
+      let cell = try CellUpdateStatement.make(
+        qualifiedName: table.qualifiedName, assignments: [(column: "c", value: "cell")],
+        primaryKeyColumns: [], rowData: locators[2].row, dialect: .sqlite, rowLocator: kind,
+        locator: locators[2])
+      #expect(try await session.command(cell.sql, binds: cell.binds).affectedRows == 1)
+
+      let after = try await collect(session, "SELECT c FROM t ORDER BY rowid")
+      #expect(after.rows == [[.string("x")], [.string("staged")], [.string("cell")]])
+
+      // STRICT keyless table: a number in an ANY column is not compared, rowid names the row
+      _ = try await session.command("CREATE TABLE s(a ANY, b TEXT) STRICT", binds: [])
+      _ = try await session.command("INSERT INTO s VALUES (5, 'x'), (5, 'x')", binds: [])
+      let strict = try #require(
+        try await SQLiteSchemaIntrospector().editTable(named: "s", in: session))
+      let strictKind = try #require(strict.rowLocator)
+      let strictRead = try await collect(session, "SELECT rowid, a, b FROM s ORDER BY rowid")
+      let strictColumns = Array(strictRead.columns.dropFirst())
+      let first = strictRead.rows[0]
+      let firstRow = Dictionary(
+        uniqueKeysWithValues: zip(strictColumns.map(\.name), first.dropFirst()))
+      let strictCell = try CellUpdateStatement.make(
+        qualifiedName: strict.qualifiedName, assignments: [(column: "b", value: "y")],
+        primaryKeyColumns: [], rowData: firstRow, dialect: .sqlite, rowLocator: strictKind,
+        locator: RowLocatorValues(
+          texts: [CellUpdateStatement.inputText(first[0], dialect: .sqlite) ?? ""], row: firstRow))
+      #expect(strictCell.sql == #"UPDATE "main"."s" SET "b" = ?1 WHERE rowid = ?2 AND "b" IS ?3"#)
+      #expect(try await session.command(strictCell.sql, binds: strictCell.binds).affectedRows == 1)
+      let strictAfter = try await collect(session, "SELECT b FROM s ORDER BY rowid")
+      #expect(strictAfter.rows == [[.string("y")], [.string("x")]])
+    }
+  }
+
   @Test("openCursor throws because SQLite has no server cursor")
   func openCursorUnsupported() async throws {
     try await withWritableDatabase { session in

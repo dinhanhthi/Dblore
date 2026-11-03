@@ -10,7 +10,7 @@
 //   user paired the tool). Read-only.
 // - shortcuts: off until the user turns Shortcuts on, then its own allowlist; the MCP server may
 //   be off. Nothing reaches a model, so the AI policy plays no part.
-// The unattended refusal (password command, unpinned SSH host key) stays in
+// The unattended refusal (password command, ask on connect, unpinned SSH host key) stays in
 // `MCPConnectionPool.refuseUnattended`, which both callers reach through their pool.
 
 import Foundation
@@ -105,17 +105,21 @@ nonisolated struct HeadlessAccessRule: Sendable {
 
   /// A pool's lookup for `caller` (Shortcuts runs its own pool, the MCP server may be off): the
   /// row `id` while the rule allows it, checked again at every connect, with its password read
-  /// only after the rule passed. `saved` and `caller` read the settings as they are now.
+  /// only after the rule passed (one the Keychain could not read throws: the pool refuses the
+  /// row). An ask on connect row reads none: the pool refuses it (`refuseUnattended`). `saved`
+  /// and `caller` read the settings as they are now.
   func entryLookup(
     saved: @escaping @Sendable () async -> [ConnectionHistoryEntry],
     caller: @escaping @Sendable () async -> Caller,
-    password: @escaping @Sendable (ConnectionConfig) -> String?
+    password: @escaping @Sendable (ConnectionConfig) throws -> String?
   ) -> MCPConnectionPool.EntryLookup {
     { id in
       let rows = await saved()
       let current = await caller()
       guard var entry = try? self.entry(id: id, saved: rows, caller: current) else { return nil }
-      if entry.config.databaseType.capabilities.usesPassword, let saved = password(entry.config) {
+      if entry.config.databaseType.capabilities.usesPassword,
+        !entry.config.askPasswordOnConnect, let saved = try password(entry.config)
+      {
         entry.config.password = saved
       }
       return entry

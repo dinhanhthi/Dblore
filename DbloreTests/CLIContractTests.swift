@@ -267,7 +267,7 @@ struct CLIContractTests {
       result.rows == [
         [.null, .bool(true)],
         [.int(1), .int(42)],
-        [.double(2.5), .text("a,\"b\"\n\tc\r")],
+        [.decimal(Decimal(string: "2.5")!), .text("a,\"b\"\n\tc\r")],
         [
           .cutText(String(repeating: "x", count: MCPResultEncoder.maxCellCharacters)),
           .binary(base64: "AQID", bytes: 3),
@@ -280,6 +280,66 @@ struct CLIContractTests {
     let object = try #require(
       JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
     #expect(object["notice"] as? String == CLIOutput.dataNotice)
+  }
+
+  @Test("A decimal is a JSON number when it fits, else exact text; the tool prints plain digits")
+  func decimalNumbers() throws {
+    let tiny = "0." + String(repeating: "0", count: 127) + "1"
+    let tinier = "0." + String(repeating: "0", count: 128) + "1"
+    let values: [CellValue] = [
+      .decimal("19.90"), .decimal("-123456789.012345"), .decimal("1234567890123456"),
+      .decimal("NaN"), .decimal(tiny), .decimal(tinier),
+      .double(0.0000001), .double(1e300), .double(5e-324),
+    ]
+    let read = MCPReadResult(
+      columns: values.indices.map { MCPResultColumn(name: "c\($0)", type: "numeric") },
+      rows: [values], rowsTruncated: false)
+    let text = MCPResultEncoder.encodeRows(read)
+    #expect(
+      text.contains(
+        #"[[19.9,-123456789.012345,"1234567890123456","NaN",\#(tiny),"\#(tinier)","#
+          + "1e-07,1e+300,5e-324]]"))
+
+    let result = try CLIOutput.decodeRows(text)
+    #expect(
+      result.rows == [
+        [
+          .decimal(Decimal(string: "19.9")!), .decimal(Decimal(string: "-123456789.012345")!),
+          .text("1234567890123456"), .text("NaN"), .decimal(Decimal(string: tiny)!),
+          .text(tinier), .decimal(Decimal(string: "0.0000001")!), .double(1e300),
+          .double(5e-324),
+        ]
+      ])
+    #expect(
+      CLIOutput.render(result, format: .csv).split(separator: "\r\n").last
+        == "19.9,-123456789.012345,1234567890123456,NaN,\(tiny),\(tinier),0.0000001,1e+300,5e-324"
+    )
+    #expect(
+      CLIOutput.render(result, format: .jsonl)
+        .contains(#""c0":19.9,"c1":-123456789.012345,"c2":"1234567890123456""#))
+  }
+
+  @Test("Dates reach the tool as text: naive wall clock without a zone, zoned ISO 8601 UTC")
+  func dateShapes() throws {
+    // 2026-10-15 12:00:00 UTC, then with .123 and .123456 fractions
+    let noon = 1_792_065_600.0
+    let read = MCPReadResult(
+      columns: [
+        MCPResultColumn(name: "naive", type: "timestamp", wallClock: true),
+        MCPResultColumn(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [0, 0.123, 0.123456].map { fraction in
+        let date = CellValue.date(Date(timeIntervalSince1970: noon + fraction))
+        return [date, date]
+      },
+      rowsTruncated: false)
+    let result = try CLIOutput.decodeRows(MCPResultEncoder.encodeRows(read))
+    #expect(
+      result.rows == [
+        [.text("2026-10-15 12:00:00"), .text("2026-10-15T12:00:00Z")],
+        [.text("2026-10-15 12:00:00.123"), .text("2026-10-15T12:00:00.123Z")],
+        [.text("2026-10-15 12:00:00.123456"), .text("2026-10-15T12:00:00.123456Z")],
+      ])
   }
 
   @Test("The tool's data notice is the app's")
@@ -563,7 +623,8 @@ struct CLIContractTests {
     case .stopped: .unavailable
     case .connectFailed: .queryFailed
     case .unknownConnection, .duckDBNotSupported, .certificateNotSaved, .sshCredentialNotSaved,
-      .sshHostKeyNotTrusted, .passwordCommand, .commandRefused, .cursorRefused:
+      .sshHostKeyNotTrusted, .passwordCommand, .passwordAsksOnConnect, .passwordStoreUnreadable,
+      .commandRefused, .cursorRefused:
       .refused
     }
   }
@@ -594,8 +655,8 @@ struct CLIContractTests {
     }
     let connectionErrors: [MCPConnectionError] = [
       .unknownConnection, .connectFailed, .stopped, .duckDBNotSupported, .certificateNotSaved,
-      .sshCredentialNotSaved, .sshHostKeyNotTrusted, .passwordCommand, .commandRefused,
-      .cursorRefused,
+      .sshCredentialNotSaved, .sshHostKeyNotTrusted, .passwordCommand, .passwordAsksOnConnect,
+      .passwordStoreUnreadable, .commandRefused, .cursorRefused,
     ]
     for error in connectionErrors {
       let text = error.localizedDescription

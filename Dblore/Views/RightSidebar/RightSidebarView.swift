@@ -298,7 +298,8 @@ struct RightSidebarView: View {
             rowData: rowData,
             primaryKeyColumns: primaryKeyColumns,
             cellId: cellId,
-            connectionManager: viewModel.connectionManager
+            connectionManager: viewModel.connectionManager,
+            wallClock: viewModel.cellDetailWallClock
           )
         },
         // Editable only for a single table with a primary key, on a writable connection
@@ -315,10 +316,12 @@ struct RightSidebarView: View {
             rowData: rowData,
             primaryKeyColumns: primaryKeyColumns,
             cellId: cellId,
-            connectionManager: viewModel.connectionManager
+            connectionManager: viewModel.connectionManager,
+            wallClock: viewModel.cellDetailWallClock
           )
         },
-        binaryFormat: viewModel.cellDetailBinaryFormat
+        binaryFormat: viewModel.cellDetailBinaryFormat,
+        wallClock: viewModel.cellDetailWallClock
       )
       .environment(viewModel)
     case .executedQuery(let query, let cellId):

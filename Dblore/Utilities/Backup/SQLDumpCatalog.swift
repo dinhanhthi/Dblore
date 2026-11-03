@@ -554,7 +554,7 @@ nonisolated enum SQLDumpCatalog {
   private static func text(_ row: [CellValue], _ index: Int) -> String? {
     guard index < row.count else { return nil }
     switch row[index] {
-    case .string(let value), .json(let value): return value
+    case .string(let value), .json(let value), .decimal(let value): return value
     case .data(let data): return String(data: data, encoding: .utf8)
     default: return nil
     }
@@ -563,7 +563,7 @@ nonisolated enum SQLDumpCatalog {
   private static func int64(_ value: CellValue) -> Int64? {
     switch value {
     case .int(let number): Int64(number)
-    case .string(let text): Int64(text)
+    case .string(let text), .decimal(let text): Int64(text)
     default: nil
     }
   }

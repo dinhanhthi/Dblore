@@ -152,6 +152,10 @@ struct QueryConfirmationState: Equatable, Sendable {
   var parameterValues: [String: SQLBindValue] = [:]
   /// Staged commit with deletes: what foreign keys also change (`CascadeImpactSummary.lines`)
   var alsoAffected: [String] = []
+  /// The connection (`NotebookViewModel.connectGenerationForRun`) the dialog was built for: its
+  /// commit style and statements are that connection's. Execute refuses on any other one. Nil:
+  /// built while a connect was in progress, or not recorded.
+  var connectGeneration: UInt64?
 
   // Run All Cells confirmation (destructive or safety-critical cells)
   var showRunAllConfirmation: Bool = false
@@ -194,6 +198,7 @@ struct QueryConfirmationState: Equatable, Sendable {
     statements = []
     parameterValues = [:]
     alsoAffected = []
+    connectGeneration = nil
     runAllAwaitingUnlock = false
   }
 

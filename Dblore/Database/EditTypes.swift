@@ -18,12 +18,13 @@ nonisolated struct RowExistenceCheck: Sendable, Equatable {
   }
 }
 
-/// `UPDATE [ONLY] <table> SET <c1> = $1[, ...] WHERE <pk1> = $n [AND ...]` for grid cells of a row.
-/// MySQL: backticks and `?`. Identifiers are quoted; values never appear in the SQL text.
+/// `UPDATE [ONLY] <table> SET <c1> = $1[, ...] WHERE <pk1> = $n [AND ...]` for grid cells of a row
+/// (a keyless row: its `RowLocatorKind` terms instead). MySQL: backticks and `?`. Identifiers are
+/// quoted; values never appear in the SQL text.
 nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
-  /// New values in SET order (bytes as `inputText`), then the primary-key values in key order;
-  /// nil binds NULL
+  /// New values in SET order (bytes as `inputText`), then the primary-key values in key order
+  /// (or the locator terms' values); nil binds NULL
   let values: [String?]
   /// MySQL: checks a 0-affected UPDATE against the row (see `RowExistenceCheck`)
   var rowCheck: RowExistenceCheck? = nil
@@ -36,16 +37,17 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// Builds the UPDATE for one cell of `rowData` (`make(assignments:)` with one assignment).
   static func make(
     qualifiedName: String, columnName: String, newValue: String?, primaryKeyColumns: [String],
-    rowData: [String: CellValue], updateOnly: Bool = false, dialect: SQLDialect = .postgresql
+    rowData: [String: CellValue], updateOnly: Bool = false, dialect: SQLDialect = .postgresql,
+    rowLocator: RowLocatorKind? = nil, locator: RowLocatorValues? = nil
   ) throws -> CellUpdateStatement {
     try make(
       qualifiedName: qualifiedName, assignments: [(column: columnName, value: newValue)],
       primaryKeyColumns: primaryKeyColumns, rowData: rowData, updateOnly: updateOnly,
-      dialect: dialect)
+      dialect: dialect, rowLocator: rowLocator, locator: locator)
   }
 
   /// Builds one UPDATE setting every `assignments` column of `rowData`, keyed by
-  /// `primaryKeyColumns` only.
+  /// `primaryKeyColumns` only, or by `locator` when `rowLocator` is set (a keyless target).
   /// - Parameters:
   ///   - qualifiedName: the server's `format('%I.%I', schema, table)` of the edit target
   ///     (MySQL: two backtick-quoted names), inserted verbatim (never user text; see
@@ -55,12 +57,16 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   ///     (`inputText` + `bindPlaceholder`)
   ///   - updateOnly: emit `UPDATE ONLY` (plain tables: never touch inheritance children); only
   ///     where `dialect.supportsUpdateOnly`
+  ///   - rowLocator: the target's locator kind (`EditTarget.rowLocator`); nil keys by
+  ///     `primaryKeyColumns`
+  ///   - locator: the page row's entry of the side locator table (`RowLocatorValues`)
   /// - Throws: `DatabaseError.notEditable` when there is no assignment, the row cannot be
-  ///   targeted by its primary key, or a binary column's text is not valid base64
+  ///   targeted by its primary key or its locator, or a binary column's text is not valid base64
   static func make(
     qualifiedName: String, assignments: [(column: String, value: String?)],
     primaryKeyColumns: [String], rowData: [String: CellValue], updateOnly: Bool = false,
-    dialect: SQLDialect = .postgresql
+    dialect: SQLDialect = .postgresql, rowLocator: RowLocatorKind? = nil,
+    locator: RowLocatorValues? = nil
   ) throws -> CellUpdateStatement {
     guard isServerQualifiedName(qualifiedName, dialect: dialect) else {
       throw DatabaseError.notEditable("unsupported table name \"\(qualifiedName)\"")
@@ -68,22 +74,35 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     guard !assignments.isEmpty else {
       throw DatabaseError.notEditable("no column to update")
     }
-    guard !primaryKeyColumns.isEmpty else {
-      throw DatabaseError.notEditable("the table has no primary key")
-    }
-    var keyValues: [String] = []
+    var keyValues: [String?] = []
     var conditions: [String] = []
-    for (index, column) in primaryKeyColumns.enumerated() {
-      guard let value = rowData[column] else {
-        throw DatabaseError.notEditable("primary key column \"\(column)\" is not in the result")
+    if let rowLocator {
+      // A keyless row: named by the side locator of its page row, never by `rowData`
+      guard let locator, let terms = rowLocator.terms(locator, dialect: dialect) else {
+        throw DatabaseError.notEditable("the row's position was not read; reload the data")
       }
-      guard let text = inputText(value, dialect: dialect) else {
-        throw DatabaseError.notEditable("primary key column \"\(column)\" is NULL")
+      for (index, term) in terms.enumerated() {
+        let placeholder = bindPlaceholder(
+          dialect.placeholder(assignments.count + index + 1), term.value, dialect: dialect)
+        conditions.append(term.lead + placeholder + term.trail)
+        keyValues.append(inputText(term.value, dialect: dialect))
       }
-      keyValues.append(text)
-      let placeholder = bindPlaceholder(
-        dialect.placeholder(assignments.count + index + 1), value, dialect: dialect)
-      conditions.append("\(quoteIdentifier(column, dialect: dialect)) = \(placeholder)")
+    } else {
+      guard !primaryKeyColumns.isEmpty else {
+        throw DatabaseError.notEditable("the table has no primary key")
+      }
+      for (index, column) in primaryKeyColumns.enumerated() {
+        guard let value = rowData[column] else {
+          throw DatabaseError.notEditable("primary key column \"\(column)\" is not in the result")
+        }
+        guard let text = inputText(value, dialect: dialect) else {
+          throw DatabaseError.notEditable("primary key column \"\(column)\" is NULL")
+        }
+        keyValues.append(text)
+        let placeholder = bindPlaceholder(
+          dialect.placeholder(assignments.count + index + 1), value, dialect: dialect)
+        conditions.append("\(quoteIdentifier(column, dialect: dialect)) = \(placeholder)")
+      }
     }
     let only = updateOnly && dialect.supportsUpdateOnly ? "ONLY " : ""
     let condition = conditions.joined(separator: " AND ")
@@ -107,7 +126,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
       "UPDATE \(only)\(qualifiedName) SET \(setList.joined(separator: ", "))"
       + " WHERE \(condition)"
     var statement = CellUpdateStatement(sql: sql, values: setValues + keyValues)
-    if dialect == .mysql {
+    if dialect == .mysql, rowLocator == nil {
       statement.rowCheck = RowExistenceCheck(
         sql: "SELECT 1 FROM \(qualifiedName) WHERE \(condition) FOR UPDATE", values: keyValues)
     }
@@ -281,7 +300,7 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     case .int(let number): return String(number)
     case .double(let number): return String(number)
     case .bool(let flag): return mysql ? (flag ? "1" : "0") : (flag ? "true" : "false")
-    case .string(let text), .json(let text): return text
+    case .string(let text), .json(let text), .decimal(let text): return text
     case .date(let date):
       let text = DateBindText.string(from: date)
       guard mysql else { return text }
@@ -305,6 +324,77 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// bytea reads `\x` hex input text
   private static func bindsBytesAsHex(_ dialect: SQLDialect) -> Bool {
     dialect == .mysql || dialect == .sqlite || dialect == .duckdb
+  }
+}
+
+/// How the rows of a keyless table are named in an UPDATE or DELETE instead of by a primary key.
+/// Set only when the table has none (`editTable`). Session-only, like `EditTarget`.
+nonisolated enum RowLocatorKind: Sendable, Equatable {
+  /// PostgreSQL `tableoid = $n::oid AND ctid = $n::tid AND xmin = $n::xid`: one live tuple
+  /// version of the table or of one of its partitions. A row changed or moved since it was read
+  /// matches nothing (0 rows: a conflict, never another row).
+  case pgLocator
+  /// SQLite `<alias> = ?n`, then `"<column>" IS ?n` for each loaded non-binary value of
+  /// `matchColumns`: the columns whose declared type gives TEXT, INTEGER, REAL or NUMERIC
+  /// affinity, in table order (`SQLiteSchemaIntrospector.locatorMatchColumns`). Binds are text,
+  /// so a BLOB-affinity (untyped) column could never match a stored number and is left out;
+  /// the values guard against a rowid renumbered by VACUUM.
+  case sqliteRowid(alias: SQLiteRowidAlias, matchColumns: [String])
+
+  /// One `<lead><placeholder><trail>` term of the locator WHERE, in bind order
+  struct Term: Sendable {
+    let lead: String
+    let value: CellValue
+    let trail: String
+  }
+
+  /// The WHERE terms naming the row `locator` was read from, or nil when the locator does not
+  /// fit this kind or `dialect` (fail closed: the caller refuses the edit).
+  func terms(_ locator: RowLocatorValues, dialect: SQLDialect) -> [Term]? {
+    switch self {
+    case .pgLocator:
+      guard dialect == .postgresql, locator.texts.count == 3 else { return nil }
+      return zip(["tableoid", "ctid", "xmin"], ["oid", "tid", "xid"]).enumerated().map {
+        Term(lead: "\($1.0) = ", value: .string(locator.texts[$0]), trail: "::\($1.1)")
+      }
+    case .sqliteRowid(let alias, let matchColumns):
+      guard dialect == .sqlite, locator.texts.count == 1 else { return nil }
+      var terms = [Term(lead: "\(alias.rawValue) = ", value: .string(locator.texts[0]), trail: "")]
+      for column in matchColumns {
+        guard let value = locator.row[column] else { continue }
+        if case .data = value { continue }
+        let name = CellUpdateStatement.quoteIdentifier(column, dialect: dialect)
+        terms.append(Term(lead: "\(name) IS ", value: value, trail: ""))
+      }
+      return terms
+    }
+  }
+}
+
+/// SQLite name of the rowid. A real column of the same name hides each alias, so the first one
+/// the table does not shadow is used, in this order.
+nonisolated enum SQLiteRowidAlias: String, Sendable, Equatable, CaseIterable {
+  case rowid
+  case underscoredRowid = "_rowid_"
+  case oid
+}
+
+/// The locator of one page row of a keyless table, read with the page (the data viewer's hidden
+/// `dblore_*` columns) and kept in a side table indexed by page row: never matched by row values,
+/// since keyless tables often hold duplicate rows. `RowChangeSet.RowKey(locator:)` stages by it
+/// and `CellUpdateStatement.make(..., rowLocator:locator:)` updates by it.
+nonisolated struct RowLocatorValues: Sendable {
+  /// PostgreSQL: `tableoid::text`, `ctid::text`, `xmin::text`, in that order (bind order too).
+  /// SQLite: the rowid as text.
+  let texts: [String]
+  /// SQLite: the row's values as read, by column name, for the `IS` terms. Leave out a value
+  /// that is not the stored one (a cut lazy prefix); binary values are skipped. Unused on
+  /// PostgreSQL.
+  var row: [String: CellValue]
+
+  init(texts: [String], row: [String: CellValue] = [:]) {
+    self.texts = texts
+    self.row = row
   }
 }
 
@@ -336,6 +426,9 @@ nonisolated struct EditTable: Sendable, Equatable {
   var name: String? = nil
   /// Generated columns (SQLite `hidden` 2/3, PostgreSQL `attgenerated`): never written
   var generatedColumns: Set<String> = []
+  /// How rows are named when the table has no primary key; nil when it has one or rows cannot
+  /// be located (no edits)
+  var rowLocator: RowLocatorKind? = nil
 
   /// Identity compared with result column origins.
   var resolvedTableRef: TableRef {
@@ -378,11 +471,15 @@ nonisolated struct EditTarget: Sendable, Equatable {
   let name: String?
   /// Generated columns: read-only in the grid and left out of staged UPDATE and INSERT
   let generatedColumns: Set<String>
+  /// Keyless table: rows are named by their locator (`RowLocatorValues`), never by
+  /// `primaryKeyColumns` (empty). Nil for a keyed target.
+  let rowLocator: RowLocatorKind?
 
   init(
     qualifiedName: String, tableID: TableRef, primaryKeyColumns: [String],
     connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID(),
-    schema: String? = nil, name: String? = nil, generatedColumns: Set<String> = []
+    schema: String? = nil, name: String? = nil, generatedColumns: Set<String> = [],
+    rowLocator: RowLocatorKind? = nil
   ) {
     self.qualifiedName = qualifiedName
     self.tableID = tableID
@@ -393,5 +490,6 @@ nonisolated struct EditTarget: Sendable, Equatable {
     self.schema = schema
     self.name = name
     self.generatedColumns = generatedColumns
+    self.rowLocator = rowLocator
   }
 }

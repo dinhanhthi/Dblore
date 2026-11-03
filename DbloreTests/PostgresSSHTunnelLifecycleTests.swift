@@ -152,7 +152,7 @@ struct PostgresSSHTunnelSeamTests {
   }
 
   @Test(
-    "Tunneled TLS uses the direct path's mode, context and DB-host name for every SSL mode",
+    "A channel attempt keeps the TLS mode, context and DB-host name for every SSL mode",
     arguments: ["db.internal", "10.0.0.5", "fd00::5"])
   func tunneledTLSMatchesDirect(host: String) throws {
     let modes: [SSLMode] = [.disable, .allow, .prefer, .require, .verifyCa, .verifyFull]
@@ -161,14 +161,13 @@ struct PostgresSSHTunnelSeamTests {
         host: host, port: 5432, database: "app", username: "ada", sslMode: mode,
         sshTunnel: SSHTunnelConfig(host: "bastion.example", username: "jump"))
       let tls = try PostgresSession.configureTLS(sslMode: mode, material: nil)
-      let direct = PostgresSession.postgresConfiguration(config, tls: tls)
-      let tunneled = PostgresSession.tunneledConfiguration(
+      let tunneled = PostgresSession.channelConfiguration(
         channel: EmbeddedChannel(), config: config, tls: tls)
-      #expect(tunneled.tls.isAllowed == direct.tls.isAllowed, "\(mode)")
-      #expect(tunneled.tls.isEnforced == direct.tls.isEnforced, "\(mode)")
-      #expect(tunneled.tls.sslContext === direct.tls.sslContext, "\(mode)")
-      // PostgresNIO derives a direct connection's TLS name from the host unless it is an IP
-      // literal (not valid in SNI); the tunnel sets the same name explicitly.
+      #expect(tunneled.tls.isAllowed == tls.isAllowed, "\(mode)")
+      #expect(tunneled.tls.isEnforced == tls.isEnforced, "\(mode)")
+      #expect(tunneled.tls.sslContext === tls.sslContext, "\(mode)")
+      // PostgresNIO derives the TLS name of a host it connects to itself from the host unless
+      // it is an IP literal (not valid in SNI); a channel attempt sets the same name explicitly.
       let isIP = host != "db.internal"
       #expect(tunneled.options.tlsServerName == (isIP ? nil : host), "\(mode)")
       #expect(tunneled.options.tlsServerName != "bastion.example")
@@ -512,7 +511,9 @@ struct PostgresSSHTunnelLifecycleTests {
     let prompt = FakeSSHHostKeyPrompt(answer: true)
     let manager = DatabaseConnectionManager(sshHostKeyPrompt: prompt)
     let isChanged: (any Error) -> Bool = {
-      guard case DatabaseError.sshHostKeyChanged(_, 2222, "SHA256:wrong", let presented) = $0
+      guard
+        case DatabaseError.sshHostKeyChanged(
+          _, 2222, "SHA256:wrong", let presented, "ssh-ed25519") = $0
       else { return false }
       return presented == Self.bastionFingerprint
     }

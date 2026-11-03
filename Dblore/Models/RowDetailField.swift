@@ -53,11 +53,13 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
   }
 
   /// Text of the original as typed in the field: a DATE column's `.date` value as `yyyy-MM-dd`
-  /// (midnight UTC), anything else as its full string (a decoded DATE is already that text)
+  /// (midnight UTC), another date as the grid shows it in its column (`NewRowField.wallClock`),
+  /// anything else as its full string (a decoded DATE is already that text)
   private var originalText: String {
     if let unloadedLength { return ResultGridModel.notLoadedText(length: unloadedLength) }
-    if field.kind == .date, case .date(let date) = original {
-      return Self.plainDateFormatter.string(from: date)
+    if case .date(let date) = original {
+      if field.kind == .date { return Self.plainDateFormatter.string(from: date) }
+      return original.displayString(wallClock: field.wallClock)
     }
     return original.fullString
   }

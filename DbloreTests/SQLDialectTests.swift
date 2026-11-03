@@ -61,7 +61,7 @@ private let sharedLiteralCases: [(CellValue, String)] = [
   (.string("a'b'c"), "'a''b''c'"),
   (.json(#"{"a":1}"#), #"'{"a":1}'"#),
   (.json(#"{"a":"o'b"}"#), #"'{"a":"o''b"}'"#),
-  (.date(sampleDate), "'2020-01-02T03:04:05Z'"),
+  (.date(sampleDate), "'2020-01-02T03:04:05.000000Z'"),
 ]
 
 private let sharedLiteralDialectCases: [(SQLDialect, CellValue, String)] = [
@@ -185,11 +185,45 @@ struct SQLDialectTests {
     #expect(dialect.literal(value) == expected)
   }
 
+  @Test("A date literal keeps its microseconds: naive is the wall clock, zoned the bind form")
+  func dateLiteralsKeepFractions() {
+    // 2026-10-15 12:00:00.123456 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123456))
+    for dialect in [SQLDialect.postgresql, .duckdb, .mysql, .sqlite] {
+      #expect(dialect.literal(date, wallClock: true) == "'2026-10-15 12:00:00.123456'")
+    }
+    #expect(SQLDialect.postgresql.literal(date) == "'2026-10-15T12:00:00.123456Z'")
+    #expect(
+      SQLDialect.postgresql.literal(date, wallClock: false) == "'2026-10-15T12:00:00.123456Z'")
+    #expect(SQLDialect.duckdb.literal(date) == "'2026-10-15T12:00:00.123456Z'")
+    // MySQL reads the text in the session's UTC zone, so no zone is written
+    #expect(SQLDialect.mysql.literal(date) == "'2026-10-15 12:00:00.123456'")
+    // Other values ignore the flag
+    #expect(SQLDialect.postgresql.literal(.int(1), wallClock: true) == "1")
+  }
+
   @Test(
     "Non-finite doubles and bytea or blob literals",
     arguments: specialLiteralCases)
   func specialLiterals(dialect: SQLDialect, value: CellValue, expected: String) {
     #expect(dialect.literal(value) == expected)
+  }
+
+  /// Security: decimal text is written bare only when it is plain digits, or the cell's text
+  /// would run as SQL
+  @Test(
+    "A decimal is unquoted only as plain digits; any other text is a quoted string",
+    arguments: [SQLDialect.postgresql, .mysql, .sqlite, .duckdb])
+  func decimalLiterals(dialect: SQLDialect) {
+    for text in ["0", "-12.50", "12345678901234567890.123456789"] {
+      #expect(dialect.literal(.decimal(text)) == text)
+    }
+    for text in [
+      "1;DROP TABLE t", "1e5", "NaN", "Infinity", "-Infinity", "--1", " 1", "1 ", "+1", ".5",
+      "1.", "", "1)--", "１",
+    ] {
+      #expect(dialect.literal(.decimal(text)) == dialect.literal(.string(text)), "\(text)")
+    }
   }
 
   @Test("Placeholders use the index as given", arguments: placeholderCases)

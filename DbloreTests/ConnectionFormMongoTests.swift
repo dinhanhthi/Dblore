@@ -77,6 +77,22 @@ struct ConnectionFormMongoTests {
     #expect(reparsed.authSource == "admin")
   }
 
+  /// Regression: a Recent load of a MongoDB row in Connection String mode showed a
+  /// `postgresql://` URL. The form's generated text follows the row's engine.
+  @Test func generatedConnectionStringFollowsTheEngine() throws {
+    let mongo = ConnectionFormContent.generatedConnectionString(for: try pastedConfig())
+    #expect(mongo.hasPrefix("mongodb://alice@db.example.com:27018/app?"))
+    #expect(!mongo.contains("s3cr"))
+
+    var postgres = ConnectionFormContent.newFormDraft(databaseType: .postgresql)
+    postgres.username = "alice"
+    postgres.password = "s3cret"
+    postgres.database = "app"
+    let url = ConnectionFormContent.generatedConnectionString(for: postgres)
+    #expect(url.hasPrefix("postgresql://alice@"))
+    #expect(!url.contains("s3cret"))
+  }
+
   // MARK: - Field edits
 
   @Test func fieldEditsRebuildTheStoredURI() throws {

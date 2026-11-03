@@ -70,10 +70,23 @@ extension WorkspaceManager {
       closeTabImmediately(id: id)
     }
     // A connection that is not remembered keeps its secrets in memory only (as Reconnect does)
-    let scoped = activeUnrememberedCertificate.map {
+    return await connectSwitched(
+      Self.switchedMongoConfig(current, to: name), certificate: activeUnrememberedCertificate,
+      sshCredential: activeUnrememberedSSHCredential)
+  }
+
+  /// The switch's connect under the unremembered secrets it started with (the connect clears the
+  /// workspace's). A changed SSH host key's Replace Pin runs it again, only while the workspace
+  /// is still disconnected from that server (else the retry is dropped); that retry's failure is
+  /// a toast. Returns the failure, nil once connected.
+  private func connectSwitched(
+    _ config: ConnectionConfig, certificate: ClientCertificateStoreFactory.ConnectionMaterial?,
+    sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  ) async -> String? {
+    let scoped = certificate.map {
       ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
     }
-    let scopedSSH = activeUnrememberedSSHCredential.map {
+    let scopedSSH = sshCredential.map {
       SSHCredentialStoreFactory.ScopedSSHCredential(
         account: $0.account, credential: $0.credential)
     }
@@ -84,12 +97,21 @@ extension WorkspaceManager {
     do {
       try await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
-          try await connectWithoutUnlockCheck(
-            config: Self.switchedMongoConfig(current, to: name), savesConnection: false)
+          try await connectWithoutUnlockCheck(config: config, savesConnection: false)
         }
       }
     } catch {
-      return SSHHostKeyTrustCoordinator.shared.report(error)
+      return SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task {
+          guard let self, self.connectionState != .connecting, !self.connectionState.isConnected,
+            self.workspace.connectionConfig.map({ Self.isSameServer($0, config) }) == true,
+            let failure = await self.connectSwitched(
+              config, certificate: certificate, sshCredential: sshCredential)
+          else { return }
+          WorkspaceWindowManager.shared.showToast(
+            "Switch database failed: \(failure)", type: .error)
+        }
+      }
     }
     return nil
   }

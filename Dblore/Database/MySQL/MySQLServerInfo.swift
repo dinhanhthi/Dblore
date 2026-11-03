@@ -45,6 +45,12 @@ nonisolated struct MySQLServerInfo: Equatable, Sendable {
     flavor == .mysql && (major, minor, patch) >= (8, 0, 18)
   }
 
+  /// A DESC index key is stored descending on MySQL 8.0+ and MariaDB 10.8+; older servers parse
+  /// DESC and build the key ascending.
+  var supportsDescendingIndexKeys: Bool {
+    flavor == .mysql ? major >= 8 : (major, minor) >= (10, 8)
+  }
+
   /// Session variable of the statement timeout: milliseconds on MySQL (SELECT only), seconds
   /// on MariaDB.
   var statementTimeoutVariable: String {

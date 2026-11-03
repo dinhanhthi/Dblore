@@ -1,8 +1,9 @@
 // CancelMessageTests.swift
 // The cancel message and record depend on the cancel strategy: an interrupt keeps the session
-// (MySQL KILL QUERY, MongoDB killOp, SQLite, DuckDB) and says only what it rolled back, or that
-// the connection was kept when nothing was. Only PostgreSQL (reconnect) says the connection was
-// reset. Fake sessions, no server.
+// (MySQL KILL QUERY, MongoDB killOp, SQLite, DuckDB, PostgreSQL's pg_cancel_backend) and says
+// only what it rolled back, or that the connection was kept when nothing was. Only a reset (a
+// reconnect cancel, or PostgreSQL's fallback) says the connection was reset. Fake sessions, no
+// server.
 
 import Foundation
 import Testing
@@ -85,7 +86,7 @@ struct CancelMessageTests {
       keepsTransaction: status.keepsTransaction, interrupts: status.interrupts,
       interruptRollsBack: status.interruptRollsBack)
     #expect((warning == nil) == keeps)
-    // DuckDB's interrupt always rolls back: the warning is definite
+    // DuckDB's interrupt and PostgreSQL's cancel always roll back: the warning is definite
     let aborts = strategy == .interrupt && type.interruptAbortsTransaction
     #expect(status.interruptRollsBack == aborts)
     let outcome = await connection.cancelRunningStatement(
@@ -99,7 +100,8 @@ struct CancelMessageTests {
 
     let generation = await connection.batchCancellationGeneration
     // The fake cannot tell whether the transaction survived (nil): the record and the state stay
-    // as built, except on DuckDB, whose interrupt always aborts it: rolled back, state cleared
+    // as built, except on DuckDB and PostgreSQL, whose cancel always aborts it: rolled back, state
+    // cleared
     let expected = QueryCancelRecord(
       epoch: status.epoch, pendingCount: keeps ? 0 : 1, userTxRolledBack: false,
       interruptGeneration: interrupts ? generation : nil, connectionKept: interrupts,
@@ -284,6 +286,130 @@ struct CancelMessageTests {
     await connection.disconnect()
   }
 
+  /// PostgreSQL: a COMMIT that answered success after the cancel committed (the cancel landed
+  /// after its commit record, only a WARNING, or matched nothing): kept, never rolled back
+  @Test(
+    "PostgreSQL: a COMMIT that answers success after the cancel is reported committed",
+    .timeLimit(.minutes(1)))
+  func postgresCommitAfterCancelCommitted() async throws {
+    let (connection, session) = try await postgresInUserTransaction()
+    let rewind = try await RewindProbe.make(on: connection)
+    defer { rewind.removeFiles() }
+    session.slowReads(containing: "pg_sleep")
+    session.holdNextCommand(containing: "COMMIT")
+    let commit = Task {
+      try await connection.execute(userSQL: "COMMIT", policy: self.open, caller: UUID())
+    }
+    while session.heldCommandCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+    let status = await connection.runningStatementStatus()
+    try await cancel(on: connection)
+    let generation = await connection.batchCancellationGeneration
+    #expect(session.cancelTargets.map(\.statement) == ["COMMIT"])
+
+    session.releaseHeldCommands()
+    _ = try await commit.value
+    #expect(await connection.userTxOpen == false)
+    #expect(try await rewind.state() == .committed)
+    #expect(
+      await connection.lastCancel
+        == QueryCancelRecord(
+          epoch: status.epoch, pendingCount: 0, userTxRolledBack: false,
+          interruptGeneration: generation, connectionKept: true, reconciled: true))
+    // Nothing owed: the next statement sends no ROLLBACK
+    _ = try await connection.executeInternal("SELECT 1")
+    #expect(!session.statements.contains("ROLLBACK"))
+    await connection.disconnect()
+  }
+
+  /// PostgreSQL: an app read sent while the COMMIT is still in flight after the cancel does not
+  /// settle the owed ROLLBACK: the COMMIT's own answer decides, here COMMIT (committed)
+  @Test(
+    "PostgreSQL: a read during the in-flight COMMIT after the cancel discards nothing",
+    .timeLimit(.minutes(1)))
+  func postgresReadDuringCommitAfterCancelKeepsEntries() async throws {
+    let (connection, session) = try await postgresInUserTransaction()
+    let rewind = try await RewindProbe.make(on: connection)
+    defer { rewind.removeFiles() }
+    session.slowReads(containing: "pg_sleep")
+    session.holdNextCommand(containing: "COMMIT")
+    let commit = Task {
+      try await connection.execute(userSQL: "COMMIT", policy: self.open, caller: UUID())
+    }
+    while session.heldCommandCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+    try await cancel(on: connection)
+    _ = try await connection.executeInternal("SELECT 1")
+    #expect(try await rewind.state() == .pending)
+    #expect(await connection.lastCancel?.userTxRolledBack == true)
+    #expect(await connection.lastCancel?.reconciled == false)
+
+    session.releaseHeldCommands()
+    _ = try await commit.value
+    #expect(try await rewind.state() == .committed)
+    #expect(await connection.userTxOpen == false)
+    #expect(await connection.lastCancel?.userTxRolledBack == false)
+    #expect(
+      await connection.lastCancel?.error.localizedDescription.contains("rolled back") == false)
+    #expect(!session.statements.contains("ROLLBACK"))
+    await connection.disconnect()
+  }
+
+  /// PostgreSQL: a COMMIT of the transaction the cancel aborted answers ROLLBACK: rolled back,
+  /// also when an app read came while it was in flight
+  @Test(
+    "PostgreSQL: a COMMIT that answers ROLLBACK after the cancel is reported rolled back",
+    .timeLimit(.minutes(1)))
+  func postgresCommitAnsweringRollbackAfterCancel() async throws {
+    let (connection, session) = try await postgresInUserTransaction()
+    let rewind = try await RewindProbe.make(on: connection)
+    defer { rewind.removeFiles() }
+    session.slowReads(containing: "pg_sleep")
+    session.holdNextCommand(containing: "COMMIT")
+    session.tagNextCommand(containing: "COMMIT", as: "ROLLBACK")
+    let commit = Task {
+      try await connection.execute(userSQL: "COMMIT", policy: self.open, caller: UUID())
+    }
+    while session.heldCommandCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+    try await cancel(on: connection)
+    _ = try await connection.executeInternal("SELECT 1")
+
+    session.releaseHeldCommands()
+    let error = await #expect(throws: DatabaseError.self) { try await commit.value }
+    #expect(
+      error?.localizedDescription
+        == DatabaseConnectionManager.commitAfterInterruptError.localizedDescription)
+    #expect(try await rewind.state() == .discarded)
+    #expect(await connection.userTxOpen == false)
+    #expect(await connection.lastCancel?.userTxRolledBack == true)
+    #expect(session.statements.filter { $0 == "ROLLBACK" }.count == 1)
+    await connection.disconnect()
+  }
+
+  /// PostgreSQL: a COMMIT the cancel stopped answers an error and ended the transaction
+  @Test(
+    "PostgreSQL: a COMMIT that fails after the cancel says the transaction was rolled back",
+    .timeLimit(.minutes(1)))
+  func postgresCommitFailingAfterCancelRolledBack() async throws {
+    let (connection, session) = try await postgresInUserTransaction()
+    let rewind = try await RewindProbe.make(on: connection)
+    defer { rewind.removeFiles() }
+    session.holdNextCommand(containing: "COMMIT")
+    session.failNextCommand(containing: "COMMIT")
+    let commit = Task {
+      try await connection.execute(userSQL: "COMMIT", policy: self.open, caller: UUID())
+    }
+    while session.heldCommandCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+    try await cancel(on: connection)
+
+    session.releaseHeldCommands()
+    let error = await #expect(throws: DatabaseError.self) { try await commit.value }
+    #expect(
+      error?.localizedDescription == "Query cancelled. Your open transaction was rolled back.")
+    #expect(await connection.userTxOpen == false)
+    #expect(try await rewind.state() == .discarded)
+    #expect(session.statements.filter { $0 == "ROLLBACK" }.count == 1)
+    await connection.disconnect()
+  }
+
   /// SQLite keeps the transaction when a read is interrupted. A COMMIT queued behind the read
   /// ends it, so the session's autocommit answer says nothing about the interrupt
   @Test(
@@ -441,6 +567,23 @@ struct CancelMessageTests {
   }
 
   private let open = ProtectionPolicy(protectionLevel: .none, protectedMode: false)
+
+  /// A fake PostgreSQL connection (server cancel, Protected mode off) inside the user's BEGIN
+  private func postgresInUserTransaction() async throws -> (
+    DatabaseConnectionManager, FakeDatabaseSession
+  ) {
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(cancelStrategy: .interrupt), slowQueries: true)
+    let connection = DatabaseConnectionManager(sessionFactory: factory)
+    try await connection.connect(
+      config: ConnectionConfig(
+        databaseType: .postgresql, host: "fake", port: 1, database: "fake", username: "u",
+        password: "p", sslMode: .disable, safeMode: .silent, protectedMode: false))
+    let session = try #require(factory.sessions.first)
+    _ = try await connection.execute(userSQL: "BEGIN", policy: open)
+    #expect(await connection.userTxOpen)
+    return (connection, session)
+  }
 
   /// A fake DuckDB connection (interrupt cancel, Protected mode off) inside the user's BEGIN
   private func duckDBInUserTransaction() async throws -> (

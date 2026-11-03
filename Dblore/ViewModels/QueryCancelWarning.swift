@@ -2,10 +2,11 @@
 //  QueryCancelWarning.swift
 //  Dblore
 //
-//  Cancel closes the connection to stop the server work, which rolls back the pending
-//  Protected transaction or the user's open transaction: the warning shown first (pure rule).
-//  An interrupt that keeps the transaction (MySQL, MongoDB) discards nothing. Another interrupt
-//  keeps the connection: DuckDB's always rolls back the open transaction, SQLite's may.
+//  Cancel stops the server work, which rolls back the pending Protected transaction or the
+//  user's open transaction: the warning shown first (pure rule). An interrupt that keeps the
+//  transaction (MySQL, MongoDB) discards nothing. Another interrupt keeps the connection:
+//  PostgreSQL's cancel and DuckDB's interrupt always roll back the open transaction, SQLite's
+//  may. A cancel without one closes the connection.
 //
 
 import Foundation
@@ -32,6 +33,13 @@ nonisolated struct QueryCancelWarning: Sendable, Equatable {
     title: "Stop the running query?",
     detail: "The statement is stopped. The connection is kept.", buttonTitle: stopTitle)
 
+  /// The same for PostgreSQL, whose server cancels the statement from a side connection
+  static let serverCancel = QueryCancelWarning(
+    title: "Stop the running query?",
+    detail: "The server stops the statement. The connection is kept, and any open transaction "
+      + "is rolled back. If the server cannot stop it, the connection is reset instead (temp "
+      + "tables, SET and search_path are lost).", buttonTitle: stopTitle)
+
   let title: String
   /// What is discarded (the itemized pending list for an app transaction)
   let detail: String
@@ -46,7 +54,7 @@ nonisolated struct QueryCancelWarning: Sendable, Equatable {
   /// - Parameter interrupts: the cancel interrupts the statement and keeps the connection; without
   ///   `keepsTransaction` the engine may roll back the open transaction (SQLite)
   /// - Parameter interruptRollsBack: the interrupt always rolls the open transaction back
-  ///   (DuckDB)
+  ///   (DuckDB, PostgreSQL)
   static func make(
     state: TransactionState, userTxOpen: Bool, ownedByAnotherTab: Bool = false,
     keepsTransaction: Bool = false, interrupts: Bool = false, interruptRollsBack: Bool = false

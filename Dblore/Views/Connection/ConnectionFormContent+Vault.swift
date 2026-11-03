@@ -2,8 +2,8 @@
 //  ConnectionFormContent+Vault.swift
 //  Dblore
 //
-//  Password source of the connection form (saved password, password command, Vault) and the
-//  Vault fields: address, mount, role, auth method, the token or AppRole secret, a private CA,
+//  Password source of the connection form (saved password, password command, Vault, ask on
+//  connect) and the Vault fields: address, mount, role, auth method, the token or AppRole secret, a private CA,
 //  and Test Vault. The secret lives only in `VaultFormDraft` until a remembered save writes it
 //  (`SessionManager`); the form never writes `VaultCredentialStore` itself.
 //
@@ -13,11 +13,32 @@ import Security
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Where a connection's password comes from.
+/// Where a connection's password comes from. The sources are exclusive.
 enum PasswordSource: String, CaseIterable {
   case saved = "Saved password"
   case command = "Password command"
   case vault = "Vault"
+  /// Typed in a prompt at each connect, kept in memory only (`askPasswordOnConnect`)
+  case ask = "Ask on connect"
+}
+
+/// What a Password source pick changes in the form (`ConnectionFormContent.selecting`)
+struct PasswordSourceDraft: Equatable {
+  var config: ConnectionConfig
+  /// The password a Vault or Ask on connect pick blanked: Saved password or Password command
+  /// brings it back
+  var passwordBeforeVault: String?
+  /// Password command picked before a script is chosen
+  var choosesPasswordCommand: Bool
+
+  /// Vault when the config has a source, then Ask on connect, then the password command once
+  /// one is picked or chosen, else the saved password.
+  var source: PasswordSource {
+    if config.vault != nil { return .vault }
+    if config.askPasswordOnConnect { return .ask }
+    if config.passwordCommandScript != nil || choosesPasswordCommand { return .command }
+    return .saved
+  }
 }
 
 /// What Test Vault shows. `running` carries the run's id: an edit made meanwhile drops it.
@@ -53,6 +74,8 @@ nonisolated struct VaultFormDraft: Equatable, Sendable {
   var pending = false
   /// A saved secret exists, bound to other Vault settings
   var storedElsewhere = false
+  /// A saved secret exists but the Keychain could not read it
+  var storeUnreadable = false
   /// Destination (`VaultCredentialStore.destination(for:)`) of the restored connection
   var originalDestination: String?
   /// Vault address (trimmed) and CA of the restored connection: the stored secret goes only there
@@ -87,6 +110,8 @@ nonisolated struct VaultFormDraft: Equatable, Sendable {
     case .found(let secret): storedSecret = secret
     case .destinationChanged: storedElsewhere = true
     case .missing: break
+    // Not "no saved secret": the stored item is still there
+    case .unreadable: storeUnreadable = true
     case nil: pending = true
     }
   }
@@ -264,15 +289,19 @@ struct VaultCADescription: Equatable {
 
 extension ConnectionFormContent {
 
-  /// Vault when the config has a source, the password command once one is picked or chosen
-  /// here, else the saved password.
+  /// The form's source (`PasswordSourceDraft.source`)
   var passwordSource: PasswordSource {
-    if connectionConfig.vault != nil { return .vault }
-    if connectionConfig.passwordCommandScript != nil || choosesPasswordCommand { return .command }
-    return .saved
+    passwordSourceDraft.source
   }
 
-  /// Saved password, Password command or Vault. `formFields()` shows the chosen source's fields.
+  private var passwordSourceDraft: PasswordSourceDraft {
+    PasswordSourceDraft(
+      config: connectionConfig, passwordBeforeVault: passwordBeforeVault,
+      choosesPasswordCommand: choosesPasswordCommand)
+  }
+
+  /// Saved password, Password command, Vault or Ask on connect. `formFields()` shows the chosen
+  /// source's fields.
   func passwordSourcePicker() -> some View {
     let source = passwordSource
     return FormField(label: "Password source") {
@@ -284,37 +313,71 @@ extension ConnectionFormContent {
     }
   }
 
-  /// Switching away from Vault drops its settings and secrets (a save then deletes the stored
-  /// secret) and brings back the password Vault cleared. Vault takes no password or password
-  /// command and is always remembered.
+  /// Applies `selecting(_:in:)`; switching away from Vault also drops its secrets (a save then
+  /// deletes the stored secret).
   func selectPasswordSource(_ source: PasswordSource) {
-    guard source != passwordSource else { return }
-    choosesPasswordCommand = source == .command
+    let draft = passwordSourceDraft
+    guard source != draft.source else { return }
+    let picked = Self.selecting(source, in: draft)
+    if draft.config.vault != nil, picked.config.vault == nil {
+      vaultDraft = VaultFormDraft()
+      vaultTest = nil
+      vaultSessionOnly = false
+    }
+    connectionConfig = picked.config
+    passwordBeforeVault = picked.passwordBeforeVault
+    choosesPasswordCommand = picked.choosesPasswordCommand
+  }
+
+  /// The sources stay exclusive. Vault and Ask on connect take no password or password command
+  /// (the password is blanked and kept in `passwordBeforeVault`, else it would reach Test or
+  /// Connect and nothing would be asked); Vault is always remembered. Saved password and
+  /// Password command drop both and bring back the blanked password (else a save or connect
+  /// would delete the row's stored password).
+  static func selecting(
+    _ source: PasswordSource, in draft: PasswordSourceDraft
+  ) -> PasswordSourceDraft {
+    let current = draft.source
+    guard source != current else { return draft }
+    var draft = draft
+    draft.choosesPasswordCommand = source == .command
+    // The password the leaving source blanked, or the one in the form
+    let blanked = current == .vault || current == .ask
     switch source {
     case .saved, .command:
-      if source == .saved { connectionConfig.passwordCommandScript = nil }
-      if connectionConfig.vault != nil {
-        connectionConfig.vault = nil
-        // Else a save or connect would delete the row's stored password
-        if let password = passwordBeforeVault { connectionConfig.password = password }
-        passwordBeforeVault = nil
-        vaultDraft = VaultFormDraft()
-        vaultTest = nil
-        vaultSessionOnly = false
+      if source == .saved { draft.config.passwordCommandScript = nil }
+      draft.config.vault = nil
+      draft.config.askPasswordOnConnect = false
+      if blanked {
+        if let password = draft.passwordBeforeVault { draft.config.password = password }
+        draft.passwordBeforeVault = nil
       }
-    case .vault:
-      connectionConfig.passwordCommandScript = nil
-      passwordBeforeVault = connectionConfig.password
-      connectionConfig.password = ""
-      connectionConfig.rememberConnection = true
-      connectionConfig.vault = VaultSource(
-        address: "", mount: "database", role: "", authMethod: .token, caPEM: nil)
+    case .vault, .ask:
+      if !blanked { draft.passwordBeforeVault = draft.config.password }
+      draft.config.password = ""
+      draft.config.passwordCommandScript = nil
+      draft.config.askPasswordOnConnect = source == .ask
+      if source == .vault {
+        draft.config.rememberConnection = true
+        draft.config.vault = VaultSource(
+          address: "", mount: "database", role: "", authMethod: .token, caPEM: nil)
+      } else {
+        draft.config.vault = nil
+      }
     }
+    return draft
   }
 
   /// The config Connect, Test and Save submit for a Vault source: always remembered, no saved
-  /// password or password command, trimmed address, mount and role.
+  /// password or password command, trimmed address, mount and role. For Ask on connect: no
+  /// password (one a pasted URI brought) and no password command, so the connect asks.
   static func withVaultRules(_ config: ConnectionConfig) -> ConnectionConfig {
+    if config.askPasswordOnConnect, config.vault == nil {
+      var config = config
+      config.password = ""
+      config.passwordCommandScript = nil
+      return config
+    }
     guard var vault = config.vault else { return config }
     var config = config
     vault.address = vault.address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -491,6 +554,12 @@ extension ConnectionFormContent {
   @ViewBuilder
   private func vaultNotes() -> some View {
     let submitted = Self.withVaultRules(withSSHConfig(connectionConfig))
+    if vaultDraft.storeUnreadable {
+      Text(Self.vaultStoreUnreadableHint)
+        .font(.caption)
+        .foregroundColor(.warning)
+        .fixedSize(horizontal: false, vertical: true)
+    }
     if vaultDraft.needsSecretAgain(for: submitted) {
       Text(Self.vaultSecretAgainHint)
         .font(.caption)
@@ -512,6 +581,16 @@ extension ConnectionFormContent {
       .fixedSize(horizontal: false, vertical: true)
     }
   }
+
+  static let vaultStoreUnreadableHint =
+    "The Keychain could not be read, so the saved Vault secret was not loaded; it is kept. "
+    + "Unlock the Keychain and open the connection again, or enter the token or AppRole "
+    + "secret to replace it."
+
+  /// Ask on connect's note under the Password source picker (it shows no password field)
+  static let askOnConnectNote =
+    "Dblore asks for the password at each connect and keeps it in memory only. Saving removes "
+    + "the stored password from the Keychain."
 
   static let vaultSecretAgainHint =
     "The saved Vault secret is for the previous Vault settings. Enter the token or AppRole "

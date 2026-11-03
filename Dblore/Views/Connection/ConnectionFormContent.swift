@@ -300,6 +300,10 @@ struct ConnectionFormContent: View {
         NotificationCenter.default.publisher(for: .localDataChanged).receive(on: RunLoop.main),
         perform: reloadHistoryList
       )
+      // An unlock or relock here, in another window or in the Connect sheet, or a removed lock
+      .onReceive(Self.lockChanges(of: LockCenter.shared.registry)) { _ in
+        refreshSSHStoredMethod()
+      }
       .onChange(of: connectionConfig.databaseType) { _, newType in
         clearParseErrorAndTestResult()
         // A string typed for the previous engine is not parsed as the new one's.
@@ -726,9 +730,15 @@ struct ConnectionFormContent: View {
     inputMode
   }
 
-  /// Shows the form's PostgreSQL URL and keeps the config it came from (`connectionStringSource`)
+  /// The Connection String tab's text for `config`, in its engine's URL form, without the password
+  static func generatedConnectionString(for config: ConnectionConfig) -> String {
+    config.databaseType == .mongodb
+      ? MongoConnectionDraft.connectionString(for: config) : generateConnectionString(config)
+  }
+
+  /// Shows the form's connection string and keeps the config it came from (`connectionStringSource`)
   func setGeneratedConnectionString() {
-    connectionString = generateConnectionString()
+    connectionString = Self.generatedConnectionString(for: connectionConfig)
     connectionStringSource = connectionConfig
   }
 
@@ -886,12 +896,23 @@ struct ConnectionFormContent: View {
     sshDraft.usableStoredMethod(sshStoredMethod, original: sshOriginalConfig)
   }
 
-  /// The workspace's in-memory SSH secret when it belongs to `original`'s account.
+  /// The workspace's in-memory SSH secret when it belongs to `original`'s account and no lock
+  /// `original` reaches is blocked (`SSHFormDraft.heldCredential`).
   func heldSSHCredential(for original: ConnectionConfig?) -> SSHStoredCredential? {
-    guard let original, let held = unrememberedSSHCredential?(),
-      held.account == SSHCredentialStoreFactory.account(for: original)
-    else { return nil }
-    return held.credential
+    SSHFormDraft.heldCredential(
+      for: original, held: unrememberedSSHCredential?(), registry: LockCenter.shared.registry)
+  }
+
+  /// A grant, a lock change or a relock of `registry`: the held or stored SSH secret may now be
+  /// readable, or blocked again
+  static func lockChanges(of registry: LockRegistry) -> AnyPublisher<Notification, Never> {
+    Publishers.MergeMany(
+      [LockRegistry.didGrant, LockRegistry.didChangeLocks, LockRegistry.didRelock].map {
+        NotificationCenter.default.publisher(for: $0, object: registry)
+      }
+    )
+    .receive(on: RunLoop.main)
+    .eraseToAnyPublisher()
   }
 
   /// Reloads the draft from `connectionConfig.sshTunnel` and snapshots the identity the stored
@@ -904,7 +925,7 @@ struct ConnectionFormContent: View {
   }
 
   /// Rereads the method of the held or stored secret of `sshOriginalConfig`, keeping the draft
-  /// (after an unlock: a blocked row reads no stored secret).
+  /// (after an unlock or a relock, here or in another window: a blocked row uses neither).
   func refreshSSHStoredMethod() {
     sshStoredMethod =
       heldSSHCredential(for: sshOriginalConfig).map(SSHFormDraft.method(of:))
@@ -1065,7 +1086,8 @@ struct ConnectionFormContent: View {
         isTesting = false
       } catch {
         isTesting = false
-        let message = SSHHostKeyTrustCoordinator.shared.report(error)
+        // Replace Pin tests the form again
+        let message = SSHHostKeyTrustCoordinator.shared.report(error) { testConnection() }
         guard formInputs == testedInputs else { return }
         testResult = .failure(message)
       }
@@ -1150,7 +1172,8 @@ struct ConnectionFormContent: View {
         isConnecting = false
       } catch {
         isConnecting = false
-        testResult = .failure(SSHHostKeyTrustCoordinator.shared.report(error))
+        // Replace Pin connects the form again
+        testResult = .failure(SSHHostKeyTrustCoordinator.shared.report(error) { connect() })
       }
     }
   }
@@ -1327,10 +1350,10 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
     "Enter the password or choose the key again for the new SSH server."
 
   /// The secret to use and save with `new`. A typed or imported secret wins. Otherwise, while
-  /// the bastion is unchanged: the `held` secret of a live unremembered connection (not in the
-  /// store), else, when the account changed (DB fields or engine), the credential stored under
-  /// the original account so it moves to the new account (not read while any lock `original`
-  /// reaches is blocked: an edit save then moves it after the unlock,
+  /// the bastion is unchanged and no lock `original` reaches is blocked: the `held` secret of a
+  /// live unremembered connection (not in the store), else, when the account changed (DB fields
+  /// or engine), the credential stored under the original account so it moves to the new
+  /// account (a blocked row reads none: an edit save then moves it after the unlock,
   /// `SessionManager.replaceConnection`). Nil keeps the store as is otherwise.
   func preparedCredential(
     original: ConnectionConfig?, new: ConnectionConfig, store: any SSHCredentialStore,
@@ -1341,18 +1364,32 @@ nonisolated struct SSHFormDraft: Equatable, Sendable {
     }
     if let enteredCredential { return enteredCredential }
     guard bastionMatches(original), let original,
-      let oldAccount = SSHCredentialStoreFactory.account(for: original)
+      let oldAccount = SSHCredentialStoreFactory.account(for: original),
+      registry.refusal(for: original) == nil
     else { return nil }
     if let held, held.account == oldAccount,
       canUseStoredCredential(Self.method(of: held.credential))
     {
       return held.credential
     }
-    guard oldAccount != newAccount, registry.refusal(for: original) == nil,
+    guard oldAccount != newAccount,
       let stored = store.load(account: oldAccount),
       canUseStoredCredential(Self.method(of: stored))
     else { return nil }
     return stored
+  }
+
+  /// `held` when it is `original`'s account's secret, nil while any lock `original` reaches is
+  /// blocked (a relocked row's in-memory secret waits for the unlock like the stored one).
+  static func heldCredential(
+    for original: ConnectionConfig?, held: SSHCredentialStoreFactory.ConnectionCredential?,
+    registry: LockRegistry = .shared
+  ) -> SSHStoredCredential? {
+    guard let original, let held,
+      held.account == SSHCredentialStoreFactory.account(for: original),
+      registry.refusal(for: original) == nil
+    else { return nil }
+    return held.credential
   }
 
   /// Auth method of the credential stored for `config` (nil when there is none). Nil without

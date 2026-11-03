@@ -34,7 +34,7 @@ extension DatabaseConnectionManager {
   /// (`resetSessionIfCapped`) and ends the script: the rest is listed in `skippedStatements`.
   /// `binds` lines up with `statements` (a missing slot is sent unbound). When `originalTexts`
   /// is set, `queryText` and skipped-statement text come from it; the text sent stays
-  /// `statement.text`.
+  /// `statement.text`. `deferEnrichment`: see `execute(userSQL:)`.
   /// - Throws: `DatabaseError.queryCancelled` once the user cancelled (the session was closed);
   ///   `DatabaseError.sessionChanged` when the connection changed between two statements, or
   ///   is not `expectedEpoch` (a Run All batch's connection) on entry (nothing sent);
@@ -44,7 +44,8 @@ extension DatabaseConnectionManager {
   ///   a statement error (after moving the app transaction to `.aborted`).
   func runUserStatements(
     _ statements: [ClassifiedStatement], protectedMode: Bool, maxRows: Int, caller: UUID?,
-    expectedEpoch: UInt64? = nil, binds: [[SQLBindValue]] = [], originalTexts: [String]? = nil
+    expectedEpoch: UInt64? = nil, binds: [[SQLBindValue]] = [], originalTexts: [String]? = nil,
+    deferEnrichment: Bool = false
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     guard session != nil else { throw DatabaseError.notConnected }
     guard !statements.isEmpty else { throw DatabaseError.emptyQuery }
@@ -99,6 +100,7 @@ extension DatabaseConnectionManager {
       if ProtectedTransactionRules.invalidatesEditTables(statement) {
         editTableCache.removeAll()
         mysqlTableColumns.removeAll()
+        columnTypeCache.removeAll()
       }
       // BEGIN suspended: the connection may have changed meanwhile
       try refuseIfSessionChanged(
@@ -153,7 +155,7 @@ extension DatabaseConnectionManager {
           result = try await Self.$userStatementAdmission.withValue(admission) {
             try await executeSingleStatement(
               statement.text, maxRows: maxRows, inTransaction: inTransaction,
-              binds: statementBinds)
+              binds: statementBinds, deferEnrichment: deferEnrichment)
           }
         }
       } catch {
@@ -175,7 +177,8 @@ extension DatabaseConnectionManager {
       }
       // A cancel interrupted the connection while this COMMIT was in flight
       if commitsUserTransaction {
-        try await noteUserCommitAfterInterrupt(since: epoch, generation: cancelGeneration)
+        try await noteUserCommitAfterInterrupt(
+          since: epoch, generation: cancelGeneration, commitState: commitState)
       }
       if action != .run {
         recordPending(
@@ -292,7 +295,8 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// A COMMIT of a transaction a DuckDB interrupt cancel aborted (`settleInterruptAbort`)
+  /// A COMMIT of a transaction a DuckDB interrupt or PostgreSQL cancel aborted
+  /// (`settleInterruptAbort`)
   static let commitAfterInterruptError = DatabaseError.transactionAborted(
     "The commit may not have been applied: cancelling the running statement rolled back the "
       + "open transaction. Check the data before running it again.")

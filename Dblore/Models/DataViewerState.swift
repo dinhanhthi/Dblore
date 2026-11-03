@@ -55,6 +55,11 @@ struct DataViewerState: Equatable {
   /// (`lazyColumns(_:databaseType:orderColumns:binaryValueColumns:)`), nil for `SELECT *`.
   /// Set from what is cached before each page read, never from a catalog query.
   var lazyColumns: [LazyColumn]? = nil
+  /// How the rows of a keyless table are named (`EditTarget.rowLocator`): the page appends them
+  /// as hidden `locatorColumns`, moved into `Truncation.locators` as soon as it is read. Set from
+  /// the shown edit target before each page read, never from a catalog query; nil for a table
+  /// with a primary key, or before its target is known (`SELECT *`).
+  var rowLocator: RowLocatorKind? = nil
   /// Another tab wrote to the relation since the shown page was read: the viewer offers Reload
   /// (never reloads on its own, so staged changes stay). Cleared by the next page load.
   var isStale = false
@@ -113,7 +118,8 @@ struct DataViewerState: Equatable {
   }
 
   /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1).
-  /// A lazy page lists `lazyColumns` instead of `*`, then its `lengthColumns`.
+  /// A lazy page lists `lazyColumns` instead of `*`, then its `lengthColumns`; a keyless page
+  /// appends its `locatorColumns`.
   var pageSQL: String {
     assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
     var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)"
@@ -127,6 +133,14 @@ struct DataViewerState: Equatable {
       sql += " LIMIT \(pageSize)"
     }
     return sql
+  }
+
+  /// `pageSQL` as the user reads it (the result's `sourceQuery`: executed-query sidebar, pins,
+  /// exports): without the locator columns of a keyless page, which only the app reads
+  var shownPageSQL: String {
+    var shown = self
+    shown.rowLocator = nil
+    return shown.pageSQL
   }
 
   var countSQL: String {
@@ -194,6 +208,19 @@ extension DataViewerState {
     /// The quoted relation the page read (`DataViewerState.relation`); empty reads nothing
     var relation = ""
     var dialect = SQLDialect.postgresql
+    /// The locator kind the page was read with (`DataViewerState.rowLocator`), nil for none
+    var rowLocator: RowLocatorKind? = nil
+    /// The locator key (`RowChangeSet.RowKey(locator:)`) of each page row, by index into
+    /// `CellResult.rows`: never matched by row values, since keyless rows can be identical.
+    /// Empty without `rowLocator`.
+    var locators: [RowChangeSet.RowKey] = []
+
+    /// The locator key of page row `row` for a target located by `kind`, nil when the page was
+    /// read with another locator (or none) or has no such row
+    func locatorKey(row: Int, kind: RowLocatorKind) -> RowChangeSet.RowKey? {
+      guard rowLocator == kind, locators.indices.contains(row) else { return nil }
+      return locators[row]
+    }
   }
 
   /// Aliases of the byte-length columns a lazy page appends, one per prefixed column in order.
@@ -207,16 +234,17 @@ extension DataViewerState {
   }
 
   /// The lazy columns of a table with `columns` (in order), or nil for `SELECT *`: an engine
-  /// other than PostgreSQL, MySQL and SQLite, no primary key, or no binary column. Binary:
+  /// other than PostgreSQL, MySQL and SQLite, no primary key (unless `located`: the page reads
+  /// the row locators its cut cells are read by), or no binary column. Binary:
   /// PostgreSQL `bytea`, a MySQL or SQLite type naming BLOB or BINARY, and a SQLite column in
   /// `binaryValueColumns` (its loaded values were blobs: SQLite columns have no fixed type).
   /// Primary key and ORDER BY columns are never prefixed: the alias would shadow them.
   static func lazyColumns(
     _ columns: [(name: String, type: String, isPrimaryKey: Bool)], databaseType: DatabaseType,
-    orderColumns: [String], binaryValueColumns: Set<String> = []
+    orderColumns: [String], binaryValueColumns: Set<String> = [], located: Bool = false
   ) -> [LazyColumn]? {
     guard [.postgresql, .mysql, .sqlite].contains(databaseType),
-      columns.contains(where: \.isPrimaryKey)
+      located || columns.contains(where: \.isPrimaryKey)
     else { return nil }
     let lazy = columns.map { column in
       let type = column.type.lowercased()
@@ -239,18 +267,43 @@ extension DataViewerState {
   }
 
   /// `*`, or the lazy columns in order (prefixed ones aliased to their name) then the length
-  /// columns
+  /// columns; then the locator columns of `rowLocator`, whichever of the two it is
   private var selectList: String {
-    guard let lazyColumns else { return "*" }
-    let prefixed = lazyColumns.filter(\.isPrefixed).map { quotedIdentifier($0.name) }
-    let columns = lazyColumns.map { column in
-      let name = quotedIdentifier(column.name)
-      return column.isPrefixed ? "\(prefixExpression(name)) AS \(name)" : name
+    var list = ["*"]
+    if let lazyColumns {
+      let prefixed = lazyColumns.filter(\.isPrefixed).map { quotedIdentifier($0.name) }
+      let columns = lazyColumns.map { column in
+        let name = quotedIdentifier(column.name)
+        return column.isPrefixed ? "\(prefixExpression(name)) AS \(name)" : name
+      }
+      let lengths = zip(prefixed, lengthColumns).map { name, alias in
+        "\(lengthExpression(name)) AS \(quotedIdentifier(alias))"
+      }
+      list = columns + lengths
     }
-    let lengths = zip(prefixed, lengthColumns).map { name, alias in
-      "\(lengthExpression(name)) AS \(quotedIdentifier(alias))"
+    return (list + locatorExpressions).joined(separator: ", ")
+  }
+
+  /// Aliases of the locator columns a page of `rowLocator` appends, in order (the bind order of
+  /// `RowLocatorKind.terms`). Moved out of the result as soon as the page is read.
+  var locatorColumns: [String] {
+    switch rowLocator {
+    case nil: return []
+    case .pgLocator: return ["dblore_tableoid", "dblore_ctid", "dblore_xmin"]
+    case .sqliteRowid: return ["dblore_rowid"]
     }
-    return (columns + lengths).joined(separator: ", ")
+  }
+
+  /// PostgreSQL `tableoid`, `ctid` and `xmin` as text, or the SQLite rowid alias, under
+  /// `locatorColumns`
+  private var locatorExpressions: [String] {
+    let sources: [String]
+    switch rowLocator {
+    case nil: sources = []
+    case .pgLocator: sources = ["tableoid::text", "ctid::text", "xmin::text"]
+    case .sqliteRowid(let alias, _): sources = [alias.rawValue]
+    }
+    return zip(sources, locatorColumns).map { "\($0) AS \(quotedIdentifier($1))" }
   }
 
   /// The first `lazyPrefixBytes` bytes of `column`, still a binary value: PostgreSQL

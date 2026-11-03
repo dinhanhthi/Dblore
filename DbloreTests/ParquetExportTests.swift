@@ -91,8 +91,9 @@ struct ParquetExportTests {
     #expect(Self.type([.string("1.2.3")], source: "NUMERIC") == .varchar)
     #expect(Self.type([.string("")], source: "NUMERIC") == .varchar)
     #expect(Self.type([.string(String(repeating: "9", count: 39))], source: "NUMERIC") == .varchar)
-    // A NUMERIC column decoded to doubles keeps DOUBLE.
+    // A NUMERIC column decoded to doubles or exact decimals keeps DOUBLE.
     #expect(Self.type([.double(1.5)], source: "NUMERIC") == .double)
+    #expect(Self.type([.decimal("1.5"), .decimal("NaN"), .int(2)], source: "NUMERIC") == .double)
   }
 
   @Test("Type SQL")

@@ -62,6 +62,25 @@ struct ChartDataExtractorTests {
     #expect(series.points.map(\.x) == [.number(0), .number(3), .number(5)])
   }
 
+  @Test("A NUMERIC y-series and x chart as numbers; NaN and Infinity are omitted")
+  func decimalValuesChart() {
+    let result = queryResult(
+      columns: [ColumnInfo(name: "x", type: "numeric"), ColumnInfo(name: "y", type: "numeric")],
+      rows: [
+        [.decimal("1.5"), .decimal("19.90")],
+        [.decimal("2.5"), .decimal("NaN")],
+        [.decimal("3.5"), .decimal("-Infinity")],
+        [.decimal("4.5"), .decimal("-0.25")],
+      ]
+    )
+    let spec = ChartSpec(kind: .line, xColumn: "x", yColumns: ["y"], seriesColumn: nil)
+    let series = ChartDataExtractor.points(result: result, spec: spec, maxPoints: 100)
+
+    #expect(series.droppedCount == 2)
+    #expect(series.points.map(\.y) == [19.9, -0.25])
+    #expect(series.points.map(\.x) == [.number(1.5), .number(4.5)])
+  }
+
   @Test("Temporal x is sorted before points are returned")
   func temporalXIsSorted() {
     let start = Date(timeIntervalSince1970: 1_700_000_000)
@@ -241,6 +260,90 @@ struct ChartDataExtractorTests {
     #expect(!faceted.xIsTemporal)
     // Not temporal: the dated facet keeps row order instead of sorting by date
     #expect(faceted.facets.map { $0.series.points.map(\.y) } == [[20, 10], [5]])
+  }
+
+  @Test("A naive date x is the wall clock; a zoned one shows local (regression A5)")
+  func naiveXIsTheWallClock() throws {
+    let noon = Date(timeIntervalSince1970: 1_792_065_600)  // 2026-10-15 12:00:00 UTC
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+        ColumnInfo(name: "value", type: "float8"),
+      ],
+      rows: [[.date(noon), .date(noon), .double(1)]]
+    )
+    try CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      let naive = ChartDataExtractor.points(
+        result: result,
+        spec: ChartSpec(kind: .line, xColumn: "naive", yColumns: ["value"], seriesColumn: nil))
+      #expect(naive.xWallClock)
+      #expect(naive.xTimeZone == TimeZone(identifier: "GMT"))
+      #expect(naive.points.first?.x == .number(noon.timeIntervalSince1970))
+      #expect(naive.xText(noon) == "2026-10-15 12:00:00")
+      let zoned = ChartDataExtractor.points(
+        result: result,
+        spec: ChartSpec(kind: .line, xColumn: "zoned", yColumns: ["value"], seriesColumn: nil))
+      #expect(!zoned.xWallClock)
+      #expect(zoned.xTimeZone == TimeZone(identifier: "Asia/Ho_Chi_Minh"))
+      #expect(zoned.xText(noon) == "2026-10-15 19:00:00+07:00")
+    }
+  }
+
+  @Test("A date-only text x is a UTC day that reads as the grid's text (regression A5)")
+  func dateOnlyTextXReadsAsTheDay() throws {
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "day", type: "date"),
+        ColumnInfo(name: "value", type: "float8"),
+      ],
+      rows: [[.string("2026-10-15"), .double(1)], [.string("2026-10-16"), .double(2)]]
+    )
+    try CellValue.$displayZone.withValue(TimeZone(identifier: "America/Los_Angeles")!) {
+      let series = ChartDataExtractor.points(
+        result: result,
+        spec: ChartSpec(kind: .line, xColumn: "day", yColumns: ["value"], seriesColumn: nil))
+      #expect(series.xDateOnly)
+      #expect(series.xTimeZone == TimeZone(identifier: "GMT"))
+      let first = try #require(series.points.first?.x)
+      guard case .number(let seconds) = first else {
+        Issue.record("A date-only text x is a date")
+        return
+      }
+      // 2026-10-15 00:00:00 UTC
+      #expect(seconds == 1_792_022_400)
+      #expect(series.xText(Date(timeIntervalSince1970: seconds)) == "2026-10-15")
+    }
+  }
+
+  @Test("A date series or facet label is the grid text of its column (regression A5)")
+  func dateLabelsAreTheGridText() throws {
+    let noon = Date(timeIntervalSince1970: 1_792_065_600)  // 2026-10-15 12:00:00 UTC
+    let result = queryResult(
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+        ColumnInfo(name: "value", type: "float8"),
+      ],
+      rows: [[.date(noon), .date(noon), .double(1)]]
+    )
+    try CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      let naive = ChartDataExtractor.points(
+        result: result,
+        spec: ChartSpec(kind: .bar, xColumn: nil, yColumns: ["value"], seriesColumn: "naive"))
+      #expect(naive.points.map(\.series) == ["2026-10-15 12:00:00"])
+      let zoned = ChartDataExtractor.points(
+        result: result,
+        spec: ChartSpec(kind: .bar, xColumn: nil, yColumns: ["value"], seriesColumn: "zoned"))
+      #expect(zoned.points.map(\.series) == ["2026-10-15 19:00:00+07:00"])
+      let facets = try #require(
+        ChartDataExtractor.facets(
+          result: result,
+          spec: ChartSpec(
+            kind: .bar, xColumn: nil, yColumns: ["value"], seriesColumn: nil,
+            facetColumn: "naive")))
+      #expect(facets.facets.map(\.label) == ["2026-10-15 12:00:00"])
+    }
   }
 
   private func queryResult(columns: [ColumnInfo], rows: [[CellValue]]) -> QueryResult {

@@ -74,6 +74,9 @@ protocol FileConflictPresenting: ObservableObject {
   /// Notes the file's date on disk as this app's own rewrite over a change not shown yet: that
   /// change still asks, and Keep My Version over it takes the rewrite as seen too
   func noteOwnRewrite()
+  /// After a Lock password change re-sealed the file: takes its new date as seen only when the
+  /// document knew the date of the bytes re-sealed
+  func noteRewrite(_ file: LockedFileIO.RewrittenFile)
 }
 
 /// The file conflict alert of a document's tab. Observes the document, so the alert shows as

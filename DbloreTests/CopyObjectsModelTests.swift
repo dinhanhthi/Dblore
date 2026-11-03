@@ -1,6 +1,7 @@
 // CopyObjectsModelTests.swift
 // The Copy Objects sheet model's guards on the target: a locked target asks to unlock before its
-// password is read (a cancelled unlock reads and opens nothing); Read-only and Schema-only
+// password is read (a cancelled unlock reads and opens nothing); a target password the Keychain
+// cannot read shows its error and opens nothing; Read-only and Schema-only
 // targets are refused when picked, before any prompt, password read or connection; a Review
 // target (Protected mode, a legacy row included) and a Confirm target ask Safe Mode before the
 // first statement reaches the target, a Password target too (always, even when the DDL lists
@@ -12,6 +13,7 @@
 
 import AppKit
 import Foundation
+import Security
 import Testing
 import os
 
@@ -88,6 +90,32 @@ struct CopyObjectsModelTests {
     #expect(readsWhileAsking == [0, 0])
     #expect(reads.withLock { $0 } == 1)
     #expect(model.planError != nil)
+    model.close()
+  }
+
+  @Test("An unreadable saved target password shows the Keychain error and opens nothing")
+  func unreadableTargetPasswordShowsError() async throws {
+    let registry = LockRegistry()
+    let config = Self.postgres(level: .none)
+    let entry = ConnectionHistoryEntry(config: config)
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    var context = Self.context(source: DatabaseConnectionManager(lockSource: registry))
+    context.password = { _ in throw ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)
+    }
+    context.lockCenter = Self.lockCenter(registry, AnsweringUnlockPrompter(answer: true))
+    context.makeTargetManager = {
+      DatabaseConnectionManager(sessionFactory: factory, lockSource: registry)
+    }
+    let model = CopyObjectsModel(
+      context: context, tables: [Self.items], selected: [Self.items], savedConnections: [entry])
+
+    model.selectTarget(entry.id)
+    await model.waitForPlan()
+    #expect(
+      model.planError
+        == DatabaseError.passwordStoreUnreadable(name: config.displayString).localizedDescription)
+    #expect(factory.sessions.isEmpty)
+    #expect(model.plan == nil)
     model.close()
   }
 

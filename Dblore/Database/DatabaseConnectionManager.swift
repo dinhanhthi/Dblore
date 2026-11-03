@@ -76,6 +76,11 @@ actor DatabaseConnectionManager {
   var scriptCheckpointHook: (@Sendable (ScriptCheckpoint) async -> Void)?
   /// Test hook after a batch statement returns, before the next one is sent.
   var batchCheckpointHook: (@Sendable (Int) async -> Void)?
+  /// Test hook awaited before an edit-table catalog read (`fetchEditTable`); nil in the app
+  var catalogReadHook: (@Sendable () async -> Void)?
+  /// Test hook answering the PostgreSQL column type catalog read (`enrichColumnTypes`) in place
+  /// of the server; nil in the app
+  var columnTypeReadHook: (@Sendable ([ColumnInfo]) async -> [ColumnInfo])?
   /// Advances when Cancel is requested, even if SQLite's interrupt misses between statements.
   var batchCancellationGeneration: UInt64 = 0
   /// Stops sandbox access for a SQLite file. `disconnect` calls it after the session closes.
@@ -114,6 +119,9 @@ actor DatabaseConnectionManager {
   /// information_schema once per table. Cleared with `editTableCache` and on schema reload; a
   /// clear also rejects catalog reads still in flight (`MySQLTableColumnsCache.generation`).
   var mysqlTableColumns = MySQLTableColumnsCache()
+  /// PostgreSQL result column types by origin (table identity and attnum), read from the
+  /// catalog once (`enrichColumnTypes`). Cleared with `editTableCache`, never per table.
+  var columnTypeCache = ColumnTypeCache()
   /// MySQL temporary tables this session created (no catalog lists them); cleared with the
   /// session (`forgetConnection`)
   var mysqlTempTables = MySQLTempTableTracker()
@@ -170,6 +178,11 @@ actor DatabaseConnectionManager {
   private nonisolated let leaseSlot = OSAllocatedUnfairLock<VaultLeaseSlot?>(initialState: nil)
   /// Why the Vault lease of the last lost connection ended (cleared on connect / disconnect)
   private(set) var lastLeaseEnd: VaultLeaseEnd?
+  /// End of the timed write unlock of this session (`unlockWrites(for:)`), never in `config`
+  /// and never saved; cleared when the session is forgotten or the protection level changes
+  private(set) var writeUnlockExpiry: Date?
+  /// Clock of the write unlock expiry (tests pass a fake one)
+  nonisolated let now: @Sendable () -> Date
 
   /// `sshHostKeyPrompt` asks the user to trust an unknown SSH host key; the default declines.
   init(
@@ -177,9 +190,11 @@ actor DatabaseConnectionManager {
     sshHostKeyPrompt: any SSHHostKeyPrompt = RejectingSSHHostKeyPrompt(),
     readLimits: CappedReadLimits? = nil, resetsSessionAfterCappedRead: Bool = true,
     scripts: ConnectionScriptRunner = .app, lockSource: LockRegistry = .shared,
-    servesMCP: Bool = false, vaultLeasing: VaultLeasing = .app
+    servesMCP: Bool = false, vaultLeasing: VaultLeasing = .app,
+    now: @escaping @Sendable () -> Date = { Date() }
   ) {
     self.vaultLeasing = vaultLeasing
+    self.now = now
     self.scripts = scripts
     self.lockSource = lockSource
     self.servesMCP = servesMCP
@@ -234,7 +249,7 @@ actor DatabaseConnectionManager {
     // This manager's lock source: the side's own is not consulted
     if let refusal = lockSource.refusal(for: config) { throw refusal }
     let vaultSecret =
-      config.vault == nil ? nil : sideVaultSecret(identity: identity, config: config)
+      config.vault == nil ? nil : try sideVaultSecret(identity: identity, config: config)
     defer { vaultSecret?.clear() }
     try await VaultCredentialStore.$operationSecret.withValue(vaultSecret) {
       try await side.reconnectWithActiveCertificate(
@@ -283,10 +298,11 @@ actor DatabaseConnectionManager {
   }
 
   /// `identity`'s Vault secret (its unremembered one, else its stored one) under `config`'s
-  /// account, still bound to `identity`'s destination: the side's config must match it.
+  /// account, still bound to `identity`'s destination: the side's config must match it. A
+  /// stored secret the Keychain could not read refuses the side connect.
   private func sideVaultSecret(
     identity: ConnectionConfig, config: ConnectionConfig
-  ) -> VaultCredentialStore.ScopedSecret? {
+  ) throws -> VaultCredentialStore.ScopedSecret? {
     let secret: VaultSecret?
     if let active = activeUnrememberedVaultSecret,
       active.account == VaultCredentialStore.account(for: identity),
@@ -294,7 +310,13 @@ actor DatabaseConnectionManager {
     {
       secret = active.secret
     } else {
-      secret = VaultCredentialStore.load(for: identity, from: vaultLeasing.store)
+      switch VaultCredentialStore.lookup(for: identity, from: vaultLeasing.store) {
+      case .found(let found): secret = found
+      case .destinationChanged, .missing: secret = nil
+      case .unreadable:
+        throw DatabaseError.passwordStoreUnreadable(
+          name: identity.name.isEmpty ? identity.displayString : identity.name)
+      }
     }
     return VaultCredentialStore.scoped(secret, for: config, boundTo: identity)
   }
@@ -330,17 +352,26 @@ actor DatabaseConnectionManager {
       config: config, extraAllowedPaths: extraAllowedPaths, checkingOpenedFile: true)
   }
 
+  /// An ask-on-connect config of an engine that uses a password, without its typed password:
+  /// refused by connect and Test (a stale flag on a file engine blocks nothing).
+  private static func lacksTypedPassword(_ config: ConnectionConfig) -> Bool {
+    config.askPasswordOnConnect && config.databaseType.capabilities.usesPassword
+      && config.password.isEmpty
+  }
+
   /// `connect` without the lock check, for this manager's own resets
   /// (`reconnectWithActiveCertificate`): a relock never drops a live session.
   /// `checkingOpenedFile`: refuse the locked file a bookmark resolves to (`connect` only).
   /// A Vault connection's session gets the lease's username and password; `config` and the
   /// published config keep the saved ones. `keepingLease` (internal resets only): a held lease
   /// of an equal key is reused, never revoked; otherwise the held lease is revoked once the
-  /// current session is closed, and a new one is taken.
+  /// current session is closed, and a new one is taken. An ask-on-connect config without its
+  /// typed password is refused before anything closes or opens: never an empty-password login.
   private func connectUnchecked(
     config: ConnectionConfig, extraAllowedPaths: [String], checkingOpenedFile: Bool = false,
     keepingLease: Bool = false
   ) async throws {
+    if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
     let config = config.resolvingBrakes(
       await MainActor.run { AppSettings.shared.sessionBrakeDefaults })
     let suppliedCertificate = ClientCertificateStoreFactory.currentMaterial(for: config)
@@ -466,12 +497,13 @@ actor DatabaseConnectionManager {
   /// connected config only: never saved, and gone with the connection. Side managers and
   /// internal resets copy that connected config, so they reuse the password and run no script.
   /// The post-disconnect script pairs with a pre-connect script that ran: it runs when the
-  /// connect then fails, or once the connection closes. A locked identity is refused before
-  /// any script runs.
+  /// connect then fails, or once the connection closes. A locked identity, and an ask-on-connect
+  /// config without its typed password, are refused before anything closes or any script runs.
   func connectRunningScripts(
     config: ConnectionConfig, extraAllowedPaths: [String] = []
   ) async throws {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
+    if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
     let pending = config.postDisconnectScript.map {
       PendingScript(runner: scripts, name: $0, config: config)
     }
@@ -575,9 +607,11 @@ actor DatabaseConnectionManager {
   /// Performs a real connection AND executes a test query to verify credentials. A password
   /// command supplies the password, as on connect; no other script runs. A locked identity is
   /// refused before the password command. A Vault connection probes with a lease of its own,
-  /// revoked after the probe: this manager's lease and session are left alone.
+  /// revoked after the probe: this manager's lease and session are left alone. An
+  /// ask-on-connect config without its typed password is refused as on connect.
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
+    if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
     let config = try await withPasswordCommand(config)
     guard config.vault != nil else { return try await probe(config) }
     let lease = try await vaultLeasing.take(for: config)
@@ -798,7 +832,7 @@ actor DatabaseConnectionManager {
   /// Runs `body` with `saved`'s client certificate and SSH secret (the caller's scoped ones, else
   /// the Keychain's) scoped under the accounts of `session`, the config with the lease username,
   /// which both accounts include. `body` alone when `session` has no Vault source.
-  private func withLeaseAccounts<T: Sendable>(
+  func withLeaseAccounts<T: Sendable>(
     _ session: ConnectionConfig, saved: ConnectionConfig, _ body: () async throws -> T
   ) async throws -> T {
     guard session.vault != nil else { return try await body() }
@@ -916,6 +950,7 @@ actor DatabaseConnectionManager {
       as: txState.endingKind == .commit || userCommitsInFlight > 0 ? nil : .discarded)
     session = nil
     config = nil
+    writeUnlockExpiry = nil
     activeUnrememberedVaultSecret = nil
     sqliteReadOnlyReason = nil
     attachWarnings = []
@@ -926,6 +961,7 @@ actor DatabaseConnectionManager {
     schemaDirtyInUserTx = false
     editTableCache.removeAll()
     mysqlTableColumns.removeAll()
+    columnTypeCache.removeAll()
     mysqlTempTables.reset()
     return ForgottenSession(
       session: forgotten, connection: resources.connection, group: resources.group,
@@ -973,9 +1009,33 @@ actor DatabaseConnectionManager {
   // MARK: - Connected Protection
 
   /// Protection of the config this actor connected with (`.none` when not connected).
-  /// The execution gate enforces the stricter of this and the caller's policy.
+  /// The execution gate enforces the stricter of this and the caller's policy. A running write
+  /// unlock lowers Read-only to Schema only (`ProtectionPolicy.unlockingWrites`).
   var connectedPolicy: ProtectionPolicy {
-    ProtectionPolicy(config: config)
+    ProtectionPolicy(config: config).unlockingWrites(isWriteUnlocked)
+  }
+
+  /// A timed write unlock of this session runs now. Never on an MCP manager.
+  var isWriteUnlocked: Bool {
+    guard !servesMCP, let writeUnlockExpiry else { return false }
+    return now() < writeUnlockExpiry
+  }
+
+  /// Starts (or restarts) the write unlock of this session for `duration`. Returns its end, or
+  /// nil when refused: an MCP manager, not connected, or a connected config the unlock cannot
+  /// write (`ProtectionPolicy.writeUnlockRefusal`). Nothing is written to `config`.
+  func unlockWrites(for duration: TimeInterval) -> Date? {
+    guard !servesMCP, let config, ProtectionPolicy.writeUnlockRefusal(for: config) == nil else {
+      return nil
+    }
+    let expiry = now().addingTimeInterval(duration)
+    writeUnlockExpiry = expiry
+    return expiry
+  }
+
+  /// Ends the write unlock of this session (no-op when none runs)
+  func lockWrites() {
+    writeUnlockExpiry = nil
   }
 
   /// Apply a runtime change of the connection's protection settings (protection level,
@@ -983,6 +1043,8 @@ actor DatabaseConnectionManager {
   /// connected. `connectedPolicy` still reads only `protectedMode` from that config.
   func updateConnectedProtection(from newConfig: ConnectionConfig) {
     guard config != nil else { return }
+    // A changed level ends the write unlock: raising it back never inherits the old one
+    if config?.protectionLevel != newConfig.protectionLevel { writeUnlockExpiry = nil }
     config?.protectionLevel = newConfig.protectionLevel
     config?.safeMode = newConfig.safeMode
     config?.protectedMode = newConfig.protectedMode

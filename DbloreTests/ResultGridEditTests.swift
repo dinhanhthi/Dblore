@@ -16,16 +16,17 @@ struct ResultGridEditTests {
   private static let usersID = TableRef.postgresql(oid: 16_400)
 
   /// `name` is the name of row id 1, displayed first once sorted by id
-  private func makeResult(primaryKeyColumns: [String], name: CellValue = .string("a")) -> CellResult
-  {
+  private func makeResult(
+    primaryKeyColumns: [String], name: CellValue = .string("a"),
+    nameColumn: ColumnInfo = ColumnInfo(
+      name: "name", type: "text", origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2))
+  ) -> CellResult {
     CellResult(
       columns: [
         ColumnInfo(
           name: "id", type: "int4",
           origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 1)),
-        ColumnInfo(
-          name: "name", type: "text",
-          origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2)),
+        nameColumn,
       ],
       rows: [[.int(3), .string("c")], [.int(1), name], [.int(2), .string("b")]],
       rowCount: 3, sourceQuery: "SELECT * FROM users", tableName: "public.users",
@@ -125,6 +126,34 @@ struct ResultGridEditTests {
 
     #expect(coordinator.isEditing == !opensSidebar)
     #expect(detailsColumn == (opensSidebar ? 1 : nil))
+  }
+
+  /// Regression A5: the editor opens on the displayed timestamp text, and closing it unchanged
+  /// sends nothing, fraction included
+  @Test("A timestamp edits as its display text and an unchanged close sends nothing")
+  func timestampEditsAsDisplayText() {
+    let at = Date(timeIntervalSince1970: Double(1_792_065_600_123_456) / 1_000_000)
+    for wallClock in [true, false] {
+      let result = makeResult(
+        primaryKeyColumns: ["id"], name: .date(at),
+        nameColumn: ColumnInfo(
+          name: "at", type: "timestamp",
+          origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2), wallClock: wallClock))
+      let viewModel = makeViewModel(
+        result: result, config: ConnectionConfig(protectionLevel: .none, safeMode: .alertRead))
+      let (coordinator, tableView) = makeGrid(viewModel, result: result)
+      let text = CellValue.date(at).displayString(wallClock: wallClock)
+
+      coordinator.beginEditing(tableView, row: 0, column: 1)
+      let field = tableView.tableColumns.firstIndex { $0.identifier.rawValue == "1" }.flatMap {
+        (tableView.view(atColumn: $0, row: 0, makeIfNecessary: false) as? NSTableCellView)?
+          .textField
+      }
+      #expect(field?.stringValue == text)
+
+      coordinator.commitEdit(row: 0, column: 1, newValue: text)
+      #expect(viewModel.rightSidebarContent == nil)
+    }
   }
 
   @Test("A loaded data-viewer row goes through the cell edit and is not staged")

@@ -116,6 +116,8 @@ struct SSHHostKeyPolicyTests {
     #expect(await RejectingSSHHostKeyPrompt().confirmUnknownHost(request) == false)
   }
 
+  /// A changed key blocks before any prompt is asked, even one that would trust anything. The
+  /// error carries the presented key for the warning's Replace Pin.
   @Test("A changed key blocks without prompting and keeps the pin")
   func changedBlocks() async throws {
     let store = InMemorySSHKnownHostStore()
@@ -126,11 +128,14 @@ struct SSHHostKeyPolicyTests {
     do {
       try await Self.validate(SSHHostKeyPolicy(store: store, prompt: prompt), presented)
       Issue.record("A changed key must be blocked")
-    } catch DatabaseError.sshHostKeyChanged(let host, let port, let expected, let got) {
+    } catch DatabaseError.sshHostKeyChanged(
+      let host, let port, let expected, let got, let algorithm)
+    {
       #expect(host == Self.host)
       #expect(port == Self.port)
       #expect(expected == "SHA256:old")
       #expect(got == presented.fingerprint)
+      #expect(algorithm == "ssh-ed25519")
     } catch {
       Issue.record("Expected sshHostKeyChanged, got \(error)")
     }
@@ -182,12 +187,15 @@ struct SSHHostKeyPolicyTests {
   @Test("SSH error messages explain the problem and the fix")
   func messages() {
     let changed = DatabaseError.sshHostKeyChanged(
-      host: "bastion.example", port: 2200, expected: "SHA256:old", presented: "SHA256:new")
+      host: "bastion.example", port: 2200, expected: "SHA256:old", presented: "SHA256:new",
+      presentedAlgorithm: "ssh-ed25519")
     #expect(
       changed.localizedDescription
         == "The SSH host key for bastion.example:2200 changed. Expected SHA256:old, got "
         + "SHA256:new. This can mean a man-in-the-middle attack. If the server key was "
-        + "legitimately replaced, remove the pin in Settings > Data and connect again.")
+        + "legitimately replaced, verify the new fingerprint with your server administrator, "
+        + "then connect from a Dblore window and choose Replace Pin (MCP, the command line and "
+        + "Shortcuts cannot replace a pin), or remove the pin in Settings > Data.")
     let notTrusted = DatabaseError.sshHostKeyNotTrusted(
       host: "bastion.example", fingerprint: "SHA256:abc")
     #expect(notTrusted.localizedDescription.contains("bastion.example"))
@@ -231,7 +239,8 @@ struct SSHHostKeyPolicyTests {
       .sshUnsupportedHostKeyAlgorithm(host: "bastion-policy.example", port: 2200),
       .sshHostKeyNotTrusted(host: "bastion-policy.example", fingerprint: "SHA256:a"),
       .sshHostKeyChanged(
-        host: "bastion-policy.example", port: 2200, expected: "SHA256:a", presented: "SHA256:b"),
+        host: "bastion-policy.example", port: 2200, expected: "SHA256:a", presented: "SHA256:b",
+        presentedAlgorithm: "ssh-ed25519"),
     ].map(\.localizedDescription)
     for text in texts {
       #expect(!text.contains("jump-secret-pw"))

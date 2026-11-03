@@ -131,6 +131,22 @@ final class SQLEditorDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
     ownRewriteDate = modificationDateOnDisk()
   }
 
+  /// After a Lock password change re-sealed the file without this document: its new date is
+  /// taken as seen only when this document knew the date of the bytes re-sealed; a change it
+  /// had not seen still asks, and Keep My Version over it takes the rewrite as seen too
+  func noteRewrite(_ file: LockedFileIO.RewrittenFile) {
+    guard lastKnownModificationDate == file.dateBeforeWrite else {
+      ownRewriteDate = file.dateAfterWrite
+      return
+    }
+    guard let dateAfterWrite = file.dateAfterWrite else {
+      updateLastKnownModificationDate()
+      return
+    }
+    lastKnownModificationDate = dateAfterWrite
+    ownRewriteDate = nil
+  }
+
   /// The file's date on disk when it changed since this document last read or wrote it (nil: no
   /// newer change, or no file)
   func unseenChangeDate() -> Date? {

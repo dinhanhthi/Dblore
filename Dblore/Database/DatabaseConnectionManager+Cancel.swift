@@ -1,13 +1,17 @@
 // DatabaseConnectionManager+Cancel.swift
-// Cancel stops the server work: PostgresNIO 1.33.1 exposes no CancelRequest, so the only public
-// way to stop a running backend is closing its connection. The session is then reopened with
-// the current config (session brakes re-applied, epoch advanced), like the capped-read reset.
-// Closing rolls back the app transaction or the user's open transaction: the ViewModel warns
-// first (`QueryCancelWarning`) and passes what the user saw, so a changed state is refused.
-// SQLite and DuckDB interrupt instead: what that did to an open transaction is asked from the
-// SQLite session once the statement stopped (`cancelErrorAfterInterrupt`). DuckDB's interrupt
-// always aborts it: a ROLLBACK is owed from the cancel on (`settleInterruptAbort`). A DuckDB
-// statement timeout or execution error aborts it too (`settleAbortAfterFailure`).
+// Cancel stops the server work and keeps the session where it can. PostgresNIO 1.33.1 exposes no
+// CancelRequest: PostgreSQL runs `pg_cancel_backend` from a short side connection
+// (`DatabaseSession.cancelBackend`). When that cancels nothing (no pid, no match, side connection
+// refused, 5 s bound) while the statement still runs, or for a session without an interrupt, the
+// connection is closed and reopened with the current config (session brakes re-applied, epoch
+// advanced), like the capped-read reset. Closing rolls back the app transaction or the user's
+// open transaction: the ViewModel warns first (`QueryCancelWarning`) and passes what the user
+// saw, so a changed state is refused. SQLite and DuckDB interrupt instead: what that did to an
+// open transaction is asked from the SQLite session once the statement stopped
+// (`cancelErrorAfterInterrupt`). DuckDB's interrupt and PostgreSQL's cancel always abort it: a
+// ROLLBACK is owed from the cancel on (`settleInterruptAbort`), unless a PostgreSQL COMMIT in
+// flight then answers COMMIT. A DuckDB statement timeout or execution error aborts it too
+// (`settleAbortAfterFailure`).
 
 import Foundation
 
@@ -66,9 +70,12 @@ nonisolated struct RunningStatementStatus: Sendable, Equatable {
   /// Cancel interrupts the statement and keeps the session (`CancelStrategy.interrupt`); without
   /// `keepsTransaction` the interrupt may roll back the open transaction (SQLite, DuckDB)
   var interrupts = false
-  /// The interrupt always rolls back the open transaction (DuckDB,
+  /// The interrupt always rolls back the open transaction (DuckDB, PostgreSQL,
   /// `DatabaseType.interruptAbortsTransaction`)
   var interruptRollsBack = false
+  /// The server cancels the statement from a side connection (PostgreSQL); the connection is
+  /// reset when it cannot
+  var cancelsOnServer = false
 }
 
 nonisolated enum QueryCancelOutcome: Sendable, Equatable {
@@ -89,13 +96,19 @@ extension DatabaseConnectionManager {
         && config?.databaseType.interruptKeepsTransaction == true,
       interrupts: session?.capabilities.cancelStrategy == .interrupt,
       interruptRollsBack: session?.capabilities.cancelStrategy == .interrupt
-        && config?.databaseType.interruptAbortsTransaction == true)
+        && config?.databaseType.interruptAbortsTransaction == true,
+      cancelsOnServer: session?.capabilities.cancelStrategy == .interrupt
+        && config?.databaseType == .postgresql)
   }
 
-  /// Stop the running statement on the server: close the connection and reconnect with the
-  /// current config. The statement (and the rest of its script) fails with
-  /// `DatabaseError.queryCancelled`; a `SessionResetEvent` (`.cancelled`) is published. If the
-  /// reconnect fails, the session is reported lost (`SessionLostEvent`).
+  /// Stop the running statement on the server: interrupt it and keep the session (PostgreSQL:
+  /// `cancelBackend`), else close the connection and reconnect with the current config. The
+  /// statement (and the rest of its script) fails with `DatabaseError.queryCancelled`; a reset
+  /// publishes a `SessionResetEvent` (`.cancelled`). If the reconnect fails, the session is
+  /// reported lost (`SessionLostEvent`).
+  /// Known limit: PostgreSQL cancels the oldest statement in flight on the shared connection,
+  /// which may be another tab's or an app read queued ahead of the confirmed one, as the other
+  /// interrupt engines stop whatever runs on the connection.
   /// - Parameters: the `RunningStatementStatus` the user confirmed.
   /// - Returns: `.nothingRunning` (also when the connection changed since the status) /
   ///   `.transactionChanged` without closing anything.
@@ -114,25 +127,57 @@ extension DatabaseConnectionManager {
     // MySQL KILL QUERY: the pending changes and the user's transaction stay
     let kept = interrupts && config.databaseType.interruptKeepsTransaction
     batchCancellationGeneration &+= 1
-    let record = QueryCancelRecord(
+    var record = QueryCancelRecord(
       epoch: connectionEpoch, pendingCount: kept ? 0 : stateBefore.pending.count,
       userTxRolledBack: kept ? false : userTxOpen,
       interruptGeneration: interrupts ? batchCancellationGeneration : nil,
       connectionKept: interrupts)
     lastCancel = record
-    // DuckDB aborts the open transaction now, and a COMMIT on it would answer success: owed in
-    // the actor turn that moved the cancel generation, so nothing admitted at the new
-    // generation reaches the session first (`settleInterruptAbort`)
+    // PostgreSQL: what the server cancel matches, read in this turn, before anything else can be
+    // queued behind the running statement (the ROLLBACK owed below, a catalog read), and the
+    // statement a failed cancel resets for (the matched one, else the one running)
+    let serverCancel =
+      interrupts && config.databaseType == .postgresql ? session?.prepareCancelBackend() : nil
+    let runningToken =
+      interrupts && config.databaseType == .postgresql
+      ? serverCancel?.token ?? session?.runningStatementToken() : nil
+    // DuckDB and PostgreSQL abort the open transaction now, and a COMMIT on it would answer
+    // success: owed in the actor turn that moved the cancel generation, so nothing admitted at
+    // the new generation reaches the session first (`settleInterruptAbort`)
     if interrupts, config.databaseType.interruptAbortsTransaction, userTxOpen || !txState.isIdle {
       interruptRollbackOwed = connectionEpoch
     }
     await AppLogger.shared.info("Cancelling the running statement", category: "Database")
     await scriptCheckpointHook?(.cancelling)
     if interrupts {
-      await session?.interrupt()
-      return .cancelled
+      guard config.databaseType == .postgresql else {
+        await session?.interrupt()
+        return .cancelled
+      }
+      if let session, let serverCancel,
+        await cancelBackendScoped(session, target: serverCancel, config: config)
+      {
+        return .cancelled
+      }
+      // Nothing was cancelled: reset instead, unless the connection went meanwhile
+      guard connectionEpoch == record.epoch, let live = self.session else { return .cancelled }
+      // or the statement running at the cancel ended on its own (often why nothing matched),
+      // whatever started since (another tab's): the session is kept, and the ROLLBACK owed since
+      // the cancel ends the transaction the user was told is rolled back
+      guard let runningToken, live.statementInFlight(runningToken) else {
+        await AppLogger.shared.info(
+          "The statement ended before the server cancel: the connection is kept",
+          category: "Database")
+        return .cancelled
+      }
+      if interruptRollbackOwed == record.epoch { interruptRollbackOwed = nil }
+      let current = lastCancel.flatMap { $0.epoch == record.epoch ? $0 : nil } ?? record
+      record = QueryCancelRecord(
+        epoch: record.epoch, pendingCount: current.pendingCount,
+        userTxRolledBack: current.userTxRolledBack)
+      lastCancel = record
     }
-    // PostgreSQL stays reconnect: close the session and open another one.
+    // Close the session and open another one.
     // Not cancelled with the caller: `connect` sleeps between retries
     let certificate = activeUnrememberedCertificate
     let sshCredential = activeUnrememberedSSHCredential
@@ -159,6 +204,26 @@ extension DatabaseConnectionManager {
         "Reconnect after cancel failed: \(error.localizedDescription)", category: "Database")
     }
     return .cancelled
+  }
+
+  /// `session.cancelBackend(target)` with this connection's client certificate in scope as a reset
+  /// scopes it (`reconnectWithActiveCertificate`), under the Vault lease's account for a Vault
+  /// row: the side connection of a connection whose certificate is not remembered finds it.
+  /// Never a side manager: that would take another Vault lease.
+  private func cancelBackendScoped(
+    _ session: any DatabaseSession, target: CancelBackendTarget, config: ConnectionConfig
+  ) async -> Bool {
+    let scoped = activeUnrememberedCertificate.map {
+      ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
+    }
+    defer { scoped?.clear() }
+    let sessionConfig = vaultLease?.overlay(on: config) ?? config
+    return await ClientCertificateStoreFactory.$operationMaterial.withValue(scoped) {
+      let cancelled = try? await withLeaseAccounts(sessionConfig, saved: config) {
+        await session.cancelBackend(target)
+      }
+      return cancelled ?? false
+    }
   }
 
   /// The error for a statement of a script started on connection `epoch` at cancellation
@@ -220,19 +285,24 @@ extension DatabaseConnectionManager {
     return current.error
   }
 
-  /// DuckDB, once a cancel interrupted a statement inside a transaction (`interruptRollbackOwed`
-  /// for the current connection): the engine aborted it, and a COMMIT on it would answer
-  /// success. In one actor turn the app transaction / `userTxOpen` are cleared, their Data
-  /// Rewind entries discarded and the cancel record settled (`reconciled`); then ROLLBACK is
-  /// sent once, straight to the session (it ends the aborted transaction; "no transaction is
-  /// active" changes nothing; any other failure is logged). The session runs one call at a time
-  /// in arrival order, so a statement sent afterwards runs after the ROLLBACK. Called by the
-  /// stopped statement, before any send (`withSession`) and by a COMMIT / Rollback; no-op
-  /// when nothing is owed. An owed ROLLBACK of an older connection is dropped.
+  /// DuckDB and PostgreSQL, once a cancel interrupted a statement inside a transaction
+  /// (`interruptRollbackOwed` for the current connection): the engine aborted it, and a COMMIT
+  /// on it would answer success. In one actor turn the app transaction / `userTxOpen` are
+  /// cleared, their Data Rewind entries discarded and the cancel record settled (`reconciled`);
+  /// then ROLLBACK is sent once, straight to the session (it ends the aborted transaction; "no
+  /// transaction is active" changes nothing; any other failure is logged). The session runs one
+  /// call at a time in arrival order, so a statement sent afterwards runs after the ROLLBACK.
+  /// Called by the stopped statement, before any send (`withSession`) and by a COMMIT /
+  /// Rollback; no-op when nothing is owed. An owed ROLLBACK of an older connection is dropped.
+  /// PostgreSQL, while a user COMMIT is in flight: still owed, nothing settled; that COMMIT's
+  /// answer decides (`noteUserCommitAfterInterrupt`, or `cancelErrorAfterInterrupt` on error).
   /// - Returns: whether an app transaction or `userTxOpen` was cleared
   @discardableResult
   func settleInterruptAbort() async -> Bool {
     guard let owed = interruptRollbackOwed else { return false }
+    if config?.databaseType == .postgresql, userCommitsInFlight > 0, owed == connectionEpoch {
+      return false
+    }
     interruptRollbackOwed = nil
     guard owed == connectionEpoch, let session else { return false }
     let cleared = !txState.isIdle || userTxOpen
@@ -266,8 +336,7 @@ extension DatabaseConnectionManager {
   /// reported it) or a cancel owes the ROLLBACK.
   /// - Returns: `error`, saying what was rolled back when it held changes
   func settleAbortAfterFailure(_ error: Error) async -> Error {
-    guard config?.databaseType.interruptAbortsTransaction == true, userTxOpen || !txState.isIdle
-    else { return error }
+    guard config?.databaseType == .duckdb, userTxOpen || !txState.isIdle else { return error }
     let epoch = connectionEpoch
     let txGeneration = commitGuard.generation
     let userTx = userTxOpen
@@ -299,13 +368,20 @@ extension DatabaseConnectionManager {
   /// interrupted the connection. DuckDB, when the interrupt landed while the COMMIT was in
   /// flight (`cancelError(since:generation:)` of its script): the interrupt aborted the
   /// transaction first, so the COMMIT committed nothing: settled (`settleInterruptAbort`) and
-  /// `commitAfterInterruptError` thrown. Elsewhere (SQLite) the COMMIT found the transaction
-  /// open, so the interrupt rolled nothing back (`settleInterruptRecordAsKept`).
-  func noteUserCommitAfterInterrupt(since epoch: UInt64, generation: UInt64) async throws {
+  /// `commitAfterInterruptError` thrown; PostgreSQL too when the COMMIT answered ROLLBACK
+  /// (`commitState` `.discarded`). A PostgreSQL COMMIT that answered COMMIT committed (the
+  /// cancel came after its commit record, or matched nothing): the ROLLBACK owed since the
+  /// cancel is dropped. There and elsewhere (SQLite, where the COMMIT found the transaction
+  /// open) the interrupt rolled nothing back (`settleInterruptRecordAsKept`).
+  func noteUserCommitAfterInterrupt(
+    since epoch: UInt64, generation: UInt64, commitState: RewindEntry.State?
+  ) async throws {
     guard let record = lastCancel, record.epoch == connectionEpoch,
       record.interruptGeneration != nil
     else { return }
-    guard config?.databaseType.interruptAbortsTransaction == true else {
+    let committedOnServer = config?.databaseType == .postgresql && commitState == .committed
+    guard config?.databaseType.interruptAbortsTransaction == true, !committedOnServer else {
+      if committedOnServer, interruptRollbackOwed == connectionEpoch { interruptRollbackOwed = nil }
       settleInterruptRecordAsKept()
       return
     }
@@ -333,11 +409,11 @@ extension DatabaseConnectionManager {
 
   /// Set while a user statement is sent (`runUserStatements`, `runStagedBatch`): the connection
   /// epoch and cancel generation (`batchCancellationGeneration`) it was admitted at. After a
-  /// DuckDB interrupt cancel since then, or one whose transaction this send rolled back, it is
-  /// refused (`withSession`)
+  /// DuckDB or PostgreSQL interrupt cancel since then, or one whose transaction this send rolled
+  /// back, it is refused (`withSession`)
   @TaskLocal static var userStatementAdmission: UserStatementAdmission?
 
-  /// A statement meant for the transaction a DuckDB interrupt cancel rolled back
+  /// A statement meant for the transaction a DuckDB or PostgreSQL cancel rolled back
   /// (`withSession`): not sent, it would autocommit
   static let sentAfterInterruptError = DatabaseError.transactionAborted(
     "Nothing was sent: cancelling the running statement rolled back the open transaction. "

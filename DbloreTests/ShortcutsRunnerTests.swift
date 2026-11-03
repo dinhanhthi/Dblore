@@ -5,6 +5,7 @@
 // would run the user's scripts.
 
 import Foundation
+import Security
 import Testing
 
 @testable import Dblore
@@ -50,13 +51,16 @@ struct ShortcutsRunnerTests {
     return ConnectionHistoryEntry(config: config)
   }
 
-  private func runner(_ rows: [ConnectionHistoryEntry]) -> ShortcutsRunner {
+  private func runner(
+    _ rows: [ConnectionHistoryEntry], factory: FakeDatabaseSessionFactory? = nil,
+    password: @escaping @Sendable (ConnectionConfig) throws -> String? = { _ in nil }
+  ) -> ShortcutsRunner {
     let allowed = Set(rows.map(\.id))
     return ShortcutsRunner(
       rule: HeadlessAccessRule(gate: AIAccessGate(), lockSource: LockRegistry()),
       saved: { rows }, caller: { .shortcuts(enabled: true, allowlist: allowed) },
       defaultCommitStyle: { .immediate }, recorder: history, historyEnabled: { true },
-      password: { _ in nil }, sessionFactory: factory)
+      password: password, sessionFactory: factory ?? self.factory)
   }
 
   @Test(
@@ -93,8 +97,28 @@ struct ShortcutsRunnerTests {
     await runner.pool.closeAll()
   }
 
+  @Test("Run Query writes a naive column's wall clock and a zoned column as ISO 8601 UTC")
+  func runQueryDateShapes() async throws {
+    // 2026-10-15 12:00:00.123 UTC
+    let date = CellValue.date(Date(timeIntervalSince1970: 1_792_065_600.123))
+    let dates = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [
+        ColumnInfo(name: "naive", type: "timestamp", wallClock: true),
+        ColumnInfo(name: "zoned", type: "timestamptz"),
+      ],
+      rows: [[date, date]])
+    let entry = Self.entry()
+    let runner = runner([entry], factory: dates)
+    let csv = try await runner.runQuery(
+      connectionID: entry.id, sql: "SELECT naive, zoned FROM orders")
+    #expect(
+      csv.hasPrefix("naive,zoned\r\n2026-10-15 12:00:00.123,2026-10-15T12:00:00.123Z\r\n1 row."))
+    await runner.pool.closeAll()
+  }
+
   @Test("The pool's lookup reads a password only for a row Shortcuts may use")
-  func lookupReadsPasswordAfterRule() async {
+  func lookupReadsPasswordAfterRule() async throws {
     let allowed = Self.entry(name: "Allowed")
     let other = Self.entry(name: "Other")
     let reads = PasswordReads()
@@ -106,13 +130,26 @@ struct ShortcutsRunnerTests {
         caller: { .shortcuts(enabled: enabled, allowlist: allowlist) },
         password: reads.read)
     }
-    #expect(await lookup(true)(other.id) == nil)
-    #expect(await lookup(false)(allowed.id) == nil)
+    #expect(try await lookup(true)(other.id) == nil)
+    #expect(try await lookup(false)(allowed.id) == nil)
     #expect(reads.count == 0)
-    let found = await lookup(true)(allowed.id)
+    let found = try await lookup(true)(allowed.id)
     #expect(found?.id == allowed.id)
     #expect(found?.config.password == "secret")
     #expect(reads.count == 1)
+  }
+
+  @Test("A row whose saved password the Keychain cannot read is refused with that reason")
+  func unreadablePasswordRefused() async {
+    let entry = Self.entry()
+    let runner = runner([entry]) { _ in
+      throw ConnectionPasswordError.unreadable(errSecInteractionNotAllowed)
+    }
+    await #expect(throws: MCPConnectionError.passwordStoreUnreadable) {
+      try await runner.runQuery(connectionID: entry.id, sql: "SELECT n FROM orders")
+    }
+    #expect(factory.sessions.isEmpty)
+    await runner.pool.closeAll()
   }
 
   @Test("Open Connection refuses a row with a password command, as the actions run here do")
@@ -127,6 +164,113 @@ struct ShortcutsRunnerTests {
     #expect(try await runner.openableEntry(id: plain.id).id == plain.id)
     #expect(factory.sessions.isEmpty)
     await runner.pool.closeAll()
+  }
+
+  /// Regression A5: Add Row reads naive timestamp text as the wall clock it shows, never as
+  /// local time shifted to UTC, and zoned text as the display zone's time; text for a type with
+  /// no date value (or SQLite's) stays as typed
+  @Test(
+    "Add Row stores naive timestamp text as its wall clock",
+    arguments: [
+      (DatabaseType.postgresql, "timestamp", nil, true, 1_792_065_600),
+      (.postgresql, "timestamp(6) without time zone", nil, true, 1_792_065_600),
+      (.postgresql, "timestamp(3) with time zone", nil, false, 1_792_040_400),
+      (.postgresql, "timestamp with time zone", nil, false, 1_792_040_400),
+      (.postgresql, "timestamptz", nil, false, 1_792_040_400),
+      (.mysql, "datetime", "datetime(6)", true, nil),
+      (.mysql, "timestamp", "timestamp", false, 1_792_040_400),
+      (.mysql, "timestamp", "timestamp(6)", false, 1_792_040_400),
+      (.duckdb, "TIMESTAMP_NS", nil, true, nil), (.sqlite, "TIMESTAMP", nil, false, nil),
+    ] as [(DatabaseType, String, String?, Bool, Double?)])
+  func addRowNaiveTimestamp(
+    engine: DatabaseType, dataType: String, columnType: String?, wallClock: Bool,
+    stagedDate: Double?
+  ) throws {
+    let type = columnType ?? dataType
+    #expect(ShortcutsRunner.isWallClock(type: type, engine: engine) == wallClock)
+    let structure = TableStructure(
+      tableID: .postgresql(oid: 1), schema: "s", name: "t",
+      columns: [
+        TableStructure.Column(
+          ordinal: 1, name: "at", dataType: dataType, isNullable: true, columnType: columnType)
+      ], indexes: [], constraints: [])
+    let text = "2026-10-15 12:00:00"
+    let typed = try CellValue.$displayZone.withValue(TimeZone(identifier: "Asia/Ho_Chi_Minh")!) {
+      try ShortcutsRunner.cellValues(["at": text], structure: structure, engine: engine)["at"]
+    }
+    // The instant of the wall clock or display zone time, or the text as typed for the server
+    #expect(
+      typed == (stagedDate.map { .date(Date(timeIntervalSince1970: $0)) } ?? .string(text)))
+    if wallClock { #expect(typed?.displayString(wallClock: true) == text) }
+  }
+
+  /// A NUMERIC, an INTEGER, a DOUBLE PRECISION, a NUMERIC named `a"b` and a TEXT column
+  private static let numberTable = TableStructure(
+    tableID: .postgresql(oid: 1), schema: "s", name: "t",
+    columns: [
+      TableStructure.Column(
+        ordinal: 1, name: "amount", dataType: "numeric", isNullable: true,
+        columnType: "numeric(40,2)"),
+      TableStructure.Column(ordinal: 2, name: "id", dataType: "integer", isNullable: true),
+      TableStructure.Column(
+        ordinal: 3, name: "ratio", dataType: "double precision", isNullable: true),
+      TableStructure.Column(ordinal: 4, name: "a\"b", dataType: "numeric", isNullable: true),
+      TableStructure.Column(ordinal: 5, name: "note", dataType: "text", isNullable: true),
+    ], indexes: [], constraints: [])
+
+  /// Add Row's values for `json`, typed for `numberTable`
+  private static func addRowValues(_ json: String) throws -> [String: CellValue] {
+    try ShortcutsRunner.cellValues(
+      ShortcutsRunner.parseValues(json), structure: numberTable, engine: .postgresql)
+  }
+
+  /// Regression: a JSON number went through Double, so a NUMERIC lost digits and its scale
+  @Test("Add Row binds a JSON number into NUMERIC by its own token text, made plain")
+  func addRowNumericTokenText() throws {
+    let forty = "1234567890123456789012345678901234567890"
+    let cases: [(String, String)] = [
+      ("12345678901234567890.12", "12345678901234567890.12"), ("19.90", "19.90"),
+      (forty, forty), ("1e20", "100000000000000000000"), ("2.5e-7", "0.00000025"),
+      ("1E+2", "100"), ("-1.5e-3", "-0.0015"), ("1.5e1", "15"),
+    ]
+    for (token, plain) in cases {
+      #expect(try Self.addRowValues(#"{"amount": \#(token)}"#)["amount"] == .decimal(plain))
+    }
+    // Other columns keep v0.9.0's number text
+    let other = try Self.addRowValues(#"{"id": 1.0, "ratio": 1e300}"#)
+    #expect(other["id"] == .int(1))
+    #expect(other["ratio"] == .double(1e300))
+    #expect(try Self.addRowValues(#"{"id": 1e3}"#)["id"] == .int(1000))
+    // Escaped keys map to their columns; text inside a string is never read as a number
+    let keyed = try Self.addRowValues(
+      #"{"note": "\"amount\": 1.5, ", "a\"b": 7.50, "amount": 0.10}"#)
+    #expect(keyed["note"] == .string(#""amount": 1.5, "#))
+    #expect(keyed["a\"b"] == .decimal("7.50"))
+    #expect(keyed["amount"] == .decimal("0.10"))
+    // A repeated key binds the value JSONSerialization chose, never the other one
+    let parsed = try #require(
+      try ShortcutsRunner.parseValues(#"{"amount": 1.10, "amount": 2.20}"#)["amount"])
+    #expect(parsed.numberToken == nil)
+    #expect(parsed.text == "1.1" || parsed.text == "2.2")
+  }
+
+  @Test("Add Row refuses a NUMERIC exponent too long to write out, without overflow")
+  func addRowRefusesLongExponent() throws {
+    let refusal = ShortcutsRunner.Refusal.decimalTooLong(column: "amount")
+    #expect(refusal.errorDescription?.contains("plain digits in a JSON string") == true)
+    #expect(throws: refusal) { try Self.addRowValues(#"{"amount": -1e1001}"#) }
+    for token in ["1e-1001", "0e9223372036854775807"] {
+      let json = #"{"amount": \#(token)}"#
+      if let parsed = try? ShortcutsRunner.parseValues(json) {
+        #expect(throws: refusal, "\(token)") {
+          try ShortcutsRunner.cellValues(parsed, structure: Self.numberTable, engine: .postgresql)
+        }
+      } else {
+        #expect(throws: ShortcutsRunner.Refusal.valuesNotObject, "\(token)") {
+          try ShortcutsRunner.parseValues(json)
+        }
+      }
+    }
   }
 
   @Test("Open Connection refuses a row with a pre-connect or post-disconnect script")

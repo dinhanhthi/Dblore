@@ -14,12 +14,17 @@ extension WindowFrame {
 }
 
 extension LaunchRestorer {
-  /// Hands the system `WindowGroup` window the front restored window, once.
-  /// Every later caller, including Welcome and Cmd+N, gets nil.
+  /// Hands the launch window (the system `WindowGroup` window, or the Welcome window a launch by
+  /// a file opens) the front restored window, once. Every later caller gets nil.
   static func takeFrontWindowClaim() -> LaunchWindow? {
     let step = LaunchClaimStore.step
     LaunchClaimStore.step = nil
     return step
+  }
+
+  /// Whether the front restored window still waits for a launch window
+  static var hasStagedFrontWindowClaim: Bool {
+    LaunchClaimStore.step != nil
   }
 
   static func stageFrontWindowClaim(_ window: LaunchWindow) {
@@ -185,14 +190,25 @@ enum LaunchSessionRestore {
     let selected = front.first(where: \.isSelectedInGroup) ?? front.first
     guard let selected else { return }
     let key = GroupTab(group: selected.groupIndex, tab: selected.tabIndex)
+    let keyWindow = NSApp.keyWindow.flatMap { NewWindowStore.shared.registration(for: $0) }
     if let id = workspaceIDs[key] {
-      WorkspaceWindowManager.shared.setActiveWorkspace(id)
-    } else if case .welcome = selected.content {
+      if setsActiveWorkspace(id, keyWindow: keyWindow) {
+        WorkspaceWindowManager.shared.setActiveWorkspace(id)
+      }
+    } else if case .welcome = selected.content, setsActiveWorkspace(nil, keyWindow: keyWindow) {
       WorkspaceWindowManager.shared.clearActiveWorkspace()
     }
     if let window = opened[key], !selected.isMiniaturized {
       window.makeKeyAndOrderFront(nil)
     }
+  }
+
+  /// Whether restore makes the front selected window's workspace (nil: Welcome) the active one.
+  /// Not while the key window shows another workspace (a launch by a file: its window is key
+  /// and the restored one opened beside it): commands act on the key window's workspace only.
+  static func setsActiveWorkspace(_ id: UUID?, keyWindow: NewWindowStore.Registration?) -> Bool {
+    guard case .workspace(let shown) = keyWindow else { return true }
+    return shown == id
   }
 
   private static func select(_ group: [LaunchWindow], opened: [GroupTab: NSWindow]) {

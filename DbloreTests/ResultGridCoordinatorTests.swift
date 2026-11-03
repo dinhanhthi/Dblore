@@ -38,6 +38,20 @@ struct ResultGridCoordinatorTests {
     return (view as? NSTableCellView)?.textField
   }
 
+  @Test("Rows replaced under the same timestamp rebuild the model")
+  func dataRevisionRebuildsTheModel() {
+    let (coordinator, tableView) = makeGrid(sortColumn: nil)
+    #expect(
+      coordinator.update(tableView, result: result, sortColumn: nil, ascending: true) == false)
+    var refreshed = CellResult(
+      columns: result.columns,
+      rows: [[.int(3), .string("z")], [.int(1), .string("a")], [.int(2), .null]],
+      rowCount: 3, timestamp: result.timestamp)
+    refreshed.dataRevision = result.dataRevision + 1
+    #expect(coordinator.update(tableView, result: refreshed, sortColumn: nil, ascending: true))
+    #expect(coordinator.model?.value(row: 0, column: 1) == .string("z"))
+  }
+
   @Test("Rows and columns map through the coordinator, sorted rows included")
   func rowColumnMapping() {
     let unsorted = makeGrid(sortColumn: nil)
@@ -208,6 +222,13 @@ struct ResultGridCoordinatorTests {
     return ResultGridCoordinator.fitWidth(
       column: 0, model: ResultGridModel(result: result, sortColumn: nil, ascending: true),
       headerWidth: headerWidth, minWidth: minWidth)
+  }
+
+  @Test("A nil grid font falls back to a font of the same size that measures text")
+  func nilFontFallsBack() {
+    let font = ResultGridCoordinator.fontOrFallback(nil, size: 11)
+    #expect(font.pointSize == 11)
+    #expect(("abc" as NSString).size(withAttributes: [.font: font]).width > 0)
   }
 
   @Test("A staged cell commit calls the stage callback and not the immediate update")

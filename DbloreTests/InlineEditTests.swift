@@ -266,11 +266,12 @@ struct InlineEditViewModelTests {
     viewModel.showCellDetail(
       columnName: "name", columnType: "text", value: .string("old"), tableName: tableName,
       rowData: rowData, primaryKeyColumns: primaryKeyColumns,
-      editTarget: viewModel.notebook.cells.first?.result?.editTarget, cellId: cellId)
+      editTarget: viewModel.notebook.cells.first?.result?.editTarget, cellId: cellId,
+      wallClock: false)
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: "new", originalValue: .string("old"),
       tableName: tableName, rowData: rowData, primaryKeyColumns: primaryKeyColumns,
-      cellId: cellId, connectionManager: DatabaseConnectionManager())
+      cellId: cellId, connectionManager: DatabaseConnectionManager(), wallClock: false)
   }
 
   // MARK: canEdit
@@ -423,7 +424,7 @@ struct InlineEditViewModelTests {
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: nil, originalValue: .int(3),
       tableName: "users", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
-      connectionManager: nil)
+      connectionManager: nil, wallClock: false)
     guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
       Issue.record("sidebar did not update")
       return
@@ -441,6 +442,30 @@ struct InlineEditViewModelTests {
     #expect(
       NotebookViewModel.editedCellValue("hi", original: .null, columnType: "TEXT") == .string("hi"))
     #expect(NotebookViewModel.editedCellValue("", original: .null, columnType: "INTEGER") == .null)
+    // NUMERIC / DECIMAL, with or without a modifier, keep the typed text exactly
+    for type in ["NUMERIC", "numeric(10,2)", "decimal(65,30)", "DECIMAL ( 5 )"] {
+      #expect(
+        NotebookViewModel.editedCellValue("12.50", original: .null, columnType: type)
+          == .decimal("12.50"), "\(type)")
+    }
+    #expect(
+      NotebookViewModel.editedCellValue("0.5", original: .null, columnType: "REAL") == .double(0.5))
+  }
+
+  /// Security: only decimal text becomes a decimal, which SQL literals may write bare
+  @Test("A decimal edit keeps the typed text; other text stays a string")
+  func decimalEditKeepsText() {
+    #expect(
+      NotebookViewModel.editedCellValue("12345678901234567890.10", original: .decimal("1"))
+        == .decimal("12345678901234567890.10"))
+    #expect(
+      NotebookViewModel.editedCellValue("=1+1", original: .decimal("1")) == .string("=1+1"))
+    // Exponent text is written out exactly as plain digits, in a NUMERIC cell or a NULL one
+    #expect(
+      NotebookViewModel.editedCellValue("1e-07", original: .decimal("1")) == .decimal("0.0000001"))
+    #expect(
+      NotebookViewModel.editedCellValue("1E+3", original: .null, columnType: "NUMERIC")
+        == .decimal("1000"))
   }
 
   @Test("A string edit still binds and displays the typed text")
@@ -453,7 +478,7 @@ struct InlineEditViewModelTests {
     viewModel.handleCellValueEdit(
       columnName: "name", columnType: "text", newValue: "new", originalValue: .string("old"),
       tableName: "users", rowData: rowData, primaryKeyColumns: ["id"], cellId: cellId,
-      connectionManager: nil)
+      connectionManager: nil, wallClock: false)
     guard case .cellInfo(_, _, let value, _, _, _, _) = viewModel.rightSidebarContent else {
       Issue.record("sidebar did not update")
       return

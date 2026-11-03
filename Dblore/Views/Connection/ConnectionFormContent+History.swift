@@ -245,7 +245,13 @@ extension ConnectionFormContent {
       }
       // Nor over a password typed while the prompt was open
       guard connectionConfig.password.isEmpty else { return }
-      connectionConfig = RecentManager.shared.withSavedPassword(connectionConfig)
+      do {
+        connectionConfig = try RecentManager.shared.withSavedPassword(connectionConfig)
+      } catch {
+        // Locked or denied: the field stays empty and the form says why
+        unlockConnectError?.wrappedValue = error.localizedDescription
+        return
+      }
       if getInputMode() == .connectionString {
         setGeneratedConnectionString()
       }

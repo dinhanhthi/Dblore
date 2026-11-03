@@ -149,10 +149,21 @@ nonisolated extension LockedFileIO {
     let reason: String
   }
 
+  /// A file the re-seal rewrote, with its modification dates just before and just after the
+  /// write (the bytes re-sealed were read at `dateBeforeWrite`): an open document that knew
+  /// that date had seen them
+  struct RewrittenFile: Sendable, Equatable {
+    let url: URL
+    let dateBeforeWrite: Date
+    let dateAfterWrite: Date?
+  }
+
   struct ResealResult: Sendable {
     /// Files left untouched: they keep their old wrap block (the old Lock password or this
     /// Mac's Keychain item still opens them)
     var failures: [FileFailure] = []
+    /// Files rewritten, the .sqlws and each tab file, in write order
+    var rewritten: [RewrittenFile] = []
     /// The new session (same key, new wrap block) of each workspace whose key was found, already
     /// swapped into an open window's session; its files that failed are in `failures`
     var sessions: [WorkspaceLockSession] = []
@@ -166,19 +177,21 @@ nonisolated extension LockedFileIO {
   /// sealed by another workspace, or plaintext, is skipped (a `.sqlws` is listed). An open
   /// session takes the new wrap block. PBKDF2 runs here, off the main actor (twice per
   /// workspace: the new block is checked by unwrapping it). `progress` reports each workspace
-  /// twice: before it, and once its key is ready (nothing written yet).
+  /// twice: before it, and once its key is ready (nothing written yet). `rewrote` is awaited
+  /// after each file written, before the next one (`ResealResult.rewritten` lists them all).
   @concurrent func reseal(
     _ workspaces: [WorkspaceHistoryEntry], currentPassword: String?, newPassword: String,
     storedKeys: [UUID: SymmetricKey] = [:],
     iterations: Int = SafeModePasswordRecord.lockIterations,
+    rewrote: @Sendable (RewrittenFile) async -> Void = { _ in },
     progress: @Sendable (Int, Int) -> Void = { _, _ in }
   ) async -> ResealResult {
     var result = ResealResult()
     for (index, entry) in workspaces.enumerated() {
       progress(index, workspaces.count)
-      reseal(
+      await reseal(
         entry, currentPassword: currentPassword, newPassword: newPassword,
-        storedKeys: storedKeys, iterations: iterations, into: &result
+        storedKeys: storedKeys, iterations: iterations, rewrote: rewrote, into: &result
       ) { progress(index, workspaces.count) }
     }
     progress(workspaces.count, workspaces.count)
@@ -191,9 +204,10 @@ nonisolated extension LockedFileIO {
   /// is left as it is and listed.
   private func reseal(
     _ entry: WorkspaceHistoryEntry, currentPassword: String?, newPassword: String,
-    storedKeys: [UUID: SymmetricKey], iterations: Int, into result: inout ResealResult,
+    storedKeys: [UUID: SymmetricKey], iterations: Int,
+    rewrote: @Sendable (RewrittenFile) async -> Void, into result: inout ResealResult,
     keyReady: () -> Void
-  ) {
+  ) async {
     let access = Self.access(entry.bookmark, fallback: entry.fileURL)
     // Reaches the bookmark-less tab files next to the .sqlws
     let folderAccess = entry.folderBookmark
@@ -230,21 +244,29 @@ nonisolated extension LockedFileIO {
         let tabAccess = Self.access(tab.bookmark, fallback: fileURL)
         defer { tabAccess.token?.release() }
         do {
-          try Self.reseal(tabAccess.url, with: session)
+          if let file = try Self.reseal(tabAccess.url, with: session, reportedAs: fileURL) {
+            result.rewritten.append(file)
+            await rewrote(file)
+          }
         } catch {
           result.failures.append(FileFailure(url: fileURL, reason: error.localizedDescription))
         }
       }
       // The bytes on disk now, not those read above
+      let dateRead = Self.modificationDate(of: url)
       let current = try Data(contentsOf: url)
       guard let now = try LockEnvelope.sniff(current), now.kind == .workspace,
         now.workspaceId == id
       else { throw LockedFileIOError.lockRemovedMeanwhile }
-      try SecurityScopedAccess.write(
+      if let file = try Self.overwrite(
         LockEnvelope.seal(
           LockEnvelope.open(current, contentKey: key), kind: .workspace, workspaceId: id,
           wrapBlock: block, contentKey: key),
-        to: url)
+        to: url, readAt: dateRead, reportedAs: url)
+      {
+        result.rewritten.append(file)
+        await rewrote(file)
+      }
     } catch {
       result.failures.append(FileFailure(url: url, reason: error.localizedDescription))
     }
@@ -259,18 +281,40 @@ nonisolated extension LockedFileIO {
     let tabs: [Tab]?
   }
 
-  /// One tab file of `session`'s workspace sealed again with its new wrap block; plaintext and
-  /// other workspaces' files are left alone
-  private static func reseal(_ url: URL, with session: WorkspaceLockSession) throws {
+  /// One tab file of `session`'s workspace sealed again with its new wrap block (reported as
+  /// `reportedAs`, the URL the .sqlws lists); plaintext and other workspaces' files are left
+  /// alone (nil)
+  private static func reseal(
+    _ url: URL, with session: WorkspaceLockSession, reportedAs reported: URL
+  ) throws -> RewrittenFile? {
+    let dateRead = modificationDate(of: url)
     let data = try Data(contentsOf: url)
     guard let header = try LockEnvelope.sniff(data), header.workspaceId == session.workspaceId
-    else { return }
+    else { return nil }
     let plaintext = try LockEnvelope.open(data, contentKey: session.contentKey)
-    try SecurityScopedAccess.write(
+    return try overwrite(
       LockEnvelope.seal(
         plaintext, kind: header.kind, workspaceId: session.workspaceId,
         wrapBlock: session.wrapBlock, contentKey: session.contentKey),
-      to: url)
+      to: url, readAt: dateRead, reportedAs: reported)
+  }
+
+  /// Writes `data` over the file at `url` whose bytes were read at `dateRead`. Reported only
+  /// when the file still has that date just before the write: a change landing after the read
+  /// is not one an open document may take as seen.
+  private static func overwrite(
+    _ data: Data, to url: URL, readAt dateRead: Date?, reportedAs reported: URL
+  ) throws -> RewrittenFile? {
+    let dateBeforeWrite = modificationDate(of: url)
+    try SecurityScopedAccess.write(data, to: url)
+    guard let dateBeforeWrite, dateBeforeWrite == dateRead else { return nil }
+    return RewrittenFile(
+      url: reported, dateBeforeWrite: dateBeforeWrite, dateAfterWrite: modificationDate(of: url))
+  }
+
+  /// The file's modification date (nil: no file, or it cannot be read)
+  private static func modificationDate(of url: URL) -> Date? {
+    (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
   }
 
   /// The file a stored bookmark resolves to, with access started, else `fallback` as is

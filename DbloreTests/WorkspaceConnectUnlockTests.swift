@@ -4,6 +4,7 @@
 // confirm → immediate does not. A different database or a stronger style connects immediately.
 // Turning protectedMode off without applyCommitStyle is not a user-facing path.
 
+import AppKit
 import Foundation
 import Testing
 
@@ -507,10 +508,13 @@ struct WorkspaceConnectUnlockTests {
     #expect(manager.activeUnrememberedCertificate == nil)
   }
 
+  /// Replace Pin's retry goes through the Safe Mode gate again: the unlock sheet comes back and
+  /// nothing opens before it is granted.
   @Test("A changed SSH host key after the unlock shows the blocking alert and an inline error")
-  func unlockedConnectReportsChangedHostKey() async {
+  func unlockedConnectReportsChangedHostKey() async throws {
     let changed = DatabaseError.sshHostKeyChanged(
-      host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+      host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new",
+      presentedAlgorithm: "ssh-ed25519")
     let factory = FakeDatabaseSessionFactory(capabilities: .contract(), openError: changed)
     let manager = WorkspaceManager(
       workspace: Workspace(connectionConfig: Self.strict), restoreTabs: false,
@@ -520,14 +524,19 @@ struct WorkspaceConnectUnlockTests {
     #expect(manager.pendingWeakeningConnect == Self.weak)
 
     let presenter = FakeSSHHostKeyTrustPresenter()
+    let store = InMemorySSHKnownHostStore()
+    try store.trust(
+      host: "bastion.example", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:old")
     let connected = await manager.completePendingWeakeningConnectReportingFailure(
-      coordinator: SSHHostKeyTrustCoordinator(presenter: presenter))
+      coordinator: SSHHostKeyTrustCoordinator(presenter: presenter, store: store),
+      defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
 
     #expect(!connected)
     #expect(
       presenter.changes == [
         SSHHostKeyChange(
-          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new",
+          presentedAlgorithm: "ssh-ed25519")
       ])
     // The unlock sheet closes (no pending connect); the still-open form shows the message.
     #expect(manager.pendingWeakeningConnect == nil)
@@ -537,6 +546,16 @@ struct WorkspaceConnectUnlockTests {
     #expect(
       WorkspaceWindowManager.shared.toastState.currentToast?.message.contains("bastion.example")
         != true)
+
+    let opened = factory.sessions.count
+    presenter.replaceChanged()
+    let end = ContinuousClock.now + .seconds(30)
+    while manager.pendingWeakeningConnect == nil, ContinuousClock.now < end {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(manager.pendingWeakeningConnect == Self.weak)
+    #expect(factory.sessions.count == opened)
+    #expect(try store.lookup(host: "bastion.example", port: 22)?.fingerprint == "SHA256:new")
   }
 
   @Test("A failed connect after the unlock shows inline; the next attempt clears it")
@@ -576,6 +595,232 @@ struct WorkspaceConnectUnlockTests {
     #expect(manager.workspace.connectionConfig == Self.strict)
     #expect(await !manager.connectionManager.isConnected)
   }
+
+  // MARK: - Ask for the password on connect (fake prompt, fake sessions)
+
+  private static func askConfig(password: String = "") -> ConnectionConfig {
+    var config = ConnectionConfig(
+      host: "ask-\(UUID().uuidString).example", port: 1, database: "db", username: "u",
+      password: password, sslMode: .disable)
+    config.askPasswordOnConnect = true
+    config.applyCommitStyle(.immediate)
+    return config
+  }
+
+  private static func askWorkspace(
+    _ config: ConnectionConfig?, presenter: AnsweringPasswordPresenter,
+    factory: PromptPasswordRecordingFactory, defaults: UserDefaults,
+    passwords: RecordingConnectionPasswordStore, registry: LockRegistry = LockRegistry()
+  ) -> WorkspaceManager {
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: config), restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(sessionFactory: factory, lockSource: registry),
+      defaults: defaults, passwords: passwords, sanitizesFileConfig: false,
+      lockCenter: LockCenter(
+        registry: registry, lockVault: .lockPassword(store: InMemoryPasswordStore()),
+        prompter: GrantingUnlockPrompter()),
+      passwordPrompt: ConnectionPasswordPromptCoordinator(presenter: presenter))
+    presenter.workspaceState = { [weak manager] in manager?.connectionState }
+    return manager
+  }
+
+  private static func withSuite(_ body: (UserDefaults) async throws -> Void) async throws {
+    let name = "WorkspaceConnectUnlockTests-ask-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    try await body(defaults)
+  }
+
+  @Test("The Locked banner's Unlock on an ask-on-connect workspace asks for the password")
+  func lockedUnlockReachesThePrompt() async throws {
+    try await Self.withSuite { defaults in
+      let registry = LockRegistry()
+      let passwords = RecordingConnectionPasswordStore()
+      var locked = Self.askConfig()
+      locked.isLocked = true
+      #expect(
+        SessionManager.saveConnection(
+          locked, defaults: defaults, passwords: passwords, registry: registry))
+      registry.relockAll()
+      let row = try #require(
+        SessionManager.loadHistory(
+          defaults: defaults, passwords: NoPasswordStore(), registry: registry
+        ).first?.config)
+      let presenter = AnsweringPasswordPresenter(answer: "typed")
+      let factory = PromptPasswordRecordingFactory()
+      let manager = Self.askWorkspace(
+        row, presenter: presenter, factory: factory, defaults: defaults, passwords: passwords,
+        registry: registry)
+
+      await manager.unlockAndConnect()
+      // The sheet showed over "connecting", then the typed password connected: never refused
+      // as passwordRequiredOnConnect
+      #expect(presenter.presented.map(\.action) == [.connect])
+      #expect(presenter.shownOver == [.connecting])
+      #expect(manager.connectionState == .connected)
+      #expect(factory.passwords == ["typed"])
+      #expect(manager.activeTypedPassword == "typed")
+      #expect(passwords.savedKeys.isEmpty)
+      await manager.disconnect()
+    }
+  }
+
+  @Test("A cancelled password prompt connects nothing and leaves the workspace disconnected")
+  func cancelledPromptConnectsNothing() async throws {
+    try await Self.withSuite { defaults in
+      let presenter = AnsweringPasswordPresenter(answer: nil)
+      let factory = PromptPasswordRecordingFactory()
+      let passwords = RecordingConnectionPasswordStore()
+      let manager = Self.askWorkspace(
+        nil, presenter: presenter, factory: factory, defaults: defaults, passwords: passwords)
+
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(
+          config: Self.askConfig(), defaultCommitStyle: .immediate, hasPassword: false,
+          hasTouchID: false)
+      }
+      #expect(presenter.shownOver == [.connecting])
+      #expect(manager.connectionState == .disconnected)
+      #expect(factory.passwords.isEmpty)
+      #expect(manager.workspace.connectionConfig == nil)
+      #expect(passwords.savedKeys.isEmpty)
+    }
+  }
+
+  @Test("A cancelled password prompt on a connected workspace keeps it connected with its session")
+  func cancelledPromptKeepsConnectedSession() async throws {
+    try await Self.withSuite { defaults in
+      let presenter = AnsweringPasswordPresenter(answer: nil)
+      let factory = PromptPasswordRecordingFactory()
+      let manager = Self.askWorkspace(
+        nil, presenter: presenter, factory: factory, defaults: defaults,
+        passwords: RecordingConnectionPasswordStore())
+      let first = Self.askConfig(password: "first")
+      try await manager.connect(
+        config: first, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false)
+      #expect(presenter.presented.isEmpty)
+
+      // Save & Reconnect after picking Ask on connect: the password is blank
+      var blank = first
+      blank.password = ""
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(
+          config: blank, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false)
+      }
+      #expect(presenter.shownOver == [.connected])
+      #expect(manager.connectionState == .connected)
+      #expect(await manager.connectionManager.isConnected)
+      #expect(factory.passwords == ["first"])
+      #expect(manager.workspace.connectionConfig?.password == "first")
+      await manager.disconnect()
+    }
+  }
+
+  @Test("A connect whose config holds the typed password (banner Reconnect) asks nothing")
+  func reconnectWithHeldPasswordAsksNothing() async throws {
+    try await Self.withSuite { defaults in
+      let presenter = AnsweringPasswordPresenter(answer: "typed")
+      let factory = PromptPasswordRecordingFactory()
+      let manager = Self.askWorkspace(
+        nil, presenter: presenter, factory: factory, defaults: defaults,
+        passwords: RecordingConnectionPasswordStore())
+      try await manager.connect(
+        config: Self.askConfig(), defaultCommitStyle: .immediate, hasPassword: false,
+        hasTouchID: false)
+      #expect(presenter.presented.count == 1)
+
+      await manager.performDisconnect(preserveCertificateForReconnect: true)
+      manager.connectionLostMessage = "The server closed the connection"
+      await manager.reconnectAfterConnectionLoss()
+      #expect(presenter.presented.count == 1)
+      #expect(manager.connectionState == .connected)
+      #expect(factory.passwords == ["typed", "typed"])
+      await manager.disconnect()
+    }
+  }
+
+  @Test("Test Connection on an Ask on connect row asks, tests with it and keeps nothing")
+  func testConnectionAsksAndKeepsNothing() async throws {
+    try await Self.withSuite { defaults in
+      let presenter = AnsweringPasswordPresenter(answer: nil)
+      let passwords = RecordingConnectionPasswordStore()
+      let manager = Self.askWorkspace(
+        nil, presenter: presenter, factory: PromptPasswordRecordingFactory(),
+        defaults: defaults, passwords: passwords)
+      // Nothing listens on 127.0.0.1:1: the probe fails at once, after the guard
+      var config = Self.askConfig()
+      config.host = "127.0.0.1"
+      config.timeoutSeconds = 2
+
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        _ = try await manager.testConnection(config: config)
+      }
+      presenter.answer = "typed"
+      await #expect {
+        _ = try await manager.testConnection(config: config)
+      } throws: { error in
+        if case .passwordRequiredOnConnect = error as? DatabaseError { return false }
+        return !(error is WorkspaceConnectError)
+      }
+      #expect(presenter.presented.map(\.action) == [.test, .test])
+      // A test shows no "connecting" and keeps no password
+      #expect(presenter.shownOver == [.disconnected, .disconnected])
+      #expect(manager.connectionState == .disconnected)
+      #expect(manager.activeTypedPassword == nil)
+      #expect(manager.editingConnectionConfig.password.isEmpty)
+      #expect(manager.workspace.connectionConfig == nil)
+      #expect(passwords.savedKeys.isEmpty)
+    }
+  }
+}
+
+/// Answers every password prompt with `answer` (nil: Cancel) on the next turn, and records the
+/// workspace state each sheet showed over
+@MainActor
+private final class AnsweringPasswordPresenter: ConnectionPasswordPrompting {
+  var answer: String?
+  var workspaceState: () -> ConnectionState? = { nil }
+  private(set) var presented: [ConnectionPasswordRequest] = []
+  private(set) var shownOver: [ConnectionState?] = []
+
+  init(answer: String?) {
+    self.answer = answer
+  }
+
+  func presentPasswordPrompt(
+    _ request: ConnectionPasswordRequest, anchor: NSWindow?,
+    answer reply: @escaping @MainActor (String?) -> Void
+  ) -> Bool {
+    presented.append(request)
+    shownOver.append(workspaceState())
+    let answer = answer
+    Task { @MainActor in reply(answer) }
+    return true
+  }
+
+  func dismissPasswordPrompt() {}
+}
+
+/// Grants every unlock without showing anything
+@MainActor
+private final class GrantingUnlockPrompter: UnlockPrompter {
+  func unlock(
+    _ item: LockIdentity, reason: String, anchor: NSWindow?, lockVault: UnlockPasswordVault
+  ) async -> Bool { true }
+}
+
+/// Records the password of every session it makes.
+private final class PromptPasswordRecordingFactory: DatabaseSessionFactory, @unchecked Sendable {
+  let inner = FakeDatabaseSessionFactory(capabilities: .contract())
+  private let lock = NSLock()
+  private var recorded: [ConnectionConfig] = []
+
+  func makeSession(config: ConnectionConfig) -> any DatabaseSession {
+    lock.withLock { recorded.append(config) }
+    return inner.makeSession(config: config)
+  }
+
+  @MainActor var passwords: [String] { lock.withLock { recorded }.map(\.password) }
 }
 
 @Suite("Workspace Connect Unlock - Integration (Requires PostgreSQL)", .requiresPostgres)

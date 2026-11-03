@@ -5,23 +5,26 @@
 // and the connection it was read on), so every copy of it knows its cut cells, whatever page
 // the tab shows now. A cut cell is read alone by its row's primary key:
 // `SELECT <quoted column> FROM <page relation> WHERE <k1> = :k1 [AND <k2> = :k2 ...]`, keys bound
-// as an edit's WHERE binds them (`RewindCaptureSQL.keyCondition`), checked by
+// as an edit's WHERE binds them (`RewindCaptureSQL.keyCondition`); a keyless table's row by the
+// locator its page read for it (`RowLocatorKind.terms`, the edit's own WHERE), checked by
 // `ReadOnlyQueryGuard` and sent through the tab's gated read path with named parameters (the one
 // a page read takes), pinned to the page's connection, so the value comes back as the same
 // binary `CellValue` a page read gives. No row (or more than one) is an error, never the cut
-// value. A loaded value replaces the cell and its truncation entry (`replacingCells`), in the
+// value; so is a value that is not the page's full length or does not start with the page's
+// prefix (a reused SQLite rowid, a VACUUM, another writer: the key now names other bytes). A
+// loaded value replaces the cell and its truncation entry (`replacingCells`), in the
 // shown page when it is still the page read in the same generation (`reset()` on every read).
 // The Cell Value viewer loads one cell at a time (a request for another cell cancels the older
 // one); copies, exports and Duplicate Row load every cut cell they need first, with progress
 // and Cancel, up to `bulkLimitBytes` in all, and copy, export or stage nothing when a load
 // fails, is cancelled, is over that limit or a cut cell cannot be read. Edits only ever bind
-// the user's whole new value: SET lists the edited columns, WHERE the primary key.
+// the user's whole new value: SET lists the edited columns, WHERE the primary key (or locator).
 
 import Foundation
 import Observation
 
 /// One cut cell of a data-viewer page: its row's primary key values (in
-/// `Truncation.keyColumns` order) and its column name
+/// `Truncation.keyColumns` order), or a keyless row's locator key, and its column name
 nonisolated struct LazyCell: Hashable, Sendable {
   let row: RowChangeSet.RowKey
   let column: String
@@ -39,6 +42,8 @@ nonisolated enum LazyCellLoadError: Error, Equatable, LocalizedError {
   case busy
   /// The page's connection is unknown: the value could come from another database
   case noConnection
+  /// The value read is not the page's full length or does not start with the page's prefix
+  case rowChanged
 
   var errorDescription: String? {
     switch self {
@@ -47,7 +52,22 @@ nonisolated enum LazyCellLoadError: Error, Equatable, LocalizedError {
     case .notUnique: "More than one row has the row's primary key."
     case .busy: "Values are still loading for another copy or export."
     case .noConnection: "The page's connection is unknown. Reload the table."
+    case .rowChanged: "The row changed since it was read, reload the data."
     }
+  }
+}
+
+/// What the page read of a cut value: its full byte length and its first bytes. A full value
+/// read later must match both, or it is another row's (or a changed) value.
+nonisolated struct LazyCellExpectation: Sendable {
+  let length: Int
+  let prefix: Data
+
+  /// The expectation of a cut cell whose page value is `cut`, nil when that is not bytes
+  init?(length: Int, cut: CellValue) {
+    guard case .data(let prefix) = cut else { return nil }
+    self.length = length
+    self.prefix = prefix
   }
 }
 
@@ -55,9 +75,11 @@ nonisolated enum LazyCellLoadError: Error, Equatable, LocalizedError {
 nonisolated struct LazyCellSource: Sendable {
   /// The quoted relation of the page (`DataViewerState.relation`)
   let relation: String
-  /// Primary key columns in row-key order (`Truncation.keyColumns`)
+  /// Primary key columns in row-key order (`Truncation.keyColumns`), empty for a keyless page
   let keyColumns: [String]
   let dialect: SQLDialect
+  /// A keyless page's locator kind (`Truncation.rowLocator`): rows are read by their locator
+  var rowLocator: RowLocatorKind? = nil
   /// Runs one guarded read with named parameters on the tab's typed read path
   let read:
     @Sendable (_ sql: String, _ parameters: [String: SQLBindValue]) async throws -> QueryResult
@@ -111,19 +133,26 @@ final class LazyCellLoader {
 
   // MARK: - Read
 
-  /// The read of `cell`'s full value, refused before sending when the key cannot be bound
+  /// The read of `cell`'s full value, refused before sending when the key cannot be bound. A
+  /// locator source names the row as an edit does (`RowLocatorKind.terms`: PostgreSQL
+  /// `tableoid`, `ctid` and `xmin` with their casts, SQLite the rowid and its `IS` terms), never
+  /// by the hidden `dblore_*` aliases.
   nonisolated static func statement(
     _ cell: LazyCell, source: LazyCellSource
   ) throws -> (sql: String, parameters: [String: SQLBindValue]) {
-    // `= NULL` matches nothing
-    guard !cell.row.values.contains(where: \.isNull) else { throw LazyCellLoadError.noKey }
     let condition: (sql: String, values: [String?])
-    do {
-      condition = try RewindCaptureSQL.keyCondition(
-        keys: source.keyColumns, keyValues: cell.row.values, dialect: source.dialect,
-        placeholder: { ":k\($0)" })
-    } catch RewindCaptureError.noPrimaryKey {
-      throw LazyCellLoadError.noKey
+    if let kind = source.rowLocator {
+      condition = try locatorCondition(cell.row, kind: kind, dialect: source.dialect)
+    } else {
+      // `= NULL` matches nothing
+      guard !cell.row.values.contains(where: \.isNull) else { throw LazyCellLoadError.noKey }
+      do {
+        condition = try RewindCaptureSQL.keyCondition(
+          keys: source.keyColumns, keyValues: cell.row.values, dialect: source.dialect,
+          placeholder: { ":k\($0)" })
+      } catch RewindCaptureError.noPrimaryKey {
+        throw LazyCellLoadError.noKey
+      }
     }
     var parameters: [String: SQLBindValue] = [:]
     for (index, value) in condition.values.enumerated() {
@@ -133,15 +162,41 @@ final class LazyCellLoader {
     return ("SELECT \(column) FROM \(source.relation) WHERE \(condition.sql)", parameters)
   }
 
-  /// `cell`'s full value as the read returns it. `@concurrent` leaves the main actor.
+  /// The WHERE naming the row `row` locates (`:k1`, `:k2`, ... in term order), each term bound
+  /// as `CellUpdateStatement.make` binds it; `noKey` when the key carries no locator of `kind`
+  private nonisolated static func locatorCondition(
+    _ row: RowChangeSet.RowKey, kind: RowLocatorKind, dialect: SQLDialect
+  ) throws -> (sql: String, values: [String?]) {
+    guard let locator = row.locator, let terms = kind.terms(locator, dialect: dialect) else {
+      throw LazyCellLoadError.noKey
+    }
+    var conditions: [String] = []
+    var values: [String?] = []
+    for (index, term) in terms.enumerated() {
+      let placeholder = CellUpdateStatement.bindPlaceholder(
+        ":k\(index + 1)", term.value, dialect: dialect)
+      conditions.append(term.lead + placeholder + term.trail)
+      values.append(CellUpdateStatement.inputText(term.value, dialect: dialect))
+    }
+    return (conditions.joined(separator: " AND "), values)
+  }
+
+  /// `cell`'s full value as the read returns it. With `expected` (the page's full length and
+  /// prefix of the cut value), a value of another length or prefix throws `rowChanged`: the key
+  /// or locator now names other bytes. `@concurrent` leaves the main actor.
   @concurrent nonisolated static func load(
-    _ cell: LazyCell, source: LazyCellSource
+    _ cell: LazyCell, source: LazyCellSource, expected: LazyCellExpectation? = nil
   ) async throws -> CellValue {
     let read = try statement(cell, source: source)
     _ = try ReadOnlyQueryGuard.check(read.sql, dialect: source.dialect)
     let result = try await source.read(read.sql, read.parameters)
     guard let row = result.rows.first else { throw LazyCellLoadError.rowMissing }
     guard result.rows.count == 1, row.count == 1 else { throw LazyCellLoadError.notUnique }
+    if let expected {
+      guard case .data(let full) = row[0], full.count == expected.length,
+        full.starts(with: expected.prefix)
+      else { throw LazyCellLoadError.rowChanged }
+    }
     return row[0]
   }
 
@@ -157,14 +212,17 @@ final class LazyCellLoader {
 
   /// The Cell Value viewer's load of `cell`. A request for another cell cancels this one (it
   /// throws `CancellationError`, even when its read already returned); a request for the same
-  /// cell joins it. The caller writes the value into the page.
-  func value(for cell: LazyCell, source: LazyCellSource) async throws -> CellValue {
+  /// cell joins it. `expected` checks the value read (`load`). The caller writes the value into
+  /// the page.
+  func value(
+    for cell: LazyCell, source: LazyCellSource, expected: LazyCellExpectation? = nil
+  ) async throws -> CellValue {
     let task: Task<CellValue, Error>
     if let current = viewer, current.cell == cell, !current.task.isCancelled {
       task = current.task
     } else {
       viewer?.task.cancel()
-      task = Task { try await Self.load(cell, source: source) }
+      task = Task { try await Self.load(cell, source: source, expected: expected) }
       viewer = (cell, task)
     }
     let value: CellValue
@@ -189,9 +247,13 @@ final class LazyCellLoader {
 
   /// Full values of `cells` for a copy or export, read one by one with `progress`. Cancel
   /// (`cancelLoading`), a page read meanwhile or a failed read throws: nothing is returned.
-  /// Refused while another copy or export loads (`LazyCellLoadError.busy`). The caller writes
-  /// the values into the page; none is kept here.
-  func values(for cells: [LazyCell], source: LazyCellSource) async throws -> [LazyCell: CellValue] {
+  /// Refused while another copy or export loads (`LazyCellLoadError.busy`). Each value read is
+  /// checked against its cell's `expected` (`load`). The caller writes the values into the
+  /// page; none is kept here.
+  func values(
+    for cells: [LazyCell], source: LazyCellSource,
+    expected: [LazyCell: LazyCellExpectation] = [:]
+  ) async throws -> [LazyCell: CellValue] {
     let missing = Array(Set(cells))
     guard !missing.isEmpty else { return [:] }
     guard bulk == nil else { throw LazyCellLoadError.busy }
@@ -201,7 +263,7 @@ final class LazyCellLoader {
       var values: [LazyCell: CellValue] = [:]
       for cell in missing {
         try Task.checkCancellation()
-        values[cell] = try await Self.load(cell, source: source)
+        values[cell] = try await Self.load(cell, source: source, expected: expected[cell])
         self?.progress?.done += 1
       }
       return values
@@ -227,15 +289,19 @@ final class LazyCellLoader {
 // MARK: - Result rows
 
 extension CellResult {
-  /// Row key of `row` (values of `columns`) in `keyColumns` order; nil when a key column is
-  /// missing
-  nonisolated func rowKey(_ row: [CellValue], keyColumns: [String]) -> RowChangeSet.RowKey? {
+  /// Row key of `rows[row]` in `truncation`: a keyless page's locator of that page row
+  /// (`Truncation.locators`, never matched by values), else the row's values of
+  /// `truncation.keyColumns` in that order; nil when a key column or the row is missing
+  nonisolated func rowKey(
+    at row: Int, in truncation: DataViewerState.Truncation
+  ) -> RowChangeSet.RowKey? {
+    if let kind = truncation.rowLocator { return truncation.locatorKey(row: row, kind: kind) }
+    guard rows.indices.contains(row) else { return nil }
     var values: [CellValue] = []
-    for key in keyColumns {
-      guard let index = columns.firstIndex(where: { $0.name == key }), index < row.count else {
-        return nil
-      }
-      values.append(row[index])
+    for key in truncation.keyColumns {
+      guard let index = columns.firstIndex(where: { $0.name == key }), index < rows[row].count
+      else { return nil }
+      values.append(rows[row][index])
     }
     return values.isEmpty ? nil : RowChangeSet.RowKey(values: values)
   }
@@ -248,7 +314,7 @@ extension CellResult {
     var rows = rows
     var truncation = truncation
     for (row, cells) in values where rows.indices.contains(row) {
-      let key = truncation.flatMap { rowKey(rows[row], keyColumns: $0.keyColumns) }
+      let key = truncation.flatMap { rowKey(at: row, in: $0) }
       for (column, value) in cells where rows[row].indices.contains(column) {
         rows[row][column] = value
         if let key, columns.indices.contains(column) {
@@ -267,6 +333,7 @@ extension CellResult {
     replaced.skippedQueuedCells = skippedQueuedCells
     replaced.dataRevision = dataRevision
     replaced.truncation = truncation
+    replaced.typesPending = typesPending
     return replaced
   }
 }
@@ -276,17 +343,19 @@ extension CellResult {
 extension NotebookViewModel {
   /// Where the cut cells of `truncation` are read: its relation and key, through the tab's
   /// gated read path, pinned to the connection the page was read on (a reconnect may reach
-  /// another database with the same table and keys). Throws without a connection, relation or
-  /// key columns (`noKey`), or without the page's connection (`noConnection`).
+  /// another database with the same table and keys). A keyless page's rows are read by their
+  /// locator (`Truncation.rowLocator`). Throws without a connection, relation, or key columns
+  /// or locator (`noKey`), or without the page's connection (`noConnection`).
   func lazyCellSource(for truncation: DataViewerState.Truncation) throws -> LazyCellSource {
-    guard let connectionManager, !truncation.keyColumns.isEmpty, !truncation.relation.isEmpty
+    guard let connectionManager, !truncation.relation.isEmpty,
+      !truncation.keyColumns.isEmpty || truncation.rowLocator != nil
     else { throw LazyCellLoadError.noKey }
     guard let epoch = truncation.connectionEpoch else { throw LazyCellLoadError.noConnection }
     let policy = protectionPolicy
     let caller = id
     return LazyCellSource(
       relation: truncation.relation, keyColumns: truncation.keyColumns,
-      dialect: truncation.dialect
+      dialect: truncation.dialect, rowLocator: truncation.rowLocator
     ) { sql, parameters in
       try await connectionManager.execute(
         userSQL: sql, parameters: parameters, policy: policy, maxRows: 2, caller: caller,
@@ -312,19 +381,6 @@ extension NotebookViewModel {
     }
   }
 
-  /// The cut cell of `row` (values of `result`'s columns) at `column` with its full byte
-  /// length, or nil when that value is whole (or already loaded). An unloaded value must never
-  /// be copied, exported or written.
-  func unloadedCell(
-    row: [CellValue], column: String, in result: CellResult
-  ) -> (cell: LazyCell, length: Int)? {
-    guard let truncation = truncation(of: result),
-      let key = result.rowKey(row, keyColumns: truncation.keyColumns),
-      let length = truncation.lengths[key]?[column]
-    else { return nil }
-    return (LazyCell(row: key, column: column), length)
-  }
-
   /// The unloaded cells of `result` by row index (into `rows`) and column index, with their
   /// full byte length; empty for a result with no cut value
   func unloadedCells(in result: CellResult) -> [Int: [Int: Int]] {
@@ -332,8 +388,8 @@ extension NotebookViewModel {
     let columnIndex = Dictionary(
       result.columns.enumerated().map { ($1.name, $0) }, uniquingKeysWith: { first, _ in first })
     var cells: [Int: [Int: Int]] = [:]
-    for (index, row) in result.rows.enumerated() {
-      guard let key = result.rowKey(row, keyColumns: truncation.keyColumns),
+    for index in result.rows.indices {
+      guard let key = result.rowKey(at: index, in: truncation),
         let lengths = truncation.lengths[key]
       else { continue }
       for (name, length) in lengths {
@@ -351,22 +407,31 @@ extension NotebookViewModel {
   /// Full values of the cells at `cells` (row index into `result.rows`, column index) that are
   /// cut, by row and column index: loaded first (progress and Cancel), then written into the
   /// shown page when it is the same page. Nil, after a message naming `action`, when a load
-  /// fails, is cancelled or would load more than `LazyCellLoader.bulkLimitBytes`: the caller
-  /// copies, exports or stages nothing.
+  /// fails, is cancelled, would load more than `LazyCellLoader.bulkLimitBytes` or reads a value
+  /// that is not the page's (`LazyCellLoadError.rowChanged`): the caller copies, exports or
+  /// stages nothing, and nothing is stored.
   func loadUnloadedCells(
     _ cells: [(row: Int, column: Int)], of result: CellResult, action: String
   ) async -> [Int: [Int: CellValue]]? {
     guard let truncation = truncation(of: result) else { return [:] }
     let unloaded = unloadedCells(in: result)
     var wanted: [(row: Int, column: Int, cell: LazyCell)] = []
+    var expected: [LazyCell: LazyCellExpectation] = [:]
     var bytes = 0
     for (row, column) in cells
     where result.rows.indices.contains(row) && result.columns.indices.contains(column) {
-      guard let length = unloaded[row]?[column],
-        let key = result.rowKey(result.rows[row], keyColumns: truncation.keyColumns)
+      guard let length = unloaded[row]?[column], let key = result.rowKey(at: row, in: truncation)
       else { continue }
       bytes += length
-      wanted.append((row, column, LazyCell(row: key, column: result.columns[column].name)))
+      let cell = LazyCell(row: key, column: result.columns[column].name)
+      // A cut value that is not bytes cannot be checked: never loaded as whole
+      guard let expectation = LazyCellExpectation(length: length, cut: result.rows[row][column])
+      else {
+        showToast("\(action) refused: \(Self.keylessRowChangedMessage).", type: .error)
+        return nil
+      }
+      expected[cell] = expectation
+      wanted.append((row, column, cell))
     }
     guard !wanted.isEmpty else { return [:] }
     guard bytes <= LazyCellLoader.bulkLimitBytes else {
@@ -382,10 +447,14 @@ extension NotebookViewModel {
     let values: [LazyCell: CellValue]
     do {
       let source = try lazyCellSource(for: truncation)
-      values = try await lazyCells.values(for: wanted.map(\.cell), source: source)
+      values = try await lazyCells.values(
+        for: wanted.map(\.cell), source: source, expected: expected)
     } catch is CancellationError {
       showToast(
         "\(action) cancelled before the full values loaded.", type: .info)
+      return nil
+    } catch LazyCellLoadError.rowChanged {
+      showToast("\(action) refused: \(Self.keylessRowChangedMessage).", type: .error)
       return nil
     } catch {
       showToast(
@@ -422,20 +491,20 @@ extension NotebookViewModel {
   }
 
   /// Writes values loaded for cut cells of `truncation` into the shown page when it is the
-  /// same page (same relation, key, connection and loader generation) and still has them cut;
-  /// the sidebar cell and row are re-read from the page
+  /// same page (same relation, key or locator kind, connection and loader generation) and still
+  /// has them cut; the sidebar cell and row are re-read from the page
   private func storeLoadedValues(
     _ values: [LazyCell: CellValue], of truncation: DataViewerState.Truncation,
     generation: Int
   ) {
     guard generation == lazyCells.generation, !values.isEmpty, let result = editorResult,
       let shown = self.truncation(of: result), shown.relation == truncation.relation,
-      shown.keyColumns == truncation.keyColumns,
+      shown.keyColumns == truncation.keyColumns, shown.rowLocator == truncation.rowLocator,
       shown.connectionEpoch == truncation.connectionEpoch
     else { return }
     var replaced: [Int: [Int: CellValue]] = [:]
-    for (index, row) in result.rows.enumerated() {
-      guard let key = result.rowKey(row, keyColumns: shown.keyColumns),
+    for index in result.rows.indices {
+      guard let key = result.rowKey(at: index, in: shown),
         let lengths = shown.lengths[key]
       else { continue }
       for name in lengths.keys {
@@ -475,13 +544,13 @@ extension NotebookViewModel {
     guard case .cellInfo(let column, _, _, _, let rowData?, _, .none) = rightSidebarContent
     else { return nil }
     if let truncation = editorResult.flatMap({ truncation(of: $0) }),
-      let key = Self.key(of: rowData, keyColumns: truncation.keyColumns),
+      let key = sidebarKey(of: rowData, in: truncation),
       let length = truncation.lengths[key]?[column]
     {
       return (LazyCell(row: key, column: column), length)
     }
     if let viewer = lazyCells.viewerCell, viewer.cell.column == column,
-      Self.key(of: rowData, keyColumns: viewer.truncation.keyColumns) == viewer.cell.row
+      sidebarKey(of: rowData, in: viewer.truncation) == viewer.cell.row
     {
       return (viewer.cell, viewer.length)
     }
@@ -500,22 +569,26 @@ extension NotebookViewModel {
   }
 
   /// Loads the sidebar's cut cell off the main actor and shows it in the sidebar (and the
-  /// page). Returns the failure message, nil when loaded or cancelled by a newer request.
+  /// page). Returns the failure message, nil when loaded or cancelled by a newer request. The
+  /// value read must be `length` bytes starting with the sidebar's cut prefix, else nothing is
+  /// stored (`LazyCellLoadError.rowChanged`).
   func loadSidebarCell(_ cell: LazyCell, length: Int) async -> String? {
     guard let truncation = sidebarTruncation(for: cell) else {
       return LazyCellLoadError.noKey.localizedDescription
     }
+    guard case .cellInfo(let column, _, let cut, _, _?, _, .none) = rightSidebarContent,
+      column == cell.column, let expected = LazyCellExpectation(length: length, cut: cut)
+    else { return LazyCellLoadError.rowChanged.localizedDescription }
     lazyCells.noteViewerCell(cell, length: length, truncation: truncation)
     let generation = lazyCells.generation
     do {
       let source = try lazyCellSource(for: truncation)
-      let value = try await lazyCells.value(for: cell, source: source)
+      let value = try await lazyCells.value(for: cell, source: source, expected: expected)
       storeLoadedValues([cell: value], of: truncation, generation: generation)
       // A row that left the page keeps its sidebar value: replace it there
       if case .cellInfo(
         let column, let type, _, let table, var rowData?, let keys, .none) = rightSidebarContent,
-        column == cell.column,
-        Self.key(of: rowData, keyColumns: truncation.keyColumns) == cell.row
+        column == cell.column, sidebarKey(of: rowData, in: truncation) == cell.row
       {
         rowData[column] = value
         rightSidebarContent = .cellInfo(
@@ -528,6 +601,23 @@ extension NotebookViewModel {
     } catch {
       return error.localizedDescription
     }
+  }
+
+  /// Row key of the sidebar's row in `truncation` (the shown page's or the viewer's). A keyless
+  /// page names it by the locator of the sidebar's page row (`cellDetailRow`): the shown page's
+  /// while that row is on it (the sidebar follows a re-read by position), else `truncation`'s
+  /// (the sidebar kept a row the re-read no longer has). Else `rowData`'s key values.
+  private func sidebarKey(
+    of rowData: [String: CellValue], in truncation: DataViewerState.Truncation
+  ) -> RowChangeSet.RowKey? {
+    guard let kind = truncation.rowLocator else {
+      return Self.key(of: rowData, keyColumns: truncation.keyColumns)
+    }
+    guard let row = cellDetailRow else { return nil }
+    if let shown = editorResult, shown.rows.indices.contains(row) {
+      return shown.truncation?.locatorKey(row: row, kind: kind)
+    }
+    return truncation.locatorKey(row: row, kind: kind)
   }
 
   /// Row key of the sidebar's `rowData` in `keyColumns` order

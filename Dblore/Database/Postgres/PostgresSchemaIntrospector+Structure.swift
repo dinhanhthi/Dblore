@@ -6,9 +6,11 @@
 // Defaults and generated expressions are pg_get_expr text (`'x'::character varying`,
 // `nextval('s_seq'::regclass)`, `(s * 2)`). A generated column has no default. Index keys are the
 // key columns in order (INCLUDE columns are left out); an expression key is
-// pg_get_indexdef(index, n, true). A check is pg_get_expr(conbin) and its columns are the ones
-// it references (conkey). Constraints other than p/u/f/c (exclusion, NOT NULL on PG 18) are left
-// out. Column lists travel as JSON text so names with quotes decode as they are.
+// pg_get_indexdef(index, n, true). Each key's order comes from indoption, unnested with indkey
+// so positions line up (see `keyOrder(indoption:)`). A check is pg_get_expr(conbin) and its
+// columns are the ones it references (conkey). Constraints other than p/u/f/c (exclusion, NOT
+// NULL on PG 18) are left out. Column lists travel as JSON text so names with quotes decode as
+// they are.
 
 import Foundation
 
@@ -19,7 +21,7 @@ nonisolated extension PostgresSchemaIntrospector {
     let found = try await rows(
       in: session,
       sql: """
-        SELECT c.oid::int8, obj_description(c.oid, 'pg_class') FROM pg_class c
+        SELECT c.oid::int8, NULLIF(obj_description(c.oid, 'pg_class'), '') FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')
         """,
@@ -43,7 +45,8 @@ nonisolated extension PostgresSchemaIntrospector {
     let query = """
       SELECT a.attnum::int4, a.attname::text, format_type(a.atttypid, a.atttypmod),
         a.attnotnull, pg_get_expr(d.adbin, d.adrelid), a.attidentity::text,
-        COALESCE(to_jsonb(a) ->> 'attgenerated', ''), col_description(a.attrelid, a.attnum)
+        COALESCE(to_jsonb(a) ->> 'attgenerated', ''),
+        NULLIF(col_description(a.attrelid, a.attnum), '')
       FROM pg_attribute a
       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
       WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -82,24 +85,28 @@ nonisolated extension PostgresSchemaIntrospector {
     let query = """
       SELECT ic.relname::text, i.indisunique, i.indisprimary, am.amname::text,
         pg_get_expr(i.indpred, i.indrelid), a.attname::text,
-        pg_get_indexdef(i.indexrelid, k.ord::int, true)
+        pg_get_indexdef(i.indexrelid, k.ord::int, true), k.opt::int
       FROM pg_index i
       JOIN pg_class ic ON ic.oid = i.indexrelid
       JOIN pg_am am ON am.oid = ic.relam
-      CROSS JOIN LATERAL unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+      CROSS JOIN LATERAL unnest(i.indkey::int2[], i.indoption::int2[])
+        WITH ORDINALITY AS k(attnum, opt, ord)
       LEFT JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
         AND k.attnum <> 0
       WHERE i.indrelid = $1::oid AND k.ord <= i.indnkeyatts
       ORDER BY ic.relname, k.ord
       """
     var indexes: [TableStructure.Index] = []
+    var orders: [[TableStructure.Index.KeyOrder]] = []
     for row in try await rows(in: session, sql: query, binds: bind) {
-      guard row.count >= 7, let name = CatalogValue.string(row[0]) else { continue }
+      guard row.count >= 8, let name = CatalogValue.string(row[0]) else { continue }
       let key: TableStructure.Index.Key =
         CatalogValue.string(row[5]).map { .column($0) }
         ?? .expression(CatalogValue.string(row[6]))
+      let order = Self.keyOrder(indoption: CatalogValue.int(row[7]) ?? 0)
       if indexes.last?.name == name {
         indexes[indexes.count - 1].keys.append(key)
+        orders[orders.count - 1].append(order)
         continue
       }
       let predicate = CatalogValue.string(row[4])
@@ -108,8 +115,21 @@ nonisolated extension PostgresSchemaIntrospector {
           name: name, keys: [key], isUnique: CatalogValue.bool(row[1]) ?? false,
           isPrimary: CatalogValue.bool(row[2]) ?? false, method: CatalogValue.string(row[3]),
           isPartial: predicate != nil, predicate: predicate))
+      orders.append([order])
+    }
+    for position in indexes.indices {
+      indexes[position].sortOrder = TableStructure.Index.storedOrder(orders[position])
     }
     return indexes
+  }
+
+  /// One `pg_index.indoption` entry: 0x1 DESC, 0x2 NULLS FIRST. NULLS is kept only when it is
+  /// not the default for the direction (LAST for ASC, FIRST for DESC).
+  static func keyOrder(indoption: Int) -> TableStructure.Index.KeyOrder {
+    let descending = indoption & 0x1 != 0
+    let nullsFirst = indoption & 0x2 != 0
+    return TableStructure.Index.KeyOrder(
+      descending: descending, nullsFirst: nullsFirst == descending ? nil : nullsFirst)
   }
 
   /// conparentid = 0 drops the per-partition copies of an inherited constraint.

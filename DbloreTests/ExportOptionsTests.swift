@@ -38,6 +38,11 @@ struct ExportOptionsTests {
     let json = DataExporter.applying(
       ExportOptions(format: .json, nullAsEmpty: true), to: sample())
     #expect(json.rows[0][2] == .null)
+    // Excel always writes an empty cell, so a saved preset with the flag on keeps NULL for it
+    #expect(!ExportFormat.excel.offersNullAsEmpty)
+    let excel = DataExporter.applying(
+      ExportOptions(format: .excel, nullAsEmpty: true), to: sample())
+    #expect(excel.rows[0][2] == .null)
   }
 
   @Test("A redacted null stays **** even when NULL is converted to empty")
@@ -99,6 +104,26 @@ struct ExportOptionsTests {
     #expect(csv.rows[0][0] == .string("'\r\n=1+1"))
     #expect(csv.rows[0][1] == .string("'\n=1+1"))
     #expect(csv.rows[0][2] == .string("'=\u{0301}1+1"))
+    // Plain number and time-offset text is not a formula; anything more still is
+    let plain = ["-12.5", "+3", "-1e5", "-05:00", "+02:30"]
+    let formulas = ["-cmd|' /C calc'!A0", "@SUM(1)", "+1+cmd", "-1\n=1", "-05:00x", "=1"]
+    let texts = grid(
+      columns: (plain + formulas).map { _ in "c" }, rows: [(plain + formulas).map(CellValue.string)]
+    )
+    let mixed = DataExporter.applying(ExportOptions(format: .csv), to: texts)
+    #expect(mixed.rows[0] == plain.map(CellValue.string) + formulas.map { .string("'" + $0) })
+  }
+
+  /// Security: a decimal's text is guarded like a string's, a real signed decimal is not
+  @Test("A decimal holding formula text is prefixed; a signed decimal stays a decimal")
+  func sanitizesDecimalFormulaText() {
+    let result = grid(
+      columns: ["a", "b", "c"], rows: [[.decimal("=1+1"), .decimal("-1.5"), .decimal("2\n=3")]])
+    for format in [ExportFormat.excel, .csv] {
+      let options = ExportOptions(format: format, convertLineBreaksToSpace: true)
+      let guarded = DataExporter.applying(options, to: result)
+      #expect(guarded.rows[0] == [.string("'=1+1"), .decimal("-1.5"), .string("2 =3")])
+    }
   }
 
   @Test("Without quotes, a formula cannot start the next physical line of a field")
@@ -166,6 +191,17 @@ struct ExportOptionsTests {
       result: result, pretty: false, includeNull: true, valuesAsString: true)
     #expect(text.contains("\"2\""))
     #expect(text.contains("\"NULL\""))
+  }
+
+  @Test("JSON writes a decimal of up to 15 significant digits as its exact number, else text")
+  func jsonDecimals() {
+    let long = "1234567890.123456"
+    let result = grid(
+      columns: ["price", "lead", "long", "nan"],
+      rows: [[.decimal("19.90"), .decimal("-007.50"), .decimal(long), .decimal("NaN")]])
+    #expect(
+      DataExporter.toJSON(result: result, pretty: false)
+        == #"[{"price":19.90,"lead":-7.50,"long":"\#(long)","nan":"NaN"}]"#)
   }
 
   @Test("SQL can omit column names, write an empty string for NULL, and flatten line breaks")
