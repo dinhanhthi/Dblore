@@ -269,7 +269,11 @@ struct AppWelcomeView: View {
     // password; cancel leaves the workspace disconnected, without a toast. A row unlocked since
     // the list loaded reads its password here. The window now shows the workspace: its form
     // shows a missing plugin (with the install) or a saved password the Keychain could not read.
-    Task { await manager.connectSavedConnection(seed, recents: recentManager) }
+    // A changed SSH host key shows its alert; Replace Pin connects again.
+    Task {
+      await manager.connectSavedConnection(
+        seed, recents: recentManager, offersHostKeyReplace: true)
+    }
   }
 
   /// Unlocks `config` on this window when its lock is blocked; true when it may be used

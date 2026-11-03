@@ -1095,13 +1095,20 @@ class WorkspaceManager: Identifiable {
       autoConnectTask = Task { await autoConnectIfNeeded() }
       return
     }
+    await connectReportingFailure(config)
+  }
+
+  /// `unlockAndConnect`'s connect; a changed SSH host key's Replace Pin runs it again.
+  private func connectReportingFailure(_ config: ConnectionConfig) async {
     do {
       try await connect(config: config)
     } catch WorkspaceConnectError.unlockRequired {
       // Cancelled: still locked, nothing to show
     } catch {
-      WorkspaceWindowManager.shared.showToast(
-        "Connect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)
+      let message = SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task { await self?.connectReportingFailure(config) }
+      }
+      WorkspaceWindowManager.shared.showToast("Connect failed: \(message)", type: .error)
       presentConnectErrorIfActionable(error, config: config)
     }
   }

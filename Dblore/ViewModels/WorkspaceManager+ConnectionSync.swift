@@ -456,7 +456,7 @@ extension WorkspaceManager {
   }
 
   /// Engine, host, port and username match (strings trimmed, case-insensitive)
-  nonisolated private static func isSameServer(
+  nonisolated static func isSameServer(
     _ lhs: ConnectionConfig, _ rhs: ConnectionConfig
   )
     -> Bool
@@ -645,7 +645,12 @@ extension WorkspaceManager {
   /// with its saved password (a locked row asks first and reads it after the grant). A saved
   /// password the Keychain could not read connects nothing: the form opens on the error. A
   /// cancelled unlock leaves the workspace disconnected, without an error.
-  func connectSavedConnection(_ seed: ConnectionConfig, recents: RecentManager = .shared) async {
+  /// `offersHostKeyReplace` (Welcome's saved rows only, never Shortcuts): a changed SSH host
+  /// key shows its alert, whose Replace Pin connects the row again (reading its saved password
+  /// again: the retry never holds the one read here).
+  func connectSavedConnection(
+    _ seed: ConnectionConfig, recents: RecentManager = .shared, offersHostKeyReplace: Bool = false
+  ) async {
     var config = seed
     do {
       config = try recents.withSavedPassword(seed)
@@ -655,6 +660,12 @@ extension WorkspaceManager {
     } catch {
       await AppLogger.shared.error("Failed to connect: \(error)", category: "Connection")
       presentConnectErrorIfActionable(error, config: config)
+      guard offersHostKeyReplace else { return }
+      _ = SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task {
+          await self?.connectSavedConnection(seed, recents: recents, offersHostKeyReplace: true)
+        }
+      }
     }
   }
 
@@ -700,17 +711,84 @@ extension WorkspaceManager {
 
   /// The unlock sheet's connect. A failure closes the sheet; the form that started it stays
   /// open and shows `lastUnlockConnectError`. A changed SSH host key also shows the blocking
-  /// alert. True once connected.
+  /// alert. True once connected. The settings are the Safe Mode gate's, which Replace Pin's
+  /// retry passes again (`connect`).
   func completePendingWeakeningConnectReportingFailure(
-    coordinator: SSHHostKeyTrustCoordinator = .shared
+    coordinator: SSHHostKeyTrustCoordinator = .shared,
+    defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
+    hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
+    hasTouchID: Bool = AppSettings.shared.isBiometricEnabled
   ) async -> Bool {
     lastUnlockConnectError = nil
+    // The connect clears what it holds: Replace Pin's retry gets this copy, which only the
+    // coordinator keeps, while its alert is open
+    let held = pendingWeakeningConnect.map {
+      HeldConnect(
+        config: $0, certificate: pendingWeakeningCertificate,
+        sshCredential: pendingWeakeningSSHCredential, vaultSecret: pendingWeakeningVaultSecret,
+        aiFieldsEdited: pendingWeakeningAIFieldsEdited, fromForm: pendingWeakeningFromForm,
+        defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
+    }
     do {
       try await completePendingWeakeningConnect()
       return true
     } catch {
-      lastUnlockConnectError = coordinator.report(error)
+      lastUnlockConnectError = coordinator.report(error) { [weak self] in
+        guard let held else { return }
+        Task { await self?.retryHeldConnect(held, coordinator: coordinator) }
+      }
       return false
+    }
+  }
+
+  /// A held connect with the secrets of the operation that started it.
+  private struct HeldConnect {
+    let config: ConnectionConfig
+    let certificate: ClientCertificateMaterial?
+    let sshCredential: SSHStoredCredential?
+    let vaultSecret: VaultCredentialStore.ConnectionSecret?
+    let aiFieldsEdited: Bool
+    let fromForm: Bool
+    let defaultCommitStyle: CommitStyle
+    let hasPassword: Bool
+    let hasTouchID: Bool
+  }
+
+  /// Replace Pin after the unlock sheet's connect: the same connect through `connect`, with the
+  /// held secrets in scope, so a weakening asks for a new unlock (the sheet shows again). Another
+  /// failure shows in the form, as the sheet's does.
+  private func retryHeldConnect(
+    _ held: HeldConnect, coordinator: SSHHostKeyTrustCoordinator
+  ) async {
+    let config = held.config
+    let scopedMaterial = held.certificate.map {
+      ClientCertificateStoreFactory.ScopedMaterial(
+        account: ClientCertificateStoreFactory.account(for: config), material: $0)
+    }
+    let scopedSSH = SSHCredentialStoreFactory.scoped(held.sshCredential, for: config)
+    let scopedVault = held.vaultSecret.map(VaultCredentialStore.ScopedSecret.init)
+    defer {
+      scopedMaterial?.clear()
+      scopedSSH?.clear()
+      scopedVault?.clear()
+    }
+    do {
+      try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
+        try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
+          try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
+            try await connect(
+              config: config, defaultCommitStyle: held.defaultCommitStyle,
+              hasPassword: held.hasPassword, hasTouchID: held.hasTouchID,
+              aiFieldsEdited: held.aiFieldsEdited, fromForm: held.fromForm)
+          }
+        }
+      }
+    } catch WorkspaceConnectError.unlockRequired {
+      // Held again for the unlock sheet
+    } catch {
+      lastUnlockConnectError = coordinator.report(error) { [weak self] in
+        Task { await self?.retryHeldConnect(held, coordinator: coordinator) }
+      }
     }
   }
 

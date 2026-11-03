@@ -118,8 +118,10 @@ enum DatabaseError: LocalizedError {
   case sshCredentialMissing
   /// The user did not confirm the unknown SSH host key, so nothing was pinned
   case sshHostKeyNotTrusted(host: String, fingerprint: String)
-  /// The SSH host key differs from the pinned one: the connection is blocked
-  case sshHostKeyChanged(host: String, port: Int, expected: String, presented: String)
+  /// The SSH host key differs from the pinned one: the connection is blocked. `presented` and
+  /// `presentedAlgorithm` are the server's key, which the warning's Replace Pin stores.
+  case sshHostKeyChanged(
+    host: String, port: Int, expected: String, presented: String, presentedAlgorithm: String)
   /// The pinned SSH host key exists but could not be read: the connection is blocked
   case sshHostKeyStoreUnreadable(host: String, port: Int)
   /// The saved password of connection `name` exists but could not be read from the Keychain:
@@ -209,10 +211,12 @@ enum DatabaseError: LocalizedError {
     case .sshHostKeyNotTrusted(let host, let fingerprint):
       return "The SSH host key of \(host) (\(fingerprint)) was not trusted, so the connection "
         + "was not opened. Connect again and confirm the fingerprint if it is correct."
-    case .sshHostKeyChanged(let host, let port, let expected, let presented):
+    case .sshHostKeyChanged(let host, let port, let expected, let presented, _):
       return "The SSH host key for \(host):\(port) changed. Expected \(expected), got "
         + "\(presented). This can mean a man-in-the-middle attack. If the server key was "
-        + "legitimately replaced, remove the pin in Settings > Data and connect again."
+        + "legitimately replaced, verify the new fingerprint with your server administrator, "
+        + "then connect from a Dblore window and choose Replace Pin (MCP, the command line and "
+        + "Shortcuts cannot replace a pin), or remove the pin in Settings > Data."
     case .sshHostKeyStoreUnreadable(let host, let port):
       return "The pinned SSH host key for \(host):\(port) could not be read from the Keychain, "
         + "so the connection was blocked. Unlock the Keychain and try again, or remove the pin "

@@ -1086,7 +1086,8 @@ struct ConnectionFormContent: View {
         isTesting = false
       } catch {
         isTesting = false
-        let message = SSHHostKeyTrustCoordinator.shared.report(error)
+        // Replace Pin tests the form again
+        let message = SSHHostKeyTrustCoordinator.shared.report(error) { testConnection() }
         guard formInputs == testedInputs else { return }
         testResult = .failure(message)
       }
@@ -1171,7 +1172,8 @@ struct ConnectionFormContent: View {
         isConnecting = false
       } catch {
         isConnecting = false
-        testResult = .failure(SSHHostKeyTrustCoordinator.shared.report(error))
+        // Replace Pin connects the form again
+        testResult = .failure(SSHHostKeyTrustCoordinator.shared.report(error) { connect() })
       }
     }
   }

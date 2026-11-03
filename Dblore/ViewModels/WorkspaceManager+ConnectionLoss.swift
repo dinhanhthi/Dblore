@@ -81,10 +81,21 @@ extension WorkspaceManager {
   /// Banner Reconnect: connect again with the workspace connection (errors as a toast)
   func reconnectAfterConnectionLoss() async {
     guard let config = workspace.connectionConfig else { return }
-    let scoped = activeUnrememberedCertificate.map {
+    await reconnect(
+      config, certificate: activeUnrememberedCertificate,
+      sshCredential: activeUnrememberedSSHCredential)
+  }
+
+  /// The Reconnect with the unremembered secrets it started with (the connect clears the
+  /// workspace's), so a changed SSH host key's Replace Pin can run it again.
+  private func reconnect(
+    _ config: ConnectionConfig, certificate: ClientCertificateStoreFactory.ConnectionMaterial?,
+    sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  ) async {
+    let scoped = certificate.map {
       ClientCertificateStoreFactory.ScopedMaterial(account: $0.account, material: $0.material)
     }
-    let scopedSSH = activeUnrememberedSSHCredential.map {
+    let scopedSSH = sshCredential.map {
       SSHCredentialStoreFactory.ScopedSSHCredential(
         account: $0.account, credential: $0.credential)
     }
@@ -105,8 +116,12 @@ extension WorkspaceManager {
       // banner and its Reconnect stay
       connectionLostMessage = lostMessage
     } catch {
-      WorkspaceWindowManager.shared.showToast(
-        "Reconnect failed: \(SSHHostKeyTrustCoordinator.shared.report(error))", type: .error)
+      let message = SSHHostKeyTrustCoordinator.shared.report(error) { [weak self] in
+        Task {
+          await self?.reconnect(config, certificate: certificate, sshCredential: sshCredential)
+        }
+      }
+      WorkspaceWindowManager.shared.showToast("Reconnect failed: \(message)", type: .error)
     }
   }
 

@@ -507,10 +507,13 @@ struct WorkspaceConnectUnlockTests {
     #expect(manager.activeUnrememberedCertificate == nil)
   }
 
+  /// Replace Pin's retry goes through the Safe Mode gate again: the unlock sheet comes back and
+  /// nothing opens before it is granted.
   @Test("A changed SSH host key after the unlock shows the blocking alert and an inline error")
-  func unlockedConnectReportsChangedHostKey() async {
+  func unlockedConnectReportsChangedHostKey() async throws {
     let changed = DatabaseError.sshHostKeyChanged(
-      host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+      host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new",
+      presentedAlgorithm: "ssh-ed25519")
     let factory = FakeDatabaseSessionFactory(capabilities: .contract(), openError: changed)
     let manager = WorkspaceManager(
       workspace: Workspace(connectionConfig: Self.strict), restoreTabs: false,
@@ -520,14 +523,19 @@ struct WorkspaceConnectUnlockTests {
     #expect(manager.pendingWeakeningConnect == Self.weak)
 
     let presenter = FakeSSHHostKeyTrustPresenter()
+    let store = InMemorySSHKnownHostStore()
+    try store.trust(
+      host: "bastion.example", port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:old")
     let connected = await manager.completePendingWeakeningConnectReportingFailure(
-      coordinator: SSHHostKeyTrustCoordinator(presenter: presenter))
+      coordinator: SSHHostKeyTrustCoordinator(presenter: presenter, store: store),
+      defaultCommitStyle: .review, hasPassword: true, hasTouchID: false)
 
     #expect(!connected)
     #expect(
       presenter.changes == [
         SSHHostKeyChange(
-          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new",
+          presentedAlgorithm: "ssh-ed25519")
       ])
     // The unlock sheet closes (no pending connect); the still-open form shows the message.
     #expect(manager.pendingWeakeningConnect == nil)
@@ -537,6 +545,16 @@ struct WorkspaceConnectUnlockTests {
     #expect(
       WorkspaceWindowManager.shared.toastState.currentToast?.message.contains("bastion.example")
         != true)
+
+    let opened = factory.sessions.count
+    presenter.replaceChanged()
+    let end = ContinuousClock.now + .seconds(30)
+    while manager.pendingWeakeningConnect == nil, ContinuousClock.now < end {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(manager.pendingWeakeningConnect == Self.weak)
+    #expect(factory.sessions.count == opened)
+    #expect(try store.lookup(host: "bastion.example", port: 22)?.fingerprint == "SHA256:new")
   }
 
   @Test("A failed connect after the unlock shows inline; the next attempt clears it")

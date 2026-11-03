@@ -122,21 +122,143 @@ struct SSHHostKeyTrustFlowTests {
 
     let changed = coordinator.report(
       DatabaseError.sshHostKeyChanged(
-        host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new"))
+        host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new",
+        presentedAlgorithm: "ssh-ed25519"),
+      retry: {})
     #expect(
       presenter.changes == [
         SSHHostKeyChange(
-          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new")
+          host: "bastion.example", port: 22, expected: "SHA256:old", presented: "SHA256:new",
+          presentedAlgorithm: "ssh-ed25519")
       ])
     #expect(changed.contains("bastion.example:22"))
 
     let cancelled = coordinator.report(
-      DatabaseError.sshHostKeyNotTrusted(host: "bastion.example", fingerprint: "SHA256:new"))
+      DatabaseError.sshHostKeyNotTrusted(host: "bastion.example", fingerprint: "SHA256:new"),
+      retry: {})
     #expect(cancelled == "Connection cancelled. The SSH host key was not trusted.")
 
-    let other = coordinator.report(DatabaseError.sshAuthenticationFailed)
+    let other = coordinator.report(DatabaseError.sshAuthenticationFailed, retry: {})
     #expect(other == DatabaseError.sshAuthenticationFailed.localizedDescription)
     #expect(presenter.changes.count == 1)
+  }
+
+  /// A pin of `SHA256:old` for `host`:22, a coordinator and policy on it, and what connecting
+  /// with a new ed25519 key threw.
+  private static func changedKey(
+    _ presenter: FakeSSHHostKeyTrustPresenter, host: String = "bastion.example",
+    store: any SSHKnownHostStore = InMemorySSHKnownHostStore()
+  ) async throws -> (
+    store: any SSHKnownHostStore, coordinator: SSHHostKeyTrustCoordinator,
+    policy: SSHHostKeyPolicy, key: NIOSSHPublicKey, fingerprint: String, error: any Error
+  ) {
+    try store.trust(host: host, port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:old")
+    let coordinator = SSHHostKeyTrustCoordinator(presenter: presenter, store: store)
+    let policy = SSHHostKeyPolicy(store: store, prompt: coordinator)
+    let key = NIOSSHPrivateKey(ed25519Key: Curve25519.Signing.PrivateKey()).publicKey
+    let fingerprint = try #require(SSHTunnel.fingerprint(of: key))
+    do {
+      try await policy.validate(host: host, port: 22, hostKey: key, fingerprint: fingerprint)
+    } catch {
+      return (store, coordinator, policy, key, fingerprint, error)
+    }
+    Issue.record("A changed key must be blocked")
+    throw CancellationError()
+  }
+
+  @Test("Replace Pin stores exactly the presented key, then the retry trusts it")
+  func replacePinStoresPresentedKey() async throws {
+    let presenter = FakeSSHHostKeyTrustPresenter()
+    let changed = try await Self.changedKey(presenter)
+    let retried = FiredFlag()
+    _ = changed.coordinator.report(changed.error, retry: { retried.set() })
+    #expect(
+      presenter.changes == [
+        SSHHostKeyChange(
+          host: "bastion.example", port: 22, expected: "SHA256:old",
+          presented: changed.fingerprint, presentedAlgorithm: "ssh-ed25519")
+      ])
+
+    presenter.replaceChanged()
+    try await waitFor { retried.isSet }
+    let pinned = try #require(try changed.store.lookup(host: "bastion.example", port: 22))
+    #expect(pinned.algorithm == "ssh-ed25519")
+    #expect(pinned.fingerprint == changed.fingerprint)
+    // The retried connect is trusted without a prompt
+    try await changed.policy.validate(
+      host: "bastion.example", port: 22, hostKey: changed.key, fingerprint: changed.fingerprint)
+    #expect(presenter.presented.isEmpty)
+  }
+
+  @Test("Cancel on a changed key keeps the old pin and the connect stays blocked")
+  func cancelKeepsOldPin() async throws {
+    let presenter = FakeSSHHostKeyTrustPresenter()
+    let changed = try await Self.changedKey(presenter)
+    let retried = FiredFlag()
+    _ = changed.coordinator.report(changed.error, retry: { retried.set() })
+    presenter.cancelChanged()
+
+    #expect(!retried.isSet)
+    #expect(
+      try changed.store.lookup(host: "bastion.example", port: 22)?.fingerprint == "SHA256:old")
+    await #expect {
+      try await changed.policy.validate(
+        host: "bastion.example", port: 22, hostKey: changed.key,
+        fingerprint: changed.fingerprint)
+    } throws: {
+      guard case DatabaseError.sshHostKeyChanged = $0 else { return false }
+      return true
+    }
+  }
+
+  @Test("The retry and the secrets it holds go once the changed-key alert ends without Replace")
+  func retryReleasedWithoutReplace() async throws {
+    let presenter = FakeSSHHostKeyTrustPresenter()
+    let changed = try await Self.changedKey(presenter)
+    weak var cancelled: RetrySecret?
+    weak var dropped: RetrySecret?
+    do {
+      let secret = RetrySecret()
+      cancelled = secret
+      _ = changed.coordinator.report(changed.error) { secret.use() }
+      // A second report while the alert shows is dropped: one alert at a time
+      let second = RetrySecret()
+      dropped = second
+      _ = changed.coordinator.report(changed.error) { second.use() }
+    }
+    #expect(dropped == nil)
+    presenter.cancelChanged()
+    #expect(cancelled == nil)
+
+    weak var closed: RetrySecret?
+    do {
+      let secret = RetrySecret()
+      closed = secret
+      _ = changed.coordinator.report(changed.error) { secret.use() }
+    }
+    // The window closed: AppKit may keep the alert's handler, never the retry
+    presenter.closeChangedAlertWindow()
+    #expect(closed == nil)
+    #expect(presenter.changes.count == 2)
+  }
+
+  @Test("Replace Pin keeps a pin that changed since the alert and does not retry")
+  func replaceKeepsPinChangedMeanwhile() async throws {
+    let presenter = FakeSSHHostKeyTrustPresenter()
+    let store = TouchFlagSSHKnownHostStore()
+    // Its own host: the toast this shows is shared with tests running in parallel
+    let host = "pin-race.example"
+    let changed = try await Self.changedKey(presenter, host: host, store: store)
+    let retried = FiredFlag()
+    _ = changed.coordinator.report(changed.error, retry: { retried.set() })
+    // Another window replaced the pin while this alert was open
+    store.replacePin(host: host, port: 22, algorithm: "ssh-ed25519", fingerprint: "SHA256:other")
+    store.arm()
+
+    presenter.replaceChanged()
+    try await waitFor { store.touched.isSet }
+    #expect(try store.lookup(host: host, port: 22)?.fingerprint == "SHA256:other")
+    #expect(!retried.isSet)
   }
 
   @Test("No window for the sheet and a failed pin are reported apart from Cancel")
@@ -147,7 +269,8 @@ struct SSHHostKeyTrustFlowTests {
     let request = Self.request(host: "hidden.example", fingerprint: "SHA256:hidden")
     #expect(await coordinator.confirm(request) == false)
     let unshown = coordinator.report(
-      DatabaseError.sshHostKeyNotTrusted(host: "hidden.example", fingerprint: "SHA256:hidden"))
+      DatabaseError.sshHostKeyNotTrusted(host: "hidden.example", fingerprint: "SHA256:hidden"),
+      retry: {})
     #expect(unshown.contains("could not be shown"))
 
     // Shown later and cancelled by the user: a plain Cancel again.
@@ -158,11 +281,12 @@ struct SSHHostKeyTrustFlowTests {
     #expect(await pending.value == false)
     #expect(
       coordinator.report(
-        DatabaseError.sshHostKeyNotTrusted(host: "hidden.example", fingerprint: "SHA256:hidden"))
+        DatabaseError.sshHostKeyNotTrusted(host: "hidden.example", fingerprint: "SHA256:hidden"),
+        retry: {})
         == "Connection cancelled. The SSH host key was not trusted.")
 
     let pinFailed = coordinator.report(
-      DatabaseError.sshHostKeyPinFailed(host: "bastion.example", port: 22))
+      DatabaseError.sshHostKeyPinFailed(host: "bastion.example", port: 22), retry: {})
     #expect(pinFailed.contains("could not be saved"))
     #expect(pinFailed != "Connection cancelled. The SSH host key was not trusted.")
   }
@@ -342,10 +466,10 @@ struct SSHHostKeyTrustFlowTests {
   }
 }
 
-/// Polls on the main actor until `condition` holds (fails after 5 s).
+/// Polls on the main actor until `condition` holds (fails after 30 s: the full suite can be slow).
 @MainActor
 private func waitFor(_ condition: () -> Bool) async throws {
-  let end = ContinuousClock.now + .seconds(5)
+  let end = ContinuousClock.now + .seconds(30)
   while !condition() {
     guard ContinuousClock.now < end else {
       Issue.record("condition not met in time")
@@ -365,6 +489,9 @@ final class FakeSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
   private(set) var dismissCount = 0
   private(set) var changes: [SSHHostKeyChange] = []
   private var decide: ((Bool) -> Void)?
+  private var changedAnswer: (@MainActor (Bool) -> Void)?
+  /// Handlers kept after their window closed, as AppKit may.
+  private var leakedHandlers: [Any] = []
   private var waiters: [(condition: () -> Bool, continuation: CheckedContinuation<Void, Never>)] =
     []
 
@@ -411,8 +538,33 @@ final class FakeSSHHostKeyTrustPresenter: SSHHostKeyTrustPresenting {
     for waiter in met { waiter.continuation.resume() }
   }
 
-  func presentHostKeyChanged(_ change: SSHHostKeyChange) {
+  /// One alert at a time, as AppKit's: a report while one is open is not shown.
+  func presentHostKeyChanged(
+    _ change: SSHHostKeyChange, answered: @escaping @MainActor (_ replace: Bool) -> Void
+  ) -> Bool {
+    guard changedAnswer == nil else { return false }
     changes.append(change)
+    changedAnswer = answered
+    return true
+  }
+
+  /// The window under the changed-key alert closed: answered false, and the handler kept,
+  /// as AppKit may.
+  func closeChangedAlertWindow() {
+    leakedHandlers.append(changedAnswer as Any)
+    endChanged(replace: false)
+  }
+
+  /// Replace Pin in the changed-key alert.
+  func replaceChanged() { endChanged(replace: true) }
+
+  /// Cancel in the changed-key alert.
+  func cancelChanged() { endChanged(replace: false) }
+
+  private func endChanged(replace: Bool) {
+    let pending = changedAnswer
+    changedAnswer = nil
+    pending?(replace)
   }
 
   func answer(_ trusted: Bool) {
@@ -526,6 +678,42 @@ private final class DenyAllUsers: NIOSSHServerUserAuthenticationDelegate {
   ) {
     responsePromise.succeed(.failure)
   }
+}
+
+/// Stands for a secret a retry captured; released with the retry.
+private final class RetrySecret {
+  func use() {}
+}
+
+/// An in-memory store that flags its first read or write after `arm()`.
+private final class TouchFlagSSHKnownHostStore: SSHKnownHostStore, @unchecked Sendable {
+  let touched = FiredFlag()
+  private let base = InMemorySSHKnownHostStore()
+  private let lock = NSLock()
+  private var armed = false
+
+  func arm() { lock.withLock { armed = true } }
+
+  private func touch() {
+    if lock.withLock({ armed }) { touched.set() }
+  }
+
+  func load(account: String) throws -> SSHKnownHost? {
+    defer { touch() }
+    return try base.load(account: account)
+  }
+
+  func add(_ host: SSHKnownHost, account: String) -> Bool {
+    defer { touch() }
+    return base.add(host, account: account)
+  }
+
+  func save(_ host: SSHKnownHost, account: String) -> Bool {
+    defer { touch() }
+    return base.save(host, account: account)
+  }
+
+  func delete(account: String) { base.delete(account: account) }
 }
 
 /// Lookups find nothing and every pin fails to save (e.g. a Keychain write error).

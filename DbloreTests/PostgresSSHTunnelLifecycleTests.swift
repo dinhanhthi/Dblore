@@ -511,7 +511,9 @@ struct PostgresSSHTunnelLifecycleTests {
     let prompt = FakeSSHHostKeyPrompt(answer: true)
     let manager = DatabaseConnectionManager(sshHostKeyPrompt: prompt)
     let isChanged: (any Error) -> Bool = {
-      guard case DatabaseError.sshHostKeyChanged(_, 2222, "SHA256:wrong", let presented) = $0
+      guard
+        case DatabaseError.sshHostKeyChanged(
+          _, 2222, "SHA256:wrong", let presented, "ssh-ed25519") = $0
       else { return false }
       return presented == Self.bastionFingerprint
     }

@@ -5,15 +5,22 @@
 // Time in the sheet does not count against the connection timeout (`SSHHandshakeDeadline`).
 // When the server gives up meanwhile (sshd LoginGraceTime), the connect fails, its validator
 // task is cancelled, and the sheet closes; the connect error says why.
+// A changed key stays blocked until the user clicks Replace Pin in its alert: that stores the
+// presented key and runs the caller's retry, the same connect through the normal path. Only the
+// coordinator holds the retry (and the unremembered secrets it captured), and only while its
+// alert is open. MCP, the CLI and Shortcuts never reach this alert
+// (`MCPConnectionPool.refuseUnattended`).
 
 import Foundation
 
-/// A changed host key, for the blocking alert.
+/// A changed host key, for the blocking alert. `presented` and `presentedAlgorithm` are the
+/// server's key: what Replace Pin stores.
 nonisolated struct SSHHostKeyChange: Equatable, Sendable {
   var host: String
   var port: Int
   var expected: String
   var presented: String
+  var presentedAlgorithm: String
 }
 
 /// Shows the trust sheet and the changed-key alert. Production: `AppKitSSHHostKeyTrustPresenter`.
@@ -26,8 +33,13 @@ protocol SSHHostKeyTrustPresenting: AnyObject {
   ) -> Bool
   /// Closes the sheet without an answer (every waiting connect was cancelled).
   func dismissTrust()
-  /// Blocking alert with both fingerprints and the man-in-the-middle warning. No Trust button.
-  func presentHostKeyChanged(_ change: SSHHostKeyChange)
+  /// Blocking alert with both fingerprints and the man-in-the-middle warning. Cancel (the
+  /// default) keeps the pin. `answered` gets true for Replace Pin, false for Cancel or when the
+  /// alert goes away (its window closed), at most once. Returns false, and never calls
+  /// `answered`, when the alert is not shown (another one is open).
+  func presentHostKeyChanged(
+    _ change: SSHHostKeyChange, answered: @escaping @MainActor (_ replace: Bool) -> Void
+  ) -> Bool
 }
 
 @MainActor
@@ -43,15 +55,23 @@ final class SSHHostKeyTrustCoordinator: SSHHostKeyPrompt {
   }
 
   private let presenter: (any SSHHostKeyTrustPresenting)?
+  /// Where Replace Pin writes: the store `SSHHostKeyPolicy` reads by default.
+  private let store: any SSHKnownHostStore
   /// Waiting requests in arrival order; the one with `shownID` is in the sheet.
   private var entries: [Entry] = []
   private var shownID: UUID?
   /// Host and fingerprint of keys declined because no window could show the sheet, so
   /// `report` does not call it a Cancel. Dropped once the sheet is shown for that key.
   private var unpresented: Set<String> = []
+  /// Replace Pin's retry of each open changed-key alert; dropped once the alert ends.
+  private var changedRetries: [UUID: @MainActor () -> Void] = [:]
 
-  init(presenter: (any SSHHostKeyTrustPresenting)?) {
+  init(
+    presenter: (any SSHHostKeyTrustPresenting)?,
+    store: any SSHKnownHostStore = SSHKnownHostStoreFactory.shared
+  ) {
     self.presenter = presenter
+    self.store = store
   }
 
   nonisolated func confirmUnknownHost(_ request: SSHHostKeyTrustRequest) async -> Bool {
@@ -71,12 +91,23 @@ final class SSHHostKeyTrustCoordinator: SSHHostKeyPrompt {
   }
 
   /// The text for a failed connect or Test Connection. A changed host key also shows the
-  /// blocking alert. A key declined because no window could show the sheet is not a Cancel.
-  func report(_ error: any Error) -> String {
+  /// blocking alert, whose Replace Pin stores the presented key and then calls `retry` (the
+  /// caller's same connect). A key declined because no window could show the sheet is not a
+  /// Cancel.
+  func report(_ error: any Error, retry: @escaping @MainActor () -> Void) -> String {
     switch error {
-    case DatabaseError.sshHostKeyChanged(let host, let port, let expected, let presented):
-      presenter?.presentHostKeyChanged(
-        SSHHostKeyChange(host: host, port: port, expected: expected, presented: presented))
+    case DatabaseError.sshHostKeyChanged(
+      let host, let port, let expected, let presented, let algorithm):
+      let change = SSHHostKeyChange(
+        host: host, port: port, expected: expected, presented: presented,
+        presentedAlgorithm: algorithm)
+      let id = UUID()
+      changedRetries[id] = retry
+      let shown =
+        presenter?.presentHostKeyChanged(change) { [weak self] replace in
+          self?.changedAlertEnded(id, change: change, replace: replace)
+        } ?? false
+      if !shown { changedRetries[id] = nil }
       return "Connection blocked: the SSH host key of \(host):\(port) changed."
     case DatabaseError.sshHostKeyNotTrusted(let host, let fingerprint)
     where unpresented.contains(Self.key(host: host, fingerprint: fingerprint)):
@@ -86,6 +117,56 @@ final class SSHHostKeyTrustCoordinator: SSHHostKeyPrompt {
       return "Connection cancelled. The SSH host key was not trusted."
     default:
       return error.localizedDescription
+    }
+  }
+
+  /// The alert ended: its retry leaves the coordinator, so a Cancel or a closed window drops it
+  /// (and its secrets) at once, and Replace Pin holds it only until it runs.
+  private func changedAlertEnded(_ id: UUID, change: SSHHostKeyChange, replace: Bool) {
+    guard let retry = changedRetries.removeValue(forKey: id), replace else { return }
+    replacePin(change, retry: retry)
+  }
+
+  private enum PinReplacement {
+    case saved, changedMeanwhile, unreadable, failed
+  }
+
+  /// Replace Pin: stores exactly the presented key (off the main actor: Keychain I/O), then
+  /// retries. Only while the pin is still the alert's expected key: one replaced or removed
+  /// meanwhile is kept and nothing retries. A failed read or write keeps the connect blocked and
+  /// says so; no retry.
+  private func replacePin(_ change: SSHHostKeyChange, retry: @escaping @MainActor () -> Void) {
+    let store = store
+    Task {
+      let outcome = await Task.detached { () -> PinReplacement in
+        let stored: SSHKnownHost?
+        do {
+          stored = try store.lookup(host: change.host, port: change.port)
+        } catch {
+          return .unreadable
+        }
+        guard stored?.fingerprint == change.expected else { return .changedMeanwhile }
+        let saved = store.replacePin(
+          host: change.host, port: change.port, algorithm: change.presentedAlgorithm,
+          fingerprint: change.presented)
+        return saved ? .saved : .failed
+      }.value
+      switch outcome {
+      case .saved:
+        retry()
+      case .changedMeanwhile:
+        WorkspaceWindowManager.shared.showToast(
+          "The SSH host key pin of \(change.host):\(change.port) changed since the warning was "
+            + "shown, so it was not replaced. Connect again to review it.", type: .error)
+      case .unreadable:
+        WorkspaceWindowManager.shared.showToast(
+          DatabaseError.sshHostKeyStoreUnreadable(host: change.host, port: change.port)
+            .localizedDescription, type: .error)
+      case .failed:
+        WorkspaceWindowManager.shared.showToast(
+          DatabaseError.sshHostKeyPinFailed(host: change.host, port: change.port)
+            .localizedDescription, type: .error)
+      }
     }
   }
 
