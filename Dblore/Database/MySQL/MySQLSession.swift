@@ -629,7 +629,7 @@ nonisolated final class MySQLSession: DatabaseSession, @unchecked Sendable {
     // task, by when the connection may have read its greeting or (a refused tunnel channel)
     // been closed and lost its address.
     loop.flatSubmit {
-      ClientBootstrap(group: loop)
+      ClientBootstrap(group: loop).withKeepalive()
         .channelOption(
           ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1
         )

@@ -159,7 +159,7 @@ extension PostgresSession {
   ) async throws -> PostgresConnection {
     let channel = try await tunnel.openDirectTCPIP(
       targetHost: config.host, targetPort: config.port)
-    let configuration = Self.tunneledConfiguration(channel: channel, config: config, tls: tls)
+    let configuration = Self.channelConfiguration(channel: channel, config: config, tls: tls)
     do {
       return try await PostgresConnection.connect(
         on: channel.eventLoop, configuration: configuration, id: 1,
@@ -170,19 +170,6 @@ extension PostgresSession {
     }
   }
 
-  /// The configuration for one tunneled attempt. Same TLS mode and context as a direct
-  /// connection; the TLS name is the database host (as a direct connection derives it), never
-  /// the bastion.
-  static func tunneledConfiguration(
-    channel: any Channel, config: ConnectionConfig, tls: PostgresConnection.Configuration.TLS
-  ) -> PostgresConnection.Configuration {
-    var configuration = PostgresConnection.Configuration(
-      establishedChannel: channel, tls: tls, username: config.username,
-      password: config.password, database: config.database)
-    configuration.options.tlsServerName = tlsServerName(for: config.host)
-    return configuration
-  }
-
   /// Verify Full checks the certificate against `tlsServerName`, and with none (an IP literal,
   /// which SNI refuses) against the peer address: for an SSH channel that is the bastion's
   /// address, not the database server's. Refused rather than checked against the wrong host.
@@ -191,16 +178,5 @@ extension PostgresSession {
     throw DatabaseError.connectionFailed(
       "Verify Full over SSH needs the database server's host name, not an IP address. Enter "
         + "the name in its certificate, or choose Verify CA.")
-  }
-
-  /// The SNI and verification name for `host`. Nil for an IP literal (not valid in SNI),
-  /// matching what PostgresNIO does for a direct TCP connection.
-  static func tlsServerName(for host: String) -> String? {
-    var ipv4 = in_addr()
-    var ipv6 = in6_addr()
-    let isIP = host.withCString {
-      inet_pton(AF_INET, $0, &ipv4) == 1 || inet_pton(AF_INET6, $0, &ipv6) == 1
-    }
-    return isIP ? nil : host
   }
 }

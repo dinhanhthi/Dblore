@@ -441,7 +441,7 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
     }
     let sslContext = plan.usesTLS ? try NIOSSLContext(configuration: tlsConfiguration(plan)) : nil
     let context = MongoClientContext(logger: Logger(label: "dblore.mongo"))
-    let channel = try await ClientBootstrap(group: group)
+    let channel = try await ClientBootstrap(group: group).withKeepalive()
       .connectTimeout(.seconds(Int64(max(1, timeoutSeconds))))
       .channelInitializer { channel in
         guard let sslContext else {

@@ -149,7 +149,7 @@ nonisolated final class SSHTunnel: SSHTunneling, @unchecked Sendable {
       defer { deadline.resume() }
       try await hostKeyValidator(key, fingerprint)
     }
-    let bootstrap = ClientBootstrap(group: loop)
+    let bootstrap = ClientBootstrap(group: loop).withKeepalive()
       .connectTimeout(connectTimeout)
       .channelInitializer { channel in
         channel.eventLoop.makeCompletedFuture {

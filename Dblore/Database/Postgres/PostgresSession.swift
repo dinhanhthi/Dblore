@@ -17,8 +17,52 @@ struct PostgresSentError: Error, @unchecked Sendable {
   let underlying: any Error
 }
 
+/// The direct TCP connect failed (refused, unreachable, timed out). Reads like the
+/// `connectionError` PostgresNIO raised when it opened the socket itself.
+nonisolated private struct PostgresTransportError: LocalizedError, @unchecked Sendable {
+  let underlying: any Error
+
+  var errorDescription: String? {
+    let code = PSQLError.Code.connectionError.description
+    return PostgresSession.underlyingErrorMessage(
+      underlying, fallback: PostgresSession.humanReadableErrorMessage(for: code) ?? code)
+  }
+}
+
+/// Closes a direct attempt's socket when its task is cancelled: at once while the startup
+/// runs, or as soon as the connect completes. Nothing once the attempt finished.
+nonisolated private final class DirectConnectCancel: @unchecked Sendable {
+  private let lock = NSLock()
+  private var cancelled = false
+  private var channel: (any Channel)?
+
+  /// False, with `channel` closed, when the attempt was cancelled first.
+  func connected(_ channel: any Channel) -> Bool {
+    let keep = lock.withLock {
+      if !cancelled { self.channel = channel }
+      return !cancelled
+    }
+    if !keep { channel.close(promise: nil) }
+    return keep
+  }
+
+  func cancel() {
+    let channel = lock.withLock {
+      cancelled = true
+      return self.channel
+    }
+    channel?.close(promise: nil)
+  }
+
+  func finished() {
+    lock.withLock { channel = nil }
+  }
+}
+
 nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
+  /// The effective connect config: a Vault connection's carries the lease's username and
+  /// password (the manager's overlay), so a side connection to this backend can log in.
   let config: ConnectionConfig
   let closeEvents: AsyncStream<SessionCloseReason>
   /// Builds the SSH tunnel when `config.sshTunnel` is set.
@@ -35,6 +79,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   private var extensionTypesStorage: [UInt32: String] = [:]
   /// `server_version_num`, read once at open (nil when that read failed)
   private var serverVersionNumStorage: Int?
+  /// `pg_backend_pid()` and its `backend_start::text`, read with the version (nil on failure)
+  private var backendPIDStorage: Int32?
+  private var backendStartTextStorage: String?
   private var didEmitClose = false
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
 
@@ -94,11 +141,10 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
     }
 
-    let postgresConfig = Self.postgresConfiguration(config, tls: tlsConfig)
     let conn: PostgresConnection
     do {
       conn = try await attemptConnection(
-        group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
+        group: group, tls: tlsConfig, timeoutSeconds: config.timeoutSeconds)
     } catch let error as PSQLError {
       await AppLogger.shared.error(
         "Failed to connect to database: \(formatPostgresError(error))", category: "Database")
@@ -106,6 +152,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       setGroup(nil)
       throw DatabaseError.connectionFailed(formatPostgresError(error))
     } catch {
+      await AppLogger.shared.error(
+        "Failed to connect to database: \(error.localizedDescription)", category: "Database")
       try? await group.shutdownGracefully()
       setGroup(nil)
       throw DatabaseError.connectionFailed(error.localizedDescription)
@@ -146,23 +194,32 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     lock.withLock { extensionTypesStorage }
   }
 
-  /// Best effort, at open (before any transaction): without it the version is unknown, and
-  /// the types editor adds enum values the way older servers need.
+  /// Best effort, at open (before any transaction): without it the version is unknown (the
+  /// types editor adds enum values the way older servers need) and so is the backend.
   private func loadServerVersionNum() async {
     do {
-      let version = try await runWatched {
+      let identity = try await runWatched {
         guard let connection = self.connection else { throw ConnectionClosedError() }
         let rows = try await connection.query(
-          PostgresQuery(unsafeSQL: "SELECT current_setting('server_version_num')::int"),
+          PostgresQuery(
+            // The start time is a subquery, so a missing pg_stat_activity row never drops the
+            // version or the pid
+            unsafeSQL: "SELECT current_setting('server_version_num')::int, pg_backend_pid(), "
+              + "(SELECT backend_start::text FROM pg_stat_activity WHERE pid = pg_backend_pid())"),
           logger: Logger(label: "dblore.session"))
-        var version: Int?
-        for try await number in rows.decode(Int.self) { version = number }
-        return version
+        var identity: (version: Int, pid: Int32, start: String?)?
+        for try await row in rows.decode((Int, Int32, String?).self) { identity = row }
+        return identity
       }
-      lock.withLock { serverVersionNumStorage = version }
+      lock.withLock {
+        serverVersionNumStorage = identity?.version
+        backendPIDStorage = identity?.pid
+        backendStartTextStorage = identity?.start
+      }
     } catch {
       await AppLogger.shared.warning(
-        "server_version_num not read: " + String(describing: error), category: "Database")
+        "server_version_num and backend pid not read: " + String(describing: error),
+        category: "Database")
     }
   }
 
@@ -170,6 +227,18 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// that read failed. A new connection is a new session, so it never outlives its server.
   var serverVersionNum: Int? {
     lock.withLock { serverVersionNumStorage }
+  }
+
+  /// This connection's server process (`pg_backend_pid()`), read once at open; nil when that
+  /// read failed.
+  var backendPID: Int32? {
+    lock.withLock { backendPIDStorage }
+  }
+
+  /// `backend_start::text` of `backendPID`, exactly as the server printed it (never parsed):
+  /// with the pid it names this backend, not a later one that reuses the pid.
+  var backendStartText: String? {
+    lock.withLock { backendStartTextStorage }
   }
 
   /// Test connection without storing it on the actor. Same probe as before: real connect,
@@ -189,17 +258,16 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       throw DatabaseError.connectionFailed("Failed to configure TLS: \(error.localizedDescription)")
     }
 
-    let postgresConfig = Self.postgresConfiguration(config, tls: tlsConfig)
     // The probe work outlives a timeout or cancel. The group shuts down when that work ends,
     // so a connect retry never lands on a shut-down loop.
     let shutdown = ProbeTeardown(
-      grace: .nanoseconds(postgresConfig.options.connectTimeout.nanoseconds) + .seconds(5)
+      grace: .nanoseconds(Self.connectTimeout.nanoseconds) + .seconds(5)
     ) { try? await group.shutdownGracefully() }
     do {
       try await withTimeout(of: .seconds(config.timeoutSeconds)) {
         try await self.probeConnectAndQuery {
           do {
-            try await self.runProbeQuery(group: group, postgresConfig: postgresConfig)
+            try await self.runProbeQuery(group: group, tls: tlsConfig)
           } catch {
             await shutdown.run()
             throw error
@@ -244,11 +312,10 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   }
 
   private func runProbeQuery(
-    group: MultiThreadedEventLoopGroup,
-    postgresConfig: PostgresConnection.Configuration
+    group: MultiThreadedEventLoopGroup, tls: PostgresConnection.Configuration.TLS
   ) async throws {
     let conn = try await attemptConnection(
-      group: group, config: postgresConfig, timeoutSeconds: config.timeoutSeconds)
+      group: group, tls: tls, timeoutSeconds: config.timeoutSeconds)
     try await Self.runTestQuery(on: conn)
     try await conn.close()
   }
@@ -481,18 +548,55 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
   // MARK: - Connect helpers
 
+  /// PostgresNIO's default connect timeout, which bounded its own TCP connect before the
+  /// direct path opened the socket itself.
+  static let connectTimeout = PostgresConnection.Configuration.Options().connectTimeout
+
   private func attemptConnection(
     group: EventLoopGroup,
-    config: PostgresConnection.Configuration,
+    tls: PostgresConnection.Configuration.TLS,
     timeoutSeconds: Int
   ) async throws -> PostgresConnection {
     try await attemptConnection(timeoutSeconds: timeoutSeconds) {
-      try await PostgresConnection.connect(
-        on: group.next(),
-        configuration: config,
-        id: 1,
-        logger: Logger(label: "dblore.connection")
-      )
+      try await self.connectDirect(on: group.next(), tls: tls)
+    }
+  }
+
+  /// One direct attempt: Dblore opens the TCP socket (keepalive on; the same POSIX bootstrap
+  /// PostgresNIO used for this group), then PostgresNIO runs its startup over it. The
+  /// SSLRequest, the `prefer` fallback to plain text and the TLS handshake all happen in that
+  /// startup, exactly as on a socket PostgresNIO opened. The startup is chained on the loop as
+  /// the connect completes, before anything is read: a server that speaks first (a MySQL
+  /// greeting on this port) still reaches PostgresNIO's decoder. A cancelled task closes the
+  /// socket, as PostgresNIO's own connect does; a failed startup closes it too.
+  private func connectDirect(
+    on loop: any EventLoop, tls: PostgresConnection.Configuration.TLS
+  ) async throws -> PostgresConnection {
+    let config = self.config
+    let cancel = DirectConnectCancel()
+    let connecting = ClientBootstrap(group: loop).withKeepalive()
+      .connectTimeout(Self.connectTimeout)
+      .connect(host: config.host, port: config.port)
+      .flatMapErrorThrowing { error -> any Channel in
+        throw PostgresTransportError(underlying: error)
+      }
+      .flatMap { channel -> EventLoopFuture<PostgresConnection> in
+        guard cancel.connected(channel) else { return loop.makeFailedFuture(CancellationError()) }
+        return PostgresConnection.connect(
+          on: loop,
+          configuration: Self.channelConfiguration(channel: channel, config: config, tls: tls),
+          id: 1, logger: Logger(label: "dblore.connection")
+        )
+        .flatMapErrorThrowing { error in
+          channel.close(promise: nil)
+          throw error
+        }
+      }
+    connecting.whenComplete { _ in cancel.finished() }
+    return try await withTaskCancellationHandler {
+      try await connecting.get()
+    } onCancel: {
+      cancel.cancel()
     }
   }
 
@@ -522,17 +626,28 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     }
   }
 
-  static func postgresConfiguration(
-    _ config: ConnectionConfig, tls: PostgresConnection.Configuration.TLS
+  /// The configuration for one attempt over an open `channel` (direct socket or SSH
+  /// direct-tcpip channel). The TLS name is the database host, as PostgresNIO derives it for a
+  /// host it connects to itself: never the bastion's.
+  static func channelConfiguration(
+    channel: any Channel, config: ConnectionConfig, tls: PostgresConnection.Configuration.TLS
   ) -> PostgresConnection.Configuration {
-    PostgresConnection.Configuration(
-      host: config.host,
-      port: config.port,
-      username: config.username,
-      password: config.password,
-      database: config.database,
-      tls: tls
-    )
+    var configuration = PostgresConnection.Configuration(
+      establishedChannel: channel, tls: tls, username: config.username,
+      password: config.password, database: config.database)
+    configuration.options.tlsServerName = tlsServerName(for: config.host)
+    return configuration
+  }
+
+  /// The SNI and verification name for `host`. Nil for an IP literal (not valid in SNI),
+  /// matching what PostgresNIO does for a host it connects to itself.
+  static func tlsServerName(for host: String) -> String? {
+    var ipv4 = in_addr()
+    var ipv6 = in6_addr()
+    let isIP = host.withCString {
+      inet_pton(AF_INET, $0, &ipv4) == 1 || inet_pton(AF_INET6, $0, &ipv6) == 1
+    }
+    return isIP ? nil : host
   }
 
   func clientCertificateMaterial() throws -> ClientCertificateMaterial? {
