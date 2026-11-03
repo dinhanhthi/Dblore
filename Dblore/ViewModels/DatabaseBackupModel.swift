@@ -61,8 +61,10 @@ final class DatabaseBackupModel {
         -> SQLiteFileBackup.Progress
     /// The tab's commit style (Safe Mode), as the query confirmation reads it
     var commitStyle: @MainActor (NotebookViewModel) -> CommitStyle
-    /// Reads and plans a restore file (`readPlan`), run off the main actor
-    var readRestorePlan: @Sendable (URL, DatabaseType) async throws -> (SQLRestorePlan, Int)
+    /// Reads and plans a restore file (`readPlan`), run off the main actor, reporting how far
+    var readRestorePlan:
+      @Sendable (URL, DatabaseType, @escaping @Sendable (SQLRestoreReadProgress) -> Void)
+        async throws -> (SQLRestorePlan, Int)
 
     static let live = Environment(
       chooseSaveURL: { await DatabaseBackupModel.showSavePanel(name: $0, fileExtension: $1) },
@@ -79,7 +81,7 @@ final class DatabaseBackupModel {
         viewModel.notebook.connectionConfig?.resolvedCommitStyle(
           fallback: AppSettings.shared.commitStyle) ?? AppSettings.shared.commitStyle
       },
-      readRestorePlan: { try DatabaseBackupModel.readPlan(url: $0, engine: $1) })
+      readRestorePlan: { try DatabaseBackupModel.readPlan(url: $0, engine: $1, progress: $2) })
   }
 
   /// The active tab: its connection, protection policy, History and notebook id (`caller`)
@@ -90,6 +92,8 @@ final class DatabaseBackupModel {
   private(set) var dumpProgress: SQLDumpProgress?
   private(set) var copyProgress: SQLiteFileBackup.Progress?
   private(set) var restoreProgress: SQLRestoreProgress?
+  /// How far the restore file's read and plan are, while `activity` is `.reading`
+  private(set) var restoreReadProgress: SQLRestoreReadProgress?
   private(set) var restoreFileName: String?
   private(set) var restoreFileSize: Int?
   private(set) var restorePlan: SQLRestorePlan?
@@ -311,6 +315,7 @@ final class DatabaseBackupModel {
     restorePlan = nil
     restoreBlockedReason = nil
     restoreProgress = nil
+    restoreReadProgress = nil
     isConfirmingRestore = false
     restoreCompleted = false
     restoreFileName = url.lastPathComponent
@@ -322,8 +327,9 @@ final class DatabaseBackupModel {
     let epoch = await manager.connectionEpoch
     let id = begin(.reading)
     let read = environment.readRestorePlan
+    let report = reporter(id, .reading) { $0.restoreReadProgress = $1 }
     let work = Task.detached(priority: .userInitiated) {
-      try await read(url, engine)
+      try await read(url, engine, report)
     }
     cancelWork = { work.cancel() }
     do {
@@ -503,12 +509,29 @@ final class DatabaseBackupModel {
   }
 
   /// The file's text, planned for `engine`. Throws `SQLRestoreError.tooLarge` before reading a
-  /// file over the limit.
+  /// file over the limit. `progress` gets the bytes read after each 1 MiB, then the statements
+  /// planned (`SQLRestorePlan.init`). One whole-file buffer at a time: the bytes are freed once
+  /// decoded, the text once its scalars are built.
   nonisolated static func readPlan(
-    url: URL, engine: DatabaseType
+    url: URL, engine: DatabaseType, progress: (SQLRestoreReadProgress) -> Void = { _ in }
   ) throws -> (SQLRestorePlan, Int) {
     let accessed = url.startAccessingSecurityScopedResource()
     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+    var (script, bytes) = try readScript(url: url, progress: progress)
+    try Task.checkCancellation()
+    let plan = try PerfSignpost.interval("restore.plan") {
+      // Hand the plan the only copy of the text, so it is freed once split
+      let owned = script
+      script = ""
+      return try SQLRestorePlan(script: consume owned, engine: engine, progress: progress)
+    }
+    return (plan, bytes)
+  }
+
+  /// The file's UTF-8 text and its size in bytes. The bytes are freed when this returns.
+  private nonisolated static func readScript(
+    url: URL, progress: (SQLRestoreReadProgress) -> Void
+  ) throws -> (String, Int) {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
     let limit = SQLRestorePlan.maxScriptBytes
@@ -517,22 +540,25 @@ final class DatabaseBackupModel {
     try handle.seek(toOffset: 0)
     var data = Data()
     data.reserveCapacity(Int(size))
+    progress(.reading(bytesRead: 0, byteCount: Int(size)))
     while true {
       try Task.checkCancellation()
-      let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
-      if chunk.isEmpty { break }
-      data.append(chunk)
+      // `read` returns each chunk autoreleased: without the pool every chunk would stay until
+      // the whole read ends, a second copy of the file
+      let appended = try autoreleasepool {
+        let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
+        data.append(chunk)
+        return chunk.count
+      }
+      if appended == 0 { break }
       // The file grew after the size check
       guard data.count <= limit else { throw SQLRestoreError.tooLarge(bytes: data.count) }
+      progress(.reading(bytesRead: data.count, byteCount: max(Int(size), data.count)))
     }
     guard let script = String(data: data, encoding: .utf8) else {
       throw DatabaseBackupError.notUTF8
     }
-    try Task.checkCancellation()
-    let plan = try PerfSignpost.interval("restore.plan") {
-      try SQLRestorePlan(script: script, engine: engine)
-    }
-    return (plan, data.count)
+    return (script, data.count)
   }
 
   // MARK: - Cancel

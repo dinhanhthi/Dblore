@@ -109,6 +109,16 @@ struct MySQLTokenizerTests {
       ])
   }
 
+  @Test("A delimiter cut inside one word splits the same way on every cut")
+  func delimiterCutsInsideAWord() {
+    #expect(
+      tokenizer.splitStatements("DELIMITER $$\nab$$cd$$DELIMITER ;\nSELECT 1;")
+        == ["ab", "cd", "SELECT 1"])
+    #expect(tokenizer.splitStatements("DELIMITER $$\nx$$1.5$$y$$") == ["x", "1.5", "y"])
+    #expect(tokenizer.splitStatements("DELIMITER ab\nxabyabzab") == ["x", "y", "z"])
+    #expect(tokenizer.splitStatements("DELIMITER 1\nSELECT a1b1c") == ["SELECT a", "b", "c"])
+  }
+
   @Test("The delimiter is not matched inside strings or comments")
   func delimiterInsideQuotes() {
     #expect(

@@ -134,12 +134,7 @@ struct SQLRestoreSheet: View {
             .disabled(model.isBusy || model.isConfirmingRestore)
         }
         if model.activity == .reading {
-          HStack(spacing: Spacing.sm) {
-            ProgressView().controlSize(.small)
-            Text("Reading and checking the file...")
-              .font(.small)
-              .foregroundColor(.foregroundMuted)
-          }
+          readProgress(model.restoreReadProgress)
         }
         if let size = model.restoreFileSize {
           Text(DataByteCount.text(Int64(size)))
@@ -147,8 +142,8 @@ struct SQLRestoreSheet: View {
             .foregroundColor(.foregroundMuted)
         }
         Text(
-          "Reads Dblore SQL dumps of this engine up to 64 MiB (about 256 MiB of memory while it "
-            + "is checked). Every statement is checked before anything runs: only the statements "
+          "Reads Dblore SQL dumps of this engine up to 64 MiB (up to about 400 MiB of memory while "
+            + "it is checked). Every statement is checked before anything runs: only the statements "
             + "a Dblore dump writes (tables, indexes, views, types, sequences and their rows) are "
             + "accepted, and any other statement refuses the whole file. Restoring still runs "
             + "the file's SQL on this connection: column defaults, checks, views and triggers "
@@ -254,6 +249,35 @@ struct SQLRestoreSheet: View {
         .font(.monoSmall)
         .foregroundColor(.foregroundMuted)
       }
+    }
+  }
+
+  /// The bytes read, then the statements checked (indeterminate while the file is split)
+  private func readProgress(_ progress: SQLRestoreReadProgress?) -> some View {
+    let fraction: Double?
+    let text: String
+    switch progress {
+    case .reading(let bytesRead, let byteCount):
+      fraction = byteCount == 0 ? nil : Double(bytesRead) / Double(byteCount)
+      text =
+        "Reading the file: \(DataByteCount.text(Int64(bytesRead))) of "
+        + DataByteCount.text(Int64(byteCount))
+    case .planning(let planned, let count) where count > 0:
+      fraction = Double(planned) / Double(count)
+      text = "Checking statements: \(planned.formatted()) of \(count.formatted())"
+    case .planning:
+      fraction = nil
+      text = "Splitting the file into statements..."
+    case nil:
+      fraction = nil
+      text = "Reading the file..."
+    }
+    return VStack(alignment: .leading, spacing: Spacing.xs) {
+      ProgressView(value: fraction)
+        .accessibilityLabel("Read progress")
+      Text(verbatim: text)
+        .font(.monoSmall)
+        .foregroundColor(.foregroundMuted)
     }
   }
 

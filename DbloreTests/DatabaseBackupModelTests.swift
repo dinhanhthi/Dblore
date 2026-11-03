@@ -613,6 +613,39 @@ struct DatabaseBackupModelTests {
     #expect(entry.sql == "Restore SQL dump: 4 statements")
   }
 
+  @Test func readingAPlanReportsBytesReadThenStatementsPlanned() throws {
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("rows.sql")
+    // Over 1 MiB (more than one read) and over 4,096 statements (more than one plan report)
+    let rows = String(
+      repeating: "INSERT INTO \"restored\" (\"id\", \"v\") VALUES (1, 'abcdefghij');\n",
+      count: 20_000)
+    try (Self.sqliteDump + rows).write(to: file, atomically: true, encoding: .utf8)
+    let log = ReadProgressLog()
+    let (plan, size) = try DatabaseBackupModel.readPlan(url: file, engine: .sqlite) {
+      log.append($0)
+    }
+    let reports = log.values
+    let count = plan.summary.statementCount
+    #expect(count == 20_003)
+    var reads: [Int] = []
+    var planned: [Int] = []
+    for report in reports {
+      switch report {
+      case .reading(let bytesRead, let byteCount):
+        #expect(planned.isEmpty && byteCount == size)
+        reads.append(bytesRead)
+      case .planning(let statementsPlanned, let statementCount):
+        #expect(statementCount == 0 || statementCount == count)
+        planned.append(statementsPlanned)
+      }
+    }
+    #expect(reads.count > 2 && reads == reads.sorted() && reads.last == size)
+    #expect(planned.count > 2 && planned == planned.sorted())
+    #expect(reports.last == .planning(statementsPlanned: count, statementCount: count))
+  }
+
   @Test func restoreRefusesAFileOverTheLimitBeforeReadingIt() async throws {
     let fixture = try await SQLiteFixture()
     defer { fixture.remove() }
@@ -742,8 +775,8 @@ struct DatabaseBackupModelTests {
     let gate = ReadGate()
     var environment = Self.environment(open: file, style: .immediate)
     // The plan is made, then held: planning past its last cancellation check
-    environment.readRestorePlan = { url, engine in
-      let result = try DatabaseBackupModel.readPlan(url: url, engine: engine)
+    environment.readRestorePlan = { url, engine, progress in
+      let result = try DatabaseBackupModel.readPlan(url: url, engine: engine, progress: progress)
       await gate.arrive()
       return result
     }
@@ -817,8 +850,8 @@ struct DatabaseBackupModelTests {
     let file = try fixture.write(Self.sqliteDump, name: "dump.sql")
     let gate = ReadGate()
     var environment = Self.environment(open: file, style: .immediate)
-    environment.readRestorePlan = { url, engine in
-      let result = try DatabaseBackupModel.readPlan(url: url, engine: engine)
+    environment.readRestorePlan = { url, engine, progress in
+      let result = try DatabaseBackupModel.readPlan(url: url, engine: engine, progress: progress)
       await gate.arrive()
       return result
     }
@@ -1037,4 +1070,13 @@ private final class SuggestedNames: @unchecked Sendable {
 
   func append(_ name: String) { lock.withLock { recorded.append(name) } }
   var values: [String] { lock.withLock { recorded } }
+}
+
+/// What a restore file read reported, in order
+private final class ReadProgressLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var recorded: [SQLRestoreReadProgress] = []
+
+  func append(_ progress: SQLRestoreReadProgress) { lock.withLock { recorded.append(progress) } }
+  var values: [SQLRestoreReadProgress] { lock.withLock { recorded } }
 }
