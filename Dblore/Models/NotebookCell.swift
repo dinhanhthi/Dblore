@@ -419,19 +419,28 @@ enum CellValue: Codable, Equatable, Sendable, Comparable {
     }
   }
 
+  /// The zone zoned dates show in, for tests: set per task, so a test never changes the
+  /// process-wide default zone under suites running beside it. Nil is `NSTimeZone.default`.
+  @TaskLocal nonisolated static var displayZone: TimeZone?
+
   /// `date` as `displayString(wallClock:)` text, built from whole microseconds in the proleptic
   /// Gregorian calendar (the engines' own), so a stored `.123456` never shows as `.123455`.
   /// A date beyond the microsecond range falls back to ISO 8601.
   private nonisolated static func dateText(_ date: Date, wallClock: Bool) -> String {
     // The default zone is the Mac's own unless set (TimeZone.current ignores a set default)
-    let offset = wallClock ? 0 : NSTimeZone.default.secondsFromGMT(for: date)
+    let offset = wallClock ? 0 : (displayZone ?? NSTimeZone.default).secondsFromGMT(for: date)
     guard
       let utcMicros = Int64(exactly: (date.timeIntervalSince1970 * 1_000_000).rounded()),
       case (let micros, false) = utcMicros.addingReportingOverflow(Int64(offset) * 1_000_000)
     else { return iso8601Formatter.string(from: date) }
     let perDay: Int64 = 86_400_000_000
-    let days = micros >= 0 ? micros / perDay : (micros + 1) / perDay - 1
-    let ofDay = micros - days * perDay
+    // Floor division without `days * perDay`, which overflows next to Int64.min
+    var days = micros / perDay
+    var ofDay = micros % perDay
+    if ofDay < 0 {
+      days -= 1
+      ofDay += perDay
+    }
     let seconds = Int(ofDay / 1_000_000)
     var text =
       CivilDate.text(daysSince1970: Int(days), bcSuffix: "")

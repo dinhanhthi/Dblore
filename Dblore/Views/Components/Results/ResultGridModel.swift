@@ -436,7 +436,8 @@ struct ResultGridModel {
     {
       return Self.flattened(text)
     }
-    return Self.flattened(value.displayString)
+    let wallClock = columns.indices.contains(column) && columns[column].wallClock
+    return Self.flattened(value.displayString(wallClock: wallClock))
   }
 
   /// `text` on one line, at most `maxDisplayLength` characters plus "…"

@@ -10,7 +10,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite(.serialized) struct PostgresDateDecodingTests {
+@Suite struct PostgresDateDecodingTests {
   private static func cell(
     _ bytes: ByteBuffer, format: PostgresFormat, type: PostgresDataType = .date
   ) -> CellValue {
@@ -22,12 +22,9 @@ import Testing
   /// 2026-10-15 12:00:00 UTC.
   private static let noonSeconds: Double = 1_792_065_600
 
-  /// `body` with `NSTimeZone.default` set to `identifier`, restored afterwards.
+  /// `body` with zoned dates shown in `identifier`, for this task only.
   private static func inZone<T>(_ identifier: String, _ body: () -> T) -> T {
-    let saved = NSTimeZone.default
-    NSTimeZone.default = TimeZone(identifier: identifier)!
-    defer { NSTimeZone.default = saved }
-    return body()
+    CellValue.$displayZone.withValue(TimeZone(identifier: identifier)!) { body() }
   }
 
   /// Binary DATE: big-endian Int32 days since 2000-01-01.
@@ -128,5 +125,16 @@ import Testing
     #expect(
       Self.inZone("America/St_Johns") { value.displayString(wallClock: false) }
         == "2026-10-15 09:30:00.123-02:30")
+  }
+
+  @Test("A date next to the microsecond limits shows text instead of trapping")
+  func extremeDatesDoNotTrap() {
+    let beforeEpoch = CellValue.date(Date(timeIntervalSince1970: -0.5))
+    #expect(beforeEpoch.displayString(wallClock: true) == "1969-12-31 23:59:59.5")
+    // Within one day of Int64.min microseconds, where `days * perDay` overflowed
+    for seconds in [-9_223_372_036_854.775, -9_223_372_036_800.0, 9_223_372_036_854.775] {
+      let text = CellValue.date(Date(timeIntervalSince1970: seconds)).displayString(wallClock: true)
+      #expect(!text.isEmpty)
+    }
   }
 }

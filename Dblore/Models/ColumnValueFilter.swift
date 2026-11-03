@@ -43,7 +43,9 @@ struct ColumnValueFilter: Equatable {
     for index in columns.indices {
       guard let hidden = hiddenKeys[index], !hidden.isEmpty else { continue }
       let value = index < row.count ? row[index] : .null
-      if hidden.contains(Self.categoryKey(for: value)) { return false }
+      if hidden.contains(Self.categoryKey(for: value, wallClock: columns[index].wallClock)) {
+        return false
+      }
     }
     return true
   }
@@ -52,15 +54,16 @@ struct ColumnValueFilter: Equatable {
   /// Counts rows in the loaded result, so a hidden value stays listed and can be shown again.
   static func categories(in result: CellResult, columnIndex: Int) -> [ColumnCategory] {
     guard result.columns.indices.contains(columnIndex) else { return [] }
+    let wallClock = result.columns[columnIndex].wallClock
     var counts: [String: Int] = [:]
     var labels: [String: String] = [:]
     var order: [String] = []
     for row in result.rows {
       let value = columnIndex < row.count ? row[columnIndex] : .null
-      let key = categoryKey(for: value)
+      let key = categoryKey(for: value, wallClock: wallClock)
       if counts[key] == nil {
         order.append(key)
-        labels[key] = categoryLabel(for: value)
+        labels[key] = categoryLabel(for: value, wallClock: wallClock)
       }
       counts[key, default: 0] += 1
     }
@@ -84,18 +87,21 @@ struct ColumnValueFilter: Equatable {
   }
 
   /// Identity of a cell value, the text the grid and the checkbox show. Two loaded values
-  /// that draw the same (a `%.2f` double, a medium date, JSON truncated at 60 characters)
-  /// are one category. Bytea is the bytes themselves: a hash can collide and changes per process.
-  static func categoryKey(for value: CellValue) -> String {
+  /// that draw the same (JSON truncated at 60 characters) are one category; doubles and dates
+  /// draw every digit and fraction they have, so they collapse only when equal. `wallClock` is
+  /// the column's `ColumnInfo.wallClock`. Bytea is the bytes themselves: a hash can collide
+  /// and changes per process.
+  static func categoryKey(for value: CellValue, wallClock: Bool = false) -> String {
     switch value {
     case .data(let bytes):
       return "x:\(bytes.base64EncodedString())"
     default:
-      return categoryLabel(for: value)
+      return categoryLabel(for: value, wallClock: wallClock)
     }
   }
 
-  static func categoryLabel(for value: CellValue) -> String {
+  /// The text the grid shows for `value` in a column whose `ColumnInfo.wallClock` is `wallClock`
+  static func categoryLabel(for value: CellValue, wallClock: Bool = false) -> String {
     switch value {
     case .null: return "NULL"
     case .string(let value) where value.isEmpty: return "(empty)"
@@ -103,7 +109,7 @@ struct ColumnValueFilter: Equatable {
       let flat = value.replacingOccurrences(of: "\n", with: " ")
       return flat.count > 60 ? String(flat.prefix(60)) + "…" : flat
     default:
-      let text = value.displayString
+      let text = value.displayString(wallClock: wallClock)
       return text.isEmpty ? "(empty)" : text
     }
   }
