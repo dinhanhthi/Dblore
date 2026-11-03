@@ -62,6 +62,25 @@ struct ChartDataExtractorTests {
     #expect(series.points.map(\.x) == [.number(0), .number(3), .number(5)])
   }
 
+  @Test("A NUMERIC y-series and x chart as numbers; NaN and Infinity are omitted")
+  func decimalValuesChart() {
+    let result = queryResult(
+      columns: [ColumnInfo(name: "x", type: "numeric"), ColumnInfo(name: "y", type: "numeric")],
+      rows: [
+        [.decimal("1.5"), .decimal("19.90")],
+        [.decimal("2.5"), .decimal("NaN")],
+        [.decimal("3.5"), .decimal("-Infinity")],
+        [.decimal("4.5"), .decimal("-0.25")],
+      ]
+    )
+    let spec = ChartSpec(kind: .line, xColumn: "x", yColumns: ["y"], seriesColumn: nil)
+    let series = ChartDataExtractor.points(result: result, spec: spec, maxPoints: 100)
+
+    #expect(series.droppedCount == 2)
+    #expect(series.points.map(\.y) == [19.9, -0.25])
+    #expect(series.points.map(\.x) == [.number(1.5), .number(4.5)])
+  }
+
   @Test("Temporal x is sorted before points are returned")
   func temporalXIsSorted() {
     let start = Date(timeIntervalSince1970: 1_700_000_000)

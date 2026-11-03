@@ -254,7 +254,10 @@ nonisolated enum ChartDataExtractor {
       number = double
     case .string(let text):
       number = Double(text.trimmingCharacters(in: .whitespacesAndNewlines))
-    case .null, .bool, .json, .date, .data, .decimal:
+    case .decimal(let text):
+      // Plotted, so the nearest double is enough; NaN and ±Infinity are dropped below
+      number = Double(text)
+    case .null, .bool, .json, .date, .data:
       number = nil
     }
     guard let number, number.isFinite else { return nil }
@@ -285,6 +288,10 @@ nonisolated enum ChartDataExtractor {
     case .double(let double) where double.isFinite:
       dateOnly = false
       return .number(double)
+    case .decimal(let text):
+      guard let number = Double(text), number.isFinite else { return nil }
+      dateOnly = false
+      return .number(number)
     case .string(let text):
       if temporal {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -303,7 +310,7 @@ nonisolated enum ChartDataExtractor {
         return nil
       }
       return .category(index: categoryIndex(for: text, in: &categories), label: text)
-    case .bool, .json, .data, .double, .decimal:
+    case .bool, .json, .data, .double:
       return nil
     }
   }

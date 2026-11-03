@@ -82,7 +82,8 @@ nonisolated enum ParquetExport {
     }
   }
 
-  /// The kind every non-NULL value shares (ints and doubles together are DOUBLE). Text is
+  /// The kind every non-NULL value shares (ints, doubles and exact decimals together are
+  /// DOUBLE: an exact DECIMAL column is not built). Text is
   /// DECIMAL only when the source type is NUMERIC or DECIMAL and every value is plain decimal
   /// text that fits; mixed kinds and all-NULL columns are VARCHAR.
   private static func type(source: String, values: some Sequence<CellValue>) -> ColumnType {
@@ -93,12 +94,12 @@ nonisolated enum ParquetExport {
       switch value {
       case .null: continue
       case .int: next = .bigint
-      case .double: next = .double
+      case .double, .decimal: next = .double
       case .bool: next = .boolean
       case .date: next = .timestamp
       case .data: next = .blob
       case .json: next = .json
-      case .string(let text), .decimal(let text):
+      case .string(let text):
         next = .varchar
         texts.append(text)
       }

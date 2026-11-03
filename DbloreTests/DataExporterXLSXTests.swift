@@ -36,6 +36,46 @@ struct DataExporterXLSXTests {
     #expect(note.childCount == 0)
   }
 
+  @Test("A decimal of up to 15 significant digits is a number cell, a longer one exact text")
+  func writesDecimalsByDigitCount() throws {
+    let long = "12345678901234567890.5"
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "price", type: "numeric"), ColumnInfo(name: "long", type: "numeric"),
+        ColumnInfo(name: "nan", type: "numeric"),
+      ],
+      rows: [[.decimal("-1234567890.12340"), .decimal(long), .decimal("NaN")]],
+      rowCount: 1)
+    let sheet = try worksheet(of: try #require(DataExporter.toXLSX(result: result)))
+
+    let price = try cell("A2", in: sheet)
+    #expect(price.attribute(forName: "t")?.stringValue == "n")
+    #expect(value(of: price) == "-1234567890.12340")
+    let longCell = try cell("B2", in: sheet)
+    #expect(longCell.attribute(forName: "t")?.stringValue == "inlineStr")
+    #expect(text(of: longCell) == long)
+    let nan = try cell("C2", in: sheet)
+    #expect(nan.attribute(forName: "t")?.stringValue == "inlineStr")
+    #expect(text(of: nan) == "NaN")
+  }
+
+  @Test("A decimal outside a spreadsheet's number range is a text cell, not a broken number")
+  func decimalsOutsideSpreadsheetRangeAreText() throws {
+    let huge = "1" + String(repeating: "0", count: 400)
+    let tiny = "0." + String(repeating: "0", count: 400) + "1"
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "huge", type: "numeric"), ColumnInfo(name: "tiny", type: "numeric"),
+        ColumnInfo(name: "zero", type: "numeric"),
+      ],
+      rows: [[.decimal(huge), .decimal(tiny), .decimal("0.000")]],
+      rowCount: 1)
+    let sheet = try worksheet(of: try #require(DataExporter.toXLSX(result: result)))
+    #expect(try cell("A2", in: sheet).attribute(forName: "t")?.stringValue == "inlineStr")
+    #expect(try cell("B2", in: sheet).attribute(forName: "t")?.stringValue == "inlineStr")
+    #expect(try cell("C2", in: sheet).attribute(forName: "t")?.stringValue == "n")
+  }
+
   @Test("Dates are text cells: a naive column's wall clock, a zoned column as ISO 8601 UTC")
   func writesDatesPerColumn() throws {
     // 2026-10-15 12:00:00.123 UTC

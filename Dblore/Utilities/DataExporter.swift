@@ -436,6 +436,8 @@ enum DataExporter {
       return "null"
     case .double(let double) where double.isFinite:
       return serializedJSON(double, pretty: false) ?? jsonString(value.fullString)
+    case .decimal(let text) where isSpreadsheetExact(text):
+      return jsonNumber(text)
     case .json:
       // A parsed value can still be unwritable (`-1e400` parses as an infinity), and an invalid
       // one raises an Objective-C exception that `try` cannot catch, so it is checked first
@@ -447,6 +449,15 @@ enum DataExporter {
     default:
       return jsonString(cellValueToJSON(value) as? String ?? value.fullString)
     }
+  }
+
+  /// Plain decimal text as a JSON number literal: its exact digits, scale zeros kept, without
+  /// the leading zeros JSON does not allow (`-007.50` is `-7.50`)
+  private static func jsonNumber(_ text: String) -> String {
+    let negative = text.hasPrefix("-")
+    let unsigned = text.drop { $0 == "-" }.drop { $0 == "0" }
+    let digits = unsigned.isEmpty || unsigned.hasPrefix(".") ? "0" + unsigned : String(unsigned)
+    return (negative ? "-" : "") + digits
   }
 
   /// `object` (a valid JSON value) as `JSONSerialization` writes it
@@ -803,6 +814,22 @@ enum DataExporter {
     int.magnitude < 1_000_000_000_000_000
   }
 
+  /// Plain decimal text of at most 15 significant digits: a JSON number and a spreadsheet number
+  /// cell hold it exactly. NaN and ±Infinity are text.
+  private static func isSpreadsheetExact(_ decimal: String) -> Bool {
+    guard DecimalText.isPlain(decimal), let finite = DecimalText.Finite(decimal) else {
+      return false
+    }
+    return finite.digits.count <= 15
+  }
+
+  /// Inside a spreadsheet's number range (about 2.2e-308 to 9.99e307), so a number cell neither
+  /// overflows nor turns into 0; zero is in range
+  private static func isInSpreadsheetRange(_ decimal: String) -> Bool {
+    guard let finite = DecimalText.Finite(decimal) else { return false }
+    return finite.digits.isEmpty || (-306...308).contains(finite.point)
+  }
+
   /// nil for NULL, written as an empty cell. An integer a spreadsheet would round and a NaN or
   /// infinity (no number cell holds them) are text, with the grid's words for the latter. A date
   /// is text, its column's text output (`wallClock`).
@@ -830,11 +857,14 @@ enum DataExporter {
   }
 
   /// Convert cell value to XLSX cell format: nil for NULL (an empty cell), text for the values
-  /// `cellValueToExcelXML` writes as text
+  /// `cellValueToExcelXML` writes as text, except a decimal of at most 15 significant digits,
+  /// which is a number cell
   private static func cellValueToXLSXCell(
     _ value: CellValue, wallClock: Bool
   ) -> (type: String, value: String)? {
     switch value {
+    case .decimal(let str) where isSpreadsheetExact(str) && isInSpreadsheetRange(str):
+      return ("n", "<v>\(str)</v>")
     case .string(let str), .decimal(let str):
       return ("inlineStr", "<is><t>\(escapeXML(str))</t></is>")
     case .int(let int) where !isSpreadsheetExact(int):

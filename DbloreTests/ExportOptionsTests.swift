@@ -193,6 +193,17 @@ struct ExportOptionsTests {
     #expect(text.contains("\"NULL\""))
   }
 
+  @Test("JSON writes a decimal of up to 15 significant digits as its exact number, else text")
+  func jsonDecimals() {
+    let long = "1234567890.123456"
+    let result = grid(
+      columns: ["price", "lead", "long", "nan"],
+      rows: [[.decimal("19.90"), .decimal("-007.50"), .decimal(long), .decimal("NaN")]])
+    #expect(
+      DataExporter.toJSON(result: result, pretty: false)
+        == #"[{"price":19.90,"lead":-7.50,"long":"\#(long)","nan":"NaN"}]"#)
+  }
+
   @Test("SQL can omit column names, write an empty string for NULL, and flatten line breaks")
   func sqlShape() {
     let named = DataExporter.sqlInsert(
