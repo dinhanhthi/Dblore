@@ -606,6 +606,73 @@ nonisolated enum DecimalText {
     isPlain(text) || text == "NaN" || text == "Infinity" || text == "-Infinity"
   }
 
+  /// Longest plain text an exponent is written out to
+  static let maxExpandedLength = 1_000
+
+  /// `plain(fromNumberToken:)`'s reading of a number token
+  enum Expansion: Equatable, Sendable {
+    case plain(String)
+    /// Written out, longer than `maxExpandedLength` characters
+    case tooLong
+    case notANumber
+  }
+
+  /// A number token as plain digits (`isPlain`), exact and never through Double. A token with no
+  /// exponent is used as written. With one (`e` or `E`, an optional sign, leading zeros allowed)
+  /// the point moves in the token text: zeros pad it, a `0` goes before a leading point
+  /// (`5e-1` → `0.5`), a trailing point is dropped (`1E+2` → `100`) and mantissa digits are
+  /// never trimmed (`1.50e1` → `15.0`, `-0e0` → `-0`). The length limit is read from the
+  /// exponent text before any arithmetic, so no exponent can overflow: the text is never
+  /// shorter than the exponent's size.
+  static func plain(fromNumberToken token: String) -> Expansion {
+    let bytes = Array(token.utf8)
+    guard
+      let marker = bytes.firstIndex(where: { $0 == UInt8(ascii: "e") || $0 == UInt8(ascii: "E") })
+    else { return isPlain(token) ? .plain(token) : .notANumber }
+    let mantissa = String(decoding: bytes[..<marker], as: UTF8.self)
+    guard isPlain(mantissa) else { return .notANumber }
+    var exponentText = bytes[(marker + 1)...]
+    let negativeExponent = exponentText.first == UInt8(ascii: "-")
+    if negativeExponent || exponentText.first == UInt8(ascii: "+") {
+      exponentText = exponentText.dropFirst()
+    }
+    guard !exponentText.isEmpty, exponentText.allSatisfy(isDigit) else { return .notANumber }
+    let significant = exponentText.drop { $0 == UInt8(ascii: "0") }
+    guard significant.count <= 4 else { return .tooLong }
+    let size = significant.reduce(0) { $0 * 10 + Int($1 - UInt8(ascii: "0")) }
+    guard size <= maxExpandedLength else { return .tooLong }
+    let exponent = negativeExponent ? -size : size
+
+    let negative = mantissa.hasPrefix("-")
+    let parts = mantissa.utf8.dropFirst(negative ? 1 : 0)
+      .split(separator: UInt8(ascii: "."), omittingEmptySubsequences: false)
+    let digits = Array(parts.joined())
+    let point = parts[0].count + exponent
+    let length =
+      (negative ? 1 : 0)
+      + (point <= 0 ? 2 - point + digits.count : (point >= digits.count ? point : digits.count + 1))
+    guard length <= maxExpandedLength else { return .tooLong }
+
+    var text: [UInt8] = negative ? [UInt8(ascii: "-")] : []
+    text.reserveCapacity(length)
+    if point <= 0 {
+      text += Array("0.".utf8) + [UInt8](repeating: UInt8(ascii: "0"), count: -point) + digits
+    } else if point >= digits.count {
+      text += digits + [UInt8](repeating: UInt8(ascii: "0"), count: point - digits.count)
+    } else {
+      text += digits[..<point] + [UInt8(ascii: ".")] + digits[point...]
+    }
+    return .plain(String(decoding: text, as: UTF8.self))
+  }
+
+  /// Typed text a `.decimal` takes: valid text (`isValid`) as typed, or a number with an
+  /// exponent written out as plain digits (`plain(fromNumberToken:)`); nil for any other text
+  static func exactText(typed text: String) -> String? {
+    if isValid(text) { return text }
+    if case .plain(let written) = plain(fromNumberToken: text) { return written }
+    return nil
+  }
+
   /// A number as one total order: -Infinity, then finite values by exact value, Infinity, NaN
   /// (PostgreSQL's order; all NaNs equal), then decimal text that is no number, by its text.
   nonisolated enum Number {

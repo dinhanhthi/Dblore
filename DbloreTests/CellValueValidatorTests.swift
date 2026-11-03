@@ -116,7 +116,7 @@ struct CellValueValidatorTests {
       ("abc", "NUMERIC", false), ("true", "BOOLEAN", true), ("maybe", "BOOLEAN", false),
       ("{\"a\": 1}", "JSONB", true), ("{bad", "JSON", false), ("hello", "TEXT", true),
       ("anything", "UUID", true), ("null1", "VARCHAR", true), ("-12.50", "numeric(10,2)", true),
-      ("1e400", "NUMERIC", false), ("nan", "DECIMAL(65,30)", false),
+      ("1e-07", "NUMERIC", true), ("1e1001", "NUMERIC", false), ("nan", "DECIMAL(65,30)", false),
     ])
   func nullCellTakesColumnType(input: String, columnType: String, isValid: Bool) {
     let result = CellValueValidator.validate(input, for: .null, columnType: columnType)
@@ -127,21 +127,29 @@ struct CellValueValidatorTests {
   /// PostgreSQL's NaN / Infinity / -Infinity pass
   @Test("A decimal takes plain digits with an optional minus and fraction, NaN or Infinity")
   func decimalValidation() {
-    for input in ["0", "-12.50", "007", "12345678901234567890.123456789", "NaN", "-Infinity"] {
+    for input in [
+      "0", "-12.50", "007", "12345678901234567890.123456789", "NaN", "-Infinity", "1e-07",
+      "2.5E+3",
+    ] {
       #expect(CellValueValidator.validate(input, for: .decimal("1")).isValid, "\(input)")
     }
-    for input in ["", "1e400", "1e5", "nan", "inf", " 1", "1 ", "+1", ".5", "1.", "--1", "1;x"] {
+    for input in [
+      "", "1e1001", "1e", "1e5.5", "nan", "inf", " 1", "1 ", "+1", ".5", "1.", "--1", "1;x",
+    ] {
       #expect(!CellValueValidator.validate(input, for: .decimal("1")).isValid, "\(input)")
     }
   }
 
-  @Test("A new row's NUMERIC field stages exact decimal text; a DOUBLE field still takes 1e-7")
+  @Test("A new row's NUMERIC field stages exact decimal text, exponents as plain digits")
   func newRowDecimalField() {
     var field = NewRowField(name: "price", type: "NUMERIC(10,2)")
     field.text = "12.50"
     #expect(field.validationError == nil)
     #expect(field.value(dialect: .postgresql) == .decimal("12.50"))
-    field.text = "1e5"
+    field.text = "1e-07"
+    #expect(field.validationError == nil)
+    #expect(field.value(dialect: .postgresql) == .decimal("0.0000001"))
+    field.text = "1e1001"
     #expect(field.validationError != nil)
     var double = NewRowField(name: "ratio", type: "DOUBLE PRECISION")
     double.text = "1e-7"

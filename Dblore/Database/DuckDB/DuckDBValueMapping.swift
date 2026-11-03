@@ -1,6 +1,6 @@
 // DuckDBValueMapping.swift
 // DuckDB result vectors become CellValue. Scalars map the way PostgreSQL values do (integers to
-// .int, DECIMAL to .double, timestamps to .date, DATE to its `YYYY-MM-DD` text, UUID to its
+// .int, DECIMAL to its exact text (.decimal), timestamps to .date, DATE to its `YYYY-MM-DD` text, UUID to its
 // string). Nested values (LIST, ARRAY, STRUCT, MAP, UNION) and TIME / INTERVAL become text in
 // DuckDB's own `::VARCHAR` style: `[1, 2]`, `{'a': 1, 'b': x}`, `{k=1}`,
 // `1 year 2 months 3 days 04:05:06.789`.
@@ -198,8 +198,8 @@ nonisolated struct DuckDBValueMapping {
       let text = Self.string(data, row)
       return SQLiteValueMapping.isValidJSON(text) ? .json(text) : .string(text)
     case .decimal(_, let scale, let storage):
-      let text = Self.decimalText(integer: Self.integerText(storage, data, row), scale: scale)
-      return Double(text).map(CellValue.double) ?? .string(text)
+      // Exact text with the scale's zeros, never through Double
+      return .decimal(Self.decimalText(integer: Self.integerText(storage, data, row), scale: scale))
     default:
       return .string(text(type, vector, row))
     }
@@ -214,7 +214,9 @@ nonisolated struct DuckDBValueMapping {
       let text = Self.integerText(id, data, row)
       return Int(text).map(CellValue.int) ?? .string(text)
     case DuckDBTypeID.float:
-      return .double(Double(data.load(fromByteOffset: row * 4, as: Float.self)))
+      // Through its shortest text, so a FLOAT 1.1 is 1.1, not 1.100000023841858
+      let value = data.load(fromByteOffset: row * 4, as: Float.self)
+      return .double(Double(String(value)) ?? Double(value))
     case DuckDBTypeID.double:
       return .double(data.load(fromByteOffset: row * 8, as: Double.self))
     case DuckDBTypeID.varchar: return .string(Self.string(data, row))

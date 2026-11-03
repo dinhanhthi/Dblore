@@ -460,6 +460,12 @@ struct InlineEditViewModelTests {
         == .decimal("12345678901234567890.10"))
     #expect(
       NotebookViewModel.editedCellValue("=1+1", original: .decimal("1")) == .string("=1+1"))
+    // Exponent text is written out exactly as plain digits, in a NUMERIC cell or a NULL one
+    #expect(
+      NotebookViewModel.editedCellValue("1e-07", original: .decimal("1")) == .decimal("0.0000001"))
+    #expect(
+      NotebookViewModel.editedCellValue("1E+3", original: .null, columnType: "NUMERIC")
+        == .decimal("1000"))
   }
 
   @Test("A string edit still binds and displays the typed text")

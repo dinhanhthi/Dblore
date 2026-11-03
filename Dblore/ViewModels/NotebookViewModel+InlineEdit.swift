@@ -787,8 +787,9 @@ extension NotebookViewModel {
     case .data:
       return Data(base64Encoded: newValue).map(CellValue.data) ?? .string(newValue)
     case .decimal:
-      // The typed text exactly, never through Double; other text stays a string
-      return DecimalText.isValid(newValue) ? .decimal(newValue) : .string(newValue)
+      // The typed text exactly (an exponent written out as plain digits), never through
+      // Double; other text stays a string
+      return DecimalText.exactText(typed: newValue).map(CellValue.decimal) ?? .string(newValue)
     }
   }
 

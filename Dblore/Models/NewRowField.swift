@@ -90,7 +90,8 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     case .integer: return Int(text).map(CellValue.int) ?? .string(text)
     case .boolean: return Bool(text).map(CellValue.bool) ?? .string(text)
     case .json: return .json(text)
-    case .decimal where isExactDecimal && DecimalText.isValid(text): return .decimal(text)
+    case .decimal where isExactDecimal:
+      return DecimalText.exactText(typed: text).map(CellValue.decimal) ?? .string(text)
     case .timestamp where dialect != .sqlite:
       return NotebookViewModel.editedNewDate(
         text, columnType: type, wallClock: wallClock, dialect: dialect)

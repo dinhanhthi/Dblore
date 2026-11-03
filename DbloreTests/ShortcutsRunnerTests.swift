@@ -204,6 +204,75 @@ struct ShortcutsRunnerTests {
     if wallClock { #expect(typed?.displayString(wallClock: true) == text) }
   }
 
+  /// A NUMERIC, an INTEGER, a DOUBLE PRECISION, a NUMERIC named `a"b` and a TEXT column
+  private static let numberTable = TableStructure(
+    tableID: .postgresql(oid: 1), schema: "s", name: "t",
+    columns: [
+      TableStructure.Column(
+        ordinal: 1, name: "amount", dataType: "numeric", isNullable: true,
+        columnType: "numeric(40,2)"),
+      TableStructure.Column(ordinal: 2, name: "id", dataType: "integer", isNullable: true),
+      TableStructure.Column(
+        ordinal: 3, name: "ratio", dataType: "double precision", isNullable: true),
+      TableStructure.Column(ordinal: 4, name: "a\"b", dataType: "numeric", isNullable: true),
+      TableStructure.Column(ordinal: 5, name: "note", dataType: "text", isNullable: true),
+    ], indexes: [], constraints: [])
+
+  /// Add Row's values for `json`, typed for `numberTable`
+  private static func addRowValues(_ json: String) throws -> [String: CellValue] {
+    try ShortcutsRunner.cellValues(
+      ShortcutsRunner.parseValues(json), structure: numberTable, engine: .postgresql)
+  }
+
+  /// Regression: a JSON number went through Double, so a NUMERIC lost digits and its scale
+  @Test("Add Row binds a JSON number into NUMERIC by its own token text, made plain")
+  func addRowNumericTokenText() throws {
+    let forty = "1234567890123456789012345678901234567890"
+    let cases: [(String, String)] = [
+      ("12345678901234567890.12", "12345678901234567890.12"), ("19.90", "19.90"),
+      (forty, forty), ("1e20", "100000000000000000000"), ("2.5e-7", "0.00000025"),
+      ("1E+2", "100"), ("-1.5e-3", "-0.0015"), ("1.5e1", "15"),
+    ]
+    for (token, plain) in cases {
+      #expect(try Self.addRowValues(#"{"amount": \#(token)}"#)["amount"] == .decimal(plain))
+    }
+    // Other columns keep v0.9.0's number text
+    let other = try Self.addRowValues(#"{"id": 1.0, "ratio": 1e300}"#)
+    #expect(other["id"] == .int(1))
+    #expect(other["ratio"] == .double(1e300))
+    #expect(try Self.addRowValues(#"{"id": 1e3}"#)["id"] == .int(1000))
+    // Escaped keys map to their columns; text inside a string is never read as a number
+    let keyed = try Self.addRowValues(
+      #"{"note": "\"amount\": 1.5, ", "a\"b": 7.50, "amount": 0.10}"#)
+    #expect(keyed["note"] == .string(#""amount": 1.5, "#))
+    #expect(keyed["a\"b"] == .decimal("7.50"))
+    #expect(keyed["amount"] == .decimal("0.10"))
+    // A repeated key binds the value JSONSerialization chose, never the other one
+    let parsed = try #require(
+      try ShortcutsRunner.parseValues(#"{"amount": 1.10, "amount": 2.20}"#)["amount"])
+    #expect(parsed.numberToken == nil)
+    #expect(parsed.text == "1.1" || parsed.text == "2.2")
+  }
+
+  @Test("Add Row refuses a NUMERIC exponent too long to write out, without overflow")
+  func addRowRefusesLongExponent() throws {
+    let refusal = ShortcutsRunner.Refusal.decimalTooLong(column: "amount")
+    #expect(refusal.errorDescription?.contains("plain digits in a JSON string") == true)
+    #expect(throws: refusal) { try Self.addRowValues(#"{"amount": -1e1001}"#) }
+    for token in ["1e-1001", "0e9223372036854775807"] {
+      let json = #"{"amount": \#(token)}"#
+      if let parsed = try? ShortcutsRunner.parseValues(json) {
+        #expect(throws: refusal, "\(token)") {
+          try ShortcutsRunner.cellValues(parsed, structure: Self.numberTable, engine: .postgresql)
+        }
+      } else {
+        #expect(throws: ShortcutsRunner.Refusal.valuesNotObject, "\(token)") {
+          try ShortcutsRunner.parseValues(json)
+        }
+      }
+    }
+  }
+
   @Test("Open Connection refuses a row with a pre-connect or post-disconnect script")
   func openRefusesConnectionScripts() async throws {
     var preConnect = Self.entry(name: "Pre")

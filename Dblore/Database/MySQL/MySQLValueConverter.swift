@@ -3,7 +3,7 @@
 // mysql-nio's MySQLData accessors are lossy in the binary protocol (spike 2.3: TIME drops days
 // and sign, zero dates come back empty, BIT reads one byte, DECIMAL/JSON/YEAR `.string` is nil).
 // Integers to .int (text when beyond Int, e.g. BIGINT UNSIGNED), FLOAT/DOUBLE to .double,
-// DECIMAL as exact text, DATETIME/TIMESTAMP to .date (UTC wall clock, like a PostgreSQL
+// DECIMAL as exact text (.decimal), DATETIME/TIMESTAMP to .date (UTC wall clock, like a PostgreSQL
 // `timestamp`) except zero dates, DATE as `YYYY-MM-DD` text (no time zone), TIME as text, BIT
 // as an integer, JSON to .json, binary collation strings and GEOMETRY (SRID + WKB) to .data,
 // other strings (ENUM, SET) to text.
@@ -62,7 +62,8 @@ nonisolated enum MySQLValueConverter {
       guard bytes.count == 8 else { return .null }
       return .double(Double(bitPattern: UInt64(littleEndian: load(bytes))))
     case .decimal, .newdecimal:
-      return .string(string(bytes))
+      let text = string(bytes)
+      return DecimalText.isValid(text) ? .decimal(text) : .string(text)
     case .date, .newdate, .datetime, .datetime2, .timestamp, .timestamp2:
       let isDate = data.type == .date || data.type == .newdate
       let parts = isText ? DateParts(text: string(bytes)) : DateParts(binary: bytes)

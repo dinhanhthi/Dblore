@@ -295,17 +295,9 @@ struct DatabaseIntegrationColumnTypeTests {
       #expect(rowsCount > 0, "Should return at least one row")
       #expect(firstRowColumnsCount == 2, "Row should have 2 columns")
 
-      if let priceValue = priceValue, case .double(let price) = priceValue {
-        #expect(abs(price - 1329.98) < 0.01, "Price should decode correctly")
-      } else {
-        Issue.record("Expected .double for price, got \(String(describing: priceValue))")
-      }
-
-      if let quantityValue = quantityValue, case .double(let quantity) = quantityValue {
-        #expect(abs(quantity - 123456789.1234) < 0.0001, "Quantity should decode correctly")
-      } else {
-        Issue.record("Expected .double for quantity, got \(String(describing: quantityValue))")
-      }
+      // NUMERIC decodes to its exact text, scale zeros kept
+      #expect(priceValue == .decimal("1329.98"), "Price should decode exactly")
+      #expect(quantityValue == .decimal("123456789.1234"), "Quantity should decode exactly")
 
       // Assert - Check type enrichment
       let columnsCount = result.columns.count

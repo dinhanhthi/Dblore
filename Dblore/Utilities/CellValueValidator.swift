@@ -108,16 +108,20 @@ struct CellValueValidator: Sendable {
     return .valid
   }
 
-  /// Exact NUMERIC / DECIMAL text (`DecimalText.isValid`): plain digits with an optional `-`
-  /// and fraction, or `NaN`, `Infinity`, `-Infinity`. Those keywords pass for every engine (the
-  /// check has no connection): PostgreSQL NUMERIC stores them; another engine treats them as any
-  /// text sent to a number column.
+  /// Exact NUMERIC / DECIMAL text (`DecimalText.exactText(typed:)`): plain digits with an
+  /// optional `-` and fraction, the same with an exponent (written out as plain digits, at most
+  /// 1,000 characters), or `NaN`, `Infinity`, `-Infinity`. Those keywords pass for every engine
+  /// (the check has no connection): PostgreSQL NUMERIC stores them; another engine treats them
+  /// as any text sent to a number column.
   nonisolated private static func validateDecimal(_ input: String) -> ValidationResult {
     if input.isEmpty {
       return .invalid("Value cannot be empty")
     }
 
-    if !DecimalText.isValid(input) {
+    if DecimalText.plain(fromNumberToken: input) == .tooLong {
+      return .invalid("Too many digits once the exponent is written out: type plain digits")
+    }
+    if DecimalText.exactText(typed: input) == nil {
       return .invalid("Invalid decimal format (use digits like -12.50)")
     }
 

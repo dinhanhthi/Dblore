@@ -87,8 +87,8 @@ import Testing
 
   @Test func decimalIsExactText() {
     let value = "12345678901234567890.123456"
-    #expect(Self.cell(Self.text(value, .newdecimal)) == .string(value))
-    #expect(Self.cell(Self.binary(Array(value.utf8), .newdecimal)) == .string(value))
+    #expect(Self.cell(Self.text(value, .newdecimal)) == .decimal(value))
+    #expect(Self.cell(Self.binary(Array(value.utf8), .newdecimal)) == .decimal(value))
   }
 
   // MARK: - Dates and times
@@ -313,7 +313,7 @@ import Testing
     let point = try #require(binary[geometryIndex].dataValue, "\(server) geometry should be data")
     let expected: [String: CellValue] = [
       "i": .int(-42), "ti": .int(-1), "ub": .string("18446744073709551615"), "f": .double(1.5),
-      "db": .double(-2.25), "d": .string("12345.678900"),
+      "db": .double(-2.25), "d": .decimal("12345.678900"),
       "dt": .date(Date(timeIntervalSince1970: epochSeconds + 0.123456)),
       "ts": .date(Date(timeIntervalSince1970: epochSeconds)),
       "da": .string("2024-01-02"), "tm": .string("25:30:15"),

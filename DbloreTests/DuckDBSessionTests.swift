@@ -286,7 +286,7 @@ struct DuckDBSessionTests {
           [1, 2, NULL], [[1.50, 2.25]]::DECIMAL(4,2)[][], {'a': 1, 'b': 'x y'}, MAP {'k': 1},
           NULL::INTEGER, '{"a": [1, 2]}'::JSON, [1, 2, 3]::INTEGER[3],
           union_value(n := 5), {'l': [1, NULL], 's': NULL},
-          to_microseconds(-9223372036854775807 - 1)
+          to_microseconds(-9223372036854775807 - 1), 1.1::FLOAT
         """#)
       let row = try #require(result.rows.first)
       let expected: [CellValue] = [
@@ -294,7 +294,7 @@ struct DuckDBSessionTests {
         .string("18446744073709551615"), .int(12),
         .string("170141183460469231731687303715884105727"),
         .string("-170141183460469231731687303715884105728"),
-        .double(123.45), .double(-0.05), .double(1.5), .bool(true),
+        .decimal("123.45"), .decimal("-0.050"), .double(1.5), .bool(true),
         .string("héllo"), .string("a string longer than twelve bytes"), .data(Data([0xAA, 0x00])),
         .string("2024-02-29"),
         .date(Date(timeIntervalSince1970: 1_709_210_096.789)), .string("infinity"),
@@ -303,6 +303,8 @@ struct DuckDBSessionTests {
         .string("[1, 2, NULL]"), .string("[[1.50, 2.25]]"), .string("{'a': 1, 'b': x y}"),
         .string("{k=1}"), .null, .json(#"{"a": [1, 2]}"#), .string("[1, 2, 3]"), .string("5"),
         .string("{'l': [1, NULL], 's': NULL}"), .string("-2562047788:00:54.775808"),
+        // FLOAT through its shortest text: 1.1, not 1.100000023841858
+        .double(1.1),
       ]
       #expect(row.count == expected.count)
       for (index, pair) in zip(row, expected).enumerated() {

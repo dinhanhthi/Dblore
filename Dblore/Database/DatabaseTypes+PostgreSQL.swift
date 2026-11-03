@@ -206,28 +206,11 @@ extension DatabaseConnectionManager {
       }
 
     case .numeric:
-      // PostgresNIO returns NUMERIC as Decimal (Foundation.Decimal) in binary format
-      // NOTE: cell.bytes != nil check above already handles NULL cases
-      // So we only reach here if there's actual data to decode
-      if let decimalValue = try? cell.decode(Decimal.self, context: .default) {
-        // Check for NaN - this can happen with special values or edge cases
-        // PostgreSQL NUMERIC type doesn't support NaN, but we check anyway
-        if decimalValue.isNaN {
-          return .null
-        }
-        // Convert Decimal to Double
-        return .double(Double(truncating: decimalValue as NSDecimalNumber))
-      }
-      // Fallback to String decoding for text format
-      if let value = try? cell.decode(String.self, context: .default) {
-        if let doubleValue = Double(value) {
-          return .double(doubleValue)
-        }
-        return .string(value)
-      }
-      // If decode fails and we reach here, it might be NULL
-      // (though this should have been caught by bytes check above)
-      return .null
+      // The server's exact text, never through Double or Decimal (38 digits, and PostgresNIO's
+      // Decimal traps on longer values): every digit, the scale's zeros, NaN and ±Infinity
+      let text = cell.format == .text ? String(buffer: bytes) : numericText(binary: bytes)
+      guard let text else { return .data(Data(buffer: bytes)) }
+      return DecimalText.isValid(text) ? .decimal(text) : .string(text)
 
     case .money:
       // Money type should be decoded as String first, then parsed
@@ -388,6 +371,59 @@ extension DatabaseConnectionManager {
     }
 
     return .null
+  }
+
+  /// numeric_send's value as numeric_out's text: Int16 digit count, Int16 weight (of the first
+  /// base-10000 digit), UInt16 sign (0x4000 negative, 0xC000 NaN, 0xD000 Infinity, 0xF000
+  /// -Infinity), Int16 display scale, then the digits. The integer part has no leading zeros
+  /// (`0` when there is none); the fraction has exactly the display scale's digits
+  /// (`19.90`, `0.00`). Nil for bytes that are no NUMERIC.
+  private nonisolated static func numericText(binary bytes: ByteBuffer) -> String? {
+    var buffer = bytes
+    guard let count = buffer.readInteger(endianness: .big, as: Int16.self),
+      let weight = buffer.readInteger(endianness: .big, as: Int16.self),
+      let sign = buffer.readInteger(endianness: .big, as: UInt16.self),
+      let scale = buffer.readInteger(endianness: .big, as: Int16.self),
+      count >= 0, scale >= 0, buffer.readableBytes == Int(count) * 2
+    else { return nil }
+    switch sign {
+    case 0xC000: return "NaN"
+    case 0xD000: return "Infinity"
+    case 0xF000: return "-Infinity"
+    case 0x0000, 0x4000: break
+    default: return nil
+    }
+    var digits: [Int] = []
+    digits.reserveCapacity(Int(count))
+    for _ in 0..<count {
+      guard let digit = buffer.readInteger(endianness: .big, as: Int16.self),
+        (0...9_999).contains(digit)
+      else { return nil }
+      digits.append(Int(digit))
+    }
+    // Digit `index` has weight `weight - index`; digits past the stored ones are zeros
+    let digit = { (index: Int) in digits.indices.contains(index) ? digits[index] : 0 }
+    let padded = { (value: Int) -> String in
+      let text = String(value)
+      return String(repeating: "0", count: 4 - text.count) + text
+    }
+    var text = sign == 0x4000 ? "-" : ""
+    if weight < 0 {
+      text += "0"
+    } else {
+      text += String(digit(0))
+      for index in stride(from: 1, through: Int(weight), by: 1) { text += padded(digit(index)) }
+    }
+    if scale > 0 {
+      var fraction = ""
+      var index = Int(weight) + 1
+      while fraction.utf8.count < Int(scale) {
+        fraction += padded(digit(index))
+        index += 1
+      }
+      text += "." + fraction.prefix(Int(scale))
+    }
+    return text
   }
 
   /// date_send's days since 2000-01-01 as the server's ISO text: `2025-01-01`, `0044-03-15 BC`,
