@@ -4,24 +4,47 @@
 
 import Foundation
 
-/// `pg_catalog` / `information_schema` reads through `DatabaseSession.query`.
+/// `pg_catalog` reads through `DatabaseSession.query`.
+///
+/// They run on the user's session with the user's `search_path`, where PostgreSQL resolves an
+/// unqualified function or operator over every schema on the path (an exact-type match there
+/// beats a `pg_catalog` one that needs a cast). So every relation, function, operator, cast type
+/// and regclass literal names `pg_catalog`, and the forms that look `=` / `<>` up by name
+/// (`NULLIF`, `IN`, `NOT IN`, `LIKE`) are written with `OPERATOR(pg_catalog.…)`. An
+/// `OPERATOR(…)` has the precedence of "any other operator" (above comparison, `IS`, `NOT`,
+/// `AND`, `OR`), so mixed expressions keep explicit parentheses. `search_path` is never pinned.
 nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   /// Relation-level visibility, equivalent to what information_schema applies to tables and views
   private static let relationPrivilegeFilter = """
-    (pg_has_role(c.relowner, 'USAGE')
-      OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
-      OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'))
+    (pg_catalog.pg_has_role(c.relowner, 'USAGE')
+      OR pg_catalog.has_table_privilege(c.oid,
+        'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+      OR pg_catalog.has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'))
     """
 
   /// information_schema hides other sessions' temporary tables (unreadable for this session)
-  private static let hideOtherTempSchemas = "NOT pg_is_other_temp_schema(n.oid)"
+  private static let hideOtherTempSchemas = "NOT pg_catalog.pg_is_other_temp_schema(n.oid)"
 
   /// Column-level visibility, as information_schema.columns applies it: a column is listed only
   /// with a privilege on that column (or ownership through a role), not on any other column
   private static let columnPrivilegeFilter = """
-    (pg_has_role(c.relowner, 'USAGE')
-      OR has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
+    (pg_catalog.pg_has_role(c.relowner, 'USAGE')
+      OR pg_catalog.has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'))
     """
+
+  /// `n.nspname NOT IN ('pg_catalog', 'information_schema')`, typed `name` as the literals were
+  private static let notSystemSchema = """
+    n.nspname OPERATOR(pg_catalog.<>) ALL \
+    (ARRAY['pg_catalog', 'information_schema']::pg_catalog.name[])
+    """
+
+  /// `notSystemSchema` plus `pg_toast`
+  private static func notSystemOrToastSchema(_ alias: String) -> String {
+    """
+    \(alias).nspname OPERATOR(pg_catalog.<>) ALL \
+    (ARRAY['pg_catalog', 'information_schema', 'pg_toast']::pg_catalog.name[])
+    """
+  }
 
   /// The session's own temp tables (pg_temp_N) are flagged; `pg_my_temp_schema()` is 0 until
   /// the session creates one.
@@ -30,16 +53,18 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     // 0 there stays unknown (empty table, track_counts off or stats reset)
     let query = """
       SELECT
-        n.nspname::text,
-        c.relname::text,
-        CASE WHEN c.reltuples < 0 OR (c.reltuples = 0 AND c.relpages = 0)
-          THEN NULLIF(pg_stat_get_live_tuples(c.oid), 0)
-          ELSE c.reltuples::bigint END AS row_estimate,
-        n.oid = pg_my_temp_schema() AS is_temporary
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind IN ('r', 'p')
-        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+        n.nspname::pg_catalog.text,
+        c.relname::pg_catalog.text,
+        CASE WHEN c.reltuples OPERATOR(pg_catalog.<) 0
+            OR (c.reltuples OPERATOR(pg_catalog.=) 0 AND c.relpages OPERATOR(pg_catalog.=) 0)
+          THEN CASE WHEN pg_catalog.pg_stat_get_live_tuples(c.oid) OPERATOR(pg_catalog.=) 0
+            THEN NULL ELSE pg_catalog.pg_stat_get_live_tuples(c.oid) END
+          ELSE c.reltuples::pg_catalog.int8 END AS row_estimate,
+        n.oid OPERATOR(pg_catalog.=) pg_catalog.pg_my_temp_schema() AS is_temporary
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      WHERE c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p']::pg_catalog."char"[])
+        AND \(Self.notSystemOrToastSchema("n"))
         AND \(Self.hideOtherTempSchemas)
         AND \(Self.relationPrivilegeFilter)
       ORDER BY n.nspname, c.relname
@@ -61,27 +86,29 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {
     let query = """
       SELECT
-        n.nspname::text,
-        c.relname::text,
-        a.attname::text,
-        format_type(a.atttypid, a.atttypmod),
+        n.nspname::pg_catalog.text,
+        c.relname::pg_catalog.text,
+        a.attname::pg_catalog.text,
+        pg_catalog.format_type(a.atttypid, a.atttypmod),
         a.attnotnull,
-        (a.attidentity <> '') AS is_identity,
+        (a.attidentity OPERATOR(pg_catalog.<>) '') AS is_identity,
         EXISTS (
-          SELECT 1 FROM pg_index i
-          WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)
+          SELECT 1 FROM pg_catalog.pg_index i
+          WHERE i.indrelid OPERATOR(pg_catalog.=) c.oid AND i.indisprimary
+            AND a.attnum OPERATOR(pg_catalog.=) ANY (i.indkey)
         ) AS is_pk,
         EXISTS (
-          SELECT 1 FROM pg_index i
-          WHERE i.indrelid = c.oid AND i.indisunique AND NOT i.indisprimary
-            AND array_length(i.indkey, 1) = 1 AND a.attnum = ANY(i.indkey)
+          SELECT 1 FROM pg_catalog.pg_index i
+          WHERE i.indrelid OPERATOR(pg_catalog.=) c.oid AND i.indisunique AND NOT i.indisprimary
+            AND pg_catalog.array_length(i.indkey, 1) OPERATOR(pg_catalog.=) 1
+            AND a.attnum OPERATOR(pg_catalog.=) ANY (i.indkey)
         ) AS is_unique
-      FROM pg_attribute a
-      JOIN pg_class c ON c.oid = a.attrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind IN ('r', 'p', 'v')
-        AND a.attnum > 0 AND NOT a.attisdropped
-        AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) a.attrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      WHERE c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p', 'v']::pg_catalog."char"[])
+        AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
+        AND \(Self.notSystemOrToastSchema("n"))
         AND \(Self.hideOtherTempSchemas)
         AND \(Self.columnPrivilegeFilter)
       ORDER BY n.nspname, c.relname, a.attnum
@@ -108,11 +135,11 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
 
   func views(in session: any DatabaseSession) async throws -> [DatabaseView] {
     let query = """
-      SELECT n.nspname::text, c.relname::text
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind = 'v'
-        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      SELECT n.nspname::pg_catalog.text, c.relname::pg_catalog.text
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      WHERE c.relkind OPERATOR(pg_catalog.=) 'v'
+        AND \(Self.notSystemSchema)
         AND \(Self.hideOtherTempSchemas)
         AND \(Self.relationPrivilegeFilter)
       ORDER BY n.nspname, c.relname
@@ -133,13 +160,13 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       SELECT
         n.nspname AS schema,
         p.proname AS name,
-        pg_get_function_result(p.oid) AS return_type,
-        pg_get_function_arguments(p.oid) AS arguments,
-        p.oid::int8
-      FROM pg_proc p
-      JOIN pg_namespace n ON p.pronamespace = n.oid
-      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-        AND p.prokind = 'f'
+        pg_catalog.pg_get_function_result(p.oid) AS return_type,
+        pg_catalog.pg_get_function_arguments(p.oid) AS arguments,
+        p.oid::pg_catalog.int8
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON p.pronamespace OPERATOR(pg_catalog.=) n.oid
+      WHERE \(Self.notSystemSchema)
+        AND p.prokind OPERATOR(pg_catalog.=) 'f'
         AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
       """
@@ -164,12 +191,12 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       SELECT
         n.nspname AS schema,
         p.proname AS name,
-        pg_get_function_arguments(p.oid) AS arguments,
-        p.oid::int8
-      FROM pg_proc p
-      JOIN pg_namespace n ON p.pronamespace = n.oid
-      WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-        AND p.prokind = 'p'
+        pg_catalog.pg_get_function_arguments(p.oid) AS arguments,
+        p.oid::pg_catalog.int8
+      FROM pg_catalog.pg_proc p
+      JOIN pg_catalog.pg_namespace n ON p.pronamespace OPERATOR(pg_catalog.=) n.oid
+      WHERE \(Self.notSystemSchema)
+        AND p.prokind OPERATOR(pg_catalog.=) 'p'
         AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
       """
@@ -192,17 +219,17 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   func triggers(in session: any DatabaseSession) async throws -> [DatabaseTrigger] {
     let query = """
       SELECT
-        n.nspname::text,
-        c.relname::text,
-        t.tgname::text,
-        t.tgtype::int4,
-        t.tgenabled::text,
-        t.oid::int8
-      FROM pg_trigger t
-      JOIN pg_class c ON c.oid = t.tgrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
+        n.nspname::pg_catalog.text,
+        c.relname::pg_catalog.text,
+        t.tgname::pg_catalog.text,
+        t.tgtype::pg_catalog.int4,
+        t.tgenabled::pg_catalog.text,
+        t.oid::pg_catalog.int8
+      FROM pg_catalog.pg_trigger t
+      JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.tgrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
       WHERE NOT t.tgisinternal
-        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND \(Self.notSystemSchema)
         AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, c.relname, t.tgname
       """
@@ -242,7 +269,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     case .trigger(let trigger):
       guard let oid = trigger.oid else { return nil }
       let found = try await rows(
-        in: session, sql: "SELECT pg_get_triggerdef($1::oid, true)", binds: [.text(String(oid))])
+        in: session, sql: "SELECT pg_catalog.pg_get_triggerdef($1::pg_catalog.oid, true)",
+        binds: [.text(String(oid))])
       return found.first?.first.flatMap(CatalogValue.string)
     case .sequence(let sequence):
       return try Self.ddl(sequence)
@@ -257,12 +285,13 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     // pg_get_functiondef raises on an aggregate, so the CASE keeps it to 'f' and 'p'.
     let query = """
       SELECT
-        CASE WHEN p.prokind IN ('f', 'p') THEN pg_get_functiondef(p.oid) END,
-        p.prokind::text,
-        p.proname::text,
-        pg_get_function_arguments(p.oid)
-      FROM pg_proc p
-      WHERE p.oid = $1::oid
+        CASE WHEN p.prokind OPERATOR(pg_catalog.=) ANY (ARRAY['f', 'p']::pg_catalog."char"[])
+          THEN pg_catalog.pg_get_functiondef(p.oid) END,
+        p.prokind::pg_catalog.text,
+        p.proname::pg_catalog.text,
+        pg_catalog.pg_get_function_arguments(p.oid)
+      FROM pg_catalog.pg_proc p
+      WHERE p.oid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
       """
     guard let row = try await rows(in: session, sql: query, binds: [.text(String(oid))]).first,
       row.count >= 4
@@ -297,8 +326,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         rolcreatedb,
         rolcreaterole,
         rolconnlimit
-      FROM pg_roles
-      WHERE rolcanlogin = true
+      FROM pg_catalog.pg_roles
+      WHERE rolcanlogin
       ORDER BY rolname
       """
     var users: [DatabaseUser] = []
@@ -328,12 +357,12 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         r.rolcreaterole,
         ARRAY(
           SELECT m.rolname
-          FROM pg_auth_members am
-          JOIN pg_roles m ON am.member = m.oid
-          WHERE am.roleid = r.oid
+          FROM pg_catalog.pg_auth_members am
+          JOIN pg_catalog.pg_roles m ON am.member OPERATOR(pg_catalog.=) m.oid
+          WHERE am.roleid OPERATOR(pg_catalog.=) r.oid
         ) AS members
-      FROM pg_roles r
-      WHERE r.rolcanlogin = false
+      FROM pg_catalog.pg_roles r
+      WHERE NOT r.rolcanlogin
       ORDER BY r.rolname
       """
     var roles: [DatabaseRole] = []
@@ -355,7 +384,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
 
   /// User schemas: not a system schema, not another session's temporary schema
   private static let userSchemaFilter = """
-    n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_toast%'
+    \(notSystemSchema) AND n.nspname OPERATOR(pg_catalog.!~~) 'pg\\_toast%'
       AND \(hideOtherTempSchemas)
     """
 
@@ -363,21 +392,27 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   /// sequence's auto ('a', serial and `OWNED BY`) or internal ('i', identity) dependency.
   func sequences(in session: any DatabaseSession) async throws -> [DatabaseSequence] {
     let query = """
-      SELECT n.nspname::text, c.relname::text, format_type(s.seqtypid, NULL), s.seqstart,
-        s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle, tn.nspname::text,
-        tc.relname::text, a.attname::text, d.deptype::text, c.oid::int8
-      FROM pg_sequence s
-      JOIN pg_class c ON c.oid = s.seqrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      LEFT JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = s.seqrelid
-        AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
-      LEFT JOIN pg_class tc ON tc.oid = d.refobjid
-      LEFT JOIN pg_namespace tn ON tn.oid = tc.relnamespace
-      LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
-      WHERE c.relkind = 'S' AND \(Self.userSchemaFilter)
+      SELECT n.nspname::pg_catalog.text, c.relname::pg_catalog.text,
+        pg_catalog.format_type(s.seqtypid, NULL), s.seqstart, s.seqincrement, s.seqmin, s.seqmax,
+        s.seqcache, s.seqcycle, tn.nspname::pg_catalog.text, tc.relname::pg_catalog.text,
+        a.attname::pg_catalog.text, d.deptype::pg_catalog.text, c.oid::pg_catalog.int8
+      FROM pg_catalog.pg_sequence s
+      JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) s.seqrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      LEFT JOIN pg_catalog.pg_depend d
+        ON d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.objid OPERATOR(pg_catalog.=) s.seqrelid
+        AND d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.deptype OPERATOR(pg_catalog.=) ANY (ARRAY['a', 'i']::pg_catalog."char"[])
+      LEFT JOIN pg_catalog.pg_class tc ON tc.oid OPERATOR(pg_catalog.=) d.refobjid
+      LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid OPERATOR(pg_catalog.=) tc.relnamespace
+      LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) d.refobjid
+        AND a.attnum OPERATOR(pg_catalog.=) d.refobjsubid
+      WHERE c.relkind OPERATOR(pg_catalog.=) 'S' AND \(Self.userSchemaFilter)
         AND NOT EXISTS (
-          SELECT 1 FROM pg_depend e
-          WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid AND e.deptype = 'e')
+          SELECT 1 FROM pg_catalog.pg_depend e
+          WHERE e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+            AND e.objid OPERATOR(pg_catalog.=) c.oid AND e.deptype OPERATOR(pg_catalog.=) 'e')
       ORDER BY n.nspname, c.relname
       """
     var sequences: [DatabaseSequence] = []
@@ -414,27 +449,35 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   /// `typtype` and each kind's details travel as JSON text.
   func userTypes(in session: any DatabaseSession) async throws -> [DatabaseUserType] {
     let query = """
-      SELECT n.nspname::text, t.typname::text, t.typtype::text,
-        (SELECT COALESCE(json_agg(e.enumlabel::text ORDER BY e.enumsortorder), '[]')::text
-          FROM pg_enum e WHERE e.enumtypid = t.oid),
-        CASE WHEN t.typtype = 'd' THEN format_type(t.typbasetype, t.typtypmod) END,
-        pg_get_expr(t.typdefaultbin, 0), t.typnotnull,
-        (SELECT COALESCE(json_agg(json_build_array(dc.conname::text, pg_get_constraintdef(dc.oid))
-            ORDER BY dc.conname), '[]')::text
-          FROM pg_constraint dc WHERE dc.contypid = t.oid AND dc.contype = 'c'),
-        (SELECT COALESCE(json_agg(json_build_array(a.attname::text,
-            format_type(a.atttypid, a.atttypmod)) ORDER BY a.attnum), '[]')::text
-          FROM pg_attribute a
-          WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped),
-        t.oid::int8
-      FROM pg_type t
-      JOIN pg_namespace n ON n.oid = t.typnamespace
-      LEFT JOIN pg_class rc ON rc.oid = t.typrelid
-      WHERE (t.typtype IN ('e', 'd') OR (t.typtype = 'c' AND rc.relkind = 'c'))
+      SELECT n.nspname::pg_catalog.text, t.typname::pg_catalog.text, t.typtype::pg_catalog.text,
+        (SELECT COALESCE(pg_catalog.json_agg(e.enumlabel::pg_catalog.text
+            ORDER BY e.enumsortorder), '[]')::pg_catalog.text
+          FROM pg_catalog.pg_enum e WHERE e.enumtypid OPERATOR(pg_catalog.=) t.oid),
+        CASE WHEN t.typtype OPERATOR(pg_catalog.=) 'd'
+          THEN pg_catalog.format_type(t.typbasetype, t.typtypmod) END,
+        pg_catalog.pg_get_expr(t.typdefaultbin, 0), t.typnotnull,
+        (SELECT COALESCE(pg_catalog.json_agg(pg_catalog.json_build_array(
+            dc.conname::pg_catalog.text, pg_catalog.pg_get_constraintdef(dc.oid))
+            ORDER BY dc.conname), '[]')::pg_catalog.text
+          FROM pg_catalog.pg_constraint dc
+          WHERE dc.contypid OPERATOR(pg_catalog.=) t.oid AND dc.contype OPERATOR(pg_catalog.=) 'c'),
+        (SELECT COALESCE(pg_catalog.json_agg(pg_catalog.json_build_array(
+            a.attname::pg_catalog.text, pg_catalog.format_type(a.atttypid, a.atttypmod))
+            ORDER BY a.attnum), '[]')::pg_catalog.text
+          FROM pg_catalog.pg_attribute a
+          WHERE a.attrelid OPERATOR(pg_catalog.=) t.typrelid AND a.attnum OPERATOR(pg_catalog.>) 0
+            AND NOT a.attisdropped),
+        t.oid::pg_catalog.int8
+      FROM pg_catalog.pg_type t
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) t.typnamespace
+      LEFT JOIN pg_catalog.pg_class rc ON rc.oid OPERATOR(pg_catalog.=) t.typrelid
+      WHERE (t.typtype OPERATOR(pg_catalog.=) ANY (ARRAY['e', 'd']::pg_catalog."char"[])
+          OR (t.typtype OPERATOR(pg_catalog.=) 'c' AND rc.relkind OPERATOR(pg_catalog.=) 'c'))
         AND \(Self.userSchemaFilter)
         AND NOT EXISTS (
-          SELECT 1 FROM pg_depend x
-          WHERE x.classid = 'pg_type'::regclass AND x.objid = t.oid AND x.deptype = 'e')
+          SELECT 1 FROM pg_catalog.pg_depend x
+          WHERE x.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_type'::pg_catalog.regclass
+            AND x.objid OPERATOR(pg_catalog.=) t.oid AND x.deptype OPERATOR(pg_catalog.=) 'e')
       ORDER BY n.nspname, t.typname
       """
     var types: [DatabaseUserType] = []
@@ -483,25 +526,27 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         c.confupdtype AS on_update,
         c.confdeltype AS on_delete,
         (
-          SELECT array_agg(a.attname::text ORDER BY x.n)::text
-          FROM pg_attribute a
-          CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS x(attnum, n)
-          WHERE a.attrelid = c.conrelid AND a.attnum = x.attnum
+          SELECT pg_catalog.array_agg(a.attname::pg_catalog.text ORDER BY x.n)::pg_catalog.text
+          FROM pg_catalog.pg_attribute a
+          CROSS JOIN LATERAL pg_catalog.unnest(c.conkey) WITH ORDINALITY AS x(attnum, n)
+          WHERE a.attrelid OPERATOR(pg_catalog.=) c.conrelid
+            AND a.attnum OPERATOR(pg_catalog.=) x.attnum
         ) AS source_columns,
         (
-          SELECT array_agg(a.attname::text ORDER BY x.n)::text
-          FROM pg_attribute a
-          CROSS JOIN LATERAL unnest(c.confkey) WITH ORDINALITY AS x(attnum, n)
-          WHERE a.attrelid = c.confrelid AND a.attnum = x.attnum
+          SELECT pg_catalog.array_agg(a.attname::pg_catalog.text ORDER BY x.n)::pg_catalog.text
+          FROM pg_catalog.pg_attribute a
+          CROSS JOIN LATERAL pg_catalog.unnest(c.confkey) WITH ORDINALITY AS x(attnum, n)
+          WHERE a.attrelid OPERATOR(pg_catalog.=) c.confrelid
+            AND a.attnum OPERATOR(pg_catalog.=) x.attnum
         ) AS target_columns
-      FROM pg_constraint c
-      JOIN pg_class cl ON c.conrelid = cl.oid
-      JOIN pg_namespace ns ON cl.relnamespace = ns.oid
-      JOIN pg_class clt ON c.confrelid = clt.oid
-      JOIN pg_namespace nst ON clt.relnamespace = nst.oid
-      WHERE c.contype = 'f'
-        AND c.conparentid = 0
-        AND ns.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+      FROM pg_catalog.pg_constraint c
+      JOIN pg_catalog.pg_class cl ON c.conrelid OPERATOR(pg_catalog.=) cl.oid
+      JOIN pg_catalog.pg_namespace ns ON cl.relnamespace OPERATOR(pg_catalog.=) ns.oid
+      JOIN pg_catalog.pg_class clt ON c.confrelid OPERATOR(pg_catalog.=) clt.oid
+      JOIN pg_catalog.pg_namespace nst ON clt.relnamespace OPERATOR(pg_catalog.=) nst.oid
+      WHERE c.contype OPERATOR(pg_catalog.=) 'f'
+        AND c.conparentid OPERATOR(pg_catalog.=) 0
+        AND \(Self.notSystemOrToastSchema("ns"))
       ORDER BY ns.nspname, cl.relname, c.conname
       """
     var foreignKeys: [ForeignKey] = []
@@ -533,18 +578,26 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
 
   func editTable(named name: String, in session: any DatabaseSession) async throws -> EditTable? {
     // attgenerated is PostgreSQL 12+. Read it through to_jsonb so older servers see no key.
+    // `$1` is the table name from the user's query: `to_regclass` resolves it through the
+    // session's search_path on purpose, as the user's own statement resolves it (the carve-out
+    // to the pg_catalog rule above).
     let query = """
-      SELECT c.oid::int8, a.attnum::int4, a.attname::text,
-             COALESCE((SELECT k.ord FROM unnest(i.indkey::int2[]) WITH ORDINALITY k(att, ord)
-                       WHERE k.att = a.attnum), 0)::int4,
-             format('%I.%I', n.nspname, c.relname), c.relkind::text, c.relhassubclass,
-             n.nspname::text, c.relname::text,
-             COALESCE(to_jsonb(a) ->> 'attgenerated', '') <> ''
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-      LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
-      WHERE c.oid = to_regclass($1)
+      SELECT c.oid::pg_catalog.int8, a.attnum::pg_catalog.int4, a.attname::pg_catalog.text,
+             COALESCE((SELECT k.ord
+                       FROM pg_catalog.unnest(i.indkey::pg_catalog.int2[])
+                         WITH ORDINALITY k(att, ord)
+                       WHERE k.att OPERATOR(pg_catalog.=) a.attnum), 0)::pg_catalog.int4,
+             pg_catalog.format('%I.%I', n.nspname, c.relname), c.relkind::pg_catalog.text,
+             c.relhassubclass, n.nspname::pg_catalog.text, c.relname::pg_catalog.text,
+             COALESCE(pg_catalog.to_jsonb(a) OPERATOR(pg_catalog.->>) 'attgenerated', '')
+               OPERATOR(pg_catalog.<>) ''
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) c.oid
+        AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
+      LEFT JOIN pg_catalog.pg_index i ON i.indrelid OPERATOR(pg_catalog.=) c.oid
+        AND i.indisprimary
+      WHERE c.oid OPERATOR(pg_catalog.=) pg_catalog.to_regclass($1)
       """
     var oid: UInt32 = 0
     var qualifiedName = ""
@@ -605,10 +658,10 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     }
   }
 
-  /// Column modifiers from `information_schema`, read for each column's own table: the table
-  /// OID and attribute number from the row description are bound, never a name. A column with
-  /// no table origin keeps its type. Throws when the catalog query fails so the actor can map a
-  /// closed session; returns `columns` when the statement is not one table.
+  /// Column modifiers as information_schema reports them, read for each column's own table:
+  /// the table OID and attribute number from the row description are bound, never a name. A
+  /// column with no table origin keeps its type. Throws when the catalog query fails so the
+  /// actor can map a closed session; returns `columns` when the statement is not one table.
   func enrichedColumns(
     _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
   ) async throws -> [ColumnInfo] {
@@ -643,22 +696,78 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     }
   }
 
-  /// One table's columns by OID (`$1`) and attribute numbers (`$2`, an int4 array literal).
-  /// `ordinal_position` is the attnum; the table's names are joined in the catalog, never sent.
+  /// One table's columns by OID (`$1`) and attribute numbers (`$2`, an int4 array literal),
+  /// with the table's names joined in the catalog, never sent. The columns are the ones
+  /// information_schema.columns gives (ordinal_position = attnum, data_type,
+  /// character_maximum_length, numeric_precision, numeric_scale, datetime_precision,
+  /// interval_type, udt_name), so `detailedType` builds the same text as before (`INTEGER(32,0)`,
+  /// `CHARACTER VARYING(20)`, `TIMESTAMP(6) W/O TZ`), but read from pg_attribute / pg_type: on
+  /// PostgreSQL 13 and older that view calls `_pg_*` SQL functions whose body is parsed with
+  /// the caller's search_path and unqualified operators. This is the view's own logic: a
+  /// domain reads as its base type and the domain's typmod (`_pg_truetypid`, `_pg_truetypmod`);
+  /// data_type is `ARRAY`, the pg_catalog type's `format_type(oid, NULL)` or `USER-DEFINED`;
+  /// the typmod is decoded as `_pg_char_max_length`, `_pg_numeric_precision`,
+  /// `_pg_numeric_scale` and `_pg_datetime_precision` do (type OIDs 1042/1043 char and varchar,
+  /// 1560/1562 bit and varbit, 21/23/20 int2/4/8, 1700 numeric, 700/701 float4/8, 1082 date,
+  /// 1083/1114/1184/1266 time and timestamp with and without zone, 1186 interval); and the rows
+  /// are the ones the view lists (relkind r/v/f/p, column privilege, no other session's temp
+  /// schema). interval_type is NULL: `detailedType` never reads it.
   private static let columnTypeSQL = """
-    SELECT c.ordinal_position::int4, c.data_type,
-           c.character_maximum_length,
-           c.numeric_precision,
-           c.numeric_scale,
-           c.datetime_precision,
-           c.interval_type,
-           c.udt_name
-    FROM pg_class r
-    JOIN pg_namespace n ON n.oid = r.relnamespace
-    JOIN information_schema.columns c
-      ON c.table_schema = n.nspname AND c.table_name = r.relname
-    WHERE r.oid = $1::oid
-      AND c.ordinal_position = ANY($2::int4[])
+    SELECT a.attnum::pg_catalog.int4,
+      CASE WHEN u.typelem OPERATOR(pg_catalog.<>) 0::pg_catalog.oid
+          AND u.typlen OPERATOR(pg_catalog.=) '-1'::pg_catalog.int2 THEN 'ARRAY'
+        WHEN un.nspname OPERATOR(pg_catalog.=) 'pg_catalog'
+          THEN pg_catalog.format_type(u.oid, NULL)
+        ELSE 'USER-DEFINED' END,
+      CASE WHEN m.typmod OPERATOR(pg_catalog.=) '-1'::pg_catalog.int4 THEN NULL
+        WHEN u.oid OPERATOR(pg_catalog.=) ANY (ARRAY[1042, 1043]::pg_catalog.oid[])
+          THEN m.typmod OPERATOR(pg_catalog.-) 4
+        WHEN u.oid OPERATOR(pg_catalog.=) ANY (ARRAY[1560, 1562]::pg_catalog.oid[])
+          THEN m.typmod
+        END,
+      CASE WHEN u.oid OPERATOR(pg_catalog.=) 21::pg_catalog.oid THEN 16
+        WHEN u.oid OPERATOR(pg_catalog.=) 23::pg_catalog.oid THEN 32
+        WHEN u.oid OPERATOR(pg_catalog.=) 20::pg_catalog.oid THEN 64
+        WHEN u.oid OPERATOR(pg_catalog.=) 1700::pg_catalog.oid THEN
+          CASE WHEN m.typmod OPERATOR(pg_catalog.=) '-1'::pg_catalog.int4 THEN NULL
+            ELSE ((m.typmod OPERATOR(pg_catalog.-) 4) OPERATOR(pg_catalog.>>) 16)
+              OPERATOR(pg_catalog.&) 65535
+            END
+        WHEN u.oid OPERATOR(pg_catalog.=) 700::pg_catalog.oid THEN 24
+        WHEN u.oid OPERATOR(pg_catalog.=) 701::pg_catalog.oid THEN 53
+        END,
+      CASE WHEN u.oid OPERATOR(pg_catalog.=) ANY (ARRAY[21, 23, 20]::pg_catalog.oid[]) THEN 0
+        WHEN u.oid OPERATOR(pg_catalog.=) 1700::pg_catalog.oid THEN
+          CASE WHEN m.typmod OPERATOR(pg_catalog.=) '-1'::pg_catalog.int4 THEN NULL
+            ELSE (m.typmod OPERATOR(pg_catalog.-) 4) OPERATOR(pg_catalog.&) 65535
+            END
+        END,
+      CASE WHEN u.oid OPERATOR(pg_catalog.=) 1082::pg_catalog.oid THEN 0
+        WHEN u.oid OPERATOR(pg_catalog.=) ANY (ARRAY[1083, 1114, 1184, 1266]::pg_catalog.oid[])
+          THEN CASE WHEN m.typmod OPERATOR(pg_catalog.<) 0 THEN 6 ELSE m.typmod END
+        WHEN u.oid OPERATOR(pg_catalog.=) 1186::pg_catalog.oid THEN
+          CASE WHEN m.typmod OPERATOR(pg_catalog.<) 0
+              OR (m.typmod OPERATOR(pg_catalog.&) 65535) OPERATOR(pg_catalog.=) 65535
+            THEN 6 ELSE m.typmod OPERATOR(pg_catalog.&) 65535
+            END
+        END,
+      NULL::pg_catalog.text,
+      u.typname::pg_catalog.text
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+    JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) c.oid
+    JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) a.atttypid
+    CROSS JOIN LATERAL (SELECT
+        CASE WHEN t.typtype OPERATOR(pg_catalog.=) 'd' THEN t.typbasetype ELSE a.atttypid END,
+        CASE WHEN t.typtype OPERATOR(pg_catalog.=) 'd' THEN t.typtypmod ELSE a.atttypmod END)
+      AS m(typid, typmod)
+    JOIN pg_catalog.pg_type u ON u.oid OPERATOR(pg_catalog.=) m.typid
+    JOIN pg_catalog.pg_namespace un ON un.oid OPERATOR(pg_catalog.=) u.typnamespace
+    WHERE c.oid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
+      AND a.attnum OPERATOR(pg_catalog.=) ANY ($2::pg_catalog.int4[])
+      AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
+      AND c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'v', 'f', 'p']::pg_catalog."char"[])
+      AND \(hideOtherTempSchemas) AND \(columnPrivilegeFilter)
     """
 
   /// Exact row count. The actor turns a query failure into 0.
@@ -667,29 +776,31 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   ) async throws
     -> Int
   {
-    let query = """
-      SELECT COUNT(*) as row_count
-      FROM "\(schema)".\"\(table)\"
-      """
+    let dialect = SQLDialect.postgresql
+    let relation = try dialect.quoteIdentifier(schema) + "." + dialect.quoteIdentifier(table)
+    let query = "SELECT pg_catalog.count(*) AS row_count FROM \(relation)"
     for row in try await rows(in: session, sql: query) {
       if let count = row.first.flatMap(CatalogValue.int) { return count }
     }
     return 0
   }
 
-  /// Primary key column names in key order. `tableName` is bound and resolved with `to_regclass`.
+  /// Primary key column names in key order. `tableName` is bound and resolved with `to_regclass`
+  /// through the session's search_path on purpose: it is the user's table name, resolved as the
+  /// user's SQL resolves it (the carve-out to the pg_catalog rule above).
   func primaryKeyColumns(
     of tableName: String, in session: any DatabaseSession
   ) async throws
     -> [String]
   {
     let query = """
-      SELECT a.attname::text AS column_name
-      FROM pg_index i
-      JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-      WHERE i.indrelid = to_regclass($1)
+      SELECT a.attname::pg_catalog.text AS column_name
+      FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) i.indrelid
+        AND a.attnum OPERATOR(pg_catalog.=) ANY (i.indkey)
+      WHERE i.indrelid OPERATOR(pg_catalog.=) pg_catalog.to_regclass($1)
         AND i.indisprimary
-      ORDER BY array_position(i.indkey, a.attnum)
+      ORDER BY pg_catalog.array_position(i.indkey, a.attnum)
       """
     var columns: [String] = []
     for row in try await rows(in: session, sql: query, binds: [.text(tableName)]) {
@@ -709,7 +820,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     return collected
   }
 
-  /// Same type string the actor built from `information_schema` cells.
+  /// Same type string the actor built from information_schema cells (`columnTypeSQL` columns).
   private static func detailedType(dataType: String, row: [CellValue]) -> String {
     var detailedType = dataType.uppercased()
     if detailedType == "USER-DEFINED", let udtName = CatalogValue.string(row[7]) {

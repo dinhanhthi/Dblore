@@ -53,7 +53,7 @@ struct TemporaryTablesSidebarTests {
     #expect(tables.map(\.isTemporary) == [true, false])
     #expect(session.queries.count == 1)
     let sql = try #require(session.queries.first)
-    #expect(sql.contains("n.oid = pg_my_temp_schema()"))
+    #expect(sql.contains("n.oid OPERATOR(pg_catalog.=) pg_catalog.pg_my_temp_schema()"))
   }
 
   // MARK: - Sidebar section

@@ -15,7 +15,7 @@ struct PostgresColumnTypeQueryTests {
   @Test("The catalog statement binds the table OID and attnums, never result names")
   func bindsOriginNotNames() async throws {
     let hostile = "v'); DROP TABLE accounts; --"
-    // information_schema row for attnum 3: numeric(12,4)
+    // Catalog row for attnum 3: numeric(12,4)
     let session = FakeDatabaseSession(
       capabilities: .contract(), columns: [],
       rows: [
@@ -40,11 +40,21 @@ struct PostgresColumnTypeQueryTests {
     #expect(enriched.map(\.origin) == columns.map(\.origin))
     #expect(session.queries.count == 1)
     let sql = try #require(session.queries.first)
-    #expect(sql.contains("$1::oid"))
+    #expect(sql.contains("$1::pg_catalog.oid"))
     #expect(sql.contains("$2"))
-    for name in [hostile, "row_key", "other_schema", "ledger", "'"] {
+    for name in [hostile, "row_key", "other_schema", "ledger"] {
       #expect(!sql.contains(name), "statement carries \(name)")
     }
+    // The only literals are the statement's own fixed ones (type names, typmod and relkind
+    // codes, privilege lists): none can carry a result name
+    let fixed: Set<String> = [
+      "ARRAY", "USER-DEFINED", "pg_catalog", "-1", "d", "r", "v", "f", "p", "USAGE",
+      "SELECT, INSERT, UPDATE, REFERENCES",
+    ]
+    let literals = SQLTokenizer.tokens(sql, dialect: .postgresql).filter {
+      $0.kind != .word && $0.kind != .symbol && $0.kind != .quotedIdentifier
+    }
+    #expect(literals.allSatisfy { $0.kind == .string && fixed.contains($0.text) })
     #expect(session.statementBinds == [[.text("16400"), .text("{1,3}")]])
   }
 

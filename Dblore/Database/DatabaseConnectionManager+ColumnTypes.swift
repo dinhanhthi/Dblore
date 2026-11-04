@@ -2,8 +2,8 @@
 //  DatabaseConnectionManager+ColumnTypes.swift
 //  Dblore
 //
-//  Column type enrichment (precision, scale, length) from information_schema, and MySQL
-//  result column origins
+//  Column type enrichment (precision, scale, length) as information_schema reports it, and
+//  MySQL result column origins
 //
 
 import Foundation
@@ -12,9 +12,9 @@ extension DatabaseConnectionManager {
   // MARK: - Column Type Enrichment
 
   /// Enrich column type information with modifiers (precision, scale, length)
-  /// Uses information_schema to get detailed type info, always read fresh (MCP, CLI and the
-  /// app's own reads never take a cached type). Skipped (driver types kept) while the app
-  /// transaction is pending: a failing catalog query would abort it.
+  /// Reads the modifiers information_schema reports (from pg_catalog), always read fresh
+  /// (MCP, CLI and the app's own reads never take a cached type). Skipped (driver types kept)
+  /// while the app transaction is pending: a failing catalog query would abort it.
   /// MySQL: resolves the result column origins instead (`resolveMySQLOrigins`).
   func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
     // Only PostgreSQL has modifiers to add. SQLite keeps declared types; DuckDB has no
@@ -112,8 +112,9 @@ extension DatabaseConnectionManager {
   private func mysqlColumns(
     of source: ColumnSourceName, tableID: TableRef
   ) async -> MySQLTableColumns? {
-    if let cached = mysqlTableColumns[tableID], cached.database == source.schema,
-      cached.table == source.table
+    if let cached = mysqlTableColumns[tableID],
+      cached.database.unicodeScalars.elementsEqual(source.schema.unicodeScalars),
+      cached.table.unicodeScalars.elementsEqual(source.table.unicodeScalars)
     {
       return cached
     }

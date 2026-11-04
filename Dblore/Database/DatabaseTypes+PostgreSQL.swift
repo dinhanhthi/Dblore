@@ -64,13 +64,16 @@ extension ColumnInfo {
 
 extension DatabaseConnectionManager {
   /// Extension types the Cell Value viewers read, found by name and owned by an extension:
-  /// their OIDs differ from one database to the next, so they are never hardcoded.
+  /// their OIDs differ from one database to the next, so they are never hardcoded. Sent at
+  /// session open with the user's search_path, so every catalog object names pg_catalog.
   nonisolated static let viewerExtensionTypesSQL = """
-    SELECT t.oid::int8, t.typname::text FROM pg_type t
-    WHERE t.typname IN ('geometry', 'geography', 'vector', 'halfvec', 'sparsevec')
+    SELECT t.oid::pg_catalog.int8, t.typname::pg_catalog.text FROM pg_catalog.pg_type t
+    WHERE t.typname OPERATOR(pg_catalog.=) ANY (ARRAY['geometry', 'geography', 'vector',
+        'halfvec', 'sparsevec']::pg_catalog.name[])
       AND EXISTS (
-        SELECT 1 FROM pg_depend d
-        WHERE d.classid = 'pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e')
+        SELECT 1 FROM pg_catalog.pg_depend d
+        WHERE d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_type'::pg_catalog.regclass
+          AND d.objid OPERATOR(pg_catalog.=) t.oid AND d.deptype OPERATOR(pg_catalog.=) 'e')
     """
 
   /// Map PostgreSQL data type to display name. `extensionTypes` names extension types by OID

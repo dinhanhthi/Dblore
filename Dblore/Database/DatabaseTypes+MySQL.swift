@@ -10,7 +10,7 @@ extension TableRef {
   /// compared, never split, and never spliced into SQL (no NUL check needed).
   nonisolated static func mysql(database: String, table: String) -> TableRef {
     func quoted(_ name: String) -> String {
-      "`" + name.replacingOccurrences(of: "`", with: "``") + "`"
+      "`" + SQLDialect.escapingScalars(name, ["`": "``"]) + "`"
     }
     return TableRef("mysql:" + quoted(database) + "." + quoted(table))
   }

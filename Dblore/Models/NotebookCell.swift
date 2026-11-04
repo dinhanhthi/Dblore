@@ -261,8 +261,18 @@ struct CellResult: Codable, Sendable {
 }
 
 /// Opaque table identity. Callers compare values. PostgreSQL builds `pg:<oid>` in `Dblore/Database`.
+/// Compared and hashed by Unicode scalars: canonically equivalent names (NFC and NFD) are two
+/// different tables, so an edit keyed by one never resolves to the other.
 nonisolated struct TableRef: Hashable, Sendable, Codable {
   private let rawValue: String
+
+  nonisolated static func == (lhs: TableRef, rhs: TableRef) -> Bool {
+    lhs.rawValue.unicodeScalars.elementsEqual(rhs.rawValue.unicodeScalars)
+  }
+
+  nonisolated func hash(into hasher: inout Hasher) {
+    for scalar in rawValue.unicodeScalars { hasher.combine(scalar.value) }
+  }
 
   nonisolated init(_ rawValue: String) {
     self.rawValue = rawValue

@@ -151,7 +151,7 @@ extension TableRef {
   /// Quotes are doubled, so names with dots or quotes never give the same string.
   nonisolated static func duckdb(schema: String, table: String) -> TableRef {
     func quoted(_ name: String) -> String {
-      "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+      "\"" + SQLDialect.escapingScalars(name, ["\"": "\"\""]) + "\""
     }
     return TableRef("duckdb:\(quoted(schema)).\(quoted(table))")
   }

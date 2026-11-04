@@ -337,7 +337,7 @@ extension TableRef {
   /// never split.
   nonisolated static func mongodb(database: String, collection: String) -> TableRef {
     func quoted(_ name: String) -> String {
-      "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+      "\"" + SQLDialect.escapingScalars(name, ["\"": "\"\""]) + "\""
     }
     return TableRef("mongodb:" + quoted(database) + "." + quoted(collection))
   }
