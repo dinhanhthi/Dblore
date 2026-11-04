@@ -114,7 +114,8 @@ nonisolated struct CopyObjectsPlan: Sendable, Equatable {
   }
 
   /// PostgreSQL: each identity sequence continues after the largest copied value. Run-only,
-  /// after the rows; built from the planned names. Empty on other targets.
+  /// after the rows; built from the planned names. Empty on other targets. Every function,
+  /// operator and cast type names pg_catalog, so nothing on the target's search_path runs.
   func identityRestartStatements() throws -> [String] {
     guard case .postgresql = target else { return [] }
     let dialect = SQLDialect.postgresql
@@ -123,9 +124,11 @@ nonisolated struct CopyObjectsPlan: Sendable, Equatable {
         try dialect.quoteIdentifier(targetSchema) + "."
         + dialect.quoteIdentifier(identity.table)
       let column = try dialect.quoteIdentifier(identity.column)
-      return "SELECT setval(pg_get_serial_sequence(\(dialect.literal(.string(table))), "
-        + "\(dialect.literal(.string(identity.column)))), "
-        + "GREATEST(COALESCE(MAX(\(column)), 0), 0) + 1, false) FROM \(table)"
+      return "SELECT pg_catalog.setval(pg_catalog.pg_get_serial_sequence("
+        + "\(dialect.literal(.string(table)))::pg_catalog.text, "
+        + "\(dialect.literal(.string(identity.column)))::pg_catalog.text), "
+        + "GREATEST(COALESCE(pg_catalog.max(\(column)), 0), 0)::pg_catalog.int8 "
+        + "OPERATOR(pg_catalog.+) 1, false) FROM \(table)"
     }
   }
 }

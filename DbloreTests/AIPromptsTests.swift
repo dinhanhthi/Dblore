@@ -377,4 +377,26 @@ struct AIPromptsTests {
     #expect(text.components(separatedBy: "</tool_result>").count == 2)
     #expect(text.hasSuffix("\n</tool_result>"))
   }
+
+  @Test("An outside tool name cannot end its attribute with a quote that carries a mark")
+  func outsideToolResultEscapesAttributesPerScalar() throws {
+    let text = AIPrompts.outsideToolResult(
+      server: "Issues", tool: "a\"\u{301} b=\"x", content: "ok")
+    let openTag = try #require(text.split(separator: "\n").first.map(String.init))
+    let escaped = "a&quot;\u{301} b=&quot;x"
+    #expect(
+      openTag.unicodeScalars.elementsEqual(
+        #"<outside_tool_result server="Issues" tool=""#.unicodeScalars + escaped.unicodeScalars
+          + #"" untrusted="true">"#.unicodeScalars))
+    // Exactly the three attributes: three `="` pairs, and six quote scalars in the tag
+    #expect(openTag.components(separatedBy: "=\"").count == 4)
+    #expect(openTag.unicodeScalars.filter { $0 == "\"" }.count == 6)
+  }
+
+  @Test("A fence outgrows a backtick run whose last backtick carries a mark")
+  func fenceCountsBackticksPerScalar() {
+    let text = AIPrompts.fenced("```\u{301}", info: "")
+    #expect(text.hasPrefix("````\n"))
+    #expect(text.hasSuffix("\n````"))
+  }
 }

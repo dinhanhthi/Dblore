@@ -1526,39 +1526,52 @@ extension DatabaseConnectionManager {
   /// (`checkPostgresDropTargets` reads five text cells): the type branch fills the last with
   /// `'-'`.
   static func postgresDropTargetsQuery(_ drops: SQLRestorePlan.PostgresDrops) -> String {
+    // Runs with the user's search_path: every catalog name, function, operator and cast type
+    // names pg_catalog (the IN list is an `= ANY` over a typed array)
     var branches: [String] = []
     if !drops.tables.isEmpty {
       branches.append(
         """
-        SELECT 'inherits'::text, pn.nspname::text, pc.relname::text,
-          cn.nspname::text, cc.relname::text
-        FROM pg_inherits i
-        JOIN pg_class pc ON pc.oid = i.inhparent JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-        JOIN pg_class cc ON cc.oid = i.inhrelid JOIN pg_namespace cn ON cn.oid = cc.relnamespace
-        WHERE pc.relkind IN ('r', 'p')
+        SELECT 'inherits'::pg_catalog.text, pn.nspname::pg_catalog.text,
+          pc.relname::pg_catalog.text, cn.nspname::pg_catalog.text, cc.relname::pg_catalog.text
+        FROM pg_catalog.pg_inherits i
+        JOIN pg_catalog.pg_class pc ON pc.oid OPERATOR(pg_catalog.=) i.inhparent
+        JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) pc.relnamespace
+        JOIN pg_catalog.pg_class cc ON cc.oid OPERATOR(pg_catalog.=) i.inhrelid
+        JOIN pg_catalog.pg_namespace cn ON cn.oid OPERATOR(pg_catalog.=) cc.relnamespace
+        WHERE pc.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p']::pg_catalog."char"[])
         """)
       branches.append(
         """
-        SELECT 'owns'::text, tn.nspname::text, tc.relname::text,
-          sn.nspname::text, sc.relname::text
-        FROM pg_depend d
-        JOIN pg_class sc ON sc.oid = d.objid AND sc.relkind = 'S'
-        JOIN pg_namespace sn ON sn.oid = sc.relnamespace
-        JOIN pg_class tc ON tc.oid = d.refobjid JOIN pg_namespace tn ON tn.oid = tc.relnamespace
-        WHERE d.classid = 'pg_class'::regclass AND d.refclassid = 'pg_class'::regclass
-          AND d.deptype = 'a'
+        SELECT 'owns'::pg_catalog.text, tn.nspname::pg_catalog.text,
+          tc.relname::pg_catalog.text, sn.nspname::pg_catalog.text, sc.relname::pg_catalog.text
+        FROM pg_catalog.pg_depend d
+        JOIN pg_catalog.pg_class sc ON sc.oid OPERATOR(pg_catalog.=) d.objid
+          AND sc.relkind OPERATOR(pg_catalog.=) 'S'
+        JOIN pg_catalog.pg_namespace sn ON sn.oid OPERATOR(pg_catalog.=) sc.relnamespace
+        JOIN pg_catalog.pg_class tc ON tc.oid OPERATOR(pg_catalog.=) d.refobjid
+        JOIN pg_catalog.pg_namespace tn ON tn.oid OPERATOR(pg_catalog.=) tc.relnamespace
+        WHERE d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND d.deptype OPERATOR(pg_catalog.=) 'a'
         """)
     }
     if !drops.types.isEmpty {
       branches.append(
         """
-        SELECT 'type'::text, n.nspname::text, t.typname::text, t.typtype::text, '-'::text
-        FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-        WHERE t.typtype <> 'e'
-          AND left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
-          AND (t.typrelid = 0
-            OR EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))
-          AND NOT EXISTS (SELECT 1 FROM pg_type e WHERE e.typarray = t.oid)
+        SELECT 'type'::pg_catalog.text, n.nspname::pg_catalog.text, t.typname::pg_catalog.text,
+          t.typtype::pg_catalog.text, '-'::pg_catalog.text
+        FROM pg_catalog.pg_type t
+        JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) t.typnamespace
+        WHERE t.typtype OPERATOR(pg_catalog.<>) 'e'
+          AND pg_catalog.left(n.nspname::pg_catalog.text, 3) OPERATOR(pg_catalog.<>) 'pg_'
+          AND n.nspname OPERATOR(pg_catalog.<>) 'information_schema'
+          AND (t.typrelid OPERATOR(pg_catalog.=) 0
+            OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c
+              WHERE c.oid OPERATOR(pg_catalog.=) t.typrelid
+                AND c.relkind OPERATOR(pg_catalog.=) 'c'))
+          AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type e
+            WHERE e.typarray OPERATOR(pg_catalog.=) t.oid)
         """)
     }
     return branches.joined(separator: "\nUNION ALL\n")

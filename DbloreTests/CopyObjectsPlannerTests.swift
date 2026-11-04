@@ -443,8 +443,10 @@ struct CopyObjectsPlannerTests {
     #expect(checked.prelude.map(\.createsTable) == [name])
     #expect(
       try plan.identityRestartStatements() == [
-        #"SELECT setval(pg_get_serial_sequence('"public"."t""x`;''"', 'c"`;'''), "#
-          + #"GREATEST(COALESCE(MAX("c""`;'"), 0), 0) + 1, false) FROM "public"."t""x`;'""#
+        #"SELECT pg_catalog.setval(pg_catalog.pg_get_serial_sequence("#
+          + #"'"public"."t""x`;''"'::pg_catalog.text, 'c"`;'''::pg_catalog.text), "#
+          + #"GREATEST(COALESCE(pg_catalog.max("c""`;'"), 0), 0)::pg_catalog.int8 "#
+          + #"OPERATOR(pg_catalog.+) 1, false) FROM "public"."t""x`;'""#
       ])
     // The source read of the same table on MySQL
     var mysqlSource = hostile

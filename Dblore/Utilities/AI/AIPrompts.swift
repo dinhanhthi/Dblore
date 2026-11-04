@@ -306,12 +306,11 @@ nonisolated enum AIPrompts {
   /// untrusted data from `server`. The open and close tags inside are neutralized; attribute
   /// values are escaped.
   static func outsideToolResult(server: String, tool: String, content: String) -> String {
+    // Per unicode scalar: a quote followed by a combining mark is one Character
     func attribute(_ text: String) -> String {
-      OutsideMCPText.display(text, limit: OutsideMCPServer.nameLimit)
-        .replacingOccurrences(of: "&", with: "&amp;")
-        .replacingOccurrences(of: "\"", with: "&quot;")
-        .replacingOccurrences(of: "<", with: "&lt;")
-        .replacingOccurrences(of: ">", with: "&gt;")
+      SQLDialect.escapingScalars(
+        OutsideMCPText.display(text, limit: OutsideMCPServer.nameLimit),
+        ["&": "&amp;", "\"": "&quot;", "<": "&lt;", ">": "&gt;"])
     }
     let capped = OutsideMCPText.capped(
       content, limit: AITools.maxOutsideResultScalars,
@@ -455,12 +454,13 @@ nonisolated enum AIPrompts {
       with: "&lt;$1", options: [.regularExpression, .caseInsensitive])
   }
 
-  /// Fenced block whose fence is longer than any backtick run in the content (min 3)
+  /// Fenced block whose fence is longer than any backtick run in the content (min 3), counted
+  /// per unicode scalar (a backtick followed by a combining mark is one Character)
   static func fenced(_ text: String, info: String) -> String {
     var longest = 0
     var run = 0
-    for character in text {
-      run = character == "`" ? run + 1 : 0
+    for scalar in text.unicodeScalars {
+      run = scalar == "`" ? run + 1 : 0
       longest = max(longest, run)
     }
     let fence = String(repeating: "`", count: max(3, longest + 1))

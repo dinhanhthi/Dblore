@@ -150,12 +150,14 @@ extension DatabaseConnectionManager {
     var constraintsSQL: String?
     switch config?.databaseType {
     case .postgresql:
-      schemaSQL = "SELECT current_schema()"
+      // Read with the user's search_path (the target's default schema is the point), so the
+      // function, operators and relations name pg_catalog
+      schemaSQL = "SELECT pg_catalog.current_schema()"
       // Every relation kind shares the schema's namespace: tables, views, indexes, sequences
       namesSQL = """
         SELECT c.relname FROM pg_catalog.pg_class c
-        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = current_schema()
+        JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+        WHERE n.nspname OPERATOR(pg_catalog.=) pg_catalog.current_schema()
         """
     case .mysql:
       schemaSQL = "SELECT DATABASE()"
