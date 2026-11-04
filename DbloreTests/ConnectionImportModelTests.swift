@@ -72,7 +72,9 @@ struct ConnectionImportModelTests {
   /// Starts a file load and returns once it is in flight.
   private static func startBlockedLoad(_ model: ConnectionImportModel) async -> Task<Void, Never> {
     let task = Task { await model.load(url: URL(fileURLWithPath: "/tmp/none")) }
-    while !model.isLoading { await Task.yield() }
+    await boundedWait("the file load starting", timeout: .seconds(45)) { @MainActor in
+      while !Task.isCancelled, !model.isLoading { await Task.yield() }
+    }
     return task
   }
 

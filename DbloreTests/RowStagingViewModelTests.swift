@@ -278,7 +278,8 @@ struct RowStagingViewModelTests {
 
     let reload = Task { await viewModel.reloadStaleDataViewer() }
     for _ in 0..<1000 where !viewModel.stagedLeavePromptVisible { await Task.yield() }
-    #expect(viewModel.stagedLeavePromptVisible)
+    #expect(
+      viewModel.stagedLeavePromptVisible, "the staged-leave prompt did not show within 1000 yields")
     #expect(viewModel.editorResult?.error == nil)
     viewModel.resolveStagedLeavePrompt(.cancel)
     await reload.value

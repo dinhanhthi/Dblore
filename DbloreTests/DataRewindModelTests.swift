@@ -154,7 +154,7 @@ struct DataRewindModelTests {
 
     let planning = Task { await model.setSelection([id]) }
     for _ in 0..<1000 where model.activity != .planning { await Task.yield() }
-    try #require(model.activity == .planning)
+    try #require(model.activity == .planning, "the planning did not start within 1000 yields")
     model.sheetDisappeared()
 
     #expect(model.activity == nil)

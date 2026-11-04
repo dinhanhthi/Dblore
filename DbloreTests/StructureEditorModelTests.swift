@@ -417,7 +417,9 @@ struct StructureEditorModelTests {
     await model.load()
     model.addColumn(Self.newColumn("note", "text"))
     let applying = Task { await model.apply() }
-    while !model.isApplying { await Task.yield() }
+    await boundedWait("the apply starting", timeout: .seconds(45)) { @MainActor in
+      while !Task.isCancelled, !model.isApplying { await Task.yield() }
+    }
 
     let staged = model.changes
     model.addColumn(Self.newColumn("other", "text"))
@@ -680,6 +682,7 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   private var pending = false
   private var holdsApply = false
   private var applyGate: CheckedContinuation<Void, Never>?
+  private let applyHeld = FiredFlag()
   private var insideUserTransaction = false
   private(set) var loads = 0
   private(set) var loadedTables: [String] = []
@@ -694,8 +697,12 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   func setApplyError(_ error: Error) { applyError = error }
   /// The next apply waits for `releaseApply()`
   func holdApply() { holdsApply = true }
-  func releaseApply() async {
-    while applyGate == nil { await Task.yield() }
+  func releaseApply(sourceLocation: SourceLocation = #_sourceLocation) async {
+    let held = applyHeld
+    await boundedWait(
+      "the held apply reaching the database", timeout: .seconds(45),
+      sourceLocation: sourceLocation
+    ) { await held.wait() }
     applyGate?.resume()
     applyGate = nil
     holdsApply = false
@@ -717,7 +724,12 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   func executeGatedSchemaChange(
     _ statements: [String], policy: ProtectionPolicy, connectionEpoch: UInt64, caller: UUID?
   ) async throws -> SchemaChangeResult {
-    if holdsApply { await withCheckedContinuation { applyGate = $0 } }
+    if holdsApply {
+      await withCheckedContinuation {
+        applyGate = $0
+        applyHeld.set()
+      }
+    }
     sent.append(statements)
     if let applyError { throw applyError }
     return SchemaChangeResult(

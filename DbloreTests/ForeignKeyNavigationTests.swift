@@ -413,11 +413,15 @@ struct ForeignKeyNavigationTests {
     return await recorder.sql
   }
 
-  private static func waitUntil(_ condition: @MainActor () -> Bool) async {
+  private static func waitUntil(
+    sourceLocation: SourceLocation = #_sourceLocation, _ condition: @MainActor () -> Bool
+  ) async {
     for _ in 0..<50 {
       if condition() { return }
       await Task.yield()
     }
+    if condition() { return }
+    Issue.record("the condition was not met within 50 yields", sourceLocation: sourceLocation)
   }
 }
 

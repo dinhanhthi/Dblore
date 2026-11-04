@@ -45,7 +45,7 @@ struct GenerateRowsModelTests {
     #expect(model.errorMessage == nil)
     // Progress lands through main-actor tasks
     for _ in 0..<100 where model.chunksDone < 3 { await Task.yield() }
-    #expect(model.chunksDone == 3)
+    #expect(model.chunksDone == 3, "the progress did not land within 100 yields")
   }
 
   @Test("Declining in Safe Mode ends the run unsent")
