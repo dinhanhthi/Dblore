@@ -84,6 +84,9 @@ extension NotebookViewModel {
     admitted confirmed: UInt64?, connectionManager: DatabaseConnectionManager
   ) async -> UInt64? {
     let admitted = confirmed ?? connectGenerationForRun()
+    // The session the run's checks are made for, read before it shows as waiting: one reopened
+    // after this (Cancel, a capped read) refuses the run below, like a connect does
+    let admittedEpoch = await connectionManager.connectionEpoch
     let wait = Task { await awaitConnectLoads(admitted) }
     editorConnectLoadsWait = wait
     let connectionKept = await withTaskCancellationHandler {
@@ -97,7 +100,7 @@ extension NotebookViewModel {
     // checks (`expectedEpoch`)
     let epoch = await connectionManager.connectionEpoch
     guard !wait.isCancelled, !Task.isCancelled else { return nil }
-    guard connectionKept, connectGenerationForRun() == admitted else {
+    guard connectionKept, epoch == admittedEpoch, connectGenerationForRun() == admitted else {
       showToast(Self.connectionChangedWhileWaitingMessage, type: .error)
       return nil
     }

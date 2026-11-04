@@ -230,6 +230,14 @@ extension NotebookViewModel {
     case .run(let epoch): expectedEpoch = epoch
     case .refused(let result): return result
     }
+    // The session the run's checks are made for, read before it shows as waiting: one reopened
+    // after this (Cancel, a capped read) refuses the run below, like a connect does
+    let admittedEpoch: UInt64
+    if let expectedEpoch {
+      admittedEpoch = expectedEpoch
+    } else {
+      admittedEpoch = await connectionManager.connectionEpoch
+    }
     // The cell list may have changed while the admission awaited: the cell may be gone or moved
     guard var index = notebook.cells.firstIndex(where: { $0.id == task.cellId }) else {
       return nil
@@ -283,7 +291,7 @@ extension NotebookViewModel {
     index = current
     // What was checked before the wait (confirmation, protection) was for the previous connection.
     // A connect starts by moving the generation: one started since the wait ended refuses too.
-    guard connectionKept, connectGenerationForRun() == admitted else {
+    guard connectionKept, runEpoch == admittedEpoch, connectGenerationForRun() == admitted else {
       notebook.cells[index].result = .errorResult(
         Self.connectionChangedWhileWaitingMessage, sourceQuery: task.query,
         aiSessionKey: aiSessionKey)

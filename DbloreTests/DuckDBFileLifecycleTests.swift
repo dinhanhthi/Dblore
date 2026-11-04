@@ -429,6 +429,58 @@ struct DuckDBFileLifecycleTests {
     #expect(toasts.messages == [NotebookViewModel.connectionChangedWhileWaitingMessage])
   }
 
+  @Test("LN12: a session reopened after the run was admitted, before its wait began, sends nothing")
+  func sessionReopenedBeforeWait() async throws {
+    let factory = AllowedPathsRecordingFactory()
+    let sql = "SELECT 42 AS ln12"
+    let (manager, viewModel, cellId, release) = try await connectedWithHeldSchemaLoad(
+      factory, sql: sql, settleLimit: .seconds(30))
+    defer { Task { await manager.performDisconnect() } }
+    defer { release.finish() }
+    // The run is admitted on `first`; the same connection's session is then reopened (a new
+    // epoch, the same connect generation) before the wait reads anything
+    let wait = viewModel.awaitConnectLoads
+    viewModel.awaitConnectLoads = { admitted in
+      try? await manager.connectionManager.reconnectWithActiveCertificate(
+        config: first, material: nil)
+      release.finish()
+      return await wait(admitted)
+    }
+
+    await viewModel.runCell(id: cellId)
+    await viewModel.executionQueue.waitForIdle()
+
+    #expect(!factory.statements.contains(sql))
+    #expect(!viewModel.notebook.cells[0].isRunning)
+    #expect(
+      viewModel.notebook.cells[0].result?.error
+        == NotebookViewModel.connectionChangedWhileWaitingMessage)
+  }
+
+  @Test("LN12: an editor run whose session was reopened before its wait began sends nothing")
+  func editorSessionReopenedBeforeWait() async throws {
+    let factory = AllowedPathsRecordingFactory()
+    let sql = "SELECT 42 AS ln12"
+    let (manager, _, _, release) = try await connectedWithHeldSchemaLoad(
+      factory, sql: sql, settleLimit: .seconds(30))
+    defer { Task { await manager.performDisconnect() } }
+    defer { release.finish() }
+    let (editor, toasts) = try editorRecordingToasts(manager, sql: sql)
+    let wait = editor.awaitConnectLoads
+    editor.awaitConnectLoads = { admitted in
+      try? await manager.connectionManager.reconnectWithActiveCertificate(
+        config: first, material: nil)
+      release.finish()
+      return await wait(admitted)
+    }
+
+    await editor.runUserEditorQuery(sql)
+
+    #expect(!factory.statements.contains(sql))
+    #expect(!editor.isEditorQueryRunning)
+    #expect(toasts.messages == [NotebookViewModel.connectionChangedWhileWaitingMessage])
+  }
+
   @Test("LN12: an editor run whose connection changed once its wait ended sends nothing")
   func editorConnectStartedAfterWait() async throws {
     let factory = AllowedPathsRecordingFactory()
