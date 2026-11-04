@@ -413,25 +413,28 @@ nonisolated extension ColumnValueGenerator {
       return 0...(signed.upperBound == .max ? .max : signed.upperBound * 2 + 1)
     }
 
-    /// `enum('a','it''s')` gives ["a", "it's"]
+    /// `enum('a','it''s')` gives ["a", "it's"]. Walks scalars: a quote followed by a combining
+    /// mark is one `Character` but still a quote.
     private static func quotedLabels(_ text: String) -> [String] {
-      guard let open = text.firstIndex(of: "("), let close = text.lastIndex(of: ")"), open < close
+      let scalars = text.unicodeScalars
+      guard let open = scalars.firstIndex(of: "("), let close = scalars.lastIndex(of: ")"),
+        open < close
       else { return [] }
       var labels: [String] = []
       var current: String?
-      var characters = text[text.index(after: open)..<close].makeIterator()
-      var pending = characters.next()
-      while let character = pending {
-        pending = characters.next()
-        guard character == "'" else {
-          current?.append(character)
+      var iterator = scalars[scalars.index(after: open)..<close].makeIterator()
+      var pending = iterator.next()
+      while let scalar = pending {
+        pending = iterator.next()
+        guard scalar == "'" else {
+          current?.unicodeScalars.append(scalar)
           continue
         }
         if current == nil {
           current = ""
         } else if pending == "'" {
           current?.append("'")
-          pending = characters.next()
+          pending = iterator.next()
         } else {
           labels.append(current ?? "")
           current = nil

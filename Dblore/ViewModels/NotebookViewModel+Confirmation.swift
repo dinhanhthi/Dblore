@@ -211,10 +211,8 @@ extension NotebookViewModel {
 
   /// One quoted token. The closing quote stays even when the text was capped.
   private nonisolated static func confirmationToken(_ value: String) -> String {
-    let escaped =
-      confirmationValue(value)
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
+    let escaped = SQLDialect.escapingScalars(
+      confirmationValue(value), ["\\": "\\\\", "\"": "\\\""])
     return "\"\(escaped)\""
   }
 
@@ -352,11 +350,11 @@ extension NotebookViewModel {
     _ kind: SQLToken.Kind, content: String, isEscapeString: Bool, dialect: SQLDialect
   ) -> LikeLexeme {
     if kind == .string, isEscapeString, dialect == .postgresql || dialect == .duckdb,
-      content.contains("\\")
+      content.unicodeScalars.contains("\\")
     {
       return .literal(eStringText(content))
     }
-    if kind == .string, dialect == .mysql, content.contains("\\") {
+    if kind == .string, dialect == .mysql, content.unicodeScalars.contains("\\") {
       return .literal(mysqlStringText(content))
     }
     if kind == .string || kind == .backslashString {

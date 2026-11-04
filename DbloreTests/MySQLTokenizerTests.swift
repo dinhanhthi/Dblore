@@ -36,6 +36,9 @@ struct MySQLTokenizerTests {
         == ["SELECT 1 -- c; d\nFROM t", "SELECT 2"])
     #expect(tokenizer.tokens("SELECT 1 --\tx;").map(\.text) == ["SELECT", "1"])
     #expect(tokenizer.tokens("SELECT 1 --\u{01}x;").map(\.text) == ["SELECT", "1"])
+    let afterDelete = SQLStatementClassifier.classify(
+      "SELECT 1 --\u{7F}x; d\nFROM t; DELETE FROM t", dialect: .mysql)
+    #expect(afterDelete.map(\.kind) == [.read, .dml])
     #expect(tokenizer.tokens("SELECT 1 --").map(\.text) == ["SELECT", "1"])
     #expect(tokenizer.tokens("SELECT 5--1").map(\.text) == ["SELECT", "5", "-", "-", "1"])
     #expect(tokenizer.splitStatements("SELECT 5--1; SELECT 2") == ["SELECT 5--1", "SELECT 2"])

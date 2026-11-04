@@ -136,6 +136,8 @@ struct MySQLClassifierTests {
       ("DESC SELECT 1", .unknown),
       ("DESCRIBE DELETE FROM t", .unknown),
       ("REPLACE INTO t VALUES (1)", .dml),
+      ("WITH c AS (SELECT 1) REPLACE t SELECT * FROM c", .dml),
+      ("WITH c AS (SELECT 1) SELECT REPLACE(x,'a','b') FROM c", .read),
       ("USE db", .sessionSet(touchesBrake: false)),
       ("SELECT * FROM t INTO OUTFILE '/tmp/x'", .utility),
       ("SELECT a INTO DUMPFILE '/tmp/x' FROM t", .utility),

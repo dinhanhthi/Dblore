@@ -41,6 +41,7 @@ struct SQLClassifierBypassTests {
     "WITH a AS (SELECT 1 /* */\u{301}) DELETE FROM t",
     "WITH a AS (SELECT 1 /*\u{301} ' */) DELETE FROM t --'",
     "WITH a AS (SELECT \u{600}'x') DELETE FROM t --'",
+    "WITH a AS (SELECT E'\\\u{301}') DELETE FROM t --'",
     // 8. Only PostgreSQL whitespace separates tokens (U+00A0 / U+3000 are identifier chars)
     "WITH a AS (SELECT \u{A0}E'\\') DELETE FROM t --'",
     "WITH a AS (SELECT \u{3000}E'\\') DELETE FROM t --'",
@@ -171,6 +172,11 @@ struct SQLClassifierBypassTests {
         + "SELECT * FROM a")
     #expect(upsert.map(\.kind) == [.dml])
     #expect(upsert.first?.affectsAllRows == false)
+  }
+
+  @Test("REPLACE() in the main query of a WITH stays a read")
+  func replaceFunctionAfterWith() {
+    #expect(kinds("WITH c AS (SELECT 1) SELECT REPLACE(x,'a','b') FROM c") == [.read])
   }
 
   @Test("Unreserved KEY as a column name does not hide the DELETE")

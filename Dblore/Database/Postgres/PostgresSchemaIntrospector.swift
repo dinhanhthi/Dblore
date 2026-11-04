@@ -797,24 +797,31 @@ nonisolated enum CatalogValue {
     return decoded.compactMap { $0.count == 2 ? ($0[0], $0[1]) : nil }
   }
 
-  /// Parse PostgreSQL array string format: {val1,val2,val3}
+  /// Parse PostgreSQL array string format: {val1,val2,val3}, a quoted element's `\"` and `\\`
+  /// read as `"` and `\`. Walks scalars: a quote followed by a combining mark is one `Character`.
   private static func parsePostgresArray(_ arrayString: String) -> [String] {
-    var str = arrayString.trimmingCharacters(in: .whitespaces)
-    if str.hasPrefix("{") { str.removeFirst() }
-    if str.hasSuffix("}") { str.removeLast() }
+    var str = Substring(arrayString.trimmingCharacters(in: .whitespaces)).unicodeScalars
+    if str.first == "{" { str = str.dropFirst() }
+    if str.last == "}" { str = str.dropLast() }
     if str.isEmpty { return [] }
 
     var result: [String] = []
     var current = ""
     var inQuotes = false
+    var escaped = false
     for char in str {
-      if char == "\"" {
+      if escaped {
+        current.unicodeScalars.append(char)
+        escaped = false
+      } else if char == "\\" && inQuotes {
+        escaped = true
+      } else if char == "\"" {
         inQuotes.toggle()
       } else if char == "," && !inQuotes {
         result.append(current.trimmingCharacters(in: .whitespaces))
         current = ""
       } else {
-        current.append(char)
+        current.unicodeScalars.append(char)
       }
     }
     if !current.isEmpty {

@@ -675,10 +675,13 @@ nonisolated enum SQLDumpDDL {
 
   /// `pg_get_indexdef` prints `ON ONLY` for an index on a partitioned table. Without ONLY the
   /// index also builds (or attaches) the partitions' indexes, which the dump does not emit.
+  /// Walks scalars: a quote followed by a combining mark is one `Character`.
   static func removingOnOnly(_ definition: String) -> String {
-    var rest = Substring(definition)
-    for prefix in ["CREATE UNIQUE INDEX ", "CREATE INDEX "] where rest.hasPrefix(prefix) {
-      rest = rest.dropFirst(prefix.count)
+    let scalars = definition.unicodeScalars
+    var rest = scalars[...]
+    for prefix in ["CREATE UNIQUE INDEX ", "CREATE INDEX "]
+    where rest.starts(with: prefix.unicodeScalars) {
+      rest = rest.dropFirst(prefix.unicodeScalars.count)
       break
     }
     // The index name: a quoted identifier or a bare word
@@ -692,8 +695,10 @@ nonisolated enum SQLDumpDDL {
     } else {
       rest = rest.drop { $0 != " " }
     }
-    guard rest.hasPrefix(" ON ONLY ") else { return definition }
-    return String(definition[..<rest.startIndex]) + " ON " + rest.dropFirst(" ON ONLY ".count)
+    let onOnly = " ON ONLY ".unicodeScalars
+    guard rest.starts(with: onOnly) else { return definition }
+    return String(Substring(scalars[..<rest.startIndex])) + " ON "
+      + String(Substring(rest.dropFirst(onOnly.count)))
   }
 
   /// Puts each partition after the parent it names; other tables keep their order
@@ -768,9 +773,10 @@ nonisolated enum SQLDumpDDL {
 
   /// `SHOW CREATE VIEW` text without its `DEFINER=user@host` clause, so a user without the
   /// SET_USER_ID (or SUPER) privilege can restore it. `SQL SECURITY` stays. Only the clauses
-  /// before the `VIEW` keyword are searched, skipping quoted text.
+  /// before the `VIEW` keyword are searched, skipping quoted text. Walks scalars: a quote
+  /// followed by a combining mark is one `Character`, which would hide where quoted text ends.
   static func removingDefiner(_ statement: String) -> String {
-    let chars = Array(statement)
+    let chars = Array(statement.unicodeScalars)
     var index = 0
     while index < chars.count {
       let char = chars[index]
@@ -784,7 +790,7 @@ nonisolated enum SQLDumpDDL {
       }
       var end = index
       while end < chars.count, isWordCharacter(chars[end]) { end += 1 }
-      let word = String(chars[index..<end]).uppercased()
+      let word = text(chars[index..<end]).uppercased()
       if word == "VIEW" { return statement }
       if word == "DEFINER", let equals = skippingSpaces(chars, from: end),
         chars[equals] == "="
@@ -794,26 +800,35 @@ nonisolated enum SQLDumpDDL {
           cursor = endOfUser(chars, from: cursor + 1)
         }
         cursor = skippingSpaces(chars, from: cursor) ?? chars.count
-        return String(chars[..<index]) + String(chars[cursor...])
+        return text(chars[..<index]) + text(chars[cursor...])
       }
       index = end
     }
     return statement
   }
 
-  private static func isWordCharacter(_ char: Character) -> Bool {
-    char == "_" || char.isLetter || char.isNumber
+  private static func text(_ scalars: ArraySlice<Unicode.Scalar>) -> String {
+    String(String.UnicodeScalarView(scalars))
+  }
+
+  /// A letter, digit or `_`; a combining mark too, so a decomposed accent stays in its word
+  private static func isWordCharacter(_ char: Unicode.Scalar) -> Bool {
+    switch char.properties.generalCategory {
+    case .nonspacingMark, .spacingMark, .enclosingMark: return true
+    default:
+      return char == "_" || char.properties.isAlphabetic || char.properties.numericType != nil
+    }
   }
 
   /// First non-space index at or after `start`, nil at the end
-  private static func skippingSpaces(_ chars: [Character], from start: Int) -> Int? {
+  private static func skippingSpaces(_ chars: [Unicode.Scalar], from start: Int) -> Int? {
     var index = start
-    while index < chars.count, chars[index].isWhitespace { index += 1 }
+    while index < chars.count, chars[index].properties.isWhitespace { index += 1 }
     return index < chars.count ? index : nil
   }
 
   /// Index after the quoted text that opens at `start` (doubled quotes and `\` escapes inside)
-  private static func endOfQuoted(_ chars: [Character], from start: Int) -> Int {
+  private static func endOfQuoted(_ chars: [Unicode.Scalar], from start: Int) -> Int {
     let quote = chars[start]
     var index = start + 1
     while index < chars.count {
@@ -834,13 +849,15 @@ nonisolated enum SQLDumpDDL {
   }
 
   /// Index after one user or host part: quoted, or bare up to a space or `@`
-  private static func endOfUser(_ chars: [Character], from start: Int) -> Int {
+  private static func endOfUser(_ chars: [Unicode.Scalar], from start: Int) -> Int {
     guard start < chars.count else { return chars.count }
     if chars[start] == "`" || chars[start] == "'" || chars[start] == "\"" {
       return endOfQuoted(chars, from: start)
     }
     var index = start
-    while index < chars.count, !chars[index].isWhitespace, chars[index] != "@" { index += 1 }
+    while index < chars.count, !chars[index].properties.isWhitespace, chars[index] != "@" {
+      index += 1
+    }
     return index
   }
 

@@ -1,6 +1,7 @@
 // SchemaCatalogTests.swift
 // Pure mapping of bulk pg_catalog column rows: display type from format_type, grouping by
-// "schema.relation" in attnum order, and the flag rules (unique only when not primary key).
+// "schema.relation" in attnum order, and the flag rules (unique only when not primary key). Also
+// the `array_agg(...)::text` array text split into names (escapes and combining marks).
 
 import Testing
 
@@ -61,5 +62,14 @@ struct SchemaCatalogTests {
     #expect(cols?[0].isIdentity == true)
     #expect(cols?[1].isNullable == true)
     #expect(cols?[1].isIdentity == false)
+  }
+
+  @Test("array text splits per scalar and resolves backslash escapes in quoted elements")
+  func arrayText() {
+    // A quote followed by a combining mark is one Character: the split must see the quote
+    let names = CatalogValue.stringList(.string(#"{"a\"b","c\\d","\#u{301}x y",plain}"#))
+    #expect(
+      names.map { Array($0.unicodeScalars) }
+        == ["a\"b", "c\\d", "\u{301}x y", "plain"].map { Array($0.unicodeScalars) })
   }
 }

@@ -354,7 +354,8 @@ nonisolated enum SQLStatementClassifier {
   /// (`START REPLICA`, ...) is not transaction control. A query that writes a file
   /// (`INTO OUTFILE` / `INTO DUMPFILE`) is a utility. MariaDB `SET STATEMENT ... FOR <stmt>`
   /// runs the trailing statement, so it fails closed; `SET DEFAULT ROLE` changes an account
-  /// (like `ALTER USER ... DEFAULT ROLE`), so it is a utility.
+  /// (like `ALTER USER ... DEFAULT ROLE`), so it is a utility. `REPLACE` as the main statement of
+  /// a WITH is a write; `REPLACE` stays off `dmlKeywords`, so the `REPLACE()` function is a read.
   private static func mysqlKind(
     of body: ArraySlice<SQLToken>, keyword: String, topWords: [String]
   ) -> StatementKind? {
@@ -371,6 +372,7 @@ nonisolated enum SQLStatementClassifier {
     case "REPLACE": .dml
     case _ where ["SELECT", "VALUES", "TABLE", "WITH"].contains(keyword) && writesFile(body):
       .utility
+    case "WITH" where mainStatementKeyword(afterWith: body) == "REPLACE": .dml
     case _ where mysqlUtilityKeywords.contains(keyword): .utility
     default: nil
     }
@@ -421,6 +423,18 @@ nonisolated enum SQLStatementClassifier {
   /// the session. Over-matches (`SET @x = global`), which only blocks more.
   private static func setsServerVariable(_ topWords: [String]) -> Bool {
     topWords.contains { ["GLOBAL", "PERSIST", "PERSIST_ONLY"].contains($0) }
+  }
+
+  /// The first keyword of the main statement after a WITH list: the first token at the
+  /// statement's depth after a `)` that is neither `,` (the next CTE) nor `AS` (after a column
+  /// list). Nil when there is none or it is not a word.
+  private static func mainStatementKeyword(afterWith body: ArraySlice<SQLToken>) -> String? {
+    let depth = body.first?.depth ?? 0
+    let top = body.filter { $0.depth == depth }
+    let main = zip(top, top.dropFirst()).first { close, next in
+      close.isSymbol(")") && !next.isSymbol(",") && !next.isWord("AS")
+    }
+    return main?.1.keyword
   }
 
   /// `INTO OUTFILE` or `INTO DUMPFILE` anywhere in the statement.
@@ -711,12 +725,13 @@ nonisolated enum SQLStatementClassifier {
       guard token.kind == .string || token.kind == .quotedIdentifier else { return false }
       let text = withoutDollarTag(token.text)
       var candidates = [text]
-      if token.kind == .string, text.contains("\\") {
+      if token.kind == .string, text.unicodeScalars.contains("\\") {
         candidates.append(decodingDuckDBEscapes(text))
       }
+      // By scalar: DuckDB matches the scheme by bytes, so a mark fused onto `/` stays remote.
       return candidates.contains { candidate in
-        let lowered = SQLTokenizer.asciiLowercased(candidate)
-        return duckdbRemoteSchemes.contains { lowered.hasPrefix($0) }
+        let lowered = SQLTokenizer.asciiLowercased(candidate).unicodeScalars
+        return duckdbRemoteSchemes.contains { lowered.starts(with: $0.unicodeScalars) }
       }
     }
   }
@@ -785,11 +800,13 @@ nonisolated enum SQLStatementClassifier {
   }
 
   /// `text` after an opening `$$` / `$tag$`, else `text` unchanged.
+  /// By scalar: a `$` followed by a combining mark is one `Character`, but still a tag.
   private static func withoutDollarTag(_ text: String) -> String {
-    guard text.hasPrefix("$"), let close = text.dropFirst().firstIndex(of: "$") else {
+    let scalars = text.unicodeScalars
+    guard scalars.first == "$", let close = scalars.dropFirst().firstIndex(of: "$") else {
       return text
     }
-    return String(text[text.index(after: close)...])
+    return String(scalars[scalars.index(after: close)...])
   }
 
   /// `ATTACH` / `DETACH` as the statement, or the same words inside a `WITH` (a column named

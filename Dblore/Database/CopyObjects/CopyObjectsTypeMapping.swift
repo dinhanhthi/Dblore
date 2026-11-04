@@ -717,7 +717,7 @@ nonisolated enum CopyObjectsTypeMapping {
   private static func hasEscapes(_ text: String, source: Engine) -> Bool {
     switch source {
     case .mysql:
-      return text.contains("\\")
+      return text.unicodeScalars.contains("\\")
     case .postgresql:
       let scalars = Array(text.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars)
       return scalars.count > 1 && (scalars[0] == "E" || scalars[0] == "e") && scalars[1] == "'"

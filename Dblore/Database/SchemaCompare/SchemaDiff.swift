@@ -446,18 +446,29 @@ nonisolated enum SchemaDiff {
   /// prints it: `dev.` (only for a lowercase simple name) or `"Dev".`, outside string literals,
   /// and at the start of a `'…'::regclass` literal (`nextval('dev.seq'::regclass)`). Nil when the
   /// prefix also appears where it cannot be rewritten safely (inside any other literal, or later
-  /// in a regclass literal) or the text is not well formed.
+  /// in a regclass literal) or the text is not well formed. Walks scalars: a quote followed by a
+  /// combining mark is one `Character`, which would hide where a literal or quoted name ends.
   static func schemaPrefixReplaced(
     in text: String, schema: String, with replacement: String
   ) -> String? {
-    let chars = Array(text)
-    let quoted = Array("\"" + SQLDialect.escapingScalars(schema, ["\"": "\"\""]) + "\".")
-    let bare: [Character]? = isSimpleName(schema) ? Array(schema + ".") : nil
-    func isNameCharacter(_ c: Character) -> Bool {
-      c.isLetter || c.isNumber || c == "_" || c == "$"
+    typealias Scalars = [Unicode.Scalar]
+    let chars = Array(text.unicodeScalars)
+    let quoted = Array(
+      ("\"" + SQLDialect.escapingScalars(schema, ["\"": "\"\""]) + "\".").unicodeScalars)
+    let bare: Scalars? = isSimpleName(schema) ? Array((schema + ".").unicodeScalars) : nil
+    /// A combining mark counts too, so a decomposed accent stays in its name
+    func isNameCharacter(_ c: Unicode.Scalar) -> Bool {
+      switch c.properties.generalCategory {
+      case .nonspacingMark, .spacingMark, .enclosingMark: return true
+      default:
+        return c.properties.isAlphabetic || c.properties.numericType != nil || c == "_" || c == "$"
+      }
+    }
+    func string(_ scalars: some Sequence<Unicode.Scalar>) -> String {
+      String(String.UnicodeScalarView(scalars))
     }
     /// The prefix that starts at `i` in `chars`, if any, after a boundary
-    func prefix(at i: Int, in chars: [Character]) -> Int? {
+    func prefix(at i: Int, in chars: Scalars) -> Int? {
       if i > 0, isNameCharacter(chars[i - 1]) || chars[i - 1] == "." || chars[i - 1] == "\"" {
         return nil
       }
@@ -468,7 +479,7 @@ nonisolated enum SchemaDiff {
       return nil
     }
     /// True when the prefix appears anywhere in `chars`
-    func mentions(_ chars: [Character]) -> Bool {
+    func mentions(_ chars: Scalars) -> Bool {
       chars.indices.contains { prefix(at: $0, in: chars) != nil }
     }
     var out = ""
@@ -477,7 +488,7 @@ nonisolated enum SchemaDiff {
       let c = chars[i]
       if c == "'" || c == "\"", prefix(at: i, in: chars) == nil {
         // A literal or a quoted name: up to its closing quote (a doubled quote is part of it)
-        var content: [Character] = []
+        var content: Scalars = []
         var j = i + 1
         while j < chars.count {
           if chars[j] == c {
@@ -490,24 +501,24 @@ nonisolated enum SchemaDiff {
         guard j < chars.count else { return nil }
         if c == "'" {
           var literal = content
-          if Array(chars[(j + 1)...]).starts(with: Array("::regclass")),
+          if chars[(j + 1)...].starts(with: "::regclass".unicodeScalars),
             let length = prefix(at: 0, in: content)
           {
-            literal = Array(replacement) + content[length...]
+            literal = Array(replacement.unicodeScalars) + content[length...]
             guard !mentions(Array(content[length...])) else { return nil }
           } else if mentions(content) {
             return nil
           }
-          out += "'" + SQLDialect.escapingScalars(String(literal), ["'": "''"]) + "'"
+          out += "'" + SQLDialect.escapingScalars(string(literal), ["'": "''"]) + "'"
         } else {
-          out += String(chars[i...j])
+          out += string(chars[i...j])
         }
         i = j + 1
       } else if let length = prefix(at: i, in: chars) {
         out += replacement
         i += length
       } else {
-        out.append(c)
+        out.unicodeScalars.append(c)
         i += 1
       }
     }

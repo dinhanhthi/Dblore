@@ -49,7 +49,7 @@ nonisolated enum CrossTableSearchQueryBuilder {
   static let rowLimit = 50
   static let valueParameter = "v"
   /// Not a backslash (a MySQL string escape) and no comment start in any dialect
-  static let escapeCharacter: Character = "!"
+  static let escapeCharacter: Unicode.Scalar = "!"
   /// Shown for a table without a key: the first searched columns
   static let fallbackDisplayColumns = 3
 
@@ -112,16 +112,12 @@ nonisolated enum CrossTableSearchQueryBuilder {
     return !skippedTypes.contains(base) && !skippedTypes.contains(firstWord)
   }
 
-  /// `value` with `%`, `_` and `escapeCharacter` each preceded by `escapeCharacter`
+  /// `value` with `%`, `_` and `escapeCharacter` each preceded by `escapeCharacter`, by scalar:
+  /// a `%` followed by a combining mark is one `Character` but still a wildcard
   static func escapedLikeText(_ value: String) -> String {
-    var escaped = ""
-    for character in value {
-      if character == "%" || character == "_" || character == escapeCharacter {
-        escaped.append(escapeCharacter)
-      }
-      escaped.append(character)
-    }
-    return escaped
+    let mark = String(escapeCharacter)
+    return SQLDialect.escapingScalars(
+      value, ["%": mark + "%", "_": mark + "_", escapeCharacter: mark + mark])
   }
 
   /// Case-insensitive `LIKE`: `ILIKE` where the engine has it (PostgreSQL, DuckDB), else
