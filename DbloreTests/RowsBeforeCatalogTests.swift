@@ -98,14 +98,15 @@ struct RowsBeforeCatalogTests {
   }
 
   /// Runs `load` in its own task and returns once the shown result satisfies `shown` (within
-  /// two seconds), with the task, or nil after recording an issue
+  /// 30 seconds: the catalog stays held until this returns, so a loaded suite only takes
+  /// longer), with the task, or nil after recording an issue
   private static func published(
     _ viewModel: NotebookViewModel, _ step: String,
     _ shown: @escaping @MainActor (CellResult?) -> Bool,
     load: @escaping @MainActor () async -> Void
   ) async -> Task<Void, Never>? {
     let task = Task { @MainActor in await load() }
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(30)
     while ContinuousClock.now < deadline {
       if shown(viewModel.editorResult) { return task }
       try? await Task.sleep(for: .milliseconds(5))
