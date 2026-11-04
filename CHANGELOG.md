@@ -2,6 +2,40 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## v0.9.1 (2026-11-03)
+
+### Added
+
+- **Edit tables without a primary key.** Edit, delete and duplicate rows in a table tab of a PostgreSQL or SQLite table that has no primary key. A row that changed since it was read is refused, never retargeted. MySQL/MariaDB still need a primary key. [#356bcec7](https://github.com/dinhanhthi/Dblore/commit/356bcec7) [#f8a3d028](https://github.com/dinhanhthi/Dblore/commit/f8a3d028) [#59292da3](https://github.com/dinhanhthi/Dblore/commit/59292da3)
+- **Ask on connect.** A connection can ask for its password each time it connects; the password stays in memory for reconnects and is never saved. MCP, the command-line tool and Shortcuts refuse such connections. [#72e60ef0](https://github.com/dinhanhthi/Dblore/commit/72e60ef0) [#cae3c058](https://github.com/dinhanhthi/Dblore/commit/cae3c058) [#bfc9ac70](https://github.com/dinhanhthi/Dblore/commit/bfc9ac70)
+- **Replace Pin.** When an SSH host key changed, compare the old and new fingerprints and choose Replace Pin to trust the new key, then the same connect is retried. [#f0587df3](https://github.com/dinhanhthi/Dblore/commit/f0587df3)
+- **Timed write unlock.** Unlock data writes on a Read-only connection for 1 or 5 minutes after the Safe Mode authentication. Schema changes stay blocked, and the unlock ends on expiry, Lock now or disconnect. [#d614d535](https://github.com/dinhanhthi/Dblore/commit/d614d535)
+- **Stop a PostgreSQL statement and keep the connection.** Stop now cancels the running statement on the server and keeps the session, its temp tables and its settings; an open transaction is rolled back. [#23d7a8a8](https://github.com/dinhanhthi/Dblore/commit/23d7a8a8)
+- **Index order.** The structure editor shows and sets DESC (and NULLS FIRST or LAST on PostgreSQL) per index column. Compare Schemas reports order differences and Copy Objects keeps the order. [#f91a8e36](https://github.com/dinhanhthi/Dblore/commit/f91a8e36) [#44f93065](https://github.com/dinhanhthi/Dblore/commit/44f93065)
+
+### Improved
+
+- **Exact numbers.** PostgreSQL NUMERIC (including NaN and Infinity), MySQL DECIMAL and DuckDB DECIMAL are shown, sorted, edited and summed exactly, and exports write them without rounding. [#b420385f](https://github.com/dinhanhthi/Dblore/commit/b420385f) [#9cf3dab4](https://github.com/dinhanhthi/Dblore/commit/9cf3dab4) [#e7980874](https://github.com/dinhanhthi/Dblore/commit/e7980874) [#8bfd6617](https://github.com/dinhanhthi/Dblore/commit/8bfd6617) [#49e6700b](https://github.com/dinhanhthi/Dblore/commit/49e6700b)
+- **Timestamps.** Columns without a time zone show their stored wall clock, and zoned ones show Mac local time with the offset, both with fractions, in the grid, filter, search, edits, copies, exports, charts and MCP. [#3ca86939](https://github.com/dinhanhthi/Dblore/commit/3ca86939) [#2078a39a](https://github.com/dinhanhthi/Dblore/commit/2078a39a) [#85edf2ae](https://github.com/dinhanhthi/Dblore/commit/85edf2ae) [#51f0a69e](https://github.com/dinhanhthi/Dblore/commit/51f0a69e) [#f53eefbc](https://github.com/dinhanhthi/Dblore/commit/f53eefbc) [#32116dab](https://github.com/dinhanhthi/Dblore/commit/32116dab)
+- **Faster table tabs.** Rows show before the table definition is read; editing waits until it is known. [#4890ef5e](https://github.com/dinhanhthi/Dblore/commit/4890ef5e)
+- **Keepalive.** Idle PostgreSQL, MySQL/MariaDB, direct MongoDB and SSH tunnel connections use TCP keepalive. [#6d5071be](https://github.com/dinhanhthi/Dblore/commit/6d5071be)
+- **Restore and import.** A SQL restore splits MySQL scripts in linear time with lower peak memory, and shows reading and splitting progress; a file import shows parse progress. [#95c5fbb2](https://github.com/dinhanhthi/Dblore/commit/95c5fbb2)
+- **Settings.** The Settings panel is wider (720 pt). [#3a1a0011](https://github.com/dinhanhthi/Dblore/commit/3a1a0011)
+
+### Fixed
+
+- **Keychain read failures.** Every connect path stops when the Keychain cannot read a saved password, instead of sending an empty one, and never deletes the stored password. [#2510d297](https://github.com/dinhanhthi/Dblore/commit/2510d297) [#9c52770d](https://github.com/dinhanhthi/Dblore/commit/9c52770d) [#b37f29a5](https://github.com/dinhanhthi/Dblore/commit/b37f29a5) [#8ea61131](https://github.com/dinhanhthi/Dblore/commit/8ea61131)
+- **PostgreSQL values.** An empty text value shows as empty text instead of NULL, `real` values show their shortest text (`1.1`, not `1.100000023841858`), and functions without arguments appear in the sidebar. [#85802dbb](https://github.com/dinhanhthi/Dblore/commit/85802dbb)
+- **Locks and windows.** A lock reseal refreshes open documents, the first DuckDB run waits for the connect loads, and window close, pending workspace routing and external file opens no longer misbehave. [#d50f8169](https://github.com/dinhanhthi/Dblore/commit/d50f8169) [#a2904864](https://github.com/dinhanhthi/Dblore/commit/a2904864) [#2244706b](https://github.com/dinhanhthi/Dblore/commit/2244706b)
+
+### Upgrade notes
+
+- **MCP, the command-line tool and Shortcuts output changed.** Columns without a time zone (PostgreSQL `timestamp`, MySQL `DATETIME`, DuckDB `TIMESTAMP`) are now the stored wall clock `2026-10-15 12:00:00.123`, no longer `2026-10-15T12:00:00Z`; zoned columns stay ISO 8601 UTC and now keep their fraction. NUMERIC and DECIMAL values are JSON numbers up to 15 significant digits (trailing zeros dropped, `19.90` becomes `19.9`), longer values and NaN or Infinity are strings; MySQL DECIMAL used to be a string. The same shapes apply to copy and to CSV, TSV, JSON and XLSX exports. `dblore` prints plain digits (`0.0000001`, not `1e-07`).
+- **New refusals.** MCP, `dblore` and Shortcuts refuse a connection that asks for its password on connect, and one whose saved password the Keychain cannot read.
+- **Notebook files stay readable by older builds.** NUMERIC and DECIMAL cells carry `"decimal": true`, timestamp columns without a zone carry `"wallClock": true`, and dates with a fraction add `"micros"`. Older builds ignore these keys.
+- **Saved connections.** A connection that asks for its password adds `askPasswordOnConnect` and its stored Keychain password is removed. An older build finds no password and fails to authenticate. The Dblore connections export file does not carry the flag.
+- **Exports and import.** XLSX writes integers of 10^15 or more and NaN or Infinity as text and NULL as an empty cell; Parquet keeps DOUBLE for decimal columns. Importing into a new table makes decimal columns `DECIMAL(65,30)` on MySQL and TEXT on SQLite.
+
 ## v0.9.0 (2026-10-31)
 
 ### Added
