@@ -279,13 +279,15 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     do {
       return try dialect.quoteIdentifier(name)
     } catch {
-      let quote: String
+      let quote: Unicode.Scalar
       switch dialect {
       case .mysql: quote = "`"
       case .mongodb: quote = "\""
       default: quote = "\""
       }
-      return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
+      let quoteText = String(quote)
+      return quoteText + SQLDialect.escapingScalars(name, [quote: quoteText + quoteText])
+        + quoteText
     }
   }
 

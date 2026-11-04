@@ -67,7 +67,7 @@ enum DataExporter {
     guard value.unicodeScalars.contains(where: { "\t\n\r\"".unicodeScalars.contains($0) }) else {
       return value
     }
-    return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    return "\"\(SQLDialect.escapingScalars(value, ["\"": "\"\""]))\""
   }
 
   /// One escaped TSV field. The formula prefix (text and decimal cells only, first scalar only:
@@ -771,13 +771,14 @@ enum DataExporter {
   nonisolated static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
     switch quote {
     case .always:
-      return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+      return "\"\(SQLDialect.escapingScalars(value, ["\"": "\"\""]))\""
     case .never:
       return value
     case .ifNeeded:
-      // Per unicode scalar, so a CRLF counts as a line break.
+      // Per unicode scalar, so a CRLF counts as a line break and a quote before a combining
+      // mark is still found and doubled.
       if value.unicodeScalars.contains(where: { ",\"\n\r".unicodeScalars.contains($0) }) {
-        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        let escaped = SQLDialect.escapingScalars(value, ["\"": "\"\""])
         return "\"\(escaped)\""
       }
       return value
@@ -786,26 +787,22 @@ enum DataExporter {
 
   /// A backslash and then a pipe are escaped (so `\|` in the data cannot end the cell), `&`, `<`
   /// and `>` become `&amp;`, `&lt;` and `&gt;` (no HTML or entity in a rendered table), and then
-  /// a line break (CRLF, LF or CR) becomes `<br>`, so a cell or header stays one table row
+  /// a line break (CRLF, LF or CR) becomes `<br>`, so a cell or header stays one table row.
+  /// The escapes go per scalar (a combining mark after `|` cannot hide it); a line break is
+  /// never joined to a neighbor in one `Character`, so it is replaced as text.
   nonisolated static func escapeMarkdown(_ value: String) -> String {
-    value.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "|", with: "\\|")
-      .replacingOccurrences(of: "&", with: "&amp;")
-      .replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;")
-      .replacingOccurrences(of: "\r\n", with: "<br>")
-      .replacingOccurrences(of: "\n", with: "<br>")
-      .replacingOccurrences(of: "\r", with: "<br>")
+    SQLDialect.escapingScalars(
+      value, ["\\": "\\\\", "|": "\\|", "&": "&amp;", "<": "&lt;", ">": "&gt;"]
+    )
+    .replacingOccurrences(of: "\r\n", with: "<br>")
+    .replacingOccurrences(of: "\n", with: "<br>")
+    .replacingOccurrences(of: "\r", with: "<br>")
   }
 
+  /// Per scalar, so a combining mark after `<` or `&` cannot hide it
   private static func escapeXML(_ value: String) -> String {
-    var escaped = value
-    escaped = escaped.replacingOccurrences(of: "&", with: "&amp;")
-    escaped = escaped.replacingOccurrences(of: "<", with: "&lt;")
-    escaped = escaped.replacingOccurrences(of: ">", with: "&gt;")
-    escaped = escaped.replacingOccurrences(of: "\"", with: "&quot;")
-    escaped = escaped.replacingOccurrences(of: "'", with: "&apos;")
-    return escaped
+    SQLDialect.escapingScalars(
+      value, ["&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&apos;"])
   }
 
   /// A spreadsheet app keeps 15 significant digits of a number cell, so a longer integer is

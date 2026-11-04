@@ -325,7 +325,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   }
 
   private func attach(_ attachment: AttachedDatabase) throws {
-    let name = attachment.name.replacingOccurrences(of: "\"", with: "\"\"")
+    let name = SQLDialect.escapingScalars(attachment.name, ["\"": "\"\""])
     let statement = try prepare("ATTACH ? AS \"\(name)\"")
     defer { sqlite3_finalize(statement) }
     try bind(statement, [.text(attachment.path)])

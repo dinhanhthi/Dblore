@@ -326,8 +326,7 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
 
   private static func listLiteral(_ values: [String]) -> String {
     "["
-      + values.map { "'" + $0.replacingOccurrences(of: "'", with: "''") + "'" }
-      .joined(separator: ", ") + "]"
+      + values.map { SQLDialect.duckdb.literal(.string($0)) }.joined(separator: ", ") + "]"
   }
 
   /// Temp (per session, removed on close), extension and secret directories in the container,

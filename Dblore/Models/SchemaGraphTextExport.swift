@@ -180,10 +180,10 @@ enum SchemaGraphTextExport {
   }
 
   /// Inside a quoted DOT string: `\` and `"` escaped (so no `\N`, `\G`, ... label escape is
-  /// formed), line breaks as the `\n` escape
+  /// formed), per scalar (a combining mark after one cannot hide it); line breaks as the `\n`
+  /// escape (a line break is never joined to a neighbor in one `Character`)
   private static func dotEscaped(_ text: String) -> String {
-    text.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
+    SQLDialect.escapingScalars(text, ["\\": "\\\\", "\"": "\\\""])
       .replacingOccurrences(of: "\r\n", with: "\\n")
       .replacingOccurrences(of: "\n", with: "\\n")
       .replacingOccurrences(of: "\r", with: "\\n")

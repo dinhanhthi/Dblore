@@ -86,7 +86,7 @@ nonisolated enum SQLInsertRenderer {
     do {
       return try dialect.quoteIdentifier(name)
     } catch {
-      return "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+      return "\"" + SQLDialect.escapingScalars(name, ["\"": "\"\""]) + "\""
     }
   }
 }

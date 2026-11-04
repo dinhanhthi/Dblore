@@ -417,7 +417,7 @@ nonisolated enum SchemaMigrationScriptBuilder {
 
     private func rewritten(_ text: String) throws -> String {
       guard case .postgresql = engine, source.schema != target.schema else { return text }
-      let quoted = "\"" + target.schema.replacingOccurrences(of: "\"", with: "\"\"") + "\"."
+      let quoted = try engine.dialect.quoteIdentifier(target.schema) + "."
       guard
         let text = SchemaDiff.schemaPrefixReplaced(in: text, schema: source.schema, with: quoted)
       else {

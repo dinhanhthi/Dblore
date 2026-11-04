@@ -451,7 +451,7 @@ nonisolated enum SchemaDiff {
     in text: String, schema: String, with replacement: String
   ) -> String? {
     let chars = Array(text)
-    let quoted = Array("\"" + schema.replacingOccurrences(of: "\"", with: "\"\"") + "\".")
+    let quoted = Array("\"" + SQLDialect.escapingScalars(schema, ["\"": "\"\""]) + "\".")
     let bare: [Character]? = isSimpleName(schema) ? Array(schema + ".") : nil
     func isNameCharacter(_ c: Character) -> Bool {
       c.isLetter || c.isNumber || c == "_" || c == "$"
@@ -498,7 +498,7 @@ nonisolated enum SchemaDiff {
           } else if mentions(content) {
             return nil
           }
-          out += "'" + String(literal).replacingOccurrences(of: "'", with: "''") + "'"
+          out += "'" + SQLDialect.escapingScalars(String(literal), ["'": "''"]) + "'"
         } else {
           out += String(chars[i...j])
         }
@@ -534,7 +534,7 @@ nonisolated enum SchemaDiff {
   }
 
   private static func shown(_ name: String) -> String {
-    "\"" + name.replacingOccurrences(of: "\"", with: "\"\"") + "\""
+    "\"" + SQLDialect.escapingScalars(name, ["\"": "\"\""]) + "\""
   }
 
   private static func flavorName(_ flavor: MySQLServerInfo.Flavor) -> String {

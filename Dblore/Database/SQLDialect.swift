@@ -83,16 +83,31 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// `"name"` with embedded `"` doubled; MySQL `` `name` `` with embedded `` ` `` doubled.
   /// Rejects a NUL anywhere in `name`, and every name on MongoDB (`notSQL`).
   func quoteIdentifier(_ name: String) throws -> String {
-    let quote: String
+    let quote: Unicode.Scalar
     switch engine {
     case .postgresql, .sqlite, .duckdb: quote = "\""
     case .mysql: quote = "`"
     case .mongodb: throw SQLDialectError.notSQL
     }
-    guard !name.contains("\0") else {
+    guard !name.unicodeScalars.contains("\0") else {
       throw SQLDialectError.nulInIdentifier
     }
-    return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
+    let quoteText = String(quote)
+    return quoteText + Self.escapingScalars(name, [quote: quoteText + quoteText]) + quoteText
+  }
+
+  /// `text` with each scalar in `map` replaced by its text. Walks scalars, not `Character`s: a
+  /// quote followed by a combining mark is one `Character` that is not equal to the bare quote.
+  static func escapingScalars(_ text: String, _ map: [Unicode.Scalar: String]) -> String {
+    var escaped = ""
+    for scalar in text.unicodeScalars {
+      if let replacement = map[scalar] {
+        escaped += replacement
+      } else {
+        escaped.unicodeScalars.append(scalar)
+      }
+    }
+    return escaped
   }
 
   /// Text for a `--` comment, in every dialect: each line break (which would end the comment
@@ -228,11 +243,11 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// plain strings have no backslash escapes. MySQL plain strings do: every `\` becomes `\\`
   /// with no prefix.
   private func quoteLiteral(_ text: String) -> String {
-    let doubledQuotes = text.replacingOccurrences(of: "'", with: "''")
-    guard text.contains("\\") else {
+    let doubledQuotes = Self.escapingScalars(text, ["'": "''"])
+    guard text.unicodeScalars.contains("\\") else {
       return "'\(doubledQuotes)'"
     }
-    let escaped = doubledQuotes.replacingOccurrences(of: "\\", with: "\\\\")
+    let escaped = Self.escapingScalars(text, ["'": "''", "\\": "\\\\"])
     switch engine {
     case .postgresql, .mongodb: return "E'\(escaped)'"
     case .mysql: return "'\(escaped)'"

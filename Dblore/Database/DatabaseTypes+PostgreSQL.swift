@@ -586,12 +586,12 @@ extension DatabaseConnectionManager {
   private nonisolated static func quoteArrayElement(_ text: String) -> String {
     let needsQuotes =
       text.isEmpty || text.caseInsensitiveCompare("NULL") == .orderedSame
-      || text.contains(where: {
-        $0 == "," || $0 == "\"" || $0 == "\\" || $0 == "{" || $0 == "}" || $0.isWhitespace
+      || text.unicodeScalars.contains(where: {
+        $0 == "," || $0 == "\"" || $0 == "\\" || $0 == "{" || $0 == "}"
+          || $0.properties.isWhitespace
       })
     guard needsQuotes else { return text }
-    let escaped = text.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
+    let escaped = SQLDialect.escapingScalars(text, ["\\": "\\\\", "\"": "\\\""])
     return "\"" + escaped + "\""
   }
 

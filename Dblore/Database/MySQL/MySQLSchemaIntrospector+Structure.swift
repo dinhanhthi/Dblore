@@ -257,9 +257,7 @@ nonisolated extension MySQLCatalog {
     ]
     if isExpression { return unescapedExpression(value) }
     if unquoted.contains(type) { return value }
-    let escaped = value.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "'", with: "''")
-    return "'\(escaped)'"
+    return SQLDialect.mysql.literal(.string(value))
   }
 
   /// MySQL prints an expression default, a generated expression, a check clause or a functional

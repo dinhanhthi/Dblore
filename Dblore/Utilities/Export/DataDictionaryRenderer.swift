@@ -152,13 +152,11 @@ nonisolated enum DataDictionaryRenderer {
     return (head + body + ["</body>", "</html>"]).joined(separator: "\n") + "\n"
   }
 
-  /// Text and attribute values: `&`, `<`, `>`, `"` and `'` become entities
+  /// Text and attribute values: `&`, `<`, `>`, `"` and `'` become entities, per scalar (a
+  /// combining mark after one cannot hide it)
   static func escapeHTML(_ value: String) -> String {
-    value.replacingOccurrences(of: "&", with: "&amp;")
-      .replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;")
-      .replacingOccurrences(of: "\"", with: "&quot;")
-      .replacingOccurrences(of: "'", with: "&#39;")
+    SQLDialect.escapingScalars(
+      value, ["&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"])
   }
 
   private static func htmlTable(_ headers: [String], _ rows: [[String]]) -> [String] {
