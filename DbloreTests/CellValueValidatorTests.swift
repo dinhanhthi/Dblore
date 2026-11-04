@@ -441,7 +441,8 @@ struct CellValueValidatorTests {
   func dateInvalidFormats() {
     let invalidDates = [
       ("", "Date cannot be empty"),
-      ("14:15:00", "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"),  // Only time
+      // Only time
+      ("14:15:00", "Invalid date format (use yyyy-MM-dd, yyyy-MM-dd HH:mm:ss or ISO8601)"),
       // Wrong separator
       (
         "2024/02/20 14:15:00",

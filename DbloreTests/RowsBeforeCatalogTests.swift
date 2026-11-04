@@ -129,9 +129,9 @@ struct RowsBeforeCatalogTests {
     let fixture = try await Self.fixture()
     let viewModel = fixture.viewModel
     await fixture.gate.hold()
-    let load = await Self.published(viewModel, "First page", { $0?.rows.count == 2 }) {
-      await viewModel.loadDataViewerPage()
-    }
+    let load = await Self.published(
+      viewModel, "First page", { $0?.rows.count == 2 },
+      load: { await viewModel.loadDataViewerPage() })
     let shown = try #require(viewModel.editorResult)
     #expect(shown.typesPending)
     #expect(shown.editTarget == nil)
@@ -161,9 +161,9 @@ struct RowsBeforeCatalogTests {
     let fixture = try await Self.fixture(dataViewer: false)
     let viewModel = fixture.viewModel
     await fixture.gate.hold()
-    let first = await Self.published(viewModel, "Table read", { $0?.rows.count == 2 }) {
-      await viewModel.executeEditorQuery("SELECT * FROM items")
-    }
+    let first = await Self.published(
+      viewModel, "Table read", { $0?.rows.count == 2 },
+      load: { await viewModel.executeEditorQuery("SELECT * FROM items") })
     #expect(viewModel.editorResult?.typesPending == true)
     await first?.value
     await viewModel.executeEditorQuery("SELECT 1 AS x")
@@ -193,10 +193,8 @@ struct RowsBeforeCatalogTests {
 
     await fixture.gate.hold()
     let reload = await Self.published(
-      viewModel, "Reload", { $0 != nil && $0?.timestamp != firstRun }
-    ) {
-      await viewModel.reloadStaleDataViewer()
-    }
+      viewModel, "Reload", { $0 != nil && $0?.timestamp != firstRun },
+      load: { await viewModel.reloadStaleDataViewer() })
     // The cached target is shown at once: the staged overlay keeps its target
     #expect(viewModel.editorResult?.typesPending == true)
     #expect(viewModel.dataViewer?.changeSet == staged)
@@ -231,10 +229,8 @@ struct RowsBeforeCatalogTests {
     await fixture.gate.hold()
     let firstRun = viewModel.editorResult?.timestamp
     let reload = await Self.published(
-      viewModel, "Re-read", { $0 != nil && $0?.timestamp != firstRun }
-    ) {
-      await viewModel.reloadStaleDataViewer()
-    }
+      viewModel, "Re-read", { $0 != nil && $0?.timestamp != firstRun },
+      load: { await viewModel.reloadStaleDataViewer() })
     // The cached key is only shown: nothing can be edited with it
     let pending = try #require(viewModel.editorResult)
     #expect(pending.typesPending)
@@ -371,10 +367,8 @@ struct RowsBeforeCatalogTests {
     let before = viewModel.editorResult?.timestamp
     await catalog.hold()
     let run = await published(
-      viewModel, "Amounts", { $0?.rows.count == 1 && $0?.timestamp != before }
-    ) {
-      await viewModel.executeEditorQuery("SELECT amount FROM payments")
-    }
+      viewModel, "Amounts", { $0?.rows.count == 1 && $0?.timestamp != before },
+      load: { await viewModel.executeEditorQuery("SELECT amount FROM payments") })
     let shown = try #require(viewModel.editorResult)
     await catalog.release()
     await run?.value

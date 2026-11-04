@@ -46,10 +46,12 @@ struct PasteRowsTests {
     let viewModel = makeViewModel()
     viewModel.editorResult = CellResult(
       columns: [
-        ColumnInfo(name: "id", type: "INTEGER", origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 1)),
         ColumnInfo(
-          name: "at", type: "TIMESTAMP", origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2),
-          wallClock: true),
+          name: "id", type: "INTEGER",
+          origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 1)),
+        ColumnInfo(
+          name: "at", type: "TIMESTAMP",
+          origin: ColumnOrigin(tableID: Self.usersID, columnOrdinal: 2), wallClock: true),
       ],
       rows: [[.int(1), .null]], rowCount: 1, editTarget: viewModel.editorResult?.editTarget)
     let reason = await paste(viewModel, "id\tat\n7\t2026-10-15 12:00:00.5\n")

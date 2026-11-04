@@ -475,9 +475,9 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       .text(String(target.pid)), .text(target.backendStart), .text(target.statement),
     ]
     let side = CancelSideConnection()
-    let cancelled = await Self.bounded(Self.cancelBackendTimeout, onTimeout: { side.abandon() }) {
-      await self.sendCancel(binds: binds, tls: tls, side: side)
-    }
+    let cancelled = await Self.bounded(
+      Self.cancelBackendTimeout, onTimeout: { side.abandon() },
+      { await self.sendCancel(binds: binds, tls: tls, side: side) })
     if !cancelled {
       await AppLogger.shared.info(
         "The running statement was not cancelled on the server",

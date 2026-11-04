@@ -34,7 +34,7 @@ private nonisolated final class FakeLeaseClock: VaultLeaseClock, @unchecked Send
           return takeWaiters()
         }
         if let ready {
-          ready.forEach { $0.resume() }
+          for continuation in ready { continuation.resume() }
         } else {
           wake.resume()
         }
@@ -53,7 +53,7 @@ private nonisolated final class FakeLeaseClock: VaultLeaseClock, @unchecked Send
       for id in due.keys { sleepers[id] = nil }
       return due.values.map(\.wake)
     }
-    due.forEach { $0.resume() }
+    for continuation in due { continuation.resume() }
   }
 
   /// Returns once `count` sleeps have suspended in total.
@@ -223,7 +223,7 @@ private nonisolated final class FakeVaultClient: VaultClient, @unchecked Sendabl
       waiters.removeAll { waiter in recorded.filter(waiter.test).count >= waiter.count }
       return ready.map(\.resume)
     }
-    ready.forEach { $0.resume() }
+    for continuation in ready { continuation.resume() }
   }
 }
 
@@ -1257,7 +1257,7 @@ private nonisolated final class Gate: @unchecked Sendable {
       defer { waiters = [] }
       return waiters
     }
-    ready.forEach { $0.resume() }
+    for continuation in ready { continuation.resume() }
   }
 
   func wait() async {
