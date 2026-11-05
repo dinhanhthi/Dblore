@@ -121,6 +121,91 @@ struct PostgresUserDataQualificationTests {
     expectQualified(filters)
   }
 
+  @Test("A cell UPDATE keys its row with pg_catalog's =")
+  func cellUpdateIsQualified() throws {
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: "public.t",
+      assignments: [(column: "a", value: "1"), (column: "b", value: nil)],
+      primaryKeyColumns: ["id", "line"], rowData: ["id": .int(1), "line": .string("x")],
+      updateOnly: true)
+    expectQualified([Statement(name: "cell update", sql: statement.sql)])
+    // The SET clause's assignments pass; a bare = in the WHERE or a SET value does not
+    let bareKey = #"UPDATE public.t SET "a" = $1 WHERE "id" = $2"#
+    let bareValue = #"UPDATE public.t SET "a" = "b" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#
+    #expect(PostgresQualificationLint.violations(bareKey).count == 1)
+    #expect(PostgresQualificationLint.violations(bareValue).count == 1)
+  }
+
+  @Test("A keyless row's UPDATE and lazy cell read name it with pg_catalog's = and types")
+  func rowLocatorIsQualified() throws {
+    let locator = RowLocatorValues(texts: ["16384", "(0,2)", "700"])
+    let update = try CellUpdateStatement.make(
+      qualifiedName: #""public"."t""#, assignments: [(column: "a", value: "1")],
+      primaryKeyColumns: [], rowData: ["a": .int(0)], updateOnly: true, dialect: .postgresql,
+      rowLocator: .pgLocator, locator: locator)
+    let source = LazyCellSource(
+      relation: #""public"."t""#, keyColumns: [], dialect: .postgresql, rowLocator: .pgLocator
+    ) { _, _ in QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0) }
+    let read = try LazyCellLoader.statement(
+      LazyCell(row: RowChangeSet.RowKey(locator: locator), column: "a"), source: source)
+    expectQualified([
+      Statement(name: "locator update", sql: update.sql),
+      Statement(name: "locator lazy read", sql: read.sql),
+    ])
+  }
+
+  @Test("Staged DELETE, UPDATE and INSERT name their rows with pg_catalog's =, bound and previewed")
+  func rowChangesAreQualified() throws {
+    let columns = [
+      ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "line", type: "text"),
+      ColumnInfo(name: "name", type: "text"), ColumnInfo(name: "body", type: "bytea"),
+    ]
+    let keyed = EditTarget(
+      qualifiedName: #""public"."t""#, tableID: .postgresql(oid: 1),
+      primaryKeyColumns: ["id", "line"], updateOnly: true)
+    var set = RowChangeSet(target: keyed)
+    set.stageDelete(row: RowChangeSet.RowKey(values: [.int(1), .string("a")]))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(2), .string("b")]), column: "name",
+      value: .string("x"), original: .string("y"))
+    try set.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(2), .string("b")]), column: "body",
+      value: .data(Data([0x01, 0xFF])), original: .null)
+    try set.stageServerDefault(
+      row: RowChangeSet.RowKey(values: [.int(3), .string("c")]), column: "name",
+      original: .string("z"))
+    set.stageInsert(values: ["id": .int(4), "line": .string("d"), "name": .string("w")])
+    set.stageInsert(values: [:])
+
+    let locator = EditTarget(
+      qualifiedName: #""public"."t""#, tableID: .postgresql(oid: 1), primaryKeyColumns: [],
+      rowLocator: .pgLocator)
+    var keyless = RowChangeSet(target: locator)
+    keyless.stageDelete(
+      row: RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", "(0,1)", "742"])))
+    try keyless.stageEdit(
+      row: RowChangeSet.RowKey(locator: RowLocatorValues(texts: ["16384", "(0,2)", "743"])),
+      column: "name", value: .string("x"), original: .string("y"))
+
+    var statements: [Statement] = []
+    for (name, changes, target) in [("keyed", set, keyed), ("locator", keyless, locator)] {
+      let bound = try RowChangeSQLBuilder.statements(
+        for: changes, target: target, columns: columns, dialect: Self.dialect)
+      let preview = try RowChangeSQLBuilder.previewText(
+        for: changes, target: target, columns: columns, dialect: Self.dialect)
+      statements += bound.enumerated().map {
+        Statement(name: "\(name) bound \($0.offset)", sql: $0.element.sql)
+      }
+      statements += preview.split(separator: "\n").enumerated().map {
+        Statement(name: "\(name) preview \($0.offset)", sql: String($0.element))
+      }
+    }
+    // Keyed: 1 DELETE, 2 UPDATEs, 2 INSERTs; locator: 1 DELETE, 1 UPDATE; each bound and previewed
+    #expect(statements.count == 14)
+    #expect(statements.filter { $0.sql.contains("OPERATOR(pg_catalog.=)") }.count == 10)
+    expectQualified(statements)
+  }
+
   @Test("The data viewer's PostgreSQL page and count are qualified")
   func dataViewerIsQualified() {
     var state = DataViewerState(schema: "public", name: "t", orderColumns: ["id"])

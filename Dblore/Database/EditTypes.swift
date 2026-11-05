@@ -19,8 +19,9 @@ nonisolated struct RowExistenceCheck: Sendable, Equatable {
 }
 
 /// `UPDATE [ONLY] <table> SET <c1> = $1[, ...] WHERE <pk1> = $n [AND ...]` for grid cells of a row
-/// (a keyless row: its `RowLocatorKind` terms instead). MySQL: backticks and `?`. Identifiers are
-/// quoted; values never appear in the SQL text.
+/// (a keyless row: its `RowLocatorKind` terms instead). PostgreSQL keys compare with
+/// `OPERATOR(pg_catalog.=)` whatever their type: the values are the row's own stored values.
+/// MySQL: backticks and `?`. Identifiers are quoted; values never appear in the SQL text.
 nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
   /// New values in SET order (bytes as `inputText`), then the primary-key values in key order
@@ -101,7 +102,8 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
         keyValues.append(text)
         let placeholder = bindPlaceholder(
           dialect.placeholder(assignments.count + index + 1), value, dialect: dialect)
-        conditions.append("\(quoteIdentifier(column, dialect: dialect)) = \(placeholder)")
+        conditions.append(
+          dialect.comparison(quoteIdentifier(column, dialect: dialect), .equal, placeholder))
       }
     }
     let only = updateOnly && dialect.supportsUpdateOnly ? "ONLY " : ""
@@ -332,9 +334,10 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
 /// How the rows of a keyless table are named in an UPDATE or DELETE instead of by a primary key.
 /// Set only when the table has none (`editTable`). Session-only, like `EditTarget`.
 nonisolated enum RowLocatorKind: Sendable, Equatable {
-  /// PostgreSQL `tableoid = $n::oid AND ctid = $n::tid AND xmin = $n::xid`: one live tuple
-  /// version of the table or of one of its partitions. A row changed or moved since it was read
-  /// matches nothing (0 rows: a conflict, never another row).
+  /// PostgreSQL `tableoid OPERATOR(pg_catalog.=) $n::pg_catalog.oid`, then the same for `ctid`
+  /// (`tid`) and `xmin` (`xid`): one live tuple version of the table or of one of its
+  /// partitions. A row changed or moved since it was read matches nothing (0 rows: a conflict,
+  /// never another row).
   case pgLocator
   /// SQLite `<alias> = ?n`, then `"<column>" IS ?n` for each loaded non-binary value of
   /// `matchColumns`: the columns whose declared type gives TEXT, INTEGER, REAL or NUMERIC
@@ -357,7 +360,10 @@ nonisolated enum RowLocatorKind: Sendable, Equatable {
     case .pgLocator:
       guard dialect == .postgresql, locator.texts.count == 3 else { return nil }
       return zip(["tableoid", "ctid", "xmin"], ["oid", "tid", "xid"]).enumerated().map {
-        Term(lead: "\($1.0) = ", value: .string(locator.texts[$0]), trail: "::\($1.1)")
+        // The placeholder goes between `<column> OPERATOR(pg_catalog.=) ` and `::pg_catalog.<type>`
+        Term(
+          lead: dialect.comparison($1.0, .equal, ""), value: .string(locator.texts[$0]),
+          trail: dialect.cast("", to: $1.1))
       }
     case .sqliteRowid(let alias, let matchColumns):
       guard dialect == .sqlite, locator.texts.count == 1 else { return nil }

@@ -74,7 +74,9 @@ struct InlineEditQualifiedNameTests {
     let statement = try CellUpdateStatement.make(
       qualifiedName: #"public."my.table""#, columnName: "v", newValue: "x",
       primaryKeyColumns: ["id"], rowData: ["id": .int(1)])
-    #expect(statement.sql == #"UPDATE public."my.table" SET "v" = $1 WHERE "id" = $2"#)
+    #expect(
+      statement.sql
+        == #"UPDATE public."my.table" SET "v" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
   }
 
   @Test("A view target: the cell UPDATE names the view, never ONLY, keyed by its mapped key")
@@ -90,7 +92,8 @@ struct InlineEditQualifiedNameTests {
       qualifiedName: target.qualifiedName, assignments: [(column: "a", value: "5")],
       primaryKeyColumns: target.primaryKeyColumns, rowData: ["key": .int(1), "a": .int(2)],
       updateOnly: target.updateOnly, rowLocator: target.rowLocator)
-    #expect(statement.sql == #"UPDATE public.v1 SET "a" = $1 WHERE "key" = $2"#)
+    #expect(
+      statement.sql == #"UPDATE public.v1 SET "a" = $1 WHERE "key" OPERATOR(pg_catalog.=) $2"#)
     #expect(statement.values == ["5", "1"])
   }
 

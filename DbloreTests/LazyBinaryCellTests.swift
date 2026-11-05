@@ -149,14 +149,20 @@ struct LazyBinaryCellTests {
       column: "body")
     let read = try LazyCellLoader.statement(cell, source: source)
     #expect(
-      read.sql == #"SELECT "body" FROM "public"."files" WHERE tableoid = :k1::oid"#
-        + " AND ctid = :k2::tid AND xmin = :k3::xid")
+      read.sql
+        == #"SELECT "body" FROM "public"."files" WHERE tableoid OPERATOR(pg_catalog.=) :k1"#
+        + "::pg_catalog.oid AND ctid OPERATOR(pg_catalog.=) :k2::pg_catalog.tid"
+        + " AND xmin OPERATOR(pg_catalog.=) :k3::pg_catalog.xid")
     #expect(read.parameters == ["k1": .text("16384"), "k2": .text("(0,2)"), "k3": .text("700")])
     _ = try ReadOnlyQueryGuard.check(read.sql, dialect: .postgresql)
     // The named parameters stay apart from their casts
     let rewritten = SQLParameterRewriter.rewrite(statement: read.sql, dialect: .postgresql)
     #expect(rewritten.names == ["k1", "k2", "k3"])
-    #expect(rewritten.text.hasSuffix("tableoid = $1::oid AND ctid = $2::tid AND xmin = $3::xid"))
+    #expect(
+      rewritten.text.hasSuffix(
+        "tableoid OPERATOR(pg_catalog.=) $1::pg_catalog.oid"
+          + " AND ctid OPERATOR(pg_catalog.=) $2::pg_catalog.tid"
+          + " AND xmin OPERATOR(pg_catalog.=) $3::pg_catalog.xid"))
 
     // A key without a locator is refused before anything is sent
     #expect(throws: LazyCellLoadError.noKey) {

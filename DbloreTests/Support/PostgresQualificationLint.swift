@@ -46,6 +46,7 @@ enum PostgresQualificationLint {
       symbol(index - 1, ".") && word(index - 2) == "PG_CATALOG"
     }
     let castTypes = castTypeStarts(tokens)
+    let assignments = setAssignments(tokens)
     var i = 0
     while i < tokens.count {
       if castTypes.contains(i) {
@@ -83,11 +84,12 @@ enum PostgresQualificationLint {
           }
           let run = tokens[i..<end]
           let bareAllowed =
-            i > 0 && tokens[i - 1].kind == .quotedIdentifier
-            && run.allSatisfy { comparisonSymbols.contains($0.text) }
-            && extensionTypedColumns[tokens[i - 1].text].map {
-              SQLOperandKind(columnType: $0) == .bare
-            } == true
+            (assignments.contains(i) && run.count == 1)
+            || i > 0 && tokens[i - 1].kind == .quotedIdentifier
+              && run.allSatisfy { comparisonSymbols.contains($0.text) }
+              && extensionTypedColumns[tokens[i - 1].text].map {
+                SQLOperandKind(columnType: $0) == .bare
+              } == true
           if !bareAllowed {
             let text = run.map(\.text).joined()
             found.append("operator \(text) outside OPERATOR(pg_catalog.…)")
@@ -159,6 +161,32 @@ enum PostgresQualificationLint {
       !text.hasPrefix("PG_")
     {
       found.append("unqualified function \(text)(")
+    }
+    return found
+  }
+
+  /// Indices of the `=` of each `column = value` in a SET clause (`UPDATE … SET`, `DO UPDATE
+  /// SET`): an assignment, not an operator. Only an `=` right after a column name that follows
+  /// the `SET` or a `,` at its depth, up to the `WHERE`, `FROM` or `RETURNING` there.
+  private static func setAssignments(_ tokens: [SQLToken]) -> Set<Int> {
+    var found: Set<Int> = []
+    for start in tokens.indices where tokens[start].keyword == "SET" {
+      let depth = tokens[start].depth
+      var j = start + 1
+      while j + 1 < tokens.count, tokens[j].depth >= depth {
+        if tokens[j].depth == depth, ["WHERE", "FROM", "RETURNING"].contains(tokens[j].keyword) {
+          break
+        }
+        let afterSeparator =
+          j - 1 == start || (tokens[j - 1].isSymbol(",") && tokens[j - 1].depth == depth)
+        if afterSeparator, tokens[j].depth == depth,
+          tokens[j].kind == .word || tokens[j].kind == .quotedIdentifier,
+          tokens[j + 1].isSymbol("=")
+        {
+          found.insert(j + 1)
+        }
+        j += 1
+      }
     }
     return found
   }
