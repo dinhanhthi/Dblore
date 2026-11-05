@@ -77,6 +77,23 @@ struct InlineEditQualifiedNameTests {
     #expect(statement.sql == #"UPDATE public."my.table" SET "v" = $1 WHERE "id" = $2"#)
   }
 
+  @Test("A view target: the cell UPDATE names the view, never ONLY, keyed by its mapped key")
+  func viewTargetUpdatesTheView() throws {
+    // CREATE VIEW v1(key, a) AS SELECT id, a FROM t: the base key `id` is the view's `key`
+    let target = EditTarget(
+      qualifiedName: "public.v1", tableID: .postgresql(oid: 16_500), primaryKeyColumns: ["key"],
+      viewBase: ViewBaseMap(
+        baseOID: 16_400, basePrimaryKey: [1], definitionVersion: "771",
+        columns: ["key": 1, "a": 2],
+        primaryKeyColumns: ["key"]))
+    let statement = try CellUpdateStatement.make(
+      qualifiedName: target.qualifiedName, assignments: [(column: "a", value: "5")],
+      primaryKeyColumns: target.primaryKeyColumns, rowData: ["key": .int(1), "a": .int(2)],
+      updateOnly: target.updateOnly, rowLocator: target.rowLocator)
+    #expect(statement.sql == #"UPDATE public.v1 SET "a" = $1 WHERE "key" = $2"#)
+    #expect(statement.values == ["5", "1"])
+  }
+
   @Test("A name that is not server output is refused")
   func refusesUserText() {
     #expect(throws: DatabaseError.self) {

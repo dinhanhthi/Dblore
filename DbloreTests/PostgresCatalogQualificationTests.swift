@@ -27,6 +27,7 @@ struct PostgresCatalogQualificationTests {
   /// search_path on purpose (`pg_catalog.to_regclass($1)`), with the reason.
   private static let boundNameLookups: [String: String] = [
     "editTable": "the name comes from the user's query, so it resolves as the user's SQL does",
+    "viewEditCandidate": "the view name comes from the user's query, resolved as in editTable",
     "primaryKeyColumns": "the name is the user's table, resolved as the user's SQL resolves it",
   ]
 
@@ -34,8 +35,8 @@ struct PostgresCatalogQualificationTests {
   // session, checked by grepping `session: any DatabaseSession` in both files: tables,
   // allColumns, views, functions, procedures, triggers, definition(of:) (routineDefinition for
   // functions and procedures, the trigger read, no SQL for sequences and user types), users,
-  // roles, sequences, userTypes, foreignKeys, editTable, enrichColumnTypes (through
-  // enrichedColumns), rowCount, primaryKeyColumns, tableStructure (structureColumns,
+  // roles, sequences, userTypes, foreignKeys, editTable, viewEditCandidate, enrichColumnTypes
+  // (through enrichedColumns), rowCount, primaryKeyColumns, tableStructure (structureColumns,
   // structureIndexes, structureConstraints) and the `rows` helper they all use. The list below
   // matches it.
   private var entryPoints: [EntryPoint] {
@@ -77,6 +78,9 @@ struct PostgresCatalogQualificationTests {
       },
       EntryPoint(name: "editTable", statements: 1) {
         _ = try await introspector.editTable(named: "public.orders", in: $0)
+      },
+      EntryPoint(name: "viewEditCandidate", statements: 1) {
+        _ = try await introspector.viewEditCandidate(named: "public.v1", in: $0)
       },
       EntryPoint(name: "enrichColumnTypes", statements: 1) {
         _ = await introspector.enrichColumnTypes(
@@ -224,6 +228,8 @@ struct PostgresCatalogQualificationTests {
           StagedIntegerKey.lookupSQL(
             schema: "public", table: "orders", column: "id", dialect: .postgresql))
       ),
+      // An editable view's body, on the side connection of its probe
+      ("view definition", PostgresSchemaIntrospector.viewDefinitionSQL),
       // Mask rule origins of a user result, by its table OIDs
       ("mask origin lookup", DatabaseConnectionManager.maskOriginSQL),
       // Run on the target session after the copied rows

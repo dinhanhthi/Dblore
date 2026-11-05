@@ -115,6 +115,11 @@ actor DatabaseConnectionManager {
   /// Inline edit tables resolved outside any app transaction, by table identity
   /// (see `cachedEditTable`)
   var editTableCache: [TableRef: EditTable] = [:]
+  /// PostgreSQL view probes that failed for a passing reason, with when and why: not tried
+  /// again for `viewProbeRetryDelay` (`viewEditTable`)
+  var viewProbeFailures: [ViewProbeKey: (at: Date, error: any Error)] = [:]
+  /// PostgreSQL view probes running: a lookup of the same view joins the one in flight
+  var viewProbesInFlight: [ViewProbeKey: Task<EditTable?, Error>] = [:]
   /// MySQL result column origins: column ordinals by table identity, read from
   /// information_schema once per table. Cleared with `editTableCache` and on schema reload; a
   /// clear also rejects catalog reads still in flight (`MySQLTableColumnsCache.generation`).

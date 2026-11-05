@@ -21,8 +21,9 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   let columns: [ColumnInfo]
   let rows: [[CellValue]]
   let slowQueries: Bool
-  /// A `query` whose SQL contains this text throws `FakeQueryError`.
+  /// A `query` whose SQL contains this text throws `failingQueryError`.
   let failingQuery: String?
+  let failingQueryError: any Error
   /// Every `open` throws this when set (a failed connect).
   let openError: (any Error)?
   /// `formatError` text when set (else `localizedDescription`).
@@ -54,13 +55,15 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     commandModifiedRows: (@Sendable (String) -> Int?)? = nil,
     typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)? = nil,
     failTypedAt: Int? = nil, typedError: any Error = FakeQueryError(),
-    writeLimits: MongoWriteLimits = .fallback, queryAnswer: FakeQueryAnswer.Script? = nil
+    writeLimits: MongoWriteLimits = .fallback, queryAnswer: FakeQueryAnswer.Script? = nil,
+    failingQueryError: any Error = FakeQueryError()
   ) {
     self.capabilities = capabilities
     self.columns = columns
     self.rows = rows
     self.slowQueries = slowQueries
     self.failingQuery = failingQuery
+    self.failingQueryError = failingQueryError
     self.openError = openError
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
@@ -78,7 +81,7 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
       failingQuery: failingQuery, openError: openError, errorFormatter: errorFormatter,
       commandRows: commandRows, commandModifiedRows: commandModifiedRows,
       typedCommandResult: typedCommandResult, failTypedAt: failTypedAt, typedError: typedError,
-      writeLimits: writeLimits, queryAnswer: queryAnswer)
+      writeLimits: writeLimits, queryAnswer: queryAnswer, failingQueryError: failingQueryError)
     lock.lock()
     made.append(session)
     madeConfigs.append(config)
@@ -121,6 +124,7 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private let rows: [[CellValue]]
   private let slowQueries: Bool
   private let failingQuery: String?
+  private let failingQueryError: any Error
   private let openError: (any Error)?
   private let errorFormatter: (@Sendable (any Error) -> String)?
   private let commandRows: (@Sendable (String) -> Int?)?
@@ -182,13 +186,15 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     commandModifiedRows: (@Sendable (String) -> Int?)? = nil,
     typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)? = nil,
     failTypedAt: Int? = nil, typedError: any Error = FakeQueryError(),
-    writeLimits: MongoWriteLimits = .fallback, queryAnswer: FakeQueryAnswer.Script? = nil
+    writeLimits: MongoWriteLimits = .fallback, queryAnswer: FakeQueryAnswer.Script? = nil,
+    failingQueryError: any Error = FakeQueryError()
   ) {
     self.capabilities = capabilities
     self.columns = columns
     self.rows = rows
     self.slowQueries = slowQueries
     self.failingQuery = failingQuery
+    self.failingQueryError = failingQueryError
     self.openError = openError
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
@@ -256,7 +262,7 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     let token = beginInFlight(sql)
     defer { endInFlight(token) }
     if let hook = takeQueryHook() { await hook(sql) }
-    if let failingQuery, sql.contains(failingQuery) { throw FakeQueryError() }
+    if let failingQuery, sql.contains(failingQuery) { throw failingQueryError }
     if slowQueries, lock.withLock({ slowOnly.map { sql.contains($0) } ?? true }) {
       try await waitUntilInterrupted()
     }

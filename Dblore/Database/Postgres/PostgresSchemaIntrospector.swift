@@ -646,6 +646,143 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       generatedColumns: generated, rowLocator: primaryKey.isEmpty ? .pgLocator : nil)
   }
 
+  /// One row per column of the view `$1` names (resolved through `to_regclass` like the user's
+  /// query, as in `editTable`), with the view-level facts repeated: oid, `%I.%I` name, schema,
+  /// name, `pg_relation_is_updatable` bits, no INSTEAD OF trigger, no rule besides `_RETURN`,
+  /// the number of relations its `_RETURN` rule reads, and when it is one: its oid, relkind,
+  /// `relhassubclass` and primary key attnums; then the column's attnum, name and
+  /// `pg_column_is_updatable`; then the `_RETURN` rule's `xmin` (it changes on every `CREATE OR
+  /// REPLACE VIEW`) and the base table's generated attnums. Both attnum lists are built by
+  /// `array_agg`, so their text is a 1-based `{1,2}` (key order from `indkey`'s ordinality):
+  /// `indkey::int2[]` itself keeps int2vector's lower bound 0 and prints as `[0:1]={1,2}`.
+  private static let viewEditCandidateSQL = """
+    SELECT v.oid::pg_catalog.int8, pg_catalog.format('%I.%I', n.nspname, v.relname),
+           n.nspname::pg_catalog.text, v.relname::pg_catalog.text,
+           pg_catalog.pg_relation_is_updatable(v.oid, false),
+           NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger g
+                       WHERE g.tgrelid OPERATOR(pg_catalog.=) v.oid
+                         AND (g.tgtype OPERATOR(pg_catalog.&) 64) OPERATOR(pg_catalog.<>) 0),
+           NOT EXISTS (SELECT 1 FROM pg_catalog.pg_rewrite w
+                       WHERE w.ev_class OPERATOR(pg_catalog.=) v.oid
+                         AND w.ev_type OPERATOR(pg_catalog.<>) '1'::pg_catalog."char"),
+           b.base_count, b.base_oid::pg_catalog.int8, t.relkind::pg_catalog.text,
+           t.relhassubclass,
+           (SELECT pg_catalog.array_agg(k.att ORDER BY k.ord)
+            FROM pg_catalog.unnest(i.indkey::pg_catalog.int2[]) WITH ORDINALITY AS k(att, ord)
+           )::pg_catalog.text,
+           a.attnum::pg_catalog.int4, a.attname::pg_catalog.text,
+           pg_catalog.pg_column_is_updatable(v.oid, a.attnum, false),
+           (SELECT x.xmin::pg_catalog.text FROM pg_catalog.pg_rewrite x
+            WHERE x.ev_class OPERATOR(pg_catalog.=) v.oid
+              AND x.ev_type OPERATOR(pg_catalog.=) '1'::pg_catalog."char"),
+           (SELECT pg_catalog.array_agg(ga.attnum ORDER BY ga.attnum)
+            FROM pg_catalog.pg_attribute ga
+            WHERE ga.attrelid OPERATOR(pg_catalog.=) t.oid
+              AND ga.attnum OPERATOR(pg_catalog.>) 0 AND NOT ga.attisdropped
+              AND COALESCE(pg_catalog.to_jsonb(ga) OPERATOR(pg_catalog.->>) 'attgenerated', '')
+                OPERATOR(pg_catalog.<>) '')::pg_catalog.text
+    FROM pg_catalog.pg_class v
+    JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) v.relnamespace
+    CROSS JOIN LATERAL (
+      SELECT pg_catalog.count(DISTINCT d.refobjid)::pg_catalog.int4 AS base_count,
+             pg_catalog.min(d.refobjid) AS base_oid
+      FROM pg_catalog.pg_rewrite r
+      JOIN pg_catalog.pg_depend d
+        ON d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_rewrite'::pg_catalog.regclass
+        AND d.objid OPERATOR(pg_catalog.=) r.oid
+        AND d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.refobjid OPERATOR(pg_catalog.<>) v.oid
+        AND d.deptype OPERATOR(pg_catalog.=) 'n'
+      WHERE r.ev_class OPERATOR(pg_catalog.=) v.oid
+        AND r.ev_type OPERATOR(pg_catalog.=) '1'::pg_catalog."char"
+    ) b
+    LEFT JOIN pg_catalog.pg_class t ON b.base_count OPERATOR(pg_catalog.=) 1
+      AND t.oid OPERATOR(pg_catalog.=) b.base_oid
+    LEFT JOIN pg_catalog.pg_index i ON i.indrelid OPERATOR(pg_catalog.=) t.oid
+      AND i.indisprimary
+    JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) v.oid
+      AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
+    WHERE v.oid OPERATOR(pg_catalog.=) pg_catalog.to_regclass($1)
+      AND v.relkind OPERATOR(pg_catalog.=) 'v'
+    ORDER BY a.attnum
+    """
+
+  /// The view `name` names as an edit candidate (`ViewEditCandidate`), from catalog reads only,
+  /// or nil when it is not a view or the v1 rule refuses it (the reason goes to the debug log):
+  /// - the UPDATE (4) and DELETE (16) bits of `pg_relation_is_updatable(oid, false)`, the test
+  ///   information_schema uses (INSERT is not required);
+  /// - no INSTEAD OF trigger and no rule besides `_RETURN`: the bits report a simple view as
+  ///   auto-updatable even with either;
+  /// - its `_RETURN` rule reads exactly one relation, a partitioned table or a plain table
+  ///   without inheritance children (no view on a view, no join);
+  /// - that table has a primary key (a view never gets a row locator).
+  /// Runs on the user's catalog session, so every catalog object names `pg_catalog`.
+  func viewEditCandidate(
+    named name: String, in session: any DatabaseSession
+  ) async throws -> ViewEditCandidate? {
+    var header: [CellValue]?
+    var columns: [Int16: String] = [:]
+    var updatable: Set<String> = []
+    for row in try await rows(in: session, sql: Self.viewEditCandidateSQL, binds: [.text(name)]) {
+      guard row.count >= 17, let attnum = CatalogValue.int(row[12]).flatMap(Int16.init(exactly:)),
+        let columnName = CatalogValue.string(row[13]), let isUpdatable = CatalogValue.bool(row[14])
+      else { throw CatalogRowError() }
+      header = header ?? row
+      columns[attnum] = columnName
+      if isUpdatable { updatable.insert(columnName) }
+    }
+    guard let header else { return nil }
+    guard let viewOID = CatalogValue.oid(header[0]),
+      let qualifiedName = CatalogValue.string(header[1]),
+      let schema = CatalogValue.string(header[2]),
+      let viewName = CatalogValue.string(header[3]),
+      let bits = CatalogValue.int(header[4]),
+      let noInsteadTrigger = CatalogValue.bool(header[5]),
+      let noOtherRule = CatalogValue.bool(header[6]),
+      let baseCount = CatalogValue.int(header[7]),
+      let definitionVersion = CatalogValue.string(header[15])
+    else { throw CatalogRowError() }
+    let baseOID = CatalogValue.oid(header[8])
+    let baseKind = CatalogValue.string(header[9])
+    let basePrimaryKey = CatalogValue.attnumList(header[11])
+    let generatedBaseColumns = CatalogValue.attnumList(header[16])
+    let baseIsTable =
+      baseKind == "p" || (baseKind == "r" && CatalogValue.bool(header[10]) == false)
+    let refusal: String?
+    if bits & 20 != 20 {
+      refusal = "pg_relation_is_updatable is \(bits), not UPDATE and DELETE"
+    } else if !noInsteadTrigger {
+      refusal = "it has an INSTEAD OF trigger"
+    } else if !noOtherRule {
+      refusal = "it has a rule besides _RETURN"
+    } else if baseCount != 1 || baseOID == nil {
+      refusal = "it reads \(baseCount) relations"
+    } else if !baseIsTable {
+      refusal = "its base relation is not a table without inheritance children"
+    } else if basePrimaryKey == nil || generatedBaseColumns == nil {
+      refusal = "its base table's key or generated columns are not a 1-based attnum list"
+    } else if basePrimaryKey?.isEmpty != false {
+      refusal = "its base table has no primary key"
+    } else {
+      refusal = nil
+    }
+    if let refusal {
+      await AppLogger.shared.debug(
+        "View \(viewOID) is not editable: \(refusal)", category: "Database")
+      return nil
+    }
+    guard let baseOID, let basePrimaryKey, let generatedBaseColumns else { return nil }
+    return ViewEditCandidate(
+      viewOID: viewOID, qualifiedName: qualifiedName, schema: schema, name: viewName,
+      columns: columns, updatableColumnNames: updatable, baseOID: baseOID,
+      basePrimaryKey: basePrimaryKey, generatedBaseColumns: Set(generatedBaseColumns),
+      definitionVersion: definitionVersion)
+  }
+
+  /// `pg_get_viewdef` of the view `$1` (its OID), read on the side session that runs the view
+  /// body's probe, so names in the body render for that session's `search_path`
+  static let viewDefinitionSQL = "SELECT pg_catalog.pg_get_viewdef($1::pg_catalog.oid)"
+
   func enrichColumnTypes(
     _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
   ) async -> [ColumnInfo] {
@@ -898,6 +1035,22 @@ nonisolated enum CatalogValue {
     default:
       return []
     }
+  }
+
+  /// An `array_agg` of attnums as text: `{1,2}` in order, `[]` for NULL (no row aggregated).
+  /// Nil for any other text, e.g. an array with explicit bounds (`[0:1]={1,2}`, an int2vector
+  /// cast to `int2[]`) or an element that is not a positive `int2`: never a partial list.
+  static func attnumList(_ value: CellValue) -> [Int16]? {
+    if case .null = value { return [] }
+    guard let text = string(value), text.first == "{", text.last == "}" else { return nil }
+    let body = text.dropFirst().dropLast()
+    if body.isEmpty { return [] }
+    var attnums: [Int16] = []
+    for element in body.split(separator: ",", omittingEmptySubsequences: false) {
+      guard let attnum = Int16(element), attnum > 0 else { return nil }
+      attnums.append(attnum)
+    }
+    return attnums
   }
 
   /// `[["a", "b"], ...]` JSON text (`json_agg(json_build_array(a, b))`) as pairs

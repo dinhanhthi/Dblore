@@ -54,6 +54,9 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
   case noRowLocator
   /// A cell set to DEFAULT on an engine whose UPDATE has no `DEFAULT` (`supportsDefaultInUpdate`).
   case serverDefaultUnsupported
+  /// A DELETE or INSERT through a view (`EditTarget.viewBase`): only cell updates are written
+  /// through a view.
+  case viewRowChange
 
   var message: String {
     switch self {
@@ -69,6 +72,8 @@ nonisolated enum RowChangeError: Error, Equatable, Sendable {
         + "data."
     case .serverDefaultUnsupported:
       "This database can't set a cell to its column default in an UPDATE."
+    case .viewRowChange:
+      "Rows can't be added or deleted through a view here. Only its cells can be edited."
     }
   }
 }

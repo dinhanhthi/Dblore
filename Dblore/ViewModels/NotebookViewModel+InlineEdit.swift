@@ -115,7 +115,8 @@ extension NotebookViewModel {
     let target = EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
-      name: table.name, generatedColumns: table.generatedColumns, rowLocator: rowLocator
+      name: table.name, generatedColumns: table.generatedColumns, rowLocator: rowLocator,
+      viewBase: table.viewBase
     ).masking(columns)
     return (target, lookup)
   }
@@ -359,7 +360,9 @@ extension NotebookViewModel {
   /// `relation` resolved by the server (always a fresh catalog read: it validates a cached
   /// target), or, while the app transaction is pending (no catalog query is sent) or when
   /// `cachedFirst` finds it, the table cached under the result columns' `tableID`. Nil when
-  /// `relation` does not name that table (`relationNamesTable`).
+  /// `relation` does not name that table (`relationNamesTable`). `cachedFirst` serves results
+  /// that wait for it: an uncached view stays not editable there, with no side connection for
+  /// its probe (the background read, `patchResultTargets`, probes it).
   private func editTable(
     _ relation: String, tableID: TableRef, _ connectionManager: DatabaseConnectionManager,
     cachedFirst: Bool = false
@@ -374,7 +377,8 @@ extension NotebookViewModel {
       return await connectionManager.cachedEditTable(id: tableID)
     }
     do {
-      return try await connectionManager.fetchEditTable(tableName: relation, tableID: tableID)
+      return try await connectionManager.fetchEditTable(
+        tableName: relation, tableID: tableID, probesViews: !cachedFirst)
     } catch {
       return nil
     }
