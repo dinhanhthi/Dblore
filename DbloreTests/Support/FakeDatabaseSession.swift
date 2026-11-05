@@ -7,14 +7,23 @@ import Foundation
 
 @testable import Dblore
 
+/// The columns and rows a fake `query` answers with in place of the scripted ones.
+struct FakeQueryAnswer: Sendable {
+  typealias Script = @Sendable (_ sql: String, _ binds: [SQLBindValue]) -> FakeQueryAnswer?
+
+  var columns: [ColumnInfo]
+  var rows: [[CellValue]]
+}
+
 /// Builds one fake session per `makeSession`. Each connect / reconnect gets its own session.
 final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Sendable {
   let capabilities: DatabaseCapabilities
   let columns: [ColumnInfo]
   let rows: [[CellValue]]
   let slowQueries: Bool
-  /// A `query` whose SQL contains this text throws `FakeQueryError`.
+  /// A `query` whose SQL contains this text throws `failingQueryError`.
   let failingQuery: String?
+  let failingQueryError: any Error
   /// Every `open` throws this when set (a failed connect).
   let openError: (any Error)?
   /// `formatError` text when set (else `localizedDescription`).
@@ -30,6 +39,9 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   let typedError: any Error
   /// What `writeLimits()` returns.
   let writeLimits: MongoWriteLimits
+  /// Answers a `query` (or a cursor's `fetch`, by the cursor's query) in place of `columns` /
+  /// `rows` when it returns non-nil (an app catalog read, by its SQL and binds).
+  let queryAnswer: FakeQueryAnswer.Script?
 
   private let lock = NSLock()
   private var made: [FakeDatabaseSession] = []
@@ -43,13 +55,15 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     commandModifiedRows: (@Sendable (String) -> Int?)? = nil,
     typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)? = nil,
     failTypedAt: Int? = nil, typedError: any Error = FakeQueryError(),
-    writeLimits: MongoWriteLimits = .fallback
+    writeLimits: MongoWriteLimits = .fallback, queryAnswer: FakeQueryAnswer.Script? = nil,
+    failingQueryError: any Error = FakeQueryError()
   ) {
     self.capabilities = capabilities
     self.columns = columns
     self.rows = rows
     self.slowQueries = slowQueries
     self.failingQuery = failingQuery
+    self.failingQueryError = failingQueryError
     self.openError = openError
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
@@ -58,6 +72,7 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
     self.failTypedAt = failTypedAt
     self.typedError = typedError
     self.writeLimits = writeLimits
+    self.queryAnswer = queryAnswer
   }
 
   func makeSession(config: ConnectionConfig) -> any DatabaseSession {
@@ -66,7 +81,7 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
       failingQuery: failingQuery, openError: openError, errorFormatter: errorFormatter,
       commandRows: commandRows, commandModifiedRows: commandModifiedRows,
       typedCommandResult: typedCommandResult, failTypedAt: failTypedAt, typedError: typedError,
-      writeLimits: writeLimits)
+      writeLimits: writeLimits, queryAnswer: queryAnswer, failingQueryError: failingQueryError)
     lock.lock()
     made.append(session)
     madeConfigs.append(config)
@@ -109,6 +124,7 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private let rows: [[CellValue]]
   private let slowQueries: Bool
   private let failingQuery: String?
+  private let failingQueryError: any Error
   private let openError: (any Error)?
   private let errorFormatter: (@Sendable (any Error) -> String)?
   private let commandRows: (@Sendable (String) -> Int?)?
@@ -117,9 +133,12 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private let failTypedAt: Int?
   private let typedError: any Error
   private let limits: MongoWriteLimits
+  private let queryAnswer: FakeQueryAnswer.Script?
   private let closeContinuation: AsyncStream<SessionCloseReason>.Continuation
   private let lock = NSLock()
   private var recorded: [String] = []
+  /// SQL and binds of the open cursor, which `fetch` answers through `queryAnswer`
+  private var cursorQuery: (sql: String, binds: [SQLBindValue])?
   private var recordedBinds: [[SQLBindValue]] = []
   private var queriesRecorded: [String] = []
   private var typedRecorded: [MongoCommand] = []
@@ -167,13 +186,15 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     commandModifiedRows: (@Sendable (String) -> Int?)? = nil,
     typedCommandResult: (@Sendable (MongoCommand) -> CommandResult)? = nil,
     failTypedAt: Int? = nil, typedError: any Error = FakeQueryError(),
-    writeLimits: MongoWriteLimits = .fallback
+    writeLimits: MongoWriteLimits = .fallback, queryAnswer: FakeQueryAnswer.Script? = nil,
+    failingQueryError: any Error = FakeQueryError()
   ) {
     self.capabilities = capabilities
     self.columns = columns
     self.rows = rows
     self.slowQueries = slowQueries
     self.failingQuery = failingQuery
+    self.failingQueryError = failingQueryError
     self.openError = openError
     self.errorFormatter = errorFormatter
     self.commandRows = commandRows
@@ -182,6 +203,7 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     self.failTypedAt = failTypedAt
     self.typedError = typedError
     limits = writeLimits
+    self.queryAnswer = queryAnswer
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
@@ -240,9 +262,12 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     let token = beginInFlight(sql)
     defer { endInFlight(token) }
     if let hook = takeQueryHook() { await hook(sql) }
-    if let failingQuery, sql.contains(failingQuery) { throw FakeQueryError() }
+    if let failingQuery, sql.contains(failingQuery) { throw failingQueryError }
     if slowQueries, lock.withLock({ slowOnly.map { sql.contains($0) } ?? true }) {
       try await waitUntilInterrupted()
+    }
+    if let answer = queryAnswer?(sql, binds) {
+      return Self.rowSource(columns: answer.columns, rows: answer.rows)
     }
     return rowSource()
   }
@@ -373,12 +398,17 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   func openCursor(_ sql: String, binds: [SQLBindValue]) async throws -> SessionCursor {
     record(sql, binds: binds, query: false)
     noteOpenCursor()
+    lock.withLock { cursorQuery = (sql, binds) }
     return SessionCursor(name: "fake_cap")
   }
 
   func fetch(_ cursor: SessionCursor, maxRows: Int) async throws -> SessionRowSource {
     record("FETCH \(maxRows)", query: false)
     noteFetch(maxRows)
+    if let query = lock.withLock({ cursorQuery }), let answer = queryAnswer?(query.sql, query.binds)
+    {
+      return Self.rowSource(columns: answer.columns, rows: answer.rows)
+    }
     return rowSource()
   }
 
@@ -585,7 +615,10 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   }
 
   private func rowSource() -> SessionRowSource {
-    let rows = rows
+    Self.rowSource(columns: columns, rows: rows)
+  }
+
+  private static func rowSource(columns: [ColumnInfo], rows: [[CellValue]]) -> SessionRowSource {
     let stream = AsyncThrowingStream<[CellValue], Error> { continuation in
       for row in rows {
         continuation.yield(row)

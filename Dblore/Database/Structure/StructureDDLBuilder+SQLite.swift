@@ -53,6 +53,9 @@ nonisolated extension StructureDDLBuilder {
         tableRename = "ALTER TABLE \(table) RENAME TO \(try q(newName))"
       case .setTableComment:
         throw StructureDDLError.unsupported("SQLite tables have no comments.")
+      case .setTableCharset, .convertTableCharset, .setAutoIncrement:
+        throw StructureDDLError.unsupported(
+          "Character sets, collations and AUTO_INCREMENT are MySQL table options.")
       case .alterColumnType, .setDefault, .dropDefault, .setNotNull, .dropNotNull,
         .addConstraint, .dropConstraint:
         throw StructureDDLError.unsupported(

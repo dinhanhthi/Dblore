@@ -44,8 +44,10 @@ struct PostgresCancelBackendTests {
       #expect(await session.cancelBackend(target))
       let cancel = server.cancelRequests.first
       for predicate in [
-        "pg_cancel_backend($1)", "pid = $1", "backend_start = $2::timestamptz",
-        "state = 'active'", "$3 <> ''", "query = left($3, length(query))",
+        "pg_catalog.pg_cancel_backend($1)", "pid OPERATOR(pg_catalog.=) $1",
+        "backend_start OPERATOR(pg_catalog.=) $2::pg_catalog.timestamptz",
+        "state OPERATOR(pg_catalog.=) 'active'", "$3 OPERATOR(pg_catalog.<>) ''",
+        "query OPERATOR(pg_catalog.=) pg_catalog.left($3, pg_catalog.length(query))",
       ] {
         #expect(cancel?.sql.contains(predicate) == true, "missing \(predicate)")
       }

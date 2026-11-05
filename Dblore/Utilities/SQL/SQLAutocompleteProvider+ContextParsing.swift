@@ -307,9 +307,22 @@ extension SQLAutocompleteProvider {
 
   private static func codes(_ word: String) -> [UInt32] { word.unicodeScalars.map(\.value) }
 
-  /// Find full table key ("schema.table") from schema cache by table name
-  func findMatchingTableKey(for tableName: String) -> String? {
+  /// Find full table key ("schema.table") from schema cache by table name. A bare name is
+  /// `preferredSchema`'s table first (when given and not empty), then the first table of that
+  /// name in any schema. A "schema.table" matches that schema's table first, then (unless
+  /// `fallsBackToName` is false) the first table of that name in any schema.
+  func findMatchingTableKey(
+    for tableName: String, fallsBackToName: Bool = true, preferredSchema: String? = nil
+  ) -> String? {
     let lowerTableName = tableName.lowercased()
+
+    if let preferredSchema, !preferredSchema.isEmpty {
+      let lowerSchema = preferredSchema.lowercased()
+      for table in tables
+      where table.schema.lowercased() == lowerSchema && table.name.lowercased() == lowerTableName {
+        return "\(table.schema).\(table.name)"
+      }
+    }
 
     // Try exact match first
     for table in tables {
@@ -320,7 +333,13 @@ extension SQLAutocompleteProvider {
 
     // Try matching the end part (in case user typed "schema.table")
     if let dotIndex = lowerTableName.lastIndex(of: ".") {
+      let schemaOnly = lowerTableName[..<dotIndex]
       let nameOnly = String(lowerTableName[lowerTableName.index(after: dotIndex)...])
+      for table in tables
+      where table.schema.lowercased() == schemaOnly && table.name.lowercased() == nameOnly {
+        return "\(table.schema).\(table.name)"
+      }
+      guard fallsBackToName else { return nil }
       for table in tables {
         if table.name.lowercased() == nameOnly {
           return "\(table.schema).\(table.name)"
@@ -331,10 +350,20 @@ extension SQLAutocompleteProvider {
     return nil
   }
 
-  enum SQLContext {
+  enum SQLContext: Equatable {
     case afterFromOrJoin  // Expecting table names
     case afterSelectOrWhere  // Expecting column names
+    /// Right after `JOIN table [alias] ON`: the tables before it, in text order, and the one
+    /// it joins
+    case joinOn(left: [TableReference], right: TableReference)
     case unknown
+  }
+
+  /// A FROM / JOIN source: its "schema.table" key and the name the query calls it by (its
+  /// alias, else its table name), as typed
+  struct TableReference: Equatable {
+    let key: String
+    let alias: String
   }
 }
 
@@ -665,6 +694,92 @@ extension SQLAutocompleteProvider {
 
   private static func isNonAliasWord(_ token: ScopeToken) -> Bool {
     token.keyword.map(nonAliasWords.contains) ?? false
+  }
+
+  /// `.joinOn` when the text before the token at `position` ends with `JOIN table [[AS] alias]
+  /// ON`, the sources read in text order at that parenthesis level; nil otherwise (or when the
+  /// last JOIN's source is not a table of the schema: a view, a CTE, a subquery, another
+  /// schema). Lexes only once the text ends with the word ON.
+  func joinOnContext(in text: String, before position: Int, dialect: SQLDialect) -> SQLContext? {
+    let nsText = text as NSString
+    var end = min(max(position, 0), nsText.length)
+    func isBoundary(_ unit: unichar) -> Bool {
+      guard let scalar = Unicode.Scalar(unit) else { return false }
+      return Character(scalar).isWhitespace || "(),;".unicodeScalars.contains(scalar)
+    }
+    func isSpace(_ unit: unichar) -> Bool {
+      Unicode.Scalar(unit).map { Character($0).isWhitespace } ?? false
+    }
+    while end > 0, !isBoundary(nsText.character(at: end - 1)) { end -= 1 }
+    guard end > 0, isSpace(nsText.character(at: end - 1)) else { return nil }
+    while end > 0, isSpace(nsText.character(at: end - 1)) { end -= 1 }
+    guard end >= 2,
+      nsText.substring(with: NSRange(location: end - 2, length: 2)).uppercased() == "ON",
+      end == 2 || isBoundary(nsText.character(at: end - 3))
+    else { return nil }
+
+    let tokens = scopeTokens(nsText.substring(to: end), dialect: dialect)
+    var references: [(reference: TableReference, depth: Int, isJoin: Bool)] = []
+    var depth = 0
+    var i = 0
+    /// Whether the last JOIN's source was read as a table of the schema
+    var lastJoinResolved = false
+    /// Reads `name[.name] [[AS] alias]` at `i`, or nothing
+    func source(isJoin: Bool) {
+      guard i < tokens.count, tokens[i].isIdentifier else { return }
+      var name = tokens[i]
+      var lookup = name.text
+      i += 1
+      if i + 1 < tokens.count, tokens[i].isSymbol("."), tokens[i + 1].isIdentifier {
+        name = tokens[i + 1]
+        lookup += "." + name.text
+        i += 2
+      }
+      if i < tokens.count, tokens[i].keyword == "AS" { i += 1 }
+      var alias = name
+      if i < tokens.count, tokens[i].isIdentifier,
+        tokens[i].keyword.map({ !Self.nonAliasWords.contains($0) }) ?? true
+      {
+        alias = tokens[i]
+        i += 1
+      }
+      // A qualified name is that schema's table or none: another schema's keys would not apply.
+      // A bare one is the default schema's, as the engine reads it (MySQL: the first of that
+      // name, the connected database not being known here).
+      guard
+        let key = findMatchingTableKey(
+          for: lookup, fallsBackToName: false, preferredSchema: dialect.defaultSchema)
+      else { return }
+      let typed =
+        alias.kind == .quotedIdentifier
+        ? ((try? dialect.quoteIdentifier(alias.text)) ?? alias.text) : alias.text
+      references.append((TableReference(key: key, alias: typed), depth, isJoin))
+      if isJoin { lastJoinResolved = true }
+    }
+    while i < tokens.count {
+      let token = tokens[i]
+      i += 1
+      if token.isSymbol("(") {
+        depth += 1
+      } else if token.isSymbol(")") {
+        depth -= 1
+      } else if token.keyword == "FROM" {
+        source(isJoin: false)
+        // FROM a, b
+        while i + 1 < tokens.count, tokens[i].isSymbol(",") {
+          i += 1
+          source(isJoin: false)
+        }
+      } else if token.keyword == "JOIN" {
+        lastJoinResolved = false
+        source(isJoin: true)
+      }
+    }
+    guard tokens.last?.keyword == "ON", lastJoinResolved,
+      let joined = references.last, joined.isJoin, joined.depth == depth
+    else { return nil }
+    let earlier = references.dropLast().filter { $0.depth == depth }.map(\.reference)
+    return .joinOn(left: earlier, right: joined.reference)
   }
 
   /// Tokens of `text` with UTF-16 offsets, per the `dialect` lexer

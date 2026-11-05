@@ -90,6 +90,24 @@ private let specialLiteralCases: [(SQLDialect, CellValue, String)] = [
   (.duckdb, .data(Data()), "''::BLOB"),
 ]
 
+/// Security: each quote or backslash is followed by U+0301, so it and the mark form one
+/// `Character` that is not equal to the bare quote. Every quote scalar must still be doubled.
+private let combiningMarkText = "a'\u{301}\"\u{301}`\u{301}\\\u{301}b"
+
+private let combiningMarkIdentifierCases: [(SQLDialect, String)] = [
+  (.postgresql, "\"a'\u{301}\"\"\u{301}`\u{301}\\\u{301}b\""),
+  (.sqlite, "\"a'\u{301}\"\"\u{301}`\u{301}\\\u{301}b\""),
+  (.duckdb, "\"a'\u{301}\"\"\u{301}`\u{301}\\\u{301}b\""),
+  (.mysql, "`a'\u{301}\"\u{301}``\u{301}\\\u{301}b`"),
+]
+
+private let combiningMarkLiteralCases: [(SQLDialect, String)] = [
+  (.postgresql, "E'a''\u{301}\"\u{301}`\u{301}\\\\\u{301}b'"),
+  (.mysql, "'a''\u{301}\"\u{301}`\u{301}\\\\\u{301}b'"),
+  (.sqlite, "'a''\u{301}\"\u{301}`\u{301}\\\u{301}b'"),
+  (.duckdb, "'a''\u{301}\"\u{301}`\u{301}\\\u{301}b'"),
+]
+
 private let placeholderCases: [(SQLDialect, Int, String)] = [
   (.postgresql, 0, "$0"),
   (.postgresql, 1, "$1"),
@@ -263,6 +281,23 @@ struct SQLDialectTests {
     #expect(SQLDialect.sqlite.literal(.string("o'brien")) == "'o''brien'")
     #expect(SQLDialect.sqlite.literal(.string(#"a\b"#)) == #"'a\b'"#)
     #expect(SQLDialect.postgresql.literal(.string(#"\n\t\x"#)) == #"E'\\n\\t\\x'"#)
+  }
+
+  /// Compared by scalars: `String ==` uses canonical equivalence and would hide the bug
+  @Test(
+    "A quote followed by a combining mark is still doubled in an identifier",
+    arguments: combiningMarkIdentifierCases)
+  func combiningMarkIdentifier(dialect: SQLDialect, expected: String) throws {
+    let quoted = try dialect.quoteIdentifier(combiningMarkText)
+    #expect(Array(quoted.unicodeScalars) == Array(expected.unicodeScalars))
+  }
+
+  @Test(
+    "A quote or backslash followed by a combining mark is still escaped in a literal",
+    arguments: combiningMarkLiteralCases)
+  func combiningMarkLiteral(dialect: SQLDialect, expected: String) {
+    let literal = dialect.literal(.string(combiningMarkText))
+    #expect(Array(literal.unicodeScalars) == Array(expected.unicodeScalars))
   }
 
   @Test("DuckDB names itself and never writes an escape string")

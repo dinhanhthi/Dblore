@@ -183,6 +183,64 @@ struct DataModelConnectionConfigTests {
     #expect(unknown.aiAccess == .useDefault)
   }
 
+  @Test("Mask rules round-trip and are absent without rules")
+  func maskRulesCoding() throws {
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    #expect(try encodedObject(config)["maskRules"] == nil)
+    #expect(
+      try JSONDecoder().decode(ConnectionConfig.self, from: JSONEncoder().encode(config))
+        .maskRules.isEmpty)
+
+    config.maskRules = [
+      try ColumnMaskRule(pattern: "users.email", style: .email),
+      try ColumnMaskRule(pattern: "card", style: .lastFour),
+    ]
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+    #expect(decoded.maskRules == config.maskRules)
+    #expect(decoded == config)
+
+  }
+
+  @Test(
+    "Mask rules decode failing closed: an unknown style masks fully, a bad pattern is dropped, at most 100"
+  )
+  func maskRulesDecodeLeniently() throws {
+    var object = try encodedObject(ConnectionConfig(host: "localhost", database: "app"))
+    let junk: [Any] = [
+      ["pattern": "users.email", "style": "hash"], ["pattern": "phone"],
+      ["pattern": "users.*", "style": "full"], ["pattern": 7, "style": "full"],
+      ["style": "full"], "email",
+    ]
+    let valid: [Any] = Array(
+      repeating: ["pattern": "card", "style": "lastFour"], count: ColumnMaskRule.maxRules)
+    object["maskRules"] = junk + valid
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.maskRules.count == ColumnMaskRule.maxRules)
+    #expect(decoded.maskRules.prefix(2).map(\.pattern) == ["users.email", "phone"])
+    #expect(decoded.maskRules.prefix(2).allSatisfy { $0.style == .full })
+    #expect(decoded.maskRules.dropFirst(2).allSatisfy { $0.pattern == "card" })
+
+    // A list of the wrong type masks nothing rather than refusing the config
+    object["maskRules"] = "email"
+    #expect(
+      try JSONDecoder().decode(
+        ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object)
+      ).maskRules.isEmpty)
+  }
+
+  @Test("Mask rules are cut to 100 on set, so a 101st is never written")
+  func maskRulesClampOnSet() throws {
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    config.maskRules = try Array(
+      repeating: ColumnMaskRule(pattern: "email", style: .full),
+      count: ColumnMaskRule.maxRules + 1)
+    #expect(config.maskRules.count == ColumnMaskRule.maxRules)
+    let encoded = try #require(try encodedObject(config)["maskRules"] as? [Any])
+    #expect(encoded.count == ColumnMaskRule.maxRules)
+  }
+
   @Test("AI rules are clamped to 2,000 characters on decode and on set")
   func aiRulesClamp() throws {
     let long = String(repeating: "a", count: 2_500)
@@ -930,6 +988,56 @@ struct DataModelConnectionConfigTests {
     #expect(launched.workspace?.connectionConfig?.password == "")
     #expect(launched.workspace?.connectionConfig?.mongoURI == config.mongoURI)
     expectNoSecret(try JSONEncoder().encode(session))
+  }
+
+  // MARK: - Endpoint Label
+
+  @Test("Endpoint label shows host:port@user, the file name, the SRV host or the SSH route")
+  func endpointLabelShapes() {
+    let mysql = ConnectionConfig(
+      databaseType: .mysql, host: "db.example.com", port: 3306, database: "shop",
+      username: "ada")
+    #expect(mysql.endpointLabel == "db.example.com:3306@ada")
+
+    let anonymous = ConnectionConfig(host: "localhost", port: 5432, database: "app")
+    #expect(anonymous.endpointLabel == "localhost:5432")
+
+    let sqlite = ConnectionConfig(
+      databaseType: .sqlite, host: "", database: "/Users/ada/Data/main.sqlite")
+    #expect(sqlite.endpointLabel == "main.sqlite")
+    let duckdb = ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/sales.duckdb")
+    #expect(duckdb.endpointLabel == "sales.duckdb")
+
+    let tunneled = ConnectionConfig(
+      host: "10.0.0.5", port: 5433, database: "app", username: "ada",
+      sshTunnel: SSHTunnelConfig(host: "bastion.example.com", username: "ops"))
+    #expect(tunneled.endpointLabel == "10.0.0.5:5433@ada via bastion.example.com")
+
+    let ipv6 = ConnectionConfig(host: "::1", port: 5432, database: "app")
+    #expect(ipv6.endpointLabel == "[::1]:5432")
+  }
+
+  @Test("Endpoint label never shows a password or the userinfo of a MongoDB URI")
+  func endpointLabelHidesSecrets() {
+    let postgres = ConnectionConfig(
+      host: "db.example.com", port: 5432, database: "app", username: "ada",
+      password: "pg-secret")
+    #expect(postgres.endpointLabel == "db.example.com:5432@ada")
+
+    var srv = ConnectionConfig(
+      databaseType: .mongodb, host: "cluster0.example.net", port: 27017, database: "app",
+      username: "ada", password: "mongo-secret")
+    srv.mongoURI = "mongodb+srv://ada:mongo-secret@cluster0.example.net/app"
+    #expect(srv.endpointLabel == "cluster0.example.net@ada")
+
+    var standard = srv
+    standard.host = "mongo.example.net"
+    standard.mongoURI = "mongodb://ada:mongo-secret@mongo.example.net:27017/app"
+    #expect(standard.endpointLabel == "mongo.example.net:27017@ada")
+
+    for label in [postgres.endpointLabel, srv.endpointLabel, standard.endpointLabel] {
+      #expect(!label.contains("secret"))
+    }
   }
 
   private func encodedObject(_ config: ConnectionConfig) throws -> [String: Any] {

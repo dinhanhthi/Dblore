@@ -10,7 +10,8 @@
 // columns, string literals in either loaded as SQL and kept by MODIFY); RENAME COLUMN + ADD
 // INDEX on the new name in one ALTER; CHECK and FOREIGN KEY add /
 // drop; refusal while DML is pending (Protected mode or a user BEGIN) leaves the DML
-// uncommitted; a failing second statement is reported as partially applied.
+// uncommitted; a failing second statement is reported as partially applied; the table
+// character set, collation and AUTO_INCREMENT in one ALTER, read back.
 // Fixtures use unique `sc_` names and are dropped on every path. Opt-in per engine
 // (`.requiresPostgres`, `.requiresMySQL`).
 
@@ -400,6 +401,36 @@ struct SchemaChangeIntegrationTests {
       let after = try await manager.fetchTableStructure(
         schema: Self.mysqlDatabase, table: names.child)
       #expect(after.columns.last?.name == "first_col")
+    }
+  }
+
+  @Test(
+    "MySQL: table character set, collation and AUTO_INCREMENT in one ALTER, read back",
+    .requiresMySQL, .timeLimit(.minutes(1)), arguments: [Server.mysql, .mariadb])
+  func mysqlTableOptions(server: Server) async throws {
+    try await withMySQL(server) { manager, observer, names in
+      let structure = try await manager.fetchTableStructure(
+        schema: Self.mysqlDatabase, table: names.child)
+      // Neither server's default for utf8mb4
+      let statements = try StructureDDLBuilder.build(
+        changes: [
+          .setTableCharset(charset: "latin1", collation: "latin1_bin"), .setAutoIncrement(1000),
+        ], structure: structure, engine: try await Self.mysqlEngine(manager),
+        characterSets: try await manager.fetchMySQLCharacterSets())
+      #expect(statements.count == 1)
+      _ = try await manager.executeGatedSchemaChange(
+        statements, policy: Self.open, connectionEpoch: await manager.connectionEpoch)
+
+      let after = try await manager.fetchTableStructure(
+        schema: Self.mysqlDatabase, table: names.child)
+      #expect(after.tableOptions == .init(characterSet: "latin1", collation: "latin1_bin"))
+      #expect(
+        try await manager.fetchMySQLNextAutoIncrement(
+          schema: Self.mysqlDatabase, table: names.child) == 1000)
+      let create = try await observer.executeInternal("SHOW CREATE TABLE \(names.child)").rows
+      let text = try #require(create.first.flatMap { $0.count > 1 ? Self.string($0[1]) : nil })
+      #expect(text.contains("AUTO_INCREMENT=1000"), "\(text)")
+      #expect(text.contains("CHARSET=latin1") && text.contains("latin1_bin"), "\(text)")
     }
   }
 

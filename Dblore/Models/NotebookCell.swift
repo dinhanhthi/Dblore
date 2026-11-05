@@ -60,8 +60,9 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     // New properties with default values for backward compatibility
     statementResults =
       try container.decodeIfPresent([StatementResult].self, forKey: .statementResults) ?? []
-    selectedStatementIndex =
-      try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
+    let savedIndex = try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
+    // An index past the decoded results reopens on the first one
+    selectedStatementIndex = statementResults.indices.contains(savedIndex) ? savedIndex : 0
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
     chartSpec = try container.decodeIfPresent(ChartSpec.self, forKey: .chartSpec)
@@ -261,8 +262,18 @@ struct CellResult: Codable, Sendable {
 }
 
 /// Opaque table identity. Callers compare values. PostgreSQL builds `pg:<oid>` in `Dblore/Database`.
+/// Compared and hashed by Unicode scalars: canonically equivalent names (NFC and NFD) are two
+/// different tables, so an edit keyed by one never resolves to the other.
 nonisolated struct TableRef: Hashable, Sendable, Codable {
   private let rawValue: String
+
+  nonisolated static func == (lhs: TableRef, rhs: TableRef) -> Bool {
+    lhs.rawValue.unicodeScalars.elementsEqual(rhs.rawValue.unicodeScalars)
+  }
+
+  nonisolated func hash(into hasher: inout Hasher) {
+    for scalar in rawValue.unicodeScalars { hasher.combine(scalar.value) }
+  }
 
   nonisolated init(_ rawValue: String) {
     self.rawValue = rawValue
@@ -312,20 +323,24 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
   /// `.date` values hold the stored wall clock as a UTC instant and show without a time zone.
   /// Set once by the session that read the column; false (zoned) when unknown.
   nonisolated let wallClock: Bool
+  /// A column a mask rule matched: its cells hold mask text, never the stored value. Set by
+  /// the manager after the read; false when no rule matched.
+  nonisolated let masked: Bool
 
   nonisolated init(
     name: String, type: String, origin: ColumnOrigin? = nil, sourceName: ColumnSourceName? = nil,
-    wallClock: Bool = false
+    wallClock: Bool = false, masked: Bool = false
   ) {
     self.name = name
     self.type = type
     self.origin = origin
     self.sourceName = sourceName
     self.wallClock = wallClock
+    self.masked = masked
   }
 
   private enum CodingKeys: String, CodingKey {
-    case name, type, origin, tableOID, attributeNumber, wallClock
+    case name, type, origin, tableOID, attributeNumber, wallClock, masked
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -344,6 +359,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     }
     sourceName = nil
     wallClock = try container.decodeIfPresent(Bool.self, forKey: .wallClock) ?? false
+    masked = try container.decodeIfPresent(Bool.self, forKey: .masked) ?? false
   }
 
   nonisolated func encode(to encoder: Encoder) throws {
@@ -352,6 +368,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     try container.encode(type, forKey: .type)
     try container.encodeIfPresent(origin, forKey: .origin)
     if wallClock { try container.encode(true, forKey: .wallClock) }
+    if masked { try container.encode(true, forKey: .masked) }
   }
 }
 

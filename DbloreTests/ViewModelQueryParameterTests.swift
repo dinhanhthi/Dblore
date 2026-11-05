@@ -492,6 +492,17 @@ struct ViewModelQueryParameterTests {
     #expect(!note.unicodeScalars.contains { $0.value == 0x202E })
   }
 
+  @Test("A bind note escapes a quote or backslash fused with a combining mark")
+  func confirmationNoteEscapesCombiningQuote() {
+    let viewModel = parameterViewModel(parameters: [
+      QueryParameter(name: "id", value: "a\"\u{301}, role = admin\\\u{301}")
+    ])
+    #expect(viewModel.presentConfirmationIfNeeded(for: "DELETE FROM t WHERE id = :id", cellId: nil))
+    let note = viewModel.queryConfirmationState.statements.first?.parameterNote ?? ""
+    let expected = "\"id\" = \"a\\\"\u{301}, role = admin\\\\\u{301}\""
+    #expect(Array(note.unicodeScalars) == Array(expected.unicodeScalars))
+  }
+
   @Test("A percent literal, escape string, or dollar quote sets the flag with no bind")
   func likeConstantPercentSetsFlag() {
     let patterns = [
@@ -502,6 +513,8 @@ struct ViewModelQueryParameterTests {
       "DELETE FROM t WHERE name LIKE $tag$%$tag$",
       "DELETE FROM t WHERE name LIKE chr(37)",
       "DELETE FROM t WHERE name LIKE char(37)",
+      // `\` fused with a combining mark is still an escape: the E-string is `%` + U+0301.
+      "DELETE FROM t WHERE name LIKE replace(E'%\\\u{301}', '\u{301}', '')",
     ]
     for sql in patterns {
       let viewModel = alertReadViewModel()

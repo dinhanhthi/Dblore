@@ -332,6 +332,178 @@ struct SQLAutocompleteProviderTests {
     #expect(!suggest(provider, "SELECT tag AS al_tag FROM users WHERE al|").contains("al_tag"))
   }
 
+  // MARK: - Contains tier
+
+  @Test("a name containing the token ranks after every prefix match, shorter or not")
+  func containsTierAfterPrefix() {
+    let provider = SQLAutocompleteProvider()
+    provider.snippets = { [] }
+    provider.update(tables: [
+      table("old_customers", columns: []),
+      table("customers_archive_2025", columns: []),
+      table("customers", columns: []),
+      table("purchase_orders", columns: ["order_total"]),
+      table("invoices", columns: ["customer_ref"]),
+    ])
+    let cust = suggest(provider, "SELECT * FROM cust|")
+    #expect(cust == ["customers", "customers_archive_2025", "old_customers"])
+    // No table starts with "ord" but one contains it (after the ORDER BY keyword's prefix hit);
+    // columns of a referenced table too
+    let ord = suggest(provider, "SELECT * FROM ord|")
+    #expect(ord.firstIndex(of: "ORDER BY") ?? 99 < ord.firstIndex(of: "purchase_orders") ?? -1)
+    #expect(suggest(provider, "SELECT tomer| FROM invoices").contains("customer_ref"))
+  }
+
+  @Test("a 1-character token gets no contains hits")
+  func containsTierNeedsTwoCharacters() {
+    let provider = SQLAutocompleteProvider()
+    provider.snippets = { [] }
+    provider.update(tables: [table("purchase_orders", columns: []), table("orders", columns: [])])
+    let suggestions = suggest(provider, "SELECT * FROM o|")
+    #expect(suggestions.contains("orders"))
+    #expect(!suggestions.contains("purchase_orders"))
+  }
+
+  // MARK: - ON after JOIN
+
+  private func joinProvider() -> SQLAutocompleteProvider {
+    let provider = SQLAutocompleteProvider()
+    provider.snippets = { [] }
+    func key(
+      _ name: String, _ source: String, _ sourceColumns: [String], _ target: String,
+      _ targetColumns: [String]
+    ) -> ForeignKey {
+      ForeignKey(
+        constraintName: name, sourceSchema: "public", sourceTable: source,
+        sourceColumns: sourceColumns, targetSchema: "public", targetTable: target,
+        targetColumns: targetColumns)
+    }
+    provider.update(
+      tables: [
+        table("orders", columns: ["id", "customer_id"]),
+        table("customers", columns: ["id", "name", "Order Id"]),
+        table("products", columns: ["id", "title"]),
+        table("shipments", columns: ["order_id", "line_no"]),
+        table("order_lines", columns: ["order_id", "line_no"]),
+      ],
+      foreignKeys: [
+        key("fk_orders_customer", "orders", ["customer_id"], "customers", ["id"]),
+        key("fk_first_order", "customers", ["Order Id"], "orders", ["id"]),
+        key(
+          "fk_shipment_line", "shipments", ["order_id", "line_no"], "order_lines",
+          ["order_id", "line_no"]),
+      ])
+    return provider
+  }
+
+  @Test("ON after a JOIN suggests the foreign key condition first, aliases as typed")
+  func joinOnSuggestsForeignKeyCondition() {
+    let provider = joinProvider()
+    #expect(
+      suggest(provider, "SELECT * FROM orders o JOIN customers c ON c|").first
+        == "c.id = o.customer_id")
+    // Nothing typed yet: no popup, so Return still breaks the line after ON
+    #expect(suggest(provider, "SELECT * FROM orders o JOIN customers c ON |").isEmpty)
+    // A mixed-case alias stays as typed; the new table on the key's source side, with a column
+    // that needs quotes, comes next
+    #expect(
+      suggest(provider, "SELECT * FROM orders o JOIN Customers C ON C|").prefix(2) == [
+        "C.id = o.customer_id", "C.\"Order Id\" = o.id",
+      ])
+    // A token on the earlier table's alias gets the condition written from that side
+    #expect(
+      suggest(provider, "SELECT * FROM orders o JOIN customers c ON o|").first
+        == "o.customer_id = c.id")
+    // A composite key is one condition
+    #expect(
+      suggest(provider, "select * from shipments s join order_lines l on l|").first
+        == "l.order_id = s.order_id AND l.line_no = s.line_no")
+  }
+
+  @Test("ON after a JOIN of a source not in the schema suggests no earlier join's condition")
+  func joinOnUnresolvedSourceOffersNoCondition() {
+    let provider = joinProvider()
+    for source in ["active a", "(SELECT 1) a", "ONLY products a"] {
+      let sql =
+        "WITH active AS (SELECT 1) SELECT * FROM orders o JOIN customers c "
+        + "ON c.id = o.customer_id JOIN \(source) ON c|"
+      #expect(!suggest(provider, sql).contains { $0.contains(" = ") }, "\(source)")
+    }
+  }
+
+  @Test("ON after a JOIN of a schema-qualified table reads that schema's foreign keys only")
+  func joinOnQualifiedSourceStaysInItsSchema() {
+    let provider = SQLAutocompleteProvider()
+    provider.snippets = { [] }
+    func table(_ schema: String, _ name: String, _ columns: [String]) -> DatabaseTable {
+      DatabaseTable(
+        schema: schema, name: name, columns: columns.map { DatabaseColumn(name: $0, type: "text") })
+    }
+    func key(_ schema: String, _ column: String) -> ForeignKey {
+      ForeignKey(
+        constraintName: "fk_\(schema)", sourceSchema: schema, sourceTable: "orders",
+        sourceColumns: [column], targetSchema: schema, targetTable: "customers",
+        targetColumns: ["id"])
+    }
+    provider.update(
+      tables: [
+        table("public", "orders", ["id", "customer_id"]),
+        table("public", "customers", ["id"]),
+        table("sales", "orders", ["id", "client_id"]),
+        table("sales", "customers", ["id"]),
+      ],
+      foreignKeys: [key("public", "customer_id"), key("sales", "client_id")])
+    let sales = suggest(provider, "SELECT * FROM sales.customers c JOIN sales.orders o ON o|")
+    #expect(sales.first == "o.client_id = c.id")
+    #expect(!sales.contains("o.customer_id = c.id"))
+    // A schema that has no such table gives no condition, not another schema's
+    #expect(
+      !suggest(provider, "SELECT * FROM sales.customers c JOIN archive.orders o ON o|").contains {
+        $0.contains(" = ")
+      })
+    // Columns after WHERE come from the named schema's table too
+    #expect(suggest(provider, "SELECT * FROM sales.orders WHERE cl|").contains("client_id"))
+  }
+
+  /// The listing is in schema order, so "archive.orders" comes before "public.orders"
+  @Test("ON after a JOIN of an unqualified table reads the default schema's table first")
+  func joinOnUnqualifiedSourcePrefersDefaultSchema() {
+    let provider = SQLAutocompleteProvider()
+    provider.snippets = { [] }
+    func table(_ schema: String, _ name: String, _ columns: [String]) -> DatabaseTable {
+      DatabaseTable(
+        schema: schema, name: name, columns: columns.map { DatabaseColumn(name: $0, type: "text") })
+    }
+    provider.update(
+      tables: [
+        table("archive", "customers", ["id"]),
+        table("archive", "orders", ["id", "client_id"]),
+        table("public", "customers", ["id"]),
+        table("public", "orders", ["id", "customer_id"]),
+      ],
+      foreignKeys: [
+        ForeignKey(
+          constraintName: "fk_orders_customer", sourceSchema: "public", sourceTable: "orders",
+          sourceColumns: ["customer_id"], targetSchema: "public", targetTable: "customers",
+          targetColumns: ["id"])
+      ])
+    #expect(
+      suggest(provider, "SELECT * FROM customers c JOIN orders o ON o|").first
+        == "o.customer_id = c.id")
+  }
+
+  @Test("ON after a JOIN with no foreign key between the tables suggests only columns")
+  func joinOnWithoutForeignKeyOffersColumns() {
+    let provider = joinProvider()
+    #expect(
+      !suggest(provider, "SELECT * FROM orders o JOIN products p ON p|").contains {
+        $0.contains(" = ")
+      })
+    let typed = suggest(provider, "SELECT * FROM orders o JOIN products p ON ti|")
+    #expect(typed.contains("title"))
+    #expect(!typed.contains { $0.contains(" = ") })
+  }
+
   // MARK: - Top 20 at scale
 
   /// 5,000 tables over three schemas, every 7th name upper case, 30 named like a keyword and a

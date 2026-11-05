@@ -51,6 +51,12 @@ nonisolated struct MySQLServerInfo: Equatable, Sendable {
     flavor == .mysql ? major >= 8 : (major, minor) >= (10, 8)
   }
 
+  /// MariaDB 10.10+ lists character-set-independent collations (`uca1400_ai_ci`) and has
+  /// `COLLATION_CHARACTER_SET_APPLICABILITY.FULL_COLLATION_NAME` with the name per set.
+  var hasFullCollationNames: Bool {
+    flavor == .mariadb && (major, minor) >= (10, 10)
+  }
+
   /// Session variable of the statement timeout: milliseconds on MySQL (SELECT only), seconds
   /// on MariaDB.
   var statementTimeoutVariable: String {

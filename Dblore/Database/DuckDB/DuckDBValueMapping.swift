@@ -321,9 +321,7 @@ nonisolated struct DuckDBValueMapping {
 
   /// `'text'` with backslashes and single quotes escaped by a backslash.
   private static func quoted(_ text: String) -> String {
-    "'"
-      + text.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "'", with: "\\'") + "'"
+    "'" + SQLDialect.escapingScalars(text, ["\\": "\\\\", "'": "\\'"]) + "'"
   }
 
   private func scalarText(_ id: Int32, _ data: UnsafeMutableRawPointer, _ row: Int) -> String {

@@ -10,7 +10,10 @@
 // so positions line up (see `keyOrder(indoption:)`). A check is pg_get_expr(conbin) and its
 // columns are the ones it references (conkey). Constraints other than p/u/f/c (exclusion, NOT
 // NULL on PG 18) are left out. Column lists travel as JSON text so names with quotes decode as
-// they are.
+// they are. Every catalog object is pg_catalog-qualified (see `PostgresSchemaIntrospector`).
+// Comments are joined from pg_description, never read with obj_description / col_description:
+// on PostgreSQL 13 and older those are SQL functions whose body is parsed when they run, with
+// the caller's search_path and unqualified `=`. An empty comment reads as NULL.
 
 import Foundation
 
@@ -21,9 +24,15 @@ nonisolated extension PostgresSchemaIntrospector {
     let found = try await rows(
       in: session,
       sql: """
-        SELECT c.oid::int8, NULLIF(obj_description(c.oid, 'pg_class'), '') FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')
+        SELECT c.oid::pg_catalog.int8,
+          CASE WHEN ds.description OPERATOR(pg_catalog.=) '' THEN NULL ELSE ds.description END
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+        LEFT JOIN pg_catalog.pg_description ds ON ds.objoid OPERATOR(pg_catalog.=) c.oid
+          AND ds.classoid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND ds.objsubid OPERATOR(pg_catalog.=) 0
+        WHERE n.nspname OPERATOR(pg_catalog.=) $1 AND c.relname OPERATOR(pg_catalog.=) $2
+          AND c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p']::pg_catalog."char"[])
         """,
       binds: [.text(schema), .text(table)])
     guard let oid = found.first?.first.flatMap(CatalogValue.oid) else {
@@ -43,13 +52,19 @@ nonisolated extension PostgresSchemaIntrospector {
     _ bind: [SQLBindValue], in session: any DatabaseSession
   ) async throws -> [TableStructure.Column] {
     let query = """
-      SELECT a.attnum::int4, a.attname::text, format_type(a.atttypid, a.atttypmod),
-        a.attnotnull, pg_get_expr(d.adbin, d.adrelid), a.attidentity::text,
-        COALESCE(to_jsonb(a) ->> 'attgenerated', ''),
-        NULLIF(col_description(a.attrelid, a.attnum), '')
-      FROM pg_attribute a
-      LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-      WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
+      SELECT a.attnum::pg_catalog.int4, a.attname::pg_catalog.text,
+        pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull,
+        pg_catalog.pg_get_expr(d.adbin, d.adrelid), a.attidentity::pg_catalog.text,
+        COALESCE(pg_catalog.to_jsonb(a) OPERATOR(pg_catalog.->>) 'attgenerated', ''),
+        CASE WHEN ds.description OPERATOR(pg_catalog.=) '' THEN NULL ELSE ds.description END
+      FROM pg_catalog.pg_attribute a
+      LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid OPERATOR(pg_catalog.=) a.attrelid
+        AND d.adnum OPERATOR(pg_catalog.=) a.attnum
+      LEFT JOIN pg_catalog.pg_description ds ON ds.objoid OPERATOR(pg_catalog.=) a.attrelid
+        AND ds.classoid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND ds.objsubid OPERATOR(pg_catalog.=) a.attnum
+      WHERE a.attrelid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
+        AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
       ORDER BY a.attnum
       """
     var columns: [TableStructure.Column] = []
@@ -78,22 +93,27 @@ nonisolated extension PostgresSchemaIntrospector {
     return columns
   }
 
-  /// One row per key part, in index name then key order.
+  /// One row per key part, in index name then key order. The two-array `unnest(a, b)` is grammar
+  /// shorthand that exists only unqualified, so it is spelled out as `ROWS FROM`.
   private func structureIndexes(
     _ bind: [SQLBindValue], in session: any DatabaseSession
   ) async throws -> [TableStructure.Index] {
     let query = """
-      SELECT ic.relname::text, i.indisunique, i.indisprimary, am.amname::text,
-        pg_get_expr(i.indpred, i.indrelid), a.attname::text,
-        pg_get_indexdef(i.indexrelid, k.ord::int, true), k.opt::int
-      FROM pg_index i
-      JOIN pg_class ic ON ic.oid = i.indexrelid
-      JOIN pg_am am ON am.oid = ic.relam
-      CROSS JOIN LATERAL unnest(i.indkey::int2[], i.indoption::int2[])
+      SELECT ic.relname::pg_catalog.text, i.indisunique, i.indisprimary,
+        am.amname::pg_catalog.text, pg_catalog.pg_get_expr(i.indpred, i.indrelid),
+        a.attname::pg_catalog.text,
+        pg_catalog.pg_get_indexdef(i.indexrelid, k.ord::pg_catalog.int4, true),
+        k.opt::pg_catalog.int4
+      FROM pg_catalog.pg_index i
+      JOIN pg_catalog.pg_class ic ON ic.oid OPERATOR(pg_catalog.=) i.indexrelid
+      JOIN pg_catalog.pg_am am ON am.oid OPERATOR(pg_catalog.=) ic.relam
+      CROSS JOIN LATERAL ROWS FROM (pg_catalog.unnest(i.indkey::pg_catalog.int2[]),
+          pg_catalog.unnest(i.indoption::pg_catalog.int2[]))
         WITH ORDINALITY AS k(attnum, opt, ord)
-      LEFT JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
-        AND k.attnum <> 0
-      WHERE i.indrelid = $1::oid AND k.ord <= i.indnkeyatts
+      LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) i.indrelid
+        AND a.attnum OPERATOR(pg_catalog.=) k.attnum AND k.attnum OPERATOR(pg_catalog.<>) 0
+      WHERE i.indrelid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
+        AND k.ord OPERATOR(pg_catalog.<=) i.indnkeyatts
       ORDER BY ic.relname, k.ord
       """
     var indexes: [TableStructure.Index] = []
@@ -137,19 +157,26 @@ nonisolated extension PostgresSchemaIntrospector {
     _ bind: [SQLBindValue], in session: any DatabaseSession
   ) async throws -> [TableStructure.Constraint] {
     let query = """
-      SELECT c.conname::text, c.contype::text,
-        (SELECT COALESCE(json_agg(a.attname::text ORDER BY x.n), '[]')::text
-          FROM unnest(c.conkey) WITH ORDINALITY AS x(attnum, n)
-          JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = x.attnum),
-        fn.nspname::text, fc.relname::text,
-        (SELECT COALESCE(json_agg(a.attname::text ORDER BY x.n), '[]')::text
-          FROM unnest(c.confkey) WITH ORDINALITY AS x(attnum, n)
-          JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = x.attnum),
-        c.confupdtype::text, c.confdeltype::text, pg_get_expr(c.conbin, c.conrelid)
-      FROM pg_constraint c
-      LEFT JOIN pg_class fc ON fc.oid = c.confrelid
-      LEFT JOIN pg_namespace fn ON fn.oid = fc.relnamespace
-      WHERE c.conrelid = $1::oid AND c.contype IN ('p', 'u', 'f', 'c') AND c.conparentid = 0
+      SELECT c.conname::pg_catalog.text, c.contype::pg_catalog.text,
+        (SELECT COALESCE(pg_catalog.json_agg(a.attname::pg_catalog.text ORDER BY x.n), '[]')
+            ::pg_catalog.text
+          FROM pg_catalog.unnest(c.conkey) WITH ORDINALITY AS x(attnum, n)
+          JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) c.conrelid
+            AND a.attnum OPERATOR(pg_catalog.=) x.attnum),
+        fn.nspname::pg_catalog.text, fc.relname::pg_catalog.text,
+        (SELECT COALESCE(pg_catalog.json_agg(a.attname::pg_catalog.text ORDER BY x.n), '[]')
+            ::pg_catalog.text
+          FROM pg_catalog.unnest(c.confkey) WITH ORDINALITY AS x(attnum, n)
+          JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) c.confrelid
+            AND a.attnum OPERATOR(pg_catalog.=) x.attnum),
+        c.confupdtype::pg_catalog.text, c.confdeltype::pg_catalog.text,
+        pg_catalog.pg_get_expr(c.conbin, c.conrelid)
+      FROM pg_catalog.pg_constraint c
+      LEFT JOIN pg_catalog.pg_class fc ON fc.oid OPERATOR(pg_catalog.=) c.confrelid
+      LEFT JOIN pg_catalog.pg_namespace fn ON fn.oid OPERATOR(pg_catalog.=) fc.relnamespace
+      WHERE c.conrelid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
+        AND c.contype OPERATOR(pg_catalog.=) ANY (ARRAY['p', 'u', 'f', 'c']::pg_catalog."char"[])
+        AND c.conparentid OPERATOR(pg_catalog.=) 0
       ORDER BY c.conname
       """
     var constraints: [TableStructure.Constraint] = []

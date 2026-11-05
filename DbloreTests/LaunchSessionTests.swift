@@ -535,6 +535,54 @@ struct LaunchSessionTests {
     #expect(!LaunchSessionRestore.setsActiveWorkspace(nil, keyWindow: .workspace(UUID())))
   }
 
+  @Test("Welcome opens on the first wake or activation only when a launch left no window")
+  func missingLaunchWindowOpensWelcome() {
+    // (case, plans Welcome, has a document window, file open pending, quitting, already fired)
+    let table: [(String, Bool, Bool, Bool, Bool, Bool, Bool)] = [
+      ("normal launch: the window is already there", true, true, false, false, false, false),
+      ("display asleep: no window, then a wake", true, false, false, false, false, true),
+      ("a file open is pending", true, false, true, false, false, false),
+      ("restore: its own path opens the window", false, false, false, false, false, false),
+      ("quitting", true, false, false, true, false, false),
+      ("a second trigger after it fired", true, false, false, false, true, false),
+    ]
+    for (name, plansWelcome, hasWindow, pending, quitting, fired, expected) in table {
+      #expect(
+        LaunchSessionRestore.opensMissingLaunchWindow(
+          plansWelcome: plansWelcome, hasDocumentWindow: hasWindow, isFileOpenPending: pending,
+          isTerminating: quitting, alreadyFired: fired) == expected, "\(name)")
+    }
+  }
+
+  @Test(
+    "A file-launch claim anchors the restored siblings on the restored window, the file's ends key")
+  func restoreRoutesClaimedSlot() {
+    let restored = UUID()
+    let content = LaunchWindowContent.workspace(LaunchWorkspace())
+    let claim = window(x: 0, group: 0, tab: 0, selected: true, content: content)
+    let sibling = window(x: 0, group: 0, tab: 1, selected: true, content: content)
+    typealias Route = LaunchSessionRestore.RestoreRoute
+    // (case, front selected, launch window shows, claimed id, expected)
+    let table: [(String, LaunchWindow, UUID?, UUID?, Route)] = [
+      // A launch by a file: the file's workspace took the launch window first. The restored
+      // window anchors its siblings; the file's window ends key, even with a sibling selected.
+      ("file launch", claim, UUID(), restored, Route(claimAnchor: .claimedOwn, key: .launch)),
+      (
+        "file launch, sibling", sibling, UUID(), restored,
+        Route(claimAnchor: .claimedOwn, key: .launch)
+      ),
+      // A normal restore and a Welcome claim: the launch window stands in the claimed slot
+      ("restore", claim, nil, restored, Route(claimAnchor: .launch, key: .launch)),
+      ("welcome", claim, nil, nil, Route(claimAnchor: .launch, key: .launch)),
+    ]
+    for (name, selected, shows, claimed, expected) in table {
+      #expect(
+        LaunchSessionRestore.route(
+          claim: claim, frontSelected: selected, launchShows: shows, claimedID: claimed)
+          == expected, "\(name)")
+    }
+  }
+
   // MARK: - Locked workspaces (envelope kind 5)
 
   @Test("A locked workspace's dirty text is stored only sealed, never as plaintext")

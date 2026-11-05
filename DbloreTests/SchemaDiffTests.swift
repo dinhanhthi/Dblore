@@ -303,6 +303,8 @@ struct SchemaDiffTests {
       ("mydev.mood", "mydev.mood"),
       ("x.dev.mood", "x.dev.mood"),
       ("\"a\"\"dev\".mood", "\"a\"\"dev\".mood"),
+      // A quote followed by a combining mark inside a quoted name: still inside the name
+      ("\"a\"\"\u{301} dev.x\"\"\u{301}\"", "\"a\"\"\u{301} dev.x\"\"\u{301}\""),
       // The schema where it cannot be rewritten safely: refused
       ("'dev.x'::text", nil),
       ("nextval('dev.seq dev.other'::regclass)", nil),

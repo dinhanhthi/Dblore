@@ -417,7 +417,7 @@ nonisolated enum SchemaMigrationScriptBuilder {
 
     private func rewritten(_ text: String) throws -> String {
       guard case .postgresql = engine, source.schema != target.schema else { return text }
-      let quoted = "\"" + target.schema.replacingOccurrences(of: "\"", with: "\"\"") + "\"."
+      let quoted = try engine.dialect.quoteIdentifier(target.schema) + "."
       guard
         let text = SchemaDiff.schemaPrefixReplaced(in: text, schema: source.schema, with: quoted)
       else {
@@ -507,16 +507,35 @@ nonisolated enum SchemaMigrationScriptBuilder {
 
     /// The schema and name of the sequence a whole default `nextval('schema.name'::regclass)`
     /// reads, each part bare (folded to lowercase, as PostgreSQL reads it) or double-quoted. Nil
-    /// for any other default or an unqualified name.
+    /// for any other default or an unqualified name. Walks scalars: a quote followed by a
+    /// combining mark is one `Character`, which would hide where the literal or a name ends.
     private static func nextvalSequence(_ text: String) -> (schema: String, name: String)? {
-      let head = "nextval('"
-      let tail = "'::regclass)"
-      guard text.hasPrefix(head), text.hasSuffix(tail), text.count >= head.count + tail.count
+      let scalars = Array(text.unicodeScalars)
+      let head = Array("nextval('".unicodeScalars)
+      let tail = Array("'::regclass)".unicodeScalars)
+      guard scalars.count >= head.count + tail.count, scalars.starts(with: head),
+        scalars.suffix(tail.count).elementsEqual(tail)
       else { return nil }
-      let literal = String(text.dropFirst(head.count).dropLast(tail.count))
-      // A lone quote would end the literal early
-      guard !literal.replacingOccurrences(of: "''", with: "").contains("'") else { return nil }
-      let chars = Array(literal.replacingOccurrences(of: "''", with: "'"))
+      // The literal's text, each doubled quote one quote. A lone quote would end it early
+      var chars: [Unicode.Scalar] = []
+      var k = head.count
+      while k < scalars.count - tail.count {
+        if scalars[k] == "'" {
+          guard k + 1 < scalars.count - tail.count, scalars[k + 1] == "'" else { return nil }
+          k += 1
+        }
+        chars.append(scalars[k])
+        k += 1
+      }
+      /// A combining mark counts too, so a decomposed accent stays in its name
+      func isNameCharacter(_ c: Unicode.Scalar) -> Bool {
+        switch c.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark: return true
+        default:
+          return c.properties.isAlphabetic || c.properties.numericType != nil || c == "_"
+            || c == "$"
+        }
+      }
       var parts: [String] = []
       var i = 0
       while i < chars.count {
@@ -529,13 +548,13 @@ nonisolated enum SchemaMigrationScriptBuilder {
               guard i + 1 < chars.count, chars[i + 1] == "\"" else { break }
               i += 1
             }
-            part.append(chars[i])
+            part.unicodeScalars.append(chars[i])
             i += 1
           }
           i += 1
         } else {
-          while i < chars.count, chars[i].isLetter || chars[i].isNumber || "_$".contains(chars[i]) {
-            part.append(chars[i])
+          while i < chars.count, isNameCharacter(chars[i]) {
+            part.unicodeScalars.append(chars[i])
             i += 1
           }
           part = SQLTokenizer.asciiLowercased(part)

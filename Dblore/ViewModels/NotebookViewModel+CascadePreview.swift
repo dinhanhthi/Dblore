@@ -139,6 +139,10 @@ extension NotebookViewModel {
     guard target.rowLocator == nil else {
       return .notComputed("Related rows are not counted for a table without a primary key.")
     }
+    // Rows are not deleted through a view (`stageDelete`); a set that holds one is not counted
+    guard target.viewBase == nil else {
+      return .notComputed("Related rows are not counted for a view.")
+    }
     // Later statements of the batch can remove a blocker before a deferred check
     let alsoWrites = !set.edits.isEmpty || !set.inserts.isEmpty
     guard let connectionManager else { return .notComputed("Not connected.") }

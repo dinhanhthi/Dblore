@@ -42,7 +42,9 @@ struct SchemaLayoutEngineTests {
       return SchemaLayoutEngine().calculateLayout(
         tables: tables, foreignKeys: [], canvasSize: CGSize(width: 30_000, height: 24_000))
     }
-    while !started.withLock({ $0 }) { await Task.yield() }
+    await boundedWait("the layout task starting", timeout: .seconds(45)) {
+      while !Task.isCancelled, !started.withLock({ $0 }) { await Task.yield() }
+    }
     // Past the entry check, into the simulation
     try? await Task.sleep(for: .milliseconds(50))
     task.cancel()

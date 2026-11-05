@@ -831,7 +831,9 @@ extension ConnectionFormContent {
         Text("Read-only")
           .font(.body)
         Text(
-          "Open this file without writing to it. SQLite may still create its -wal and -shm files next to a WAL database, as reads need them."
+          connectionConfig.databaseType == .duckdb
+            ? "Open this file without writing to it. DuckDB opens it READ_ONLY and writes no .wal file."
+            : "Open this file without writing to it. SQLite may still create its -wal and -shm files next to a WAL database, as reads need them."
         )
         .font(.caption)
         .foregroundColor(.foregroundMuted)

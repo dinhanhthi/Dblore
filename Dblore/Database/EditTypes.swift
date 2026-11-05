@@ -279,13 +279,15 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
     do {
       return try dialect.quoteIdentifier(name)
     } catch {
-      let quote: String
+      let quote: Unicode.Scalar
       switch dialect {
       case .mysql: quote = "`"
       case .mongodb: quote = "\""
       default: quote = "\""
       }
-      return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
+      let quoteText = String(quote)
+      return quoteText + SQLDialect.escapingScalars(name, [quote: quoteText + quoteText])
+        + quoteText
     }
   }
 
@@ -429,10 +431,153 @@ nonisolated struct EditTable: Sendable, Equatable {
   /// How rows are named when the table has no primary key; nil when it has one or rows cannot
   /// be located (no edits)
   var rowLocator: RowLocatorKind? = nil
+  /// PostgreSQL updatable view: `oid`, `attributeNames` and `primaryKeyColumns` are the view's,
+  /// and this maps them to its one base table. Nil for a table.
+  var viewBase: ViewBaseMap? = nil
 
   /// Identity compared with result column origins.
   var resolvedTableRef: TableRef {
     tableRef ?? .postgresql(oid: oid)
+  }
+
+  /// A view that was checked and found not editable, cached under its OID so the next result
+  /// of it opens no side connection (`refusedView`). Never an edit target.
+  var isRefusedView: Bool {
+    viewBase != nil && primaryKeyColumns.isEmpty
+  }
+
+  /// The edit table of `candidate` with its probed `map`, or nil when the map was probed for
+  /// another view definition or a base key column is no longer an updatable view column.
+  /// Not-updatable view columns (expressions), view columns of a generated base column and
+  /// other view columns of a base key column are read-only (`generatedColumns`). Never `UPDATE
+  /// ONLY` and never a `rowLocator`: a view is named by its own name and keyed by its mapped key.
+  static func view(
+    _ candidate: ViewEditCandidate, map: ViewBaseMap, connectionEpoch: UInt64
+  ) -> EditTable? {
+    guard !map.primaryKeyColumns.isEmpty, map.matches(candidate),
+      map.primaryKeyColumns.allSatisfy({ candidate.updatableColumnNames.contains($0) })
+    else { return nil }
+    let keys = Set(map.primaryKeyColumns)
+    let baseKeys = Set(candidate.basePrimaryKey)
+    var readOnly: Set<String> = []
+    for name in candidate.columns.values {
+      let base = map.columns[name]
+      let aliasesKey = base.map(baseKeys.contains) == true && !keys.contains(name)
+      let generated = base.map(candidate.generatedBaseColumns.contains) == true
+      if !candidate.updatableColumnNames.contains(name) || aliasesKey || generated {
+        readOnly.insert(name)
+      }
+    }
+    return EditTable(
+      oid: candidate.viewOID, attributeNames: candidate.columns,
+      primaryKeyColumns: map.primaryKeyColumns, qualifiedName: candidate.qualifiedName,
+      connectionEpoch: connectionEpoch, updateOnly: false, schema: candidate.schema,
+      name: candidate.name, generatedColumns: readOnly, viewBase: map)
+  }
+
+  /// The cache entry of a view `candidate` refused after its probe (`isRefusedView`)
+  static func refusedView(_ candidate: ViewEditCandidate, connectionEpoch: UInt64) -> EditTable {
+    EditTable(
+      oid: candidate.viewOID, attributeNames: candidate.columns, primaryKeyColumns: [],
+      connectionEpoch: connectionEpoch,
+      viewBase: ViewBaseMap(
+        baseOID: candidate.baseOID, basePrimaryKey: candidate.basePrimaryKey,
+        definitionVersion: candidate.definitionVersion, columns: [:], primaryKeyColumns: []))
+  }
+}
+
+/// A PostgreSQL view that passed every catalog check of an edit through it
+/// (`PostgresSchemaIntrospector.viewEditCandidate`): auto-updatable for UPDATE and DELETE, no
+/// INSTEAD OF trigger, no rule besides `_RETURN`, exactly one base relation, a plain or
+/// partitioned table with a primary key. Its columns are not mapped yet: that needs the probe
+/// of the view body on a side session (`DatabaseSession.columnOrigins(ofViewBody:)`).
+nonisolated struct ViewEditCandidate: Sendable, Equatable {
+  let viewOID: UInt32
+  /// Server-resolved `format('%I.%I', schema, view)`
+  let qualifiedName: String
+  /// Unquoted catalog schema and view name
+  let schema: String
+  let name: String
+  /// View column names by attribute number
+  let columns: [Int16: String]
+  /// View columns `pg_column_is_updatable` marks updatable
+  let updatableColumnNames: Set<String>
+  let baseOID: UInt32
+  /// The base table's primary key attribute numbers, in key order
+  let basePrimaryKey: [Int16]
+  /// The base table's generated attribute numbers (`attgenerated`): never written
+  let generatedBaseColumns: Set<Int16>
+  /// `xmin` of the view's `_RETURN` rule: changes on every `CREATE OR REPLACE VIEW`, which can
+  /// point a view column at another base column under the same names
+  let definitionVersion: String
+}
+
+/// One view's probe on one connection and view definition (`viewEditTable`)
+nonisolated struct ViewProbeKey: Hashable, Sendable {
+  let viewOID: UInt32
+  let definitionVersion: String
+  let connectionEpoch: UInt64
+}
+
+/// How an editable view's columns map to its one base table, from the probe's column origins.
+nonisolated struct ViewBaseMap: Sendable, Equatable {
+  let baseOID: UInt32
+  /// The base primary key attribute numbers the map was built for, in key order
+  let basePrimaryKey: [Int16]
+  /// The view definition the map was built for (`ViewEditCandidate.definitionVersion`)
+  let definitionVersion: String
+  /// Base attribute number of each view column that is a plain base column, by view name
+  let columns: [String: Int16]
+  /// The base primary key in view column names, in key order
+  let primaryKeyColumns: [String]
+
+  /// Why a view's probe gives no map
+  struct Refusal: Error, Equatable {
+    let reason: String
+  }
+
+  /// The map of `candidate` from `origins`, the probe's column origins in view column order
+  /// (view attribute `i + 1` is probe column `i`: a view's columns cannot be dropped, and a
+  /// renamed column keeps its position). An origin in another relation, a column count that
+  /// differs, or a base key column that is not an updatable view column refuses the view.
+  static func make(
+    _ candidate: ViewEditCandidate, origins: [ColumnOrigin?]
+  ) throws(Refusal) -> ViewBaseMap {
+    guard origins.count == candidate.columns.count else {
+      throw Refusal(
+        reason: "the probe read \(origins.count) columns, the view has \(candidate.columns.count)")
+    }
+    let base = TableRef.postgresql(oid: candidate.baseOID)
+    var columns: [String: Int16] = [:]
+    var viewNamesByBase: [Int16: [String]] = [:]
+    for (index, origin) in origins.enumerated() {
+      guard let origin else { continue }
+      guard origin.tableID == base, let attnum = Int16(exactly: origin.columnOrdinal),
+        let name = Int16(exactly: index + 1).flatMap({ candidate.columns[$0] })
+      else {
+        throw Refusal(reason: "view column \(index + 1) reads \(origin.tableID.identity)")
+      }
+      columns[name] = attnum
+      viewNamesByBase[attnum, default: []].append(name)
+    }
+    var keys: [String] = []
+    for attnum in candidate.basePrimaryKey {
+      guard
+        let name = viewNamesByBase[attnum]?.first(where: candidate.updatableColumnNames.contains)
+      else {
+        throw Refusal(reason: "base key column \(attnum) is not an updatable view column")
+      }
+      keys.append(name)
+    }
+    return ViewBaseMap(
+      baseOID: candidate.baseOID, basePrimaryKey: candidate.basePrimaryKey,
+      definitionVersion: candidate.definitionVersion, columns: columns, primaryKeyColumns: keys)
+  }
+
+  /// Whether the map was built for `candidate`'s base table, key and view definition
+  func matches(_ candidate: ViewEditCandidate) -> Bool {
+    baseOID == candidate.baseOID && basePrimaryKey == candidate.basePrimaryKey
+      && definitionVersion == candidate.definitionVersion
   }
 }
 
@@ -469,17 +614,21 @@ nonisolated struct EditTarget: Sendable, Equatable {
   let schema: String?
   /// Unquoted catalog table name (`relname` or the SQLite table). Nil when unknown.
   let name: String?
-  /// Generated columns: read-only in the grid and left out of staged UPDATE and INSERT
+  /// Generated columns, and masked ones (`masking(_:)`): read-only in the grid and left out of
+  /// staged UPDATE and INSERT
   let generatedColumns: Set<String>
   /// Keyless table: rows are named by their locator (`RowLocatorValues`), never by
   /// `primaryKeyColumns` (empty). Nil for a keyed target.
   let rowLocator: RowLocatorKind?
+  /// A PostgreSQL updatable view (`EditTable.viewBase`): cells are updated through the view's
+  /// name with its mapped key; staged DELETE and INSERT are refused. Nil for a table.
+  let viewBase: ViewBaseMap?
 
   init(
     qualifiedName: String, tableID: TableRef, primaryKeyColumns: [String],
     connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID(),
     schema: String? = nil, name: String? = nil, generatedColumns: Set<String> = [],
-    rowLocator: RowLocatorKind? = nil
+    rowLocator: RowLocatorKind? = nil, viewBase: ViewBaseMap? = nil
   ) {
     self.qualifiedName = qualifiedName
     self.tableID = tableID
@@ -491,5 +640,23 @@ nonisolated struct EditTarget: Sendable, Equatable {
     self.name = name
     self.generatedColumns = generatedColumns
     self.rowLocator = rowLocator
+    self.viewBase = viewBase
+  }
+
+  /// This target with the masked `columns` (`ColumnInfo.masked`: their cells hold mask text)
+  /// joined to `generatedColumns`, so nothing writes them back; same generation. Nil when a
+  /// masked column names the rows: a primary key column or a SQLite match column, whose mask
+  /// text in the WHERE would name another row, or none.
+  func masking(_ columns: [ColumnInfo]) -> EditTarget? {
+    let masked = Set(columns.filter(\.masked).map(\.name))
+    var keys = Set(primaryKeyColumns)
+    if case .sqliteRowid(_, let matchColumns) = rowLocator { keys.formUnion(matchColumns) }
+    guard keys.isDisjoint(with: masked) else { return nil }
+    guard !masked.isSubset(of: generatedColumns) else { return self }
+    return EditTarget(
+      qualifiedName: qualifiedName, tableID: tableID, primaryKeyColumns: primaryKeyColumns,
+      connectionEpoch: connectionEpoch, updateOnly: updateOnly, generation: generation,
+      schema: schema, name: name, generatedColumns: generatedColumns.union(masked),
+      rowLocator: rowLocator, viewBase: viewBase)
   }
 }

@@ -8,6 +8,15 @@ import Testing
 
 @testable import Dblore
 
+/// A flag another task sets (the fake catalog's answer changes once it is set).
+private final class Flag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = false
+
+  var isSet: Bool { lock.withLock { value } }
+  func set() { lock.withLock { value = true } }
+}
+
 /// History rows the service recorded.
 private actor RecordedHistory: QueryHistoryRecording {
   private(set) var entries: [QueryHistoryEntry] = []
@@ -643,6 +652,39 @@ struct MCPToolServiceTests {
     await pool.closeAll()
   }
 
+  @Test("run_query of one quoted PostgreSQL relation returns the catalog's column types")
+  func quotedRelationEnrichedTypes() async throws {
+    let origin = ColumnOrigin(tableID: .postgresql(oid: 42), columnOrdinal: 1)
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [ColumnInfo(name: "amount", type: "numeric", origin: origin)],
+      rows: [[.string("1.50")]])
+    let entry = Self.entry()
+    let id = entry.id
+    let pool = MCPConnectionPool(
+      entry: { $0 == id ? entry : nil }, sessionFactory: factory,
+      certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
+      knownHosts: InMemorySSHKnownHostStore())
+    // The catalog read answered in place of the server
+    try await pool.withManager(for: id) { manager in
+      await manager.setColumnTypeReadHook { columns in
+        columns.map {
+          ColumnInfo(name: $0.name, type: "NUMERIC(10,2)", origin: $0.origin)
+        }
+      }
+    }
+    let historySwitch = historySwitch
+    let service = MCPToolService(
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history,
+      historyEnabled: { historySwitch.enabled }, gate: gate)
+    let read = await runQuery(service, id, "SELECT amount FROM \"public\".\"payments\"")
+    await pool.closeAll()
+
+    #expect(!read.isError, "\(read.text)")
+    #expect(read.text.contains(#""type":"NUMERIC(10,2)""#), "\(read.text)")
+  }
+
   @Test("run_query writes a naive column's wall clock and a zoned column as ISO 8601 UTC")
   func sqlReadSourceDateShapes() async throws {
     // 2026-10-15 12:00:00.123 UTC
@@ -828,5 +870,394 @@ struct MCPToolServiceTests {
     #expect(String(decoding: refused.body, as: UTF8.self).contains("command-line tool only reads"))
     #expect(writes.statements.isEmpty)
     #expect(await handler(post(list, nil)).status == 401)
+  }
+}
+
+// MARK: - Column masking
+
+/// Mask rules applied where user SQL results leave the manager: an MCP `run_query`, a grid read
+/// and a SQLite read. Rule `users.email`; a result's origin is resolved per engine and fails
+/// closed (the rule matches on its column alone) when it is a view, a partition or unknown.
+extension MCPToolServiceTests {
+  private static let rawEmail = "alice@example.com"
+  private static let maskedEmail = "a\u{2022}\u{2022}\u{2022}@example.com"
+
+  /// pg_class by OID: schema, table, relkind and whether the relation has a parent
+  private nonisolated static let relations: [Int: (String, String, String, Bool)] = [
+    100: ("public", "users", "r", false), 200: ("public", "users_v", "v", false),
+    300: ("public", "users_2026_10", "r", true), 400: ("public", "orders", "r", false),
+  ]
+
+  /// The origin lookup (the read naming pg_inherits) answered with the bound OIDs' rows
+  private nonisolated static let catalog = pgCatalog { relations }
+
+  /// `catalog` over the relations `relations` returns when the lookup runs
+  private nonisolated static func pgCatalog(
+    _ relations: @escaping @Sendable () -> [Int: (String, String, String, Bool)]
+  ) -> FakeQueryAnswer.Script {
+    { sql, binds in
+      guard sql.contains("pg_inherits"), case .text(let list)? = binds.first else { return nil }
+      let oids = list.trimmingCharacters(in: CharacterSet(charactersIn: "{}"))
+        .split(separator: ",").compactMap { Int($0) }
+      let current = relations()
+      return FakeQueryAnswer(
+        columns: ["oid", "nspname", "relname", "relkind", "has_parent"].map {
+          ColumnInfo(name: $0, type: "text")
+        },
+        rows: oids.compactMap { oid in
+          current[oid].map {
+            [.int(oid), .string($0.0), .string($0.1), .string($0.2), .bool($0.3)]
+          }
+        })
+    }
+  }
+
+  private static func emailRule(_ style: ColumnMaskRule.Style = .email) throws -> [ColumnMaskRule] {
+    [try ColumnMaskRule(pattern: "users.email", style: style)]
+  }
+
+  /// A PostgreSQL fake answering user SQL with one `email` column read from relation `oid`
+  private static func emailFactory(
+    oid: UInt32, value: String = rawEmail, failingLookup: Bool = false,
+    catalog: @escaping FakeQueryAnswer.Script = catalog
+  ) -> FakeDatabaseSessionFactory {
+    FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [
+        ColumnInfo(
+          name: "email", type: "text",
+          origin: ColumnOrigin(tableID: .postgresql(oid: oid), columnOrdinal: 2))
+      ],
+      rows: [[.string(value)]], failingQuery: failingLookup ? "pg_inherits" : nil,
+      queryAnswer: catalog)
+  }
+
+  private static func pgConfig(maskRules: [ColumnMaskRule] = []) -> ConnectionConfig {
+    var config = ConnectionConfig(
+      databaseType: .postgresql, host: "fake", port: 5432, database: "db", username: "u",
+      sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    config.maskRules = maskRules
+    return config
+  }
+
+  @Test(
+    "run_query masks users.email from a table, view, partition or failed lookup; not orders",
+    arguments: [
+      ("SELECT * FROM users", 100, false, true),
+      ("SELECT email FROM users", 100, false, true),
+      ("SELECT email FROM users", 100, true, true),
+      ("SELECT * FROM users_v", 200, false, true),
+      ("SELECT * FROM users_2026_10", 300, false, true),
+      ("SELECT email FROM orders", 400, false, false),
+    ] as [(String, UInt32, Bool, Bool)])
+  func runQueryMasks(sql: String, oid: UInt32, failingLookup: Bool, masked: Bool) async throws {
+    let factory = Self.emailFactory(oid: oid, failingLookup: failingLookup)
+    var ruled = Self.entry()
+    ruled.config.maskRules = try Self.emailRule()
+    let entry = ruled
+    let id = entry.id
+    let pool = MCPConnectionPool(
+      entry: { $0 == id ? entry : nil }, sessionFactory: factory,
+      certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
+      knownHosts: InMemorySSHKnownHostStore())
+    let historySwitch = historySwitch
+    let service = MCPToolService(
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history,
+      historyEnabled: { historySwitch.enabled }, gate: gate)
+    let read = await runQuery(service, id, sql)
+    await pool.closeAll()
+
+    #expect(!read.isError, "\(read.text)")
+    #expect(read.text.contains(Self.rawEmail) == !masked, "\(read.text)")
+    #expect(read.text.contains(Self.maskedEmail) == masked, "\(read.text)")
+    #expect(factory.statements.contains { $0.contains("pg_inherits") })
+  }
+
+  @Test("A deferred grid read resolves the origin before its rows return, once per result")
+  func deferredGridReadResolvesOrigin() async throws {
+    for (oid, masked) in [(UInt32(400), false), (100, true)] {
+      let factory = Self.emailFactory(oid: oid)
+      let manager = DatabaseConnectionManager(sessionFactory: factory)
+      try await manager.connect(config: Self.pgConfig(maskRules: try Self.emailRule()))
+      for _ in 0..<2 {
+        let result = try await manager.execute(
+          userSQL: "SELECT email FROM t", policy: ProtectionPolicy(protectionLevel: .none),
+          deferEnrichment: true)
+        #expect(result.typesDeferred)
+        #expect(result.columns.map(\.masked) == [masked])
+        #expect(result.rows == [[.string(masked ? Self.maskedEmail : Self.rawEmail)]])
+      }
+      #expect(factory.statements.filter { $0.contains("pg_inherits") }.count == 2)
+      await manager.disconnect()
+    }
+  }
+
+  @Test("A table renamed by another client is matched by its new name on the next result")
+  func renamedTableMatchesNewName() async throws {
+    let renamed = Flag()
+    let factory = Self.emailFactory(
+      oid: 100,
+      catalog: Self.pgCatalog {
+        renamed.isSet ? [100: ("public", "people", "r", false)] : Self.relations
+      })
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(
+      config: Self.pgConfig(maskRules: [try ColumnMaskRule(pattern: "people.email", style: .email)])
+    )
+    func read() async throws -> [[CellValue]] {
+      try await manager.execute(
+        userSQL: "SELECT email FROM users", policy: ProtectionPolicy(protectionLevel: .none)
+      ).rows
+    }
+    #expect(try await read() == [[.string(Self.rawEmail)]])
+
+    // ALTER TABLE users RENAME TO people, sent by another client: same OID, new name
+    renamed.set()
+    #expect(try await read() == [[.string(Self.maskedEmail)]])
+    await manager.disconnect()
+  }
+
+  /// A PostgreSQL fake: `SELECT email FROM <table>` reads two rows of one `email` column from
+  /// `oids[table]`; the origin lookup answers `relations`
+  private static func emailTablesFactory(
+    oids: [String: UInt32], relations: [Int: (String, String, String, Bool)]
+  ) -> FakeDatabaseSessionFactory {
+    let catalog = pgCatalog { relations }
+    let raw = rawEmail
+    return FakeDatabaseSessionFactory(
+      capabilities: .contract(), columns: [], rows: [],
+      queryAnswer: { sql, binds in
+        if let answer = catalog(sql, binds) { return answer }
+        let prefix = "SELECT email FROM "
+        guard sql.hasPrefix(prefix), let oid = oids[String(sql.dropFirst(prefix.count))] else {
+          return nil
+        }
+        return FakeQueryAnswer(
+          columns: [
+            ColumnInfo(
+              name: "email", type: "text",
+              origin: ColumnOrigin(tableID: .postgresql(oid: oid), columnOrdinal: 2))
+          ],
+          rows: [[.string(raw)], [.string(raw)]])
+      })
+  }
+
+  /// Whether `SELECT email FROM <table>` comes back masked (column flag and every row)
+  private static func readsMasked(
+    _ table: String, on manager: DatabaseConnectionManager, policy: ProtectionPolicy,
+    maxRows: Int = DatabaseConnectionManager.defaultMaxFetchRows
+  ) async throws -> (masked: Bool, result: QueryResult) {
+    let result = try await manager.execute(
+      userSQL: "SELECT email FROM \(table)", policy: policy, maxRows: maxRows)
+    let masked =
+      result.columns.map(\.masked) == [true] && !result.rows.isEmpty
+      && result.rows.allSatisfy { $0 == [.string(maskedEmail)] }
+    return (masked, result)
+  }
+
+  @Test(
+    "While the app transaction is pending, tables read before keep their origin; others fail closed"
+  )
+  func pendingTransactionUsesReadOrigins() async throws {
+    let factory = Self.emailTablesFactory(
+      oids: ["users": 100, "customers": 500, "vendors": 600],
+      relations: Self.relations.merging([
+        500: ("public", "customers", "r", false), 600: ("public", "vendors", "r", false),
+      ]) { $1 })
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    var config = Self.pgConfig(maskRules: try Self.emailRule())
+    config.protectedMode = true
+    try await manager.connect(config: config)
+    let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+    func masked(_ table: String) async throws -> Bool {
+      try await Self.readsMasked(table, on: manager, policy: protected).masked
+    }
+    func lookups() -> Int { factory.statements.filter { $0.contains("pg_inherits") }.count }
+
+    #expect(try await !masked("customers"))
+    #expect(try await masked("users"))
+    #expect(lookups() == 2)
+
+    _ = try await manager.execute(userSQL: "UPDATE t SET a = 1", policy: protected)
+    #expect(await manager.transactionSnapshot().pending.count == 1)
+    // No catalog read inside the transaction: the origins read before stand in
+    #expect(try await !masked("customers"))
+    #expect(try await masked("users"))
+    // A read cut by the row cap keeps its session (the transaction): the memo still answers
+    let capped = try await Self.readsMasked("customers", on: manager, policy: protected, maxRows: 1)
+    #expect(capped.result.truncated && !capped.result.sessionReset)
+    #expect(!capped.masked)
+    // Never read before: no origin, so the rule matches on its column alone
+    #expect(try await masked("vendors"))
+    #expect(lookups() == 2)
+
+    try await manager.commitAppTransaction(
+      expectedGeneration: await manager.transactionStatus().generation)
+    #expect(try await !masked("vendors"))
+    #expect(lookups() == 3)
+    await manager.disconnect()
+  }
+
+  @Test("A table renamed to a ruled name inside the app transaction is masked (memo cleared)")
+  func renameInsideTransactionFailsClosed() async throws {
+    // Same OID before and after the rename
+    let factory = Self.emailTablesFactory(
+      oids: ["staging": 700, "users": 700],
+      relations: Self.relations.merging([700: ("public", "staging", "r", false)]) { $1 })
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    var config = Self.pgConfig(maskRules: try Self.emailRule())
+    config.protectedMode = true
+    try await manager.connect(config: config)
+    let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+    func lookups() -> Int { factory.statements.filter { $0.contains("pg_inherits") }.count }
+
+    // Memoized: OID 700 is public.staging
+    #expect(try await !Self.readsMasked("staging", on: manager, policy: protected).masked)
+    #expect(lookups() == 1)
+
+    _ = try await manager.execute(userSQL: "UPDATE t SET a = 1", policy: protected)
+    _ = try await manager.execute(
+      userSQL: "ALTER TABLE staging RENAME TO users", policy: protected)
+    #expect(await manager.transactionSnapshot().pending.count == 2)
+    // The DDL cleared the memo: OID 700 has no origin, so `users.email` matches on `email`
+    #expect(try await Self.readsMasked("users", on: manager, policy: protected).masked)
+    #expect(lookups() == 1)
+    await manager.disconnect()
+  }
+
+  /// information_schema.TABLES of the MySQL fake: schema, table, TABLE_TYPE
+  private nonisolated static let mysqlTables: [(String, String, String)] = [
+    ("shop", "users", "BASE TABLE"), ("shop", "users_v", "VIEW"),
+    ("shop", "orders", "BASE TABLE"), ("archive", "users", "BASE TABLE"),
+  ]
+
+  /// The base table lookup (the read of information_schema.TABLES) answered with the rows of
+  /// its bound (schema, table) pairs
+  private nonisolated static let mysqlCatalog: FakeQueryAnswer.Script = { sql, binds in
+    guard sql.contains("information_schema.TABLES") else { return nil }
+    let names = binds.compactMap { bind -> String? in
+      if case .text(let text) = bind { return text }
+      return nil
+    }
+    let pairs = stride(from: 0, to: names.count - 1, by: 2).map { (names[$0], names[$0 + 1]) }
+    return FakeQueryAnswer(
+      columns: ["TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE"].map {
+        ColumnInfo(name: $0, type: "VARCHAR")
+      },
+      rows: mysqlTables.filter { table in pairs.contains { $0 == (table.0, table.1) } }.map {
+        [.string($0.0), .string($0.1), .string($0.2)]
+      })
+  }
+
+  @Test(
+    "MySQL run_query masks a view, a failed lookup and the exact schema's table; not orders",
+    arguments: [
+      ("users.email", "shop", "users_v", false, true),
+      ("users.email", "shop", "users", true, true),
+      ("users.email", "shop", "orders", false, false),
+      ("shop.users.email", "shop", "users", false, true),
+      ("shop.users.email", "archive", "users", false, false),
+    ] as [(String, String, String, Bool, Bool)])
+  func mysqlRunQueryMasks(
+    rule: String, schema: String, table: String, failingLookup: Bool, masked: Bool
+  ) async throws {
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [
+        ColumnInfo(
+          name: "email", type: "VARCHAR",
+          sourceName: ColumnSourceName(schema: schema, table: table, column: "email"))
+      ],
+      rows: [[.string(Self.rawEmail)]],
+      failingQuery: failingLookup ? "information_schema.TABLES" : nil,
+      queryAnswer: Self.mysqlCatalog)
+    var ruled = Self.entry(.mysql)
+    ruled.config.maskRules = [try ColumnMaskRule(pattern: rule, style: .email)]
+    let entry = ruled
+    let id = entry.id
+    let pool = MCPConnectionPool(
+      entry: { $0 == id ? entry : nil }, sessionFactory: factory,
+      certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
+      knownHosts: InMemorySSHKnownHostStore())
+    let historySwitch = historySwitch
+    let service = MCPToolService(
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history,
+      historyEnabled: { historySwitch.enabled }, gate: gate)
+    let read = await runQuery(service, id, "SELECT * FROM \(table)")
+    await pool.closeAll()
+
+    #expect(!read.isError, "\(read.text)")
+    #expect(read.text.contains(Self.rawEmail) == !masked, "\(read.text)")
+    #expect(read.text.contains(Self.maskedEmail) == masked, "\(read.text)")
+    #expect(factory.statements.contains { $0.contains("information_schema.TABLES") })
+  }
+
+  @Test("A cut MCP cell of a partial style shows the full mask, never the end of its prefix")
+  func cutCellMasksFully() async throws {
+    let long = String(repeating: "x", count: 3_000) + "1234"
+    let factory = Self.emailFactory(oid: 100, value: long)
+    let manager = DatabaseConnectionManager(
+      sessionFactory: factory, readLimits: MCPConnectionPool.readLimits)
+    try await manager.connect(config: Self.pgConfig(maskRules: try Self.emailRule(.lastFour)))
+    let result = try await manager.execute(
+      userSQL: "SELECT email FROM users", policy: ProtectionPolicy(protectionLevel: .readOnly))
+    await manager.disconnect()
+    #expect(result.rows == [[.string(ColumnMaskRule.maskText)]])
+  }
+
+  @Test("SQLite origins name the table: users.email is masked, orders.email is not")
+  func sqliteOrigins() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-mask-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    var config = ConnectionConfig(
+      databaseType: .sqlite, host: "", port: 0, database: url.path, username: "",
+      rememberConnection: false, protectionLevel: .none, safeMode: .silent,
+      protectedMode: false)
+    config.maskRules = try Self.emailRule()
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    for sql in [
+      "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)",
+      "CREATE TABLE orders (id INTEGER PRIMARY KEY, email TEXT)",
+      "INSERT INTO users VALUES (1, '\(Self.rawEmail)')",
+      "INSERT INTO orders VALUES (1, 'bob@example.com')",
+    ] {
+      _ = try await manager.executeInternal(sql)
+    }
+    let result = try await manager.execute(
+      userSQL: "SELECT users.email, orders.email FROM users, orders",
+      policy: ProtectionPolicy(protectionLevel: .none))
+    await manager.disconnect()
+    #expect(result.columns.map(\.masked) == [true, false])
+    #expect(result.rows == [[.string(Self.maskedEmail), .string("bob@example.com")]])
+  }
+
+  @Test("A manager connected without rules masks once another config saves the rule to the row")
+  func savedRuleReachesLiveManager() async throws {
+    let name = "MCPToolServiceTests-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let live = Self.pgConfig()
+    #expect(SessionManager.saveConnection(live, defaults: defaults, passwords: NoPasswordStore()))
+    let manager = DatabaseConnectionManager(sessionFactory: Self.emailFactory(oid: 100))
+    await manager.setSavedMaskRules { config in
+      UserDefaults(suiteName: name).map { SavedMaskRules.rules(for: config, defaults: $0) } ?? []
+    }
+    try await manager.connect(config: live)
+    func read() async throws -> [[CellValue]] {
+      try await manager.execute(
+        userSQL: "SELECT email FROM users", policy: ProtectionPolicy(protectionLevel: .none)
+      ).rows
+    }
+    #expect(try await read() == [[.string(Self.rawEmail)]])
+
+    // Saved from another window: the other config carries the rule, this one does not
+    let other = Self.pgConfig(maskRules: try Self.emailRule())
+    #expect(SessionManager.saveConnection(other, defaults: defaults, passwords: NoPasswordStore()))
+    #expect(try await read() == [[.string(Self.maskedEmail)]])
+    await manager.disconnect()
   }
 }

@@ -408,6 +408,27 @@ struct SQLDumpDDLTests {
         == "CREATE VIEW `v` AS select 'DEFINER=`a`@`b`' AS x")
   }
 
+  @Test func mysqlDefinerRemovalEndsQuotedTextPerScalar() {
+    // A quote followed by a combining mark is one Character: a Character scan misses the
+    // closing quote and keeps the DEFINER clause after it
+    let cases = [
+      (
+        "CREATE ALGORITHM=UNDEFINED 'a'\u{301} DEFINER=`u`@`h`"
+          + " SQL SECURITY DEFINER VIEW `v` AS select 1",
+        "CREATE ALGORITHM=UNDEFINED 'a'\u{301} SQL SECURITY DEFINER VIEW `v` AS select 1"
+      ),
+      (
+        "CREATE DEFINER=`a``\u{301}`@`h` SQL SECURITY DEFINER VIEW `v` AS select 1",
+        "CREATE SQL SECURITY DEFINER VIEW `v` AS select 1"
+      ),
+    ]
+    for (statement, expected) in cases {
+      #expect(
+        Array(SQLDumpDDL.removingDefiner(statement).unicodeScalars)
+          == Array(expected.unicodeScalars), "\(statement)")
+    }
+  }
+
   // MARK: - SQLite
 
   private static let sqliteRows: [SQLDumpDDL.SQLiteMasterRow] = [

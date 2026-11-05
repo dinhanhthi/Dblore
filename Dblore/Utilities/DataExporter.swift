@@ -67,7 +67,7 @@ enum DataExporter {
     guard value.unicodeScalars.contains(where: { "\t\n\r\"".unicodeScalars.contains($0) }) else {
       return value
     }
-    return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+    return "\"\(SQLDialect.escapingScalars(value, ["\"": "\"\""]))\""
   }
 
   /// One escaped TSV field. The formula prefix (text and decimal cells only, first scalar only:
@@ -536,15 +536,15 @@ enum DataExporter {
   }
 
   /// INSERT script. `rows` nil exports every row; otherwise only in-range indexes, in that order.
-  /// The table is `table` when that is non-nil, otherwise `result.tableName`.
+  /// `schema` and `name` are the unquoted table (`insertTable(dataViewer:editTarget:)`); nil
+  /// `name` writes the placeholder. `result.tableName` is never used: it is already quoted.
   static func sqlInsert(
-    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect,
-    includeColumns: Bool = true
+    result: CellResult, rows: [Int]? = nil, schema: String? = nil, name: String? = nil,
+    dialect: SQLDialect, includeColumns: Bool = true
   ) -> String {
-    let exported = queryResult(from: result, rowIndexes: rows)
-    let name = SQLInsertRenderer.tableName(for: exported, fallback: table ?? result.tableName)
-    return SQLInsertRenderer.insertScript(
-      result: exported, table: name, dialect: dialect, includeColumns: includeColumns)
+    SQLInsertRenderer.insertScript(
+      result: queryResult(from: result, rowIndexes: rows), schema: schema, name: name,
+      dialect: dialect, includeColumns: includeColumns)
   }
 
   /// Parenthesized IN list for `values`.
@@ -561,9 +561,10 @@ enum DataExporter {
   }
 
   /// Save the result using the sheet's format and options. Copy actions do not call this.
+  /// `schema` and `name`: the unquoted table of a SQL INSERT download (see `sqlInsert`).
   static func download(
     result: CellResult, options: ExportOptions, queryIndex: Int? = nil,
-    dialect: SQLDialect = .postgresql
+    dialect: SQLDialect = .postgresql, schema: String? = nil, name: String? = nil
   ) {
     let prepared = applying(options, to: result)
     switch options.format {
@@ -596,7 +597,7 @@ enum DataExporter {
         wrapText: options.wrapText)
     case .sqlInsert:
       let sql = sqlInsert(
-        result: prepared, table: result.tableName, dialect: dialect,
+        result: prepared, schema: schema, name: name, dialect: dialect,
         includeColumns: options.includeHeader)
       let name = generateFilename(extension: "sql", queryIndex: queryIndex)
       saveFile(
@@ -687,10 +688,10 @@ enum DataExporter {
 
   /// Download an INSERT script for every row.
   static func downloadSQLInsert(
-    result: CellResult, table: String? = nil, dialect: SQLDialect, filename: String? = nil,
-    queryIndex: Int? = nil
+    result: CellResult, schema: String? = nil, name: String? = nil, dialect: SQLDialect,
+    filename: String? = nil, queryIndex: Int? = nil
   ) {
-    let sql = sqlInsert(result: result, table: table, dialect: dialect)
+    let sql = sqlInsert(result: result, schema: schema, name: name, dialect: dialect)
     let defaultName = filename ?? generateFilename(extension: "sql", queryIndex: queryIndex)
     saveFile(content: sql, defaultFilename: defaultName, allowedFileTypes: ["sql"])
   }
@@ -716,9 +717,11 @@ enum DataExporter {
 
   /// Copy an INSERT script to the clipboard.
   static func copyInsert(
-    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect
+    result: CellResult, rows: [Int]? = nil, schema: String? = nil, name: String? = nil,
+    dialect: SQLDialect
   ) {
-    copyToClipboard(sqlInsert(result: result, rows: rows, table: table, dialect: dialect))
+    copyToClipboard(
+      sqlInsert(result: result, rows: rows, schema: schema, name: name, dialect: dialect))
   }
 
   /// Copy an IN list to the clipboard.
@@ -771,13 +774,14 @@ enum DataExporter {
   nonisolated static func escapeCSV(_ value: String, quote: ExportQuote) -> String {
     switch quote {
     case .always:
-      return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
+      return "\"\(SQLDialect.escapingScalars(value, ["\"": "\"\""]))\""
     case .never:
       return value
     case .ifNeeded:
-      // Per unicode scalar, so a CRLF counts as a line break.
+      // Per unicode scalar, so a CRLF counts as a line break and a quote before a combining
+      // mark is still found and doubled.
       if value.unicodeScalars.contains(where: { ",\"\n\r".unicodeScalars.contains($0) }) {
-        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        let escaped = SQLDialect.escapingScalars(value, ["\"": "\"\""])
         return "\"\(escaped)\""
       }
       return value
@@ -786,26 +790,22 @@ enum DataExporter {
 
   /// A backslash and then a pipe are escaped (so `\|` in the data cannot end the cell), `&`, `<`
   /// and `>` become `&amp;`, `&lt;` and `&gt;` (no HTML or entity in a rendered table), and then
-  /// a line break (CRLF, LF or CR) becomes `<br>`, so a cell or header stays one table row
+  /// a line break (CRLF, LF or CR) becomes `<br>`, so a cell or header stays one table row.
+  /// The escapes go per scalar (a combining mark after `|` cannot hide it); a line break is
+  /// never joined to a neighbor in one `Character`, so it is replaced as text.
   nonisolated static func escapeMarkdown(_ value: String) -> String {
-    value.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "|", with: "\\|")
-      .replacingOccurrences(of: "&", with: "&amp;")
-      .replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;")
-      .replacingOccurrences(of: "\r\n", with: "<br>")
-      .replacingOccurrences(of: "\n", with: "<br>")
-      .replacingOccurrences(of: "\r", with: "<br>")
+    SQLDialect.escapingScalars(
+      value, ["\\": "\\\\", "|": "\\|", "&": "&amp;", "<": "&lt;", ">": "&gt;"]
+    )
+    .replacingOccurrences(of: "\r\n", with: "<br>")
+    .replacingOccurrences(of: "\n", with: "<br>")
+    .replacingOccurrences(of: "\r", with: "<br>")
   }
 
+  /// Per scalar, so a combining mark after `<` or `&` cannot hide it
   private static func escapeXML(_ value: String) -> String {
-    var escaped = value
-    escaped = escaped.replacingOccurrences(of: "&", with: "&amp;")
-    escaped = escaped.replacingOccurrences(of: "<", with: "&lt;")
-    escaped = escaped.replacingOccurrences(of: ">", with: "&gt;")
-    escaped = escaped.replacingOccurrences(of: "\"", with: "&quot;")
-    escaped = escaped.replacingOccurrences(of: "'", with: "&apos;")
-    return escaped
+    SQLDialect.escapingScalars(
+      value, ["&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&apos;"])
   }
 
   /// A spreadsheet app keeps 15 significant digits of a number cell, so a longer integer is

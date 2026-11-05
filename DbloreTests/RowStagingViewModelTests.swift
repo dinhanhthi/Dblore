@@ -197,6 +197,53 @@ struct RowStagingViewModelTests {
     #expect(viewModel.dataViewer?.changeSet?.isEmpty == false)
   }
 
+  @Test(
+    "A view target commits staged updates in one transaction; row deletes and inserts are refused")
+  func viewTargetStagesUpdatesOnly() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(
+      config: ConnectionConfig(
+        databaseType: .postgresql, host: "fake", port: 5432, database: "app", username: "ana",
+        sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false))
+    defer { Task { await manager.disconnect() } }
+    let view = TableRef.postgresql(oid: 16_600)
+    let viewModel = makeViewModel(
+      primaryKey: ["id"], columnTableID: view,
+      rows: [[.int(1), .string("old")], [.int(2), .string("older")]])
+    viewModel.dataViewer = DataViewerState(schema: "public", name: "v1", orderColumns: ["id"])
+    viewModel.editorResult?.editTarget = EditTarget(
+      qualifiedName: "public.v1", tableID: view, primaryKeyColumns: ["id"],
+      connectionEpoch: await manager.connectionEpoch, schema: "public", name: "v1",
+      viewBase: ViewBaseMap(
+        baseOID: 16_500, basePrimaryKey: [1], definitionVersion: "771",
+        columns: ["id": 1, "nickname": 2], primaryKeyColumns: ["id"]))
+    viewModel.connectionManager = manager
+
+    #expect(viewModel.stagingEnabled)
+    #expect(viewModel.stageDelete(rows: [0]) == NotebookViewModel.viewDeleteUnsupported)
+    #expect(viewModel.rowInsertUnavailableReason == NotebookViewModel.viewInsertUnsupported)
+    #expect(viewModel.stageInsert() == NotebookViewModel.viewInsertUnsupported)
+    #expect(await viewModel.addStagedRow() == NotebookViewModel.viewInsertUnsupported)
+    #expect(await viewModel.stageDuplicate(rows: [0]) == NotebookViewModel.viewInsertUnsupported)
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    #expect(viewModel.stageEdit(row: 0, column: "nickname", value: .string("neo")) == nil)
+    #expect(viewModel.stageEdit(row: 1, column: "nickname", value: .string("trinity")) == nil)
+
+    // A server error (a CHECK OPTION, a missing grant) keeps the staged set
+    let tab = try #require(factory.sessions.first)
+    tab.failNextCommand(containing: "UPDATE")
+    await viewModel.commitStaged()
+    #expect(viewModel.dataViewer?.changeSet?.edits.count == 2)
+    #expect(!tab.statements.contains("COMMIT"))
+
+    await viewModel.commitStaged()
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    let update = #"UPDATE public.v1 SET "nickname" = $1 WHERE "id" = $2"#
+    let commit = try #require(tab.statements.lastIndex(of: "COMMIT"))
+    #expect(Array(tab.statements[(commit - 2)...commit]) == [update, update, "COMMIT"])
+  }
+
   @Test("A result whose columns name another table cannot be staged")
   func otherTableIdentityCannotBeStaged() {
     let viewModel = makeViewModel(
@@ -278,7 +325,8 @@ struct RowStagingViewModelTests {
 
     let reload = Task { await viewModel.reloadStaleDataViewer() }
     for _ in 0..<1000 where !viewModel.stagedLeavePromptVisible { await Task.yield() }
-    #expect(viewModel.stagedLeavePromptVisible)
+    #expect(
+      viewModel.stagedLeavePromptVisible, "the staged-leave prompt did not show within 1000 yields")
     #expect(viewModel.editorResult?.error == nil)
     viewModel.resolveStagedLeavePrompt(.cancel)
     await reload.value
@@ -420,6 +468,87 @@ struct RowStagingViewModelTests {
       #expect(
         viewModel.editorResult?.error
           == NotebookViewModel.LazyPageError.unexpectedShape.errorDescription)
+    } catch {
+      await manager.disconnect()
+      throw error
+    }
+    await manager.disconnect()
+  }
+
+  @Test("A rule saved before a re-read masks the column and makes it read-only")
+  func refreshKeepsANewlyMaskedColumnReadOnly() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-masked-\(UUID().uuidString).sqlite")
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    try await manager.connect(config: config)
+    do {
+      for statement in [
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)",
+        "INSERT INTO users VALUES (1, 'ann@example.com')",
+      ] {
+        _ = try await manager.executeInternal(statement)
+      }
+      var notebook = DbloreNotebook.newDocument()
+      notebook.connectionConfig = config
+      let viewModel = NotebookViewModel(notebook: notebook)
+      viewModel.viewMode = .editor
+      viewModel.connectionManager = manager
+      var state = DataViewerState(schema: "main", name: "users", orderColumns: [])
+      state.databaseType = .sqlite
+      viewModel.dataViewer = state
+      await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
+      let shown = try #require(viewModel.editorResult)
+      let target = try #require(shown.editTarget)
+      #expect(viewModel.canEdit(shown))
+      #expect(viewModel.readOnlyColumnIndexes(shown).isEmpty)
+
+      // Saved in another window between the page read and the re-read after an edit
+      let rule = try ColumnMaskRule(pattern: "users.email", style: .full)
+      await manager.setSavedMaskRules { _ in [rule] }
+      await viewModel.refreshDataViewerRows(
+        target: target, connectionManager: manager, done: "Cell updated")
+      let result = try #require(viewModel.editorResult)
+      #expect(result.rows[0][1] == ColumnMaskRule.Style.full.masked(.string("ann@example.com")))
+      #expect(result.columns[1].masked)
+      #expect(viewModel.readOnlyColumnIndexes(result) == [1])
+      #expect(result.editTarget?.generatedColumns.contains("email") == true)
+      #expect(
+        viewModel.stageEdit(row: 0, column: "email", value: .string("x"))
+          == NotebookViewModel.maskedColumnMessage("email"))
+      #expect(viewModel.dataViewer?.changeSet == nil)
+
+      // The rule removed: the column stays read-only until the cell runs again, still as masked
+      await manager.setSavedMaskRules { _ in [] }
+      await viewModel.refreshDataViewerRows(
+        target: try #require(result.editTarget), connectionManager: manager,
+        done: "Cell updated")
+      let unmasked = try #require(viewModel.editorResult)
+      #expect(unmasked.columns[1].masked)
+      #expect(viewModel.readOnlyColumnIndexes(unmasked) == [1])
+      #expect(
+        viewModel.stageEdit(row: 0, column: "email", value: .string("x"))
+          == NotebookViewModel.maskedColumnMessage("email"))
+
+      // A rule on the key leaves no target, and the result no longer names the table or key
+      let keyRule = try ColumnMaskRule(pattern: "users.id", style: .full)
+      await manager.setSavedMaskRules { _ in [rule, keyRule] }
+      await viewModel.refreshDataViewerRows(
+        target: try #require(result.editTarget), connectionManager: manager,
+        done: "Cell updated")
+      let keyless = try #require(viewModel.editorResult)
+      #expect(keyless.columns[0].masked)
+      #expect(keyless.editTarget == nil)
+      #expect(keyless.tableName == nil)
+      #expect(keyless.primaryKeyColumns.isEmpty)
     } catch {
       await manager.disconnect()
       throw error

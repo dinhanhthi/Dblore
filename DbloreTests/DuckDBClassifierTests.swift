@@ -136,6 +136,10 @@ private let sideEffectReadCases: [String] = [
   // A plain string has no escapes in DuckDB, so this is the local path `\x68ttps://...`.
   // The classifier does not tell `E'...'` from `'...'` apart and fails closed on both.
   #"SELECT * FROM read_parquet('\x68ttps://h/a.parquet')"#,
+  // DuckDB matches the scheme by bytes, so a combining mark fused onto `/` keeps it remote.
+  "SELECT * FROM read_parquet('https://\u{301}h/a.parquet')",
+  "SELECT * FROM read_parquet(E'\\x68ttps://\u{301}h/a.parquet')",
+  "SELECT * FROM read_parquet($\u{301}$https://h/a.parquet$\u{301}$)",
 ]
 
 /// DuckDB reads, including table functions that read a file the sandbox lets the app open.

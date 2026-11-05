@@ -169,7 +169,9 @@ final class DataRewindModel {
   }
 
   /// Picks `ids` (only committed or unconfirmed entries) and plans their inverse: rows read off
-  /// the main actor, the live columns from the catalog
+  /// the main actor, the live columns from the catalog. The plan's preview (shown, confirmed and
+  /// logged to History) masks the columns the connection's mask rules match; its binds keep the
+  /// real values.
   func setSelection(_ ids: Set<Int64>) async {
     let chosen = items.filter { ids.contains($0.id) && $0.status.isSelectable }.map(\.entry)
     selection = Set(chosen.map(\.id))
@@ -189,26 +191,67 @@ final class DataRewindModel {
       let loaded = try await Task.detached(priority: .userInitiated) {
         try chosen.map { (entry: $0, rows: try store.rows(entryID: $0.id)) }
       }.value
+      let rules = await manager.currentMaskRules()
       var tables: [RewindTableName: RewindTable] = [:]
       for entry in chosen {
         guard let schema = entry.schema else { continue }
         let name = RewindTableName(schema: schema, table: entry.table)
         guard tables[name] == nil else { continue }
-        do {
-          tables[name] = RewindTable(
-            try await manager.fetchTableStructure(schema: schema, table: entry.table))
-        } catch DatabaseError.metadataPausedDuringTransaction {
-          throw DataRewindError.transactionPending
-        }
+        tables[name] = try await Self.rewindTable(
+          name, engine: engine, manager: manager, hidesServerText: !rules.isEmpty)
       }
       let planned = try await Task.detached(priority: .userInitiated) {
-        try RewindPlanner.plan(loaded, tables: tables, engine: engine)
+        try RewindPlanner.plan(
+          loaded, tables: tables, engine: engine, masks: ColumnMaskRuleSet(rules))
       }.value
       guard planID == id else { return }
       plan = planned
     } catch {
       guard planID == id else { return }
       errorMessage = error.localizedDescription
+    }
+  }
+
+  /// The live columns of `name`: its table structure, or on PostgreSQL, where that reads only
+  /// tables, the updatable view it names, resolved again through the edit path
+  /// (`fetchEditTable`: the catalog checks, then the cached or newly probed map), so an entry
+  /// read after a reconnect plans with an empty edit-target cache. Anything else that is not a
+  /// table keeps the structure read's error; a failed view read (a probe's connect or timeout)
+  /// says so. `hidesServerText`: the connection has mask rules (the plan can mask values), so
+  /// that error shows only its SQLSTATE or type, never the server's text.
+  private static func rewindTable(
+    _ name: RewindTableName, engine: DatabaseType, manager: DatabaseConnectionManager,
+    hidesServerText: Bool
+  ) async throws -> RewindTable {
+    do {
+      return RewindTable(
+        try await manager.fetchTableStructure(schema: name.schema, table: name.table))
+    } catch DatabaseError.metadataPausedDuringTransaction {
+      throw DataRewindError.transactionPending
+    } catch {
+      let structureError = error
+      let dialect = SQLDialect.postgresql
+      guard engine == .postgresql,
+        let relation = try? dialect.quoteIdentifier(name.schema) + "."
+          + dialect.quoteIdentifier(name.table)
+      else { throw structureError }
+      let view: EditTable?
+      do {
+        view = try await manager.fetchEditTable(tableName: relation)
+      } catch DatabaseError.metadataPausedDuringTransaction {
+        throw DataRewindError.transactionPending
+      } catch {
+        let reason =
+          hidesServerText && carriesServerText(error)
+          ? (DatabaseConnectionManager.serverSQLState(error).map { "SQLSTATE \($0)" }
+            ?? "\(type(of: error))") + " (its message is hidden, as it can show a masked value)"
+          : error.localizedDescription
+        throw DataRewindError.viewUnreadable(
+          name: "\(name.schema).\(name.table)", reason: reason)
+      }
+      guard let view, view.viewBase != nil, view.schema == name.schema, view.name == name.table
+      else { throw structureError }
+      return RewindTable(view: view)
     }
   }
 
@@ -273,7 +316,7 @@ final class DataRewindModel {
         plan.statements, policy: viewModel.protectionPolicy, connectionEpoch: epoch,
         caller: viewModel.id, rewind: nil, rewinding: plan.entryIDs)
       outcome = QueryHistoryOutcome(
-        sql: plan.preview, duration: Date().timeIntervalSince(started),
+        sql: Self.historySQL(plan), duration: Date().timeIntervalSince(started),
         rowCount: counts.reduce(0, +), status: .success, errorMessage: nil)
       let appTransaction = await !manager.transactionStatus().state.isIdle
       let userTransaction = await manager.userTxOpen
@@ -282,7 +325,7 @@ final class DataRewindModel {
       let message = Self.failureMessage(error, plan: plan)
       errorMessage = message
       outcome = QueryHistoryOutcome(
-        sql: plan.preview, duration: Date().timeIntervalSince(started), rowCount: nil,
+        sql: Self.historySQL(plan), duration: Date().timeIntervalSince(started), rowCount: nil,
         status: DatabaseBackupModel.historyStatus(for: error), errorMessage: message)
     }
     activity = nil
@@ -298,6 +341,16 @@ final class DataRewindModel {
     errorMessage = errorMessage ?? failure
   }
 
+  /// The History text of `plan`: its preview, or, when it shows mask text
+  /// (`RewindInverse.masksValues`), the preview commented out line by line, so Insert, Copy or
+  /// the command palette never put a runnable statement that writes mask text back.
+  nonisolated static func historySQL(_ plan: RewindInverse) -> String {
+    guard plan.masksValues else { return plan.preview }
+    let lines = plan.preview.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
+    return (["Data Rewind with masked values, not runnable"] + lines.map(String.init))
+      .map { "-- " + $0 }.joined(separator: "\n")
+  }
+
   private static func rewoundMessage(_ plan: RewindInverse, pending: Bool) -> String {
     let count = "\(plan.statements.count) statement\(plan.statements.count == 1 ? "" : "s")"
     if pending {
@@ -308,32 +361,79 @@ final class DataRewindModel {
 
   /// Which row stopped the rewind (the batch rolled back to before it), or the error. Only a
   /// row count off the expected one (a failed check) means the row changed since the edit.
+  /// A plan that shows mask text never shows the server's text, which can echo a masked value
+  /// (a duplicate key, a failed check): only its error code, when it leads the text.
   nonisolated static func failureMessage(_ error: Error, plan: RewindInverse) -> String {
     guard case DatabaseError.batchStatementFailed(let index, _, let reason, _) = error,
       plan.origins.indices.contains(index)
-    else { return "Nothing was rewound: \(error.localizedDescription)" }
+    else {
+      guard plan.masksValues, carriesServerText(error) else {
+        return "Nothing was rewound: \(error.localizedDescription)"
+      }
+      return "Nothing was rewound: \(hiddenServerText(nil))."
+    }
     let origin = plan.origins[index]
     let time = origin.created.formatted(date: .abbreviated, time: .standard)
     let row = origin.key.isEmpty ? "a row of \(origin.table)" : "\(origin.table) row \(origin.key)"
     let edited = "\(row) (\(origin.operation.rawValue) at \(time))"
     guard reason.hasPrefix(DatabaseConnectionManager.unexpectedRowCountReason) else {
-      return "Nothing was rewound: \(edited) could not be rewound: \(reason). "
+      let shown = plan.masksValues ? hiddenServerText(reason) : reason
+      return "Nothing was rewound: \(edited) could not be rewound: \(shown). "
         + "The whole rewind was rolled back."
     }
     return "Nothing was rewound: \(edited) changed since the edit (\(reason)). "
       + "The whole rewind was rolled back."
+  }
+
+  /// "the database refused it with ERROR 23505 (…)" for a plan that shows mask text: the code
+  /// that leads `reason` (PostgreSQL `ERROR 23505: …`, MySQL `ERROR 1062 (23000): …`), never
+  /// the rest of the text
+  private nonisolated static func hiddenServerText(_ reason: String?) -> String {
+    let code = reason?.firstMatch(
+      of: /^(?:ERROR|FATAL|PANIC) (?:[0-9]+ \([0-9A-Z]{5}\)|[0-9A-Z]{5}):/
+    ).map { " with " + String($0.output.dropLast()) }
+    return "the database refused it\(code ?? "") (its message is hidden, as it can show a "
+      + "masked value)"
+  }
+
+  /// An error whose text can hold the server's or the driver's (which can echo a masked value):
+  /// every case that wraps such text, and any error Dblore does not know. Dblore's own refusals
+  /// (protection, cancel, locks) keep their text. No `default`, so a new case must be sorted.
+  private nonisolated static func carriesServerText(_ error: Error) -> Bool {
+    guard let error = error as? DatabaseError else {
+      return !(error is DataRewindError || error is CancellationError)
+    }
+    switch error {
+    case .connectionFailed, .queryFailed, .transactionAborted, .connectionLost,
+      .batchStatementFailed, .schemaChangePartiallyApplied, .batchPartiallyApplied:
+      return true
+    case .notConnected, .emptyQuery, .blockedByProtection, .missingParameters, .mixedPlaceholders,
+      .notEditable, .transactionPendingInAnotherTab, .metadataPausedDuringTransaction,
+      .editRowCountMismatch, .batchCancelled, .schemaChangeRefused, .sequentialBatchRefused,
+      .commitRefusedTransactionChanged, .transactionEnding, .rollbackRefusedStatementRunning,
+      .queryCancelled, .sessionChanged, .sshCredentialMissing, .sshHostKeyNotTrusted,
+      .sshHostKeyChanged, .sshHostKeyStoreUnreadable, .passwordStoreUnreadable,
+      .passwordRequiredOnConnect, .passwordNotHeldByWorkspace, .passwordSourcesMixed,
+      .sshHostKeyPinFailed, .sshAuthenticationFailed, .sshUnsupportedHostKeyAlgorithm,
+      .sshHandshakeTimedOut, .engineUnavailable, .connectionLocked:
+      return false
+    }
   }
 }
 
 nonisolated enum DataRewindError: LocalizedError, Equatable {
   /// Catalog reads wait while a transaction is pending
   case transactionPending
+  /// The view's edit target could not be read; `reason` holds no server text when masked
+  case viewUnreadable(name: String, reason: String)
 
   var errorDescription: String? {
     switch self {
     case .transactionPending:
       "Commit or roll back the pending transaction first: the table's columns cannot be read "
         + "while it is open."
+    case .viewUnreadable(let name, let reason):
+      "Could not read view \(name): \(reason)"
     }
   }
 }

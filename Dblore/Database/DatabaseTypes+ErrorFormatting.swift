@@ -15,49 +15,14 @@ extension PostgresSession {
   static func formatPostgresError(
     _ error: PSQLError, query: String?, statementTimeoutSeconds: Int
   ) -> String {
-    if let timeout = statementTimeoutMessage(
-      error, statementTimeoutSeconds: statementTimeoutSeconds)
-    {
-      return timeout
-    }
     var message = ""
 
     if let serverInfo = error.serverInfo {
-      if let errorMessage = serverInfo[.message] {
-        message = errorMessage
-      } else if let severity = serverInfo[.severity] {
-        if let friendlyMessage = humanReadableErrorMessage(for: error.code.description) {
-          message = "\(severity): \(friendlyMessage)"
-        } else {
-          message = "\(severity): \(error.code.description)"
-        }
-      } else {
-        message = humanReadableErrorMessage(for: error.code.description) ?? error.code.description
-      }
-
-      if let detail = serverInfo[.detail] {
-        message += "\n\nDetail: \(detail)"
-      }
-
-      if let hint = serverInfo[.hint] {
-        message += "\n\n💡 Hint: \(hint)"
-      } else if ["42P08", "42P18"].contains(serverInfo[.sqlState]) {
-        // Bound :name values are untyped; PostgreSQL types a parameter from its first use,
-        // and `:name IS NULL` gives it none (42P08 on Parse, 42P18 from PREPARE).
-        message +=
-          "\n\n💡 Hint: Cast the parameter where it is first used, e.g. :name::integer IS NULL"
-      }
-
-      if let positionStr = serverInfo[.position],
-        let position = Int(positionStr)
-      {
-        if let query, position > 0 && position <= query.count {
-          let errorContext = extractErrorContext(from: query, at: position)
-          message += "\n\nNear: \"\(errorContext)\""
-        } else {
-          message += "\n\nPosition: \(positionStr)"
-        }
-      }
+      message = formatServerError(
+        sqlState: serverInfo[.sqlState], severity: serverInfo[.severity],
+        message: serverInfo[.message], detail: serverInfo[.detail], hint: serverInfo[.hint],
+        position: serverInfo[.position], query: query, code: error.code.description,
+        statementTimeoutSeconds: statementTimeoutSeconds)
     } else if error.code == .messageDecodingFailure {
       // Not a PostgreSQL message, e.g. the greeting of a MySQL server on this port
       message =
@@ -87,13 +52,63 @@ extension PostgresSession {
     return "\(fallback): \(detail)"
   }
 
+  /// The text of a server error from its fields: `ERROR <sqlstate>: <message>` (the severity
+  /// the server sent in place of ERROR, such as FATAL for a refused login; no prefix without a
+  /// SQLSTATE), then the detail, the hint (or the cast hint for an untyped bound parameter,
+  /// 42P08 / 42P18) and the statement context at `position` (1-based, in `query`). The
+  /// statement timeout brake (`statementTimeoutMessage`) has its own text. `code` is the
+  /// driver's error code, shown when the server sent no message.
+  static func formatServerError(
+    sqlState: String?, severity: String?, message serverMessage: String?, detail: String?,
+    hint: String?, position: String?, query: String?, code: String, statementTimeoutSeconds: Int
+  ) -> String {
+    if let timeout = statementTimeoutMessage(
+      sqlState: sqlState, message: serverMessage, statementTimeoutSeconds: statementTimeoutSeconds)
+    {
+      return timeout
+    }
+    var message = ""
+    if let serverMessage {
+      message = sqlState.map { "\(severity ?? "ERROR") \($0): \(serverMessage)" } ?? serverMessage
+    } else if let severity {
+      message = "\(severity): \(humanReadableErrorMessage(for: code) ?? code)"
+    } else {
+      message = humanReadableErrorMessage(for: code) ?? code
+    }
+
+    if let detail {
+      message += "\n\nDetail: \(detail)"
+    }
+
+    if let hint {
+      message += "\n\n💡 Hint: \(hint)"
+    } else if let sqlState, ["42P08", "42P18"].contains(sqlState) {
+      // Bound :name values are untyped; PostgreSQL types a parameter from its first use,
+      // and `:name IS NULL` gives it none (42P08 on Parse, 42P18 from PREPARE).
+      message +=
+        "\n\n💡 Hint: Cast the parameter where it is first used, e.g. :name::integer IS NULL"
+    }
+
+    if let positionStr = position,
+      let position = Int(positionStr)
+    {
+      if let query, position > 0 && position <= query.count {
+        let errorContext = extractErrorContext(from: query, at: position)
+        message += "\n\nNear: \"\(errorContext)\""
+      } else {
+        message += "\n\nPosition: \(positionStr)"
+      }
+    }
+    return message
+  }
+
   /// The server brake `statement_timeout` (applied on connect) stopped the statement: SQLSTATE
   /// 57014 "canceling statement due to statement timeout" (57014 is also an administrator's
   /// `pg_cancel_backend`, which keeps the server message). Nil for any other error.
-  static func statementTimeoutMessage(_ error: PSQLError, statementTimeoutSeconds: Int) -> String? {
-    guard let info = error.serverInfo, info[.sqlState] == "57014",
-      info[.message]?.contains("statement timeout") == true
-    else { return nil }
+  static func statementTimeoutMessage(
+    sqlState: String?, message: String?, statementTimeoutSeconds: Int
+  ) -> String? {
+    guard sqlState == "57014", message?.contains("statement timeout") == true else { return nil }
     let seconds = SessionBrakeLimits.clampStatementTimeout(statementTimeoutSeconds)
     return "Statement timed out after \(seconds)s (statement_timeout, SQLSTATE 57014) — change it "
       + "in the connection's Safety settings"

@@ -148,20 +148,22 @@ struct DataViewerControls: View {
     "\(count) \(count == 1 ? singular : singular + "s")"
   }
 
+  /// Disabled while rows cannot be staged, and on a view target (`rowInsertUnavailableReason`)
   private var addRowButton: some View {
-    Button(action: stageNewRow) {
+    let reason = viewModel.rowInsertUnavailableReason
+    return Button(action: stageNewRow) {
       dataViewerCapsuleLabel {
         Text("+ Row")
           .font(.system(size: 11))
-          .foregroundColor(viewModel.stagingEnabled ? .foreground : .foregroundMuted)
+          .foregroundColor(reason == nil ? .foreground : .foregroundMuted)
       }
     }
     .buttonStyle(.plain)
     .linkPointer()
     .fixedSize()
-    .disabled(!viewModel.stagingEnabled)
-    .help(viewModel.rowStagingUnavailableReason ?? "Fill in a new row")
-    .overlay { disabledStagingHelp }
+    .disabled(reason != nil)
+    .help(reason ?? "Fill in a new row")
+    .overlay { disabledHelp(reason) }
   }
 
   /// Opens the bulk write form (hosted by `DataViewerView`, as the header is too small)
@@ -310,9 +312,14 @@ struct DataViewerControls: View {
   }
 
   /// Disabled controls do not show help on their own; this overlay does.
-  @ViewBuilder
   private var disabledStagingHelp: some View {
-    if !viewModel.stagingEnabled, let reason = viewModel.rowStagingUnavailableReason {
+    disabledHelp(viewModel.rowStagingUnavailableReason)
+  }
+
+  /// The help of a control disabled for `reason` (nothing when it is enabled)
+  @ViewBuilder
+  private func disabledHelp(_ reason: String?) -> some View {
+    if let reason {
       Color.clear
         .contentShape(Rectangle())
         .help(reason)

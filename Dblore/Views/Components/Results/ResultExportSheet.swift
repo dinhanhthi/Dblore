@@ -30,6 +30,7 @@ struct ResultExportSheet: View {
     self.onExport = onExport
     self.onCancel = onCancel
     let initial = ExportOptions(format: formats.contains(format) ? format : .csv)
+      .redactingMasked(result.columns)
     _options = State(initialValue: initial)
     _estimate = State(initialValue: ExportSize.estimate(result: result, options: initial))
   }
@@ -271,10 +272,13 @@ struct ResultExportSheet: View {
   private var sensitiveColumns: some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
       sectionTitle("Sensitive columns")
-      Text("Checked columns are written as \(ExportOptions.mask). You can select more than one.")
-        .font(.small)
-        .foregroundColor(.foregroundSubtle)
-        .fixedSize(horizontal: false, vertical: true)
+      Text(
+        "Checked columns are written as \(ExportOptions.mask). You can select more than one. "
+          + "Columns masked by a connection rule stay checked."
+      )
+      .font(.small)
+      .foregroundColor(.foregroundSubtle)
+      .fixedSize(horizontal: false, vertical: true)
       if result.columns.isEmpty {
         Text("This result has no columns.")
           .font(.small)
@@ -296,6 +300,8 @@ struct ResultExportSheet: View {
               }
             }
             .toggleStyle(.checkbox)
+            .disabled(column.masked)
+            .help(column.masked ? "Masked by a connection rule" : "")
           }
         }
       }
@@ -316,7 +322,7 @@ struct ResultExportSheet: View {
           .keyboardShortcut(.cancelAction)
       } else {
         Button("Reset to Default") {
-          options = ExportOptions(format: options.format)
+          options = ExportOptions(format: options.format).redactingMasked(result.columns)
         }
         .buttonStyle(GhostButtonStyle())
         .disabled(parquet.isRunning)

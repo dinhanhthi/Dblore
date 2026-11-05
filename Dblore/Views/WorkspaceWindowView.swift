@@ -149,15 +149,16 @@ struct AppWindowView: View {
     window.setFrame(claim.frame.rect, display: true)
     Task {
       var restoredWindow = window
-      await LaunchSessionRestore.finish(claim: claim, host: window) { id, isTabbed in
-        // A double-clicked file may already own this window: give the restored one its own.
-        if let current = workspaceId, current != id {
+      await LaunchSessionRestore.finish(
+        claim: claim, host: window, launchShows: { workspaceId },
+        show: { workspaceId = $0 },
+        openOwn: { id in
+          // A double-clicked file already owns this window: the restored one gets its own,
+          // outside the file's tab group (its restored siblings join it there)
           restoredWindow = NewWindowStore.shared.openWorkspaceWindow(
-            workspaceId: id, frame: claim.frame.rect, asTabOf: isTabbed ? window : nil)
-        } else {
-          workspaceId = id
-        }
-      }
+            workspaceId: id, frame: claim.frame.rect)
+          return restoredWindow
+        })
       if claim.isMiniaturized {
         restoredWindow.miniaturize(nil)
       }

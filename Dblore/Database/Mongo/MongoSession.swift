@@ -283,6 +283,13 @@ nonisolated final class MongoSession: DatabaseSession, @unchecked Sendable {
         // Connect and log in now, so a wrong password fails here as on the cluster path.
         _ = try await pool.next(for: .writable)
       } else {
+        // No TCP keepalive here (MongoKitten builds the sockets): its discovery loop handshakes
+        // every pooled connection each `heartbeatFrequency`, 10 s by default, with that as the
+        // handshake's timeout, and drops one that fails (MongoKitten 7.16.3 `Cluster.swift:155`,
+        // `:343-354`, `:496-525`), so a dead path is found within about 20 s. The app keeps the
+        // default: `init(connectingTo:)` starts the loop (`:338`), which captures the interval
+        // (`:343`), so a later assignment only changes the handshake timeout, and the property
+        // is not thread safe outside the cluster's event loop (`:154`).
         let cluster = try await MongoCluster(connectingTo: plan.settings, eventLoopGroup: group)
         cluster.onStateChange = { [weak self] state in
           if case .disconnected = state.connectionState { self?.emit(.connectionLost) }
@@ -871,6 +878,9 @@ private nonisolated struct ControlConnection: Sendable {
       }
       return ControlConnection(connection: connection, cluster: nil, context: context)
     }
+    // The default 10 s handshake heartbeat, as in `open()`: `init(connectingTo:)` starts
+    // discovery with that interval, so a later assignment does not change it (MongoKitten 7.16.3
+    // `Cluster.swift:155`, `:338-354`, `:496-525`).
     let cluster = try await MongoCluster(connectingTo: plan.settings, eventLoopGroup: group)
     do {
       return ControlConnection(

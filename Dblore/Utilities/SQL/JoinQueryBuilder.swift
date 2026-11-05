@@ -129,16 +129,13 @@ nonisolated enum JoinQueryBuilder {
         let key = foreignKeys[step.foreignKey]
         let table = endTable(of: step, foreignKeys)
         let alias = uniqueName(table.name, taken: tables.map(\.alias))
-        let (anchorColumns, newColumns) =
-          step.forward
-          ? (key.sourceColumns, key.targetColumns) : (key.targetColumns, key.sourceColumns)
-        let conditions = try zip(newColumns, anchorColumns).map {
-          try column($0, of: alias, dialect: dialect) + " = "
-            + column($1, of: anchor, dialect: dialect)
-        }
+        let condition = try joinCondition(
+          fk: key, leftAlias: dialect.quoteIdentifier(alias),
+          rightAlias: dialect.quoteIdentifier(anchor), leftIsTarget: step.forward,
+          quotesEveryColumn: true, dialect: dialect)
         joins.append(
           try "\(pick.kind.keyword) \(dialect.qualified(schema: table.schema, name: table.name))"
-            + " AS \(dialect.quoteIdentifier(alias)) ON \(conditions.joined(separator: " AND "))")
+            + " AS \(dialect.quoteIdentifier(alias)) ON \(condition)")
         let isPicked = index == path.steps.count - 1
         tables.append(
           JoinedTable(
@@ -167,6 +164,25 @@ nonisolated enum JoinQueryBuilder {
     let sql = lines.joined(separator: "\n")
     _ = try ReadOnlyQueryGuard.check(sql, dialect: dialect)
     return Query(sql: sql, tables: tables, pickAliases: pickAliases)
+  }
+
+  /// `left.c = right.c` for each column pair of `fk`, joined with AND (a composite key compares
+  /// column by column). The aliases come rendered (quoted, or as the user typed them);
+  /// `leftIsTarget` says which side of `fk` the left alias names, so a self-reference reads the
+  /// right way round. Columns are quoted when they need it (`quoteIdentifierIfNeeded`), or every
+  /// time with `quotesEveryColumn`. Throws when a column cannot be quoted (a NUL, or MongoDB).
+  static func joinCondition(
+    fk: ForeignKey, leftAlias: String, rightAlias: String, leftIsTarget: Bool,
+    quotesEveryColumn: Bool = false, dialect: SQLDialect
+  ) throws -> String {
+    let (leftColumns, rightColumns) =
+      leftIsTarget ? (fk.targetColumns, fk.sourceColumns) : (fk.sourceColumns, fk.targetColumns)
+    func column(_ name: String) throws -> String {
+      try quotesEveryColumn ? dialect.quoteIdentifier(name) : dialect.quoteIdentifierIfNeeded(name)
+    }
+    return try zip(leftColumns, rightColumns).map {
+      try "\(leftAlias).\(column($0)) = \(rightAlias).\(column($1))"
+    }.joined(separator: " AND ")
   }
 
   /// Fewest hops from any joined table to `target`, at least one. Ties go to the earlier joined

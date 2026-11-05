@@ -41,6 +41,10 @@ nonisolated struct RewindTable: Sendable, Equatable {
   /// PostgreSQL `GENERATED ALWAYS AS IDENTITY`: an INSERT writing one needs
   /// `OVERRIDING SYSTEM VALUE`
   var identityAlwaysColumns: Set<String> = []
+  /// A view (`init(view:)`): its rows are only updated, never inserted or deleted, and its
+  /// columns match mask rules without an origin, as the grid's view results do (a rule naming
+  /// the base table or the view masks them)
+  var updatesOnly = false
 
   init(
     columns: Set<String>, primaryKey: [String], generatedColumns: Set<String> = [],
@@ -57,6 +61,18 @@ nonisolated struct RewindTable: Sendable, Equatable {
     primaryKey = structure.constraints.first { $0.kind == .primaryKey }?.columns ?? []
     generatedColumns = Set(structure.columns.filter { $0.generated != nil }.map(\.name))
     identityAlwaysColumns = Set(structure.columns.filter { $0.identity == .always }.map(\.name))
+  }
+
+  /// A PostgreSQL updatable view (`EditTable.viewBase`), which `TableStructure` does not read:
+  /// its view columns, its mapped key, and as never written the columns its edit target keeps
+  /// read-only (`EditTable.view`: expressions, view columns of a generated base column through
+  /// `ViewBaseMap`, other names of a key column). No identity column: only UPDATEs are written
+  /// through a view, and `OVERRIDING SYSTEM VALUE` is an INSERT's.
+  init(view table: EditTable) {
+    columns = Set(table.attributeNames.values)
+    primaryKey = table.primaryKeyColumns
+    generatedColumns = table.generatedColumns
+    updatesOnly = true
   }
 }
 
@@ -80,12 +96,16 @@ nonisolated struct RewindInverse: Sendable, Equatable {
   }
 
   var statements: [BoundStatement] = []
-  /// Each statement with its values as literals, as sent
+  /// Each statement with its values as literals, for display: a column a mask rule matches
+  /// shows the rule's mask (`statements` keep the real values)
   var previews: [String] = []
   var origins: [Origin] = []
   var skipped: [Skipped] = []
   /// Entries rewound, newest first
   var entryIDs: [Int64] = []
+  /// A mask rule matched a column of a planned entry: the previews and key texts hold mask
+  /// text, and the server's error text, which can echo a real value, is never shown
+  var masksValues = false
 
   var preview: String { previews.joined(separator: "\n") }
 }
@@ -117,10 +137,11 @@ nonisolated enum RewindPlanner {
   static let notCapturedReason = "not captured"
 
   /// The inverse statements of `entries` (any order) on `engine`, against the live `tables`.
+  /// `masks`: the connection's mask rules, which the previews (never the binds) follow.
   /// - Throws: `RewindPlannerError.refused` for the first entry that cannot be rewound safely.
   static func plan(
     _ entries: [(entry: RewindEntry, rows: [RewindRow])], tables: [RewindTableName: RewindTable],
-    engine: DatabaseType
+    engine: DatabaseType, masks: ColumnMaskRuleSet = ColumnMaskRuleSet([])
   ) throws -> RewindInverse {
     let dialect: SQLDialect
     switch engine {
@@ -138,7 +159,7 @@ nonisolated enum RewindPlanner {
     var inverse = RewindInverse()
     for (entry, rows) in ordered {
       let planner = try EntryPlanner(
-        entry: entry, rows: rows, tables: tables, engine: engine, dialect: dialect)
+        entry: entry, rows: rows, tables: tables, engine: engine, dialect: dialect, masks: masks)
       try planner.append(to: &inverse)
     }
     return inverse
@@ -156,10 +177,13 @@ private nonisolated struct EntryPlanner {
   let relation: String
   let columns: [RewindColumn]
   let names: Set<String>
+  /// The style of each column a mask rule matches on this table: the previews and the key text
+  /// show its values masked, the binds stay real
+  let maskStyles: [String: ColumnMaskRule.Style]
 
   init(
     entry: RewindEntry, rows: [RewindRow], tables: [RewindTableName: RewindTable],
-    engine: DatabaseType, dialect: SQLDialect
+    engine: DatabaseType, dialect: SQLDialect, masks: ColumnMaskRuleSet
   ) throws {
     self.entry = entry
     self.rows = rows
@@ -191,6 +215,10 @@ private nonisolated struct EntryPlanner {
     guard names.isSubset(of: table.columns) else { throw refuse("a column no longer exists") }
     let keys = Set(table.primaryKey)
     for row in rows {
+      // The store is untrusted: an entry recorded on a table now replaced by a view
+      guard !table.updatesOnly || row.operation == .update else {
+        throw refuse("rows are only updated through a view")
+      }
       guard row.primaryKey.isEmpty || Set(row.primaryKey.keys) == keys else {
         throw refuse("the table's primary key changed")
       }
@@ -200,10 +228,15 @@ private nonisolated struct EntryPlanner {
     }
     self.table = table
     self.columns = entry.columns
+    let origin = table.updatesOnly ? nil : ColumnMaskRule.Origin(schema: schema, table: entry.table)
+    maskStyles = entry.columns.reduce(into: [:]) { styles, column in
+      styles[column.name] = masks.matchingRule(column: column.name, origin: origin)?.style
+    }
   }
 
   /// Appends this entry's statements, rows in reverse, or its skipped rows.
   func append(to inverse: inout RewindInverse) throws {
+    if !maskStyles.isEmpty { inverse.masksValues = true }
     for row in rows.reversed() {
       let origin = RewindInverse.Origin(
         entryID: entry.id, created: entry.created, table: entry.table, operation: row.operation,
@@ -267,7 +300,7 @@ private nonisolated struct EntryPlanner {
     builder.text("UPDATE \(relation) SET ")
     for (index, column) in changed.enumerated() {
       builder.text((index > 0 ? ", " : "") + "\(try quote(column.name)) = ")
-      builder.bind(try bind(before, column))
+      builder.bind(try bind(before, column), mask: maskStyles[column.name])
     }
     let keys = Set(table.primaryKey)
     let checked = changed.filter { !keys.contains($0.name) }
@@ -296,7 +329,7 @@ private nonisolated struct EntryPlanner {
     builder.text(" VALUES (")
     for (index, column) in written.enumerated() {
       if index > 0 { builder.text(", ") }
-      builder.bind(try bind(before, column))
+      builder.bind(try bind(before, column), mask: maskStyles[column.name])
     }
     builder.text(")")
     return builder
@@ -329,7 +362,7 @@ private nonisolated struct EntryPlanner {
       }
       and()
       builder.text("\(try quote(key)) = ")
-      builder.bind(try bind(image, column))
+      builder.bind(try bind(image, column), mask: maskStyles[key])
     }
     for column in checked {
       guard let text = image[column.name] else {
@@ -338,7 +371,9 @@ private nonisolated struct EntryPlanner {
       and()
       let bytes = engine == .mysql && !SQLDumpDataRenderer.isMySQLHexType(column.typeName)
       builder.text(try comparison(column) + (bytes ? " CAST(" : " "))
-      builder.bind(RewindBind(form: .plain, value: SQLBindValue(optionalText: text)))
+      builder.bind(
+        RewindBind(form: .plain, value: SQLBindValue(optionalText: text)),
+        mask: maskStyles[column.name])
       if bytes { builder.text(" AS BINARY)") }
     }
   }
@@ -373,10 +408,15 @@ private nonisolated struct EntryPlanner {
     try dialect.quoteIdentifier(name)
   }
 
-  /// `id = 5, k = 'a'` in key order, from the stored text (display only)
+  /// `id = 5, k = 'a'` in key order, from the stored text (display only; a masked key column
+  /// shows its mask)
   private func keyText(_ key: RewindImage) -> String {
     table.primaryKey.compactMap { name in
-      key[name].map { "\(name) = \($0 ?? "NULL")" }
+      key[name].map { text in
+        guard let style = maskStyles[name] else { return "\(name) = \(text ?? "NULL")" }
+        let shown = style.masked(text.map(CellValue.string) ?? .null)
+        return "\(name) = \(shown.isNull ? "NULL" : shown.displayString)"
+      }
     }.joined(separator: ", ")
   }
 
@@ -434,15 +474,19 @@ private nonisolated struct StatementBuilder {
     preview += text
   }
 
-  mutating func bind(_ bind: RewindBind) {
+  /// Binds the real value; the preview shows it masked with `mask`, when given
+  mutating func bind(_ bind: RewindBind, mask: ColumnMaskRule.Style? = nil) {
     sql += bind.sql(placeholder: dialect.placeholder(values.count + 1))
+    let shown: CellValue
     switch bind.value {
     case .null:
       values.append(nil)
-      preview += bind.sql(placeholder: "NULL")
+      shown = .null
     case .text(let text):
       values.append(text)
-      preview += bind.sql(placeholder: dialect.literal(.string(text)))
+      shown = .string(text)
     }
+    let previewed = mask?.masked(shown) ?? shown
+    preview += bind.sql(placeholder: previewed.isNull ? "NULL" : dialect.literal(previewed))
   }
 }

@@ -85,13 +85,15 @@ enum LaunchSessionRestore {
     pendingGroups = restored.grouped
   }
 
-  /// Opens the claimed window's workspace, then every other window. `assign` receives the
-  /// claimed workspace id so the system window shows it and does not open a second copy, and
-  /// whether the claimed window shares its tab group with other restored windows.
+  /// Opens the claimed window's workspace, then every other window. `show` hands the claimed
+  /// workspace id to the launch window so it shows it and does not open a second copy; when the
+  /// launch window already shows another workspace (`launchShows`, a launch by a file),
+  /// `openOwn` opens the claimed one in its own window instead (`route`).
   /// `isRestoring` stays set until this returns, including when a window is skipped. Then a
   /// fresh snapshot is scheduled so the one just restored does not linger.
   static func finish(
-    claim: LaunchWindow, host: NSWindow, assign: @escaping (UUID, _ isTabbed: Bool) -> Void
+    claim: LaunchWindow, host: NSWindow, launchShows: @escaping () -> UUID?,
+    show: @escaping (UUID) -> Void, openOwn: @escaping (UUID) -> NSWindow
   ) async {
     guard !didFinish else { return }
     didFinish = true
@@ -106,11 +108,22 @@ enum LaunchSessionRestore {
     var claimedID: UUID?
     if case .workspace(let launch) = claim.content {
       claimedID = await openContent(launch)
-      if let claimedID {
-        assign(claimedID, (groups.first?.count ?? 0) > 1)
+    }
+    let front = groups.first
+    let route = route(
+      claim: claim, frontSelected: front?.first(where: \.isSelectedInGroup) ?? front?.first,
+      launchShows: claimedID == nil ? nil : launchShows(), claimedID: claimedID)
+    var claimAnchor = host
+    if let claimedID {
+      if route.claimAnchor == .claimedOwn {
+        claimAnchor = openOwn(claimedID)
+      } else {
+        show(claimedID)
       }
     }
-    await openRemaining(groups, host: host, claim: claim, claimedID: claimedID)
+    await openRemaining(
+      groups, host: host, claimAnchor: claimAnchor, key: route.key, claim: claim,
+      claimedID: claimedID)
   }
 
   /// Bookmark first, then the resolved file. Never `FileManager` on the raw saved URL:
@@ -146,12 +159,16 @@ enum LaunchSessionRestore {
       "Couldn't reopen \(names.joined(separator: ", "))", type: .warning)
   }
 
+  /// `host` is the launch window, `claimAnchor` the window in the claimed slot (the launch
+  /// window, or the claimed workspace's own one): its group's other windows join it as tabs.
+  /// `key` is the window made key at the end (`route`).
   private static func openRemaining(
-    _ groups: [[LaunchWindow]], host: NSWindow, claim: LaunchWindow, claimedID: UUID?
+    _ groups: [[LaunchWindow]], host: NSWindow, claimAnchor: NSWindow, key keyRole: RestoreWindow?,
+    claim: LaunchWindow, claimedID: UUID?
   ) async {
     let claimKey = GroupTab(group: claim.groupIndex, tab: claim.tabIndex)
     var anchors: [Int: NSWindow] = [:]
-    var opened: [GroupTab: NSWindow] = [claimKey: host]
+    var opened: [GroupTab: NSWindow] = [claimKey: claimAnchor]
     var workspaceIDs: [GroupTab: UUID] = [:]
     if let claimedID {
       workspaceIDs[claimKey] = claimedID
@@ -163,9 +180,9 @@ enum LaunchSessionRestore {
         let key = GroupTab(group: window.groupIndex, tab: window.tabIndex)
         if key == claimKey {
           if anchors[groupIndex] == nil {
-            anchors[groupIndex] = host
-          } else if let parent = anchors[groupIndex], parent !== host {
-            parent.addTabbedWindow(host, ordered: .above)
+            anchors[groupIndex] = claimAnchor
+          } else if let parent = anchors[groupIndex], parent !== claimAnchor {
+            parent.addTabbedWindow(claimAnchor, ordered: .above)
           }
           continue
         }
@@ -181,16 +198,26 @@ enum LaunchSessionRestore {
       }
       select(group, opened: opened)
       let selected = group.first(where: \.isSelectedInGroup) ?? group.first
-      if selected?.isMiniaturized == true, let anchor = anchors[groupIndex], anchor !== host {
+      if selected?.isMiniaturized == true, let anchor = anchors[groupIndex], anchor !== claimAnchor
+      {
         anchor.miniaturize(nil)
       }
     }
 
+    let keyTarget: NSWindow? =
+      switch keyRole {
+      case .launch: host
+      case .claimedOwn: claimAnchor
+      case .slot(let group, let tab): opened[GroupTab(group: group, tab: tab)]
+      case nil: nil
+      }
     guard let front = groups.first else { return }
     let selected = front.first(where: \.isSelectedInGroup) ?? front.first
     guard let selected else { return }
     let key = GroupTab(group: selected.groupIndex, tab: selected.tabIndex)
-    let keyWindow = NSApp.keyWindow.flatMap { NewWindowStore.shared.registration(for: $0) }
+    let keyWindow = (keyTarget ?? NSApp.keyWindow).flatMap {
+      NewWindowStore.shared.registration(for: $0)
+    }
     if let id = workspaceIDs[key] {
       if setsActiveWorkspace(id, keyWindow: keyWindow) {
         WorkspaceWindowManager.shared.setActiveWorkspace(id)
@@ -198,17 +225,65 @@ enum LaunchSessionRestore {
     } else if case .welcome = selected.content, setsActiveWorkspace(nil, keyWindow: keyWindow) {
       WorkspaceWindowManager.shared.clearActiveWorkspace()
     }
-    if let window = opened[key], !selected.isMiniaturized {
-      window.makeKeyAndOrderFront(nil)
+    keyTarget?.makeKeyAndOrderFront(nil)
+  }
+
+  /// A window of the launch restore, by its role
+  enum RestoreWindow: Hashable {
+    /// The launch window: the system window, or the one a launch by a file opened
+    case launch
+    /// The claimed workspace's own window, when the launch window shows another workspace
+    case claimedOwn
+    /// The window opened for a saved slot
+    case slot(group: Int, tab: Int)
+  }
+
+  /// Where the claimed restored workspace shows and which window ends key
+  struct RestoreRoute: Equatable {
+    /// Stands in the claimed slot of its saved group: the group's other windows join it as tabs
+    var claimAnchor: RestoreWindow
+    /// Made key once every window is open. Nil: none (the front selected window stays minimized).
+    var key: RestoreWindow?
+  }
+
+  /// The routing of the claimed slot. When the launch window shows another workspace than the
+  /// claimed one (a launch by a file), the claimed workspace gets its own window, which anchors
+  /// its saved group, and the file's window ends key: the file the user opened stays in front.
+  /// Otherwise the launch window stands in the claimed slot and the front group's selected
+  /// window ends key, unless it was minimized.
+  static func route(
+    claim: LaunchWindow, frontSelected: LaunchWindow?, launchShows: UUID?, claimedID: UUID?
+  ) -> RestoreRoute {
+    if claimedID != nil, let launchShows, launchShows != claimedID {
+      return RestoreRoute(claimAnchor: .claimedOwn, key: .launch)
     }
+    guard let selected = frontSelected, !selected.isMiniaturized else {
+      return RestoreRoute(claimAnchor: .launch, key: nil)
+    }
+    let isClaim = selected.groupIndex == claim.groupIndex && selected.tabIndex == claim.tabIndex
+    return RestoreRoute(
+      claimAnchor: .launch,
+      key: isClaim ? .launch : .slot(group: selected.groupIndex, tab: selected.tabIndex))
   }
 
   /// Whether restore makes the front selected window's workspace (nil: Welcome) the active one.
-  /// Not while the key window shows another workspace (a launch by a file: its window is key
-  /// and the restored one opened beside it): commands act on the key window's workspace only.
+  /// Not while the window restore makes key (`route`) shows another workspace (a launch by a
+  /// file: its window ends key, the restored one opened beside it): commands act on the key
+  /// window's workspace only.
   static func setsActiveWorkspace(_ id: UUID?, keyWindow: NewWindowStore.Registration?) -> Bool {
     guard case .workspace(let shown) = keyWindow else { return true }
     return shown == id
+  }
+
+  /// Whether the first screen wake or activation after launch opens Welcome. A launch while the
+  /// display sleeps is not activated, so SwiftUI makes no window: only a Welcome launch (restore
+  /// opens its own launch window) that still has no document window, no file open on its way and
+  /// no quit in progress opens one, and only on the first trigger.
+  static func opensMissingLaunchWindow(
+    plansWelcome: Bool, hasDocumentWindow: Bool, isFileOpenPending: Bool, isTerminating: Bool,
+    alreadyFired: Bool
+  ) -> Bool {
+    plansWelcome && !hasDocumentWindow && !isFileOpenPending && !isTerminating && !alreadyFired
   }
 
   private static func select(_ group: [LaunchWindow], opened: [GroupTab: NSWindow]) {

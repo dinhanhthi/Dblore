@@ -115,6 +115,11 @@ actor DatabaseConnectionManager {
   /// Inline edit tables resolved outside any app transaction, by table identity
   /// (see `cachedEditTable`)
   var editTableCache: [TableRef: EditTable] = [:]
+  /// PostgreSQL view probes that failed for a passing reason, with when and why: not tried
+  /// again for `viewProbeRetryDelay` (`viewEditTable`)
+  var viewProbeFailures: [ViewProbeKey: (at: Date, error: any Error)] = [:]
+  /// PostgreSQL view probes running: a lookup of the same view joins the one in flight
+  var viewProbesInFlight: [ViewProbeKey: Task<EditTable?, Error>] = [:]
   /// MySQL result column origins: column ordinals by table identity, read from
   /// information_schema once per table. Cleared with `editTableCache` and on schema reload; a
   /// clear also rejects catalog reads still in flight (`MySQLTableColumnsCache.generation`).
@@ -122,6 +127,14 @@ actor DatabaseConnectionManager {
   /// PostgreSQL result column types by origin (table identity and attnum), read from the
   /// catalog once (`enrichColumnTypes`). Cleared with `editTableCache`, never per table.
   var columnTypeCache = ColumnTypeCache()
+  /// The saved rows' mask rules for a config (`SavedMaskRules` on `.standard`); tests read
+  /// their own defaults
+  var savedMaskRules: @Sendable (ConnectionConfig) -> [ColumnMaskRule] = {
+    SavedMaskRules.rules(for: $0)
+  }
+  /// The MySQL server's character sets and collations, read once per connection (the epoch it
+  /// was read on) for the structure editor (`fetchMySQLCharacterSets`)
+  var mysqlCharacterSetsCache: (epoch: UInt64, sets: MySQLCharacterSets)?
   /// MySQL temporary tables this session created (no catalog lists them); cleared with the
   /// session (`forgetConnection`)
   var mysqlTempTables = MySQLTempTableTracker()
@@ -1036,6 +1049,17 @@ actor DatabaseConnectionManager {
   /// Ends the write unlock of this session (no-op when none runs)
   func lockWrites() {
     writeUnlockExpiry = nil
+  }
+
+  /// The workspace's mask rules changed (another window saved a removal): the connected config
+  /// takes them, so the next query masks with them. No-op when not connected, or connected to
+  /// another connection than `workspaceConfig` meanwhile.
+  func updateConnectedMaskRules(_ rules: [ColumnMaskRule], of workspaceConfig: ConnectionConfig) {
+    guard let config, config.databaseType == workspaceConfig.databaseType,
+      ConnectionKeychainKey.password(for: config)
+        == ConnectionKeychainKey.password(for: workspaceConfig)
+    else { return }
+    self.config?.maskRules = rules
   }
 
   /// Apply a runtime change of the connection's protection settings (protection level,

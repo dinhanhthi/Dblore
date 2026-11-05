@@ -647,6 +647,17 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// The SQLSTATE of a server rejection (`isServerRejection`) that carries one: PostgreSQL's,
+  /// or a MySQL ERR packet's. Nil for anything else.
+  nonisolated static func serverSQLState(_ error: Error) -> String? {
+    guard isServerRejection(error) else { return nil }
+    switch error {
+    case let error as PSQLError: return error.serverInfo?[.sqlState]
+    case let error as MySQLSessionError: return error.sqlState
+    default: return nil
+    }
+  }
+
   /// Send a user `COMMIT` / `END` with the result `executeCommand` gives, and what it did to
   /// the open Data Rewind entries: committed; discarded when the server rejected it
   /// (`isServerRejection`) or answered with a ROLLBACK tag (PostgreSQL, for a transaction a

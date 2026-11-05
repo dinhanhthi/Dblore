@@ -4,7 +4,10 @@
 // identity, generated); the primary key ignores functional key parts; foreign keys group
 // composite keys in key order; display types; UPDATE / DELETE rules; the column ordinal cache
 // refuses a write from a read started before it was cleared; MySQL's escaped expression text
-// (every `\` and `'` escaped) is unescaped back to SQL, and MariaDB's plain SQL is kept.
+// (every `\` and `'` escaped) is unescaped back to SQL, and MariaDB's plain SQL is kept; the
+// next AUTO_INCREMENT and the table character set come from SHOW CREATE TABLE and the catalog.
+// Against a scripted session: the table structure never needs SHOW CREATE TABLE and its refusal
+// only leaves AUTO_INCREMENT unknown; MariaDB 10.10+ lists collations by full name per set.
 
 import Foundation
 import Testing
@@ -223,6 +226,80 @@ struct MySQLCatalogTests {
         isMariaDB: true) == #"concat(_utf8mb4\'x\')"#)
   }
 
+  // MARK: - Table options
+
+  @Test("The next AUTO_INCREMENT is the table option of SHOW CREATE TABLE; none without it")
+  func nextAutoIncrement() {
+    let columns = """
+      CREATE TABLE `t` (
+        `id` int NOT NULL AUTO_INCREMENT COMMENT 'AUTO_INCREMENT=7',
+        PRIMARY KEY (`id`)
+      ) ENGINE=InnoDB
+      """
+    #expect(
+      MySQLCatalog.nextAutoIncrement(
+        createTable: columns
+          + " AUTO_INCREMENT=1000 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci") == 1000)
+    // The column attribute and a comment holding the text are not the table option
+    #expect(
+      MySQLCatalog.nextAutoIncrement(
+        createTable: columns + " DEFAULT CHARSET=latin1 COMMENT='AUTO_INCREMENT=5'") == nil)
+  }
+
+  @Test("Table options: the collation's character set, else its name prefix")
+  func tableOptionsFromRows() {
+    #expect(
+      MySQLCatalog.tableOptions(collation: "utf8mb4_bin", characterSet: "utf8mb4")
+        == .init(characterSet: "utf8mb4", collation: "utf8mb4_bin"))
+    // MariaDB lists UCA 14 collations without a set
+    #expect(
+      MySQLCatalog.tableOptions(collation: "utf8mb4_uca1400_ai_ci", characterSet: nil)
+        == .init(characterSet: "utf8mb4", collation: "utf8mb4_uca1400_ai_ci"))
+  }
+
+  @Test("A refused SHOW CREATE TABLE leaves AUTO_INCREMENT unknown and the structure readable")
+  func refusedShowCreateTable() async throws {
+    let session = ScriptedCatalogSession(
+      answers: [
+        (
+          "FROM information_schema.TABLES t",
+          [[.string(""), .string("latin1_bin"), .string("latin1")]]
+        ),
+        ("VERSION()", [[.string("8.4.3")]]),
+      ], failing: ["SHOW CREATE TABLE"])
+    let introspector = MySQLSchemaIntrospector(database: "db")
+    let structure = try await introspector.tableStructure(schema: "db", table: "t", in: session)
+    #expect(structure.tableOptions == .init(characterSet: "latin1", collation: "latin1_bin"))
+    #expect(!session.statements.contains { $0.contains("SHOW CREATE TABLE") })
+    #expect(try await introspector.nextAutoIncrement(schema: "db", table: "t", in: session) == nil)
+  }
+
+  @Test("MariaDB 10.10+ lists UCA 14 collations per set; COLLATIONS when that read fails")
+  func mariaDBFullCollationNames() async throws {
+    let answers: [(String, [[CellValue]])] = [
+      ("VERSION()", [[.string("11.4.2-MariaDB")]]),
+      ("CHARACTER_SETS", [[.string("utf8mb4"), .string("utf8mb4_general_ci")]]),
+      (
+        "COLLATION_CHARACTER_SET_APPLICABILITY",
+        [
+          [.string("utf8mb4_general_ci"), .string("utf8mb4")],
+          [.string("utf8mb4_uca1400_ai_ci"), .string("utf8mb4")],
+        ]
+      ),
+      (
+        "information_schema.COLLATIONS",
+        [[.string("utf8mb4_general_ci"), .string("utf8mb4")], [.string("uca1400_ai_ci"), .null]]
+      ),
+    ]
+    let introspector = MySQLSchemaIntrospector(database: "db")
+    let full = try await introspector.characterSets(in: ScriptedCatalogSession(answers: answers))
+    #expect(full.contains(charset: "utf8mb4", collation: "utf8mb4_uca1400_ai_ci"))
+    let fallback = try await introspector.characterSets(
+      in: ScriptedCatalogSession(
+        answers: answers, failing: ["COLLATION_CHARACTER_SET_APPLICABILITY"]))
+    #expect(fallback.characterSet(named: "utf8mb4")?.collations == ["utf8mb4_general_ci"])
+  }
+
   // MARK: - Helpers
 
   private func column(
@@ -248,4 +325,66 @@ struct MySQLCatalogTests {
       targetTable: targetTable, targetColumn: targetColumn, updateRule: update,
       deleteRule: delete)
   }
+}
+
+/// A MySQL catalog session: each read answers the rows of the first entry its SQL contains (none
+/// otherwise); a read containing a `failing` text throws `FakeQueryError`
+private final class ScriptedCatalogSession: DatabaseSession, @unchecked Sendable {
+  private let inner = FakeDatabaseSession(
+    capabilities: .contract(), columns: [], rows: [], slowQueries: false)
+  private let answers: [(String, [[CellValue]])]
+  private let failing: [String]
+
+  init(answers: [(String, [[CellValue]])], failing: [String] = []) {
+    self.answers = answers
+    self.failing = failing
+  }
+
+  /// Every read, in order
+  var statements: [String] { inner.queries }
+
+  var capabilities: DatabaseCapabilities { inner.capabilities }
+  var closeEvents: AsyncStream<SessionCloseReason> { inner.closeEvents }
+
+  func open() async throws { try await inner.open() }
+  func close() async { await inner.close() }
+
+  func query(_ sql: String, binds: [SQLBindValue]) async throws -> SessionRowSource {
+    _ = try await inner.query(sql, binds: binds)
+    if failing.contains(where: sql.contains) { throw FakeQueryError() }
+    let rows = answers.first { sql.contains($0.0) }?.1 ?? []
+    return SessionRowSource(
+      columns: [],
+      rows: AsyncThrowingStream { continuation in
+        for row in rows { continuation.yield(row) }
+        continuation.finish()
+      })
+  }
+
+  func command(_ sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
+    try await inner.command(sql, binds: binds)
+  }
+
+  func openCursor(_ sql: String, binds: [SQLBindValue]) async throws -> SessionCursor {
+    try await inner.openCursor(sql, binds: binds)
+  }
+
+  func fetch(_ cursor: SessionCursor, maxRows: Int) async throws -> SessionRowSource {
+    try await inner.fetch(cursor, maxRows: maxRows)
+  }
+
+  func closeCursor(_ cursor: SessionCursor) async throws {
+    try await inner.closeCursor(cursor)
+  }
+
+  func applySessionSettings(
+    statementTimeoutSeconds: Int, lockTimeoutSeconds: Int, idleTimeoutSeconds: Int
+  ) async throws {
+    try await inner.applySessionSettings(
+      statementTimeoutSeconds: statementTimeoutSeconds, lockTimeoutSeconds: lockTimeoutSeconds,
+      idleTimeoutSeconds: idleTimeoutSeconds)
+  }
+
+  func interrupt() async { await inner.interrupt() }
+  func formatError(_ error: Error) -> String { inner.formatError(error) }
 }

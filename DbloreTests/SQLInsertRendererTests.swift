@@ -1,5 +1,5 @@
 // SQLInsertRendererTests.swift
-// INSERT scripts, IN lists, and the caller-chosen table name for a query result.
+// INSERT scripts, IN lists, and the caller-chosen schema and table name for a query result.
 
 import Foundation
 import Testing
@@ -13,13 +13,13 @@ struct SQLInsertRendererTests {
     let columns = [ColumnInfo(name: "id", type: "int4")]
     let rows500 = (0..<500).map { [CellValue.int($0)] }
     let script500 = SQLInsertRenderer.insertScript(
-      result: result(columns: columns, rows: rows500), table: "t", dialect: .postgresql)
+      result: result(columns: columns, rows: rows500), name: "t", dialect: .postgresql)
     let tuples = (0..<500).map { "(\($0))" }.joined(separator: ", ")
     #expect(script500 == "INSERT INTO \"t\" (\"id\") VALUES \(tuples);")
 
     let rows501 = rows500 + [[.int(500)]]
     let script501 = SQLInsertRenderer.insertScript(
-      result: result(columns: columns, rows: rows501), table: "t", dialect: .postgresql)
+      result: result(columns: columns, rows: rows501), name: "t", dialect: .postgresql)
     let parts = script501.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     #expect(parts.count == 2)
     #expect(parts[0] == script500)
@@ -27,7 +27,7 @@ struct SQLInsertRendererTests {
 
     let two = SQLInsertRenderer.insertScript(
       result: result(columns: columns, rows: [[.int(1)], [.int(2)]]),
-      table: "t",
+      name: "t",
       dialect: .postgresql,
       batchSize: 0)
     #expect(
@@ -48,7 +48,7 @@ struct SQLInsertRendererTests {
       [.string("plain"), .bool(false), .json("{}"), .string("x")],
     ]
     let script = SQLInsertRenderer.insertScript(
-      result: result(columns: columns, rows: rows), table: "a\"b", dialect: .postgresql)
+      result: result(columns: columns, rows: rows), name: "a\"b", dialect: .postgresql)
     let expected =
       #"INSERT INTO "a""b" ("c""d", "flag", "doc", "note") VALUES "#
       + #"('o''brien', TRUE, '{"a":"o''b"}', NULL), ('plain', FALSE, '{}', 'x');"#
@@ -61,7 +61,7 @@ struct SQLInsertRendererTests {
       result: result(
         columns: [ColumnInfo(name: "c\"d\0", type: "text")],
         rows: [[.int(1)]]),
-      table: "a\"\0b",
+      name: "a\"\0b",
       dialect: .sqlite)
     #expect(script == "INSERT INTO \"a\"\"\0b\" (\"c\"\"d\0\") VALUES (1);")
   }
@@ -77,9 +77,28 @@ struct SQLInsertRendererTests {
     let script = SQLInsertRenderer.insertScript(
       result: result(
         columns: [ColumnInfo(name: "blob", type: "bytea")], rows: [[.data(data)]]),
-      table: "files",
+      name: "files",
       dialect: dialect)
     #expect(script == "INSERT INTO \"files\" (\"blob\") VALUES (\(literal));")
+  }
+
+  @Test(
+    "A known schema qualifies the table, each part quoted apart; no name is the placeholder",
+    arguments: [
+      (SQLDialect.postgresql, "public", "ts_t", #""public"."ts_t""#),
+      (SQLDialect.mysql, "db", "t", "`db`.`t`"),
+      (SQLDialect.sqlite, "main", "t", #""main"."t""#),
+      (SQLDialect.duckdb, "main", "t", #""main"."t""#),
+      (SQLDialect.postgresql, "public", "a.b", #""public"."a.b""#),
+      (SQLDialect.postgresql, nil, "public.t", #""public.t""#),
+      (SQLDialect.postgresql, "public", nil, #""table_name""#),
+    ] as [(SQLDialect, String?, String?, String)])
+  func qualifiedTable(dialect: SQLDialect, schema: String?, name: String?, expected: String) {
+    let script = SQLInsertRenderer.insertScript(
+      result: result(columns: [ColumnInfo(name: "id", type: "int4")], rows: [[.int(1)]]),
+      schema: schema, name: name, dialect: dialect)
+    let id = dialect == .mysql ? "`id`" : #""id""#
+    #expect(script == "INSERT INTO \(expected) (\(id)) VALUES (1);")
   }
 
   @Test("No rows, or rows without columns, produce an empty script")
@@ -87,10 +106,10 @@ struct SQLInsertRendererTests {
     let columns = [ColumnInfo(name: "id", type: "int4")]
     #expect(
       SQLInsertRenderer.insertScript(
-        result: result(columns: columns, rows: []), table: "t", dialect: .postgresql) == "")
+        result: result(columns: columns, rows: []), name: "t", dialect: .postgresql) == "")
     #expect(
       SQLInsertRenderer.insertScript(
-        result: result(columns: [], rows: [[.int(1)]]), table: "t", dialect: .postgresql) == "")
+        result: result(columns: [], rows: [[.int(1)]]), name: "t", dialect: .postgresql) == "")
   }
 
   @Test("IN lists drop nulls, dedupe in first-seen order, and comment only when nulls were omitted")

@@ -256,11 +256,13 @@ struct AIToolsTests {
   /// A workspace whose live manager is connected to `live`; AI queries open sessions of `aiRead`
   private func connectedManager(
     live: FakeDatabaseSessionFactory, aiRead: (any DatabaseSessionFactory)? = nil,
-    databaseType: DatabaseType = .postgresql, policy: AIAccessPolicy = .always
+    databaseType: DatabaseType = .postgresql, policy: AIAccessPolicy = .always,
+    maskRules: [ColumnMaskRule] = []
   ) async throws -> WorkspaceManager {
-    let config = ConnectionConfig(
+    var config = ConnectionConfig(
       databaseType: databaseType, host: "fake", port: 1, database: "db", username: "u",
       sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    config.maskRules = maskRules
     let manager = WorkspaceManager(
       workspace: Workspace(connectionConfig: config), restoreTabs: false,
       connectionManager: DatabaseConnectionManager(sessionFactory: live))
@@ -511,6 +513,26 @@ struct AIToolsTests {
 
     #expect(!outcome.result.isError)
     #expect(outcome.result.content.contains(Self.secret))
+  }
+
+  @Test("A masked column reaches the model's data block as mask text only")
+  func dataBlockGetsMaskText() async throws {
+    let aiRead = FakeDatabaseSessionFactory(
+      capabilities: .contract(), columns: [ColumnInfo(name: "email", type: "text")],
+      rows: [[.string(Self.secret)]])
+    let manager = try await connectedManager(
+      live: FakeDatabaseSessionFactory(capabilities: .contract()), aiRead: aiRead,
+      maskRules: [try ColumnMaskRule(pattern: "users.email", style: .full)])
+
+    let outcome = await manager.runAITool(
+      Self.call("run_read_query", #"{"sql":"SELECT email FROM users"}"#), dialect: .postgresql,
+      sessionKey: manager.liveSessionKey,
+      runsQueries: true, sendsResultRows: true)
+
+    #expect(!outcome.result.isError)
+    #expect(!outcome.result.content.contains(Self.secret))
+    #expect(outcome.result.content.contains(ColumnMaskRule.maskText))
+    #expect(outcome.queryResult?.rows.first == [ColumnMaskRule.maskText])
   }
 
   @Test("A server error reaches the model only when rows may")

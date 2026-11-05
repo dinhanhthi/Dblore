@@ -59,13 +59,22 @@ extension EditorModeView {
         )
       }
 
+      // One tab per result set of a multi-statement run, above the grid
+      if viewModel.editorStatementResults.count > 1 {
+        ResultSetTabs(
+          results: viewModel.editorStatementResults,
+          selectedIndex: viewModel.selectedStatementIndex,
+          dialect: viewModel.sqlDialect,
+          onSelect: { viewModel.selectEditorStatement(at: $0) }
+        )
+        .padding(.horizontal, Spacing.md)
+        .padding(.top, Spacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.appBackground)
+      }
+
       // Main header
       HStack {
-        // Dropdown for multi-statement queries (at the beginning, only show when > 1 statement)
-        if viewModel.editorStatementResults.count > 1 {
-          multiStatementDropdown()
-        }
-
         // Result info
         resultInfoSection(result: result)
 
@@ -124,60 +133,6 @@ extension EditorModeView {
         alignment: .bottom  // Border on bottom since this is now a header
       )
     }
-  }
-
-  /// Multi-statement dropdown menu
-  @ViewBuilder
-  private func multiStatementDropdown() -> some View {
-    Menu {
-      ForEach(viewModel.editorStatementResults.indices, id: \.self) { index in
-        let statementResult = viewModel.editorStatementResults[index]
-        Button(action: {
-          viewModel.selectEditorStatement(at: index)
-        }) {
-          HStack {
-            // Combined text: "Result N • query text (truncated)"
-            let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
-            let queryLabel = Text(truncateQuery(statementResult.queryText))
-              .font(.system(size: 11, design: .monospaced))
-            Text("\(resultLabel)\(queryLabel)")
-              .lineLimit(1)
-
-            Spacer()
-
-            // Checkmark for selected item
-            if index == viewModel.selectedStatementIndex {
-              Image(systemName: "checkmark")
-                .font(.system(size: 10))
-                .foregroundColor(.accentColor)
-            }
-          }
-        }
-        .id(statementResult.id)
-      }
-    } label: {
-      HStack {
-        Text("Result \(viewModel.selectedStatementIndex + 1)")
-          .font(.system(size: 11))
-          .foregroundColor(.foreground)
-        Spacer()
-        Image(systemName: "chevron.down")
-          .font(.system(size: 9))
-          .foregroundColor(.foregroundMuted)
-      }
-      .padding(.horizontal, Spacing.sm)
-      .padding(.vertical, Spacing.xs)
-      .background(
-        Capsule()
-          .fill(Color.inputBackground)
-      )
-      .overlay(HairlineBorder(shape: Capsule()))
-    }
-    .id(viewModel.editorStatementResults.map { $0.id })
-    .buttonStyle(.plain)
-    .linkPointer()
-    .help("Select statement result to view")
-    .fixedSize()
   }
 
   /// Result info section showing row count and execution time
@@ -521,6 +476,7 @@ struct EditorResultGridView: View {
       lookupRelation: result.lookupRelation)
     let referencedRow = referencedRowHandlers(
       viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+    let insert = insertTable(dataViewer: viewModel.dataViewer, editTarget: result.editTarget)
     ResultGridView(
       result: result,
       sortColumn: gridSort.column,
@@ -635,6 +591,8 @@ struct EditorResultGridView: View {
       relationSchema: relation?.schema,
       relationTable: relation?.table,
       baseColumnNames: relation?.baseColumns,
+      insertSchema: insert.schema,
+      insertName: insert.name,
       foreignKeys: viewModel.lookupForeignKeys,
       lookupDialect: viewModel.sqlDialect,
       onLookupReferencedRow: referencedRow.lookup,

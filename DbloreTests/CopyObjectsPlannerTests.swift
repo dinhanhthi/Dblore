@@ -8,16 +8,18 @@
 // A CHECK or index expression that calls an unsafe function (attribute notation and SQLite's
 // load_extension / readfile included) or has a subquery is skipped with a warning; an
 // allowlisted one is copied. Known MySQL constraint names are renamed. Hostile
-// identifiers stay quoted in the DDL, the identity restart and the source read.
+// identifiers stay quoted in the DDL, the identity restart and the source read. A MySQL string
+// default with a backslash (before a combining mark too) is dropped.
 // CopyObjectsDDLCheck guards: a type edit, an allowlisted CHECK and expression index, and a MySQL
 // prefix length pass; a renamed column, a DROP, a statement on another table, comments,
-// executable comments, dollar quotes, backslash strings, extra statements, CREATE TABLE AS,
-// trailing clauses, a duplicate CREATE TABLE, an unplanned REFERENCES, ADD COLUMN, a multi-action
-// ALTER, an unplanned PRAGMA, a trigger body, three-part names and unsafe CHECK, index key and
-// predicate expressions (attribute notation, a qualified name, a table after IN), unsafe column
-// DEFAULT / generated expressions (a call at the column's own level: pg_sleep, nextval, sleep,
-// quoted or qualified), an identity's SEQUENCE NAME, a LIKE item and ADD ... USING INDEX are
-// refused; clock defaults, START WITH and every target's unedited planned columns pass.
+// executable comments, dollar quotes, backslash strings (a combining mark after the backslash
+// included), extra statements, CREATE TABLE AS, trailing clauses, a duplicate CREATE TABLE, an
+// unplanned REFERENCES, ADD COLUMN, a multi-action ALTER, an unplanned PRAGMA, a trigger body,
+// three-part names and unsafe CHECK, index key and predicate expressions (attribute notation, a
+// qualified name, a table after IN), unsafe column DEFAULT / generated expressions (a call at the
+// column's own level: pg_sleep, nextval, sleep, quoted or qualified), an identity's SEQUENCE NAME,
+// a LIKE item and ADD ... USING INDEX are refused; clock defaults, START WITH and every target's
+// unedited planned columns pass.
 
 import Foundation
 import Testing
@@ -441,8 +443,10 @@ struct CopyObjectsPlannerTests {
     #expect(checked.prelude.map(\.createsTable) == [name])
     #expect(
       try plan.identityRestartStatements() == [
-        #"SELECT setval(pg_get_serial_sequence('"public"."t""x`;''"', 'c"`;'''), "#
-          + #"GREATEST(COALESCE(MAX("c""`;'"), 0), 0) + 1, false) FROM "public"."t""x`;'""#
+        #"SELECT pg_catalog.setval(pg_catalog.pg_get_serial_sequence("#
+          + #"'"public"."t""x`;''"'::pg_catalog.text, 'c"`;'''::pg_catalog.text), "#
+          + #"GREATEST(COALESCE(pg_catalog.max("c""`;'"), 0), 0)::pg_catalog.int8 "#
+          + #"OPERATOR(pg_catalog.+) 1, false) FROM "public"."t""x`;'""#
       ])
     // The source read of the same table on MySQL
     var mysqlSource = hostile
@@ -475,6 +479,20 @@ struct CopyObjectsPlannerTests {
     #expect(
       CopyObjectsRun.transactionalPrelude(target: Self.sqlite, checked: sqliteChecked).first
         == CopyObjectsPlan.sqliteDeferForeignKeys)
+  }
+
+  @Test(
+    "A MySQL string default with a backslash is dropped, a combining mark after it included",
+    arguments: [#"'a\\b'"#, "'a\\\u{301}b'"])
+  func mysqlBackslashDefaultDropped(_ literal: String) throws {
+    var source = Self.table("t", schema: "shop", columns: [("v", "varchar")])
+    source.structure.columns[0].columnType = "varchar(10)"
+    source.structure.columns[0].defaultExpression = literal
+    let plan = try CopyObjectsPlanner.plan(
+      [source], source: Self.mysql, target: .postgresql, targetSchema: "public",
+      existingNames: [])
+    #expect(!plan.editableDDL.contains("DEFAULT"), "\(plan.editableDDL)")
+    #expect(plan.warnings.contains { $0.contains("is not copied") }, "\(plan.warnings)")
   }
 
   // MARK: - DDL check refusals
@@ -612,6 +630,8 @@ struct CopyObjectsPlannerTests {
     .create("`status` LONGTEXT", "`status` INT DEFAULT PREVIOUS VALUE FOR s"),
     .create("`status` LONGTEXT", "`status` INT DEFAULT s.nextval"),
     .append("ALTER TABLE `shop`.`users` ADD CONSTRAINT `c` CHECK (NEXT VALUE FOR s > 0)"),
+    // A backslash before a combining mark is one Character but still a backslash
+    .append("ALTER TABLE `shop`.`users` ADD CONSTRAINT `c` CHECK (`name` <> 'a\\\u{301}')"),
   ]
 
   @Test(

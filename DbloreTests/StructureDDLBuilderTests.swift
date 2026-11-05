@@ -2,7 +2,8 @@
 // StructureDDLBuilder: exact DDL per engine and change kind, PostgreSQL statement order, MySQL
 // full-definition restating and version/flavor choices, SQLite version gates and refusals,
 // DuckDB refusal, rejection of injected names and expressions, and table rename (always last),
-// table comment literals and DROP TABLE.
+// table comment literals, MySQL table character set / CONVERT TO / AUTO_INCREMENT (listed names
+// only; refused on PostgreSQL and SQLite) and DROP TABLE.
 
 import Foundation
 import Testing
@@ -650,6 +651,82 @@ struct StructureDDLBuilderTests {
           "ALTER TABLE `shop`.`orders` RENAME COLUMN `title` TO `name`, "
             + "ADD CONSTRAINT `c` CHECK ('title' <> subtitle)"
         ])
+  }
+
+  // MARK: - MySQL table options
+
+  private static let characterSets = MySQLCharacterSets(characterSets: [
+    .init(name: "latin1", defaultCollation: "latin1_swedish_ci", collations: ["latin1_swedish_ci"]),
+    .init(
+      name: "utf8mb4", defaultCollation: "utf8mb4_0900_ai_ci",
+      collations: ["utf8mb4_0900_ai_ci", "utf8mb4_bin"]),
+  ])
+
+  @Test("MySQL: the comment, the table character set and AUTO_INCREMENT join the one ALTER TABLE")
+  func mysqlTableOptions() throws {
+    #expect(
+      try StructureDDLBuilder.build(
+        changes: [
+          .setAutoIncrement(1000), .setTableCharset(charset: "utf8mb4", collation: "utf8mb4_bin"),
+          .setTableComment("x"), .dropColumn(column: "total"),
+        ], structure: Self.mysql, engine: .mysql(Self.mysql80),
+        characterSets: Self.characterSets) == [
+          "ALTER TABLE `shop`.`orders` DROP COLUMN `total`, COMMENT = 'x', "
+            + "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin, AUTO_INCREMENT=1000"
+        ])
+    // Only the convert case rewrites the rows
+    #expect(
+      try StructureDDLBuilder.build(
+        changes: [.convertTableCharset(charset: "latin1", collation: "latin1_swedish_ci")],
+        structure: Self.mysql, engine: .mysql(Self.mysql80),
+        characterSets: Self.characterSets) == [
+          "ALTER TABLE `shop`.`orders` CONVERT TO CHARACTER SET latin1 COLLATE latin1_swedish_ci"
+        ])
+  }
+
+  @Test(
+    "MySQL: a character set or collation that is not listed for it is refused",
+    arguments: [
+      // Unknown collation, a collation of another set, unknown set, injected text
+      ("utf8mb4", "utf8mb4_nope_ci"), ("utf8mb4", "latin1_swedish_ci"),
+      ("koi8r", "koi8r_general_ci"), ("utf8mb4", "utf8mb4_bin, ENGINE=MEMORY"),
+    ])
+  func mysqlUnlistedCharsetRefused(charset: String, collation: String) throws {
+    for change: StructureChange in [
+      .setTableCharset(charset: charset, collation: collation),
+      .convertTableCharset(charset: charset, collation: collation),
+    ] {
+      #expect(throws: StructureDDLError.self) {
+        try StructureDDLBuilder.build(
+          changes: [change], structure: Self.mysql, engine: .mysql(Self.mysql80),
+          characterSets: Self.characterSets)
+      }
+    }
+    // Without the loaded lists nothing is listed
+    #expect(throws: StructureDDLError.self) {
+      try build(
+        [.setTableCharset(charset: "utf8mb4", collation: "utf8mb4_bin")], Self.mysql,
+        .mysql(Self.mysql80))
+    }
+  }
+
+  @Test("PostgreSQL and SQLite refuse the MySQL table options")
+  func tableOptionsRefusedElsewhere() throws {
+    for change: StructureChange in [
+      .setTableCharset(charset: "utf8mb4", collation: "utf8mb4_bin"),
+      .convertTableCharset(charset: "utf8mb4", collation: "utf8mb4_bin"), .setAutoIncrement(5),
+    ] {
+      #expect(throws: StructureDDLError.self) {
+        try StructureDDLBuilder.build(
+          changes: [change], structure: Self.postgres, engine: .postgresql,
+          characterSets: Self.characterSets)
+      }
+      #expect(throws: StructureDDLError.self) {
+        try StructureDDLBuilder.build(
+          changes: [change], structure: Self.sqlite, engine: .sqlite(libraryVersion: 3_045_000),
+          characterSets: Self.characterSets)
+      }
+    }
   }
 
   // MARK: - SQLite

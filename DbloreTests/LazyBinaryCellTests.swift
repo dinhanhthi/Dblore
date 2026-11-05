@@ -259,13 +259,13 @@ struct LazyBinaryCellTests {
   func copyInsertCarriesFullValue() async throws {
     try await withItems { viewModel, _, plain in
       let lazy = try #require(viewModel.editorResult)
-      let expected = DataExporter.sqlInsert(result: plain, table: "items", dialect: .sqlite)
-      #expect(DataExporter.sqlInsert(result: lazy, table: "items", dialect: .sqlite) != expected)
+      let expected = DataExporter.sqlInsert(result: plain, name: "items", dialect: .sqlite)
+      #expect(DataExporter.sqlInsert(result: lazy, name: "items", dialect: .sqlite) != expected)
 
       let copied = try #require(
         await QueryCopyBar.loadedResult(lazy, viewModel: viewModel, action: "Copy"))
       #expect(copied.rows[0][1] == Self.fullPayload(plain))
-      #expect(DataExporter.sqlInsert(result: copied, table: "items", dialect: .sqlite) == expected)
+      #expect(DataExporter.sqlInsert(result: copied, name: "items", dialect: .sqlite) == expected)
       // Loaded once: the page now holds the full value and nothing is cut
       #expect(viewModel.editorResult?.rows[0][1] == Self.fullPayload(plain))
       #expect(!viewModel.hasUnloadedCells(in: try #require(viewModel.editorResult)))

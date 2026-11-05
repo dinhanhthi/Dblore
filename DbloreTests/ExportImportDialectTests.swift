@@ -13,8 +13,7 @@ struct ExportImportDialectTests {
     CellResult(
       columns: [ColumnInfo(name: "name", type: "text")],
       rows: [[.string("O'Brien \\ co")]],
-      rowCount: 1,
-      tableName: "t")
+      rowCount: 1)
   }
 
   @Test(
@@ -24,7 +23,8 @@ struct ExportImportDialectTests {
       (SQLDialect.mysql, #"INSERT INTO `t` (`name`) VALUES ('O''Brien \\ co');"#),
     ])
   func insertExport(dialect: SQLDialect, expected: String) {
-    #expect(DataExporter.sqlInsert(result: Self.cellResult(), dialect: dialect) == expected)
+    #expect(
+      DataExporter.sqlInsert(result: Self.cellResult(), name: "t", dialect: dialect) == expected)
   }
 
   @Test("Import batch quotes the destination with the dialect", .timeLimit(.minutes(1)))

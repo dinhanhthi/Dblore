@@ -29,6 +29,15 @@ struct DataExporterTSVTests {
     #expect(DataExporter.escapeTSV("a\r\nb") == "\"a\r\nb\"")
   }
 
+  @Test("A quote followed by a combining mark is doubled in a CSV and a TSV field (per scalar)")
+  func doublesQuoteBeforeCombiningMark() {
+    // Compared as scalars: String == uses canonical equivalence and would hide a missed quote.
+    let value = "a\"\u{0301}b"
+    let expected = Array("\"a\"\"\u{0301}b\"".unicodeScalars)
+    #expect(Array(DataExporter.escapeCSV(value, quote: .ifNeeded).unicodeScalars) == expected)
+    #expect(Array(DataExporter.escapeTSV(value).unicodeScalars) == expected)
+  }
+
   @Test("Copied TSV prefixes formula-like text and headers when on, never numbers or dates")
   func neutralizesFormulaText() {
     let date = Date(timeIntervalSince1970: 0)

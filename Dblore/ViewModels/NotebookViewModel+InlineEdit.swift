@@ -111,10 +111,13 @@ extension NotebookViewModel {
       primaryKey.isEmpty && dataViewer != nil && Self.readsPlainColumns(columns, of: table)
       ? table.rowLocator : nil
     guard !primaryKey.isEmpty || rowLocator != nil else { return (nil, lookup) }
+    // Masked columns are never written; a masked key leaves no target
     let target = EditTarget(
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
-      name: table.name, generatedColumns: table.generatedColumns, rowLocator: rowLocator)
+      name: table.name, generatedColumns: table.generatedColumns, rowLocator: rowLocator,
+      viewBase: table.viewBase
+    ).masking(columns)
     return (target, lookup)
   }
 
@@ -231,11 +234,14 @@ extension NotebookViewModel {
       else { return nil }
       let saved = (result.columns, result.tableName, result.primaryKeyColumns)
       result.typesPending = false
-      if let columns { result.columns = columns }
-      result.editTarget = target
+      // The shown rows' mask flags: a re-read meanwhile (`refreshDataViewerRows`) may have
+      // masked more than `read` did
+      if let columns { result.columns = Self.columns(columns, maskedAs: result.columns) }
+      let shown = target?.masking(result.columns)
+      result.editTarget = shown
       result.lookupRelation = targets.lookupRelation
-      result.tableName = target?.qualifiedName
-      result.primaryKeyColumns = target?.primaryKeyColumns ?? []
+      result.tableName = shown?.qualifiedName
+      result.primaryKeyColumns = shown?.primaryKeyColumns ?? []
       if saved != (result.columns, result.tableName, result.primaryKeyColumns) {
         savedFieldsChanged = true
       }
@@ -294,7 +300,8 @@ extension NotebookViewModel {
     return EditTarget(
       qualifiedName: collection, tableID: .mongodb(database: database, collection: collection),
       primaryKeyColumns: ["_id"], connectionEpoch: epoch, updateOnly: false, schema: nil,
-      name: collection, generatedColumns: [])
+      name: collection, generatedColumns: []
+    ).masking(result.columns)
   }
 
   /// True when a find projection leaves `_id` as the stored value: no `_id` key, or `1`/`true`.
@@ -353,7 +360,9 @@ extension NotebookViewModel {
   /// `relation` resolved by the server (always a fresh catalog read: it validates a cached
   /// target), or, while the app transaction is pending (no catalog query is sent) or when
   /// `cachedFirst` finds it, the table cached under the result columns' `tableID`. Nil when
-  /// `relation` does not name that table (`relationNamesTable`).
+  /// `relation` does not name that table (`relationNamesTable`). `cachedFirst` serves results
+  /// that wait for it: an uncached view stays not editable there, with no side connection for
+  /// its probe (the background read, `patchResultTargets`, probes it).
   private func editTable(
     _ relation: String, tableID: TableRef, _ connectionManager: DatabaseConnectionManager,
     cachedFirst: Bool = false
@@ -368,7 +377,8 @@ extension NotebookViewModel {
       return await connectionManager.cachedEditTable(id: tableID)
     }
     do {
-      return try await connectionManager.fetchEditTable(tableName: relation, tableID: tableID)
+      return try await connectionManager.fetchEditTable(
+        tableName: relation, tableID: tableID, probesViews: !cachedFirst)
     } catch {
       return nil
     }
@@ -421,7 +431,7 @@ extension NotebookViewModel {
           origin: ordinals[read.name].map { ColumnOrigin(tableID: tableID, columnOrdinal: $0) },
           sourceName: source.map {
             ColumnSourceName(schema: $0.schema, table: $0.table, column: read.name)
-          }, wallClock: read.wallClock)
+          }, wallClock: read.wallClock, masked: read.masked)
       }
     }
     // The edit target's key order; the cached key when the table did not resolve
@@ -485,7 +495,9 @@ extension NotebookViewModel {
   ) throws -> (QueryResult, DataViewerState.Truncation) {
     let aliases = state.locatorColumns
     let kept = result.columns.count - aliases.count
+    // A masked locator holds mask text, never the row's locator
     guard kept > 0, result.columns.suffix(aliases.count).map(\.name) == aliases,
+      !result.columns.suffix(aliases.count).contains(where: \.masked),
       result.rows.allSatisfy({ $0.count == result.columns.count })
     else { throw LazyPageError.unexpectedShape }
     let columns = Array(result.columns.prefix(kept))
@@ -746,7 +758,10 @@ extension NotebookViewModel {
     }
     let columnNames = assignments.map(\.column)
     if let generated = columnNames.first(where: target.generatedColumns.contains) {
-      showToast(Self.generatedColumnMessage(generated), type: .error)
+      showToast(
+        Self.readOnlyColumnMessage(
+          generated, columns: liveResult(of: target, cellId: cellId)?.columns),
+        type: .error)
       return false
     }
     var locator: RowLocatorValues?
@@ -834,6 +849,41 @@ extension NotebookViewModel {
   /// Shown when an edit targets a generated column
   nonisolated static func generatedColumnMessage(_ column: String) -> String {
     "'\(column)' is a generated column and cannot be edited"
+  }
+
+  /// Shown when an edit targets a column a mask rule matched (its cells hold mask text)
+  nonisolated static func maskedColumnMessage(_ column: String) -> String {
+    "'\(column)' is masked by a connection rule and cannot be edited"
+  }
+
+  /// Why `column`, one of a target's `generatedColumns`, refuses edits: masked when it is in
+  /// `columns` (the live result's) with `ColumnInfo.masked`, else generated
+  nonisolated static func readOnlyColumnMessage(
+    _ column: String, columns: [ColumnInfo]?
+  )
+    -> String
+  {
+    columns?.first { $0.name == column }?.masked == true
+      ? maskedColumnMessage(column) : generatedColumnMessage(column)
+  }
+
+  /// `columns` also marked `masked` where the column at the same index of `read`, with the same
+  /// name, is: a re-read of the same columns, whose cells were masked by the rules of now. A mask
+  /// is never cleared: the target keeps a masked column read-only (`EditTarget.masking` only
+  /// adds), so its flag keeps saying why until the cell runs again.
+  nonisolated static func columns(
+    _ columns: [ColumnInfo], maskedAs read: [ColumnInfo]
+  )
+    -> [ColumnInfo]
+  {
+    columns.enumerated().map { index, column in
+      guard read.indices.contains(index), read[index].name == column.name,
+        read[index].masked, !column.masked
+      else { return column }
+      return ColumnInfo(
+        name: column.name, type: column.type, origin: column.origin,
+        sourceName: column.sourceName, wallClock: column.wallClock, masked: true)
+    }
   }
 
   /// Shown when an edit has no live target (result from a file, re-run or not a single table)
@@ -1022,7 +1072,9 @@ extension NotebookViewModel {
   /// changes were made against that generation and stay valid) and its columns. The page is
   /// `mongoQueries()` for MongoDB (`pageSQL` asserts it is not), else `pageSQL`. A failed read
   /// shows "<done>, but failed to refresh"; a page, target, or column list that changed
-  /// meanwhile is left as shown.
+  /// meanwhile is left as shown. A column the re-read masks becomes read-only (a masked key
+  /// leaves no target); a column it unmasks stays read-only, marked masked, until the cell runs
+  /// again.
   func refreshDataViewerRows(
     target: EditTarget, connectionManager: DatabaseConnectionManager, done: String
   ) async {
@@ -1053,12 +1105,16 @@ extension NotebookViewModel {
     guard isLiveEditTarget(target, cellId: nil), dataViewer?.loadKey == state.loadKey,
       stored.columns.map(\.name) == result.columns.map(\.name)
     else { return }
+    // A rule saved since the page was read masks the new rows: their columns take the new mask
+    // flags, and the target never writes a newly masked column (none at all for a masked key)
+    let columns = Self.columns(result.columns, maskedAs: stored.columns)
+    let shown = result.editTarget?.masking(columns)
     var updated = CellResult(
-      columns: result.columns, rows: stored.rows, executionTime: result.executionTime,
+      columns: columns, rows: stored.rows, executionTime: result.executionTime,
       rowCount: stored.rows.count, timestamp: result.timestamp, error: result.error,
       wasLimited: result.wasLimited, sourceQuery: result.sourceQuery,
-      tableName: result.tableName, primaryKeyColumns: result.primaryKeyColumns,
-      affectedRows: result.affectedRows, editTarget: result.editTarget,
+      tableName: shown?.qualifiedName, primaryKeyColumns: shown?.primaryKeyColumns ?? [],
+      affectedRows: result.affectedRows, editTarget: shown,
       lookupRelation: result.lookupRelation)
     updated.sessionReset = result.sessionReset
     updated.skippedStatements = result.skippedStatements
@@ -1070,6 +1126,8 @@ extension NotebookViewModel {
     updated.dataRevision = result.dataRevision + 1
     updated.truncation = truncation
     if !isMongoDataViewer { resetLazyCells() }
+    // A target the re-read masked moves to the Cell Value sidebar too
+    carryCellDetailEditTarget(from: result, to: updated)
     editorResult = updated
     // The sidebar cell is re-read from the new rows, so it shows the row its next save names
     syncCellDetail(cellId: nil, result: updated)

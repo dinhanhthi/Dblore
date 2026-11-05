@@ -123,6 +123,37 @@ nonisolated extension DatabaseSession {
   func runningStatementToken() -> UInt64? { nil }
   func statementInFlight(_ token: UInt64) -> Bool { false }
   func cancelBackend(_ target: CancelBackendTarget) async -> Bool { false }
+
+  /// PostgreSQL: the table origin of each output column of a view body (`pg_get_viewdef`), nil
+  /// for an expression. The column origins of a query on a view name the view, since they are
+  /// set before the rewriter expands it; through a subselect in FROM they name the relations
+  /// the body reads. So this reads the row description of `SELECT * FROM (<body>) AS v LIMIT 0`
+  /// (one trailing `;` and whitespace removed) inside `BEGIN READ ONLY` with a 5 s
+  /// `statement_timeout` and `lock_timeout` (`SET LOCAL`), and always ends with `ROLLBACK`, also
+  /// on an error. `LIMIT 0` returns no row and a view body cannot hold a data-modifying CTE, so
+  /// no table row is written. The planner may still evaluate IMMUTABLE functions of the body,
+  /// and READ ONLY does not stop a function from taking an advisory lock or sending a NOTIFY:
+  /// the timeouts bound how long it runs. Only for a single-use side session the app opened for
+  /// it, never the user's session.
+  func columnOrigins(ofViewBody body: String) async throws -> [ColumnOrigin?] {
+    var trimmed = Substring(body)
+    while trimmed.last?.isWhitespace == true { trimmed = trimmed.dropLast() }
+    if trimmed.last == ";" { trimmed = trimmed.dropLast() }
+    while trimmed.last?.isWhitespace == true { trimmed = trimmed.dropLast() }
+    let result: Result<[ColumnOrigin?], Error>
+    do {
+      _ = try await command("BEGIN READ ONLY", binds: [])
+      _ = try await command("SET LOCAL statement_timeout = '5s'", binds: [])
+      _ = try await command("SET LOCAL lock_timeout = '5s'", binds: [])
+      let source = try await query("SELECT * FROM (\n\(trimmed)\n) AS v LIMIT 0", binds: [])
+      for try await _ in source.rows {}
+      result = .success(source.columns.map(\.tableOrigin))
+    } catch {
+      result = .failure(error)
+    }
+    _ = try? await command("ROLLBACK", binds: [])
+    return try result.get()
+  }
 }
 
 /// What PostgreSQL's server cancel matches (`DatabaseSession.prepareCancelBackend`)

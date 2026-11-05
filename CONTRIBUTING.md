@@ -39,7 +39,10 @@ Thanks for your interest — contributions are welcome!
   2. Match the existing style: the project is Swift 6 with strict concurrency, formatted
      with `swift-format` (`.swift-format`; format with
      `swift-format -i -r Dblore/ DbloreTests/ DbloreCLI/ Plugins/LocalAI/`). Check the files you changed
-     with `swift-format lint --strict <files>`.
+     with `swift-format lint --strict <files>`. In tests, wait for async work with
+     `boundedWait("named step") { … }` (`DbloreTests/Support/BoundedWait.swift`), never an
+     unbounded `while … { await Task.yield() }` loop: a timeout then fails with the step's name
+     instead of hanging the suite. A loop that already gives up after N tries records an `Issue`.
   3. Keep pull requests focused, and describe what changed and why.
 
 ## mysql-nio fork
@@ -136,6 +139,26 @@ A PostgreSQL or SQLite table without a primary key is edited by `RowLocatorKind`
 `IS`. The data viewer reads them under `dblore_*` aliases, strips them before the grid and
 indexes them by page row, never by values; an UPDATE or DELETE that matches no row is a conflict.
 MySQL/MariaDB introspection returns no locator, so those tables still need a primary key.
+
+## SQL text and PostgreSQL catalog reads
+
+Swift compares `Character`s (grapheme clusters): a quote or backslash followed by a combining
+mark is one `Character` that is not equal to the bare symbol. Never escape or scan SQL with
+`replacingOccurrences(of: "'", …)` or `contains("\\")`; quote with `SQLDialect.quoteIdentifier`
+and `literal`, escape with `SQLDialect.escapingScalars`, and make scanners walk
+`unicodeScalars`. `SQLDialectTests` pins names and values with combining marks on every dialect.
+
+PostgreSQL catalog reads run on the user's session, under the user's `search_path`, where a
+planted function or operator can win over the built-in one. Every catalog statement names
+`pg_catalog` for each relation, function, operator (`a OPERATOR(pg_catalog.=) b`), cast
+(`::pg_catalog.int8`) and regclass literal (`'pg_catalog.pg_class'::pg_catalog.regclass`), and
+reads `pg_catalog` directly instead of SQL-language helpers such as `obj_description` or
+`information_schema` (on PostgreSQL 13 and older they parse under the caller's path).
+`pg_catalog.to_regclass($1)` on a bound user-typed name is the only carve-out.
+`PostgresCatalogQualificationTests` lints every introspector statement (pinning how many each
+entry point sends), the manager's own catalog reads and the static catalog SQL, so add a new
+entry point or statement there. `PostgresSearchPathIntegrationTests` (`.requiresPostgres`)
+checks planted objects against a real server.
 
 ## SQL dump format
 

@@ -19,6 +19,17 @@ nonisolated struct TableStructure: Sendable, Equatable {
   /// PostgreSQL / MySQL table comment. Nil when none (an empty MySQL comment) and on SQLite and
   /// DuckDB.
   var comment: String? = nil
+  /// MySQL / MariaDB table options. Nil on the other engines.
+  var tableOptions: TableOptions? = nil
+
+  struct TableOptions: Sendable, Equatable {
+    /// The table's default character set (for new columns)
+    var characterSet: String?
+    /// TABLE_COLLATION
+    var collation: String?
+    /// The next AUTO_INCREMENT value; nil when the table has none
+    var autoIncrement: UInt64?
+  }
 
   struct Column: Sendable, Equatable {
     /// 1-based position in the table

@@ -28,8 +28,9 @@ nonisolated struct BoundStatement: Equatable, Sendable {
 /// Builds bound DML, then a display-only preview, for a `RowChangeSet`.
 /// Statement order is every DELETE, then every UPDATE, then every INSERT.
 /// Throws `RowChangeError.noRowKey` when the set has an UPDATE or DELETE and the target no key,
-/// `noRowLocator` when a locator target's row has no locator that fits, and
-/// `serverDefaultUnsupported` for a DEFAULT cell the dialect cannot write. A locator target
+/// `noRowLocator` when a locator target's row has no locator that fits,
+/// `serverDefaultUnsupported` for a DEFAULT cell the dialect cannot write, and `viewRowChange` for
+/// a DELETE or INSERT on a view target (`EditTarget.viewBase`). A locator target
 /// (`EditTarget.rowLocator`) names rows by `RowKey.locator` and gets no MySQL row check.
 nonisolated enum RowChangeSQLBuilder {
   static func statements(
@@ -67,6 +68,11 @@ nonisolated enum RowChangeSQLBuilder {
       !set.deletes.isEmpty || !set.edits.isEmpty
     {
       throw RowChangeError.noRowKey(table: target.qualifiedName)
+    }
+    // Through a view only cell UPDATEs: undoing a DELETE would be an INSERT through the view,
+    // which can drop base columns the view does not show
+    if target.viewBase != nil, !set.deletes.isEmpty || !set.inserts.isEmpty {
+      throw RowChangeError.viewRowChange
     }
     let relation = relationName(target)
     let only = target.updateOnly && dialect.supportsUpdateOnly

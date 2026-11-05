@@ -231,6 +231,57 @@ struct RowChangeSQLBuilderTests {
     #expect(sqlite.allSatisfy { !$0.sql.contains("ONLY") })
   }
 
+  @Test(
+    "A view target: the staged UPDATE names the view with its mapped key; DELETE and INSERT throw")
+  @MainActor
+  func viewTargetUpdatesOnly() throws {
+    let map = ViewBaseMap(
+      baseOID: 16_400, basePrimaryKey: [1], definitionVersion: "771",
+      columns: ["key": 1, "name": 2],
+      primaryKeyColumns: ["key"])
+    let view = EditTarget(
+      qualifiedName: "public.v1", tableID: .postgresql(oid: 16_500), primaryKeyColumns: ["key"],
+      viewBase: map)
+    let viewColumns = [
+      ColumnInfo(name: "key", type: "int4"), ColumnInfo(name: "name", type: "text"),
+    ]
+    var edit = RowChangeSet(target: view)
+    try edit.stageEdit(
+      row: RowChangeSet.RowKey(values: [.int(2)]), column: "name", value: .string("b"),
+      original: .string("a"))
+    #expect(
+      try RowChangeSQLBuilder.statements(
+        for: edit, target: view, columns: viewColumns, dialect: .postgresql
+      ).map(\.sql) == [#"UPDATE public.v1 SET "name" = $1 WHERE "key" = $2"#])
+
+    // The target a page re-read rebuilds for the staged set keeps the view
+    let viewModel = NotebookViewModel()
+    var state = DataViewerState(schema: "public", name: "v1", orderColumns: ["key"])
+    state.changeSet = RowChangeSet(target: view)
+    viewModel.dataViewer = state
+    let reread = EditTarget(
+      qualifiedName: view.qualifiedName, tableID: view.tableID, primaryKeyColumns: ["key"],
+      viewBase: map)
+    let regenerated = try #require(viewModel.keepingStagedGeneration(reread))
+    #expect(regenerated.generation == view.generation)
+    for target in [view, regenerated] {
+      var delete = RowChangeSet(target: target)
+      delete.stageDelete(row: RowChangeSet.RowKey(values: [.int(1)]))
+      var insert = RowChangeSet(target: target)
+      insert.stageInsert(values: ["key": .int(3), "name": .string("c")])
+      for set in [delete, insert] {
+        #expect(throws: RowChangeError.viewRowChange) {
+          try RowChangeSQLBuilder.statements(
+            for: set, target: target, columns: viewColumns, dialect: .postgresql)
+        }
+        #expect(throws: RowChangeError.viewRowChange) {
+          try RowChangeSQLBuilder.previewText(
+            for: set, target: target, columns: viewColumns, dialect: .postgresql)
+        }
+      }
+    }
+  }
+
   @Test("An insert can include a primary key supplied after the row was staged")
   func insertIncludesPrimaryKey() throws {
     let editTarget = target()

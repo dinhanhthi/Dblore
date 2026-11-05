@@ -64,27 +64,43 @@ struct ImportTypeInferenceTests {
     #expect(ImportTypeInference.infer(rows: [["1.5"], ["2e3"]], columnCount: 1) == [.text])
   }
 
-  /// Decimals keep every digit: never a binary float type (SQLite has no exact decimal type)
+  /// A naive timestamp export (`2026-10-15 12:00:00.123456`) re-imports as a naive column so
+  /// the server keeps its wall clock; a column mixing naive and zoned text stays text
+  @Test("Naive timestamps infer a zone-less kind, and mixed zones stay text")
+  func localTimestamps() {
+    let rows: [[String?]] = [
+      ["2026-10-15 12:00:00.123456", "2026-10-15T08:30:00", "2026-10-15 12:00:00"],
+      ["2026-10-16 23:59:59", "2026-10-16T08:30:00.5", "2026-10-15T12:00:00Z"],
+    ]
+    #expect(
+      ImportTypeInference.infer(rows: rows, columnCount: 3) == [
+        .localTimestamp, .localTimestamp, .text,
+      ])
+    #expect(ImportTypeInference.Kind.localTimestamp.sqlType(dialect: .postgresql) == "timestamp")
+  }
+
+  /// Decimals keep every digit: never a binary float type (SQLite has no exact decimal type).
+  /// DuckDB decimals are text unless the builder has their digits (`ImportSQLBuilderTests`).
   @Test("Database types match the inferred kind")
   func sqlTypes() {
     let kinds: [ImportTypeInference.Kind] = [
-      .integer, .decimal, .boolean, .date, .timestamp, .text,
+      .integer, .decimal, .boolean, .date, .timestamp, .localTimestamp, .text,
     ]
     #expect(
       kinds.map { $0.sqlType(dialect: .postgresql) } == [
-        "bigint", "numeric", "boolean", "date", "timestamptz", "text",
+        "bigint", "numeric", "boolean", "date", "timestamptz", "timestamp", "text",
       ])
     #expect(
       kinds.map { $0.sqlType(dialect: .sqlite) } == [
-        "INTEGER", "TEXT", "INTEGER", "TEXT", "TEXT", "TEXT",
+        "INTEGER", "TEXT", "INTEGER", "TEXT", "TEXT", "TEXT", "TEXT",
       ])
     #expect(
       kinds.map { $0.sqlType(dialect: .mysql) } == [
-        "BIGINT", "DECIMAL(65,30)", "BOOLEAN", "DATE", "DATETIME(6)", "LONGTEXT",
+        "BIGINT", "DECIMAL(65,30)", "BOOLEAN", "DATE", "DATETIME(6)", "DATETIME(6)", "LONGTEXT",
       ])
     #expect(
       kinds.map { $0.sqlType(dialect: .duckdb) } == [
-        "bigint", "numeric", "boolean", "date", "timestamptz", "text",
+        "bigint", "text", "boolean", "date", "timestamptz", "timestamp", "text",
       ])
   }
 }

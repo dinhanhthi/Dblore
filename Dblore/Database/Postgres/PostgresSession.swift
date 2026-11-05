@@ -236,11 +236,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// Best effort, at open (before any transaction): without it the version is unknown (the
   /// types editor adds enum values the way older servers need) and so is the backend.
   private func loadServerVersionNum() async {
-    // The start time is a subquery, so a missing pg_stat_activity row never drops the version
-    // or the pid
-    let sql =
-      "SELECT current_setting('server_version_num')::int, pg_backend_pid(), "
-      + "(SELECT backend_start::text FROM pg_stat_activity WHERE pid = pg_backend_pid())"
+    let sql = Self.sessionIdentitySQL
     do {
       let identity = try await runTracked(sql) { connection in
         let rows = try await connection.query(
@@ -260,6 +256,16 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
         category: "Database")
     }
   }
+
+  /// Read once at open on the raw connection (`loadServerVersionNum`): the version, the pid and
+  /// its `backend_start::text`. The start time is a subquery, so a missing pg_stat_activity row
+  /// never drops the version or the pid. It runs with the user's search_path, so every function,
+  /// relation, operator and cast type names pg_catalog.
+  static let sessionIdentitySQL =
+    "SELECT pg_catalog.current_setting('server_version_num')::pg_catalog.int4, "
+    + "pg_catalog.pg_backend_pid(), "
+    + "(SELECT a.backend_start::pg_catalog.text FROM pg_catalog.pg_stat_activity a "
+    + "WHERE a.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid())"
 
   /// `server_version_num` of this connection (120000 for 12.0), read once at open; nil when
   /// that read failed. A new connection is a new session, so it never outlives its server.
@@ -426,11 +432,14 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// while it runs the statement `prepareCancelBackend` read. Behind a transaction-mode pooler
   /// the backend may serve another client meanwhile: its statement never matches. The
   /// `left($3, length(query))` form also matches a text `track_activity_query_size` truncated;
-  /// an empty `$3` never matches (`left($3, 0)` would match any empty text).
+  /// an empty `$3` never matches (`left($3, 0)` would match any empty text). The side connection
+  /// has the user's search_path, so every name and operator is pg_catalog-qualified.
   static let cancelBackendSQL =
-    "SELECT pg_cancel_backend($1) FROM pg_stat_activity WHERE pid = $1 "
-    + "AND backend_start = $2::timestamptz AND state = 'active' "
-    + "AND $3 <> '' AND query = left($3, length(query))"
+    "SELECT pg_catalog.pg_cancel_backend($1) FROM pg_catalog.pg_stat_activity "
+    + "WHERE pid OPERATOR(pg_catalog.=) $1 "
+    + "AND backend_start OPERATOR(pg_catalog.=) $2::pg_catalog.timestamptz "
+    + "AND state OPERATOR(pg_catalog.=) 'active' AND $3 OPERATOR(pg_catalog.<>) '' "
+    + "AND query OPERATOR(pg_catalog.=) pg_catalog.left($3, pg_catalog.length(query))"
 
   /// Bound of the whole cancel: side connect, statement and answer
   static let cancelBackendTimeout: Duration = .seconds(5)

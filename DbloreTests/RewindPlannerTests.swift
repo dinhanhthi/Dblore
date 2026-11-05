@@ -95,6 +95,28 @@ struct RewindPlannerTests {
     #expect(!DatabaseType.duckdb.supportsDataRewind && !DatabaseType.mongodb.supportsDataRewind)
   }
 
+  @Test("A rule on the key column masks the key text and previews, never the binds")
+  func maskedKeyColumn() throws {
+    let entry = Self.sqliteEntry(id: 5, created: Self.start)
+    let delete = RewindRow(
+      operation: .delete, primaryKey: ["id": "4242"],
+      before: ["id": "4242", "label": "'a'", "score": "1.5", "total": "3.0"], after: nil)
+    let skipped = RewindRow(operation: .update, primaryKey: ["id": "9999"], before: nil, after: nil)
+
+    let plan = try RewindPlanner.plan(
+      [(entry, [skipped, delete])], tables: Self.sqliteTables, engine: .sqlite,
+      masks: ColumnMaskRuleSet([try ColumnMaskRule(pattern: "items.id", style: .full)]))
+
+    #expect(plan.masksValues)
+    #expect(plan.origins.map(\.key) == ["id = \(ColumnMaskRule.maskText)"])
+    #expect(plan.skipped.map(\.origin.key) == ["id = \(ColumnMaskRule.maskText)"])
+    #expect(!plan.preview.contains("4242"))
+    #expect(plan.statements.flatMap(\.values).contains("4242"))
+    #expect(
+      !(try RewindPlanner.plan([(entry, [delete])], tables: Self.sqliteTables, engine: .sqlite))
+        .masksValues)
+  }
+
   @Test("Rows without their images or key are listed as skipped, never planned")
   func uncapturedRowsAreSkipped() throws {
     var entry = Self.sqliteEntry(id: 3, created: Self.start)

@@ -23,6 +23,8 @@ nonisolated enum ImportSQLBuilder {
   struct Column: Sendable, Equatable {
     var name: String
     var kind: ImportTypeInference.Kind
+    /// A DuckDB new-table decimal column's observed digits (`ImportTypeInference.decimalDigits`)
+    var precisionScale: ImportTypeInference.PrecisionScale? = nil
   }
 
   /// A Copy Objects column: its bytes are written through `bindForm`
@@ -51,10 +53,24 @@ nonisolated enum ImportSQLBuilder {
     guard !columns.isEmpty else { throw Error.invalidColumns }
     let relation = try dialect.qualified(schema: schema, name: table)
     let definitions = try columns.map { column in
-      try dialect.quoteIdentifier(column.name) + " " + column.kind.sqlType(dialect: dialect)
+      try dialect.quoteIdentifier(column.name) + " " + columnType(column, dialect: dialect)
     }.joined(separator: ", ")
     return BoundStatement(
       sql: "CREATE TABLE \(relation) (\(definitions))", values: [], expectedRows: nil)
+  }
+
+  /// DuckDB's widest DECIMAL: width 1 to 38 (DuckDB docs, "Numeric Types", "Fixed-Point
+  /// Decimals"). Wider decimals are text.
+  private static let duckDBMaximumDecimalWidth = 38
+
+  /// A DuckDB decimal with its digits is DECIMAL(p,s); otherwise the kind's type (text)
+  private static func columnType(_ column: Column, dialect: SQLDialect) -> String {
+    if dialect == .duckdb, column.kind == .decimal, let digits = column.precisionScale,
+      digits.precision <= duckDBMaximumDecimalWidth
+    {
+      return "DECIMAL(\(digits.precision),\(digits.scale))"
+    }
+    return column.kind.sqlType(dialect: dialect)
   }
 
   static func insertStatements(

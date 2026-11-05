@@ -200,6 +200,8 @@ struct DataModelDocumentTests {
     ]
     let notebook = try DocumentCoder.decode(
       from: try JSONSerialization.data(withJSONObject: json))
+    // An older file has no masked key: unmasked
+    #expect(notebook.cells.first?.result?.columns.map(\.masked) == [false])
     let rows = try #require(notebook.cells.first?.result?.rows)
     #expect(
       rows.prefix(3).map { $0.map { $0.outputString(wallClock: false) } } == [
@@ -222,6 +224,32 @@ struct DataModelDocumentTests {
     let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
     #expect(cell.result?.columns.map(\.wallClock) == [true, false])
     #expect(cell.pinnedResult?.result.columns.map(\.wallClock) == [true, false])
+  }
+
+  @Test("The masked column key round-trips in results and pins; absent reads unmasked")
+  func maskedColumnKeyRoundTrip() throws {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "email", type: "text", masked: true),
+        ColumnInfo(name: "id", type: "int4"),
+      ],
+      rows: [[.string("****"), .int(1)]], rowCount: 1)
+    let pin = PinnedResult(
+      result: result, pinnedAt: Date(timeIntervalSince1970: Self.noonSeconds), sourceQuery: nil)
+    let notebook = DbloreNotebook(
+      id: UUID(), cells: [NotebookCell(content: "SELECT 1", result: result, pinnedResult: pin)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Masked"),
+      connectionConfig: nil, settings: NotebookSettings())
+    let data = try DocumentCoder.encode(notebook, includeResultsOnSave: true)
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let cells = try #require(json["cells"] as? [[String: Any]])
+    let columns = try #require(
+      (cells.first?["result"] as? [String: Any])?["columns"] as? [[String: Any]])
+    #expect(columns.map { $0["masked"] as? Bool } == [true, nil])
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.result?.columns.map(\.masked) == [true, false])
+    #expect(cell.pinnedResult?.result.columns.map(\.masked) == [true, false])
   }
 
   @Test("A decimal cell saves as a flagged string (older builds read the text) and reopens exact")
@@ -320,6 +348,31 @@ struct DataModelDocumentTests {
     let statements = notebook.cells[0].statementResults
     #expect(statements.map(\.queryText) == ["SELECT 1", "SELECT 2"])
     #expect(statements.allSatisfy { $0.result.rows.isEmpty && $0.result.columns.isEmpty })
+  }
+
+  @Test("A saved result-set index past the decoded results reopens on the first result")
+  func outOfRangeStatementIndexDecodesToFirst() throws {
+    let statements: [[String: Any]] = (0..<7).map {
+      ["queryText": "SELECT \($0)", "statementIndex": $0, "result": [String: Any]()]
+    }
+    let json: [String: Any] = [
+      "cells": [
+        ["content": "SELECT 0", "statementResults": statements, "selectedStatementIndex": 42]
+      ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: json)
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.statementResults.count == 7)
+    #expect(cell.selectedStatementIndex == 0)
+
+    // The cell's own Codable decoding clamps the same way
+    var encoded = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(cell)) as? [String: Any])
+    encoded["selectedStatementIndex"] = 42
+    let codableCell = try JSONDecoder().decode(
+      NotebookCell.self, from: JSONSerialization.data(withJSONObject: encoded))
+    #expect(codableCell.selectedStatementIndex == 0)
   }
 
   // MARK: - File Conflict (an open file changed on disk)

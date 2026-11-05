@@ -160,7 +160,9 @@ struct SQLRestoreDropTargetTests {
   func postgresQueryFollowsTheDrops() {
     func branches(_ drops: SQLRestorePlan.PostgresDrops) -> [String] {
       let query = DatabaseConnectionManager.postgresDropTargetsQuery(drops)
-      return ["inherits", "owns", "type"].filter { query.contains("SELECT '\($0)'::text") }
+      return ["inherits", "owns", "type"].filter {
+        query.contains("SELECT '\($0)'::pg_catalog.text")
+      }
     }
     var tables = Self.postgresDrops
     tables.types = []
@@ -171,7 +173,9 @@ struct SQLRestoreDropTargetTests {
     #expect(branches(Self.postgresDrops) == ["inherits", "owns", "type"])
     // No table row type or array type: DROP TYPE refuses those without CASCADE
     let query = DatabaseConnectionManager.postgresDropTargetsQuery(types)
-    #expect(query.contains("c.relkind = 'c'") && query.contains("e.typarray = t.oid"))
+    #expect(
+      query.contains("c.relkind OPERATOR(pg_catalog.=) 'c'")
+        && query.contains("e.typarray OPERATOR(pg_catalog.=) t.oid"))
     #expect(!query.contains("UNION ALL"))
   }
 

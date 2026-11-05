@@ -83,16 +83,78 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// `"name"` with embedded `"` doubled; MySQL `` `name` `` with embedded `` ` `` doubled.
   /// Rejects a NUL anywhere in `name`, and every name on MongoDB (`notSQL`).
   func quoteIdentifier(_ name: String) throws -> String {
-    let quote: String
+    let quote: Unicode.Scalar
     switch engine {
     case .postgresql, .sqlite, .duckdb: quote = "\""
     case .mysql: quote = "`"
     case .mongodb: throw SQLDialectError.notSQL
     }
-    guard !name.contains("\0") else {
+    guard !name.unicodeScalars.contains("\0") else {
       throw SQLDialectError.nulInIdentifier
     }
-    return quote + name.replacingOccurrences(of: quote, with: quote + quote) + quote
+    let quoteText = String(quote)
+    return quoteText + Self.escapingScalars(name, [quote: quoteText + quoteText]) + quoteText
+  }
+
+  /// `name` bare when it is a plain lowercase identifier (`[a-z_][a-z0-9_]*`) and no reserved
+  /// word, else `quoteIdentifier(name)`. A bare name reads the same as the quoted one on every
+  /// engine (PostgreSQL folds an unquoted name to lower case, and it is already lower case).
+  /// Only safe for the column part of a qualified name (`alias.column`): the reserved words
+  /// below are not every engine's, and most of them are fine after a dot.
+  func quoteIdentifierIfNeeded(_ name: String) throws -> String {
+    if case .mongodb = engine { throw SQLDialectError.notSQL }
+    let isPlain = name.utf8.enumerated().allSatisfy { offset, byte in
+      byte == UInt8(ascii: "_") || (byte >= UInt8(ascii: "a") && byte <= UInt8(ascii: "z"))
+        || (offset > 0 && byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9"))
+    }
+    guard isPlain, !name.isEmpty, !Self.reservedWords.contains(name) else {
+      return try quoteIdentifier(name)
+    }
+    return name
+  }
+
+  /// Words a bare identifier may not be in some engine (the SQL standard's and PostgreSQL's
+  /// reserved words, common MySQL 8 ones, many of them often a column's name, and SQLite
+  /// keywords it does not take as a name after a dot)
+  private static let reservedWords: Set<String> = [
+    "add", "all", "alter", "analyse", "analyze", "and", "any", "array", "as", "asc",
+    "asymmetric", "authorization", "autoincrement", "between", "binary", "both", "by", "case",
+    "cast", "check", "collate",
+    "collation", "column", "commit", "condition", "constraint", "create", "cross",
+    "current_catalog",
+    "current_date", "current_role", "current_schema", "current_time", "current_timestamp",
+    "current_user", "database", "default", "deferrable", "delete", "desc", "describe",
+    "distinct", "div", "do", "drop", "else", "end", "escape", "except", "exists", "explain",
+    "false",
+    "fetch", "for", "foreign", "freeze", "from", "full", "glob", "grant", "group", "groups",
+    "having",
+    "ilike", "in", "index", "indexed", "initially", "inner", "insert", "intersect", "interval",
+    "into",
+    "is", "isnull", "join", "key", "keys", "lag", "lateral", "lead", "leading", "left", "like",
+    "limit", "load", "localtime", "localtimestamp", "lock", "match", "mod", "natural", "not",
+    "nothing", "notnull", "null", "offset", "on", "only", "or", "order", "outer", "over",
+    "overlaps",
+    "partition", "placing", "primary", "procedure", "range", "rank", "read", "references",
+    "regexp", "rename", "replace", "returning", "right", "row", "rows", "schema", "select",
+    "session_user", "set", "show", "similar", "some", "symmetric", "system", "system_user",
+    "table", "tablesample", "then", "to", "trailing", "transaction", "trigger", "true", "union",
+    "unique",
+    "update", "usage", "use", "user", "using", "values", "variadic", "verbose", "when", "where",
+    "window", "with", "write",
+  ]
+
+  /// `text` with each scalar in `map` replaced by its text. Walks scalars, not `Character`s: a
+  /// quote followed by a combining mark is one `Character` that is not equal to the bare quote.
+  static func escapingScalars(_ text: String, _ map: [Unicode.Scalar: String]) -> String {
+    var escaped = ""
+    for scalar in text.unicodeScalars {
+      if let replacement = map[scalar] {
+        escaped += replacement
+      } else {
+        escaped.unicodeScalars.append(scalar)
+      }
+    }
+    return escaped
   }
 
   /// Text for a `--` comment, in every dialect: each line break (which would end the comment
@@ -228,11 +290,11 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// plain strings have no backslash escapes. MySQL plain strings do: every `\` becomes `\\`
   /// with no prefix.
   private func quoteLiteral(_ text: String) -> String {
-    let doubledQuotes = text.replacingOccurrences(of: "'", with: "''")
-    guard text.contains("\\") else {
+    let doubledQuotes = Self.escapingScalars(text, ["'": "''"])
+    guard text.unicodeScalars.contains("\\") else {
       return "'\(doubledQuotes)'"
     }
-    let escaped = doubledQuotes.replacingOccurrences(of: "\\", with: "\\\\")
+    let escaped = Self.escapingScalars(text, ["'": "''", "\\": "\\\\"])
     switch engine {
     case .postgresql, .mongodb: return "E'\(escaped)'"
     case .mysql: return "'\(escaped)'"

@@ -7,6 +7,7 @@ nonisolated enum ImportTypeInference {
     case boolean
     case date
     case timestamp
+    case localTimestamp
     case text
 
     func sqlType(dialect: SQLDialect) -> String {
@@ -15,7 +16,7 @@ nonisolated enum ImportTypeInference {
         // Decimals as TEXT: SQLite has no exact decimal type, and REAL keeps about 15 digits
         switch self {
         case .integer, .boolean: "INTEGER"
-        case .date, .timestamp, .text, .decimal: "TEXT"
+        case .date, .timestamp, .localTimestamp, .text, .decimal: "TEXT"
         }
       case .mysql:
         // The widest exact DECIMAL, not DOUBLE (about 15 digits) or bare DECIMAL (which is
@@ -26,8 +27,12 @@ nonisolated enum ImportTypeInference {
         case .boolean: "BOOLEAN"
         case .date: "DATE"
         case .timestamp: "DATETIME(6)"
+        case .localTimestamp: "DATETIME(6)"
         case .text: "LONGTEXT"
         }
+      // Without its digits a decimal is text: a bare DECIMAL is DECIMAL(18,3), which rounds
+      // fractions (`ImportSQLBuilder.createTable` writes DECIMAL(p,s) from the digits)
+      case .duckdb where self == .decimal: Kind.text.postgresSQLType
       case .postgresql, .duckdb: postgresSQLType
       default: postgresSQLType
       }
@@ -40,9 +45,41 @@ nonisolated enum ImportTypeInference {
       case .boolean: "boolean"
       case .date: "date"
       case .timestamp: "timestamptz"
+      case .localTimestamp: "timestamp"
       case .text: "text"
       }
     }
+  }
+
+  /// A decimal column's widest observed digits: `precision` is the integer plus fraction
+  /// digits, `scale` the fraction digits
+  struct PrecisionScale: Sendable, Equatable {
+    var precision: Int
+    var scale: Int
+  }
+
+  /// The widest integer and fraction digits of plain-notation decimals (`0.5` counts its `0`,
+  /// so it needs DECIMAL(2,1)). Nil when a value is not plain notation, or all are blank.
+  static func decimalDigits(_ values: [String?]) -> PrecisionScale? {
+    var integer = 0
+    var fraction = 0
+    var found = false
+    for raw in values {
+      guard let value = normalizedValue(raw)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      else { continue }
+      let unsigned =
+        value.utf8.first == UInt8(ascii: "-") ? value.utf8.dropFirst() : value.utf8[...]
+      let parts = unsigned.split(separator: UInt8(ascii: "."), omittingEmptySubsequences: false)
+      guard (1...2).contains(parts.count),
+        parts.allSatisfy({
+          !$0.isEmpty && $0.allSatisfy { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }
+        })
+      else { return nil }
+      integer = max(integer, parts[0].count)
+      fraction = max(fraction, parts.count == 2 ? parts[1].count : 0)
+      found = true
+    }
+    return found ? PrecisionScale(precision: integer + fraction, scale: fraction) : nil
   }
 
   static func normalizedValue(_ value: String?) -> String? {
@@ -94,6 +131,9 @@ nonisolated enum ImportTypeInference {
       if values.allSatisfy({ parser.date(from: $0) != nil }) {
         return .timestamp
       }
+      if values.allSatisfy({ isLocalTimestamp($0, dates: dateFormatter) }) {
+        return .localTimestamp
+      }
       return .text
     }
   }
@@ -111,6 +151,16 @@ nonisolated enum ImportTypeInference {
       of: #"^-?(?:0|[1-9][0-9]{0,34})(?:\.[0-9]{1,30})?$"#,
       options: .regularExpression
     ) != nil
+  }
+
+  /// `yyyy-MM-dd[ T]HH:mm:ss[.f{1,6}]` with no zone (a naive timestamp export). Only checked:
+  /// its binds stay the file text, so the server keeps the wall clock.
+  private static func isLocalTimestamp(_ value: String, dates: ISO8601DateFormatter) -> Bool {
+    let pattern =
+      #"^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T]"#
+      + #"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]{1,6})?$"#
+    return value.range(of: pattern, options: .regularExpression) != nil
+      && isDate(String(value.prefix(10)), formatter: dates)
   }
 
   private static func isDate(_ value: String, formatter: ISO8601DateFormatter) -> Bool {

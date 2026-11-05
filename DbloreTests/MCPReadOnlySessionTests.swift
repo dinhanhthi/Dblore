@@ -114,7 +114,9 @@ struct MCPReadOnlySessionTests {
     _ = try await manager.execute(
       userSQL: "SELECT 1", policy: ProtectionPolicy(protectionLevel: .readOnly), maxRows: 10)
     #expect(inner.sessions.first?.didClose == true)
-    while await manager.isConnected { await Task.yield() }
+    await boundedWait("the manager reporting the session lost", timeout: .seconds(45)) {
+      while !Task.isCancelled, await manager.isConnected { await Task.yield() }
+    }
   }
 
   @Test("Commands and server cursors are refused before anything is sent", arguments: wrapped)

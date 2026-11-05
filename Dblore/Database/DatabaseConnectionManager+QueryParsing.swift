@@ -53,6 +53,14 @@ extension DatabaseConnectionManager {
     Self.singleTableName(in: query)
   }
 
+  /// Whether a PostgreSQL read gets the catalog's column types: `singleTableName` takes it (a
+  /// plain name, also with GROUP BY / HAVING), or `CellUpdateStatement.singleRelation` does (a
+  /// quoted or schema-qualified relation, such as a data viewer page of `"public"."payments"`).
+  nonisolated static func enrichesColumnTypes(_ query: String) -> Bool {
+    singleTableName(in: query) != nil
+      || CellUpdateStatement.singleRelation(in: query, dialect: .postgresql) != nil
+  }
+
   /// `extractSingleTableName` for callers that are not the connection actor.
   nonisolated static func singleTableName(in query: String) -> String? {
     // Normalize query for parsing

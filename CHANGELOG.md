@@ -1,6 +1,41 @@
 # Changelog
 
-All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
+All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Security`, `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
+
+## Unreleased
+
+### Security
+
+- **Quotes followed by a combining accent.** Names and values that contain a quote or backslash followed by a combining accent are now escaped correctly in every generated SQL statement, export, dump and Schema Compare script, on every engine. Before, such text could change the SQL Dblore wrote. Names of outside MCP servers and tools are escaped the same way in what Dblore sends to the AI provider. [#85d8d0e7](https://github.com/dinhanhthi/Dblore/commit/85d8d0e7) [#c46a6359](https://github.com/dinhanhthi/Dblore/commit/c46a6359) [#7d12db58](https://github.com/dinhanhthi/Dblore/commit/7d12db58)
+- **Read-only connections.** They now also refuse MySQL `WITH … REPLACE` statements and DuckDB remote URLs written with combining accents. [#c46a6359](https://github.com/dinhanhthi/Dblore/commit/c46a6359)
+- **PostgreSQL catalog reads.** Schema, structure and metadata reads no longer call functions or operators found through your `search_path`; they always use the server's built-in ones. Before, a function planted by another role in a schema on your path (for example `public` on PostgreSQL 14 and older) could run when Dblore loaded the schema. [#0e42cfff](https://github.com/dinhanhthi/Dblore/commit/0e42cfff) [#7d12db58](https://github.com/dinhanhthi/Dblore/commit/7d12db58)
+- **Accent-encoded table names.** Two tables whose names differ only in how an accent is encoded are no longer treated as the same table. [#0e42cfff](https://github.com/dinhanhthi/Dblore/commit/0e42cfff)
+
+### Added
+
+- **Column masking.** The Masking section of the connection form hides columns by name (`column`, `table.column` or `schema.table.column`) as Full, Last 4, Email or NULL in results, copies, exports, AI, MCP, Shortcuts and the command-line tool. Masked cells cannot be edited, the export sheet keeps them checked, and the Data Rewind preview shows mask text while Rewind restores the real values. Rules travel in the Dblore connections file. [#a5dc68d3](https://github.com/dinhanhthi/Dblore/commit/a5dc68d3) [#42a31a3c](https://github.com/dinhanhthi/Dblore/commit/42a31a3c) [#1a8c7496](https://github.com/dinhanhthi/Dblore/commit/1a8c7496)
+- **Table Health.** File > Table Health lists tables without a primary key and foreign keys without a covering index on PostgreSQL, MySQL/MariaDB and SQLite, plus unused indexes and tables with many dead rows on PostgreSQL and unused or redundant indexes from the MySQL `sys` schema, filtered by Keys, Indexes or Bloat, with Show Table and Copy Report. [#5bfef6c0](https://github.com/dinhanhthi/Dblore/commit/5bfef6c0)
+- **MySQL table options.** The structure editor sets a MySQL/MariaDB table's character set, collation and AUTO_INCREMENT, and Convert existing data rewrites the rows after a confirmation. [#5628ae2d](https://github.com/dinhanhthi/Dblore/commit/5628ae2d)
+- **Edit PostgreSQL views.** Cells of an auto-updatable PostgreSQL view whose key maps to the base table's primary key can be edited, staged and rewound like a table's, except a row the edit moved out of the view, which Rewind cannot capture. Row delete, Add Row and paste are refused on views. [#884136bd](https://github.com/dinhanhthi/Dblore/commit/884136bd) [#10f45539](https://github.com/dinhanhthi/Dblore/commit/10f45539)
+- **Result set tabs.** Several result sets show as tabs such as "1 · 120 rows" or "2 · UPDATE 3", in the editor and in notebook cells; from seven results the rest go in More. [#f835ea42](https://github.com/dinhanhthi/Dblore/commit/f835ea42)
+- **Connection endpoints.** Welcome and recent connection rows show `host:port@user`, the file name for SQLite, and search matches it. [#f835ea42](https://github.com/dinhanhthi/Dblore/commit/f835ea42)
+- **Smarter completion and partitions.** After `ON`, autocomplete suggests the foreign-key join condition; table and column names also match in the middle (`ord` finds `purchase_orders`). PostgreSQL partitions show under their parent table in the sidebar, and the filter opens the parent of a matching partition. [#72fbf1bc](https://github.com/dinhanhthi/Dblore/commit/72fbf1bc)
+
+### Fixed
+
+- **PostgreSQL errors and types.** Errors start with their SQLSTATE (`ERROR 22012: division by zero`), and a query on one quoted or schema-qualified table shows the column's full type (`NUMERIC(10,2)`). [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4)
+- **Copy as INSERT and SQL INSERT export.** They write the schema and table as two quoted names (`"public"."orders"`), so the INSERT runs. [#87be440e](https://github.com/dinhanhthi/Dblore/commit/87be440e)
+- **Import.** Text timestamps without a zone import as a timestamp without time zone ("Timestamp (no zone)"), keeping their wall clock. [#87be440e](https://github.com/dinhanhthi/Dblore/commit/87be440e) [#4202518f](https://github.com/dinhanhthi/Dblore/commit/4202518f)
+- **Restore.** A MySQL file with its own `SET NAMES` line is refused with that statement quoted. [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4) [#9ee2df28](https://github.com/dinhanhthi/Dblore/commit/9ee2df28)
+- **Launch windows.** A launch while the display sleeps shows a single Welcome window, and a file opened at launch in Restore mode keeps the restored workspaces together as tabs in their own window. [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4)
+
+### Upgrade notes
+
+- **MCP and the command-line tool output changed.** PostgreSQL errors start with `<severity> <sqlstate>: `, for example `ERROR 22012: division by zero` or `FATAL 28P01: …` for a refused login, also when the connect fails. A read of one quoted or schema-qualified table returns the catalog type (`NUMERIC(10,2)` instead of `numeric`).
+- **Masking is not access control.** It matches column names, so an alias or a computed column in SQL written by you, the AI or an MCP agent gets past it. Filters, sorting and Find in every table still search the real values, and SQL dumps, backups, Copy Objects, Schema Compare and the Data Rewind store keep them. While a transaction is open, a table renamed by another session since this connection last read it is matched under its old name until the transaction ends.
+- **Mask rules and older builds.** Connections with rules save a `maskRules` key; an older build ignores it and drops the rules when it saves that connection again. Notebook files mark masked columns with `"masked": true`, which older builds ignore.
+- **PostgreSQL `search_path`.** Statements Dblore builds over your data (cell edits, filters, foreign-key lookups, Data Rewind) and restored dumps still resolve operators through your `search_path`; a fix follows.
+- **Views.** PostgreSQL auto-updatable views take cell updates only, never row deletes or inserts; views with INSTEAD OF triggers, without a mappable key or over something other than a table stay read-only. MySQL/MariaDB views stay read-only.
 
 ## v0.9.1 (2026-11-03)
 

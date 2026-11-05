@@ -21,6 +21,11 @@ struct TableRowView: View {
   /// False when the row sits under its schema group (the label would repeat it)
   var showsSchema = true
   let onToggle: () -> Void
+  /// A partitioned table's partition count, nil for any other table: a disclosure badge that
+  /// opens the partitions under the row
+  var partitionCount: Int? = nil
+  var arePartitionsOpen = false
+  var onTogglePartitions: () -> Void = {}
   let onOpen: () -> Void
   let onColumnClick: (String) -> Void
   /// Nil hides "Import Data..." (the engine has no table import)
@@ -83,6 +88,10 @@ struct TableRowView: View {
           }
 
           ForEach(collectionFlagTitles, id: \.self) { CollectionFlagBadge(text: $0) }
+
+          if let partitionCount {
+            partitionDisclosure(count: partitionCount)
+          }
 
           Spacer()
 
@@ -177,6 +186,27 @@ struct TableRowView: View {
       }
     }
     .clipped()
+  }
+
+  /// Chevron and partition count, styled as the row's badges; a tap opens or closes them
+  private func partitionDisclosure(count: Int) -> some View {
+    HStack(spacing: 2) {
+      Image(systemName: "chevron.right")
+        .font(.system(size: 8, weight: .semibold))
+        .rotationEffect(.degrees(arePartitionsOpen ? 90 : 0))
+      Text("\(count)")
+        .font(.system(.caption2))
+    }
+    .foregroundColor(.foregroundMuted)
+    .padding(.horizontal, Spacing.xs)
+    .padding(.vertical, 1)
+    .background(
+      RoundedRectangle(cornerRadius: 3)
+        .fill(Color.foregroundMuted.opacity(0.12))
+    )
+    .contentShape(Rectangle())
+    .onTapGesture { onTogglePartitions() }
+    .help(count == 1 ? "1 partition" : "\(count) partitions")
   }
 
   /// Badges of a MongoDB collection's markers, in a fixed order

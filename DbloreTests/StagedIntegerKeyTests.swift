@@ -48,10 +48,12 @@ struct StagedIntegerKeyTests {
   func postgresLookup() {
     let sql = StagedIntegerKey.lookupSQL(
       schema: "public", table: "qa_people", column: "id", dialect: .postgresql)
-    #expect(sql?.contains("information_schema.columns") == true)
-    #expect(sql?.contains("c.column_default IS NOT NULL") == true)
-    #expect(sql?.contains(#"MAX("id") FROM "public"."qa_people""#) == true)
-    #expect(sql?.contains("table_name = 'qa_people'") == true)
+    #expect(sql?.contains("FROM pg_catalog.pg_attribute a") == true)
+    #expect(sql?.contains("LEFT JOIN pg_catalog.pg_attrdef d") == true)
+    #expect(sql?.contains("(d.adbin IS NOT NULL") == true)
+    #expect(sql?.contains(#"pg_catalog.max("id") FROM "public"."qa_people""#) == true)
+    #expect(sql?.contains("c.relname OPERATOR(pg_catalog.=) 'qa_people'") == true)
+    #expect(sql?.contains("information_schema") == false)
   }
 
   @Test("SQLite lookup reads pragma_table_info")

@@ -86,6 +86,7 @@ extension WorkspaceManager {
     // Weakening the row needs an unlock the tab's gate did not ask
     guard !needsUnlock(saved) || needsUnlock(previous) else { return }
     var row = Self.keepingSavedAIFields(current, defaults: defaults)
+    row = Self.keepingSavedMaskRules(row, defaults: defaults)
     row = Self.keepingSavedAppearance(row, defaults: defaults)
     SessionManager.saveConnection(
       row.mongoHomeDatabase == nil
@@ -141,6 +142,96 @@ extension WorkspaceManager {
     config.aiRules = saved.aiRules
     config.isLocked = saved.isLocked
     return config
+  }
+
+  /// `config` with the mask rules of the saved row a save of `config` overwrites added to its own
+  /// (`ColumnMaskRule.union`, the saved row's first and its style winning on the same pattern), so
+  /// a save never writes fewer rules than the row has, whatever else the save edited, and an
+  /// opened file's extra rules stay. Run on every save except one whose mask rules the user
+  /// edited (`maskRulesEdited`): the form runs it with its `seed` first, and that list is the one
+  /// written. With a `seed` (the rules the form started from), only the rules the user removed
+  /// (in `seed`, not in `config`) are dropped from the saved row's; `config`'s come first, its
+  /// style winning, so a rule the form never showed (saved by another window meanwhile, or of a
+  /// saved connection the form moved to) stays. Unchanged without that row, and with Remember
+  /// off (nothing is written).
+  static func keepingSavedMaskRules(
+    _ config: ConnectionConfig, seed: [ColumnMaskRule]? = nil, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    guard config.rememberConnection else { return config }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    guard let saved = exactSavedEntry(for: config, in: history)?.config else { return config }
+    var config = config
+    if let seed {
+      let removed = ColumnMaskRule.removedPatterns(seed, config.maskRules)
+      config.maskRules = ColumnMaskRule.union(
+        config.maskRules, saved.maskRules.filter { !removed.contains($0.normalizedPattern) })
+    } else {
+      config.maskRules = ColumnMaskRule.union(saved.maskRules, config.maskRules)
+    }
+    return config
+  }
+
+  /// `keepingSavedMaskRules` for a save of the saved row `id` whose mask rules the form did not
+  /// edit: `config`'s are still the ones the form was seeded with (that row's when it opened), so
+  /// the ones the row lost since (removed by another window) are dropped first and never written
+  /// back. Unchanged with Remember off (nothing is written).
+  static func keepingSavedMaskRules(
+    _ config: ConnectionConfig, editing id: UUID, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    guard config.rememberConnection else { return config }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    var config = config
+    if let row = history.first(where: { $0.id == id })?.config {
+      let dropped = ColumnMaskRule.removedPatterns(config.maskRules, row.maskRules)
+      config.maskRules.removeAll { dropped.contains($0.normalizedPattern) }
+    }
+    return keepingSavedMaskRules(config, defaults: defaults)
+  }
+
+  /// The mask rules of the saved row a save of `config` overwrites; nil without that row, or
+  /// with Remember off (nothing is written)
+  static func savedRowMaskRules(
+    for config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> [ColumnMaskRule]? {
+    guard config.rememberConnection else { return nil }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    return exactSavedEntry(for: config, in: history)?.config.maskRules
+  }
+
+  /// After a save wrote edited mask rules (`saved`) over a row that had `before`: every other
+  /// open workspace of that saved row drops the rules the edit removed and takes the saved
+  /// ones, keeping its own extra rules (an opened file's), so its next save (rename, hidden
+  /// schemas, protection, an unedited form) never writes a removed rule back, and its
+  /// connection masks with them from the next query.
+  static func pushSavedMaskRules(
+    _ saved: ConnectionConfig, before: [ColumnMaskRule], to workspaces: [WorkspaceManager],
+    except sender: WorkspaceManager? = nil
+  ) {
+    let removed = ColumnMaskRule.removedPatterns(before, saved.maskRules)
+    let row = ConnectionHistoryEntry(config: saved)
+    for other in workspaces where other !== sender {
+      other.adoptSavedMaskRules(saved.maskRules, removed: removed, of: row)
+    }
+  }
+
+  private func adoptSavedMaskRules(
+    _ rules: [ColumnMaskRule], removed: Set<String>, of row: ConnectionHistoryEntry
+  ) {
+    let adopted = { (own: [ColumnMaskRule]) in
+      ColumnMaskRule.union(rules, own.filter { !removed.contains($0.normalizedPattern) })
+    }
+    if row.isSavedRow(of: editingConnectionConfig) {
+      editingConnectionConfig.maskRules = adopted(editingConnectionConfig.maskRules)
+    }
+    guard var current = workspace.connectionConfig, row.isSavedRow(of: current) else { return }
+    let rules = adopted(current.maskRules)
+    guard rules != current.maskRules else { return }
+    current.maskRules = rules
+    workspace.connectionConfig = current
+    markDirtyAndScheduleAutoSave()
+    syncConnectionStateToTabs()
+    let connectionManager = connectionManager
+    Task { await connectionManager.updateConnectedMaskRules(rules, of: current) }
   }
 
   /// `config` with the color, group, hidden schemas, scripts, attached databases and lock of the
@@ -290,6 +381,8 @@ extension WorkspaceManager {
   /// The AI policy and rules an opened workspace or notebook file may keep. With a saved match,
   /// the saved connection's policy and rules replace the file's. Without one, the file's policy
   /// may only tighten (Always follows the default) and its rules are dropped (untrusted).
+  /// Mask rules only hide data: the file keeps its own, plus the saved match's (whose style wins
+  /// on the same pattern), so it never runs with fewer than the saved row.
   static func sanitizedFileAIPolicy(
     _ config: ConnectionConfig?, defaults: UserDefaults = .standard
   ) -> ConnectionConfig? {
@@ -297,6 +390,7 @@ extension WorkspaceManager {
     if let saved = savedConnection(matching: config, defaults: defaults) {
       config.aiAccess = saved.aiAccess
       config.aiRules = saved.aiRules
+      config.maskRules = ColumnMaskRule.union(saved.maskRules, config.maskRules)
     } else {
       if config.aiAccess == .always { config.aiAccess = .useDefault }
       config.aiRules = ""
@@ -342,6 +436,7 @@ extension WorkspaceManager {
     guard !trimmed.isEmpty, var current = workspace.connectionConfig, current.name != trimmed
     else { return }
     current = Self.keepingSavedAIFields(current, defaults: defaults)
+    current = Self.keepingSavedMaskRules(current, defaults: defaults)
     current = Self.keepingSavedAppearance(current, defaults: defaults)
     current.name = trimmed
     workspace.connectionConfig = current
@@ -368,6 +463,7 @@ extension WorkspaceManager {
       return
     }
     current = Self.keepingSavedAIFields(current, defaults: defaults)
+    current = Self.keepingSavedMaskRules(current, defaults: defaults)
     current = Self.keepingSavedAppearance(current, defaults: defaults)
     current.hiddenSchemas = normalized
     workspace.connectionConfig = current
@@ -497,6 +593,9 @@ extension WorkspaceManager {
   ///   held, connected or read.
   /// - Parameter aiFieldsEdited: true only when the user edited the AI policy or rules: the save
   ///   then writes them; otherwise the saved row's AI fields are kept.
+  /// - Parameter maskRulesEdited: true only when the user edited the mask rules: the save then
+  ///   writes `config`'s list; otherwise the saved row's rules are added to it
+  ///   (`keepingSavedMaskRules`).
   /// - Parameter fromForm: true when `config` comes from the connection form: the save writes its
   ///   color and group (nil clears them); otherwise the saved row's are kept.
   /// - Parameter passwordPromptAnchor: where an ask-on-connect connection asks for its password
@@ -509,7 +608,8 @@ extension WorkspaceManager {
     isAutoConnect: Bool = false,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
-    aiFieldsEdited: Bool = false, fromForm: Bool = false, passwordPromptAnchor: NSWindow? = nil
+    aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false,
+    passwordPromptAnchor: NSWindow? = nil
   ) async throws {
     lastUnlockConnectError = nil
     // The pin of a switched MongoDB connection holds on its own server only (Reconnect,
@@ -547,7 +647,9 @@ extension WorkspaceManager {
         saved: Self.savedTransportRow(for: config, defaults: defaults), new: config,
         defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
       {
-        holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+        holdWeakeningConnect(
+          config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
+          fromForm: fromForm)
         throw WorkspaceConnectError.unlockRequired
       }
     } catch {
@@ -562,10 +664,11 @@ extension WorkspaceManager {
     pendingWeakeningSSHCredential = nil
     pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
+    pendingWeakeningMaskRulesEdited = false
     pendingWeakeningFromForm = false
     try await connectWithoutUnlockCheck(
       config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited,
-      fromForm: fromForm)
+      maskRulesEdited: maskRulesEdited, fromForm: fromForm)
     await showAttachWarnings()
   }
 
@@ -585,7 +688,8 @@ extension WorkspaceManager {
   /// Ask on connect asks on `passwordPromptAnchor` (the Welcome window: this workspace has no
   /// window yet) in both cases.
   func connectFromWelcome(
-    config: ConnectionConfig, aiFieldsEdited: Bool, weakeningUnlocked: Bool,
+    config: ConnectionConfig, aiFieldsEdited: Bool, maskRulesEdited: Bool = false,
+    weakeningUnlocked: Bool,
     defaultCommitStyle: CommitStyle = AppSettings.shared.commitStyle,
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
@@ -594,13 +698,14 @@ extension WorkspaceManager {
     guard weakeningUnlocked else {
       try await connect(
         config: config, defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword,
-        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, fromForm: true,
-        passwordPromptAnchor: passwordPromptAnchor)
+        hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
+        fromForm: true, passwordPromptAnchor: passwordPromptAnchor)
       return
     }
     await unlockAttachedFiles(of: config)
     let config = try await askingPassword(config, for: .connect, anchor: passwordPromptAnchor)
-    holdWeakeningConnect(config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+    holdWeakeningConnect(
+      config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited, fromForm: true)
     try await completePendingWeakeningConnect()
   }
 
@@ -632,7 +737,7 @@ extension WorkspaceManager {
   /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate, SSH
   /// secret and Vault secret of the running operation (the form's), which end with it.
   private func holdWeakeningConnect(
-    _ config: ConnectionConfig, aiFieldsEdited: Bool, fromForm: Bool
+    _ config: ConnectionConfig, aiFieldsEdited: Bool, maskRulesEdited: Bool, fromForm: Bool
   ) {
     pendingWeakeningConnect = config
     pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
@@ -640,6 +745,7 @@ extension WorkspaceManager {
     pendingWeakeningSSHCredential = pendingSSH?.credential
     pendingWeakeningVaultSecret = VaultCredentialStore.currentSecret(for: config)
     pendingWeakeningAIFieldsEdited = aiFieldsEdited
+    pendingWeakeningMaskRulesEdited = maskRulesEdited
     pendingWeakeningFromForm = fromForm
   }
 
@@ -736,11 +842,13 @@ extension WorkspaceManager {
     let scopedSSH = SSHCredentialStoreFactory.scoped(pendingWeakeningSSHCredential, for: config)
     let scopedVault = pendingWeakeningVaultSecret.map(VaultCredentialStore.ScopedSecret.init)
     let aiFieldsEdited = pendingWeakeningAIFieldsEdited
+    let maskRulesEdited = pendingWeakeningMaskRulesEdited
     let fromForm = pendingWeakeningFromForm
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
     pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
+    pendingWeakeningMaskRulesEdited = false
     pendingWeakeningFromForm = false
     defer {
       scopedMaterial?.clear()
@@ -752,7 +860,8 @@ extension WorkspaceManager {
         try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
           try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
             try await connectWithoutUnlockCheck(
-              config: config, aiFieldsEdited: aiFieldsEdited, fromForm: fromForm)
+              config: config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
+              fromForm: fromForm)
           }
         }
       }
@@ -781,7 +890,8 @@ extension WorkspaceManager {
       HeldConnect(
         config: $0, certificate: pendingWeakeningCertificate,
         sshCredential: pendingWeakeningSSHCredential, vaultSecret: pendingWeakeningVaultSecret,
-        aiFieldsEdited: pendingWeakeningAIFieldsEdited, fromForm: pendingWeakeningFromForm,
+        aiFieldsEdited: pendingWeakeningAIFieldsEdited,
+        maskRulesEdited: pendingWeakeningMaskRulesEdited, fromForm: pendingWeakeningFromForm,
         defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
     }
     do {
@@ -803,6 +913,7 @@ extension WorkspaceManager {
     let sshCredential: SSHStoredCredential?
     let vaultSecret: VaultCredentialStore.ConnectionSecret?
     let aiFieldsEdited: Bool
+    let maskRulesEdited: Bool
     let fromForm: Bool
     let defaultCommitStyle: CommitStyle
     let hasPassword: Bool
@@ -834,7 +945,8 @@ extension WorkspaceManager {
             try await connect(
               config: config, defaultCommitStyle: held.defaultCommitStyle,
               hasPassword: held.hasPassword, hasTouchID: held.hasTouchID,
-              aiFieldsEdited: held.aiFieldsEdited, fromForm: held.fromForm)
+              aiFieldsEdited: held.aiFieldsEdited, maskRulesEdited: held.maskRulesEdited,
+              fromForm: held.fromForm)
           }
         }
       }
@@ -854,6 +966,7 @@ extension WorkspaceManager {
     pendingWeakeningSSHCredential = nil
     pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
+    pendingWeakeningMaskRulesEdited = false
     pendingWeakeningFromForm = false
   }
 

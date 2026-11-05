@@ -7,7 +7,7 @@ import Foundation
 
 /// Represents an entry in the connection history
 /// Stores connection config (without password) and metadata
-struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
+struct ConnectionHistoryEntry: nonisolated Codable, Equatable, Identifiable, Sendable {
   let id: UUID
   var config: ConnectionConfig  // Always stored without password
   let lastUsedAt: Date
@@ -50,7 +50,7 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
   }
 
   /// Keychain key for password storage (see `ConnectionKeychainKey`)
-  var keychainKey: String {
+  nonisolated var keychainKey: String {
     ConnectionKeychainKey.password(for: config)
   }
 
@@ -58,7 +58,7 @@ struct ConnectionHistoryEntry: Codable, Equatable, Identifiable, Sendable {
   /// engine, host, port, home database and username. PostgreSQL, SQLite and DuckDB share the
   /// unscoped key space, and the unscoped key joins the fields with colons, so another engine or
   /// other fields can make the same key.
-  func isSavedRow(of config: ConnectionConfig) -> Bool {
+  nonisolated func isSavedRow(of config: ConnectionConfig) -> Bool {
     keychainKey == ConnectionKeychainKey.password(for: config)
       && self.config.databaseType == config.databaseType && self.config.host == config.host
       && self.config.port == config.port

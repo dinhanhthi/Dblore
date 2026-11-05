@@ -68,6 +68,33 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// MySQL / MariaDB: the next AUTO_INCREMENT of one table for the structure editor (SHOW CREATE
+  /// TABLE, read only here so the other structure readers keep their round trips); nil when the
+  /// table has none or the server refused the read
+  func fetchMySQLNextAutoIncrement(schema: String, table: String) async throws -> UInt64? {
+    guard let mysql = introspector as? MySQLSchemaIntrospector else { return nil }
+    return try await fetchCatalog("table options") { session in
+      try await mysql.nextAutoIncrement(schema: schema, table: table, in: session)
+    }
+  }
+
+  /// MySQL / MariaDB: the server's character sets and collations, read once per connection
+  func fetchMySQLCharacterSets() async throws -> MySQLCharacterSets {
+    if let cached = mysqlCharacterSetsCache, cached.epoch == connectionEpoch {
+      return cached.sets
+    }
+    guard let mysql = introspector as? MySQLSchemaIntrospector else {
+      throw DatabaseError.notConnected
+    }
+    let epoch = connectionEpoch
+    let sets = try await fetchCatalog("character sets") { session in
+      try await mysql.characterSets(in: session)
+    }
+    // A read that outlived its connection is not kept
+    if epoch == connectionEpoch { mysqlCharacterSetsCache = (epoch, sets) }
+    return sets
+  }
+
   /// Schema Compare on PostgreSQL: the structures of `tables` in `schema`, in order, read in one
   /// read-only transaction with `search_path` empty, so every user type and sequence the catalog
   /// prints names its schema (`public.mood`, `nextval('public.orders_id_seq'::regclass)`),

@@ -207,15 +207,18 @@ extension DatabaseConnectionManager {
 
   /// The labels of each PostgreSQL enum column of `structure`, by column name in label order
   /// (`GenerateRowsPlanner.plan(enumLabels:)`); empty on other engines. The table OID is bound,
-  /// never a name, and the read is refused as `readGenerateRows` is.
+  /// never a name, and the read is refused as `readGenerateRows` is. It runs with the user's
+  /// search_path, so every catalog name, operator and cast type names pg_catalog.
   func readGenerateRowsEnumLabels(_ structure: TableStructure) async throws -> [String: [String]] {
     guard let oid = structure.tableID.postgresOID else { return [:] }
     try refuseGenerateRowsRead()
     let result = try await executeSingleStatement(
       """
-      SELECT a.attname::text, e.enumlabel::text
-      FROM pg_attribute a JOIN pg_enum e ON e.enumtypid = a.atttypid
-      WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
+      SELECT a.attname::pg_catalog.text, e.enumlabel::pg_catalog.text
+      FROM pg_catalog.pg_attribute a
+      JOIN pg_catalog.pg_enum e ON e.enumtypid OPERATOR(pg_catalog.=) a.atttypid
+      WHERE a.attrelid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
+        AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
       ORDER BY a.attnum, e.enumsortorder
       """, maxRows: GenerateRowsPlanner.maxSampledKeys, binds: [.text(String(oid))])
     guard !result.truncated else {

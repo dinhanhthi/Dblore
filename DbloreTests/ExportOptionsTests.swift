@@ -74,6 +74,23 @@ struct ExportOptionsTests {
     #expect(!sql.contains("hunter2"))
   }
 
+  @Test("A column masked by a connection rule stays redacted when it is not ticked")
+  func maskedColumnStaysRedacted() {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "pwd", type: "text", masked: true), ColumnInfo(name: "note", type: "text"),
+      ],
+      rows: [[.string(ColumnMaskRule.maskText), .string("visible")]],
+      rowCount: 1,
+      tableName: "accounts")
+    let prepared = DataExporter.applying(ExportOptions(format: .sqlInsert), to: result)
+    #expect(prepared.rows[0][0] == .string("****"))
+    #expect(prepared.rows[0][1] == .string("visible"))
+    let sql = DataExporter.sqlInsert(result: prepared, dialect: .postgresql)
+    #expect(sql.contains("'****'"))
+    #expect(!sql.contains(ColumnMaskRule.maskText))
+  }
+
   @Test("Line breaks inside a cell become spaces only for formats that offer it")
   func lineBreakBecomesSpace() {
     let result = grid(columns: ["note"], rows: [[.string("a\nb")]])
@@ -207,7 +224,7 @@ struct ExportOptionsTests {
   @Test("SQL can omit column names, write an empty string for NULL, and flatten line breaks")
   func sqlShape() {
     let named = DataExporter.sqlInsert(
-      result: sample(), dialect: .postgresql, includeColumns: false)
+      result: sample(), name: "accounts", dialect: .postgresql, includeColumns: false)
     #expect(named.contains("INSERT INTO \"accounts\" VALUES"))
     #expect(!named.contains("pwd"))
     let emptied = DataExporter.applying(
@@ -218,7 +235,7 @@ struct ExportOptionsTests {
     let broken = grid(columns: ["note"], rows: [[.string("a\nb")]])
     let flat = DataExporter.applying(
       ExportOptions(format: .sqlInsert, convertLineBreaksToSpace: true), to: broken)
-    let script = DataExporter.sqlInsert(result: flat, table: "t", dialect: .postgresql)
+    let script = DataExporter.sqlInsert(result: flat, name: "t", dialect: .postgresql)
     #expect(script.contains("'a b'"))
     #expect(!script.contains("a\nb"))
   }

@@ -166,7 +166,9 @@ nonisolated enum CopyObjectsDDLCheck {
   /// as the DDL check refuses it.
   static func expressionRefusal(_ text: String, dialect: SQLDialect) -> String? {
     let tokens = SQLTokenizer(dialect: dialect).tokens(text)
-    if dialect == .mysql, tokens.contains(where: { $0.kind == .string && $0.text.contains("\\") }) {
+    if dialect == .mysql,
+      tokens.contains(where: { $0.kind == .string && $0.text.unicodeScalars.contains("\\") })
+    {
       return "a string with a backslash"
     }
     return expressionRefusal(tokens[...])
@@ -339,7 +341,7 @@ nonisolated enum CopyObjectsDDLCheck {
             tokens.append(Token(kind: .identifier, text: content, depth: depth))
           case .string:
             // MySQL: where it ends depends on sql_mode NO_BACKSLASH_ESCAPES
-            guard dialect != .mysql || !content.contains("\\") else {
+            guard dialect != .mysql || !content.unicodeScalars.contains("\\") else {
               throw refuse("Strings with a backslash are not allowed in the copy's DDL.")
             }
             tokens.append(Token(kind: .string, text: content, depth: depth))

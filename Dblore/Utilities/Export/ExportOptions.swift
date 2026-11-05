@@ -231,12 +231,22 @@ nonisolated struct ExportOptions: Equatable, Sendable {
   var emptiesNulls: Bool {
     nullAsEmpty && format.offersNullAsEmpty
   }
+
+  /// These options with every column a connection mask rule hid (`ColumnInfo.masked`) redacted:
+  /// a download never un-redacts one, and writes the ASCII `mask` rather than the rule's text.
+  func redactingMasked(_ columns: [ColumnInfo]) -> ExportOptions {
+    var options = self
+    options.redactedColumns.formUnion(columns.indices.filter { columns[$0].masked })
+    return options
+  }
 }
 
 extension DataExporter {
-  /// Sensitive columns, then nulls, then line breaks and formula prefixes when that format offers them.
+  /// Sensitive columns (the masked ones always), then nulls, then line breaks and formula
+  /// prefixes when that format offers them.
   /// Column names are text, so they get the same formula prefix as text cells.
   static func applying(_ options: ExportOptions, to result: CellResult) -> CellResult {
+    let options = options.redactingMasked(result.columns)
     let emptyNulls = options.emptiesNulls
     let flatten = options.convertLineBreaksToSpace && options.format.offersLineBreakToSpace
     let sanitize = options.sanitizeFormulas && options.format.offersFormulaSanitize
@@ -267,7 +277,8 @@ extension DataExporter {
       ? result.columns.map { column in
         ColumnInfo(
           name: prefixedIfFormula(column.name, splitsFields: splitsFields), type: column.type,
-          origin: column.origin, sourceName: column.sourceName, wallClock: column.wallClock)
+          origin: column.origin, sourceName: column.sourceName, wallClock: column.wallClock,
+          masked: column.masked)
       } : result.columns
     return CellResult(
       columns: columns,

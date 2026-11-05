@@ -9,6 +9,17 @@
 import Foundation
 
 extension NotebookViewModel {
+  /// Shown when a row is added, duplicated or pasted on a view target: only its cells are
+  /// written (`EditTarget.viewBase`)
+  static let viewInsertUnsupported = "Insert through a view is not supported yet"
+
+  /// Why new rows cannot be staged (+ Row, Duplicate Row, Paste Rows), or nil: the staging gate
+  /// (`rowStagingUnavailableReason`), then a view target, whose cells stay editable.
+  var rowInsertUnavailableReason: String? {
+    if let reason = rowStagingUnavailableReason { return reason }
+    return stagedEditTarget?.viewBase != nil ? Self.viewInsertUnsupported : nil
+  }
+
   /// + Row: opens the form, or closes it when it is already shown. MongoDB opens the document
   /// editor instead (closed when already shown).
   func toggleAddRowForm() async {
@@ -25,7 +36,7 @@ extension NotebookViewModel {
 
   /// Opens the form with empty fields (the grid's "Add Row" menu item).
   func openAddRowForm() async {
-    if let reason = rowStagingUnavailableReason {
+    if let reason = rowInsertUnavailableReason {
       showToast(reason, type: .error)
       return
     }
@@ -56,7 +67,7 @@ extension NotebookViewModel {
         isPrimaryKey: primaryKey.contains(column.name) || info?.isPrimaryKey == true,
         isNullable: info?.isNullable ?? true, isIdentity: info?.isIdentity ?? false,
         isGenerated: generated.contains(column.name) || info?.isGenerated == true,
-        wallClock: column.wallClock)
+        isMasked: column.masked, wallClock: column.wallClock)
     }
     for (column, value) in await automaticIntegerKeyValues() {
       guard let index = fields.firstIndex(where: { $0.name == column }) else { continue }

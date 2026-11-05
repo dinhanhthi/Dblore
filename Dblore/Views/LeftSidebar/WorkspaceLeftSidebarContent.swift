@@ -36,6 +36,8 @@ struct WorkspaceLeftSidebarContent: View {
   @State private var folderStore = SidebarFolderStore.shared
   /// Folders the user closed; a new folder starts open
   @State private var collapsedFolders: Set<UUID> = []
+  /// Partitioned tables whose partitions the user opened
+  @State private var openedPartitions: Set<UUID> = []
   /// The New Folder or Rename Folder sheet
   @State private var folderPrompt: SidebarFolderPrompt?
   /// The Public tab filter's last result (`refilterPublic`)
@@ -87,6 +89,7 @@ struct WorkspaceLeftSidebarContent: View {
       if epoch == nil {
         publicFilterResult = nil
         expandedSections = [:]
+        openedPartitions = []
       }
     }
     // A refresh while the result is not drawn: its arrays go now, not when the Public tab's
@@ -99,6 +102,7 @@ struct WorkspaceLeftSidebarContent: View {
       if !isConnected {
         publicFilterResult = nil
         expandedSections = [:]
+        openedPartitions = []
       }
     }
     .sheet(item: $aggregationBuilder) { model in
@@ -270,6 +274,8 @@ struct WorkspaceLeftSidebarContent: View {
     let source: DatabaseTable
     let columns: [DatabaseColumn]
     let expandForMatch: Bool
+    /// Its partitions, nil when it has none
+    var partitions: Partitions? = nil
     var id: UUID { source.id }
     var folderSchema: String { source.schema }
     /// Built when read: a large catalog maps every matching row per render
@@ -279,6 +285,48 @@ struct WorkspaceLeftSidebarContent: View {
       var copy = source
       copy.columns = columns
       return copy
+    }
+  }
+
+  /// A partitioned table's partitions, resolved into rows only when the row is opened
+  private struct Partitions {
+    /// Every partition, in array order
+    let positions: [Int]
+    /// The partitions a filter hit on (or below), drawn opened; nil when none
+    let revealed: [SidebarEntityIndex.RelationMatch]?
+    /// The arrays and the parent → partitions map of the result the positions point into
+    let tables: [DatabaseTable]
+    let map: [Int: [Int]]
+
+    init?(
+      of match: SidebarEntityIndex.RelationMatch, tables: [DatabaseTable], map: [Int: [Int]]
+    ) {
+      guard let positions = map[match.position] else { return nil }
+      self.positions = positions
+      self.revealed = match.partitions
+      self.tables = tables
+      self.map = map
+    }
+
+    /// The rows under the table: those a filter revealed, else every partition
+    var rows: [FilteredTable] {
+      let matches =
+        revealed
+        ?? positions.map {
+          SidebarEntityIndex.RelationMatch(position: $0, columns: nil, expandForMatch: false)
+        }
+      return matches.compactMap { match in
+        guard tables.indices.contains(match.position) else { return nil }
+        let table = tables[match.position]
+        return FilteredTable(
+          source: table,
+          columns: match.columns.map {
+            $0.filter(table.columns.indices.contains).map { table.columns[$0] }
+          }
+            ?? table.columns,
+          expandForMatch: match.expandForMatch,
+          partitions: Partitions(of: match, tables: tables, map: map))
+      }
     }
   }
 
@@ -445,7 +493,7 @@ struct WorkspaceLeftSidebarContent: View {
     }
     // Read by a schema group's section: the Temporary section shows no unread one
     let temporary = entities(
-      result.temporary, in: catalog,
+      result.temporary, in: catalog, partitions: result.partitions,
       sequences: (sequences ?? []).filter { temporarySchemas.contains($0.schema) },
       userTypes: (userTypes ?? []).filter { temporarySchemas.contains($0.schema) })
     return PublicMatches(
@@ -457,14 +505,15 @@ struct WorkspaceLeftSidebarContent: View {
   /// The listed objects of every schema (the flat layout)
   private func listedEntities(of found: PublicMatches) -> PublicEntities {
     entities(
-      found.filtered.listed, in: found.catalog, sequences: found.sequences,
+      found.filtered.listed, in: found.catalog, partitions: found.filtered.partitions,
+      sequences: found.sequences,
       userTypes: found.userTypes)
   }
 
   /// The listed objects of one schema group, from the index's bucket
   private func entities(in schema: String, of found: PublicMatches) -> PublicEntities {
     entities(
-      found.filtered.inSchema(schema), in: found.catalog,
+      found.filtered.inSchema(schema), in: found.catalog, partitions: found.filtered.partitions,
       sequences: found.sequences?.filter { $0.schema == schema },
       userTypes: found.userTypes?.filter { $0.schema == schema })
   }
@@ -472,7 +521,7 @@ struct WorkspaceLeftSidebarContent: View {
   /// `matches` resolved against `catalog`, with the sequences and types kept. A position or
   /// column offset out of range (arrays changed in place since) is skipped.
   private func entities(
-    _ matches: SidebarEntityIndex.Matches, in catalog: PublicCatalog,
+    _ matches: SidebarEntityIndex.Matches, in catalog: PublicCatalog, partitions: [Int: [Int]],
     sequences: [DatabaseSequence]?, userTypes: [DatabaseUserType]?
   ) -> PublicEntities {
     let tables = catalog.tables
@@ -489,7 +538,8 @@ struct WorkspaceLeftSidebarContent: View {
         let table = tables[match.position]
         return FilteredTable(
           source: table, columns: columns(match.columns, of: table.columns),
-          expandForMatch: match.expandForMatch)
+          expandForMatch: match.expandForMatch,
+          partitions: Partitions(of: match, tables: tables, map: partitions))
       },
       views: matches.views.compactMap { match in
         guard views.indices.contains(match.position) else { return nil }
@@ -609,11 +659,22 @@ struct WorkspaceLeftSidebarContent: View {
     SidebarFolder.member(schema: view.schema, name: view.name)
   }
 
-  /// Tables and views of `schema` the sidebar lists, as folder members (what a drop may move)
+  /// Tables and views of `schema` the sidebar lists, as folder members (what a drop may move). A
+  /// partition listed under its parent is not one: a folder never shows it.
   private func listedMembers(in schema: String) -> Set<String> {
     guard isListed(schema) else { return [] }
-    var members = Set(
-      workspaceManager.databaseTables.filter { $0.schema == schema }.map(Self.member))
+    let tables = workspaceManager.databaseTables
+    var inSchema = tables.filter { $0.schema == schema }
+    if inSchema.contains(where: { $0.parentID != nil }) {
+      let byID = Dictionary(tables.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+      inSchema.removeAll { table in
+        guard let parent = table.parentID.flatMap({ byID[$0] }), parent.id != table.id else {
+          return false
+        }
+        return parent.isTemporary || isListed(parent.schema)
+      }
+    }
+    var members = Set(inSchema.map(Self.member))
     members.formUnion(
       workspaceManager.databaseViews.filter { $0.schema == schema }.map(Self.member))
     return members
@@ -1113,10 +1174,41 @@ struct WorkspaceLeftSidebarContent: View {
     perform(.copyName, name: name, schema: schema, open: {})
   }
 
-  /// `folderID` is the folder listing the row, nil when ungrouped. A temporary table row on
-  /// MySQL offers nothing that reads its structure or columns (`rowReadsStructure`).
+  /// The table's row and, once opened, its partitions' rows (a filter hit on a partition opens
+  /// its parents down to it, and only them). The badge counts the partitions it lists: those a
+  /// filter revealed, else every one. The click only flips the open state.
   private func tableRow(
     _ table: FilteredTable, showsSchema: Bool, folderIndex: FolderIndex?, folderID: UUID? = nil
+  ) -> some View {
+    let partitions = table.partitions
+    let isOpen = partitions?.revealed != nil || openedPartitions.contains(table.id)
+    return VStack(alignment: .leading, spacing: 0) {
+      tableRowView(
+        table, showsSchema: showsSchema, folderIndex: folderIndex, folderID: folderID,
+        partitionCount: partitions.map { $0.revealed?.count ?? $0.positions.count },
+        arePartitionsOpen: isOpen)
+      if let partitions, isOpen {
+        VStack(alignment: .leading, spacing: 0) {
+          // A partition lists under its parent only: no folder actions
+          ForEach(partitions.rows) { partition in
+            // A partition in another schema than its parent names it, even in a schema group
+            AnyView(
+              tableRow(
+                partition,
+                showsSchema: showsSchema || partition.source.schema != table.source.schema,
+                folderIndex: nil))
+          }
+        }
+        .padding(.leading, Spacing.lg)
+      }
+    }
+  }
+
+  /// `folderID` is the folder listing the row, nil when ungrouped. A temporary table row on
+  /// MySQL offers nothing that reads its structure or columns (`rowReadsStructure`).
+  private func tableRowView(
+    _ table: FilteredTable, showsSchema: Bool, folderIndex: FolderIndex?, folderID: UUID?,
+    partitionCount: Int?, arePartitionsOpen: Bool
   ) -> some View {
     let readsStructure = SidebarSectionModel.rowReadsStructure(
       table.source, databaseType: connectionDatabaseType)
@@ -1130,6 +1222,15 @@ struct WorkspaceLeftSidebarContent: View {
       onToggle: {
         if !table.expandForMatch {
           workspaceManager.toggleTableExpansion(tableId: table.id)
+        }
+      },
+      partitionCount: partitionCount,
+      arePartitionsOpen: arePartitionsOpen,
+      onTogglePartitions: {
+        // A filter keeps the partitions it hit on open
+        guard table.partitions?.revealed == nil else { return }
+        withAnimation(.snappy(duration: 0.2)) {
+          if !openedPartitions.insert(table.id).inserted { openedPartitions.remove(table.id) }
         }
       },
       onOpen: { openTable(table.source) },

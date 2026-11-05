@@ -24,6 +24,10 @@ nonisolated enum SidebarEntityFilter {
     case exact = 6
   }
 
+  /// Least `score` of a literal hit (the keyword appears as typed), above an abbreviation or a
+  /// typo
+  static let literalScore = Rank.contains.rawValue
+
   /// Whitespace-separated terms. Empty query matches everything.
   static func keywords(in query: String) -> [String] {
     query.split(whereSeparator: \.isWhitespace).map { String($0).lowercased() }

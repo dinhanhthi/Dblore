@@ -99,12 +99,48 @@ nonisolated enum StagedIntegerKey {
         AND c.COLUMN_NAME = \(columnLiteral)
         """
     }
+    if dialect == .postgresql {
+      return postgresLookupSQL(
+        literals: (schemaLiteral, tableLiteral, columnLiteral),
+        maxOf: (quotedColumn, quotedRelation))
+    }
     return """
       SELECT (c.column_default IS NOT NULL) AS has_default, \(maxSQL) AS max_id \
       FROM information_schema.columns AS c \
       WHERE c.table_schema = \(schemaLiteral) AND c.table_name = \(tableLiteral) \
       AND c.column_name = \(columnLiteral)
       """
+  }
+
+  /// The PostgreSQL lookup runs on the user's session with the user's search_path, so it reads
+  /// pg_catalog directly and names pg_catalog for every catalog name, function, operator and cast
+  /// type: `information_schema.columns` is SQL whose helpers are parsed with the caller's
+  /// search_path on PostgreSQL 13 and older. `has_default` is `column_default IS NOT NULL` as
+  /// information_schema reports it: a pg_attrdef row, except for a generated column
+  /// (`attgenerated` is PostgreSQL 12+, read through to_jsonb so older servers see no key). The
+  /// row covers the relation kinds information_schema.columns lists. The MAX'd relation is the
+  /// user's table, as the user named it (quoted literals and identifiers from the caller).
+  private static func postgresLookupSQL(
+    literals: (schema: String, table: String, column: String),
+    maxOf: (column: String, relation: String)
+  ) -> String {
+    """
+    SELECT (d.adbin IS NOT NULL \
+    AND COALESCE(pg_catalog.to_jsonb(a) OPERATOR(pg_catalog.->>) 'attgenerated', '') \
+    OPERATOR(pg_catalog.=) '') AS has_default, \
+    (SELECT pg_catalog.max(\(maxOf.column)) FROM \(maxOf.relation)) AS max_id \
+    FROM pg_catalog.pg_attribute a \
+    JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) a.attrelid \
+    JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace \
+    LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid OPERATOR(pg_catalog.=) a.attrelid \
+    AND d.adnum OPERATOR(pg_catalog.=) a.attnum \
+    WHERE n.nspname OPERATOR(pg_catalog.=) \(literals.schema) \
+    AND c.relname OPERATOR(pg_catalog.=) \(literals.table) \
+    AND a.attname OPERATOR(pg_catalog.=) \(literals.column) \
+    AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped \
+    AND c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'v', 'f', 'p']::pg_catalog."char"[]) \
+    AND NOT pg_catalog.pg_is_other_temp_schema(n.oid)
+    """
   }
 
   /// A lookup row `(has_default, max_id)`. Nil when the row is missing or not those types.

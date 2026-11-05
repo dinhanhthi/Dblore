@@ -15,7 +15,7 @@ struct PostgresColumnTypeQueryTests {
   @Test("The catalog statement binds the table OID and attnums, never result names")
   func bindsOriginNotNames() async throws {
     let hostile = "v'); DROP TABLE accounts; --"
-    // information_schema row for attnum 3: numeric(12,4)
+    // Catalog row for attnum 3: numeric(12,4)
     let session = FakeDatabaseSession(
       capabilities: .contract(), columns: [],
       rows: [
@@ -40,12 +40,63 @@ struct PostgresColumnTypeQueryTests {
     #expect(enriched.map(\.origin) == columns.map(\.origin))
     #expect(session.queries.count == 1)
     let sql = try #require(session.queries.first)
-    #expect(sql.contains("$1::oid"))
+    #expect(sql.contains("$1::pg_catalog.oid"))
     #expect(sql.contains("$2"))
-    for name in [hostile, "row_key", "other_schema", "ledger", "'"] {
+    for name in [hostile, "row_key", "other_schema", "ledger"] {
       #expect(!sql.contains(name), "statement carries \(name)")
     }
+    // The only literals are the statement's own fixed ones (type names, typmod and relkind
+    // codes, privilege lists): none can carry a result name
+    let fixed: Set<String> = [
+      "ARRAY", "USER-DEFINED", "pg_catalog", "-1", "d", "r", "v", "f", "p", "USAGE",
+      "SELECT, INSERT, UPDATE, REFERENCES",
+    ]
+    let literals = SQLTokenizer.tokens(sql, dialect: .postgresql).filter {
+      $0.kind != .word && $0.kind != .symbol && $0.kind != .quotedIdentifier
+    }
+    #expect(literals.allSatisfy { $0.kind == .string && fixed.contains($0.text) })
     #expect(session.statementBinds == [[.text("16400"), .text("{1,3}")]])
+  }
+
+  @Test("A masked column stays masked after enrichment; a cache hit takes the incoming flag")
+  func maskedFlagSurvivesEnrichmentAndCache() async throws {
+    // Catalog rows for attnums 1 (int4) and 3 (numeric(12,4))
+    let session = FakeDatabaseSession(
+      capabilities: .contract(), columns: [],
+      rows: [
+        [.int(1), .string("integer"), .null, .int(32), .int(0), .null, .null, .string("int4")],
+        [
+          .int(3), .string("numeric"), .null, .int(12), .int(4), .null, .null,
+          .string("numeric"),
+        ],
+      ],
+      slowQueries: false)
+    let columns = [
+      ColumnInfo(name: "card", type: "NUMERIC", origin: origin(3), masked: true),
+      ColumnInfo(name: "id", type: "INT4", origin: origin(1)),
+      ColumnInfo(name: "note", type: "TEXT", masked: true),
+    ]
+
+    let enriched = try await introspector.enrichedColumns(
+      columns, query: "SELECT * FROM ledger", in: session)
+
+    #expect(enriched.map(\.type) == ["NUMERIC(12,4)", "INTEGER(32,0)", "TEXT"])
+    #expect(enriched.map(\.masked) == [true, false, true])
+
+    // The cache keeps types only: a rule edit since the read (flags flipped) wins on a hit
+    var cache = ColumnTypeCache()
+    cache.store(driver: columns, enriched: enriched, readAt: cache.generation)
+    let incoming = [
+      ColumnInfo(name: "card", type: "NUMERIC", origin: origin(3)),
+      ColumnInfo(name: "id", type: "INT4", origin: origin(1), masked: true),
+    ]
+    let cached = try #require(cache.columns(incoming))
+    #expect(cached.map(\.type) == ["NUMERIC(12,4)", "INTEGER(32,0)"])
+    #expect(cached.map(\.masked) == [false, true])
+  }
+
+  private func origin(_ attributeNumber: Int) -> ColumnOrigin {
+    ColumnOrigin(tableID: .postgresql(oid: 16_400), columnOrdinal: attributeNumber)
   }
 
   // MARK: - Live (CI only)

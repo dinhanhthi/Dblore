@@ -108,6 +108,21 @@ struct StructureEditorView: View {
       footer
     }
     .background(Color.cardBackground)
+    .confirmationDialog(
+      "Convert existing data?",
+      isPresented: Binding(
+        get: { model.isConfirmingConvert }, set: { if !$0 { model.cancelConvert() } }),
+      titleVisibility: .visible
+    ) {
+      Button("Convert and Apply", role: .destructive) {
+        Task { await model.confirmConvert() }
+      }
+      Button("Cancel", role: .cancel) { model.cancelConvert() }
+    } message: {
+      Text(
+        "Converting rewrites every row of the table, and it fails if any data does not fit "
+          + "the new character set.")
+    }
   }
 
   // MARK: - Sections
@@ -248,36 +263,102 @@ struct StructureEditorView: View {
 
 // MARK: - Table
 
-/// The table's name (a rename) and comment (PostgreSQL and MySQL), staged like the other changes
+/// The table's name (a rename) and comment (PostgreSQL and MySQL), and on MySQL its options
+/// (character set, collation, AUTO_INCREMENT, Convert existing data), staged like the other
+/// changes. The character set lists load after the table: until then the dropdowns show the
+/// loaded values, disabled.
 private struct StructureTableSection: View {
   let model: StructureEditorModel
 
   var body: some View {
     SettingsGroupCard(title: "Table") {
-      HStack(alignment: .top, spacing: Spacing.md) {
-        labeled("Name") {
-          field(
-            model.workingTableName, isEdited: model.workingTableName != model.table,
-            placeholder: "",
-            takesFocus: {
-              // Once: a reload after Apply shows the field again
-              let focuses = model.focusesTableName
-              model.focusesTableName = false
-              return focuses
-            }
-          ) { model.renameTable(to: $0) }
-        }
-        .frame(width: 260)
-        if model.supportsTableComment {
-          labeled("Comment") {
-            field(
-              model.workingComment ?? "",
-              isEdited: model.workingComment != model.structure?.comment, placeholder: "None"
-            ) { model.setTableComment($0) }
-          }
+      VStack(alignment: .leading, spacing: Spacing.md) {
+        nameAndComment
+        if model.supportsTableOptions {
+          Text("Table options")
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+          tableOptions
         }
       }
     }
+  }
+
+  private var nameAndComment: some View {
+    HStack(alignment: .top, spacing: Spacing.md) {
+      labeled("Name") {
+        field(
+          model.workingTableName, isEdited: model.workingTableName != model.table,
+          placeholder: "",
+          takesFocus: {
+            // Once: a reload after Apply shows the field again
+            let focuses = model.focusesTableName
+            model.focusesTableName = false
+            return focuses
+          }
+        ) { model.renameTable(to: $0) }
+      }
+      .frame(width: 260)
+      if model.supportsTableComment {
+        labeled("Comment") {
+          field(
+            model.workingComment ?? "",
+            isEdited: model.workingComment != model.structure?.comment, placeholder: "None"
+          ) { model.setTableComment($0) }
+        }
+      }
+    }
+  }
+
+  /// Why the character set dropdowns cannot be used yet, or nil
+  private var listsUnavailableReason: String? {
+    if model.characterSets != nil { return nil }
+    return model.characterSetsError ?? "Loading the server's character sets..."
+  }
+
+  private var tableOptions: some View {
+    let loaded = model.structure?.tableOptions
+    let collations =
+      model.workingCharacterSet.flatMap { model.characterSets?.characterSet(named: $0) }?
+      .collations ?? []
+    return HStack(alignment: .bottom, spacing: Spacing.md) {
+      labeled("Character set") {
+        CapsuleDropdown(
+          title: model.workingCharacterSet ?? "None", width: 180,
+          accessibilityLabel: "Table character set",
+          options: model.characterSets?.characterSets.map(\.name) ?? [], optionTitle: { $0 },
+          isSelected: { $0 == model.workingCharacterSet },
+          onSelect: { model.setTableCharset($0) }
+        )
+        .disabled(model.isReadOnly || model.characterSets == nil)
+      }
+      labeled("Collation") {
+        CapsuleDropdown(
+          title: model.workingCollation ?? "None", width: 240,
+          accessibilityLabel: "Table collation", options: collations, optionTitle: { $0 },
+          isSelected: { $0 == model.workingCollation },
+          onSelect: { model.setTableCollation($0) }
+        )
+        .disabled(model.isReadOnly || model.characterSets == nil)
+      }
+      labeled("AUTO_INCREMENT") {
+        field(
+          model.workingAutoIncrement.map(String.init) ?? "",
+          isEdited: model.workingAutoIncrement != loaded?.autoIncrement, placeholder: "None"
+        ) { model.setAutoIncrement($0) }
+      }
+      .frame(width: 140)
+      Toggle(
+        "Convert existing data",
+        isOn: Binding(
+          get: { model.convertsTableData }, set: { model.setConvertsTableData($0) })
+      )
+      .toggleStyle(.checkbox)
+      .font(.small)
+      .help("Also converts every character column to the chosen character set")
+      .disabled(model.isReadOnly || model.characterSets == nil)
+    }
+    .help(listsUnavailableReason ?? "")
   }
 
   private func labeled(

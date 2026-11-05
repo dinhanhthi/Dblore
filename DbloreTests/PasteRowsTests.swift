@@ -160,6 +160,19 @@ struct PasteRowsTests {
     #expect(viewModel.dataViewer?.changeSet == nil)
   }
 
+  @Test("A view target refuses the paste: insert through a view is not supported")
+  func viewTargetRefusesPaste() async {
+    let viewModel = makeViewModel()
+    viewModel.editorResult?.editTarget = EditTarget(
+      qualifiedName: "public.users", tableID: Self.usersID, primaryKeyColumns: ["id"],
+      viewBase: ViewBaseMap(
+        baseOID: 2, basePrimaryKey: [1], definitionVersion: "1", columns: ["id": 1],
+        primaryKeyColumns: ["id"]))
+
+    #expect(await paste(viewModel, "2\tneo\t30\ttrue") == NotebookViewModel.viewInsertUnsupported)
+    #expect(viewModel.dataViewer?.changeSet == nil)
+  }
+
   private static let usersID = TableRef.postgresql(oid: 1)
 
   private func inserts(_ viewModel: NotebookViewModel) -> [[String: CellValue]] {
