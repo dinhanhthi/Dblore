@@ -419,6 +419,22 @@ struct RowsBeforeCatalogTests {
     await manager.disconnect()
   }
 
+  @Test("A data viewer page of a quoted PostgreSQL relation gets the catalog's types")
+  func dataViewerPageEnriched() async throws {
+    let catalog = TypeCatalog([1: "NUMERIC(10,2)"])
+    let (manager, viewModel) = try await Self.postgres(driverType: "numeric", catalog: catalog)
+    var state = DataViewerState(schema: "public", name: "payments", orderColumns: ["amount"])
+    state.databaseType = .postgresql
+    viewModel.dataViewer = state
+    #expect(state.pageSQL.contains("FROM \"public\".\"payments\""))
+    await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
+    let page = try #require(viewModel.editorResult)
+    #expect(!page.typesPending)
+    #expect(page.columns.map(\.type) == ["NUMERIC(10,2)"])
+    await manager.disconnect()
+  }
+
   @Test("A cached type is not shown once the driver reports another base type")
   func cachedTypeNeedsSameDriverType() async throws {
     let catalog = TypeCatalog([1: "BIGINT"])

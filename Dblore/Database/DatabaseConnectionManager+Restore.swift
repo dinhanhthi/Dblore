@@ -435,6 +435,9 @@ nonisolated struct SQLRestorePlan: Sendable {
     if statement.changesPrivileges || statement.affectsAllRows {
       throw refusal(index, notWritten(tokens))
     }
+    if engine == .mysql, let reason = setNamesRefusal(statement.text, tokens) {
+      throw refusal(index, reason)
+    }
     switch statement.kind {
     case .dml:
       if let reason = dataRefusal(tokens, engine: engine) { throw refusal(index, reason) }
@@ -527,6 +530,26 @@ nonisolated struct SQLRestorePlan: Sendable {
   private static func notWritten(_ tokens: [SQLToken]) -> String {
     let lead = tokens.prefix(2).map { $0.keyword ?? $0.text }.joined(separator: " ")
     return "a Dblore dump never writes this \(lead) statement"
+  }
+
+  /// The refusal reason for a MySQL `SET NAMES`, also inside a version comment, other than the
+  /// dump's own `SET NAMES utf8mb4;` (any other spelling, charset or COLLATE): it names the
+  /// statement's text (whitespace runs shown as one space, cut at 100 characters). Nil for
+  /// anything else. Nothing is rewritten: the session already pinned utf8mb4 on connect.
+  private static func setNamesRefusal(_ text: String, _ tokens: [SQLToken]) -> String? {
+    guard let first = tokens.first, first.isWord("SET") || first.kind == .executableComment,
+      !mysqlSettingTokens.contains(tokens)
+    else { return nil }
+    let tokenizer = SQLTokenizer(dialect: .mysql)
+    let opened = tokenizer.tokens(withVersionCommentsOpened(text, tokenizer))
+    guard opened.count >= 2, opened[0].isWord("SET"), opened[1].isWord("NAMES") else {
+      return nil
+    }
+    var shown = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    if shown.count > 100 { shown = shown.prefix(100) + "…" }
+    return "\"\(shown)\" sets the connection's character set, but Dblore restores only the "
+      + "statements its own dumps write (SET NAMES utf8mb4;), and this session already uses "
+      + "utf8mb4"
   }
 
   private static func refusal(_ index: Int, _ reason: String) -> SQLRestoreError {

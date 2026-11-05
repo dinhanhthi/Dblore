@@ -25,7 +25,7 @@ extension DatabaseConnectionManager {
     case .mysql: return await resolveMySQLOrigins(columns)
     case .sqlite, .duckdb, .mongodb, nil: return columns
     }
-    guard !columns.isEmpty, Self.singleTableName(in: query) != nil else { return columns }
+    guard !columns.isEmpty, Self.enrichesColumnTypes(query) else { return columns }
     return await freshColumnTypes(columns, query: query) ?? columns
   }
 
@@ -64,7 +64,7 @@ extension DatabaseConnectionManager {
   /// types for the caller's background read (`freshColumnTypes`): a PostgreSQL read of one
   /// table. False enriches now (other engines: MySQL origins resolve on the critical path).
   func defersColumnTypes(_ columns: [ColumnInfo], query: String) -> Bool {
-    databaseType == .postgresql && !columns.isEmpty && Self.singleTableName(in: query) != nil
+    databaseType == .postgresql && !columns.isEmpty && Self.enrichesColumnTypes(query)
   }
 
   /// `columns` (as the driver reported them) with their cached PostgreSQL types, or nil: what

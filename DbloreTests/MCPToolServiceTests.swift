@@ -643,6 +643,39 @@ struct MCPToolServiceTests {
     await pool.closeAll()
   }
 
+  @Test("run_query of one quoted PostgreSQL relation returns the catalog's column types")
+  func quotedRelationEnrichedTypes() async throws {
+    let origin = ColumnOrigin(tableID: .postgresql(oid: 42), columnOrdinal: 1)
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      columns: [ColumnInfo(name: "amount", type: "numeric", origin: origin)],
+      rows: [[.string("1.50")]])
+    let entry = Self.entry()
+    let id = entry.id
+    let pool = MCPConnectionPool(
+      entry: { $0 == id ? entry : nil }, sessionFactory: factory,
+      certificates: InMemoryClientCertificateStore(), sshCredentials: InMemorySSHCredentialStore(),
+      knownHosts: InMemorySSHKnownHostStore())
+    // The catalog read answered in place of the server
+    try await pool.withManager(for: id) { manager in
+      await manager.setColumnTypeReadHook { columns in
+        columns.map {
+          ColumnInfo(name: $0.name, type: "NUMERIC(10,2)", origin: $0.origin)
+        }
+      }
+    }
+    let historySwitch = historySwitch
+    let service = MCPToolService(
+      connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+      source: MCPSQLReadSource(pool: pool), recorder: history,
+      historyEnabled: { historySwitch.enabled }, gate: gate)
+    let read = await runQuery(service, id, "SELECT amount FROM \"public\".\"payments\"")
+    await pool.closeAll()
+
+    #expect(!read.isError, "\(read.text)")
+    #expect(read.text.contains(#""type":"NUMERIC(10,2)""#), "\(read.text)")
+  }
+
   @Test("run_query writes a naive column's wall clock and a zoned column as ISO 8601 UTC")
   func sqlReadSourceDateShapes() async throws {
     // 2026-10-15 12:00:00.123 UTC

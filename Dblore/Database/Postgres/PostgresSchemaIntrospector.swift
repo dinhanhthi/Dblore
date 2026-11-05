@@ -665,7 +665,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   func enrichedColumns(
     _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
   ) async throws -> [ColumnInfo] {
-    guard !columns.isEmpty, DatabaseConnectionManager.singleTableName(in: query) != nil
+    guard !columns.isEmpty, DatabaseConnectionManager.enrichesColumnTypes(query)
     else { return columns }
 
     var attributeNumbers: [UInt32: Set<Int>] = [:]

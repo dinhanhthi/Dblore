@@ -18,10 +18,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   private var isTerminating = false
   /// Files that launch the app arrive before this is set
   private var didFinishLaunching = false
+  /// File opens whose window is not made yet
+  private var fileOpensInFlight = 0
+  /// The first screen wake or activation after launch (see `watchForMissingLaunchWindow`)
+  private var missingLaunchWindowObservers: [(NotificationCenter, NSObjectProtocol)] = []
+  private var didCheckMissingLaunchWindow = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     PerfSignpost.event("launch.didFinish")
     didFinishLaunching = true
+    // Read now: restore clears it once its windows are open
+    watchForMissingLaunchWindow(plansWelcome: !LaunchRestorer.isRestoring)
     NotificationCenter.default.addObserver(
       forName: NSWindow.willCloseNotification, object: nil, queue: .main
     ) { [weak self] note in
@@ -65,6 +72,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
   }
 
+  /// A launch while the display sleeps is not activated, so SwiftUI makes no window: Welcome
+  /// opens on the first screen wake or activation instead, if no window came by then
+  /// (`opensMissingLaunchWindow`). A normal launch already has its window: the check is a no-op.
+  private func watchForMissingLaunchWindow(plansWelcome: Bool) {
+    guard !SessionManager.isRunningAsTestHost else { return }
+    let triggers: [(NotificationCenter, Notification.Name)] = [
+      (NSWorkspace.shared.notificationCenter, NSWorkspace.screensDidWakeNotification),
+      (.default, NSApplication.didBecomeActiveNotification),
+    ]
+    for (center, name) in triggers {
+      let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.checkMissingLaunchWindow(plansWelcome: plansWelcome)
+        }
+      }
+      missingLaunchWindowObservers.append((center, token))
+    }
+  }
+
+  /// Taken once, on the first trigger. The observers go at once: opening Welcome activates the app.
+  @MainActor
+  private func checkMissingLaunchWindow(plansWelcome: Bool) {
+    let alreadyFired = didCheckMissingLaunchWindow
+    didCheckMissingLaunchWindow = true
+    for (center, token) in missingLaunchWindowObservers {
+      center.removeObserver(token)
+    }
+    missingLaunchWindowObservers = []
+    // SwiftUI may make its first window on activation itself: decide one turn later
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      let opens = LaunchSessionRestore.opensMissingLaunchWindow(
+        plansWelcome: plansWelcome,
+        hasDocumentWindow: NSApp.windows.contains(where: \.isOpenDbloreDocumentWindow),
+        isFileOpenPending: fileOpensInFlight > 0
+          || WorkspaceWindowManager.shared.pendingWorkspaceId != nil,
+        isTerminating: isTerminating, alreadyFired: alreadyFired)
+      guard opens else { return }
+      NewWindowStore.shared.openWelcomeWindow(frame: .zero)
+    }
+  }
+
   func applicationWillTerminate(_ notification: Notification) {
     guard !SessionManager.isRunningAsTestHost else { return }
     MCPServerController.shared.stopForQuit()
@@ -103,7 +152,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       }
     }
 
+    fileOpensInFlight += 1
     Task { @MainActor in
+      defer { fileOpensInFlight -= 1 }
       // Open workspace files directly
       // A locked workspace's window opens first with its locked placeholder and asks there; a
       // file that does not open says why in a toast

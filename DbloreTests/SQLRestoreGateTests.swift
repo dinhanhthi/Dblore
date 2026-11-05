@@ -254,6 +254,31 @@ struct SQLRestoreGateTests {
   }
 
   @Test(
+    "A SET NAMES other than the dump's is refused with its statement number and text",
+    arguments: [
+      ("SET NAMES utf8;", "SET NAMES utf8"),
+      ("set names 'utf8mb4';", "set names 'utf8mb4'"),
+      ("SET NAMES utf8mb4 COLLATE utf8mb4_bin;", "SET NAMES utf8mb4 COLLATE utf8mb4_bin"),
+      ("SET\tNAMES\n  \"utf8mb4\";", "SET NAMES \"utf8mb4\""),
+      ("/*!40101 SET NAMES utf8 */;", "/*!40101 SET NAMES utf8 */"),
+      ("/*!40101 SET NAMES utf8mb4 */;", "/*!40101 SET NAMES utf8mb4 */"),
+    ])
+  func setNamesRefused(statement: String, shown: String) {
+    let script = Self.header(.mysql) + "\nCREATE TABLE a (id int);\n" + statement + "\n"
+    let error = Self.planError(script, .mysql)
+    guard case .statementRefused(let index, _)? = error else {
+      Issue.record("Expected \(statement) to be refused")
+      return
+    }
+    #expect(index == 1)
+    #expect(
+      error?.localizedDescription
+        == "Statement 2 is not part of a SQL dump: \"\(shown)\" sets the connection's character "
+        + "set, but Dblore restores only the statements its own dumps write (SET NAMES utf8mb4;), "
+        + "and this session already uses utf8mb4. Nothing was executed.")
+  }
+
+  @Test(
     "DDL and DML a dump never writes are refused: roles, extensions, drops, unfiltered writes",
     arguments: [
       (DatabaseType.postgresql, "CREATE ROLE backdoor SUPERUSER LOGIN PASSWORD 'x';"),
