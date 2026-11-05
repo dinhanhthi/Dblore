@@ -95,13 +95,31 @@ struct TableFilter: Codable, Hashable {
 
   var isEmpty: Bool { conditions.isEmpty }
 
+  /// How `whereClause` writes PostgreSQL: `qualified` (the SQL the app runs) names
+  /// `pg_catalog`'s operators and casts, so nothing resolves through the user's `search_path`;
+  /// `plain` is the readable text shown to the user (join builder, highlight summary). Other
+  /// dialects write the same text either way.
+  nonisolated enum Form: Sendable {
+    case plain
+    case qualified
+  }
+
   /// `a AND b OR c` over the complete conditions with literals escaped for `dialect`,
   /// nil when no condition is complete. The first complete row ignores its connector.
-  /// A `qualifier` (a table alias) prefixes every column: `"o"."c"`.
-  nonisolated func whereClause(dialect: SQLDialect, qualifier: String? = nil) -> String? {
+  /// A `qualifier` (a table alias) prefixes every column: `"o"."c"`. `columnTypes` (column name
+  /// → schema type text, `DatabaseColumn.type`) picks the operand kind of a qualified
+  /// comparison; a column without one qualifies.
+  nonisolated func whereClause(
+    dialect: SQLDialect, qualifier: String? = nil, columnTypes: [String: String] = [:],
+    form: Form = .qualified
+  ) -> String? {
     var clause = ""
     for condition in conditions {
-      guard let sql = Self.sql(for: condition, dialect: dialect, qualifier: qualifier) else {
+      guard
+        let sql = Self.sql(
+          for: condition, dialect: dialect, qualifier: qualifier, columnTypes: columnTypes,
+          form: form)
+      else {
         continue
       }
       if !clause.isEmpty {
@@ -117,17 +135,25 @@ struct TableFilter: Codable, Hashable {
     do {
       return try dialect.quoteIdentifier(name)
     } catch {
-      return CellUpdateStatement.quoteIdentifier(name)
+      return CellUpdateStatement.quoteIdentifier(name, dialect: dialect)
     }
   }
 
   private nonisolated static func sql(
-    for condition: FilterCondition, dialect: SQLDialect, qualifier: String?
+    for condition: FilterCondition, dialect: SQLDialect, qualifier: String?,
+    columnTypes: [String: String], form: Form
   ) -> String? {
     guard condition.isComplete else { return nil }
     let prefix = qualifier.map { quotedIdentifier($0, dialect: dialect) + "." } ?? ""
     let column = prefix + quotedIdentifier(condition.column, dialect: dialect)
     let value = dialect.literal(.string(condition.value))
+    let escape = condition.likeEscape.map { dialect.literal(.string($0)) }
+    if form == .qualified, dialect == .postgresql {
+      return qualifiedSQL(
+        op: condition.op, column: column, value: value, escape: escape,
+        items: inItems(condition.value, dialect: dialect),
+        operand: SQLOperandKind(columnType: columnTypes[condition.column]), dialect: dialect)
+    }
     switch condition.op {
     case .equals: return "\(column) = \(value)"
     case .notEquals: return "\(column) <> \(value)"
@@ -138,16 +164,49 @@ struct TableFilter: Codable, Hashable {
     case .isNull: return "\(column) IS NULL"
     case .isNotNull: return "\(column) IS NOT NULL"
     case .like, .notLike, .ilike, .notIlike:
-      let escape = condition.likeEscape.map { dialect.literal(.string($0)) }
       return likeSQL(
         column: column, value: value, escape: escape, op: condition.op, dialect: dialect)
     case .in:
-      let items = condition.value.split(separator: ",")
-        .map { $0.trimmingCharacters(in: .whitespaces) }
-        .filter { !$0.isEmpty }
+      let list = inItems(condition.value, dialect: dialect)
+      guard !list.isEmpty else { return nil }
+      return "\(column) IN (\(list.joined(separator: ", ")))"
+    }
+  }
+
+  /// The comma-separated `in` value as literals, trimmed, empty items dropped
+  private nonisolated static func inItems(_ value: String, dialect: SQLDialect) -> [String] {
+    value.split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+      .map { dialect.literal(.string($0)) }
+  }
+
+  /// PostgreSQL through the `SQLDialect` qualification helpers: `OPERATOR(pg_catalog.op)`
+  /// (bare for a denylisted extension `operand`), `IN` as an OR chain, `LIKE` / `ILIKE` as
+  /// `::pg_catalog.text OPERATOR(pg_catalog.~~)` with `pg_catalog.like_escape` for an escape
+  private nonisolated static func qualifiedSQL(
+    op: FilterOperator, column: String, value: String, escape: String?, items: [String],
+    operand: SQLOperandKind, dialect: SQLDialect
+  ) -> String? {
+    func compare(_ comparison: SQLComparison) -> String {
+      dialect.comparison(column, comparison, value, operand: operand)
+    }
+    switch op {
+    case .equals: return compare(.equal)
+    case .notEquals: return compare(.notEqual)
+    case .lessThan: return compare(.less)
+    case .lessThanOrEqual: return compare(.lessOrEqual)
+    case .greaterThan: return compare(.greater)
+    case .greaterThanOrEqual: return compare(.greaterOrEqual)
+    case .isNull: return "\(column) IS NULL"
+    case .isNotNull: return "\(column) IS NOT NULL"
+    case .like, .notLike, .ilike, .notIlike:
+      return dialect.like(
+        column: column, pattern: value, escape: escape, negated: op == .notLike || op == .notIlike,
+        caseInsensitive: op == .ilike || op == .notIlike)
+    case .in:
       guard !items.isEmpty else { return nil }
-      let list = items.map { dialect.literal(.string($0)) }.joined(separator: ", ")
-      return "\(column) IN (\(list))"
+      return dialect.inList(column, items, operand: operand)
     }
   }
 

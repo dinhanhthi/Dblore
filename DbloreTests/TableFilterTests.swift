@@ -26,19 +26,19 @@ struct TableFilterTests {
   }
 
   @Test(
-    "Every operator on PostgreSQL",
+    "Every operator on PostgreSQL names pg_catalog",
     arguments: [
-      (FilterOperator.equals, #""c" = 'v'"#),
-      (.notEquals, #""c" <> 'v'"#),
-      (.like, #""c"::text LIKE 'v'"#),
-      (.notLike, #""c"::text NOT LIKE 'v'"#),
-      (.ilike, #""c"::text ILIKE 'v'"#),
-      (.notIlike, #""c"::text NOT ILIKE 'v'"#),
-      (.lessThan, #""c" < 'v'"#),
-      (.lessThanOrEqual, #""c" <= 'v'"#),
-      (.greaterThan, #""c" > 'v'"#),
-      (.greaterThanOrEqual, #""c" >= 'v'"#),
-      (.in, #""c" IN ('v')"#),
+      (FilterOperator.equals, #""c" OPERATOR(pg_catalog.=) 'v'"#),
+      (.notEquals, #""c" OPERATOR(pg_catalog.<>) 'v'"#),
+      (.like, #""c"::pg_catalog.text OPERATOR(pg_catalog.~~) 'v'"#),
+      (.notLike, #""c"::pg_catalog.text OPERATOR(pg_catalog.!~~) 'v'"#),
+      (.ilike, #""c"::pg_catalog.text OPERATOR(pg_catalog.~~*) 'v'"#),
+      (.notIlike, #""c"::pg_catalog.text OPERATOR(pg_catalog.!~~*) 'v'"#),
+      (.lessThan, #""c" OPERATOR(pg_catalog.<) 'v'"#),
+      (.lessThanOrEqual, #""c" OPERATOR(pg_catalog.<=) 'v'"#),
+      (.greaterThan, #""c" OPERATOR(pg_catalog.>) 'v'"#),
+      (.greaterThanOrEqual, #""c" OPERATOR(pg_catalog.>=) 'v'"#),
+      (.in, #"("c" OPERATOR(pg_catalog.=) 'v')"#),
       (.isNull, #""c" IS NULL"#),
       (.isNotNull, #""c" IS NOT NULL"#),
     ])
@@ -77,13 +77,18 @@ struct TableFilterTests {
 
   @Test("Quotes in the value and the column are escaped")
   func quoteEscaping() {
-    #expect(clause([condition("c", .equals, "o'brien")]) == #""c" = 'o''brien'"#)
-    #expect(clause([condition(#"we"ird"#, .equals, "x")]) == #""we""ird" = 'x'"#)
+    #expect(
+      clause([condition("c", .equals, "o'brien")]) == #""c" OPERATOR(pg_catalog.=) 'o''brien'"#)
+    #expect(
+      clause([condition(#"we"ird"#, .equals, "x")]) == #""we""ird" OPERATOR(pg_catalog.=) 'x'"#)
   }
 
   @Test("in splits on commas, trims and drops empty items")
   func inSplitting() {
-    #expect(clause([condition("c", .in, " a, b ,, c'd ")]) == #""c" IN ('a', 'b', 'c''d')"#)
+    #expect(
+      clause([condition("c", .in, " a, b ,, c'd ")])
+        == #"("c" OPERATOR(pg_catalog.=) 'a' OR "c" OPERATOR(pg_catalog.=) 'b' OR "c" OPERATOR(pg_catalog.=) 'c''d')"#
+    )
     #expect(clause([condition("c", .in, " , ,")]) == nil)
   }
 
@@ -110,13 +115,16 @@ struct TableFilterTests {
       condition("b", .equals, "2", .and),
       condition("c", .equals, "3", .or),
     ]
-    #expect(clause(rows) == #""a" = '1' AND "b" = '2' OR "c" = '3'"#)
+    #expect(
+      clause(rows)
+        == #""a" OPERATOR(pg_catalog.=) '1' AND "b" OPERATOR(pg_catalog.=) '2' OR "c" OPERATOR(pg_catalog.=) '3'"#
+    )
   }
 
   @Test("The first complete row ignores its connector even after skipped rows")
   func firstCompleteRowConnector() {
     let rows = [condition("", .equals, "x"), condition("a", .equals, "1", .or)]
-    #expect(clause(rows) == #""a" = '1'"#)
+    #expect(clause(rows) == #""a" OPERATOR(pg_catalog.=) '1'"#)
   }
 
   @Test("A qualifier prefixes every column with the quoted alias")
@@ -124,7 +132,8 @@ struct TableFilterTests {
     let rows = [condition("c", .equals, "v"), condition("d", .ilike, "w")]
     #expect(
       TableFilter(conditions: rows).whereClause(dialect: .postgresql, qualifier: #"o"x"#)
-        == #""o""x"."c" = 'v' AND "o""x"."d"::text ILIKE 'w'"#)
+        == #""o""x"."c" OPERATOR(pg_catalog.=) 'v' AND "o""x"."d"::pg_catalog.text OPERATOR(pg_catalog.~~*) 'w'"#
+    )
     #expect(
       TableFilter(conditions: rows).whereClause(dialect: .mysql, qualifier: "o")
         == "`o`.`c` = 'v' AND LOWER(CAST(`o`.`d` AS CHAR)) LIKE LOWER('w')")
@@ -137,7 +146,7 @@ struct TableFilterTests {
     ])
     let expected =
       dialect == .postgresql
-      ? #""c" = 'v' OR "d"::text ILIKE 'w'"#
+      ? #""c" OPERATOR(pg_catalog.=) 'v' OR "d"::pg_catalog.text OPERATOR(pg_catalog.~~*) 'w'"#
       : "`c` = 'v' OR LOWER(CAST(`d` AS CHAR)) LIKE LOWER('w')"
     #expect(filter.whereClause(dialect: dialect.dialect, qualifier: nil) == expected)
   }

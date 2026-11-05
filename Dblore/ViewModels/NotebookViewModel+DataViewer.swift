@@ -20,6 +20,12 @@ extension NotebookViewModel {
       if current.rowLocator != rowLocator { dataViewer?.rowLocator = rowLocator }
       let lazyColumns = dataViewerLazyColumns(current, rowLocator: rowLocator)
       if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
+      let columnTypes = dataViewerColumnTypes(current)
+      if current.columnTypes != columnTypes {
+        dataViewer?.columnTypes = columnTypes
+        // The filter's operators changed with the types: count the total again
+        if !current.filter.isEmpty { dataViewer?.totalRows = nil }
+      }
       guard let state = dataViewer else { return }
       let key = state.loadKey
       guard let query = dataViewerQuery(state) else { return }
@@ -127,6 +133,50 @@ extension NotebookViewModel {
       result.columns.map { ($0.name, $0.type, key.contains($0.name)) },
       databaseType: state.databaseType, orderColumns: state.orderColumns,
       binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
+  }
+
+  /// Column name → type text of the viewed table or view from the schema cache
+  /// (`DatabaseColumn.type`), never a catalog read nor a result's column types (`USER-DEFINED`
+  /// for most extension types). Empty while the cache does not have the relation. On PostgreSQL
+  /// a domain column gets its base type from the workspace's cached user types; while they are
+  /// unread (their read is started here, a later page or count uses them) or for a domain they
+  /// leave out (an extension's), the domain name stays and its comparisons are qualified.
+  private func dataViewerColumnTypes(_ state: DataViewerState) -> [String: String] {
+    let columns =
+      databaseTables.first(where: { $0.schema == state.schema && $0.name == state.name })?.columns
+      ?? databaseViews.first(where: { $0.schema == state.schema && $0.name == state.name })?
+      .columns ?? []
+    let types = Dictionary(
+      columns.map { ($0.name, $0.type) }, uniquingKeysWith: { first, _ in first })
+    guard state.databaseType == .postgresql, !types.isEmpty else { return types }
+    guard let userTypes = workspaceUserTypes() else {
+      requestUserTypes()
+      return types
+    }
+    return types.mapValues { Self.domainBaseType($0, userTypes: userTypes, schema: state.schema) }
+  }
+
+  /// `type` (`format_type` text) with a domain followed to its base type, through at most 8
+  /// domains. An array type, a name no cached domain has, and an unqualified name of domains in
+  /// several schemas none of which is `schema` stay unchanged.
+  private static func domainBaseType(
+    _ type: String, userTypes: [DatabaseUserType], schema: String
+  ) -> String {
+    var type = type
+    var seen: Set<String> = []
+    for _ in 0..<8 {
+      guard !type.contains("["), seen.insert(type).inserted else { break }
+      let parts = TypeName.parts(type)
+      guard parts.count <= 2, let name = parts.last?.name else { break }
+      let matches = userTypes.filter {
+        guard case .domain = $0.kind, $0.name == name else { return false }
+        return parts.count == 1 || $0.schema == parts[0].name
+      }
+      let match = matches.count == 1 ? matches.first : matches.first { $0.schema == schema }
+      guard case .domain(let baseType, _, _, _)? = match?.kind else { break }
+      type = baseType
+    }
+    return type
   }
 
   /// True for a data viewer on a MongoDB connection: pages are mongosh commands and the

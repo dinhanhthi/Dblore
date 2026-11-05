@@ -213,7 +213,8 @@ struct SavedFilterStoreTests {
     #expect(saved[0].filter.conditions[0].column == "name")
     #expect(saved[0].filter.conditions[0].value == "1")
     #expect(saved[0].filter.conditions[0].emptyStringIsValue == false)
-    #expect(saved[0].filter.whereClause(dialect: .postgresql) == #""name" = '1'"#)
+    #expect(
+      saved[0].filter.whereClause(dialect: .postgresql) == #""name" OPERATOR(pg_catalog.=) '1'"#)
     defaults.removePersistentDomain(forName: name)
   }
 

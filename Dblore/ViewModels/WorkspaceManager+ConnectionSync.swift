@@ -41,6 +41,13 @@ extension WorkspaceManager {
       return !self.pendingTransaction.isIdle
     }
     viewModel.writeUnlock = writeUnlock
+    viewModel.workspaceUserTypes = { [weak self] in self?.databaseUserTypes.items }
+    // A failed read is retried by the sidebar's Retry or the next schema refresh, not each page.
+    // While a transaction is open nothing is asked, so the next page after it ends asks.
+    viewModel.requestUserTypes = { [weak self] in
+      guard let self, databaseUserTypes.error == nil, !isSchemaPaused else { return }
+      Task { await self.loadUserTypesIfNeeded() }
+    }
   }
 
   /// A tab changed the protection level, commit style, Safe Mode or protected mode of the

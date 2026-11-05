@@ -174,10 +174,11 @@ struct DuckDBDialectSitesTests {
     #expect(filter(op, .duckdb) == expected)
   }
 
-  @Test("PostgreSQL and SQLite LIKE filters are unchanged")
+  @Test("PostgreSQL and SQLite LIKE filters keep their own form")
   func otherFilters() {
-    #expect(filter(.notIlike, .postgresql) == #""c"::text NOT ILIKE 'v'"#)
-    #expect(filter(.like, .postgresql) == #""c"::text LIKE 'v'"#)
+    #expect(
+      filter(.notIlike, .postgresql) == #""c"::pg_catalog.text OPERATOR(pg_catalog.!~~*) 'v'"#)
+    #expect(filter(.like, .postgresql) == #""c"::pg_catalog.text OPERATOR(pg_catalog.~~) 'v'"#)
     #expect(filter(.notIlike, .sqlite) == #""c" NOT LIKE 'v'"#)
     #expect(filter(.notLike, .sqlite) == #""c" NOT LIKE 'v'"#)
   }

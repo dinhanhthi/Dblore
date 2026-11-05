@@ -15,8 +15,8 @@ nonisolated enum SQLDialectError: Error, Equatable, Sendable {
 /// How one database spells identifiers, literals, and a few statement fragments.
 /// `mongodb` is a marker, not a SQL dialect: the text entry points (classifier, splitter,
 /// tokenizer, parameter rewriter) delegate to the mongosh code, `quoteIdentifier` and
-/// `qualified` throw `notSQL`, and the other members return the PostgreSQL value; capability
-/// guards keep those SQL paths unreachable for MongoDB.
+/// `qualified` throw `notSQL`, and the other members return the PostgreSQL value without the
+/// `pg_catalog` qualification; capability guards keep those SQL paths unreachable for MongoDB.
 nonisolated struct SQLDialect: Sendable, Equatable {
   private enum Engine: Sendable, Equatable {
     case postgresql
@@ -284,6 +284,88 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     return escape.map { "\(comparison) ESCAPE \($0)" } ?? comparison
   }
 
+  // MARK: - PostgreSQL qualification
+  // On `.postgresql` these name `pg_catalog`'s operators, functions and built-in types, so a
+  // statement on user data never runs an object planted in a schema on the `search_path`. Every
+  // other dialect (MongoDB too) gets the unqualified text the builders write today.
+
+  /// `lhs op rhs`; PostgreSQL `lhs OPERATOR(pg_catalog.op) rhs` unless `operand` is `.bare`
+  func comparison(
+    _ lhs: String, _ op: SQLComparison, _ rhs: String, operand: SQLOperandKind = .qualified
+  ) -> String {
+    guard engine == .postgresql, operand == .qualified else {
+      return "\(lhs) \(op.rawValue) \(rhs)"
+    }
+    return "\(lhs) OPERATOR(pg_catalog.\(op.rawValue)) \(rhs)"
+  }
+
+  /// `column [NOT] IN (items)`. PostgreSQL has no qualified `IN`: an OR chain of `=` (an AND
+  /// chain of `<>` when `negated`) in parentheses; never `= ANY (ARRAY[...])`, whose quoted items
+  /// would make a `text[]`. `items` are SQL fragments, at least one.
+  func inList(
+    _ column: String, _ items: [String], negated: Bool = false,
+    operand: SQLOperandKind = .qualified
+  ) -> String {
+    guard engine == .postgresql else {
+      return "\(column) \(negated ? "NOT " : "")IN (\(items.joined(separator: ", ")))"
+    }
+    let terms = items.map {
+      comparison(column, negated ? .notEqual : .equal, $0, operand: operand)
+    }
+    return "(" + terms.joined(separator: negated ? " AND " : " OR ") + ")"
+  }
+
+  /// `column [NOT] LIKE pattern [ESCAPE escape]`, case-insensitive (`ILIKE`, or both sides
+  /// lowered on SQLite and MySQL) when asked. Fragments are inserted unchanged. PostgreSQL is
+  /// `column::pg_catalog.text OPERATOR(pg_catalog.~~)` (`~~*`, `!~~`, `!~~*`), and an escape
+  /// becomes `pg_catalog.like_escape(pattern, escape)`: `ESCAPE` only follows the keyword.
+  func like(
+    column: String, pattern: String, escape: String? = nil, negated: Bool = false,
+    caseInsensitive: Bool = false
+  ) -> String {
+    if engine == .postgresql {
+      let op = (negated ? "!~~" : "~~") + (caseInsensitive ? "*" : "")
+      let operand = escape.map { function("like_escape", pattern, $0) } ?? pattern
+      return "\(cast(column, to: "text")) OPERATOR(pg_catalog.\(op)) \(operand)"
+    }
+    if caseInsensitive && !negated {
+      return caseInsensitiveLike(column: column, pattern: pattern, escape: escape)
+    }
+    let keyword = caseInsensitive && !likeIsCaseInsensitive ? "ILIKE" : "LIKE"
+    let fullPattern = escape.map { "\(pattern) ESCAPE \($0)" } ?? pattern
+    return "\(likeSubject(column)) \(negated ? "NOT " : "")\(keyword) \(fullPattern)"
+  }
+
+  /// `CAST(expression AS type)`; PostgreSQL `expression::type` with a built-in name that is no
+  /// SQL keyword in `pg_catalog` (`text`, `uuid`, `int4`, `"char"`, their arrays). Keyword names
+  /// (`integer`, `character varying(20)`, `timestamp with time zone`) are bound by the parser
+  /// itself and stay; user and extension types keep the given name.
+  func cast(_ expression: String, to type: String) -> String {
+    guard engine == .postgresql else { return "CAST(\(expression) AS \(type))" }
+    let type = type.trimmingCharacters(in: .whitespaces)
+    let parts = TypeName.parts(type)
+    let isBuiltIn =
+      parts.count == 1
+      && (parts[0].quoted
+        ? parts[0].name == "char" : TypeName.postgresBuiltIns.contains(parts[0].name))
+    return "\(expression)::\(isBuiltIn ? "pg_catalog." : "")\(type)"
+  }
+
+  /// `name(arguments)`; PostgreSQL `pg_catalog.name(arguments)`
+  func function(_ name: String, _ arguments: String...) -> String {
+    "\(engine == .postgresql ? "pg_catalog." : "")\(name)(\(arguments.joined(separator: ", ")))"
+  }
+
+  /// Text concatenation: `lhs || rhs`, MySQL `CONCAT(lhs, rhs)`, PostgreSQL
+  /// `lhs OPERATOR(pg_catalog.||) rhs`
+  func concatenation(_ lhs: String, _ rhs: String) -> String {
+    switch engine {
+    case .postgresql: "\(lhs) OPERATOR(pg_catalog.||) \(rhs)"
+    case .mysql: "CONCAT(\(lhs), \(rhs))"
+    case .sqlite, .duckdb, .mongodb: "\(lhs) || \(rhs)"
+    }
+  }
+
   /// `'text'`, with `'` doubled. PostgreSQL text that contains `\` is `E'...'`:
   /// every `\` becomes `\\` and every `'` becomes `''`, so those characters stay
   /// data with `standard_conforming_strings` on or off. SQLite and DuckDB never use `E`: their
@@ -308,8 +390,9 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .sqlite, .mysql:
       return "NULL"
     case .postgresql, .mongodb:
-      if number.isNaN { return "'NaN'::float8" }
-      return number > 0 ? "'Infinity'::float8" : "'-Infinity'::float8"
+      let type = engine == .postgresql ? "pg_catalog.float8" : "float8"
+      if number.isNaN { return "'NaN'::\(type)" }
+      return number > 0 ? "'Infinity'::\(type)" : "'-Infinity'::\(type)"
     case .duckdb:
       if number.isNaN { return "'NaN'::DOUBLE" }
       return number > 0 ? "'Infinity'::DOUBLE" : "'-Infinity'::DOUBLE"
@@ -354,4 +437,97 @@ extension Data {
       return length
     }
   }
+}
+
+/// A comparison `SQLDialect.comparison` writes
+nonisolated enum SQLComparison: String, Sendable, CaseIterable {
+  case equal = "="
+  case notEqual = "<>"
+  case less = "<"
+  case lessOrEqual = "<="
+  case greater = ">"
+  case greaterOrEqual = ">="
+}
+
+/// Whether a PostgreSQL comparison on a column names `pg_catalog`'s operator. Only a fixed list
+/// of extension base types (and their arrays) keeps the bare operator, because `pg_catalog` has
+/// none for them (a qualified `=` would make a citext filter case-sensitive or fail on PostGIS).
+/// Every other type text qualifies: built-ins, arrays, enums, domains, composites, ranges,
+/// unknown names and a missing type, so an unlisted extension type fails visibly. A caller that
+/// knows a domain's base type passes that instead (the data viewer, from the cached user types).
+nonisolated enum SQLOperandKind: Sendable, Equatable {
+  case qualified
+  case bare
+
+  /// `columnType` is the schema's `format_type` text (`DatabaseColumn.type`), never a result's
+  /// `ColumnInfo.type`; the schema prefix, quotes, typmod and `[]` are ignored
+  init(columnType: String?) {
+    let name = columnType.flatMap { TypeName.parts($0).last?.name }
+    self = name.map(Self.extensionTypes.contains) == true ? .bare : .qualified
+  }
+
+  private static let extensionTypes: Set<String> = [
+    "citext", "geometry", "geography", "hstore", "ltree", "lquery", "ltxtquery", "cube", "isbn",
+    "isbn13", "issn", "issn13", "ean13", "ismn", "ismn13", "upc",
+  ]
+}
+
+/// The parts of a PostgreSQL type text
+nonisolated enum TypeName {
+  /// The dot-separated name parts before any typmod `(` or `[]`: a quoted part unquoted (`""`
+  /// undoubled), an unquoted part trimmed and lowercased as PostgreSQL folds it
+  static func parts(_ text: String) -> [(name: String, quoted: Bool)] {
+    var parts: [(name: String, quoted: Bool)] = []
+    var name = ""
+    var quoted = false
+    var inQuotes = false
+    func finish() {
+      parts.append(
+        quoted ? (name, true) : (name.trimmingCharacters(in: .whitespaces).lowercased(), false))
+    }
+    let scalars = Array(text.unicodeScalars)
+    var index = 0
+    scan: while index < scalars.count {
+      let scalar = scalars[index]
+      index += 1
+      if inQuotes {
+        if scalar != "\"" {
+          name.unicodeScalars.append(scalar)
+        } else if index < scalars.count, scalars[index] == "\"" {
+          name += "\""
+          index += 1
+        } else {
+          inQuotes = false
+        }
+        continue
+      }
+      switch scalar {
+      case "\"":
+        inQuotes = true
+        quoted = true
+      case ".":
+        finish()
+        name = ""
+        quoted = false
+      case "(", "[":
+        break scan
+      default:
+        name.unicodeScalars.append(scalar)
+      }
+    }
+    finish()
+    return parts
+  }
+
+  /// `pg_catalog` type names that are no SQL keyword (`"char"` is matched quoted, apart)
+  static let postgresBuiltIns: Set<String> = [
+    "text", "date", "uuid", "bytea", "json", "jsonb", "jsonpath", "xml", "int2", "int4", "int8",
+    "float4", "float8", "bool", "oid", "tid", "xid", "xid8", "cid", "inet", "cidr", "macaddr",
+    "macaddr8", "money", "name", "bpchar", "varbit", "timestamptz", "timetz", "point", "line",
+    "lseg", "box", "path", "polygon", "circle", "regclass", "regtype", "regproc", "regprocedure",
+    "regoper", "regoperator", "regnamespace", "regrole", "regconfig", "regdictionary",
+    "regcollation", "tsvector", "tsquery", "pg_lsn", "pg_snapshot", "txid_snapshot",
+    "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange", "int4multirange",
+    "int8multirange", "nummultirange", "tsmultirange", "tstzmultirange", "datemultirange",
+  ]
 }

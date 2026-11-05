@@ -204,9 +204,12 @@ struct CrossTableSearchQueryBuilderTests {
     arguments: [
       (
         Builder.Mode.contains, SQLDialect.postgresql,
-        #""c"::text ILIKE E'%C:\\t!%!_!!%' ESCAPE '!'"#
+        #""c"::pg_catalog.text OPERATOR(pg_catalog.~~*) pg_catalog.like_escape(E'%C:\\t!%!_!!%', '!')"#
       ),
-      (.equals, .postgresql, #""c"::text LIKE E'C:\\t!%!_!!' ESCAPE '!'"#),
+      (
+        .equals, .postgresql,
+        #""c"::pg_catalog.text OPERATOR(pg_catalog.~~) pg_catalog.like_escape(E'C:\\t!%!_!!', '!')"#
+      ),
       (.contains, .mysql, #"LOWER(CAST(`c` AS CHAR)) LIKE LOWER('%C:\\t!%!_!!%') ESCAPE '!'"#),
       (.equals, .mysql, #"CAST(`c` AS CHAR) LIKE 'C:\\t!%!_!!' ESCAPE '!'"#),
       (.contains, .sqlite, #"LOWER("c") LIKE LOWER('%C:\t!%!_!!%') ESCAPE '!'"#),

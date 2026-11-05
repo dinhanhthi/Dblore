@@ -164,10 +164,10 @@ struct ForeignKeyLookupTests {
     let empty = ForeignKeyLookup.jumpFilter(
       for: orders, values: ["code": .string("")], dialect: .postgresql)
     #expect(empty?.conditions.map(\.emptyStringIsValue) == [true])
-    #expect(empty?.whereClause(dialect: .postgresql) == #""code" = ''"#)
+    #expect(empty?.whereClause(dialect: .postgresql) == #""code" OPERATOR(pg_catalog.=) ''"#)
     var viewer = DataViewerState(schema: "public", name: "users", orderColumns: [])
     viewer.filter = empty ?? TableFilter(conditions: [])
-    #expect(viewer.pageSQL.contains(#"= ''"#))
+    #expect(viewer.pageSQL.contains(#"OPERATOR(pg_catalog.=) ''"#))
 
     let composite = key(source: ["tenant", "code"], target: ["tenant", "code"])
     let both = ForeignKeyLookup.jumpFilter(
@@ -175,11 +175,12 @@ struct ForeignKeyLookupTests {
     )
     #expect(both?.conditions.map(\.emptyStringIsValue) == [false, true])
     #expect(
-      both?.whereClause(dialect: .postgresql) == #""tenant" = 'acme' AND "code" = ''"#)
+      both?.whereClause(dialect: .postgresql)
+        == #""tenant" OPERATOR(pg_catalog.=) 'acme' AND "code" OPERATOR(pg_catalog.=) ''"#)
     viewer.filter = both ?? TableFilter(conditions: [])
     let page = viewer.pageSQL
-    #expect(page.contains(#""tenant" = 'acme'"#))
-    #expect(page.contains(#""code" = ''"#))
+    #expect(page.contains(#""tenant" OPERATOR(pg_catalog.=) 'acme'"#))
+    #expect(page.contains(#""code" OPERATOR(pg_catalog.=) ''"#))
 
     let blank = FilterCondition(column: "name", op: .equals, value: "")
     #expect(blank.emptyStringIsValue == false)

@@ -154,7 +154,7 @@ nonisolated enum JoinQueryBuilder {
     ]
     lines += joins
     let clauses = zip(picks, pickAliases).compactMap { pick, alias in
-      pick.filter?.whereClause(dialect: dialect, qualifier: alias)
+      pick.filter?.whereClause(dialect: dialect, qualifier: alias, form: .plain)
     }
     if clauses.count == 1 {
       lines.append("WHERE \(clauses[0])")
