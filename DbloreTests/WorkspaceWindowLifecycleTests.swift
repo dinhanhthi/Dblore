@@ -58,6 +58,23 @@ struct WorkspaceWindowLifecycleTests {
     #expect(windows.pendingWorkspaceId == nil)
   }
 
+  @Test("New commands with no workspace create one and show it; with one, nothing new opens")
+  func activeWorkspaceOrNewShowsCreatedWorkspace() {
+    let seams = WindowSeams()
+    let windows = windows(seams)
+
+    let created = windows.activeWorkspaceOrNew()
+
+    #expect(windows.workspaces[created.id] === created)
+    #expect(seams.opened == [created.id])
+
+    let again = windows.activeWorkspaceOrNew()
+
+    #expect(again === created)
+    #expect(windows.workspaces.count == 1)
+    #expect(seams.opened == [created.id])
+  }
+
   @Test("A Welcome window takes the id; still pending later, a window opens")
   func showPendingWorkspaceHandsIdToWelcome() async {
     let seams = WindowSeams()

@@ -58,6 +58,36 @@ struct TableImportModelTests {
     #expect(batch.rowRanges == [1...2])
   }
 
+  @Test("PostgreSQL import into an existing table with no Schema names the loaded table's schema")
+  func postgresExistingTableTakesLoadedSchema() async throws {
+    let url = temporaryFile("id,name\n1,a\n2,b\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: nil, table: "t")
+    model.tables = [DatabaseTable(schema: "public", name: "t")]
+    let structure = keyStructure(
+      columns: [column("id", "integer"), column("name", "text")], indexes: [],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    model.matchKey = model.matchKeys.first
+    model.mode = .insertOrUpdate
+    // Row 1 exists, read only through the qualified relation (a bare "t" matches nothing)
+    let batch = try await model.prepareBatch(
+      dialect: .postgresql, connectionEpoch: 1,
+      readMatches: { $0.sql.contains(#""public"."t""#) ? [[.int(0), .int(1)]] : [] })
+
+    try #require(batch.statements.map { String($0.sql.prefix(6)) } == ["INSERT", "UPDATE"])
+    #expect(batch.statements[0].sql.hasPrefix(#"INSERT INTO "public"."t" "#))
+    #expect(batch.statements[1].sql.hasPrefix(#"UPDATE "public"."t" "#))
+    #expect(batch.preview.contains(#""public"."t""#))
+
+    model.matchKey = nil
+    model.mode = .insert
+    let plain = try await model.prepareBatch(dialect: .postgresql, connectionEpoch: 1)
+    #expect(plain.statements.map(\.sql).allSatisfy { $0.hasPrefix(#"INSERT INTO "public"."t" "#) })
+  }
+
   @Test("A column first seen after the preview cannot be silently omitted")
   func lateJSONColumn() async throws {
     let rows = (0..<100).map { "{\"id\":\($0)}" }.joined(separator: "\n")

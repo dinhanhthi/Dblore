@@ -50,21 +50,16 @@ extension ConnectionFormContent {
         }
       }
 
-      if capabilities.isFileBased {
-        sqliteFileSection()
-        usernameField()
-      } else {
-        HStack(alignment: .top, spacing: Spacing.md) {
-          FormField(label: "Database") {
-            TextField(databasePlaceholder, text: $connectionConfig.database)
-              .textFieldStyle(.plain)
-              .inputCapsuleStyle()
-          }
-          .frame(maxWidth: .infinity, alignment: .leading)
-
-          usernameField()
-            .frame(maxWidth: .infinity, alignment: .leading)
+      HStack(alignment: .top, spacing: Spacing.md) {
+        FormField(label: "Database") {
+          TextField(databasePlaceholder, text: $connectionConfig.database)
+            .textFieldStyle(.plain)
+            .inputCapsuleStyle()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        usernameField()
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
 
       if capabilities.usesPassword {
@@ -733,7 +728,8 @@ extension ConnectionFormContent {
     return try certificateInfo(from: certificatePEM, hasCA: material.caPEM != nil)
   }
 
-  /// Name plus Browse, then the attached databases. The chosen path is shown under the button.
+  /// Name plus Browse, the read-only toggle once a file is chosen, then the attached databases.
+  /// The chosen path is shown under the button.
   @ViewBuilder
   func sqliteSimpleFields() -> some View {
     VStack(alignment: .leading, spacing: Spacing.sm) {
@@ -757,30 +753,11 @@ extension ConnectionFormContent {
         }
       }
 
-      attachedDatabasesSection()
-    }
-  }
-
-  /// File path (`database`), bookmark, and the open-read-only flag. No file password.
-  @ViewBuilder
-  func sqliteFileSection() -> some View {
-    VStack(alignment: .leading, spacing: Spacing.sm) {
-      FormField(label: "Database file") {
-        VStack(alignment: .leading, spacing: Spacing.sm) {
-          TextField("/path/to/database.sqlite", text: sqliteFilePath)
-            .textFieldStyle(.plain)
-            .inputCapsuleStyle()
-
-          HStack(spacing: Spacing.sm) {
-            Button("Choose", action: chooseSQLiteFile)
-              .buttonStyle(FilledSecondaryButtonStyle())
-            Button("Create new file", action: createSQLiteFile)
-              .buttonStyle(FilledSecondaryButtonStyle())
-          }
-        }
+      if !connectionConfig.database.isEmpty {
+        readOnlyFileToggle()
       }
 
-      readOnlyFileToggle()
+      attachedDatabasesSection()
     }
   }
 
@@ -849,27 +826,8 @@ extension ConnectionFormContent {
     }
   }
 
-  /// Typing a path drops the bookmark; choosing a file sets both together.
-  private var sqliteFilePath: Binding<String> {
-    Binding(
-      get: { connectionConfig.database },
-      set: { newValue in
-        var updated = connectionConfig
-        if newValue != updated.database {
-          updated.fileBookmark = nil
-        }
-        updated.database = newValue
-        connectionConfig = updated
-      }
-    )
-  }
-
   private func chooseSQLiteFile() {
     presentFilePanel(SQLiteFilePicker.openPanel(), onPick: storeSQLiteFile)
-  }
-
-  private func createSQLiteFile() {
-    presentFilePanel(SQLiteFilePicker.savePanel(), onPick: storeSQLiteFile)
   }
 
   private func chooseDuckDBFile() {
@@ -1245,7 +1203,7 @@ enum CertificateFormError: LocalizedError {
   }
 }
 
-/// Open and save panels for a SQLite file. Suggested extensions, plus any other file.
+/// Open panel for a SQLite file. Suggested extensions, plus any other file.
 enum SQLiteFilePicker {
   static let extensions = ["sqlite", "sqlite3", "db", "db3"]
 
@@ -1262,18 +1220,6 @@ enum SQLiteFilePicker {
     panel.allowsOtherFileTypes = true
     panel.prompt = "Choose"
     panel.message = "Choose a SQLite database file"
-    return panel
-  }
-
-  static func savePanel() -> NSSavePanel {
-    let panel = NSSavePanel()
-    panel.canCreateDirectories = true
-    panel.allowedContentTypes = contentTypes
-    panel.allowsOtherFileTypes = true
-    panel.isExtensionHidden = false
-    panel.nameFieldStringValue = "database.sqlite"
-    panel.prompt = "Create"
-    panel.message = "Create a new SQLite database file"
     return panel
   }
 }

@@ -448,8 +448,8 @@ final class TableImportModel {
     parseTask = nil
     progress = 0.6
     let mappings = self.mappings
-    let destination = self.destination
     let tables = self.tables
+    let destination = Self.resolvingSchema(self.destination, tables: tables, dialect: dialect)
     let build = Task.detached(priority: .userInitiated) {
       let columns = Self.importColumns(
         mappings: mappings, destination: destination, tables: tables, dialect: dialect)
@@ -742,6 +742,19 @@ final class TableImportModel {
     return tables.first { table in
       table.name.lowercased() == name && (destination.schema.map { $0 == table.schema } ?? true)
     }
+  }
+
+  /// An existing PostgreSQL destination with no schema takes the loaded table's (as
+  /// `loadMatchKeys` reads it), so the import names it instead of resolving the bare name
+  /// through the search_path. Other engines keep the destination as typed: on MySQL the
+  /// loaded schema is the database, which the statements would then name.
+  private nonisolated static func resolvingSchema(
+    _ destination: TableImportDestination, tables: [DatabaseTable], dialect: SQLDialect
+  ) -> TableImportDestination {
+    guard dialect == .postgresql, destination.schema == nil,
+      let table = existingTable(destination: destination, tables: tables)
+    else { return destination }
+    return .existing(schema: table.schema, table: destination.table)
   }
 
   /// Lowercased column name to declared type for an existing destination. Empty when unknown.

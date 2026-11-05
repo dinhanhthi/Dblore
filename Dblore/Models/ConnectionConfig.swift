@@ -165,7 +165,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsUpdateOnly: false,
         supportsDefaultInUpdate: false,
         supportsRowStaging: false,
-        supportsDataImport: false,
+        supportsDataImport: true,
         supportsForeignKeyLookup: false,
         requiresPlugin: true,
         isAvailable: true,

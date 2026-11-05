@@ -1054,11 +1054,12 @@ struct TabCommands: Commands {
       || WorkspaceWindowManager.shared.activeWorkspaceManager?.lockCoverage != nil
   }
 
-  /// Get active workspace or create new one; nil (nothing created) while covered
+  /// Get active workspace or create new one, shown in a window; nil (nothing created) while
+  /// covered
   private var activeWorkspaceOrNew: WorkspaceManager? {
     FocusedActionRegistry.shared.commandWorkspace(
       WorkspaceWindowManager.shared.activeWorkspaceManager,
-      orNew: { WorkspaceWindowManager.shared.newWorkspace() })
+      orNew: { WorkspaceWindowManager.shared.activeWorkspaceOrNew() })
   }
 
   /// The workspace Save Workspace / Save As act on, nil while covered

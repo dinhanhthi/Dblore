@@ -196,6 +196,15 @@ class WorkspaceWindowManager {
 
   // MARK: - Workspace Operations
 
+  /// The active workspace, else a new one shown in a window (New Tab, New Notebook, New SQL
+  /// File, New Markdown Note)
+  func activeWorkspaceOrNew() -> WorkspaceManager {
+    if let active = activeWorkspaceManager { return active }
+    let manager = newWorkspace()
+    showPendingWorkspace(manager.id)
+    return manager
+  }
+
   /// Create a new empty workspace
   /// Note: Caller should open window using openWindow(value: manager.id) after calling this
   @discardableResult

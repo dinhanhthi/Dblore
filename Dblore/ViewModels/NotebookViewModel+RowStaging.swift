@@ -444,7 +444,8 @@ extension NotebookViewModel {
       } else {
         rowCount = try await connectionManager.executeGatedBatch(
           batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
-          caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil
+          caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil,
+          isDataImport: batch.historySource == .dataImport
         ).reduce(0, +)
         ranStatements = batch.statements.map(\.sql)
       }
@@ -493,8 +494,15 @@ extension NotebookViewModel {
   }
 
   /// Gate pre-check and Safe Mode confirmation for an import in this tab's transaction.
+  /// A DuckDB refusal (Protected mode, a transaction open) is returned before Safe Mode asks,
+  /// so the sheet shows it.
   func beginImportBatch(_ batch: PendingStagedBatch) async -> String? {
     if let reason = importUnsupportedReason { return reason }
+    if notebook.connectionConfig?.databaseType == .duckdb, let manager = connectionManager,
+      let reason = await manager.duckDBImportRefusalReason(policy: protectionPolicy)
+    {
+      return reason
+    }
     guard !hasPendingStagedChanges else {
       return "Commit or discard staged changes before importing"
     }
