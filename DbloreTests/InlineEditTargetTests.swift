@@ -542,7 +542,7 @@ private actor ArrivalBarrier {
   func arrive() async {
     arrived += 1
     guard arrived < parties else {
-      waiting.forEach { $0.resume() }
+      for continuation in waiting { continuation.resume() }
       waiting = []
       return
     }
