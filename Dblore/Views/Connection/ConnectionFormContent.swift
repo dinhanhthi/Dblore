@@ -133,9 +133,7 @@ struct ConnectionFormContent: View {
   @State private var fieldsEngine: DatabaseType?
   /// `draftGeneration` the fields were last taken from.
   @State private var seenDraftGeneration = 0
-  @State private var showDeleteConfirmation = false
   @State private var showClearAllConfirmation = false
-  @State private var entryToDelete: UUID?
   /// The window this form lives in (a form sheet's own window): unlock prompts anchor to it
   @State var hostWindow = HostWindowReference()
 
@@ -442,10 +440,6 @@ struct ConnectionFormContent: View {
     $connectionStringSSLMode
   }
 
-  var showDeleteConfirmationBinding: Binding<Bool> {
-    $showDeleteConfirmation
-  }
-
   var showClearAllConfirmationBinding: Binding<Bool> {
     $showClearAllConfirmation
   }
@@ -731,15 +725,6 @@ struct ConnectionFormContent: View {
 
   func setSelectedHistoryId(_ id: UUID?) {
     selectedHistoryId = id
-  }
-
-  func getEntryToDelete() -> UUID? {
-    entryToDelete
-  }
-
-  func prepareDeleteConnection(_ id: UUID) {
-    entryToDelete = id
-    showDeleteConfirmation = true
   }
 
   func prepareClearAllHistory() {

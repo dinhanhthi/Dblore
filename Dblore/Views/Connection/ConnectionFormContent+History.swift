@@ -60,22 +60,6 @@ extension ConnectionFormContent {
       .linkPointer()
     }
     .confirmationDialog(
-      "Delete Connection?",
-      isPresented: showDeleteConfirmationBinding,
-      titleVisibility: .visible
-    ) {
-      Button("Delete", role: .destructive) {
-        if let id = getEntryToDelete() {
-          deleteConnection(id)
-        }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text(
-        "This removes the connection from Recent connections. Its saved certificate is removed when no other Recent connection uses it."
-      )
-    }
-    .confirmationDialog(
       "Clear All History?",
       isPresented: showClearAllConfirmationBinding,
       titleVisibility: .visible
@@ -91,58 +75,53 @@ extension ConnectionFormContent {
     }
   }
 
-  /// Menu rows of the recent connections, each with its color dot when it has one.
+  /// Menu rows of the recent connections, each with its color dot when it has one. A menu item
+  /// takes its title and subtitle only from two texts directly in the button's label (or a
+  /// Label's title): extra views in a stack are dropped, so the row's marks are words in the
+  /// subtitle.
   @ViewBuilder
   func historyRows(_ entries: [ConnectionHistoryEntry]) -> some View {
     ForEach(entries) { entry in
-      Button(action: {
-        loadConnection(entry)
-      }) {
+      let subtitle = historySubtitle(entry.config)
+      if let color = entry.config.colorTag {
         // A menu item draws an icon only from the button's own Label in .titleAndIcon style
-        if let color = entry.config.colorTag {
+        Button {
+          loadConnection(entry)
+        } label: {
           Label {
             Text(historyTitle(entry.config))
+            Text(subtitle)
           } icon: {
             Self.menuColorDot(color)
               .accessibilityLabel("Color \(color.rawValue)")
           }
           .labelStyle(.titleAndIcon)
-        } else {
-          historyRowContent(entry)
+        }
+      } else {
+        Button {
+          loadConnection(entry)
+        } label: {
+          Text(historyTitle(entry.config))
+          Text(subtitle)
         }
       }
     }
   }
 
-  private func historyRowContent(_ entry: ConnectionHistoryEntry) -> some View {
-    HStack {
-      // Connection name
-      Text(historyTitle(entry.config))
-        .font(.body)
-
-      historyShield(for: entry.config)
-      if entry.config.isLocked {
-        lockMark
-      }
-      if entry.config.protectionLevel != .none {
-        Image(systemName: entry.config.protectionLevel.iconName)
-          .foregroundColor(
-            entry.config.protectionLevel == .readOnly ? .warning : .secondary
-          )
-          .font(.caption)
-      }
-
-      Spacer()
-
-      Button(action: {
-        prepareDeleteConnection(entry.id)
-      }) {
-        Image(systemName: "trash")
-          .foregroundColor(.destructive)
-      }
-      .buttonStyle(.plain)
-      .linkPointer()
+  /// The endpoint, then the row's lock, protection and commit style when set.
+  func historySubtitle(_ config: ConnectionConfig) -> String {
+    var parts = [config.endpointLabel]
+    if config.isLocked {
+      parts.append("Locked")
     }
+    if config.protectionLevel != .none {
+      parts.append(config.protectionLevel.displayName)
+    }
+    let style = config.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
+    if style != .immediate {
+      parts.append("Commit: \(style.title)")
+    }
+    return parts.filter { !$0.isEmpty }.joined(separator: " · ")
   }
 
   /// Marks a locked row: its saved password loads only after the unlock
@@ -180,7 +159,7 @@ extension ConnectionFormContent {
     setConnectionHistory(SessionManager.loadHistory())
     let opening = Self.openingHistory(
       history: getConnectionHistory(), draft: connectionConfig, opensOnDraft: opensOnDraft)
-    // Only a draft form writes the selection here; a fresh form keeps it for `deleteConnection`
+    // Only a draft form writes the selection here; a fresh form keeps the current one
     if let entry = opening.load {
       loadConnection(entry)
     } else if opensOnDraft {
@@ -258,28 +237,6 @@ extension ConnectionFormContent {
     }
   }
 
-  /// Deleting the last row of a locked connection would drop its lock: a blocked row asks
-  /// first, and cancel or a refusal changes nothing.
-  func deleteConnection(_ id: UUID) {
-    Task {
-      if let entry = getConnectionHistory().first(where: { $0.id == id }) {
-        guard
-          await LockCenter.shared.requestUnlock(
-            for: entry.config, reason: "Unlock \(entry.shortDisplayName) to remove it",
-            anchor: hostWindow.window)
-        else { return }
-      }
-      guard SessionManager.removeConnection(id: id) else { return }
-      loadConnectionHistory()
-
-      if getSelectedHistoryId() == id {
-        setSelectedHistoryId(nil)
-        connectionConfig = Self.newFormDraft()
-        resetCertificateDraft()
-      }
-    }
-  }
-
   /// Each locked connection asks first; cancel or a refusal changes nothing.
   func clearAllHistory() {
     Task {
@@ -296,17 +253,6 @@ extension ConnectionFormContent {
       setSelectedHistoryId(nil)
       connectionConfig = Self.newFormDraft()
       resetCertificateDraft()
-    }
-  }
-
-  /// Shield for any resolved style other than Immediate. Password tint only for Password.
-  @ViewBuilder
-  func historyShield(for config: ConnectionConfig) -> some View {
-    let style = config.resolvedCommitStyle(fallback: AppSettings.shared.commitStyle)
-    if style != .immediate {
-      Image(systemName: style == .password ? "lock.shield.fill" : "exclamationmark.triangle.fill")
-        .foregroundColor(style == .password ? .accent : .warning)
-        .font(.caption)
     }
   }
 }

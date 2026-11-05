@@ -60,8 +60,9 @@ struct NotebookCell: Codable, Identifiable, Sendable {
     // New properties with default values for backward compatibility
     statementResults =
       try container.decodeIfPresent([StatementResult].self, forKey: .statementResults) ?? []
-    selectedStatementIndex =
-      try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
+    let savedIndex = try container.decodeIfPresent(Int.self, forKey: .selectedStatementIndex) ?? 0
+    // An index past the decoded results reopens on the first one
+    selectedStatementIndex = statementResults.indices.contains(savedIndex) ? savedIndex : 0
     totalExecutionTime =
       try container.decodeIfPresent(TimeInterval.self, forKey: .totalExecutionTime)
     chartSpec = try container.decodeIfPresent(ChartSpec.self, forKey: .chartSpec)

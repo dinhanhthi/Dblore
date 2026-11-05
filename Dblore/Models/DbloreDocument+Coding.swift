@@ -85,7 +85,9 @@ enum DocumentCoder {
                 statementIndex: statementIndex
               ))
           }
-          selectedStatementIndex = cellDict["selectedStatementIndex"] as? Int ?? 0
+          let savedIndex = cellDict["selectedStatementIndex"] as? Int ?? 0
+          // An index past the decoded results reopens on the first one
+          selectedStatementIndex = statementResults.indices.contains(savedIndex) ? savedIndex : 0
           totalExecutionTime = cellDict["totalExecutionTime"] as? TimeInterval
         }
 

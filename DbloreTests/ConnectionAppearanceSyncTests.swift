@@ -528,12 +528,16 @@ struct ConnectionAppearanceSyncTests {
     }
   }
 
-  @Test("The welcome filter also matches the group name")
+  @Test("The welcome filter also matches the group name and the shown endpoint")
   func welcomeFilterMatchesGroup() {
     let prod = ConnectionHistoryEntry(config: Self.config(group: "Production"))
-    let none = ConnectionHistoryEntry(config: Self.config())
-    let rows = [prod, none]
+    var tunneledConfig = Self.config()
+    tunneledConfig.sshTunnel = SSHTunnelConfig(host: "bastion.example.com", username: "ops")
+    let tunneled = ConnectionHistoryEntry(config: tunneledConfig)
+    let rows = [prod, tunneled]
     #expect(WelcomeRecents.matchingConnections(rows, query: "product").map(\.id) == [prod.id])
+    // The SSH host is only in the row's endpoint line
+    #expect(WelcomeRecents.matchingConnections(rows, query: "bastion").map(\.id) == [tunneled.id])
     #expect(WelcomeRecents.matchingConnections(rows, query: "").count == 2)
     #expect(WelcomeRecents.matchingConnections(rows, query: "nothing-like-this").isEmpty)
   }

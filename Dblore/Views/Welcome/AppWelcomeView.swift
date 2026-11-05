@@ -656,7 +656,8 @@ struct WelcomeRecents: View {
     Self.matchingConnections(connections, query: query)
   }
 
-  /// Connections whose name, connection string or group contains `query` (all when empty).
+  /// Connections whose name, connection string, shown endpoint or group contains `query` (all
+  /// when empty).
   static func matchingConnections(
     _ connections: [ConnectionHistoryEntry], query: String
   ) -> [ConnectionHistoryEntry] {
@@ -664,6 +665,7 @@ struct WelcomeRecents: View {
     return connections.filter {
       $0.shortDisplayName.localizedCaseInsensitiveContains(query)
         || $0.config.displayString.localizedCaseInsensitiveContains(query)
+        || $0.config.endpointLabel.localizedCaseInsensitiveContains(query)
         || ($0.config.groupName?.localizedCaseInsensitiveContains(query) ?? false)
     }
   }
@@ -939,7 +941,7 @@ struct RecentWorkspaceRow: View {
 
 // MARK: - Recent Connection Row
 
-/// One line: name, connection string, then last-used date.
+/// One line: name, endpoint (`ConnectionConfig.endpointLabel`), then last-used date.
 struct RecentConnectionRow: View {
   let connection: ConnectionHistoryEntry
   let isLoading: Bool
@@ -985,7 +987,7 @@ struct RecentConnectionRow: View {
           }
         }
       } detail: {
-        Text(connection.config.displayString)
+        Text(connection.config.endpointLabel)
       } trailing: {
         RecentTrailingSlot(
           isShown: showsRecentActions,

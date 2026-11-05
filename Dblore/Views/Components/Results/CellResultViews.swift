@@ -55,6 +55,17 @@ struct ResultAreaView: View {
         .frame(width: ComponentSize.cellSidebarWidth)
 
       VStack(alignment: .leading, spacing: Spacing.sm) {
+        // One tab per result set of a multi-statement run, above every kind of result, so an
+        // UPDATE's success message keeps them too
+        if let cell, cell.statementResults.count > 1 {
+          ResultSetTabs(
+            results: cell.statementResults,
+            selectedIndex: cell.selectedStatementIndex,
+            dialect: viewModel.sqlDialect,
+            onSelect: { viewModel.selectCellStatement(cellId: cellId, at: $0) }
+          )
+        }
+
         // Query footer (for both single and multi-statement). The Grid / Chart slider sits
         // at the trailing end of the metadata bar under the grid.
         ResultQueryFooterView(
@@ -246,8 +257,6 @@ struct ErrorResultView: View {
 
 struct ResultMetadataView: View {
   let result: CellResult
-  var statementResults: [StatementResult]? = nil
-  var selectedStatementIndex: Int? = nil
   var viewModel: NotebookViewModel? = nil
   var cellId: UUID? = nil
   /// Grid / Chart shared with the grid, drawn at the trailing end. Nil hides the slider.
@@ -285,15 +294,6 @@ struct ResultMetadataView: View {
       documents: viewModel?.sqlDialect == .mongodb)
   }
 
-  /// Truncate long query text for display in dropdown menu
-  private func truncateQuery(_ query: String, maxLength: Int = 60) -> String {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.count <= maxLength {
-      return trimmed
-    }
-    return String(trimmed.prefix(maxLength)) + "..."
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Horizontal divider line
@@ -302,59 +302,6 @@ struct ResultMetadataView: View {
         .frame(height: 1)
 
       HStack(spacing: Spacing.md) {
-        // Dropdown menu for multi-statement queries (at the beginning, only show when > 1 statement)
-        if let statementResults = statementResults,
-          let selectedIndex = selectedStatementIndex,
-          let viewModel = viewModel,
-          let cellId = cellId,
-          statementResults.count > 1
-        {
-          Menu {
-            ForEach(statementResults.indices, id: \.self) { index in
-              let statementResult = statementResults[index]
-              // Toggle renders the native menu checkmark on the selected item
-              Toggle(
-                isOn: Binding(
-                  get: { index == selectedIndex },
-                  set: { _ in viewModel.selectCellStatement(cellId: cellId, at: index) })
-              ) {
-                // Combined text: "Result N • query text (truncated)"
-                let resultLabel = Text("Result \(index + 1) • ").font(.system(size: 11))
-                let queryLabel = Text(truncateQuery(statementResult.queryText))
-                  .font(.system(size: 11, design: .monospaced))
-                Text("\(resultLabel)\(queryLabel)")
-                  .lineLimit(1)
-              }
-              .id(statementResult.id)
-            }
-          } label: {
-            HStack {
-              Text("Result \(selectedIndex + 1)")
-                .font(.system(size: 11))
-                .foregroundColor(.foreground)
-              Spacer()
-              Image(systemName: "chevron.down")
-                .font(.system(size: 9))
-                .foregroundColor(.foregroundMuted)
-            }
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, Spacing.xs)
-            .background(
-              Capsule()
-                .fill(Color.inputBackground)
-            )
-            .overlay(HairlineBorder(shape: Capsule()))
-          }
-          .id(statementResults.map { $0.id })
-          .buttonStyle(.plain)
-          .linkPointer()
-          .help("Select statement result to view")
-          .fixedSize()
-
-          Text("|")
-            .foregroundColor(.foregroundSubtle)
-        }
-
         Text("Rows: \(result.rowCount)")
 
         // Show warning if the row cap truncated the result
@@ -781,24 +728,10 @@ struct NotebookResultGridView: View {
         gridOrChart
       }
 
-      // Result metadata (below table) with dropdown for multi-statement (only show when > 1 statement)
-      if let cell = cell, cell.statementResults.count > 1 {
-        // Multi-statement: show dropdown in metadata bar
-        ResultMetadataView(
-          result: result,
-          statementResults: cell.statementResults,
-          selectedStatementIndex: cell.selectedStatementIndex,
-          viewModel: viewModel,
-          cellId: cellId,
-          displayMode: displayMode,
-          selectionSummary: selectionSummary
-        )
-      } else {
-        // Single statement: no dropdown
-        ResultMetadataView(
-          result: result, viewModel: viewModel, cellId: cellId, displayMode: displayMode,
-          selectionSummary: selectionSummary)
-      }
+      // Result metadata (below table); the result set tabs sit above it in `ResultAreaView`
+      ResultMetadataView(
+        result: result, viewModel: viewModel, cellId: cellId, displayMode: displayMode,
+        selectionSummary: selectionSummary)
     }
     // A new result (run or statement switch) refreshes the comparison off the main actor
     .task(

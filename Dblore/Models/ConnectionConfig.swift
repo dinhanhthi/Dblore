@@ -867,6 +867,27 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     "\(database)@\(host):\(port)"
   }
 
+  /// Where the connection goes, for a row's secondary line: `host:port@user` (the default port
+  /// kept), the file name of a SQLite or DuckDB file, the SRV host and `@user` of a
+  /// `mongodb+srv` connection, and " via ssh-host" behind an SSH tunnel. Built from the host,
+  /// port and user fields only, so never a password or a URI's userinfo.
+  nonisolated var endpointLabel: String {
+    if !databaseType.capabilities.usesNetwork {
+      return database.isEmpty ? "" : URL(fileURLWithPath: database).lastPathComponent
+    }
+    let isSRV =
+      databaseType == .mongodb && mongoURI?.lowercased().hasPrefix("mongodb+srv://") == true
+    let hostName = host.contains(":") ? "[\(host)]" : host
+    var label = isSRV ? hostName : "\(hostName):\(port)"
+    if !username.isEmpty {
+      label += "@\(username)"
+    }
+    if let sshTunnel {
+      label += " via \(sshTunnel.host)"
+    }
+    return label
+  }
+
   /// Safe display string for logging (redacts sensitive host information)
   /// Examples:
   /// - "mydb@db.example.com:5432" -> "mydb@db.*****.com:5432"

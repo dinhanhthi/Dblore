@@ -990,6 +990,56 @@ struct DataModelConnectionConfigTests {
     expectNoSecret(try JSONEncoder().encode(session))
   }
 
+  // MARK: - Endpoint Label
+
+  @Test("Endpoint label shows host:port@user, the file name, the SRV host or the SSH route")
+  func endpointLabelShapes() {
+    let mysql = ConnectionConfig(
+      databaseType: .mysql, host: "db.example.com", port: 3306, database: "shop",
+      username: "ada")
+    #expect(mysql.endpointLabel == "db.example.com:3306@ada")
+
+    let anonymous = ConnectionConfig(host: "localhost", port: 5432, database: "app")
+    #expect(anonymous.endpointLabel == "localhost:5432")
+
+    let sqlite = ConnectionConfig(
+      databaseType: .sqlite, host: "", database: "/Users/ada/Data/main.sqlite")
+    #expect(sqlite.endpointLabel == "main.sqlite")
+    let duckdb = ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/sales.duckdb")
+    #expect(duckdb.endpointLabel == "sales.duckdb")
+
+    let tunneled = ConnectionConfig(
+      host: "10.0.0.5", port: 5433, database: "app", username: "ada",
+      sshTunnel: SSHTunnelConfig(host: "bastion.example.com", username: "ops"))
+    #expect(tunneled.endpointLabel == "10.0.0.5:5433@ada via bastion.example.com")
+
+    let ipv6 = ConnectionConfig(host: "::1", port: 5432, database: "app")
+    #expect(ipv6.endpointLabel == "[::1]:5432")
+  }
+
+  @Test("Endpoint label never shows a password or the userinfo of a MongoDB URI")
+  func endpointLabelHidesSecrets() {
+    let postgres = ConnectionConfig(
+      host: "db.example.com", port: 5432, database: "app", username: "ada",
+      password: "pg-secret")
+    #expect(postgres.endpointLabel == "db.example.com:5432@ada")
+
+    var srv = ConnectionConfig(
+      databaseType: .mongodb, host: "cluster0.example.net", port: 27017, database: "app",
+      username: "ada", password: "mongo-secret")
+    srv.mongoURI = "mongodb+srv://ada:mongo-secret@cluster0.example.net/app"
+    #expect(srv.endpointLabel == "cluster0.example.net@ada")
+
+    var standard = srv
+    standard.host = "mongo.example.net"
+    standard.mongoURI = "mongodb://ada:mongo-secret@mongo.example.net:27017/app"
+    #expect(standard.endpointLabel == "mongo.example.net:27017@ada")
+
+    for label in [postgres.endpointLabel, srv.endpointLabel, standard.endpointLabel] {
+      #expect(!label.contains("secret"))
+    }
+  }
+
   private func encodedObject(_ config: ConnectionConfig) throws -> [String: Any] {
     let data = try JSONEncoder().encode(config)
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])

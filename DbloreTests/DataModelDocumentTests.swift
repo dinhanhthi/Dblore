@@ -350,6 +350,31 @@ struct DataModelDocumentTests {
     #expect(statements.allSatisfy { $0.result.rows.isEmpty && $0.result.columns.isEmpty })
   }
 
+  @Test("A saved result-set index past the decoded results reopens on the first result")
+  func outOfRangeStatementIndexDecodesToFirst() throws {
+    let statements: [[String: Any]] = (0..<7).map {
+      ["queryText": "SELECT \($0)", "statementIndex": $0, "result": [String: Any]()]
+    }
+    let json: [String: Any] = [
+      "cells": [
+        ["content": "SELECT 0", "statementResults": statements, "selectedStatementIndex": 42]
+      ]
+    ]
+    let data = try JSONSerialization.data(withJSONObject: json)
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.statementResults.count == 7)
+    #expect(cell.selectedStatementIndex == 0)
+
+    // The cell's own Codable decoding clamps the same way
+    var encoded = try #require(
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(cell)) as? [String: Any])
+    encoded["selectedStatementIndex"] = 42
+    let codableCell = try JSONDecoder().decode(
+      NotebookCell.self, from: JSONSerialization.data(withJSONObject: encoded))
+    #expect(codableCell.selectedStatementIndex == 0)
+  }
+
   // MARK: - File Conflict (an open file changed on disk)
 
   /// A temp file opened in a fresh workspace, dated a minute ago so a write now is newer

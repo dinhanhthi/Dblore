@@ -35,15 +35,6 @@ extension EditorModeView {
 
   // MARK: - Query Formatting
 
-  /// Truncate long query text for display in dropdown menu
-  func truncateQuery(_ query: String, maxLength: Int = 60) -> String {
-    let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.count <= maxLength {
-      return trimmed
-    }
-    return String(trimmed.prefix(maxLength)) + "..."
-  }
-
   /// Format execution time with appropriate unit
   /// - If time >= 1 second: show in seconds with 2 decimal places (e.g., "1.23s")
   /// - If time < 1 second: show in milliseconds with 0 decimal places (e.g., "450ms")
