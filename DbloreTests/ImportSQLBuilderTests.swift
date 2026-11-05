@@ -177,7 +177,9 @@ struct ImportSQLBuilderTests {
       columns: [.init(name: "id", kind: .integer), .init(name: "name", kind: .text)],
       row: [" 7", "Ada"],
       keys: [try key(column("id", "integer(4)"), .postgresql)], dialect: .postgresql)
-    #expect(postgres.sql == #"UPDATE "s"."t" SET "name" = $1 WHERE "id" = CAST($2 AS integer)"#)
+    #expect(
+      postgres.sql
+        == #"UPDATE "s"."t" SET "name" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2::integer"#)
     #expect(postgres.values == ["Ada", " 7"])
     #expect(postgres.expectedRows == 1)
     #expect(postgres.rowCheck == nil)
@@ -227,6 +229,45 @@ struct ImportSQLBuilderTests {
         columns: [.init(name: "id", kind: .integer), .init(name: "v", kind: .text)],
         row: [" ", "x"], keys: [try key(column("id", "INTEGER"), .sqlite)], dialect: .sqlite)
     }
+  }
+
+  /// One `KeyColumn` list feeds the match read and the UPDATE: a citext key keeps the bare `=`
+  /// in both (a qualified one compares as text, so a differently-cased row would be matched by
+  /// neither or only one), an integer key gets pg_catalog's `=` in both
+  @Test("A PostgreSQL key compares with the same operator in the match read and the UPDATE")
+  func postgresKeyOperatorsAgree() throws {
+    let structure = TableStructure(
+      tableID: .postgresql(oid: 1), schema: "s", name: "t",
+      columns: [column("id", "integer"), column("name", "citext"), column("note", "text")],
+      indexes: [], constraints: [])
+    let keys = try ["id", "name"].map { name in
+      try key(try #require(structure.columns.first { $0.name == name }), .postgresql)
+    }
+    let read = try #require(
+      try ImportMatchPlanner.plan(
+        schema: "s", table: "t", keyColumns: ["id", "name"], columns: ["id", "name", "note"],
+        rows: [["1", "Ada", "x"]], structure: structure, dialect: .postgresql
+      ).reads.first)
+    let update = try ImportSQLBuilder.updateStatement(
+      schema: "s", table: "t",
+      columns: [
+        .init(name: "id", kind: .integer), .init(name: "name", kind: .text),
+        .init(name: "note", kind: .text),
+      ],
+      row: ["1", "Ada", "x"], keys: keys, dialect: .postgresql)
+
+    #expect(keys.map(\.operand) == [.qualified, .bare])
+    #expect(read.sql.contains(#"(VALUES (0, $1::integer, $2::citext))"#))
+    #expect(
+      read.sql.contains(#"ON t."id" OPERATOR(pg_catalog.=) v.k0 AND t."name" = v.k1 GROUP"#))
+    #expect(
+      update.sql
+        == #"UPDATE "s"."t" SET "note" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2::integer "#
+        + #"AND "name" = $3::citext"#)
+    // Safe Mode classifies the previewed UPDATE as a keyed write
+    let classified = SQLStatementClassifier.classify(update.sql, dialect: .postgresql)
+    #expect(classified.map(\.kind) == [.dml])
+    #expect(!SQLStatementClassifier.summary(classified).affectsAllRows)
   }
 
   @Test("A keyed import summary names each statement kind and the per-mode counts, no values")

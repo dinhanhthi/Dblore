@@ -32,9 +32,10 @@ struct CascadePreviewModelTests {
     #expect(!factory.statements.contains { $0.contains("DELETE") })
     // The tab's session sent no count: a second, read-only session did, with its key bound
     let tab = try #require(factory.sessions.first)
-    #expect(!tab.statements.contains { $0.contains("COUNT(*)") })
+    #expect(!tab.statements.contains { $0.contains("pg_catalog.count(*)") })
     let side = try #require(factory.sessions.dropFirst().first)
-    let index = try #require(side.statements.firstIndex { $0.hasPrefix("SELECT COUNT(*)") })
+    let index = try #require(
+      side.statements.firstIndex { $0.hasPrefix("SELECT pg_catalog.count(*)") })
     #expect(!side.statements[index].contains("42"))
     #expect(side.statementBinds[index] == [.text("42")])
     #expect(side.statements.contains("BEGIN TRANSACTION READ ONLY"))
@@ -141,7 +142,7 @@ struct CascadePreviewModelTests {
     #expect(!impact.blocksCommit)
     #expect(impact.note?.hasPrefix("Impact not computed") == true)
     #expect(factory.sessions.count == 1)
-    #expect(!factory.statements.contains { $0.contains("COUNT(*)") })
+    #expect(!factory.statements.contains { $0.contains("pg_catalog.count(*)") })
   }
 
   @Test("With a transaction open nothing is counted and the commit is not refused")
@@ -157,7 +158,7 @@ struct CascadePreviewModelTests {
     #expect(!impact.blocksCommit)
     #expect(impact.note?.contains("A transaction is open") == true)
     #expect(factory.sessions.count == 1)
-    #expect(!factory.statements.contains { $0.contains("COUNT(*)") })
+    #expect(!factory.statements.contains { $0.contains("pg_catalog.count(*)") })
     #expect(await manager.userTxOpen)
   }
 
@@ -177,7 +178,7 @@ struct CascadePreviewModelTests {
 
     let failingManager = try await connect(
       FakeDatabaseSessionFactory(
-        capabilities: .contract(), rows: [[.int(3)]], failingQuery: "COUNT"))
+        capabilities: .contract(), rows: [[.int(3)]], failingQuery: "pg_catalog.count"))
     let failed = await NotebookViewModel.cascadeImpact { try await count(failingManager) }
 
     for summary in [timedOut, failed] {

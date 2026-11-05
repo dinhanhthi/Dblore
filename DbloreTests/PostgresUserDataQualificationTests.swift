@@ -348,6 +348,56 @@ struct PostgresUserDataQualificationTests {
     #expect(PostgresQualificationLint.violations(bare).count == 6)
   }
 
+  @Test("A staged delete's cascade counts match keys with pg_catalog's = and count")
+  func cascadeCountsAreQualified() throws {
+    func key(
+      _ name: String, _ child: String, _ sources: [String], _ parent: String,
+      _ targets: [String], _ onDelete: ForeignKeyAction
+    ) -> ForeignKey {
+      ForeignKey(
+        constraintName: name, sourceSchema: "public", sourceTable: child, sourceColumns: sources,
+        targetSchema: "public", targetTable: parent, targetColumns: targets, onDelete: onDelete)
+    }
+    let keys = [
+      key("orders_user_fk", "orders", ["user_id"], "users", ["id"], .cascade),
+      // A composite key on cascaded rows, a key on a non-key column of the deleted rows
+      key("lines_order_fk", "lines", ["o_id", "o_user"], "orders", ["id", "user_id"], .cascade),
+      key("profiles_email_fk", "profiles", ["email"], "users", ["email"], .setNull),
+      // A self-reference blocker, a RESTRICT key on a table a cascade also reaches (diamond)
+      key("users_referrer_fk", "users", ["referrer_id"], "users", ["id"], .noAction),
+      key("inv_order_fk", "invoices", ["order_id"], "orders", ["id"], .restrict),
+      key("inv_user_fk", "invoices", ["user_id"], "users", ["id"], .cascade),
+    ]
+    let impact = CascadeImpactPlanner.impact(
+      deletingFrom: "public", table: "users", keyColumns: ["id"], keys: [[.int(1)], [.int(2)]],
+      foreignKeys: keys, dialect: Self.dialect)
+    guard case .plan(let plan) = impact else {
+      Issue.record("expected a plan, got \(impact)")
+      return
+    }
+    // Every count, the blockers with their exclusions and the left-out rows they may block
+    #expect(plan.steps.count == 8)
+    #expect(plan.steps.allSatisfy { $0.sql.hasPrefix("SELECT pg_catalog.count(*) FROM ") })
+    #expect(plan.steps.contains { $0.sql.contains(#"AND NOT COALESCE(("#) })
+    #expect(
+      plan.steps.contains {
+        $0.sql.contains(#"("o_id", "o_user") OPERATOR(pg_catalog.=) ANY (SELECT "id", "user_id""#)
+      })
+    for step in plan.steps {
+      #expect(throws: Never.self) { try ReadOnlyQueryGuard.check(step.sql, dialect: Self.dialect) }
+    }
+    expectQualified(
+      plan.steps.enumerated().map {
+        Statement(
+          name: "cascade count \($0.offset) \($0.element.constraintName)", sql: $0.element.sql)
+      })
+    // The batch 11 counts: an unqualified COUNT, a bare IN list and a bare IN subquery
+    let bare =
+      #"SELECT COUNT(*) FROM "public"."lines" WHERE ("o_id", "o_user") IN "#
+      + #"(SELECT "id", "user_id" FROM "public"."orders" WHERE "user_id" IN (:k1, :k2))"#
+    #expect(PostgresQualificationLint.violations(bare).count == 3)
+  }
+
   @Test("The data viewer's PostgreSQL page and count are qualified")
   func dataViewerIsQualified() {
     var state = DataViewerState(schema: "public", name: "t", orderColumns: ["id"])
@@ -368,5 +418,122 @@ struct PostgresUserDataQualificationTests {
       Statement(name: "count", sql: state.countSQL, extensionTypedColumns: extensionTyped),
     ])
     #expect(state.countSQL.hasSuffix(#""name" = 'a'"#))
+  }
+
+  @Test("Copy Objects' PostgreSQL source count, page read and keyset read are qualified")
+  func copyObjectsSourceReadsAreQualified() throws {
+    let read = try CopyObjectsRunTests.postgresRead(
+      [
+        ("id", "integer"), ("code", "text"), ("data", "bytea"), ("tags", "text[]"),
+        ("at", "timestamp with time zone"),
+      ], key: ["id", "code"], target: .sqlite(libraryVersion: SQLiteLibraryVersion.current))
+    let citext = try CopyObjectsRunTests.postgresRead(
+      [("name", "citext")], key: ["name"], target: .postgresql)
+    let mixed = try CopyObjectsRunTests.postgresRead(
+      [("id", "integer"), ("name", "citext")], key: ["id", "name"], target: .postgresql)
+    // The citext key keeps the bare > and =, for the column it was given
+    let extensionTyped = ["name": "citext"]
+    let statements = [
+      Statement(name: "copy count", sql: read.countSQL),
+      Statement(name: "copy first read", sql: read.select(after: nil, offset: 0).sql),
+      Statement(name: "copy keyset read", sql: read.select(after: ["1", "a"], offset: 0).sql),
+      Statement(
+        name: "copy citext keyset read", sql: citext.select(after: ["a"], offset: 0).sql,
+        extensionTypedColumns: extensionTyped),
+      Statement(
+        name: "copy citext chain read", sql: mixed.select(after: ["1", "a"], offset: 0).sql,
+        extensionTypedColumns: extensionTyped),
+    ]
+    for statement in statements {
+      #expect(throws: Never.self) {
+        try ReadOnlyQueryGuard.check(statement.sql, dialect: Self.dialect)
+      }
+      // The source table is named with its schema, `public` too
+      #expect(statement.sql.contains(#" FROM "public"."t""#), "\(statement.name)")
+    }
+    expectQualified(statements)
+    // The chain's bare > on "name" passes only through the citext column type
+    #expect(PostgresQualificationLint.violations(statements[4].sql).count == 1)
+    // The batch 11 reads: an unqualified COUNT, bare || and text casts, a bare row comparison
+    let bareCount = #"SELECT COUNT(*) FROM "public"."t""#
+    let bareRead =
+      #"SELECT 'v' || "id"::text, 'v' || encode("data", 'hex') FROM "public"."t" "#
+      + #"WHERE ("id", "code") > ($1, $2) ORDER BY "id", "code" LIMIT 500"#
+    #expect(PostgresQualificationLint.violations(bareCount).count == 1)
+    #expect(PostgresQualificationLint.violations(bareRead).count == 5)
+  }
+
+  @Test("A keyed import names its schema and casts, counts and compares keys qualified")
+  func keyedImportIsQualified() throws {
+    func column(_ name: String, _ type: String) -> TableStructure.Column {
+      TableStructure.Column(ordinal: 1, name: name, dataType: type, isNullable: true)
+    }
+    let structure = TableStructure(
+      tableID: .postgresql(oid: 1), schema: "public", name: "t",
+      columns: [
+        column("id", "integer"), column("code", "text"), column("name", "citext"),
+        column("note", "character varying(20)"),
+      ],
+      indexes: [], constraints: [])
+    let keyNames = ["id", "code", "name"]
+    let names = keyNames + ["note"]
+    let row: [String?] = ["1", "A", "Ada", "x"]
+    let plan = try ImportMatchPlanner.plan(
+      schema: "public", table: "t", keyColumns: keyNames, columns: names, rows: [row, row],
+      structure: structure, dialect: Self.dialect)
+    let keys = try keyNames.map { name in
+      try ImportMatchPlanner.KeyColumn(
+        try #require(structure.columns.first { $0.name == name }), dialect: Self.dialect)
+    }
+    let update = try ImportSQLBuilder.updateStatement(
+      schema: "public", table: "t",
+      columns: names.map { .init(name: $0, kind: $0 == "id" ? .integer : .text) }, row: row,
+      keys: keys, dialect: Self.dialect)
+    // The citext key keeps the bare =, for the column it was given
+    let extensionTyped = ["name": "citext"]
+    expectQualified(
+      plan.reads.map {
+        Statement(name: "import match read", sql: $0.sql, extensionTypedColumns: extensionTyped)
+      } + [
+        Statement(
+          name: "import keyed update", sql: update.sql, extensionTypedColumns: extensionTyped)
+      ])
+    // The table is named with its schema, `public` too: a bare "t" would resolve through the
+    // user's search_path, where a same-named table or view could come first
+    let columns = names.map { ImportSQLBuilder.Column(name: $0, kind: .text) }
+    let create = try ImportSQLBuilder.createTable(
+      schema: "public", table: "t", columns: columns, dialect: Self.dialect)
+    let inserts = try ImportSQLBuilder.insertStatements(
+      schema: "public", table: "t", columns: columns, rows: [row], dialect: Self.dialect)
+    let summary = try ImportSQLBuilder.summaryText(
+      createTable: create, schema: "public", table: "t", columns: names, rowCount: 1,
+      dialect: Self.dialect)
+    let matchSummary = try ImportSQLBuilder.matchSummaryText(
+      schema: "public", table: "t", columns: names, update: update,
+      counts: .init(inserts: 1, updates: 1, skips: 0, refused: 0), dialect: Self.dialect)
+    #expect(plan.reads.allSatisfy { $0.sql.contains(#" JOIN "public"."t" AS t ON "#) })
+    #expect(update.sql.hasPrefix(#"UPDATE "public"."t" SET "#))
+    #expect(create.sql.hasPrefix(#"CREATE TABLE "public"."t" ("#))
+    #expect(inserts.map { $0.sql.hasPrefix(#"INSERT INTO "public"."t" ("#) } == [true])
+    #expect(
+      summary.hasPrefix(#"CREATE TABLE "public"."t" ("#)
+        && summary.contains(#"INSERT INTO "public"."t" ("#))
+    #expect(
+      matchSummary.contains(#"INSERT INTO "public"."t" ("#)
+        && matchSummary.contains(#"UPDATE "public"."t" SET "#))
+    // The batch 11 read and update: an unqualified COUNT and text cast, bare = on every key
+    let bareRead =
+      #"SELECT v.pos, COUNT(*) FROM (VALUES (0, CAST($1 AS integer), CAST($2 AS text), "#
+      + #"CAST($3 AS citext))) AS v(pos, k0, k1, k2) JOIN "public"."t" AS t "#
+      + #"ON t."id" = v.k0 AND t."code" = v.k1 AND t."name" = v.k2 GROUP BY v.pos"#
+    let bareUpdate =
+      #"UPDATE "public"."t" SET "note" = $1 WHERE "id" = CAST($2 AS integer) "#
+      + #"AND "code" = CAST($3 AS text) AND "name" = CAST($4 AS citext)"#
+    #expect(
+      PostgresQualificationLint.violations(bareRead, extensionTypedColumns: extensionTyped).count
+        == 4)
+    #expect(
+      PostgresQualificationLint.violations(bareUpdate, extensionTypedColumns: extensionTyped)
+        .count == 3)
   }
 }

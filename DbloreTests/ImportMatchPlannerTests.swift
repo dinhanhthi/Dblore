@@ -53,7 +53,7 @@ struct ImportMatchPlannerTests {
     }
   }
 
-  @Test("PostgreSQL casts every key bind to its column's type and quotes names")
+  @Test("PostgreSQL casts every key bind to its column's type, qualified, and quotes names")
   func postgresCastsKeyBinds() throws {
     let plan = try ImportMatchPlanner.plan(
       schema: "sales", table: "or\"ders", keyColumns: ["id", "co\"de", "label", "amount"],
@@ -69,13 +69,14 @@ struct ImportMatchPlannerTests {
     #expect(plan.reads.count == 1)
     #expect(
       read.sql
-        == #"SELECT v.pos, COUNT(*) FROM (VALUES "#
-        + #"(0, CAST($1 AS integer), CAST($2 AS bpchar), CAST($3 AS character varying), "#
-        + #"CAST($4 AS numeric)), "#
-        + #"(1, CAST($5 AS integer), CAST($6 AS bpchar), CAST($7 AS character varying), "#
-        + #"CAST($8 AS numeric))) AS v(pos, k0, k1, k2, k3) "#
-        + #"JOIN "sales"."or""ders" AS t ON t."id" = v.k0 AND t."co""de" = v.k1 "#
-        + #"AND t."label" = v.k2 AND t."amount" = v.k3 GROUP BY v.pos"#)
+        == #"SELECT v.pos, pg_catalog.count(*) FROM (VALUES "#
+        + #"(0, $1::integer, $2::pg_catalog.bpchar, $3::character varying, $4::numeric), "#
+        + #"(1, $5::integer, $6::pg_catalog.bpchar, $7::character varying, $8::numeric)) "#
+        + #"AS v(pos, k0, k1, k2, k3) "#
+        + #"JOIN "sales"."or""ders" AS t ON t."id" OPERATOR(pg_catalog.=) v.k0 "#
+        + #"AND t."co""de" OPERATOR(pg_catalog.=) v.k1 "#
+        + #"AND t."label" OPERATOR(pg_catalog.=) v.k2 "#
+        + #"AND t."amount" OPERATOR(pg_catalog.=) v.k3 GROUP BY v.pos"#)
     #expect(read.values == ["1", "AB", "x", "1.50", "2", "CD", "y", "2"])
     #expect(read.expectedRows == nil)
     #expect(read.classified?.kind == .read)
@@ -188,7 +189,7 @@ struct ImportMatchPlannerTests {
 
     #expect(plan.reads.map(\.values.count) == [4, 4, 2])
     #expect(plan.reads[2].values == ["a4", "b4"])
-    #expect(plan.reads[2].sql.contains("(VALUES (4, CAST($1 AS text), CAST($2 AS text)))"))
+    #expect(plan.reads[2].sql.contains("(VALUES (4, $1::pg_catalog.text, $2::pg_catalog.text))"))
   }
 
   // MARK: - Fixtures

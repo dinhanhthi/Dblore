@@ -11,7 +11,12 @@
 // while the rows are small. Each value is read as text in the source engine's own form, or as bytes (hex on the
 // wire), normalized per the column's value form, and bound through ImportSQLBuilder's chunked
 // INSERT. Source values never become SQL text, except SQLite target BLOBs: `X'..'` literals made
-// from the bytes.
+// from the bytes. PostgreSQL source reads name pg_catalog for every function, operator and
+// built-in cast type, so nothing planted on the user's search_path runs; a key column of a
+// denylisted extension type (`SQLOperandKind`, from the source `TableStructure`) keeps its bare
+// comparison, so the keyset boundary follows the same order as the ORDER BY. A key column of any
+// other user type (a domain, an enum, an unlisted extension type) has no comparison known to
+// follow its order: that table is read by position.
 //
 // PostgreSQL and SQLite targets: one streamed batch in one transaction. Prelude: SQLite's
 // PRAGMA defer_foreign_keys = ON (always first, whatever the edited DDL kept), then the CREATE
@@ -77,7 +82,7 @@ nonisolated struct CopyObjectsTableRead: Sendable {
   static let rowsPerChunk = 500
   static let bytesPerChunk = 4 * 1_024 * 1_024
 
-  /// The quoted source table
+  /// The quoted source table (PostgreSQL always with its schema)
   let relation: String
   /// The target table and its columns
   let table: String
@@ -90,6 +95,8 @@ nonisolated struct CopyObjectsTableRead: Sendable {
   private let keys: [String]?
   /// Per key column: the exact number type its bind is cast to (MySQL integers and decimals)
   private let keyCasts: [String?]
+  /// Per key column: whether its comparisons name pg_catalog's operator (PostgreSQL)
+  private let keyOperands: [SQLOperandKind]
   private let positionOrder: String?
   private let source: Engine
   private let target: SQLDialect
@@ -105,7 +112,15 @@ nonisolated struct CopyObjectsTableRead: Sendable {
     let dialect = source.dialect
     let sameEngine = dialect == target.dialect
     let structure = planned.source
-    relation = try dialect.qualified(schema: structure.schema, name: structure.name)
+    // PostgreSQL always names the schema: an unqualified `public` table would be looked up
+    // through the user's search_path, where a same-named table could come first
+    if case .postgresql = source {
+      relation =
+        try dialect.quoteIdentifier(structure.schema) + "."
+        + dialect.quoteIdentifier(structure.name)
+    } else {
+      relation = try dialect.qualified(schema: structure.schema, name: structure.name)
+    }
     table = planned.name
     columns = planned.columns.map { .init(name: $0.name, bindForm: $0.mapping.bindForm) }
     forms = planned.columns.map { sameEngine ? .asIs : $0.mapping.valueForm }
@@ -115,7 +130,7 @@ nonisolated struct CopyObjectsTableRead: Sendable {
       list.append(
         Self.valueRead(
           try dialect.quoteIdentifier(column.name), binary: binary[index], form: forms[index],
-          source: source))
+          source: source, dialect: dialect))
     }
 
     let primaryKey = CopyObjectsTypeMapping.primaryKey(of: structure)
@@ -133,11 +148,16 @@ nonisolated struct CopyObjectsTableRead: Sendable {
         default: return nil
         }
       }
-      list += quotedKey.map { Self.keyRead($0, source: source) }
+      keyOperands = primaryKey.map { name in
+        guard case .postgresql = source else { return .qualified }
+        return SQLOperandKind(columnType: structure.columns.first { $0.name == name }?.dataType)
+      }
+      list += quotedKey.map { Self.keyRead($0, source: source, dialect: dialect) }
       positionOrder = nil
     } else {
       keys = nil
       keyCasts = []
+      keyOperands = []
       if !quotedKey.isEmpty {
         positionOrder = quotedKey.joined(separator: ", ")
       } else {
@@ -151,8 +171,11 @@ nonisolated struct CopyObjectsTableRead: Sendable {
     selectList = list
   }
 
-  /// The count read, for the planned chunk total
-  var countSQL: String { "SELECT COUNT(*) FROM \(relation)" }
+  /// The count read, for the planned chunk total (PostgreSQL `pg_catalog.count(*)`)
+  var countSQL: String {
+    guard case .postgresql = source else { return "SELECT COUNT(*) FROM \(relation)" }
+    return "SELECT \(source.dialect.function("count", "*")) FROM \(relation)"
+  }
 
   /// The next read of at most `limit` rows: after `key` (keyset) or from `offset` (by position)
   func select(
@@ -168,15 +191,36 @@ nonisolated struct CopyObjectsTableRead: Sendable {
       let dialect = source.dialect
       let markers = zip(key.indices, keyCasts).map { index, cast in
         let marker = dialect.placeholder(index + 1)
-        return cast.map { "CAST(\(marker) AS \($0))" } ?? marker
+        return cast.map { dialect.cast(marker, to: $0) } ?? marker
       }
-      sql +=
-        keys.count == 1
-        ? " WHERE \(keys[0]) > \(markers[0])"
-        : " WHERE (\(keys.joined(separator: ", "))) > (\(markers.joined(separator: ", ")))"
+      sql += " WHERE " + keyset(keys, after: markers)
       binds = key.map { .text($0) }
     }
     return (sql + " ORDER BY \(keys.joined(separator: ", ")) LIMIT \(limit)", binds)
+  }
+
+  /// The rows after `markers` in ORDER BY's order: `k > m`, or the row comparison
+  /// `(k1, k2) > (m1, m2)`; PostgreSQL names pg_catalog's `>`. A PostgreSQL key with a column of a
+  /// denylisted extension type is the chain `((k1 > m1) OR (k1 = m1 AND k2 > m2))` instead, each
+  /// column with its own operator (a row comparison names one operator for every column).
+  private func keyset(_ keys: [String], after markers: [String]) -> String {
+    let dialect = source.dialect
+    guard keys.count > 1 else {
+      return dialect.comparison(keys[0], .greater, markers[0], operand: keyOperands[0])
+    }
+    guard case .postgresql = source, keyOperands.contains(.bare) else {
+      return dialect.comparison(
+        "(\(keys.joined(separator: ", ")))", .greater, "(\(markers.joined(separator: ", ")))")
+    }
+    let terms = keys.indices.map { last in
+      let equal = (0..<last).map {
+        dialect.comparison(keys[$0], .equal, markers[$0], operand: keyOperands[$0])
+      }
+      let greater = dialect.comparison(
+        keys[last], .greater, markers[last], operand: keyOperands[last])
+      return "(" + (equal + [greater]).joined(separator: " AND ") + ")"
+    }
+    return "(" + terms.joined(separator: " OR ") + ")"
   }
 
   /// One row's values in the target's form, and their size toward the 4 MiB chunk budget
@@ -223,18 +267,26 @@ nonisolated struct CopyObjectsTableRead: Sendable {
 
   /// Text in the engine's own form behind a `v` (the prefix keeps '' apart from NULL; text
   /// concatenated with NULL stays NULL), or bytes as hex. SQLite values are read as stored.
+  /// PostgreSQL names pg_catalog's `||`, functions and `text`.
   private static func valueRead(
-    _ name: String, binary: Bool, form: CopyObjectsTypeMapping.ValueForm, source: Engine
+    _ name: String, binary: Bool, form: CopyObjectsTypeMapping.ValueForm, source: Engine,
+    dialect: SQLDialect
   ) -> String {
     switch source {
     case .postgresql:
-      if binary { return "'v' || encode(\(name), 'hex')" }
-      switch form {
-      case .jsonText: return "'v' || to_json(\(name))::text"
-      case .timestampUTC:
-        return "'v' || to_char(\(name) AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')"
-      default: return "'v' || \(name)::text"
+      let read: String
+      if binary {
+        read = dialect.function("encode", name, "'hex'")
+      } else {
+        switch form {
+        case .jsonText: read = dialect.cast(dialect.function("to_json", name), to: "text")
+        case .timestampUTC:
+          read = dialect.function(
+            "to_char", "\(name) AT TIME ZONE 'UTC'", "'YYYY-MM-DD HH24:MI:SS.US'")
+        default: read = dialect.cast(name, to: "text")
+        }
       }
+      return dialect.concatenation("'v'", read)
     case .mysql:
       return binary ? "CONCAT('v', HEX(\(name)))" : "CONCAT('v', CAST(\(name) AS CHAR))"
     case .sqlite:
@@ -250,18 +302,21 @@ nonisolated struct CopyObjectsTableRead: Sendable {
   }
 
   /// A primary key column read again in the engine's own text form, for the next read's bind
-  private static func keyRead(_ name: String, source: Engine) -> String {
+  private static func keyRead(_ name: String, source: Engine, dialect: SQLDialect) -> String {
     switch source {
-    case .postgresql: "'v' || \(name)::text"
+    case .postgresql: dialect.concatenation("'v'", dialect.cast(name, to: "text"))
     case .mysql: "CONCAT('v', CAST(\(name) AS CHAR))"
     case .sqlite: name
     case .duckdb: "'v' || CAST(\(name) AS VARCHAR)"
     }
   }
 
-  /// Keyset needs a primary key of text-comparable columns: no binary column; on SQLite no
-  /// column without affinity or with BLOB affinity (a text bind would not compare with its
-  /// values) and no column that may hold NULL (SQLite allows NULL in most primary keys)
+  /// Keyset needs a primary key of text-comparable columns: no binary column; on PostgreSQL no
+  /// column of a user type other than a denylisted extension type (pg_catalog's `>` on a domain
+  /// over citext compares as text while ORDER BY sorts as citext, so pages would skip or repeat
+  /// rows); on SQLite no column without affinity or with BLOB affinity (a text bind would not
+  /// compare with its values) and no column that may hold NULL (SQLite allows NULL in most
+  /// primary keys)
   private static func allowsKeyset(
     _ primaryKey: [String], planned: CopyObjectsPlan.Table, source: Engine
   ) -> Bool {
@@ -271,6 +326,10 @@ nonisolated struct CopyObjectsTableRead: Sendable {
         column.mapping.bindForm == .plain,
         let structure = planned.source.columns.first(where: { $0.name == name })
       else { return false }
+      if case .postgresql = source {
+        return !CopyObjectsTypeMapping.family(of: structure, source: source).isUserType
+          || SQLOperandKind(columnType: structure.dataType) == .bare
+      }
       guard case .sqlite = source else { return true }
       let declared = SQLTokenizer.asciiUppercased(
         structure.dataType.trimmingCharacters(in: .whitespaces))

@@ -15,6 +15,8 @@ enum PostgresQualificationLint {
     "COALESCE", "GREATEST", "LEAST", "CASE", "EXISTS", "ANY", "ALL", "ARRAY", "CAST", "ROW",
     "EXTRACT", "POSITION", "SUBSTRING", "TRIM", "VALUES", "AND", "OR", "NOT", "WHERE", "SELECT",
     "THEN", "ELSE", "WHEN", "ON", "FROM", "JOIN", "LATERAL", "BY", "IS", "FILTER", "OVER",
+    // A CTE head (`WITH name AS (`)
+    "AS",
     // Flagged on their own (`wordViolations`)
     "IN", "USING",
   ]

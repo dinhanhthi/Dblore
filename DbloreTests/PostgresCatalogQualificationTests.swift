@@ -118,6 +118,21 @@ struct PostgresCatalogQualificationTests {
     }
   }
 
+  @Test("The dump's PostgreSQL catalog reads are qualified")
+  func dumpCatalogReadsAreQualified() async throws {
+    // They run under `SET LOCAL search_path = ''` too; qualified so this lint covers them. No
+    // rows: no table is listed, so the introspector's structure reads (linted above) do not run.
+    let session = FakeDatabaseSession(
+      capabilities: .contract(), columns: [], rows: [], slowQueries: false)
+    _ = try await SQLDumpCatalog.postgresInput(session)
+    // Tables, indexes, constraints, types, sequences, views
+    #expect(session.statements.count == 6, "sent \(session.statements.count) statements")
+    for sql in session.statements {
+      let found = PostgresQualificationLint.violations(sql)
+      #expect(found.isEmpty, "\(found.joined(separator: "; "))\n\(sql)")
+    }
+  }
+
   /// A restore script that drops tables and a type, so the probe reads every branch
   private static let restoreDropDump =
     ([
@@ -293,6 +308,11 @@ struct PostgresCatalogQualificationTests {
         AND c.oid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
       """
     #expect(PostgresQualificationLint.violations(qualified) == [])
+    let commonTableExpression = """
+      WITH RECURSIVE used AS (SELECT 1 AS oid)
+      SELECT 1 FROM used u WHERE u.oid OPERATOR(pg_catalog.=) ANY (SELECT oid FROM used)
+      """
+    #expect(PostgresQualificationLint.violations(commonTableExpression) == [])
     // SQL keyword type names are bound by the parser, a user type keeps its name, and a named
     // bind is no operator
     let keywordTypes = """
