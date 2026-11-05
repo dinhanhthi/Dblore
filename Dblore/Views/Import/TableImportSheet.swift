@@ -317,7 +317,7 @@ struct TableImportSheet: View {
               .disabled(!model.mappings[index].included)
             CapsulePickerMenu(
               title: kinds.indices.contains(mappingKind(index).wrappedValue)
-                ? kindLabel(kinds[mappingKind(index).wrappedValue]) : "", width: 125
+                ? kindLabel(kinds[mappingKind(index).wrappedValue]) : "", width: 160
             ) {
               Picker("Type", selection: mappingKind(index)) {
                 ForEach(kinds.indices, id: \.self) { kindIndex in
