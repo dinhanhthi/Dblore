@@ -471,7 +471,8 @@ nonisolated struct EditTarget: Sendable, Equatable {
   let schema: String?
   /// Unquoted catalog table name (`relname` or the SQLite table). Nil when unknown.
   let name: String?
-  /// Generated columns: read-only in the grid and left out of staged UPDATE and INSERT
+  /// Generated columns, and masked ones (`masking(_:)`): read-only in the grid and left out of
+  /// staged UPDATE and INSERT
   let generatedColumns: Set<String>
   /// Keyless table: rows are named by their locator (`RowLocatorValues`), never by
   /// `primaryKeyColumns` (empty). Nil for a keyed target.
@@ -493,5 +494,22 @@ nonisolated struct EditTarget: Sendable, Equatable {
     self.name = name
     self.generatedColumns = generatedColumns
     self.rowLocator = rowLocator
+  }
+
+  /// This target with the masked `columns` (`ColumnInfo.masked`: their cells hold mask text)
+  /// joined to `generatedColumns`, so nothing writes them back; same generation. Nil when a
+  /// masked column names the rows: a primary key column or a SQLite match column, whose mask
+  /// text in the WHERE would name another row, or none.
+  func masking(_ columns: [ColumnInfo]) -> EditTarget? {
+    let masked = Set(columns.filter(\.masked).map(\.name))
+    var keys = Set(primaryKeyColumns)
+    if case .sqliteRowid(_, let matchColumns) = rowLocator { keys.formUnion(matchColumns) }
+    guard keys.isDisjoint(with: masked) else { return nil }
+    guard !masked.isSubset(of: generatedColumns) else { return self }
+    return EditTarget(
+      qualifiedName: qualifiedName, tableID: tableID, primaryKeyColumns: primaryKeyColumns,
+      connectionEpoch: connectionEpoch, updateOnly: updateOnly, generation: generation,
+      schema: schema, name: name, generatedColumns: generatedColumns.union(masked),
+      rowLocator: rowLocator)
   }
 }

@@ -203,6 +203,13 @@ nonisolated struct ColumnMaskRuleSet: Sendable {
 
   var isEmpty: Bool { compiled.isEmpty }
 
+  /// A rule that names a table or schema names one of `columns`, so matching them needs their
+  /// origins
+  func needsOrigin(forColumns columns: [String]) -> Bool {
+    let names = Set(columns.map { $0.lowercased() })
+    return compiled.contains { ($0.table != nil || $0.schema != nil) && names.contains($0.column) }
+  }
+
   /// The strictest rule that matches `column` of a table `origin` (`Style.strictness`; ties: the
   /// most specific, then the first in the list). Masking is a display guard, so a narrower rule
   /// never weakens a broader one: `users.email` showing the last four never outranks `email`

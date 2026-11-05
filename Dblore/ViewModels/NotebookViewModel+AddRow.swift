@@ -56,7 +56,7 @@ extension NotebookViewModel {
         isPrimaryKey: primaryKey.contains(column.name) || info?.isPrimaryKey == true,
         isNullable: info?.isNullable ?? true, isIdentity: info?.isIdentity ?? false,
         isGenerated: generated.contains(column.name) || info?.isGenerated == true,
-        wallClock: column.wallClock)
+        isMasked: column.masked, wallClock: column.wallClock)
     }
     for (column, value) in await automaticIntegerKeyValues() {
       guard let index = fields.firstIndex(where: { $0.name == column }) else { continue }

@@ -692,7 +692,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       }
       return ColumnInfo(
         name: column.name, type: enrichedType, origin: column.origin,
-        wallClock: column.wallClock)
+        wallClock: column.wallClock, masked: column.masked)
     }
   }
 

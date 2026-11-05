@@ -200,6 +200,8 @@ struct DataModelDocumentTests {
     ]
     let notebook = try DocumentCoder.decode(
       from: try JSONSerialization.data(withJSONObject: json))
+    // An older file has no masked key: unmasked
+    #expect(notebook.cells.first?.result?.columns.map(\.masked) == [false])
     let rows = try #require(notebook.cells.first?.result?.rows)
     #expect(
       rows.prefix(3).map { $0.map { $0.outputString(wallClock: false) } } == [
@@ -222,6 +224,32 @@ struct DataModelDocumentTests {
     let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
     #expect(cell.result?.columns.map(\.wallClock) == [true, false])
     #expect(cell.pinnedResult?.result.columns.map(\.wallClock) == [true, false])
+  }
+
+  @Test("The masked column key round-trips in results and pins; absent reads unmasked")
+  func maskedColumnKeyRoundTrip() throws {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "email", type: "text", masked: true),
+        ColumnInfo(name: "id", type: "int4"),
+      ],
+      rows: [[.string("****"), .int(1)]], rowCount: 1)
+    let pin = PinnedResult(
+      result: result, pinnedAt: Date(timeIntervalSince1970: Self.noonSeconds), sourceQuery: nil)
+    let notebook = DbloreNotebook(
+      id: UUID(), cells: [NotebookCell(content: "SELECT 1", result: result, pinnedResult: pin)],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Masked"),
+      connectionConfig: nil, settings: NotebookSettings())
+    let data = try DocumentCoder.encode(notebook, includeResultsOnSave: true)
+    let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let cells = try #require(json["cells"] as? [[String: Any]])
+    let columns = try #require(
+      (cells.first?["result"] as? [String: Any])?["columns"] as? [[String: Any]])
+    #expect(columns.map { $0["masked"] as? Bool } == [true, nil])
+
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    #expect(cell.result?.columns.map(\.masked) == [true, false])
+    #expect(cell.pinnedResult?.result.columns.map(\.masked) == [true, false])
   }
 
   @Test("A decimal cell saves as a flagged string (older builds read the text) and reopens exact")

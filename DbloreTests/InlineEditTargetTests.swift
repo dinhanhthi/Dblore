@@ -185,9 +185,30 @@ struct InlineEditTargetTests {
     #expect(await cachedTarget(cachedID: customers, columnID: orders) == nil)
   }
 
-  /// Catalog lookup is paused. The only stored table is `cachedID`; columns name `columnID`.
+  @Test("A masked column is read-only, and a masked primary key leaves no edit target")
   @MainActor
-  private func cachedTarget(cachedID: TableRef, columnID: TableRef) async -> EditTarget? {
+  func maskedColumnsRefuseEdits() async throws {
+    let orders = TableRef.postgresql(oid: Self.ordersOID)
+    let target = try #require(
+      await cachedTarget(cachedID: orders, columnID: orders, masked: ["total"]))
+    #expect(target.primaryKeyColumns == ["id"])
+    #expect(target.generatedColumns.contains("total"))
+    let columns = [
+      ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "total", type: "int4", masked: true),
+    ]
+    let result = CellResult(
+      columns: columns, rows: [[.int(1), .string("****")]], editTarget: target)
+    #expect(NotebookViewModel().readOnlyColumnIndexes(result) == [1])
+    // Mask text in the WHERE key would name the wrong row, or none
+    #expect(await cachedTarget(cachedID: orders, columnID: orders, masked: ["id"]) == nil)
+  }
+
+  /// Catalog lookup is paused. The only stored table is `cachedID`; columns name `columnID`;
+  /// `masked` columns carry the mask flag a rule sets.
+  @MainActor
+  private func cachedTarget(
+    cachedID: TableRef, columnID: TableRef, masked: Set<String> = []
+  ) async -> EditTarget? {
     let manager = DatabaseConnectionManager()
     let table = EditTable(
       oid: Self.ordersOID,
@@ -199,9 +220,11 @@ struct InlineEditTargetTests {
     await manager.seedPausedEditTable(table, id: cachedID)
     let columns = [
       ColumnInfo(
-        name: "id", type: "int4", origin: ColumnOrigin(tableID: columnID, columnOrdinal: 1)),
+        name: "id", type: "int4", origin: ColumnOrigin(tableID: columnID, columnOrdinal: 1),
+        masked: masked.contains("id")),
       ColumnInfo(
-        name: "total", type: "int4", origin: ColumnOrigin(tableID: columnID, columnOrdinal: 3)),
+        name: "total", type: "int4", origin: ColumnOrigin(tableID: columnID, columnOrdinal: 3),
+        masked: masked.contains("total")),
     ]
     let result = QueryResult(
       columns: columns, rows: [[.int(1), .int(9)]], rowCount: 1, executionTime: 0)

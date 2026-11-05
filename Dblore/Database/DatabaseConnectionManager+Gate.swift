@@ -76,22 +76,119 @@ extension DatabaseConnectionManager {
 
   /// `parameters` nil keeps the authorize path. A dictionary rewrites first, then uses the
   /// same effective policy; missing names are refused only after that policy allows the script.
+  /// The results leave with the connection's mask rules applied (`applyingMaskRules`).
   private func runUserSQL(
     _ userSQL: String, parameters: [String: SQLBindValue]?, policy: ProtectionPolicy,
     maxRows: Int, caller: UUID?, expectedEpoch: UInt64?, deferEnrichment: Bool
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     try refuseIfRelocked(config)
-    guard let parameters else {
+    // The config the statements run with: a disconnect meanwhile never drops its rules
+    let ruleConfig = config
+    let run: (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval)
+    if let parameters {
+      let plan = try planNamedParameters(userSQL, parameters: parameters, policy: policy)
+      run = try await runUserStatements(
+        plan.statements, protectedMode: plan.protectedMode, maxRows: maxRows, caller: caller,
+        expectedEpoch: expectedEpoch, binds: plan.binds, originalTexts: plan.originalTexts,
+        deferEnrichment: deferEnrichment)
+    } else {
       let (statements, protectedMode) = try authorize(userSQL, policy: policy)
-      return try await runUserStatements(
+      run = try await runUserStatements(
         statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
         expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
     }
-    let plan = try planNamedParameters(userSQL, parameters: parameters, policy: policy)
-    return try await runUserStatements(
-      plan.statements, protectedMode: plan.protectedMode, maxRows: maxRows, caller: caller,
-      expectedEpoch: expectedEpoch, binds: plan.binds, originalTexts: plan.originalTexts,
-      deferEnrichment: deferEnrichment)
+    guard let ruleConfig else { return run }
+    return (await applyingMaskRules(run.results, config: ruleConfig), run.totalTime)
+  }
+
+  // MARK: - Mask rules
+
+  /// `results` with the mask rules of `config` applied: its own and its saved row's
+  /// (`SavedMaskRules`, read now, so a rule saved in another window applies at once). A column
+  /// a rule matches is `masked` and its cells hold the rule's mask; no rule, no work. The app's
+  /// own reads (`executeInternal`, catalog reads, the Data Rewind capture) never come here.
+  private func applyingMaskRules(
+    _ results: [(queryText: String, result: QueryResult)], config: ConnectionConfig
+  ) async -> [(queryText: String, result: QueryResult)] {
+    let rules = ColumnMaskRule.union(config.maskRules, savedMaskRules(config))
+    guard !rules.isEmpty else { return results }
+    let ruleSet = ColumnMaskRuleSet(rules)
+    var masked = results
+    for index in masked.indices {
+      masked[index].result = await applying(
+        ruleSet, to: masked[index].result, databaseType: config.databaseType)
+    }
+    return masked
+  }
+
+  /// `result` with `rules` applied, matched once per column. Without an origin a rule matches
+  /// the most columns, so only the columns that match then need theirs (`maskOrigins`), and only
+  /// when a rule that names a table or schema names one of them. A PostgreSQL read cut by the
+  /// row cap and not reset is still draining: no catalog read, its origins are nil (fail closed),
+  /// or the memo's while metadata is paused (`maskOrigins`).
+  private func applying(
+    _ rules: ColumnMaskRuleSet, to result: QueryResult, databaseType: DatabaseType
+  ) async -> QueryResult {
+    var matches = result.columns.map { rules.matchingRule(column: $0.name, origin: nil) }
+    let candidates = matches.indices.filter { matches[$0] != nil }
+    guard !candidates.isEmpty else { return result }
+    if rules.needsOrigin(forColumns: candidates.map { result.columns[$0].name }) {
+      let mayRead = databaseType != .postgresql || !result.truncated || result.sessionReset
+      let origins = await maskOrigins(
+        candidates.map { result.columns[$0] }, databaseType: databaseType, mayRead: mayRead)
+      for (index, origin) in zip(candidates, origins) {
+        matches[index] = rules.matchingRule(column: result.columns[index].name, origin: origin)
+      }
+    }
+    return Self.masking(result, with: matches, cutAfter: readLimits?.maxCellCharacters)
+  }
+
+  /// `result` with each column that has a rule in `matches` (same order) marked `masked` and
+  /// its cells masked. `cutAfter`: the capped read's cell limit (MCP managers).
+  private nonisolated static func masking(
+    _ result: QueryResult, with matches: [ColumnMaskRule?], cutAfter limit: Int?
+  ) -> QueryResult {
+    let styles = matches.enumerated().compactMap { index, rule in
+      rule.map { (index: index, style: $0.style) }
+    }
+    guard !styles.isEmpty else { return result }
+    let columns = result.columns.enumerated().map { index, column in
+      matches.indices.contains(index) && matches[index] != nil
+        ? ColumnInfo(
+          name: column.name, type: column.type, origin: column.origin,
+          sourceName: column.sourceName, wallClock: column.wallClock, masked: true)
+        : column
+    }
+    let rows = result.rows.map { row in
+      var row = row
+      for (index, style) in styles where row.indices.contains(index) {
+        row[index] = maskedCell(row[index], style: style, cutAfter: limit)
+      }
+      return row
+    }
+    var masked = QueryResult(
+      columns: columns, rows: rows, rowCount: result.rowCount,
+      executionTime: result.executionTime, wasLimited: result.wasLimited,
+      affectedRows: result.affectedRows)
+    masked.truncated = result.truncated
+    masked.sessionReset = result.sessionReset
+    masked.skippedStatements = result.skippedStatements
+    masked.typesDeferred = result.typesDeferred
+    return masked
+  }
+
+  /// `cell` as `style` shows it. Text a capped read cut (longer than `limit`: it keeps one
+  /// character past) shows the full mask: a partial style would show part of a prefix.
+  private nonisolated static func maskedCell(
+    _ cell: CellValue, style: ColumnMaskRule.Style, cutAfter limit: Int?
+  ) -> CellValue {
+    guard let limit, style == .lastFour || style == .email else { return style.masked(cell) }
+    let text: String
+    switch cell {
+    case .string(let value), .json(let value), .decimal(let value): text = value
+    default: return style.masked(cell)
+    }
+    return text.count > limit ? ColumnMaskRule.Style.full.masked(cell) : style.masked(cell)
   }
 
   private func planNamedParameters(

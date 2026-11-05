@@ -792,7 +792,9 @@ extension NotebookViewModel {
       }
       keyed.append((key, original, value))
     }
-    if target.generatedColumns.contains(column) { return Self.generatedColumnMessage(column) }
+    if target.generatedColumns.contains(column) {
+      return Self.readOnlyColumnMessage(column, columns: editorResult?.columns)
+    }
     let setsDefault = keyed.contains { cell in
       if case .serverDefault = cell.value { return cell.key.tempID == nil }
       return false

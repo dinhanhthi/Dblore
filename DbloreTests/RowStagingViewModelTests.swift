@@ -428,6 +428,87 @@ struct RowStagingViewModelTests {
     await manager.disconnect()
   }
 
+  @Test("A rule saved before a re-read masks the column and makes it read-only")
+  func refreshKeepsANewlyMaskedColumnReadOnly() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-masked-\(UUID().uuidString).sqlite")
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    try await manager.connect(config: config)
+    do {
+      for statement in [
+        "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT)",
+        "INSERT INTO users VALUES (1, 'ann@example.com')",
+      ] {
+        _ = try await manager.executeInternal(statement)
+      }
+      var notebook = DbloreNotebook.newDocument()
+      notebook.connectionConfig = config
+      let viewModel = NotebookViewModel(notebook: notebook)
+      viewModel.viewMode = .editor
+      viewModel.connectionManager = manager
+      var state = DataViewerState(schema: "main", name: "users", orderColumns: [])
+      state.databaseType = .sqlite
+      viewModel.dataViewer = state
+      await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
+      let shown = try #require(viewModel.editorResult)
+      let target = try #require(shown.editTarget)
+      #expect(viewModel.canEdit(shown))
+      #expect(viewModel.readOnlyColumnIndexes(shown).isEmpty)
+
+      // Saved in another window between the page read and the re-read after an edit
+      let rule = try ColumnMaskRule(pattern: "users.email", style: .full)
+      await manager.setSavedMaskRules { _ in [rule] }
+      await viewModel.refreshDataViewerRows(
+        target: target, connectionManager: manager, done: "Cell updated")
+      let result = try #require(viewModel.editorResult)
+      #expect(result.rows[0][1] == ColumnMaskRule.Style.full.masked(.string("ann@example.com")))
+      #expect(result.columns[1].masked)
+      #expect(viewModel.readOnlyColumnIndexes(result) == [1])
+      #expect(result.editTarget?.generatedColumns.contains("email") == true)
+      #expect(
+        viewModel.stageEdit(row: 0, column: "email", value: .string("x"))
+          == NotebookViewModel.maskedColumnMessage("email"))
+      #expect(viewModel.dataViewer?.changeSet == nil)
+
+      // The rule removed: the column stays read-only until the cell runs again, still as masked
+      await manager.setSavedMaskRules { _ in [] }
+      await viewModel.refreshDataViewerRows(
+        target: try #require(result.editTarget), connectionManager: manager,
+        done: "Cell updated")
+      let unmasked = try #require(viewModel.editorResult)
+      #expect(unmasked.columns[1].masked)
+      #expect(viewModel.readOnlyColumnIndexes(unmasked) == [1])
+      #expect(
+        viewModel.stageEdit(row: 0, column: "email", value: .string("x"))
+          == NotebookViewModel.maskedColumnMessage("email"))
+
+      // A rule on the key leaves no target, and the result no longer names the table or key
+      let keyRule = try ColumnMaskRule(pattern: "users.id", style: .full)
+      await manager.setSavedMaskRules { _ in [rule, keyRule] }
+      await viewModel.refreshDataViewerRows(
+        target: try #require(result.editTarget), connectionManager: manager,
+        done: "Cell updated")
+      let keyless = try #require(viewModel.editorResult)
+      #expect(keyless.columns[0].masked)
+      #expect(keyless.editTarget == nil)
+      #expect(keyless.tableName == nil)
+      #expect(keyless.primaryKeyColumns.isEmpty)
+    } catch {
+      await manager.disconnect()
+      throw error
+    }
+    await manager.disconnect()
+  }
+
   @Test("A keyless lazy blob loads by its locator before Duplicate Row stages it, never the prefix")
   func keylessDuplicateLoadsTheCutValue() async throws {
     try await withKeylessSQLite([

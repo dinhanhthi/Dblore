@@ -23,8 +23,10 @@ struct NewRowField: Identifiable, Equatable, Sendable {
   let isNullable: Bool
   /// Identity column: the database numbers it
   let isIdentity: Bool
-  /// Generated column: never written
+  /// Generated column, or a masked one (`isMasked`): never written
   let isGenerated: Bool
+  /// `ColumnInfo.masked`: a mask rule matched the column
+  let isMasked: Bool
   /// `ColumnInfo.wallClock`: a naive timestamp, shown and read as its stored wall clock
   let wallClock: Bool
   var text = ""
@@ -32,7 +34,8 @@ struct NewRowField: Identifiable, Equatable, Sendable {
 
   init(
     name: String, type: String, isPrimaryKey: Bool = false, isNullable: Bool = true,
-    isIdentity: Bool = false, isGenerated: Bool = false, wallClock: Bool = false
+    isIdentity: Bool = false, isGenerated: Bool = false, isMasked: Bool = false,
+    wallClock: Bool = false
   ) {
     self.name = name
     self.type = type
@@ -40,7 +43,8 @@ struct NewRowField: Identifiable, Equatable, Sendable {
     self.isPrimaryKey = isPrimaryKey
     self.isNullable = isNullable && !isPrimaryKey
     self.isIdentity = isIdentity
-    self.isGenerated = isGenerated
+    self.isGenerated = isGenerated || isMasked
+    self.isMasked = isMasked
     self.wallClock = wallClock
   }
 

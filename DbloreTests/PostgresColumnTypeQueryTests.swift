@@ -58,6 +58,47 @@ struct PostgresColumnTypeQueryTests {
     #expect(session.statementBinds == [[.text("16400"), .text("{1,3}")]])
   }
 
+  @Test("A masked column stays masked after enrichment; a cache hit takes the incoming flag")
+  func maskedFlagSurvivesEnrichmentAndCache() async throws {
+    // Catalog rows for attnums 1 (int4) and 3 (numeric(12,4))
+    let session = FakeDatabaseSession(
+      capabilities: .contract(), columns: [],
+      rows: [
+        [.int(1), .string("integer"), .null, .int(32), .int(0), .null, .null, .string("int4")],
+        [
+          .int(3), .string("numeric"), .null, .int(12), .int(4), .null, .null,
+          .string("numeric"),
+        ],
+      ],
+      slowQueries: false)
+    let columns = [
+      ColumnInfo(name: "card", type: "NUMERIC", origin: origin(3), masked: true),
+      ColumnInfo(name: "id", type: "INT4", origin: origin(1)),
+      ColumnInfo(name: "note", type: "TEXT", masked: true),
+    ]
+
+    let enriched = try await introspector.enrichedColumns(
+      columns, query: "SELECT * FROM ledger", in: session)
+
+    #expect(enriched.map(\.type) == ["NUMERIC(12,4)", "INTEGER(32,0)", "TEXT"])
+    #expect(enriched.map(\.masked) == [true, false, true])
+
+    // The cache keeps types only: a rule edit since the read (flags flipped) wins on a hit
+    var cache = ColumnTypeCache()
+    cache.store(driver: columns, enriched: enriched, readAt: cache.generation)
+    let incoming = [
+      ColumnInfo(name: "card", type: "NUMERIC", origin: origin(3)),
+      ColumnInfo(name: "id", type: "INT4", origin: origin(1), masked: true),
+    ]
+    let cached = try #require(cache.columns(incoming))
+    #expect(cached.map(\.type) == ["NUMERIC(12,4)", "INTEGER(32,0)"])
+    #expect(cached.map(\.masked) == [false, true])
+  }
+
+  private func origin(_ attributeNumber: Int) -> ColumnOrigin {
+    ColumnOrigin(tableID: .postgresql(oid: 16_400), columnOrdinal: attributeNumber)
+  }
+
   // MARK: - Live (CI only)
 
   @Test(

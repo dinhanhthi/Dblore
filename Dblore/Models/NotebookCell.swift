@@ -322,20 +322,24 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
   /// `.date` values hold the stored wall clock as a UTC instant and show without a time zone.
   /// Set once by the session that read the column; false (zoned) when unknown.
   nonisolated let wallClock: Bool
+  /// A column a mask rule matched: its cells hold mask text, never the stored value. Set by
+  /// the manager after the read; false when no rule matched.
+  nonisolated let masked: Bool
 
   nonisolated init(
     name: String, type: String, origin: ColumnOrigin? = nil, sourceName: ColumnSourceName? = nil,
-    wallClock: Bool = false
+    wallClock: Bool = false, masked: Bool = false
   ) {
     self.name = name
     self.type = type
     self.origin = origin
     self.sourceName = sourceName
     self.wallClock = wallClock
+    self.masked = masked
   }
 
   private enum CodingKeys: String, CodingKey {
-    case name, type, origin, tableOID, attributeNumber, wallClock
+    case name, type, origin, tableOID, attributeNumber, wallClock, masked
   }
 
   nonisolated init(from decoder: Decoder) throws {
@@ -354,6 +358,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     }
     sourceName = nil
     wallClock = try container.decodeIfPresent(Bool.self, forKey: .wallClock) ?? false
+    masked = try container.decodeIfPresent(Bool.self, forKey: .masked) ?? false
   }
 
   nonisolated func encode(to encoder: Encoder) throws {
@@ -362,6 +367,7 @@ struct ColumnInfo: Codable, Identifiable, Sendable {
     try container.encode(type, forKey: .type)
     try container.encodeIfPresent(origin, forKey: .origin)
     if wallClock { try container.encode(true, forKey: .wallClock) }
+    if masked { try container.encode(true, forKey: .masked) }
   }
 }
 

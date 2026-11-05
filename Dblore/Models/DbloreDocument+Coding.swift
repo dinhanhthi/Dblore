@@ -318,7 +318,9 @@ enum DocumentCoder {
         let type = colDict["type"] as? String ?? ""
         // Absent (files from older builds) is zoned
         let wallClock = colDict["wallClock"] as? Bool ?? false
-        columns.append(ColumnInfo(name: name, type: type, wallClock: wallClock))
+        // Absent (files from older builds) is unmasked
+        let masked = colDict["masked"] as? Bool ?? false
+        columns.append(ColumnInfo(name: name, type: type, wallClock: wallClock, masked: masked))
       }
     }
 
@@ -373,10 +375,12 @@ enum DocumentCoder {
     ]
 
     // Encode columns
-    // `wallClock` only when set, as `ColumnInfo` encodes it; older builds ignore the key
+    // `wallClock` and `masked` only when set, as `ColumnInfo` encodes them; older builds ignore
+    // the keys
     let columnsArray = result.columns.map { column -> [String: Any] in
       var columnDict: [String: Any] = ["name": column.name, "type": column.type]
       if column.wallClock { columnDict["wallClock"] = true }
+      if column.masked { columnDict["masked"] = true }
       return columnDict
     }
     dict["columns"] = columnsArray

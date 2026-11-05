@@ -224,6 +224,8 @@ struct PostgresCatalogQualificationTests {
           StagedIntegerKey.lookupSQL(
             schema: "public", table: "orders", column: "id", dialect: .postgresql))
       ),
+      // Mask rule origins of a user result, by its table OIDs
+      ("mask origin lookup", DatabaseConnectionManager.maskOriginSQL),
       // Run on the target session after the copied rows
       ("copy identity restart", try #require(restarts.first)),
       // Table Health, on a side connection

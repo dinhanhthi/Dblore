@@ -279,6 +279,11 @@ extension NotebookViewModel {
       return
     }
     guard let first = keys.first, first != "_id" else { return }
+    // A masked field holds mask text: neither the sheet nor a `$set` edits it
+    if result.editTarget?.generatedColumns.contains(first) == true {
+      showToast(Self.readOnlyColumnMessage(first, columns: result.columns), type: .error)
+      return
+    }
     let rowData = CellResult.rowData(columns: result.columns, row: result.rows[row])
     guard let editType, let text else {
       guard let id = rowData["_id"] else {
@@ -483,7 +488,8 @@ extension NotebookViewModel {
     return .staged(inserts[insertIndex])
   }
 
-  /// The document of `row` without `_id`, nil when the row is not on the page.
+  /// The document of `row` without `_id` (a stored one also without its masked fields), nil
+  /// when the row is not on the page.
   private func duplicatedDocument(row: Int) -> MongoValue? {
     switch documentRow(row) {
     case .staged(let insert)?:
@@ -492,7 +498,9 @@ extension NotebookViewModel {
     case .stored?:
       guard let result = editorResult else { return nil }
       var fields: [MongoValue.Field] = []
-      for (index, column) in result.columns.enumerated() where column.name != "_id" {
+      // A masked field's mask text is never copied
+      for (index, column) in result.columns.enumerated()
+      where column.name != "_id" && !column.masked {
         guard result.rows[row].indices.contains(index) else { continue }
         let cell = result.rows[row][index]
         if case .null = cell { continue }

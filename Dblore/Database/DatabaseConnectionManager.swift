@@ -122,6 +122,11 @@ actor DatabaseConnectionManager {
   /// PostgreSQL result column types by origin (table identity and attnum), read from the
   /// catalog once (`enrichColumnTypes`). Cleared with `editTableCache`, never per table.
   var columnTypeCache = ColumnTypeCache()
+  /// The saved rows' mask rules for a config (`SavedMaskRules` on `.standard`); tests read
+  /// their own defaults
+  var savedMaskRules: @Sendable (ConnectionConfig) -> [ColumnMaskRule] = {
+    SavedMaskRules.rules(for: $0)
+  }
   /// The MySQL server's character sets and collations, read once per connection (the epoch it
   /// was read on) for the structure editor (`fetchMySQLCharacterSets`)
   var mysqlCharacterSetsCache: (epoch: UInt64, sets: MySQLCharacterSets)?
