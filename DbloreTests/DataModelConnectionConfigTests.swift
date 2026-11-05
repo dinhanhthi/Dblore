@@ -183,6 +183,64 @@ struct DataModelConnectionConfigTests {
     #expect(unknown.aiAccess == .useDefault)
   }
 
+  @Test("Mask rules round-trip and are absent without rules")
+  func maskRulesCoding() throws {
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    #expect(try encodedObject(config)["maskRules"] == nil)
+    #expect(
+      try JSONDecoder().decode(ConnectionConfig.self, from: JSONEncoder().encode(config))
+        .maskRules.isEmpty)
+
+    config.maskRules = [
+      try ColumnMaskRule(pattern: "users.email", style: .email),
+      try ColumnMaskRule(pattern: "card", style: .lastFour),
+    ]
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONEncoder().encode(config))
+    #expect(decoded.maskRules == config.maskRules)
+    #expect(decoded == config)
+
+  }
+
+  @Test(
+    "Mask rules decode failing closed: an unknown style masks fully, a bad pattern is dropped, at most 100"
+  )
+  func maskRulesDecodeLeniently() throws {
+    var object = try encodedObject(ConnectionConfig(host: "localhost", database: "app"))
+    let junk: [Any] = [
+      ["pattern": "users.email", "style": "hash"], ["pattern": "phone"],
+      ["pattern": "users.*", "style": "full"], ["pattern": 7, "style": "full"],
+      ["style": "full"], "email",
+    ]
+    let valid: [Any] = Array(
+      repeating: ["pattern": "card", "style": "lastFour"], count: ColumnMaskRule.maxRules)
+    object["maskRules"] = junk + valid
+    let decoded = try JSONDecoder().decode(
+      ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.maskRules.count == ColumnMaskRule.maxRules)
+    #expect(decoded.maskRules.prefix(2).map(\.pattern) == ["users.email", "phone"])
+    #expect(decoded.maskRules.prefix(2).allSatisfy { $0.style == .full })
+    #expect(decoded.maskRules.dropFirst(2).allSatisfy { $0.pattern == "card" })
+
+    // A list of the wrong type masks nothing rather than refusing the config
+    object["maskRules"] = "email"
+    #expect(
+      try JSONDecoder().decode(
+        ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object)
+      ).maskRules.isEmpty)
+  }
+
+  @Test("Mask rules are cut to 100 on set, so a 101st is never written")
+  func maskRulesClampOnSet() throws {
+    var config = ConnectionConfig(host: "localhost", database: "app")
+    config.maskRules = try Array(
+      repeating: ColumnMaskRule(pattern: "email", style: .full),
+      count: ColumnMaskRule.maxRules + 1)
+    #expect(config.maskRules.count == ColumnMaskRule.maxRules)
+    let encoded = try #require(try encodedObject(config)["maskRules"] as? [Any])
+    #expect(encoded.count == ColumnMaskRule.maxRules)
+  }
+
   @Test("AI rules are clamped to 2,000 characters on decode and on set")
   func aiRulesClamp() throws {
     let long = String(repeating: "a", count: 2_500)

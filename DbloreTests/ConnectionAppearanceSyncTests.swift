@@ -158,6 +158,150 @@ struct ConnectionAppearanceSyncTests {
     }
   }
 
+  // MARK: - Mask rules
+
+  @Test("A rename save keeps the saved mask rules; an opened file never runs with fewer")
+  func maskRulesFollowTheSavedRow() throws {
+    try Self.withDefaults { defaults in
+      var saved = Self.config()
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      saved.maskRules = [email]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      var opened = saved
+      opened.maskRules = []
+
+      let manager = Self.workspace(opened)
+      manager.renameConnection(to: "Renamed", defaults: defaults, passwords: NoPasswordStore())
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [email])
+
+      // The file's own extra rule stays: a rule only hides data
+      let card = try ColumnMaskRule(pattern: "card", style: .lastFour)
+      opened.maskRules = [try ColumnMaskRule(pattern: "USERS.email", style: .null), card]
+      let file = try #require(WorkspaceManager.sanitizedFileAIPolicy(opened, defaults: defaults))
+      #expect(file.maskRules == [email, card])
+      opened.maskRules = []
+      #expect(
+        WorkspaceManager.sanitizedFileAIPolicy(opened, defaults: defaults)?.maskRules == [email])
+    }
+  }
+
+  @Test("A rule saved through a save or a Welcome edit reaches a live config without rules")
+  func savedMaskRulesSeeEverySave() throws {
+    try Self.withDefaults { defaults in
+      let live = Self.config()
+      #expect(SessionManager.saveConnection(live, defaults: defaults, passwords: NoPasswordStore()))
+      // Read once, so a stale cache would hide the rule
+      #expect(SavedMaskRules.rules(for: live, defaults: defaults).isEmpty)
+
+      var edited = live
+      let email = try ColumnMaskRule(pattern: "email", style: .full)
+      edited.maskRules = [email]
+      #expect(
+        SessionManager.saveConnection(edited, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(SavedMaskRules.rules(for: live, defaults: defaults) == [email])
+
+      let row = try #require(Self.savedEntry(live, defaults: defaults))
+      let card = try ColumnMaskRule(pattern: "*.card", style: .lastFour)
+      edited.maskRules = [email, card]
+      #expect(
+        SessionManager.replaceConnection(
+          id: row.id, with: edited, defaults: defaults, passwords: NoPasswordStore()))
+      #expect(SavedMaskRules.rules(for: live, defaults: defaults) == [email, card])
+    }
+  }
+
+  @Test("A connect with edited AI fields keeps the saved mask rules")
+  func aiEditedConnectKeepsSavedMaskRules() async throws {
+    try await Self.withDefaultsAsync { defaults in
+      var saved = Self.config()
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      saved.maskRules = [email]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      let manager = Self.workspace(saved, defaults: defaults)
+      var edited = saved
+      edited.aiRules = "Never read the payments table."
+      edited.maskRules = []
+
+      try await manager.connect(
+        config: edited, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+        aiFieldsEdited: true, fromForm: true)
+
+      let row = Self.savedEntry(saved, defaults: defaults)?.config
+      #expect(row?.aiRules == "Never read the payments table.")
+      #expect(row?.maskRules == [email])
+      #expect(manager.workspace.connectionConfig?.maskRules == [email])
+    }
+  }
+
+  @Test("A rename or a hidden-schemas save after opening a file keeps the file's extra rule")
+  func renameKeepsOpenedFileMaskRules() throws {
+    try Self.withDefaults { defaults in
+      var saved = Self.config()
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      saved.maskRules = [email]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      var file = saved
+      let card = try ColumnMaskRule(pattern: "card", style: .lastFour)
+      file.maskRules = [card]
+      let manager = WorkspaceManager(
+        workspace: Workspace(connectionConfig: file), restoreTabs: false,
+        connectionManager: DatabaseConnectionManager(
+          sessionFactory: FakeDatabaseSessionFactory(
+            capabilities: DatabaseType.postgresql.capabilities)),
+        defaults: defaults, passwords: RecordingConnectionPasswordStore())
+      #expect(manager.workspace.connectionConfig?.maskRules == [email, card])
+
+      manager.renameConnection(to: "Renamed", defaults: defaults, passwords: NoPasswordStore())
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [email, card])
+
+      // The saved row gained a rule since: the next save keeps it too
+      var row = try #require(Self.savedEntry(saved, defaults: defaults)?.config)
+      let phone = try ColumnMaskRule(pattern: "phone", style: .full)
+      row.maskRules = [email, card, phone]
+      #expect(SessionManager.saveConnection(row, defaults: defaults, passwords: NoPasswordStore()))
+      manager.setHiddenSchemas(["audit"], defaults: defaults, passwords: NoPasswordStore())
+      #expect(
+        Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [email, card, phone])
+    }
+  }
+
+  @Test("A connect with edited mask rules writes the given list, through the Safe Mode unlock too")
+  func maskRulesEditedReplacesSavedRules() async throws {
+    try await Self.withDefaultsAsync { defaults in
+      var saved = Self.config()
+      saved.applyCommitStyle(.review)
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      let card = try ColumnMaskRule(pattern: "card", style: .lastFour)
+      saved.maskRules = [email, card]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      let manager = Self.workspace(saved, defaults: defaults)
+
+      var edited = saved
+      edited.maskRules = [card]
+      try await manager.connect(
+        config: edited, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+        maskRulesEdited: true, fromForm: true)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [card])
+
+      // Held for the unlock: the flag is kept until the connect completes
+      edited.applyCommitStyle(.immediate)
+      edited.maskRules = []
+      await #expect(throws: WorkspaceConnectError.unlockRequired) {
+        try await manager.connect(
+          config: edited, defaultCommitStyle: .review, hasPassword: true, hasTouchID: false,
+          maskRulesEdited: true, fromForm: true)
+      }
+      #expect(manager.pendingWeakeningMaskRulesEdited == true)
+      try await manager.completePendingWeakeningConnect()
+      #expect(manager.pendingWeakeningMaskRulesEdited == false)
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [])
+    }
+  }
+
   @Test("An auto-connect from an opened file keeps the saved color and group")
   func fileConnectKeepsSavedAppearance() async throws {
     try await Self.withDefaultsAsync { defaults in

@@ -391,6 +391,7 @@ struct AppWelcomeView: View {
     }
     if let id = editingConnectionId {
       var row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
+      row = WorkspaceManager.keepingSavedMaskRules(row)
       // Opened without its unreadable password and none typed: keep it, never save it empty
       if editingPasswordUnread, let edited {
         row = try recentManager.keepingSavedPassword(row, of: edited.config)

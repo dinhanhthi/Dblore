@@ -125,6 +125,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningVaultSecret: VaultCredentialStore.ConnectionSecret?
   /// The held connect's `aiFieldsEdited` (see `connect(config:…, aiFieldsEdited:)`)
   var pendingWeakeningAIFieldsEdited = false
+  /// The held connect's `maskRulesEdited` (see `connect(config:…, maskRulesEdited:)`)
+  var pendingWeakeningMaskRulesEdited = false
   /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
   var pendingWeakeningFromForm = false
   /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
@@ -869,12 +871,13 @@ class WorkspaceManager: Identifiable {
   /// `workspace.connectionKeychainKey` alone. A switched MongoDB config (`mongoHomeDatabase` set)
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
-  /// unless `aiFieldsEdited`, its color and group unless `fromForm`, and its hidden schemas.
+  /// unless `aiFieldsEdited`, its mask rules (added to the config's) unless `maskRulesEdited`,
+  /// its color and group unless `fromForm`, and its hidden schemas.
   /// A save onto the Keychain key of another saved connection throws
   /// `SessionManagerError.keychainKeyInUse` before anything changes.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
-    aiFieldsEdited: Bool = false, fromForm: Bool = false
+    aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false
   ) async throws {
     if savesConnection, config.rememberConnection, config.mongoHomeDatabase == nil,
       SessionManager.keyUsedByAnotherIdentity(config, defaults: defaults)
@@ -932,6 +935,7 @@ class WorkspaceManager: Identifiable {
       }
       if savesConnection, config.mongoHomeDatabase == nil {
         if !aiFieldsEdited { config = Self.keepingSavedAIFields(config, defaults: defaults) }
+        if !maskRulesEdited { config = Self.keepingSavedMaskRules(config, defaults: defaults) }
         config =
           fromForm
           ? Self.keepingSavedHiddenSchemas(

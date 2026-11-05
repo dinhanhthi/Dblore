@@ -119,9 +119,17 @@ class SessionManager {
     Set(history.filter { ids.contains($0.id) }.map(\.keychainKey))
   }
 
+  /// The saved rows as stored: no password, no Keychain read and no lock republish. For readers
+  /// off the main actor (`SavedMaskRules`).
+  nonisolated static func savedRowsWithoutPasswords(
+    defaults: UserDefaults
+  ) -> [ConnectionHistoryEntry] {
+    storedEntries(defaults: defaults).known
+  }
+
   /// Decodes saved entries one by one. Entries this build cannot decode (for example an
   /// engine added by a newer build) come back as raw JSON objects in `unknown`.
-  private static func storedEntries(
+  private nonisolated static func storedEntries(
     defaults: UserDefaults
   ) -> (known: [ConnectionHistoryEntry], unknown: [Any]) {
     guard let data = defaults.data(forKey: historyKey),
@@ -142,12 +150,20 @@ class SessionManager {
     return (known, unknown)
   }
 
+  /// The one way the history key is written (saves, replaces, removals, the lock toggle and the
+  /// persistent-domain writes): it also resets `SavedMaskRules`, so no live manager masks with
+  /// the rules of a history that was replaced.
+  private nonisolated static func writeHistory(_ write: () -> Void) {
+    write()
+    SavedMaskRules.reset()
+  }
+
   /// Save connection history (private helper)
   private static func saveHistory(
     _ entries: [ConnectionHistoryEntry], defaults: UserDefaults = .standard
   ) {
     if let encoded = encodedHistory(entries, defaults: defaults) {
-      defaults.set(encoded, forKey: historyKey)
+      writeHistory { defaults.set(encoded, forKey: historyKey) }
     }
   }
 
@@ -259,7 +275,7 @@ class SessionManager {
         passwords.savePassword(config.password, forKey: newEntry.keychainKey)
       }
     }
-    defaults.set(encoded, forKey: historyKey)
+    writeHistory { defaults.set(encoded, forKey: historyKey) }
     publishLocks(history, defaults: defaults, registry: registry)
     if grantsNewLock {
       grantNewLocks(
@@ -345,7 +361,7 @@ class SessionManager {
     for pending in pendingPasswords {
       passwords.savePassword(pending.password, forKey: pending.key)
     }
-    defaults.set(encoded, forKey: historyKey)
+    writeHistory { defaults.set(encoded, forKey: historyKey) }
     publishLocks(kept + history, defaults: defaults, registry: registry)
     report.added = kept.count
     return report
@@ -535,7 +551,7 @@ class SessionManager {
         passwords.savePassword(config.password, forKey: newKey)
       }
     }
-    defaults.set(encoded, forKey: historyKey)
+    writeHistory { defaults.set(encoded, forKey: historyKey) }
     publishLocks(history, defaults: defaults, registry: registry)
     if grantsNewLock {
       grantNewLocks(
@@ -578,7 +594,7 @@ class SessionManager {
     // The undecodable rows go too: none keeps a secret
     pruneVaultSecrets(previous: history, current: [], rawKeys: [], vaultSecrets: vaultSecrets)
 
-    defaults.removeObject(forKey: historyKey)
+    writeHistory { defaults.removeObject(forKey: historyKey) }
     publishLocks([], defaults: defaults, registry: registry)
     return true
   }
@@ -680,7 +696,7 @@ class SessionManager {
     guard let encoded = encodedHistory(history, defaults: defaults) else { return false }
     let lockedBefore = registry.lockedIdentities
     let generation = registry.generation
-    defaults.set(encoded, forKey: historyKey)
+    writeHistory { defaults.set(encoded, forKey: historyKey) }
     publishLocks(history, defaults: defaults, registry: registry)
     if locked {
       grantNewLocks(
@@ -911,7 +927,7 @@ class SessionManager {
     } else {
       domain.removeValue(forKey: legacySessionKey)
     }
-    defaults.setPersistentDomain(domain, forName: domainName)
+    writeHistory { defaults.setPersistentDomain(domain, forName: domainName) }
     return true
   }
 
@@ -927,7 +943,7 @@ class SessionManager {
     }
     domain.removeValue(forKey: historyKey)
     domain.removeValue(forKey: legacySessionKey)
-    defaults.setPersistentDomain(domain, forName: domainName)
+    writeHistory { defaults.setPersistentDomain(domain, forName: domainName) }
     return true
   }
 

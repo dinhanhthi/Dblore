@@ -30,6 +30,10 @@ struct DbloreConnectionFileTests {
     config.postDisconnectScript = "vpn-down.sh"
     config.passwordCommandScript = "pw.sh"
     config.scriptTimeoutSeconds = 45
+    config.maskRules = [
+      try! ColumnMaskRule(pattern: "public.users.email", style: .email),
+      try! ColumnMaskRule(pattern: "*.card", style: .lastFour),
+    ]
     return config
   }
 
@@ -210,6 +214,22 @@ struct DbloreConnectionFileTests {
 
     entry.aiRules += "r"
     #expect(throws: DbloreConnectionFile.ReadError.fieldTooLong) {
+      try DbloreConnectionFile.decode(try DbloreConnectionFile(connections: [entry]).encoded())
+    }
+  }
+
+  @Test("A mask rule with a * column or an unknown style skips the entry; over 100 refuse the file")
+  func maskRulesAreValidated() throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    for (pattern, style) in [("users.*", "full"), ("email", "hash")] {
+      entry.maskRules = [.init(pattern: pattern, style: style)]
+      #expect(throws: DbloreConnectionFile.Connection.Skipped.self) {
+        try entry.importedConnection().get()
+      }
+    }
+    entry.maskRules = Array(
+      repeating: .init(pattern: "email", style: "full"), count: ColumnMaskRule.maxRules + 1)
+    #expect(throws: DbloreConnectionFile.ReadError.tooManyEntries) {
       try DbloreConnectionFile.decode(try DbloreConnectionFile(connections: [entry]).encoded())
     }
   }

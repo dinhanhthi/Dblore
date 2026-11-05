@@ -86,6 +86,12 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
     var caPEM: String?
   }
 
+  /// A column mask rule as raw text, checked on import (`ColumnMaskRule`).
+  nonisolated struct MaskRule: Codable, Equatable, Sendable {
+    var pattern: String
+    var style: String
+  }
+
   /// One allow-listed connection. Enum values are kept as raw text so a file is checked entry by
   /// entry rather than refused whole.
   nonisolated struct Connection: Codable, Equatable, Sendable {
@@ -119,6 +125,8 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
     var postDisconnectScript: String?
     var passwordCommandScript: String?
     var scriptTimeoutSeconds: Int?
+    /// Absent from files without mask rules
+    var maskRules: [MaskRule]?
   }
 
   /// A favorite statement as plain text: no ids, no file references.
@@ -209,8 +217,13 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
         item.preConnectScript, item.postDisconnectScript, item.passwordCommandScript,
         item.vault?.address, item.vault?.mount, item.vault?.role, item.vault?.authMethod,
       ]
+      let maskRules = item.maskRules ?? []
+      guard maskRules.count <= ColumnMaskRule.maxRules else { throw ReadError.tooManyEntries }
       guard fields.allSatisfy(fits), item.aiRules.count <= ConnectionConfig.aiRulesLimit,
-        (item.vault?.caPEM?.utf8.count ?? 0) <= Self.maxCAPEMLength
+        (item.vault?.caPEM?.utf8.count ?? 0) <= Self.maxCAPEMLength,
+        maskRules.allSatisfy({
+          $0.pattern.count <= ColumnMaskRule.patternLimit && fits($0.style)
+        })
       else {
         throw ReadError.fieldTooLong
       }
@@ -296,6 +309,12 @@ nonisolated extension DbloreConnectionFile.Connection {
     postDisconnectScript = config.postDisconnectScript
     passwordCommandScript = config.passwordCommandScript
     scriptTimeoutSeconds = config.scriptTimeoutSeconds
+    maskRules =
+      config.maskRules.isEmpty
+      ? nil
+      : config.maskRules.map {
+        DbloreConnectionFile.MaskRule(pattern: $0.pattern, style: $0.style.rawValue)
+      }
   }
 }
 
@@ -347,6 +366,13 @@ nonisolated extension DbloreConnectionFile.Connection {
     } else {
       style = nil
     }
+    var rules: [ColumnMaskRule] = []
+    for rule in maskRules ?? [] {
+      guard let style = ColumnMaskRule.Style(rawValue: rule.style),
+        let checked = try? ColumnMaskRule(pattern: rule.pattern, style: style)
+      else { return skip("a masking rule this version does not read") }
+      rules.append(checked)
+    }
     var warnings: [String] = []
     var tunnel: SSHTunnelConfig?
     if let ssh {
@@ -388,6 +414,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     config.aiAccess = access == .always ? .useDefault : access
     config.aiRules = ConnectionConfig.clampedAIRules(aiRules)
     config.hiddenSchemas = ConnectionConfig.normalizedHiddenSchemas(hiddenSchemas)
+    config.maskRules = rules
 
     typealias Warning = DbloreConnectionFile.Warning
     if tls == .disable { warnings.append(Warning.tlsOff) }

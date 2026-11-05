@@ -387,6 +387,16 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var sshTunnel: SSHTunnelConfig?
   /// Credentials leased from Vault on connect; `password` is then never encoded.
   var vault: VaultSource?
+  /// Columns whose values results show masked (a display guard on names, not access control),
+  /// at most `ColumnMaskRule.maxRules` (cut on set and decode). Synced like the AI rules: a save
+  /// never writes fewer than the saved row's (`WorkspaceManager.keepingSavedMaskRules`).
+  var maskRules: [ColumnMaskRule] = [] {
+    didSet {
+      if maskRules.count > ColumnMaskRule.maxRules {
+        maskRules = Array(maskRules.prefix(ColumnMaskRule.maxRules))
+      }
+    }
+  }
   /// The password is typed on each connect and kept in memory only: never read from nor written
   /// to the Keychain, never encoded. Exclusive with `vault` and `passwordCommandScript`.
   var askPasswordOnConnect = false
@@ -570,6 +580,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case isLocked
     // Attached databases (absent unless set)
     case attachedDatabases
+    // Column mask rules (absent unless set)
+    case maskRules
     // Legacy keys (for reading old data)
     case readOnly, blockSchemaChanges
   }
@@ -654,6 +666,11 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     attachedDatabases = Array(
       (((try? container.decodeIfPresent([AttachedDatabase].self, forKey: .attachedDatabases))
         ?? nil) ?? []).prefix(Self.attachedDatabasesLimit))
+    // Rule by rule, failing closed (`ColumnMaskRule.Lenient`): one rule never makes the config
+    // unreadable; a list of the wrong type masks nothing
+    maskRules = Array(
+      (((try? container.decodeIfPresent([ColumnMaskRule.Lenient].self, forKey: .maskRules))
+        ?? nil) ?? []).compactMap(\.rule).prefix(ColumnMaskRule.maxRules))
 
     // Try to decode new protectionLevel first, fall back to legacy fields
     if let level = try container.decodeIfPresent(
@@ -728,6 +745,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     }
     if !attachedDatabases.isEmpty {
       try container.encode(attachedDatabases, forKey: .attachedDatabases)
+    }
+    if !maskRules.isEmpty {
+      try container.encode(maskRules, forKey: .maskRules)
     }
   }
 
