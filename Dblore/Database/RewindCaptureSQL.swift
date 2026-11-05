@@ -1,8 +1,9 @@
 // RewindCaptureSQL.swift
 // The Data Rewind row read: one row by primary key, every column in text form, and the way
 // back from that stored text to binds for the inverse statements.
-// - PostgreSQL reads `'v' || col::text` (the one-character prefix keeps '' apart from NULL:
-//   text concatenated with NULL stays NULL) and binds the text as an untyped `$n`.
+// - PostgreSQL reads `'v' OPERATOR(pg_catalog.||) col::pg_catalog.text` (the one-character
+//   prefix keeps '' apart from NULL: text concatenated with NULL stays NULL) and binds the text
+//   as an untyped `$n`; its key compares with `OPERATOR(pg_catalog.=)`.
 // - MySQL reads `HEX(col)` for byte, BIT and spatial columns, bound back as `UNHEX(?)`, and
 //   `CAST(col AS CHAR)` for the rest, bound back as text.
 // - SQLite reads `quote(col)` and keeps the literal, so the storage class survives: `NULL`,
@@ -89,9 +90,11 @@ nonisolated enum RewindCaptureSQL {
     return BoundStatement(sql: sql, values: condition.values, expectedRows: nil)
   }
 
-  /// `k1 = <p1> AND k2 = <p2> ...` for the key columns `keys` equal to `keyValues` (in key
-  /// order), each value bound the way an edit's own WHERE binds it (`inputText`, MySQL bytes
-  /// through `UNHEX`), and the bind text of each placeholder in order (nil is NULL).
+  /// `k1 = <p1> AND k2 = <p2> ...` (PostgreSQL `OPERATOR(pg_catalog.=)`, whatever the key's
+  /// type: the values are the row's own stored values) for the key columns `keys` equal to
+  /// `keyValues` (in key order), each value bound the way an edit's own WHERE binds it
+  /// (`inputText`, MySQL bytes through `UNHEX`), and the bind text of each placeholder in order
+  /// (nil is NULL).
   /// `placeholder` gives the placeholder of the n-th bind (1-based). Shared with the full
   /// value read of a lazy binary cell (`LazyCellLoader`).
   static func keyCondition(
@@ -106,7 +109,7 @@ nonisolated enum RewindCaptureSQL {
     for (index, (key, value)) in zip(keys, keyValues).enumerated() {
       let bound = CellUpdateStatement.bindPlaceholder(
         placeholder(index + 1), value, dialect: dialect)
-      conditions.append("\(try dialect.quoteIdentifier(key)) = \(bound)")
+      conditions.append(dialect.comparison(try dialect.quoteIdentifier(key), .equal, bound))
       values.append(CellUpdateStatement.inputText(value, dialect: dialect))
     }
     return (conditions.joined(separator: " AND "), values)

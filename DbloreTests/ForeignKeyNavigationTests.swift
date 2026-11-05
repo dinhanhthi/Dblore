@@ -24,7 +24,9 @@ struct ForeignKeyNavigationTests {
     let sql = try #require(session.statements.first)
     #expect(session.statements.count == 1)
     #expect(
-      sql == #"SELECT * FROM "main"."parent" WHERE "b" = $1 AND "a" = $2 LIMIT 2"#)
+      sql
+        == #"SELECT * FROM "main"."parent" WHERE "b" OPERATOR(pg_catalog.=) $1"#
+        + #" AND "a" OPERATOR(pg_catalog.=) $2 LIMIT 2"#)
     #expect(session.statementBinds == [[.text("1"), .text(Self.secret)]])
     #expect(!sql.contains(Self.secret))
     #expect(!sql.contains("= NULL"))

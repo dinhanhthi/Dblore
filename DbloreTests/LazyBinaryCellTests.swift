@@ -130,7 +130,9 @@ struct LazyBinaryCellTests {
     ) { _, _ in QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0) }
     let postgresRead = try LazyCellLoader.statement(
       LazyCell(row: RowChangeSet.RowKey(values: [.int(1)]), column: "payload"), source: postgres)
-    #expect(postgresRead.sql == #"SELECT "payload" FROM "public"."items" WHERE "id" = :k1"#)
+    #expect(
+      postgresRead.sql
+        == #"SELECT "payload" FROM "public"."items" WHERE "id" OPERATOR(pg_catalog.=) :k1"#)
     _ = try ReadOnlyQueryGuard.check(postgresRead.sql, dialect: .postgresql)
 
     let nullKey = LazyCell(row: RowChangeSet.RowKey(values: [.int(7), .null]), column: "body")

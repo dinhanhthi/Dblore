@@ -8,8 +8,11 @@
 // so they decode and show as in the grid (a timestamp as a date in its column's zone). The value
 // is always the `:v` bind (the gate rewrites it per dialect), never SQL text, and every
 // identifier is quoted. Columns are joined with OR, at most `rowLimit` rows. The result's last
-// column is the 1-based index of the first searched column that matched. A statement is
-// returned only once it passed `ReadOnlyQueryGuard`.
+// column is the 1-based index of the first searched column that matched. On PostgreSQL the cast,
+// `=` and `ILIKE` are `pg_catalog`'s (`::pg_catalog.text`, `OPERATOR(pg_catalog.=)`,
+// `OPERATOR(pg_catalog.~~*)` with `pg_catalog.like_escape`), so no object planted on the user's
+// `search_path` runs; they compare the text form, so even a citext column is qualified. A
+// statement is returned only once it passed `ReadOnlyQueryGuard`.
 
 import Foundation
 
@@ -74,10 +77,11 @@ nonisolated enum CrossTableSearchQueryBuilder {
 
     let placeholder = ":\(valueParameter)"
     let predicates = try searched.map { column in
-      let subject = textCast(try dialect.quoteIdentifier(column.name), dialect: dialect)
+      let quoted = try dialect.quoteIdentifier(column.name)
       switch mode {
-      case .contains: return try containsPredicate(subject, placeholder, dialect: dialect)
-      case .equals: return "\(subject) = \(placeholder)"
+      case .contains: return try containsPredicate(quoted, placeholder, dialect: dialect)
+      case .equals:
+        return dialect.comparison(textCast(quoted, dialect: dialect), .equal, placeholder)
       }
     }
     let selected = try display.map { try dialect.quoteIdentifier($0.name) }
@@ -120,16 +124,21 @@ nonisolated enum CrossTableSearchQueryBuilder {
       value, ["%": mark + "%", "_": mark + "_", escapeCharacter: mark + mark])
   }
 
-  /// Case-insensitive `LIKE`: `ILIKE` where the engine has it (PostgreSQL, DuckDB), else
-  /// `LOWER()` on both sides (SQLite, and MySQL/MariaDB, where a `_bin` collation makes `LIKE`
-  /// case-sensitive; the `CAST(.. AS CHAR)` subject is a nonbinary string, so `LOWER()` applies).
+  /// Case-insensitive `LIKE` on the column's text: `ILIKE` where the engine has it (PostgreSQL
+  /// as `pg_catalog`'s `~~*` with `like_escape`, DuckDB), else `LOWER()` on both sides (SQLite,
+  /// and MySQL/MariaDB, where a `_bin` collation makes `LIKE` case-sensitive; the
+  /// `CAST(.. AS CHAR)` subject is a nonbinary string, so `LOWER()` applies).
   private static func containsPredicate(
-    _ subject: String, _ placeholder: String, dialect: SQLDialect
+    _ quotedColumn: String, _ placeholder: String, dialect: SQLDialect
   ) throws -> String {
-    let escape = "ESCAPE '\(escapeCharacter)'"
+    let escape = "'\(escapeCharacter)'"
+    let subject = textCast(quotedColumn, dialect: dialect)
     switch dialect {
-    case .postgresql, .duckdb: return "\(subject) ILIKE \(placeholder) \(escape)"
-    case .sqlite, .mysql: return "LOWER(\(subject)) LIKE LOWER(\(placeholder)) \(escape)"
+    case .postgresql:
+      return dialect.like(
+        column: quotedColumn, pattern: placeholder, escape: escape, caseInsensitive: true)
+    case .duckdb: return "\(subject) ILIKE \(placeholder) ESCAPE \(escape)"
+    case .sqlite, .mysql: return "LOWER(\(subject)) LIKE LOWER(\(placeholder)) ESCAPE \(escape)"
     default: throw SQLDialectError.notSQL
     }
   }
@@ -142,6 +151,6 @@ nonisolated enum CrossTableSearchQueryBuilder {
     case .duckdb: type = "VARCHAR"
     default: type = "text"
     }
-    return "CAST(\(quotedColumn) AS \(type))"
+    return dialect.cast(quotedColumn, to: type)
   }
 }

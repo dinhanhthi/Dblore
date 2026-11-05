@@ -7,17 +7,20 @@
 //   PostgreSQL `OVERRIDING SYSTEM VALUE` when it writes a `GENERATED ALWAYS` identity column.
 // - An INSERT is undone by a DELETE by key WHERE every other column still reads as inserted.
 // The checks compare the capture's own text form with null-safe equality (PostgreSQL
-// `col::text COLLATE "C" IS NOT DISTINCT FROM`, MySQL `CAST(CAST(col AS CHAR) AS BINARY) <=>
-// CAST(? AS BINARY)` or `HEX(col) <=>`, SQLite `quote(col) IS`): the after-image is that text,
-// PostgreSQL `json` has no equality operator, a nondeterministic PostgreSQL collation can fold
-// case ("C" compares bytes), and MySQL's collations fold case and (`_bin` included) ignore
-// trailing spaces. The MySQL text and the bind are both in the connection charset (utf8mb4,
-// `MySQLSession`), so the binary comparison is byte for byte on MySQL and MariaDB. PostgreSQL
+// `col::pg_catalog.text COLLATE pg_catalog."C" OPERATOR(pg_catalog.=)`, or `IS NULL` for a NULL
+// image, MySQL `CAST(CAST(col AS CHAR) AS BINARY) <=> CAST(? AS BINARY)` or `HEX(col) <=>`,
+// SQLite `quote(col) IS`): the after-image is that text, PostgreSQL `json` has no equality
+// operator, a nondeterministic PostgreSQL collation can fold case ("C" compares bytes), and
+// MySQL's collations fold case and (`_bin` included) ignore trailing spaces. The MySQL text
+// and the bind are both in the connection charset (utf8mb4, `MySQLSession`), so the binary
+// comparison is byte for byte on MySQL and MariaDB. PostgreSQL
 // `bpchar::text` drops the trailing spaces, but `char(n)` stores 'a' and 'a ' as one value, so
 // no change goes unseen; SQLite compares `quote()` text with BINARY. A failed check matches no
 // row, so the batch's row count stops the whole rewind. The MySQL row check (0 changed rows
 // counts as 1 when it finds the row) repeats the whole WHERE, so a failed check is never a
 // success.
+// PostgreSQL keys compare with `OPERATOR(pg_catalog.=)` whatever their type (the values are the
+// row's own stored values), so nothing resolves through the user's search_path.
 // The store file is outside the database and is untrusted: the relation is rebuilt from schema
 // and table (the stored server text must name the same table and is never sent), names are
 // quoted by the dialect and must be live columns, the key must be the live primary key, and
@@ -361,7 +364,8 @@ private nonisolated struct EntryPlanner {
         throw RewindCaptureError.noPrimaryKey
       }
       and()
-      builder.text("\(try quote(key)) = ")
+      // The row's own stored key: always pg_catalog's `=`, whatever the key's type
+      builder.text(dialect.comparison(try quote(key), .equal, ""))
       builder.bind(try bind(image, column), mask: maskStyles[key])
     }
     for column in checked {
@@ -369,6 +373,10 @@ private nonisolated struct EntryPlanner {
         throw RewindCaptureError.unexpectedValue(column: column.name)
       }
       and()
+      if engine == .postgresql {
+        try appendPostgresCheck(column, text, to: &builder)
+        continue
+      }
       let bytes = engine == .mysql && !SQLDumpDataRenderer.isMySQLHexType(column.typeName)
       builder.text(try comparison(column) + (bytes ? " CAST(" : " "))
       builder.bind(
@@ -378,21 +386,41 @@ private nonisolated struct EntryPlanner {
     }
   }
 
+  /// PostgreSQL's null-safe check of one column against its stored text: `IS NOT DISTINCT FROM`
+  /// looks `=` up by name, so a NULL image reads `col::pg_catalog.text IS NULL` (the text
+  /// form, so a composite of NULL fields is not NULL) and any other text
+  /// `col::pg_catalog.text COLLATE pg_catalog."C" OPERATOR(pg_catalog.=) <text>`. A masked
+  /// column previews its NULL check as that comparison with the masked NULL, so the preview
+  /// never tells NULL from a value.
+  private func appendPostgresCheck(
+    _ column: RewindColumn, _ text: String?, to builder: inout StatementBuilder
+  ) throws {
+    let textForm = dialect.cast(try quote(column.name), to: "text")
+    // A nondeterministic column collation would carry over through the cast and fold case
+    let check = dialect.comparison("\(textForm) COLLATE pg_catalog.\"C\"", .equal, "")
+    let mask = maskStyles[column.name]
+    guard let text else {
+      let preview = mask.map { check + builder.previewLiteral(.null, mask: $0) }
+      builder.text("\(textForm) IS NULL", preview: preview)
+      return
+    }
+    builder.text(check)
+    builder.bind(RewindBind(form: .plain, value: SQLBindValue(optionalText: text)), mask: mask)
+  }
+
   /// The column in the capture's text form and the null-safe equality operator (MySQL text:
-  /// as bytes, the bind cast the same way by `appendCondition`).
+  /// as bytes, the bind cast the same way by `appendCondition`). PostgreSQL:
+  /// `appendPostgresCheck`.
   private func comparison(_ column: RewindColumn) throws -> String {
     let name = try quote(column.name)
     switch engine {
-    case .postgresql:
-      // A nondeterministic column collation would carry over through the cast and fold case
-      return "\(name)::text COLLATE \"C\" IS NOT DISTINCT FROM"
     case .mysql:
       // HEX digits hold no spaces, so only the text form needs the byte comparison
       return SQLDumpDataRenderer.isMySQLHexType(column.typeName)
         ? "HEX(\(name)) <=>" : "CAST(CAST(\(name) AS CHAR) AS BINARY) <=>"
     case .sqlite:
       return "quote(\(name)) IS"
-    case .duckdb, .mongodb:
+    case .postgresql, .duckdb, .mongodb:
       throw RewindCaptureError.unsupportedEngine(engine)
     }
   }
@@ -469,9 +497,10 @@ private nonisolated struct StatementBuilder {
     BoundStatement(sql: sql, values: values, rowCheck: rowCheck)
   }
 
-  mutating func text(_ text: String) {
+  /// `text` in the SQL; the preview shows `preview` instead, when given
+  mutating func text(_ text: String, preview shown: String? = nil) {
     sql += text
-    preview += text
+    preview += shown ?? text
   }
 
   /// Binds the real value; the preview shows it masked with `mask`, when given
@@ -486,7 +515,12 @@ private nonisolated struct StatementBuilder {
       values.append(text)
       shown = .string(text)
     }
-    let previewed = mask?.masked(shown) ?? shown
-    preview += bind.sql(placeholder: previewed.isNull ? "NULL" : dialect.literal(previewed))
+    preview += bind.sql(placeholder: previewLiteral(shown, mask: mask))
+  }
+
+  /// `value` as the preview shows it: a literal, masked with `mask` when given
+  func previewLiteral(_ value: CellValue, mask: ColumnMaskRule.Style?) -> String {
+    let previewed = mask?.masked(value) ?? value
+    return previewed.isNull ? "NULL" : dialect.literal(previewed)
   }
 }

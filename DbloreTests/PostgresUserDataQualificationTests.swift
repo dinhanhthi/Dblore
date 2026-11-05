@@ -206,6 +206,148 @@ struct PostgresUserDataQualificationTests {
     expectQualified(statements)
   }
 
+  @Test("The Rewind capture, the keyed lazy cell read and the dump read are qualified")
+  func rowReadsAreQualified() throws {
+    let target = EditTarget(
+      qualifiedName: #""public"."t""#, tableID: .postgresql(oid: 1),
+      primaryKeyColumns: ["id", "line"], updateOnly: true)
+    let capture = try RewindCaptureSQL.selectStatement(
+      target: target,
+      columns: [
+        RewindColumn(name: "id", typeName: "int4"), RewindColumn(name: "line", typeName: "text"),
+        RewindColumn(name: "body", typeName: "bytea"),
+      ],
+      keyValues: [.int(1), .string("a")], engine: .postgresql)
+    let source = LazyCellSource(
+      relation: #""public"."t""#, keyColumns: ["id", "line"], dialect: .postgresql
+    ) { _, _ in QueryResult(columns: [], rows: [], rowCount: 0, executionTime: 0) }
+    let lazyRead = try LazyCellLoader.statement(
+      LazyCell(row: RowChangeSet.RowKey(values: [.int(1), .string("a")]), column: "body"),
+      source: source)
+    let dump = try SQLDumpDataRenderer.selectStatement(
+      SQLDumpDDL.TableInsert(
+        schema: "public", name: "t", target: #""public"."t""#,
+        columns: ["n", "b"].enumerated().map {
+          TableStructure.Column(
+            ordinal: $0.offset + 1, name: $0.element, dataType: "text", isNullable: true,
+            defaultExpression: nil, identity: nil, generated: nil, comment: nil, columnType: nil,
+            extra: nil, characterSet: nil, collation: nil)
+        },
+        overridingSystemValue: false, hasData: true),
+      engine: .postgresql)
+    #expect(capture.sql.contains("OPERATOR(pg_catalog.||)"))
+    #expect(lazyRead.sql.components(separatedBy: "OPERATOR(pg_catalog.=)").count == 3)
+    expectQualified([
+      Statement(name: "rewind capture", sql: capture.sql),
+      Statement(name: "keyed lazy read", sql: lazyRead.sql),
+      Statement(name: "dump read", sql: dump),
+    ])
+    // The batch 11 capture text: a bare ||, an unqualified text cast and a bare = key
+    let bare = #"SELECT 'v' || "id"::text FROM ONLY public.t WHERE "id" = $1 FOR UPDATE"#
+    #expect(PostgresQualificationLint.violations(bare).count == 3)
+  }
+
+  @Test("Rewind undo UPDATE, DELETE and INSERT key and check rows with pg_catalog's =")
+  func rewindUndoIsQualified() throws {
+    let entry = RewindEntry(
+      id: 1, connectionKey: "k", schema: "public", table: "t", qualifiedName: "public.t",
+      engine: .postgresql, created: Date(timeIntervalSince1970: 0), state: .committed,
+      editKind: .staged, statementCount: 1,
+      columns: [
+        RewindColumn(name: "id", typeName: "int4"), RewindColumn(name: "line", typeName: "text"),
+        RewindColumn(name: "name", typeName: "citext"), RewindColumn(name: "doc", typeName: "json"),
+      ],
+      notCaptured: false, notRewindableReason: nil)
+    let rows = [
+      RewindRow(
+        operation: .update, primaryKey: ["id": "1", "line": "a"],
+        before: ["id": "1", "line": "a", "name": "x", "doc": nil],
+        after: ["id": "1", "line": "a", "name": "X", "doc": "{}"]),
+      RewindRow(
+        operation: .delete, primaryKey: ["id": "2", "line": "b"],
+        before: ["id": "2", "line": "b", "name": "y", "doc": nil], after: nil),
+      RewindRow(
+        operation: .insert, primaryKey: ["id": "3", "line": "c"], before: nil,
+        after: ["id": "3", "line": "c", "name": "z", "doc": nil]),
+    ]
+    let plan = try RewindPlanner.plan(
+      [(entry, rows)],
+      tables: [
+        RewindTableName(schema: "public", table: "t"): RewindTable(
+          columns: ["id", "line", "name", "doc"], primaryKey: ["id", "line"],
+          identityAlwaysColumns: ["id"])
+      ],
+      engine: .postgresql)
+    // Newest row first: the DELETE undoing the INSERT, the INSERT, the UPDATE
+    #expect(plan.statements.map { $0.sql.prefix(6) } == ["DELETE", "INSERT", "UPDATE"])
+    // Keys of the DELETE and the UPDATE; the citext and json checks compare text forms
+    #expect(
+      plan.statements.map { $0.sql.components(separatedBy: "OPERATOR(").count - 1 } == [3, 0, 4])
+    // A NULL image is checked as `IS NULL` on the text form, with no bind
+    #expect(plan.statements[0].sql.contains(#""doc"::pg_catalog.text IS NULL"#))
+    #expect(plan.statements[0].values == ["3", "c", "z"])
+    expectQualified(
+      plan.statements.enumerated().map {
+        Statement(name: "undo bound \($0.offset)", sql: $0.element.sql)
+      }
+        + plan.previews.enumerated().map {
+          Statement(name: "undo preview \($0.offset)", sql: $0.element)
+        })
+    // The batch 11 undo UPDATE: a bare = key, an unqualified text cast and DISTINCT FROM
+    let bare =
+      #"UPDATE "public"."t" SET "name" = $1 WHERE "id" = $2"#
+      + #" AND "name"::text COLLATE "C" IS NOT DISTINCT FROM $3"#
+    #expect(PostgresQualificationLint.violations(bare).count == 3)
+  }
+
+  @Test("A foreign-key lookup and its jump filter match with pg_catalog's =")
+  func foreignKeyLookupIsQualified() throws {
+    let key = ForeignKey(
+      constraintName: "link_parent", sourceSchema: "main", sourceTable: "link",
+      sourceColumns: ["parent_b", "parent_a"], targetSchema: "main", targetTable: "parent",
+      targetColumns: ["b", "a"])
+    let values: [String: CellValue] = ["parent_b": .data(Data([0x01])), "parent_a": .string("x")]
+    let lookup = try #require(
+      ForeignKeyLookup.lookupSQL(for: key, values: values, dialect: Self.dialect))
+    let jump = try #require(
+      ForeignKeyLookup.jumpFilter(for: key, values: values, dialect: Self.dialect))
+    var viewer = DataViewerState(schema: "main", name: "parent", orderColumns: ["b"])
+    viewer.filter = jump
+    #expect(lookup.sql.components(separatedBy: "OPERATOR(pg_catalog.=)").count == 3)
+    expectQualified([
+      Statement(name: "fk lookup", sql: lookup.sql),
+      Statement(name: "fk jump page", sql: viewer.pageSQL),
+      Statement(name: "fk jump count", sql: viewer.countSQL),
+    ])
+    // The batch 11 lookup: a bare = per key column
+    let bare = #"SELECT * FROM "main"."parent" WHERE "b" = :fk1 AND "a" = :fk2 LIMIT 2"#
+    #expect(PostgresQualificationLint.violations(bare).count == 2)
+  }
+
+  @Test("Find a Value in Every Table casts, compares and matches with pg_catalog's")
+  func crossTableSearchIsQualified() throws {
+    let columns: [CrossTableSearchQueryBuilder.Column] = [
+      .init(name: "id", type: "integer", isPrimaryKey: true),
+      .init(name: "name", type: "citext"), .init(name: "note", type: "text"),
+    ]
+    let statements = try CrossTableSearchQueryBuilder.Mode.allCases.map { mode in
+      let statement = try #require(
+        try CrossTableSearchQueryBuilder.statement(
+          schema: "public", table: "t", columns: columns, value: "a", mode: mode,
+          dialect: Self.dialect))
+      // Every searched column is compared as text, the citext one too
+      #expect(statement.sql.components(separatedBy: "::pg_catalog.text ").count == 7)
+      return Statement(name: "cross-table search \(mode.rawValue)", sql: statement.sql)
+    }
+    expectQualified(statements)
+    // The batch 11 search: an unqualified text cast with a bare = or ILIKE
+    let bare =
+      #"SELECT "id", CASE WHEN CAST("id" AS text) = :v THEN 1"#
+      + #" WHEN CAST("note" AS text) ILIKE :v ESCAPE '!' THEN 2 END FROM "public"."t""#
+      + #" WHERE CAST("id" AS text) = :v LIMIT 50"#
+    #expect(PostgresQualificationLint.violations(bare).count == 6)
+  }
+
   @Test("The data viewer's PostgreSQL page and count are qualified")
   func dataViewerIsQualified() {
     var state = DataViewerState(schema: "public", name: "t", orderColumns: ["id"])

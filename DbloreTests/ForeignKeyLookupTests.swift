@@ -92,10 +92,17 @@ struct ForeignKeyLookupTests {
       "link_parent", schema: "main", table: "link", source: ["parent_b", "parent_a"],
       targetSchema: "main", targetTable: "parent", target: ["b", "a"])
     let values: [String: CellValue] = ["parent_b": .int(1), "parent_a": .string("x")]
-    let expected = #"SELECT * FROM "main"."parent" WHERE "b" = :fk1 AND "a" = :fk2 LIMIT 2"#
-    for dialect in [SQLDialect.postgresql, SQLDialect.sqlite] {
+    let expected: [(SQLDialect, String)] = [
+      (
+        .postgresql,
+        #"SELECT * FROM "main"."parent" WHERE "b" OPERATOR(pg_catalog.=) :fk1"#
+          + #" AND "a" OPERATOR(pg_catalog.=) :fk2 LIMIT 2"#
+      ),
+      (.sqlite, #"SELECT * FROM "main"."parent" WHERE "b" = :fk1 AND "a" = :fk2 LIMIT 2"#),
+    ]
+    for (dialect, sql) in expected {
       let query = ForeignKeyLookup.lookupSQL(for: link, values: values, dialect: dialect)
-      #expect(query?.sql == expected)
+      #expect(query?.sql == sql)
       #expect(query?.parameters == ["fk1": .text("1"), "fk2": .text("x")])
     }
   }
@@ -109,7 +116,7 @@ struct ForeignKeyLookupTests {
       for: weird, values: ["user_id": .string("'; DROP TABLE users;--")], dialect: .postgresql)
     #expect(
       query?.sql
-        == #"SELECT * FROM "my""s"."we""ird" WHERE "a""b" = :fk1 LIMIT 2"#)
+        == #"SELECT * FROM "my""s"."we""ird" WHERE "a""b" OPERATOR(pg_catalog.=) :fk1 LIMIT 2"#)
     #expect(query?.parameters == ["fk1": .text("'; DROP TABLE users;--")])
 
     let unqualified = key(
@@ -122,7 +129,9 @@ struct ForeignKeyLookupTests {
     let nulSQL = ForeignKeyLookup.lookupSQL(
       for: nul, values: ["id": .int(1)], dialect: .postgresql)
     let quoted = CellUpdateStatement.quoteIdentifier("a\0b")
-    #expect(nulSQL?.sql == #"SELECT * FROM "public"."users" WHERE \#(quoted) = :fk1 LIMIT 2"#)
+    #expect(
+      nulSQL?.sql
+        == #"SELECT * FROM "public"."users" WHERE \#(quoted) OPERATOR(pg_catalog.=) :fk1 LIMIT 2"#)
   }
 
   @Test("A null or missing component is not a lookup and not a filter")
@@ -148,7 +157,9 @@ struct ForeignKeyLookupTests {
     let orders = key(source: ["code"], target: ["code"])
     let textNull = ForeignKeyLookup.lookupSQL(
       for: orders, values: ["code": .string("NULL")], dialect: .postgresql)
-    #expect(textNull?.sql == #"SELECT * FROM "public"."users" WHERE "code" = :fk1 LIMIT 2"#)
+    #expect(
+      textNull?.sql
+        == #"SELECT * FROM "public"."users" WHERE "code" OPERATOR(pg_catalog.=) :fk1 LIMIT 2"#)
     #expect(textNull?.parameters == ["fk1": .text("NULL")])
     #expect(textNull?.sql.contains("= NULL") == false)
 

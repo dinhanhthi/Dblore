@@ -180,7 +180,8 @@ struct RewindPlannerTests {
       plan.statements == [
         BoundStatement(
           sql: "UPDATE \"public\".\"items\" SET \"label\" = $1"
-            + " WHERE \"id\" = $2 AND \"label\"::text COLLATE \"C\" IS NOT DISTINCT FROM $3",
+            + " WHERE \"id\" OPERATOR(pg_catalog.=) $2 AND \"label\"::pg_catalog.text"
+            + " COLLATE pg_catalog.\"C\" OPERATOR(pg_catalog.=) $3",
           values: ["old", "8", "new"]),
         BoundStatement(
           sql: "INSERT INTO \"public\".\"items\" (\"id\", \"label\", \"doc\")"
@@ -189,7 +190,36 @@ struct RewindPlannerTests {
       ])
     #expect(plan.statements.allSatisfy { $0.rowCheck == nil && $0.expectedRows == 1 })
     // Byte-exact whatever the column's collation: a nondeterministic one can fold case
-    #expect(plan.statements[0].sql.contains("::text COLLATE \"C\" IS NOT DISTINCT FROM"))
+    #expect(plan.statements[0].sql.contains("::pg_catalog.text COLLATE pg_catalog.\"C\" OPERATOR"))
+  }
+
+  @Test(
+    "PostgreSQL: a masked NULL check previews like a masked value, and still runs as IS NULL",
+    arguments: ColumnMaskRule.Style.allCases)
+  func postgresMaskedNullCheck(style: ColumnMaskRule.Style) throws {
+    let entry = Self.entry(
+      id: 4, engine: .postgresql, schema: "public", table: "items",
+      qualifiedName: "public.items", columns: Self.postgresColumns)
+    let masks = ColumnMaskRuleSet([try ColumnMaskRule(pattern: "items.doc", style: style)])
+    func undoInsert(doc: String?) throws -> RewindInverse {
+      let row = RewindRow(
+        operation: .insert, primaryKey: ["id": "9"], before: nil,
+        after: ["id": "9", "label": "a", "doc": doc])
+      return try RewindPlanner.plan(
+        [(entry, [row])], tables: Self.postgresTables, engine: .postgresql, masks: masks)
+    }
+
+    let null = try undoInsert(doc: nil)
+    let value = try undoInsert(doc: "{}")
+
+    // The preview never tells a NULL from a value in a masked column
+    #expect(!null.preview.contains("IS NULL"))
+    #expect(null.preview == value.preview)
+    // The executed check is still IS NULL, with no bind for it
+    let statement = try #require(null.statements.first)
+    #expect(statement.sql.contains("\"doc\"::pg_catalog.text IS NULL"))
+    #expect(statement.values == ["9", "a"])
+    #expect(statement.sql.components(separatedBy: "$").count - 1 == statement.values.count)
   }
 
   // MARK: - MySQL
