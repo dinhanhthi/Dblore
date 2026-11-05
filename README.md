@@ -23,31 +23,38 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 ## Features
 
 - **Notebooks and SQL editor**: `.dblore` notebooks with inline results, plain `.sql` tabs
-  and quick Markdown notes, in one tidy workspace. Autocomplete knows CTE columns and offers
-  select-list aliases after ORDER BY, Format SQL follows your indent, case, comma and
-  line-width rules, and View > Zoom resizes the focused editor, grid or schema diagram
+  and quick Markdown notes, in one tidy workspace. Autocomplete knows CTE columns, offers
+  select-list aliases after ORDER BY and the foreign-key condition after a join's ON, and also
+  matches names in the middle (`ord` finds `purchase_orders`). Format SQL follows your indent,
+  case, comma and line-width rules, and View > Zoom resizes the focused editor, grid or schema
+  diagram
 - **Schema browser**: tables, columns and types, a quick filter and a canvas with foreign-key
   lines that you can copy or save as Mermaid or Graphviz DOT. Group tables and views into
   sidebar folders, hide schemas you do not use, and find a value in the text of every table.
-  A Temporary section lists the session's temp tables. PostgreSQL also lists sequences, enums,
-  domains and composite types. At 50,000 tables the load can be cancelled, the filter runs in
-  the background and the canvas draws up to 300 tables you pick
+  A Temporary section lists the session's temp tables. PostgreSQL shows partitions under their
+  parent table and also lists sequences, enums, domains and composite types. At 50,000 tables
+  the load can be cancelled, the filter runs in the background and the canvas draws up to 300
+  tables you pick
 - **Join query builder**: pick tables (also by multi-select on the canvas) and get the join
   along their foreign keys, with columns, filters and a live SQL preview
 - **Compare Schemas**: compare two schemas of the same engine (PostgreSQL, MySQL/MariaDB,
   SQLite), review the exact script and run it through Safe Mode. Drops are unticked by default
-- **Data Dictionary**: export the columns, indexes and foreign keys of every table as Markdown
-  or standalone HTML
+- **Data Dictionary and Table Health**: export the columns, indexes and foreign keys of every
+  table as Markdown or standalone HTML. Table Health lists tables without a primary key or foreign
+  keys without a covering index (PostgreSQL, MySQL/MariaDB, SQLite), plus unused or redundant
+  indexes and bloated tables from the server's statistics (PostgreSQL, MySQL/MariaDB)
 - **Structure editor**: add, change and drop columns, indexes and keys, create, rename,
   comment and drop tables, with a preview of the exact SQL that runs. Rename tables and edit
   columns and foreign keys on the schema canvas too (drag a column onto another table for a
-  foreign key), and create or change PostgreSQL enums, domains and composite types
+  foreign key), create or change PostgreSQL enums, domains and composite types, and set a
+  MySQL/MariaDB table's character set, collation and AUTO_INCREMENT
 - **Copy Objects**: copy tables and their rows from a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB
   connection to another saved PostgreSQL, MySQL/MariaDB or SQLite connection, with type warnings
   and an editable DDL preview. A failed or cancelled copy leaves nothing behind on PostgreSQL
   and SQLite; on MySQL/MariaDB Dblore drops the tables it created and names any it could not
-- **Results grid**: sort, search, filter, freeze leading columns (table tabs), edit values
-  inline, add rows from a form, follow foreign keys, inspect cells as JSON, pin a result to
+- **Results grid**: several result sets show as tabs; sort, search, filter, freeze leading
+  columns (table tabs), edit values inline (also cells of auto-updatable PostgreSQL views, never
+  their rows), add rows from a form, follow foreign keys, inspect cells as JSON, pin a result to
   compare re-runs, see Count, Sum and Avg of a selection, and highlight cells or rows with
   several rules at once. NUMERIC and DECIMAL values stay exact, a timestamp without a time zone
   shows its stored wall clock and a zoned one Mac local time with its offset, both with
@@ -60,9 +67,9 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Binary values**: show a binary column as hex, UUID, MessagePack or Protobuf with Display
   As. Table tabs read binary cells up to 64 KB; a longer value shows as "not loaded" and is
   loaded by its key or row location when you open or copy it, and never written back unloaded
-- **Data Rewind**: edits made in the data viewer on a table with a primary key keep the rows
-  before and after, so you can preview and run the SQL that puts them back (PostgreSQL, MySQL,
-  SQLite). The copies stay on this Mac and are never backed up
+- **Data Rewind**: edits made in the data viewer on a table with a primary key (or an editable
+  PostgreSQL view) keep the rows before and after, so you can preview and run the SQL that puts
+  them back (PostgreSQL, MySQL, SQLite). The copies stay on this Mac and are never backed up
 - **Charts**: switch any result between grid and chart, or split a chart into one small chart
   per value of a column
 - **Geometry and vector viewers**: draw PostGIS and MySQL geometry values, and summarize
@@ -113,8 +120,12 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   asks for the password each time and keeps it in memory only. An unreadable Keychain password
   stops the connect, TCP keepalive guards idle connections, and a changed SSH host key can be
   replaced with Replace Pin once both fingerprints are shown
-- **Connection colors and groups**: tell connections apart at a glance and group them on the
-  welcome screen
+- **Column masking**: per-connection rules hide columns by name (Full, Last 4, Email or NULL)
+  in results, copies, exports, AI, MCP, Shortcuts and the command line, and masked cells cannot
+  be edited. It matches column names, so an alias or a computed column gets past it: it is not
+  access control, and dumps, backups and Copy Objects keep real values
+- **Connection colors and groups**: tell connections apart at a glance by color and
+  `host:port@user`, and group them on the welcome screen
 - **Keyboard-first**: run cells and queries without leaving the keys, find and replace in
   editors, and find any command with `Cmd+K`
 
