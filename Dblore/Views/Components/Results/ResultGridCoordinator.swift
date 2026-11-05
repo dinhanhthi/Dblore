@@ -179,6 +179,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   /// Base column of each result column of `relation` (aliases), nil entry for an expression.
   /// Nil: the result column names are the base names. Keys match base names only.
   var baseColumnNames: [String?]?
+  /// Unquoted table of "Copy as INSERT". Nil name: the placeholder.
+  var insertSchema: String?
+  var insertName: String?
   var foreignKeys: [ForeignKey] = []
   /// Connection dialect: whether `ForeignKeyLookup` can follow the cell, and no SQL copies on
   /// MongoDB
@@ -948,10 +951,11 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let cells = model.unloadedCells(
       originalRows: target.insertRows, columns: Array(sourceResult.columns.indices))
     let dialect = exportDialect
+    let (schema, name) = (insertSchema, insertName)
     withLoadedCells(cells) { _, values in
       DataExporter.copyInsert(
-        result: sourceResult.replacingCells(values), rows: target.insertRows,
-        table: sourceResult.tableName, dialect: dialect)
+        result: sourceResult.replacingCells(values), rows: target.insertRows, schema: schema,
+        name: name, dialect: dialect)
     }
   }
 

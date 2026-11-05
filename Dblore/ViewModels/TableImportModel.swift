@@ -772,9 +772,9 @@ final class TableImportModel {
       let type = types[$0.targetName.lowercased()]
       let keepsText: Bool
       switch $0.kind {
-      case .timestamp where dialect == .mysql:
+      case .timestamp where dialect == .mysql, .localTimestamp where dialect == .mysql:
         keepsText = type.map { !isMySQLDateTimeType($0) } == true
-      case .boolean, .timestamp:
+      case .boolean, .timestamp, .localTimestamp:
         keepsText = type.map(hasTextAffinity) == true
       default:
         keepsText = false
@@ -799,6 +799,19 @@ final class TableImportModel {
     return rows
   }
 
+  /// DuckDB decimal columns with the digits of every file row, for their DECIMAL(p,s)
+  nonisolated static func withDecimalDigits(
+    _ columns: [ImportSQLBuilder.Column], rows: [[String?]]
+  ) -> [ImportSQLBuilder.Column] {
+    columns.enumerated().map { index, column in
+      guard column.kind == .decimal else { return column }
+      var column = column
+      column.precisionScale = ImportTypeInference.decimalDigits(
+        rows.map { $0.indices.contains(index) ? $0[index] : nil })
+      return column
+    }
+  }
+
   private nonisolated static func buildBatch(
     columns: [ImportSQLBuilder.Column], rows: [[String?]], destination: TableImportDestination,
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int?
@@ -806,7 +819,9 @@ final class TableImportModel {
     let create =
       destination.createsTable
       ? try ImportSQLBuilder.createTable(
-        schema: destination.schema, table: destination.table, columns: columns, dialect: dialect)
+        schema: destination.schema, table: destination.table,
+        columns: dialect == .duckdb ? withDecimalDigits(columns, rows: rows) : columns,
+        dialect: dialect)
       : nil
     let inserts = try ImportSQLBuilder.insertStatements(
       schema: destination.schema, table: destination.table, columns: columns, rows: rows,

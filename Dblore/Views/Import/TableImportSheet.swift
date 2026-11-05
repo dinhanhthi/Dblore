@@ -29,7 +29,7 @@ struct TableImportSheet: View {
   private let formats: [TableImportFormat] = [.csv, .tsv, .json]
   private let modes = ImportMode.allCases
   private let kinds: [ImportTypeInference.Kind] = [
-    .integer, .decimal, .boolean, .date, .timestamp, .text,
+    .integer, .decimal, .boolean, .date, .timestamp, .localTimestamp, .text,
   ]
   /// Row and cell caps. JSONRowsReader uses the same defaults.
   private let limits = DelimitedTextReader.Options()
@@ -509,9 +509,19 @@ struct TableImportSheet: View {
 
   private var createTableSQL: String {
     guard createsNewTable else { return modeDescription(model.mode) }
-    let columns = model.mappings.filter(\.included).map {
-      ImportSQLBuilder.Column(name: $0.targetName, kind: $0.kind)
+    let included = model.mappings.indices.filter { model.mappings[$0].included }
+    let mapped = included.map {
+      ImportSQLBuilder.Column(name: model.mappings[$0].targetName, kind: model.mappings[$0].kind)
     }
+    // DuckDB decimal digits from the preview rows (the import measures every row)
+    let columns =
+      sqlDialect == .duckdb
+      ? TableImportModel.withDecimalDigits(
+        mapped,
+        rows: model.previewRows.map { row in
+          included.map { row.indices.contains($0) ? row[$0] : nil }
+        })
+      : mapped
     guard !columns.isEmpty, !model.destination.table.isEmpty else {
       return "Choose a file and enter a table name to preview CREATE TABLE."
     }
@@ -554,6 +564,7 @@ struct TableImportSheet: View {
     case .boolean: "Boolean"
     case .date: "Date"
     case .timestamp: "Timestamp"
+    case .localTimestamp: "Timestamp (no zone)"
     case .text: "Text"
     }
   }
@@ -589,8 +600,9 @@ struct TableImportSheet: View {
   }
 
   private func mappingKind(_ index: Int) -> Binding<Int> {
+    // An unknown kind shows Text, the last one
     Binding(
-      get: { kinds.firstIndex(of: model.mappings[index].kind) ?? 5 },
+      get: { kinds.firstIndex(of: model.mappings[index].kind) ?? kinds.count - 1 },
       set: { model.mappings[index].kind = kinds[$0] })
   }
 

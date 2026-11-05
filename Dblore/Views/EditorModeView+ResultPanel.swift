@@ -521,6 +521,7 @@ struct EditorResultGridView: View {
       lookupRelation: result.lookupRelation)
     let referencedRow = referencedRowHandlers(
       viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+    let insert = insertTable(dataViewer: viewModel.dataViewer, editTarget: result.editTarget)
     ResultGridView(
       result: result,
       sortColumn: gridSort.column,
@@ -635,6 +636,8 @@ struct EditorResultGridView: View {
       relationSchema: relation?.schema,
       relationTable: relation?.table,
       baseColumnNames: relation?.baseColumns,
+      insertSchema: insert.schema,
+      insertName: insert.name,
       foreignKeys: viewModel.lookupForeignKeys,
       lookupDialect: viewModel.sqlDialect,
       onLookupReferencedRow: referencedRow.lookup,

@@ -113,6 +113,10 @@ struct ResultGridView: NSViewRepresentable {
   var relationTable: String? = nil
   /// Base column of each result column (aliases). Nil: the result column names are the base names.
   var baseColumnNames: [String?]? = nil
+  /// Unquoted table of "Copy as INSERT" (`insertTable(dataViewer:editTarget:)`). Nil name:
+  /// the placeholder.
+  var insertSchema: String? = nil
+  var insertName: String? = nil
   var foreignKeys: [ForeignKey] = []
   /// Connection dialect. Only decides whether a NULL component skips the lookup.
   var lookupDialect: SQLDialect = .postgresql
@@ -252,6 +256,8 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.relationSchema = relationSchema
     coordinator.relationTable = relationTable
     coordinator.baseColumnNames = baseColumnNames
+    coordinator.insertSchema = insertSchema
+    coordinator.insertName = insertName
     coordinator.foreignKeys = foreignKeys
     coordinator.lookupDialect = lookupDialect
     coordinator.onLookupReferencedRow = onLookupReferencedRow
@@ -298,6 +304,18 @@ func referencedRelation(
   }
   guard let lookupRelation else { return nil }
   return (lookupRelation.schema, lookupRelation.table, lookupRelation.baseColumns)
+}
+
+/// Unquoted schema and table an INSERT script of a result writes. A data viewer uses its
+/// relation, else the edit target's catalog name. Never `CellResult.tableName` (already quoted),
+/// nor a lookup relation (its columns may be aliases). Nil name: the placeholder.
+func insertTable(
+  dataViewer: DataViewerState?, editTarget: EditTarget?
+) -> (schema: String?, name: String?) {
+  if let dataViewer {
+    return (dataViewer.schema, dataViewer.name)
+  }
+  return (editTarget?.schema, editTarget?.name)
 }
 
 /// The view model's lookup and jump, unchanged. The grid does not send its own SQL.

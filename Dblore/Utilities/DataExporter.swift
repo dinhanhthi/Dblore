@@ -536,15 +536,15 @@ enum DataExporter {
   }
 
   /// INSERT script. `rows` nil exports every row; otherwise only in-range indexes, in that order.
-  /// The table is `table` when that is non-nil, otherwise `result.tableName`.
+  /// `schema` and `name` are the unquoted table (`insertTable(dataViewer:editTarget:)`); nil
+  /// `name` writes the placeholder. `result.tableName` is never used: it is already quoted.
   static func sqlInsert(
-    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect,
-    includeColumns: Bool = true
+    result: CellResult, rows: [Int]? = nil, schema: String? = nil, name: String? = nil,
+    dialect: SQLDialect, includeColumns: Bool = true
   ) -> String {
-    let exported = queryResult(from: result, rowIndexes: rows)
-    let name = SQLInsertRenderer.tableName(for: exported, fallback: table ?? result.tableName)
-    return SQLInsertRenderer.insertScript(
-      result: exported, table: name, dialect: dialect, includeColumns: includeColumns)
+    SQLInsertRenderer.insertScript(
+      result: queryResult(from: result, rowIndexes: rows), schema: schema, name: name,
+      dialect: dialect, includeColumns: includeColumns)
   }
 
   /// Parenthesized IN list for `values`.
@@ -561,9 +561,10 @@ enum DataExporter {
   }
 
   /// Save the result using the sheet's format and options. Copy actions do not call this.
+  /// `schema` and `name`: the unquoted table of a SQL INSERT download (see `sqlInsert`).
   static func download(
     result: CellResult, options: ExportOptions, queryIndex: Int? = nil,
-    dialect: SQLDialect = .postgresql
+    dialect: SQLDialect = .postgresql, schema: String? = nil, name: String? = nil
   ) {
     let prepared = applying(options, to: result)
     switch options.format {
@@ -596,7 +597,7 @@ enum DataExporter {
         wrapText: options.wrapText)
     case .sqlInsert:
       let sql = sqlInsert(
-        result: prepared, table: result.tableName, dialect: dialect,
+        result: prepared, schema: schema, name: name, dialect: dialect,
         includeColumns: options.includeHeader)
       let name = generateFilename(extension: "sql", queryIndex: queryIndex)
       saveFile(
@@ -687,10 +688,10 @@ enum DataExporter {
 
   /// Download an INSERT script for every row.
   static func downloadSQLInsert(
-    result: CellResult, table: String? = nil, dialect: SQLDialect, filename: String? = nil,
-    queryIndex: Int? = nil
+    result: CellResult, schema: String? = nil, name: String? = nil, dialect: SQLDialect,
+    filename: String? = nil, queryIndex: Int? = nil
   ) {
-    let sql = sqlInsert(result: result, table: table, dialect: dialect)
+    let sql = sqlInsert(result: result, schema: schema, name: name, dialect: dialect)
     let defaultName = filename ?? generateFilename(extension: "sql", queryIndex: queryIndex)
     saveFile(content: sql, defaultFilename: defaultName, allowedFileTypes: ["sql"])
   }
@@ -716,9 +717,11 @@ enum DataExporter {
 
   /// Copy an INSERT script to the clipboard.
   static func copyInsert(
-    result: CellResult, rows: [Int]? = nil, table: String? = nil, dialect: SQLDialect
+    result: CellResult, rows: [Int]? = nil, schema: String? = nil, name: String? = nil,
+    dialect: SQLDialect
   ) {
-    copyToClipboard(sqlInsert(result: result, rows: rows, table: table, dialect: dialect))
+    copyToClipboard(
+      sqlInsert(result: result, rows: rows, schema: schema, name: name, dialect: dialect))
   }
 
   /// Copy an IN list to the clipboard.

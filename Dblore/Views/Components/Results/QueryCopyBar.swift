@@ -155,10 +155,12 @@ struct QueryCopyBar: View {
             let exported = request.result
             let index = queryIndex
             let exportDialect = dialect
+            let table = insertTarget(for: exported)
             exportRequest = nil
             DispatchQueue.main.async {
               DataExporter.download(
-                result: exported, options: options, queryIndex: index, dialect: exportDialect)
+                result: exported, options: options, queryIndex: index, dialect: exportDialect,
+                schema: table.schema, name: table.name)
             }
           },
           onCancel: { exportRequest = nil })
@@ -474,9 +476,18 @@ struct QueryCopyBar: View {
 
   private func handleCopyInsert(result: CellResult) {
     let dialect = dialect
+    let table = insertTarget(for: result)
     handleCopy(.insert) {
-      DataExporter.copyInsert(result: $0, table: $0.tableName, dialect: dialect)
+      DataExporter.copyInsert(
+        result: $0, schema: table.schema, name: table.name, dialect: dialect)
     }
+  }
+
+  /// The unquoted table of `result`'s INSERT script: the editor's data viewer relation, else
+  /// the result's edit target (`insertTable(dataViewer:editTarget:)`)
+  private func insertTarget(for result: CellResult) -> (schema: String?, name: String?) {
+    insertTable(
+      dataViewer: cellId == nil ? viewModel?.dataViewer : nil, editTarget: result.editTarget)
   }
 }
 

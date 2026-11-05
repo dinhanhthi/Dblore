@@ -207,7 +207,7 @@ struct ExportOptionsTests {
   @Test("SQL can omit column names, write an empty string for NULL, and flatten line breaks")
   func sqlShape() {
     let named = DataExporter.sqlInsert(
-      result: sample(), dialect: .postgresql, includeColumns: false)
+      result: sample(), name: "accounts", dialect: .postgresql, includeColumns: false)
     #expect(named.contains("INSERT INTO \"accounts\" VALUES"))
     #expect(!named.contains("pwd"))
     let emptied = DataExporter.applying(
@@ -218,7 +218,7 @@ struct ExportOptionsTests {
     let broken = grid(columns: ["note"], rows: [[.string("a\nb")]])
     let flat = DataExporter.applying(
       ExportOptions(format: .sqlInsert, convertLineBreaksToSpace: true), to: broken)
-    let script = DataExporter.sqlInsert(result: flat, table: "t", dialect: .postgresql)
+    let script = DataExporter.sqlInsert(result: flat, name: "t", dialect: .postgresql)
     #expect(script.contains("'a b'"))
     #expect(!script.contains("a\nb"))
   }

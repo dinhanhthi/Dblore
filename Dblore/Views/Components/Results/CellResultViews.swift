@@ -713,6 +713,7 @@ struct NotebookResultGridView: View {
       dataViewer: nil, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
     let referencedRow = referencedRowHandlers(
       viewModel, editTarget: result.editTarget, lookupRelation: result.lookupRelation)
+    let insert = insertTable(dataViewer: nil, editTarget: result.editTarget)
     ResultGridView(
       result: result,
       sortColumn: sortColumn,
@@ -750,6 +751,8 @@ struct NotebookResultGridView: View {
       relationSchema: relation?.schema,
       relationTable: relation?.table,
       baseColumnNames: relation?.baseColumns,
+      insertSchema: insert.schema,
+      insertName: insert.name,
       foreignKeys: viewModel.lookupForeignKeys,
       lookupDialect: viewModel.sqlDialect,
       onLookupReferencedRow: referencedRow.lookup,

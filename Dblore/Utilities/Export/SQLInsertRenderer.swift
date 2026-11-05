@@ -1,20 +1,24 @@
 // SQLInsertRenderer.swift
-// Multi-row INSERT scripts and IN lists from a query result. The caller supplies the table name.
+// Multi-row INSERT scripts and IN lists from a query result. The caller supplies the schema and
+// table name, unquoted.
 
 import Foundation
 
 /// Renders a `QueryResult` as SQL text. Identifiers and literals come from `SQLDialect`.
 nonisolated enum SQLInsertRenderer {
   /// One `INSERT` statement per batch. No rows, or rows with no columns, is `""`.
+  /// `schema` and `name` are unquoted catalog names, each quoted as one part (a dot in a name
+  /// stays in it). A known schema is always written, so the script does not depend on the search
+  /// path. No schema writes the bare name; no name writes the placeholder `table_name`.
   static func insertScript(
-    result: QueryResult, table: String, dialect: SQLDialect, batchSize: Int = 500,
-    includeColumns: Bool = true
+    result: QueryResult, schema: String? = nil, name: String?, dialect: SQLDialect,
+    batchSize: Int = 500, includeColumns: Bool = true
   ) -> String {
     guard !result.rows.isEmpty, !result.columns.isEmpty else {
       return ""
     }
     let size = batchSize < 1 ? 1 : batchSize
-    let quotedTable = quotedIdentifier(table, dialect: dialect)
+    let quotedTable = quotedTable(schema: schema, name: name, dialect: dialect)
     let header: String
     if includeColumns {
       let columnList = result.columns.map { quotedIdentifier($0.name, dialect: dialect) }
@@ -58,16 +62,16 @@ nonisolated enum SQLInsertRenderer {
     return list + "\n-- \(nullCount) NULL values omitted"
   }
 
-  /// `fallback` trimmed, when that is non-empty. Otherwise `table_name`.
-  /// `ColumnInfo` has a table OID, not a name.
-  static func tableName(for result: QueryResult, fallback: String?) -> String {
-    if let fallback {
-      let trimmed = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !trimmed.isEmpty {
-        return trimmed
-      }
+  /// `"schema"."name"`, `"name"` without a schema, `"table_name"` without a name
+  private static func quotedTable(schema: String?, name: String?, dialect: SQLDialect) -> String {
+    guard let name, !name.isEmpty else {
+      return quotedIdentifier("table_name", dialect: dialect)
     }
-    return "table_name"
+    guard let schema, !schema.isEmpty else {
+      return quotedIdentifier(name, dialect: dialect)
+    }
+    return quotedIdentifier(schema, dialect: dialect) + "."
+      + quotedIdentifier(name, dialect: dialect)
   }
 
   /// `row` as literals, a date as its column's (`ColumnInfo.wallClock`; zoned past the end)

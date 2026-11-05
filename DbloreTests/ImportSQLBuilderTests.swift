@@ -18,6 +18,27 @@ struct ImportSQLBuilderTests {
     #expect(statement.expectedRows == nil)
   }
 
+  /// DuckDB's bare DECIMAL is DECIMAL(18,3), which rounds fractions: a new table gets the
+  /// observed digits, or text beyond DuckDB's 38-digit maximum
+  @Test("DuckDB decimal columns keep every observed digit")
+  func duckDBDecimalDigits() throws {
+    let wide = String(repeating: "9", count: 20) + "." + String(repeating: "1", count: 20)
+    let samples: [(values: [String?], type: String)] = [
+      (["1.23456", "-0.5", nil], "DECIMAL(6,5)"),
+      ([wide], "text"),
+    ]
+    for sample in samples {
+      #expect(
+        ImportTypeInference.infer(rows: sample.values.map { [$0] }, columnCount: 1) == [.decimal])
+      let column = ImportSQLBuilder.Column(
+        name: "price", kind: .decimal,
+        precisionScale: ImportTypeInference.decimalDigits(sample.values))
+      let statement = try ImportSQLBuilder.createTable(
+        schema: nil, table: "t", columns: [column], dialect: .duckdb)
+      #expect(statement.sql == #"CREATE TABLE "t" ("price" \#(sample.type))"#)
+    }
+  }
+
   @Test("INSERT chunks respect both row and bind limits and bind every cell")
   func insertChunks() throws {
     let rows: [[String?]] = [["1", "o'brien"], ["2", nil], ["3", "secret"]]
