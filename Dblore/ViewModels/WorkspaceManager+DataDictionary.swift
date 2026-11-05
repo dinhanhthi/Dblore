@@ -42,7 +42,7 @@ extension WorkspaceManager {
   }
 
   /// The file name for a file database, the database name otherwise, else the connection name
-  private var dataDictionaryDatabaseName: String {
+  var dataDictionaryDatabaseName: String {
     guard let config = workspace.connectionConfig else { return "database" }
     let database =
       config.databaseType.capabilities.isFileBased

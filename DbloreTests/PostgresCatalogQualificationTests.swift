@@ -226,6 +226,10 @@ struct PostgresCatalogQualificationTests {
       ),
       // Run on the target session after the copied rows
       ("copy identity restart", try #require(restarts.first)),
+      // Table Health, on a side connection
+      ("table health statistics state", TableHealthQueries.postgresStatisticsStateSQL),
+      ("table health unused indexes", TableHealthQueries.postgresUnusedIndexesSQL),
+      ("table health dead tuples", TableHealthQueries.postgresDeadTuplesSQL),
     ]
     for (name, sql) in statements {
       let found = CatalogSQLLint.violations(sql)

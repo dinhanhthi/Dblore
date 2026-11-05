@@ -591,6 +591,7 @@ struct WorkspaceContainerView: View {
         }
       }
       .dataDictionaryExportSheet(workspaceManager: workspaceManager)
+      .tableHealthSheet(workspaceManager: workspaceManager)
       .schemaCompareSheet(workspaceManager: workspaceManager)
       .userTypeEditorSheet(workspaceManager: workspaceManager)
       .copyObjectsSheet(workspaceManager: workspaceManager)
@@ -611,6 +612,7 @@ struct WorkspaceContainerView: View {
     }
     if manager.isCommitUnlockVisible { manager.cancelCommitUnlock() }
     manager.dataDictionaryExport?.cancel()
+    manager.tableHealth?.cancel()
     manager.closeSchemaCompare()
     manager.closeUserTypeEditor()
     manager.closeCopyObjects()

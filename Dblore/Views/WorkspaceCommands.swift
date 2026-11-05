@@ -161,6 +161,11 @@ struct OpenDataDictionaryActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
+/// Table Health (File menu): nil unless `WorkspaceManager.canOpenTableHealth`
+struct OpenTableHealthActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
 /// Compare Schemas (File menu): nil unless `WorkspaceManager.canCompareSchemas`
 struct OpenSchemaCompareActionKey: FocusedValueKey {
   typealias Value = () -> Void
@@ -216,6 +221,11 @@ extension FocusedValues {
   var openDataDictionaryAction: (() -> Void)? {
     get { self[OpenDataDictionaryActionKey.self] }
     set { self[OpenDataDictionaryActionKey.self] = newValue }
+  }
+
+  var openTableHealthAction: (() -> Void)? {
+    get { self[OpenTableHealthActionKey.self] }
+    set { self[OpenTableHealthActionKey.self] = newValue }
   }
 
   var openSchemaCompareAction: (() -> Void)? {

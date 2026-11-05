@@ -325,6 +325,11 @@ class WorkspaceManager: Identifiable {
   /// Export Data Dictionary sheet. Nil hides it.
   var dataDictionaryExport: DataDictionaryExportModel?
 
+  // MARK: - Table Health
+
+  /// Table Health sheet. Nil hides it.
+  var tableHealth: TableHealthModel?
+
   // MARK: - Schema Compare
 
   /// Compare Schemas sheet. Nil hides it.

@@ -781,6 +781,7 @@ struct TabCommands: Commands {
   @BridgedFocusedValue(\.openSQLRestoreAction) private var openSQLRestoreAction
   @BridgedFocusedValue(\.openDatabaseFileCopyAction) private var openDatabaseFileCopyAction
   @BridgedFocusedValue(\.openDataDictionaryAction) private var openDataDictionaryAction
+  @BridgedFocusedValue(\.openTableHealthAction) private var openTableHealthAction
   @BridgedFocusedValue(\.openSchemaCompareAction) private var openSchemaCompareAction
   @BridgedFocusedValue(\.openJoinBuilderAction) private var openJoinBuilderAction
   @BridgedFocusedValue(\.openCopyObjectsAction) private var openCopyObjectsAction
@@ -900,6 +901,9 @@ struct TabCommands: Commands {
       if !isMongo {
         Button("Export Data Dictionary...") { openDataDictionaryAction?() }
           .disabled(openDataDictionaryAction == nil)
+
+        Button("Table Health...") { openTableHealthAction?() }
+          .disabled(openTableHealthAction == nil)
       }
 
       // PostgreSQL, MySQL / MariaDB and SQLite only
