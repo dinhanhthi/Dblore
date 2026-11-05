@@ -70,6 +70,8 @@ extension NotebookViewModel {
   /// Shown while the rows are shown and the table definition is still read
   /// (`CellResult.typesPending`)
   static let readingTableDefinition = "Reading table definition"
+  /// Shown when rows of a view target are deleted: only its cells are written (`viewBase`)
+  static let viewDeleteUnsupported = "Deleting rows through a view is not supported yet"
 
   /// Why grid edits are refused for this engine (`supportsRowStaging`), or nil.
   /// Nil for MongoDB, whose flag stays false: it edits documents (`+DocumentStaging.swift`), and
@@ -119,7 +121,7 @@ extension NotebookViewModel {
   /// An empty map is `INSERT ... DEFAULT VALUES`. An existing row's primary key stays read-only.
   @discardableResult
   func stageInsert(values: [String: CellValue] = [:]) -> String? {
-    if let reason = rowStagingUnavailableReason { return reason }
+    if let reason = rowInsertUnavailableReason { return reason }
     if stagesDocuments { return openDocumentInsertEditor() }
     return changeSet("Add Row") { $0.stageInsert(values: values) }
   }
@@ -127,7 +129,7 @@ extension NotebookViewModel {
   /// + Row. A single integer primary key with no database default is set to the next number.
   /// A key the database fills (identity, serial, or any other default) is left unset.
   func addStagedRow() async -> String? {
-    if let reason = rowStagingUnavailableReason { return reason }
+    if let reason = rowInsertUnavailableReason { return reason }
     if stagesDocuments { return openDocumentInsertEditor() }
     return stageInsert(values: await automaticIntegerKeyValues())
   }
@@ -138,7 +140,7 @@ extension NotebookViewModel {
   /// stages nothing (nil, after its message), so a cut prefix is never inserted.
   @discardableResult
   func stageDuplicate(rows: [Int]) async -> String? {
-    if let reason = rowStagingUnavailableReason { return reason }
+    if let reason = rowInsertUnavailableReason { return reason }
     if stagesDocuments { return openDocumentDuplicateEditor(rows: rows) }
     guard let target = stagedEditTarget, let result = editorResult else {
       return Self.tableHasNoPrimaryKey
@@ -175,12 +177,13 @@ extension NotebookViewModel {
     }
   }
 
-  /// Stages a delete for each existing row, or drops a staged insert.
+  /// Stages a delete for each existing row, or drops a staged insert. Refused on a view target.
   @discardableResult
   func stageDelete(rows: [Int]) -> String? {
     if let reason = rowStagingUnavailableReason { return reason }
     if stagesDocuments { return stageDocumentDelete(rows: rows) }
     guard let target = stagedEditTarget else { return Self.tableHasNoPrimaryKey }
+    if target.viewBase != nil { return Self.viewDeleteUnsupported }
     let keys = rows.compactMap { rowKey(at: $0, target: target) }
     if keys.isEmpty { return rows.isEmpty ? nil : Self.rowNotOnPage }
     return changeSet("Delete Rows") { set in

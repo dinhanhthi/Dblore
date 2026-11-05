@@ -172,7 +172,95 @@ struct RewindCaptureSQLTests {
     #expect(text?.keyAfter == [.string("b")])
   }
 
+  @Test(
+    "A view target: the capture reads the view by its mapped key; the restore updates the view, masked by a base-table rule"
+  )
+  func viewTargetCaptureAndRestore() throws {
+    let view = try Self.ordersView()
+    let target = EditTarget(
+      qualifiedName: view.qualifiedName, tableID: view.resolvedTableRef,
+      primaryKeyColumns: view.primaryKeyColumns, connectionEpoch: 1, updateOnly: view.updateOnly,
+      schema: view.schema, name: view.name, generatedColumns: view.generatedColumns,
+      viewBase: view.viewBase)
+    let capture = try RewindCaptureSQL.selectStatement(
+      target: target, columns: Self.ordersViewColumns, keyValues: [.int(7)], engine: .postgresql)
+    #expect(
+      capture.sql
+        == "SELECT 'v' || \"key\"::text, 'v' || \"total\"::text, 'v' || \"doubled\"::text"
+        + " FROM public.v1 WHERE \"key\" = $1 FOR UPDATE")
+
+    // Back through the view by its key; the expression column is never written. A rule naming
+    // the base table masks the view's column (no origin: fails closed, as in the grid)
+    let row = RewindRow(
+      operation: .update, primaryKey: ["key": "7"],
+      before: ["key": "7", "total": "5", "doubled": "10"],
+      after: ["key": "7", "total": "6", "doubled": "12"])
+    let inverse = try RewindPlanner.plan(
+      [(Self.ordersViewEntry, [row])],
+      tables: [RewindTableName(schema: "public", table: "v1"): RewindTable(view: view)],
+      engine: .postgresql,
+      masks: ColumnMaskRuleSet([try ColumnMaskRule(pattern: "orders.total", style: .full)]))
+    #expect(
+      inverse.statements.map(\.sql) == [
+        #"UPDATE "public"."v1" SET "total" = $1 WHERE "key" = $2"#
+          + #" AND "total"::text COLLATE "C" IS NOT DISTINCT FROM $3"#
+      ])
+    #expect(inverse.statements.first?.values == ["5", "7", "6"])
+    // One row expected: a row the edit moved out of the view matches none and stops the rewind
+    #expect(inverse.statements.first?.expectedRows == 1)
+    #expect(inverse.masksValues)
+    #expect(inverse.preview.contains(ColumnMaskRule.maskText))
+    #expect(!inverse.preview.contains("'5'") && !inverse.preview.contains("'6'"))
+    #expect(DataRewindModel.historySQL(inverse).hasPrefix("-- "))
+  }
+
+  @Test("A stored DELETE or INSERT row on a view is refused: rows are only updated through a view")
+  func viewTargetRefusesInsertAndDelete() throws {
+    let tables = [
+      RewindTableName(schema: "public", table: "v1"): RewindTable(view: try Self.ordersView())
+    ]
+    let image: RewindImage = ["key": "7", "total": "5", "doubled": "10"]
+    for row in [
+      RewindRow(operation: .delete, primaryKey: ["key": "7"], before: image, after: nil),
+      RewindRow(operation: .insert, primaryKey: ["key": "7"], before: nil, after: image),
+    ] {
+      #expect(
+        throws: RewindPlannerError.refused(
+          entryID: 1, table: "v1", reason: "rows are only updated through a view")
+      ) {
+        try RewindPlanner.plan([(Self.ordersViewEntry, [row])], tables: tables, engine: .postgresql)
+      }
+    }
+  }
+
   // MARK: - Fixtures
+
+  /// `CREATE VIEW v1(key, total, doubled) AS SELECT id, total, total * 2 FROM orders`
+  private static func ordersView() throws -> EditTable {
+    let orders = TableRef.postgresql(oid: 16_500)
+    let candidate = ViewEditCandidate(
+      viewOID: 16_600, qualifiedName: "public.v1", schema: "public", name: "v1",
+      columns: [1: "key", 2: "total", 3: "doubled"], updatableColumnNames: ["key", "total"],
+      baseOID: 16_500, basePrimaryKey: [1], generatedBaseColumns: [], definitionVersion: "771")
+    let map = try ViewBaseMap.make(
+      candidate,
+      origins: [
+        ColumnOrigin(tableID: orders, columnOrdinal: 1),
+        ColumnOrigin(tableID: orders, columnOrdinal: 3), nil,
+      ])
+    return try #require(EditTable.view(candidate, map: map, connectionEpoch: 1))
+  }
+
+  private static let ordersViewColumns = [
+    column("key", "int4"), column("total", "int4"), column("doubled", "int4"),
+  ]
+
+  private static var ordersViewEntry: RewindEntry {
+    RewindEntry(
+      id: 1, connectionKey: "k", schema: "public", table: "v1", qualifiedName: "public.v1",
+      engine: .postgresql, created: Date(), state: .committed, editKind: .staged,
+      statementCount: 1, columns: ordersViewColumns, notCaptured: false, notRewindableReason: nil)
+  }
 
   private static func column(_ name: String, _ type: String) -> RewindColumn {
     RewindColumn(name: name, typeName: type)

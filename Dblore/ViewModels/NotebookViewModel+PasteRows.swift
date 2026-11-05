@@ -169,9 +169,10 @@ extension NotebookViewModel {
   /// Columns the paste does not map, and generated columns, are left out of the INSERT, so the
   /// server fills them (an identity or auto-increment key; Commit still numbers a key with no
   /// default, as for + Row). The text is parsed and checked off the main actor. Refused, with
-  /// nothing staged, on engines without row staging (DuckDB, MongoDB), read-only connections,
-  /// a refused paste (`PastedRows.parse`), a value invalid for its column, or a table or page
-  /// that changed meanwhile. A page shown before its table definition waits for it.
+  /// nothing staged, on engines without row staging (DuckDB, MongoDB), read-only connections, a
+  /// view target (`rowInsertUnavailableReason`), a refused paste (`PastedRows.parse`), a value
+  /// invalid for its column, or a table or page that changed meanwhile. A page shown before its
+  /// table definition waits for it.
   @discardableResult
   func stagePastedRows(_ text: String, columnOrder: [Int]? = nil) async -> String? {
     if let reason = unavailableFeatureMessage("Pasting rows", \.supportsRowStaging) {
@@ -179,7 +180,7 @@ extension NotebookViewModel {
     }
     // Read at once, staged once the table definition of a page shown before it has landed
     if editorResult?.typesPending == true { await awaitResultTargets() }
-    if let reason = rowStagingUnavailableReason { return reason }
+    if let reason = rowInsertUnavailableReason { return reason }
     guard let target = stagedEditTarget, let result = editorResult else {
       return Self.tableHasNoPrimaryKey
     }
@@ -206,7 +207,7 @@ extension NotebookViewModel {
       return Self.tableChangedWhilePasting
     }
     // Read-only or another policy may have turned on while the rows were read
-    if let reason = rowStagingUnavailableReason { return reason }
+    if let reason = rowInsertUnavailableReason { return reason }
     return changeSet("Paste Rows") { set in
       for values in inserts { set.stageInsert(values: values) }
     }

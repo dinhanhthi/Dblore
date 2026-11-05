@@ -219,6 +219,30 @@ struct CascadePreviewModelTests {
     await tab.disconnect()
   }
 
+  @Test("A view target's staged deletes are not counted, with no side connection")
+  func viewTargetIsNotCounted() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract(), rows: [[.int(3)]])
+    let (viewModel, _) = try await makeViewModel(factory)
+    let target = try #require(viewModel.editorResult?.editTarget)
+    let view = EditTarget(
+      qualifiedName: target.qualifiedName, tableID: target.tableID,
+      primaryKeyColumns: target.primaryKeyColumns, connectionEpoch: target.connectionEpoch,
+      schema: target.schema, name: target.name,
+      viewBase: ViewBaseMap(
+        baseOID: 2, basePrimaryKey: [1], definitionVersion: "1", columns: ["id": 1],
+        primaryKeyColumns: ["id"]))
+    viewModel.editorResult?.editTarget = view
+    // `stageDelete` refuses a view: a set holding a delete is built directly
+    var set = RowChangeSet(target: view)
+    set.stageDelete(row: RowChangeSet.RowKey(values: [.int(42)]))
+    viewModel.dataViewer?.changeSet = set
+
+    let impact = await viewModel.stagedDeleteImpact()
+
+    #expect(impact == .notComputed("Related rows are not counted for a view."))
+    #expect(factory.sessions.count == 1)
+  }
+
   /// The users page with row ids 42 and 43, on a connected tab manager whose catalog has
   /// `orders.user_id` referencing `users.id` ON DELETE RESTRICT.
   private func makeViewModel(

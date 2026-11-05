@@ -41,6 +41,10 @@ nonisolated struct RewindTable: Sendable, Equatable {
   /// PostgreSQL `GENERATED ALWAYS AS IDENTITY`: an INSERT writing one needs
   /// `OVERRIDING SYSTEM VALUE`
   var identityAlwaysColumns: Set<String> = []
+  /// A view (`init(view:)`): its rows are only updated, never inserted or deleted, and its
+  /// columns match mask rules without an origin, as the grid's view results do (a rule naming
+  /// the base table or the view masks them)
+  var updatesOnly = false
 
   init(
     columns: Set<String>, primaryKey: [String], generatedColumns: Set<String> = [],
@@ -57,6 +61,18 @@ nonisolated struct RewindTable: Sendable, Equatable {
     primaryKey = structure.constraints.first { $0.kind == .primaryKey }?.columns ?? []
     generatedColumns = Set(structure.columns.filter { $0.generated != nil }.map(\.name))
     identityAlwaysColumns = Set(structure.columns.filter { $0.identity == .always }.map(\.name))
+  }
+
+  /// A PostgreSQL updatable view (`EditTable.viewBase`), which `TableStructure` does not read:
+  /// its view columns, its mapped key, and as never written the columns its edit target keeps
+  /// read-only (`EditTable.view`: expressions, view columns of a generated base column through
+  /// `ViewBaseMap`, other names of a key column). No identity column: only UPDATEs are written
+  /// through a view, and `OVERRIDING SYSTEM VALUE` is an INSERT's.
+  init(view table: EditTable) {
+    columns = Set(table.attributeNames.values)
+    primaryKey = table.primaryKeyColumns
+    generatedColumns = table.generatedColumns
+    updatesOnly = true
   }
 }
 
@@ -199,6 +215,10 @@ private nonisolated struct EntryPlanner {
     guard names.isSubset(of: table.columns) else { throw refuse("a column no longer exists") }
     let keys = Set(table.primaryKey)
     for row in rows {
+      // The store is untrusted: an entry recorded on a table now replaced by a view
+      guard !table.updatesOnly || row.operation == .update else {
+        throw refuse("rows are only updated through a view")
+      }
       guard row.primaryKey.isEmpty || Set(row.primaryKey.keys) == keys else {
         throw refuse("the table's primary key changed")
       }
@@ -208,7 +228,7 @@ private nonisolated struct EntryPlanner {
     }
     self.table = table
     self.columns = entry.columns
-    let origin = ColumnMaskRule.Origin(schema: schema, table: entry.table)
+    let origin = table.updatesOnly ? nil : ColumnMaskRule.Origin(schema: schema, table: entry.table)
     maskStyles = entry.columns.reduce(into: [:]) { styles, column in
       styles[column.name] = masks.matchingRule(column: column.name, origin: origin)?.style
     }

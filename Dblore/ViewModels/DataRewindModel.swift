@@ -191,19 +191,15 @@ final class DataRewindModel {
       let loaded = try await Task.detached(priority: .userInitiated) {
         try chosen.map { (entry: $0, rows: try store.rows(entryID: $0.id)) }
       }.value
+      let rules = await manager.currentMaskRules()
       var tables: [RewindTableName: RewindTable] = [:]
       for entry in chosen {
         guard let schema = entry.schema else { continue }
         let name = RewindTableName(schema: schema, table: entry.table)
         guard tables[name] == nil else { continue }
-        do {
-          tables[name] = RewindTable(
-            try await manager.fetchTableStructure(schema: schema, table: entry.table))
-        } catch DatabaseError.metadataPausedDuringTransaction {
-          throw DataRewindError.transactionPending
-        }
+        tables[name] = try await Self.rewindTable(
+          name, engine: engine, manager: manager, hidesServerText: !rules.isEmpty)
       }
-      let rules = await manager.currentMaskRules()
       let planned = try await Task.detached(priority: .userInitiated) {
         try RewindPlanner.plan(
           loaded, tables: tables, engine: engine, masks: ColumnMaskRuleSet(rules))
@@ -213,6 +209,49 @@ final class DataRewindModel {
     } catch {
       guard planID == id else { return }
       errorMessage = error.localizedDescription
+    }
+  }
+
+  /// The live columns of `name`: its table structure, or on PostgreSQL, where that reads only
+  /// tables, the updatable view it names, resolved again through the edit path
+  /// (`fetchEditTable`: the catalog checks, then the cached or newly probed map), so an entry
+  /// read after a reconnect plans with an empty edit-target cache. Anything else that is not a
+  /// table keeps the structure read's error; a failed view read (a probe's connect or timeout)
+  /// says so. `hidesServerText`: the connection has mask rules (the plan can mask values), so
+  /// that error shows only its SQLSTATE or type, never the server's text.
+  private static func rewindTable(
+    _ name: RewindTableName, engine: DatabaseType, manager: DatabaseConnectionManager,
+    hidesServerText: Bool
+  ) async throws -> RewindTable {
+    do {
+      return RewindTable(
+        try await manager.fetchTableStructure(schema: name.schema, table: name.table))
+    } catch DatabaseError.metadataPausedDuringTransaction {
+      throw DataRewindError.transactionPending
+    } catch {
+      let structureError = error
+      let dialect = SQLDialect.postgresql
+      guard engine == .postgresql,
+        let relation = try? dialect.quoteIdentifier(name.schema) + "."
+          + dialect.quoteIdentifier(name.table)
+      else { throw structureError }
+      let view: EditTable?
+      do {
+        view = try await manager.fetchEditTable(tableName: relation)
+      } catch DatabaseError.metadataPausedDuringTransaction {
+        throw DataRewindError.transactionPending
+      } catch {
+        let reason =
+          hidesServerText && carriesServerText(error)
+          ? (DatabaseConnectionManager.serverSQLState(error).map { "SQLSTATE \($0)" }
+            ?? "\(type(of: error))") + " (its message is hidden, as it can show a masked value)"
+          : error.localizedDescription
+        throw DataRewindError.viewUnreadable(
+          name: "\(name.schema).\(name.table)", reason: reason)
+      }
+      guard let view, view.viewBase != nil, view.schema == name.schema, view.name == name.table
+      else { throw structureError }
+      return RewindTable(view: view)
     }
   }
 
@@ -385,12 +424,16 @@ final class DataRewindModel {
 nonisolated enum DataRewindError: LocalizedError, Equatable {
   /// Catalog reads wait while a transaction is pending
   case transactionPending
+  /// The view's edit target could not be read; `reason` holds no server text when masked
+  case viewUnreadable(name: String, reason: String)
 
   var errorDescription: String? {
     switch self {
     case .transactionPending:
       "Commit or roll back the pending transaction first: the table's columns cannot be read "
         + "while it is open."
+    case .viewUnreadable(let name, let reason):
+      "Could not read view \(name): \(reason)"
     }
   }
 }

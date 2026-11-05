@@ -197,6 +197,53 @@ struct RowStagingViewModelTests {
     #expect(viewModel.dataViewer?.changeSet?.isEmpty == false)
   }
 
+  @Test(
+    "A view target commits staged updates in one transaction; row deletes and inserts are refused")
+  func viewTargetStagesUpdatesOnly() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(
+      config: ConnectionConfig(
+        databaseType: .postgresql, host: "fake", port: 5432, database: "app", username: "ana",
+        sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false))
+    defer { Task { await manager.disconnect() } }
+    let view = TableRef.postgresql(oid: 16_600)
+    let viewModel = makeViewModel(
+      primaryKey: ["id"], columnTableID: view,
+      rows: [[.int(1), .string("old")], [.int(2), .string("older")]])
+    viewModel.dataViewer = DataViewerState(schema: "public", name: "v1", orderColumns: ["id"])
+    viewModel.editorResult?.editTarget = EditTarget(
+      qualifiedName: "public.v1", tableID: view, primaryKeyColumns: ["id"],
+      connectionEpoch: await manager.connectionEpoch, schema: "public", name: "v1",
+      viewBase: ViewBaseMap(
+        baseOID: 16_500, basePrimaryKey: [1], definitionVersion: "771",
+        columns: ["id": 1, "nickname": 2], primaryKeyColumns: ["id"]))
+    viewModel.connectionManager = manager
+
+    #expect(viewModel.stagingEnabled)
+    #expect(viewModel.stageDelete(rows: [0]) == NotebookViewModel.viewDeleteUnsupported)
+    #expect(viewModel.rowInsertUnavailableReason == NotebookViewModel.viewInsertUnsupported)
+    #expect(viewModel.stageInsert() == NotebookViewModel.viewInsertUnsupported)
+    #expect(await viewModel.addStagedRow() == NotebookViewModel.viewInsertUnsupported)
+    #expect(await viewModel.stageDuplicate(rows: [0]) == NotebookViewModel.viewInsertUnsupported)
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    #expect(viewModel.stageEdit(row: 0, column: "nickname", value: .string("neo")) == nil)
+    #expect(viewModel.stageEdit(row: 1, column: "nickname", value: .string("trinity")) == nil)
+
+    // A server error (a CHECK OPTION, a missing grant) keeps the staged set
+    let tab = try #require(factory.sessions.first)
+    tab.failNextCommand(containing: "UPDATE")
+    await viewModel.commitStaged()
+    #expect(viewModel.dataViewer?.changeSet?.edits.count == 2)
+    #expect(!tab.statements.contains("COMMIT"))
+
+    await viewModel.commitStaged()
+    #expect(viewModel.dataViewer?.changeSet == nil)
+    let update = #"UPDATE public.v1 SET "nickname" = $1 WHERE "id" = $2"#
+    let commit = try #require(tab.statements.lastIndex(of: "COMMIT"))
+    #expect(Array(tab.statements[(commit - 2)...commit]) == [update, update, "COMMIT"])
+  }
+
   @Test("A result whose columns name another table cannot be staged")
   func otherTableIdentityCannotBeStaged() {
     let viewModel = makeViewModel(
