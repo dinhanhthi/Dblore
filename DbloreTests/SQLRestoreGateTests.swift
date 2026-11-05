@@ -262,6 +262,7 @@ struct SQLRestoreGateTests {
       ("SET\tNAMES\n  \"utf8mb4\";", "SET NAMES \"utf8mb4\""),
       ("/*!40101 SET NAMES utf8 */;", "/*!40101 SET NAMES utf8 */"),
       ("/*!40101 SET NAMES utf8mb4 */;", "/*!40101 SET NAMES utf8mb4 */"),
+      ("-- charset note\n# legacy\n/* old */ SET NAMES utf8;", "SET NAMES utf8"),
     ])
   func setNamesRefused(statement: String, shown: String) {
     let script = Self.header(.mysql) + "\nCREATE TABLE a (id int);\n" + statement + "\n"

@@ -534,7 +534,8 @@ nonisolated struct SQLRestorePlan: Sendable {
 
   /// The refusal reason for a MySQL `SET NAMES`, also inside a version comment, other than the
   /// dump's own `SET NAMES utf8mb4;` (any other spelling, charset or COLLATE): it names the
-  /// statement's text (whitespace runs shown as one space, cut at 100 characters). Nil for
+  /// statement's text without its comments (`strippingComments`, which keeps a version comment),
+  /// whitespace runs shown as one space, cut at 100 characters. Nil for
   /// anything else. Nothing is rewritten: the session already pinned utf8mb4 on connect.
   private static func setNamesRefusal(_ text: String, _ tokens: [SQLToken]) -> String? {
     guard let first = tokens.first, first.isWord("SET") || first.kind == .executableComment,
@@ -545,7 +546,8 @@ nonisolated struct SQLRestorePlan: Sendable {
     guard opened.count >= 2, opened[0].isWord("SET"), opened[1].isWord("NAMES") else {
       return nil
     }
-    var shown = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    var shown = tokenizer.strippingComments(text).split(whereSeparator: \.isWhitespace)
+      .joined(separator: " ")
     if shown.count > 100 { shown = shown.prefix(100) + "…" }
     return "\"\(shown)\" sets the connection's character set, but Dblore restores only the "
       + "statements its own dumps write (SET NAMES utf8mb4;), and this session already uses "
