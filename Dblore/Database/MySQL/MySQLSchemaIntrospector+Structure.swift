@@ -2,6 +2,10 @@
 // Structure of one MySQL / MariaDB table from information_schema (COLUMNS, STATISTICS,
 // TABLE_CONSTRAINTS, KEY_COLUMN_USAGE, REFERENTIAL_CONSTRAINTS, CHECK_CONSTRAINTS). Database and
 // table are always binds. A view or a missing table throws. An empty table comment reads as nil.
+// Table options: TABLE_COLLATION and its character set (COLLATIONS); the next AUTO_INCREMENT is a
+// separate soft read for the structure editor (`nextAutoIncrement`, SHOW CREATE TABLE with quoted
+// identifiers). The server's character set and collation lists come from CHARACTER_SETS and
+// COLLATIONS, or on MariaDB 10.10+ COLLATION_CHARACTER_SET_APPLICABILITY (`characterSets(in:)`).
 //
 // Defaults are raw SQL text on both engines (see `MySQLCatalog.defaultExpression`). Generated
 // expressions, check clauses and functional index keys stay as the server prints them (MySQL
@@ -25,11 +29,13 @@ nonisolated extension MySQLSchemaIntrospector {
     let found = try await rows(
       in: session,
       sql: """
-        SELECT TABLE_COMMENT FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE IN \(Self.tableTypes)
+        SELECT t.TABLE_COMMENT, t.TABLE_COLLATION, c.CHARACTER_SET_NAME
+        FROM information_schema.TABLES t
+        LEFT JOIN information_schema.COLLATIONS c ON c.COLLATION_NAME = t.TABLE_COLLATION
+        WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ? AND t.TABLE_TYPE IN \(Self.tableTypes)
         """,
       binds: binds)
-    guard !found.isEmpty else {
+    guard let tableRow = found.first else {
       throw DatabaseError.queryFailed("Table \(schema).\(table) was not found", 0)
     }
     let server = try await serverInfo(of: session)
@@ -39,7 +45,72 @@ nonisolated extension MySQLSchemaIntrospector {
       indexes: try await structureIndexes(binds, server: server, in: session),
       constraints: try await structureKeys(binds, in: session)
         + structureChecks(binds, server: server, in: session),
-      comment: found.first.flatMap { MySQLCatalog.nonEmpty(MySQLCatalogValue.string($0, 0)) })
+      comment: MySQLCatalog.nonEmpty(MySQLCatalogValue.string(tableRow, 0)),
+      tableOptions: MySQLCatalog.tableOptions(
+        collation: MySQLCatalogValue.string(tableRow, 1),
+        characterSet: MySQLCatalogValue.string(tableRow, 2)))
+  }
+
+  /// The next AUTO_INCREMENT of one table, or nil when it has none or SHOW CREATE TABLE is
+  /// refused (it needs a table-level privilege; an engine plugin may be missing): only the
+  /// structure editor's AUTO_INCREMENT field depends on it. A cancellation is thrown.
+  /// information_schema.TABLES.AUTO_INCREMENT is cached on MySQL 8
+  /// (information_schema_stats_expiry); SHOW CREATE TABLE prints the current value.
+  func nextAutoIncrement(
+    schema: String, table: String, in session: any DatabaseSession
+  ) async throws -> UInt64? {
+    let q = SQLDialect.mysql.quoteIdentifier
+    do {
+      let createTable = try await rows(
+        in: session, sql: "SHOW CREATE TABLE \(try q(schema)).\(try q(table))"
+      ).first.flatMap { MySQLCatalogValue.string($0, 1) }
+      return createTable.flatMap(MySQLCatalog.nextAutoIncrement(createTable:))
+    } catch {
+      if error is CancellationError || Task.isCancelled { throw error }
+      return nil
+    }
+  }
+
+  /// Every character set with its default collation, and every collation of each set. MariaDB
+  /// 10.10+ lists its UCA 14 collations in COLLATIONS under bare names without a set
+  /// (`uca1400_ai_ci`); COLLATION_CHARACTER_SET_APPLICABILITY.FULL_COLLATION_NAME has the name
+  /// per set (`utf8mb4_uca1400_ai_ci`). Where that read fails, COLLATIONS is used.
+  func characterSets(in session: any DatabaseSession) async throws -> MySQLCharacterSets {
+    let sets = try await rows(
+      in: session,
+      sql: "SELECT CHARACTER_SET_NAME, DEFAULT_COLLATE_NAME FROM information_schema.CHARACTER_SETS"
+    ).compactMap { row -> (name: String, defaultCollation: String)? in
+      guard let name = MySQLCatalogValue.string(row, 0),
+        let collation = MySQLCatalogValue.string(row, 1)
+      else { return nil }
+      return (name, collation)
+    }
+    var collationRows: [[CellValue]]?
+    if try await serverInfo(of: session)?.hasFullCollationNames == true {
+      do {
+        collationRows = try await rows(
+          in: session,
+          sql: """
+            SELECT FULL_COLLATION_NAME, CHARACTER_SET_NAME
+            FROM information_schema.COLLATION_CHARACTER_SET_APPLICABILITY
+            """)
+      } catch {
+        if error is CancellationError || Task.isCancelled { throw error }
+        // An older server without FULL_COLLATION_NAME: COLLATIONS below
+      }
+    }
+    if collationRows == nil {
+      collationRows = try await rows(
+        in: session,
+        sql: "SELECT COLLATION_NAME, CHARACTER_SET_NAME FROM information_schema.COLLATIONS")
+    }
+    let collations = (collationRows ?? []).compactMap { row -> (name: String, set: String)? in
+      guard let name = MySQLCatalogValue.string(row, 0),
+        let set = MySQLCatalogValue.string(row, 1)
+      else { return nil }
+      return (name, set)
+    }
+    return MySQLCharacterSets(sets: sets, collations: collations)
   }
 
   /// The session's parsed version, or `SELECT VERSION()` for another session type.
@@ -284,6 +355,33 @@ nonisolated extension MySQLCatalog {
       }
     }
     return String(result)
+  }
+
+  /// The table options of one table: TABLE_COLLATION and its character set from COLLATIONS
+  /// (nil when the join found none: MariaDB 10.10+ lists its UCA 14 collations without a set, so
+  /// the set is then the name's prefix, as every collation but `binary` is `<set>_...`). The
+  /// next AUTO_INCREMENT is read apart (`nextAutoIncrement(schema:table:in:)`).
+  static func tableOptions(collation: String?, characterSet: String?) -> TableStructure.TableOptions
+  {
+    let collation = nonEmpty(collation)
+    let prefix = collation.flatMap { name in
+      name.firstIndex(of: "_").map { String(name[..<$0]) } ?? (name == "binary" ? name : nil)
+    }
+    return TableStructure.TableOptions(
+      characterSet: nonEmpty(characterSet) ?? prefix, collation: collation)
+  }
+
+  /// `AUTO_INCREMENT=n` among the table options of SHOW CREATE TABLE (outside the column list,
+  /// not in a string), or nil when the table has none
+  static func nextAutoIncrement(createTable: String) -> UInt64? {
+    let tokens = SQLTokenizer.tokens(createTable, dialect: .mysql)
+    for (position, token) in tokens.enumerated()
+    where token.depth == 0 && token.isWord("AUTO_INCREMENT") && position + 2 < tokens.count
+      && tokens[position + 1].isSymbol("=")
+    {
+      return UInt64(tokens[position + 2].text)
+    }
+    return nil
   }
 
   /// Nil for NULL and for the empty text MySQL prints where MariaDB has NULL.

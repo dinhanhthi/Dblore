@@ -59,8 +59,11 @@ nonisolated enum StructureDDLBuilder {
     }
   }
 
+  /// `characterSets`: the MySQL server's lists; a character set or collation change is refused
+  /// without them, or when its names are not listed
   static func build(
-    changes: [StructureChange], structure: TableStructure, engine: Engine
+    changes: [StructureChange], structure: TableStructure, engine: Engine,
+    characterSets: MySQLCharacterSets? = nil
   ) throws -> [String] {
     guard !changes.isEmpty else { return [] }
     if engine == .duckdb {
@@ -70,7 +73,8 @@ nonisolated enum StructureDDLBuilder {
     switch engine {
     case .postgresql: return try postgresStatements(changes, structure: structure)
     case .mysql(let server):
-      return try mysqlStatements(changes, structure: structure, server: server)
+      return try mysqlStatements(
+        changes, structure: structure, server: server, characterSets: characterSets)
     case .sqlite(let version):
       return try sqliteStatements(changes, structure: structure, libraryVersion: version)
     case .duckdb: return []
@@ -141,6 +145,9 @@ nonisolated enum StructureDDLBuilder {
       case .setTableComment(let text):
         tableComment =
           "COMMENT ON TABLE \(table) IS " + (text.map { dialect.literal(.string($0)) } ?? "NULL")
+      case .setTableCharset, .convertTableCharset, .setAutoIncrement:
+        throw StructureDDLError.unsupported(
+          "Character sets, collations and AUTO_INCREMENT are MySQL table options.")
       }
     }
     let actions = dropConstraints + dropColumns + addColumns + alterColumns + addConstraints
@@ -276,6 +283,15 @@ nonisolated enum StructureDDLBuilder {
         if text?.contains("\0") == true {
           throw StructureDDLError.invalidText("A comment cannot contain a NUL character.")
         }
+      case .setTableCharset(let charset, let collation),
+        .convertTableCharset(let charset, let collation):
+        for name in [charset, collation]
+        where name.isEmpty || !name.unicodeScalars.allSatisfy(isASCIIWordCharacter) {
+          throw StructureDDLError.invalidText(
+            "\"\(name)\" is not a character set or collation name.")
+        }
+      case .setAutoIncrement:
+        break
       case .addConstraint(let constraint):
         if let name = constraint.name { try checkedName(name) }
         if case .check(let expression) = constraint.kind {

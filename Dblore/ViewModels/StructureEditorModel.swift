@@ -5,7 +5,9 @@
 // and applies the previewed strings through `executeGatedSchemaChange` (which re-checks every
 // refusal). History rows use source `.structure`. The table rename and comment are staged like
 // any other change (at most one of each); Drop Table is sent on its own after the user typed the
-// table name, through the same Safe Mode step and gate.
+// table name, through the same Safe Mode step and gate. On MySQL the table character set
+// (collation following it), AUTO_INCREMENT and the opt-in CONVERT TO stage once each; the
+// server's lists load once, after the table, and a staged CONVERT TO asks before Apply.
 
 import Foundation
 import Observation
@@ -27,6 +29,19 @@ nonisolated protocol StructureEditorDatabase: Sendable {
   func executeGatedSchemaChange(
     _ statements: [String], policy: ProtectionPolicy, connectionEpoch: UInt64, caller: UUID?
   ) async throws -> SchemaChangeResult
+  /// MySQL / MariaDB character sets and collations for the table options
+  func fetchMySQLCharacterSets() async throws -> MySQLCharacterSets
+  /// MySQL / MariaDB: the table's next AUTO_INCREMENT; nil when none or the read was refused
+  func fetchMySQLNextAutoIncrement(schema: String, table: String) async throws -> UInt64?
+}
+
+extension StructureEditorDatabase {
+  /// A database without MySQL table options
+  func fetchMySQLCharacterSets() async throws -> MySQLCharacterSets {
+    throw DatabaseError.notConnected
+  }
+
+  func fetchMySQLNextAutoIncrement(schema: String, table: String) async throws -> UInt64? { nil }
 }
 
 extension DatabaseConnectionManager: StructureEditorDatabase {
@@ -184,6 +199,12 @@ final class StructureEditorModel {
   private(set) var isConfirmingDrop = false
   /// The Safe Mode step asks about the drop (not the staged changes)
   private(set) var confirmsDrop = false
+  /// MySQL: the server's character sets and collations; nil until loaded (or when the read
+  /// failed: `characterSetsError`)
+  private(set) var characterSets: MySQLCharacterSets?
+  private(set) var characterSetsError: String?
+  /// Apply waits for the user to confirm the staged CONVERT TO (it rewrites every row)
+  private(set) var isConfirmingConvert = false
   /// The Name field takes the focus when it appears (opened from a row's Rename...)
   @ObservationIgnored var focusesTableName = false
   /// Called after a change reached the server (to reload the sidebar schema)
@@ -200,6 +221,9 @@ final class StructureEditorModel {
   @ObservationIgnored private let context: StructureEditorContext
   @ObservationIgnored private var connection = StructureEditorConnectionState()
   @ObservationIgnored private var confirmedStatements: [String]?
+  /// The user confirmed the staged CONVERT TO; any edit or cancel takes it back
+  @ObservationIgnored private var convertConfirmed = false
+  @ObservationIgnored private var characterSetsTask: Task<Void, Never>?
   /// One per `.addColumn` in `changes`, in order: the added rows' `rowID`
   @ObservationIgnored private var addedRowIDs: [UUID] = []
 
@@ -228,6 +252,28 @@ final class StructureEditorModel {
     case .postgresql, .mysql: true
     case .sqlite, .duckdb, .mongodb: false
     }
+  }
+
+  /// MySQL and MariaDB have table character sets, collations and AUTO_INCREMENT
+  var supportsTableOptions: Bool { context.databaseType == .mysql }
+
+  /// The staged table character set, or the loaded one
+  var workingCharacterSet: String? {
+    stagedCharset?.charset ?? structure?.tableOptions?.characterSet
+  }
+
+  /// The staged table collation, or the loaded one
+  var workingCollation: String? { stagedCharset?.collation ?? structure?.tableOptions?.collation }
+
+  /// The staged character set change converts the existing data (CONVERT TO)
+  var convertsTableData: Bool { stagedCharset?.converts == true }
+
+  /// The staged next AUTO_INCREMENT, or the loaded one
+  var workingAutoIncrement: UInt64? {
+    for change in changes.reversed() {
+      if case .setAutoIncrement(let value) = change { return value }
+    }
+    return structure?.tableOptions?.autoIncrement
   }
 
   /// The staged new name, or the loaded one
@@ -274,15 +320,26 @@ final class StructureEditorModel {
     loadState = .loading
     do {
       let database = context.database
+      let readsTableOptions = supportsTableOptions
       let (state, loaded) = try await PerfSignpost.interval("structure.editorLoad") {
         let state = await database.structureEditorState()
-        return (state, try await database.fetchTableStructure(schema: schema, table: table))
+        var loaded = try await database.fetchTableStructure(schema: schema, table: table)
+        // Every load: the field shows the server's value after an Apply
+        if readsTableOptions {
+          loaded.tableOptions?.autoIncrement = try await database.fetchMySQLNextAutoIncrement(
+            schema: schema, table: table)
+        }
+        return (state, loaded)
       }
       connection = state
       structure = loaded
       disabledReason = Self.disabledReason(
         databaseType: context.databaseType, policy: context.policy, state: state)
       loadState = .loaded
+      if supportsTableOptions, characterSets == nil, characterSetsTask == nil {
+        // Off the load: the table shows at once, the dropdowns once the lists are in
+        characterSetsTask = Task { [weak self] in await self?.readCharacterSets() }
+      }
     } catch DatabaseError.metadataPausedDuringTransaction {
       loadState = .failed(Self.pausedMessage)
     } catch {
@@ -413,6 +470,78 @@ final class StructureEditorModel {
       changes.removeAll(where: Self.isTableComment)
       if value != structure?.comment { changes.append(.setTableComment(value)) }
     }
+  }
+
+  /// Waits for the character set lists (read once when the editor loads on MySQL)
+  func loadCharacterSets() async {
+    if characterSets == nil, characterSetsTask == nil, supportsTableOptions {
+      characterSetsTask = Task { [weak self] in await self?.readCharacterSets() }
+    }
+    await characterSetsTask?.value
+  }
+
+  /// Stages the table's default character set with its default collation (replacing an earlier
+  /// change, keeping the Convert choice); the loaded set and collation take it back. Picking the
+  /// staged or loaded set again keeps its collation (never a silent switch to the default).
+  func setTableCharset(_ charset: String) {
+    guard let set = characterSets?.characterSet(named: charset) else { return }
+    let loaded = structure?.tableOptions
+    let current =
+      charset == workingCharacterSet
+      ? workingCollation : charset == loaded?.characterSet ? loaded?.collation : nil
+    stageCharset(charset, current ?? set.defaultCollation, converts: convertsTableData)
+  }
+
+  /// Stages a collation of the working character set
+  func setTableCollation(_ collation: String) {
+    guard let charset = workingCharacterSet,
+      characterSets?.contains(charset: charset, collation: collation) == true
+    else { return }
+    stageCharset(charset, collation, converts: convertsTableData)
+  }
+
+  /// Opt-in: the character set change converts every character column (CONVERT TO), which
+  /// Apply confirms first. Refused (a toast) while the working collation is not in the lists.
+  func setConvertsTableData(_ converts: Bool) {
+    guard let charset = workingCharacterSet, let collation = workingCollation else { return }
+    if converts, characterSets?.contains(charset: charset, collation: collation) != true {
+      toastPresenter(
+        "The collation \"\(collation)\" is not in the server's list for \"\(charset)\", so "
+          + "the data cannot be converted to it. Pick a listed collation first.", .error)
+      return
+    }
+    stageCharset(charset, collation, converts: converts)
+  }
+
+  /// Stages the next AUTO_INCREMENT; blank or the loaded value takes the change back, text that
+  /// is not a whole number from 1 is refused
+  func setAutoIncrement(_ text: String) {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let value = UInt64(trimmed)
+    if !trimmed.isEmpty, value == nil || value == 0 {
+      toastPresenter("AUTO_INCREMENT is a whole number from 1", .error)
+      return
+    }
+    stage { changes in
+      changes.removeAll(where: Self.isAutoIncrement)
+      if let value, value != structure?.tableOptions?.autoIncrement {
+        changes.append(.setAutoIncrement(value))
+      }
+    }
+  }
+
+  /// Takes back the CONVERT TO question (and an earlier confirmation): nothing is sent
+  func cancelConvert() {
+    isConfirmingConvert = false
+    convertConfirmed = false
+  }
+
+  /// The user confirmed the CONVERT TO: Apply goes on (Safe Mode may still ask). No check on
+  /// `isConfirmingConvert`: the dialog clears it (`cancelConvert`) as it closes, before this runs.
+  func confirmConvert() async {
+    isConfirmingConvert = false
+    convertConfirmed = true
+    await apply()
   }
 
   // MARK: - Drop Table
@@ -594,8 +723,17 @@ final class StructureEditorModel {
 
   /// Asks Safe Mode first when the connection's commit style confirms writes (the sheet then
   /// verifies the password / Touch ID and calls `confirmApply`); otherwise sends the preview.
+  /// A staged CONVERT TO is confirmed first (`isConfirmingConvert`, then `confirmConvert`).
   func apply() async {
     guard canApply else { return }
+    if convertsTableData {
+      guard convertConfirmed else {
+        isConfirmingConvert = true
+        return
+      }
+      // One confirmation per Apply: a failed send asks again next time
+      convertConfirmed = false
+    }
     let statements = previewStatements
     if askSafeMode(statements) { return }
     await send(statements, dropping: false)
@@ -620,6 +758,7 @@ final class StructureEditorModel {
     confirmedStatements = nil
     confirmationRequiresPassword = false
     confirmsDrop = false
+    cancelConvert()
   }
 
   // MARK: - Private
@@ -717,6 +856,45 @@ final class StructureEditorModel {
     }
   }
 
+  private func readCharacterSets() async {
+    do {
+      characterSets = try await context.database.fetchMySQLCharacterSets()
+      characterSetsError = nil
+    } catch {
+      characterSetsError = error.localizedDescription
+      // The next load tries again
+      characterSetsTask = nil
+    }
+    rebuildPreview()
+  }
+
+  /// The staged character set change, if any
+  private var stagedCharset: (charset: String, collation: String, converts: Bool)? {
+    for change in changes.reversed() {
+      switch change {
+      case .setTableCharset(let charset, let collation): return (charset, collation, false)
+      case .convertTableCharset(let charset, let collation): return (charset, collation, true)
+      default: continue
+      }
+    }
+    return nil
+  }
+
+  /// Replaces the staged character set change; the loaded pair without a conversion takes it
+  /// back
+  private func stageCharset(_ charset: String, _ collation: String, converts: Bool) {
+    stage { changes in
+      changes.removeAll(where: Self.isCharsetChange)
+      if converts {
+        changes.append(.convertTableCharset(charset: charset, collation: collation))
+      } else if charset != structure?.tableOptions?.characterSet
+        || collation != structure?.tableOptions?.collation
+      {
+        changes.append(.setTableCharset(charset: charset, collation: collation))
+      }
+    }
+  }
+
   private func clearChanges() {
     changes = []
     addedRowIDs = []
@@ -771,7 +949,7 @@ final class StructureEditorModel {
     guard let structure, !changes.isEmpty, let engine else { return }
     do {
       previewStatements = try StructureDDLBuilder.build(
-        changes: changes, structure: structure, engine: engine)
+        changes: changes, structure: structure, engine: engine, characterSets: characterSets)
     } catch {
       previewError = error.localizedDescription
     }
@@ -805,6 +983,17 @@ final class StructureEditorModel {
 
   private static func isTableComment(_ change: StructureChange) -> Bool {
     if case .setTableComment = change { true } else { false }
+  }
+
+  private static func isCharsetChange(_ change: StructureChange) -> Bool {
+    switch change {
+    case .setTableCharset, .convertTableCharset: true
+    default: false
+    }
+  }
+
+  private static func isAutoIncrement(_ change: StructureChange) -> Bool {
+    if case .setAutoIncrement = change { true } else { false }
   }
 
   private static func isRenameChange(_ change: StructureChange) -> Bool {
@@ -870,7 +1059,7 @@ final class StructureEditorModel {
       .dropColumn(let column):
       column
     case .addColumn, .addConstraint, .dropConstraint, .createIndex, .dropIndex, .renameTable,
-      .setTableComment:
+      .setTableComment, .setTableCharset, .convertTableCharset, .setAutoIncrement:
       nil
     }
   }
@@ -900,7 +1089,7 @@ final class StructureEditorModel {
       row.state = .dropped
       return
     case .addColumn, .addConstraint, .dropConstraint, .createIndex, .dropIndex, .renameTable,
-      .setTableComment:
+      .setTableComment, .setTableCharset, .convertTableCharset, .setAutoIncrement:
       return
     }
     row.editedFields.insert(field)

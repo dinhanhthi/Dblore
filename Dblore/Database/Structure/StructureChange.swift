@@ -3,7 +3,8 @@
 // list of them into DDL. Every column, constraint and index name is a name as loaded (or as added
 // by `addColumn`): renames run after every other change, and the table rename runs last. Type
 // text and DEFAULT / CHECK expressions are typed by the user and written into the SQL as they
-// are, after validation. A table comment is written as a string literal.
+// are, after validation. A table comment is written as a string literal. Character set and
+// collation names are never quoted: they must be one word found in the server's lists.
 
 import Foundation
 
@@ -26,6 +27,14 @@ nonisolated enum StructureChange: Sendable, Equatable {
   case renameTable(newName: String)
   /// Nil (or empty) removes the comment
   case setTableComment(String?)
+  /// MySQL: the table's default character set and collation for new columns
+  /// (`DEFAULT CHARSET=… COLLATE=…`). Names must be in the server's loaded lists.
+  case setTableCharset(charset: String, collation: String)
+  /// MySQL: converts every character column and the table default (`CONVERT TO CHARACTER SET`),
+  /// rewriting each row
+  case convertTableCharset(charset: String, collation: String)
+  /// MySQL: the next AUTO_INCREMENT value (`AUTO_INCREMENT=n`)
+  case setAutoIncrement(UInt64)
 
   struct NewColumn: Sendable, Equatable {
     var name: String

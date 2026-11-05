@@ -1,7 +1,8 @@
 // StructureEditorModelTests.swift
 // StructureEditorModel: loads the table off the main actor, explains up front why a table cannot
 // be edited, stages changes into an exact DDL preview, asks Safe Mode before sending, applies
-// through the gate and reports applied / pending / inside-transaction / partial outcomes.
+// through the gate and reports applied / pending / inside-transaction / partial outcomes. MySQL
+// table options stage once, and a staged CONVERT TO is sent only once confirmed.
 
 import Foundation
 import Testing
@@ -38,6 +39,22 @@ struct StructureEditorModelTests {
     ])
 
   private static let mysql80 = MySQLServerInfo(flavor: .mysql, major: 8, minor: 0, patch: 36)
+
+  private static let characterSets = MySQLCharacterSets(characterSets: [
+    .init(name: "latin1", defaultCollation: "latin1_swedish_ci", collations: ["latin1_swedish_ci"]),
+    .init(
+      name: "utf8mb4", defaultCollation: "utf8mb4_0900_ai_ci",
+      collations: ["utf8mb4_0900_ai_ci", "utf8mb4_bin"]),
+  ])
+
+  /// `items` on MySQL 8.0 with latin1 table options and AUTO_INCREMENT 5
+  private static func mysqlOptionsDatabase() -> FakeStructureDatabase {
+    var structure = items
+    structure.tableOptions = .init(
+      characterSet: "latin1", collation: "latin1_swedish_ci", autoIncrement: 5)
+    return FakeStructureDatabase(
+      structure: structure, state: .init(mysqlServerInfo: mysql80), characterSets: characterSets)
+  }
   private static let open = ProtectionPolicy(protectionLevel: .none)
 
   private static func newColumn(_ name: String, _ type: String) -> StructureChange.NewColumn {
@@ -585,6 +602,106 @@ struct StructureEditorModelTests {
     #expect(model.changes.last == .setTableComment(nil))
   }
 
+  @Test("MySQL table options stage once; a character set picks its default collation")
+  func mysqlTableOptionsStageOnce() async throws {
+    let model = makeModel(Self.mysqlOptionsDatabase(), type: .mysql)
+    await model.load()
+    await model.loadCharacterSets()
+    #expect(model.characterSets == Self.characterSets)
+
+    model.setTableCharset("utf8mb4")
+    #expect(model.workingCollation == "utf8mb4_0900_ai_ci")
+    model.setTableCollation("utf8mb4_bin")
+    // A collation of another set is not taken
+    model.setTableCollation("latin1_swedish_ci")
+    model.setAutoIncrement("1000")
+    model.setAutoIncrement("2000")
+    #expect(
+      model.changes == [
+        .setTableCharset(charset: "utf8mb4", collation: "utf8mb4_bin"), .setAutoIncrement(2000),
+      ])
+    #expect(
+      model.previewStatements == [
+        "ALTER TABLE `public`.`items` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin, "
+          + "AUTO_INCREMENT=2000"
+      ])
+
+    // The loaded values take the changes back
+    model.setTableCharset("latin1")
+    model.setAutoIncrement("5")
+    #expect(model.changes.isEmpty)
+  }
+
+  @Test("Apply with Convert existing data staged waits for its confirmation; confirmed, it sends")
+  func mysqlConvertNeedsConfirmation() async throws {
+    let database = Self.mysqlOptionsDatabase()
+    let model = makeModel(database, type: .mysql)
+    await model.load()
+    await model.loadCharacterSets()
+    model.setTableCharset("utf8mb4")
+    model.setConvertsTableData(true)
+    #expect(
+      model.changes == [.convertTableCharset(charset: "utf8mb4", collation: "utf8mb4_0900_ai_ci")])
+
+    await model.apply()
+    #expect(model.isConfirmingConvert)
+    #expect(await database.sent.isEmpty)
+    model.cancelConvert()
+    #expect(!model.isConfirmingConvert)
+    #expect(await database.sent.isEmpty)
+
+    await database.setApplyError(DatabaseError.queryFailed("Data too long", 0))
+    await model.apply()
+    await model.confirmConvert()
+    #expect(
+      await database.sent == [
+        [
+          "ALTER TABLE `public`.`items` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
+        ]
+      ])
+    // The send failed and the change stays staged: the next Apply asks again
+    await model.apply()
+    #expect(model.isConfirmingConvert)
+    #expect(await database.sent.count == 1)
+  }
+
+  @Test("A MariaDB UCA 14 table collation is kept on a re-pick; Convert needs it listed")
+  func mysqlUCACollationKept() async throws {
+    var structure = Self.items
+    structure.tableOptions = .init(characterSet: "utf8mb4", collation: "utf8mb4_uca1400_ai_ci")
+    func model(listing collations: [String]) async -> (StructureEditorModel, [String]) {
+      let sets = MySQLCharacterSets(characterSets: [
+        .init(name: "utf8mb4", defaultCollation: "utf8mb4_general_ci", collations: collations)
+      ])
+      let model = makeModel(
+        FakeStructureDatabase(
+          structure: structure, state: .init(mysqlServerInfo: Self.mysql80), characterSets: sets),
+        type: .mysql)
+      await model.load()
+      await model.loadCharacterSets()
+      model.setTableCharset("utf8mb4")
+      var messages: [String] = []
+      model.toastPresenter = { message, _ in messages.append(message) }
+      model.setConvertsTableData(true)
+      return (model, messages)
+    }
+
+    let (listed, listedToasts) = await model(
+      listing: ["utf8mb4_general_ci", "utf8mb4_uca1400_ai_ci"])
+    #expect(listedToasts.isEmpty)
+    #expect(
+      listed.changes == [
+        .convertTableCharset(charset: "utf8mb4", collation: "utf8mb4_uca1400_ai_ci")
+      ])
+    #expect(listed.previewError == nil)
+
+    // Not in the lists: re-picking the set still stages nothing, Convert is refused up front
+    let (unlisted, unlistedToasts) = await model(listing: ["utf8mb4_general_ci"])
+    #expect(unlisted.changes.isEmpty)
+    #expect(unlistedToasts.count == 1)
+    #expect(unlistedToasts.first?.contains("utf8mb4_uca1400_ai_ci") == true)
+  }
+
   @Test("Drop Table needs the exact name, sends the drop DDL and reports the dropped table")
   func dropTableNeedsTypedName() async throws {
     let database = FakeStructureDatabase(structure: Self.items)
@@ -688,9 +805,24 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   private(set) var loadedTables: [String] = []
   private(set) var sent: [[String]] = []
 
-  init(structure: TableStructure, state: StructureEditorConnectionState = .init()) {
+  private let characterSets: MySQLCharacterSets?
+
+  init(
+    structure: TableStructure, state: StructureEditorConnectionState = .init(),
+    characterSets: MySQLCharacterSets? = nil
+  ) {
     self.structure = structure
     self.state = state
+    self.characterSets = characterSets
+  }
+
+  func fetchMySQLCharacterSets() async throws -> MySQLCharacterSets {
+    guard let characterSets else { throw DatabaseError.notConnected }
+    return characterSets
+  }
+
+  func fetchMySQLNextAutoIncrement(schema: String, table: String) async throws -> UInt64? {
+    structure.tableOptions?.autoIncrement
   }
 
   func setLoadError(_ error: Error) { loadError = error }

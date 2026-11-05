@@ -122,6 +122,9 @@ actor DatabaseConnectionManager {
   /// PostgreSQL result column types by origin (table identity and attnum), read from the
   /// catalog once (`enrichColumnTypes`). Cleared with `editTableCache`, never per table.
   var columnTypeCache = ColumnTypeCache()
+  /// The MySQL server's character sets and collations, read once per connection (the epoch it
+  /// was read on) for the structure editor (`fetchMySQLCharacterSets`)
+  var mysqlCharacterSetsCache: (epoch: UInt64, sets: MySQLCharacterSets)?
   /// MySQL temporary tables this session created (no catalog lists them); cleared with the
   /// session (`forgetConnection`)
   var mysqlTempTables = MySQLTempTableTracker()

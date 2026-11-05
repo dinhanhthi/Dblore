@@ -1,9 +1,10 @@
 // StructureDDLBuilder+MySQL.swift
 // MySQL / MariaDB: every change in ONE `ALTER TABLE db.table` (atomic DDL on InnoDB 8), clauses in
 // this order: DROP constraint / DROP INDEX, DROP COLUMN, ADD COLUMN, one clause per edited column,
-// ADD constraint, ADD INDEX, then the table COMMENT; each group in the order given. A table rename
-// is a `RENAME TABLE db.old TO db.new` after it: the statements run one by one, so the ALTER must
-// still name the loaded table.
+// ADD constraint, ADD INDEX, then the table COMMENT, character set (DEFAULT CHARSET or CONVERT TO,
+// names only as the server's loaded lists have them) and AUTO_INCREMENT; each group in the order
+// given. A table rename is a `RENAME TABLE db.old TO db.new` after it: the statements run one by
+// one, so the ALTER must still name the loaded table.
 //
 // All edits to one column merge into one clause. MODIFY (or CHANGE when renamed) restates the
 // full loaded definition and changes only the edited parts: COLUMN_TYPE, CHARACTER SET and
@@ -31,7 +32,8 @@ nonisolated extension StructureDDLBuilder {
   }
 
   static func mysqlStatements(
-    _ changes: [StructureChange], structure: TableStructure, server: MySQLServerInfo
+    _ changes: [StructureChange], structure: TableStructure, server: MySQLServerInfo,
+    characterSets: MySQLCharacterSets? = nil
   ) throws -> [String] {
     let dialect = SQLDialect.mysql
     let q = dialect.quoteIdentifier
@@ -45,6 +47,8 @@ nonisolated extension StructureDDLBuilder {
     var addConstraints: [String] = []
     var addIndexes: [String] = []
     var tableComment: String?
+    var tableCharset: String?
+    var autoIncrement: String?
     var tableRename: String?
     func edit(_ column: String, _ apply: (inout ColumnEdit) -> Void) {
       if edits[column] == nil { editOrder.append(column) }
@@ -97,6 +101,22 @@ nonisolated extension StructureDDLBuilder {
       case .setTableComment(let text):
         // An empty comment removes it
         tableComment = "COMMENT = \(dialect.literal(.string(text ?? "")))"
+      case .setTableCharset(let charset, let collation),
+        .convertTableCharset(let charset, let collation):
+        guard tableCharset == nil else {
+          throw StructureDDLError.unsupported(
+            "Change the table character set once: either its default or a conversion.")
+        }
+        try checkListed(charset: charset, collation: collation, in: characterSets)
+        let set = try catalogWord(charset)
+        let collate = try catalogWord(collation)
+        if case .convertTableCharset = change {
+          tableCharset = "CONVERT TO CHARACTER SET \(set) COLLATE \(collate)"
+        } else {
+          tableCharset = "DEFAULT CHARSET=\(set) COLLATE=\(collate)"
+        }
+      case .setAutoIncrement(let value):
+        autoIncrement = "AUTO_INCREMENT=\(value)"
       }
     }
     var columnClauses: [String] = []
@@ -115,7 +135,7 @@ nonisolated extension StructureDDLBuilder {
     }
     let clauses =
       drops + dropColumns + addColumns + columnClauses + addConstraints + addIndexes
-      + [tableComment].compactMap { $0 }
+      + [tableComment, tableCharset, autoIncrement].compactMap { $0 }
     let alter =
       clauses.isEmpty
       ? []
@@ -260,6 +280,19 @@ nonisolated extension StructureDDLBuilder {
     let base = type.prefix { $0.isLetter }.lowercased()
     return ["char", "varchar", "tinytext", "text", "mediumtext", "longtext", "enum", "set"]
       .contains(base)
+  }
+
+  /// Refuses a character set or collation the server did not list (or lists not loaded)
+  private static func checkListed(
+    charset: String, collation: String, in characterSets: MySQLCharacterSets?
+  ) throws {
+    guard let characterSets else {
+      throw StructureDDLError.unsupported("The server's character sets are not loaded yet.")
+    }
+    guard characterSets.contains(charset: charset, collation: collation) else {
+      throw StructureDDLError.unsupported(
+        "The server has no collation \"\(collation)\" for the character set \"\(charset)\".")
+    }
   }
 
   /// A character set or collation name from the catalog: one word, written as is
