@@ -103,6 +103,13 @@ extension DatabaseConnectionManager {
 
   // MARK: - Mask rules
 
+  /// The mask rules results get now: the config's and its saved row's (`applyingMaskRules`).
+  /// For displays outside `runUserSQL`, such as the Data Rewind preview.
+  func currentMaskRules() -> [ColumnMaskRule] {
+    guard let config else { return [] }
+    return ColumnMaskRule.union(config.maskRules, savedMaskRules(config))
+  }
+
   /// `results` with the mask rules of `config` applied: its own and its saved row's
   /// (`SavedMaskRules`, read now, so a rule saved in another window applies at once). A column
   /// a rule matches is `masked` and its cells hold the rule's mask; no rule, no work. The app's

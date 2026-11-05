@@ -302,6 +302,91 @@ struct ConnectionAppearanceSyncTests {
     }
   }
 
+  @Test("An unedited edit of a saved row never writes back a rule another window removed")
+  func uneditedMaskRulesKeepOtherWindowRemoval() throws {
+    try Self.withDefaults { defaults in
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      let card = try ColumnMaskRule(pattern: "card", style: .lastFour)
+      var saved = Self.config()
+      saved.maskRules = [email, card]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      let id = try #require(Self.savedEntry(saved, defaults: defaults)?.id)
+      // The form was seeded with email and card, then another window removed card
+      var row = saved
+      row.maskRules = [email]
+      #expect(
+        SessionManager.replaceConnection(
+          id: id, with: row, defaults: defaults, passwords: NoPasswordStore()))
+      let merged = WorkspaceManager.keepingSavedMaskRules(saved, editing: id, defaults: defaults)
+      #expect(merged.maskRules == [email])
+    }
+  }
+
+  @Test("An edited rule list drops only the rules the user removed from the saved row's")
+  func editedMaskRulesKeepUnseenSavedRules() throws {
+    try Self.withDefaults { defaults in
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      let card = try ColumnMaskRule(pattern: "card", style: .lastFour)
+      let phone = try ColumnMaskRule(pattern: "phone", style: .full)
+      // Another window saved phone after this form was seeded with email and card
+      var saved = Self.config()
+      saved.maskRules = [email, card, phone]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      var form = saved
+      form.maskRules = [try ColumnMaskRule(pattern: "USERS.email", style: .null)]
+      let merged = WorkspaceManager.keepingSavedMaskRules(
+        form, seed: [email, card], defaults: defaults)
+      #expect(merged.maskRules == [form.maskRules[0], phone])
+
+      // The form moved to another saved connection after it was seeded: its rule stays
+      var other = Self.config()
+      other.maskRules = [email]
+      #expect(
+        SessionManager.saveConnection(other, defaults: defaults, passwords: NoPasswordStore()))
+      var moved = other
+      moved.maskRules = []
+      #expect(
+        WorkspaceManager.keepingSavedMaskRules(moved, seed: [card], defaults: defaults)
+          .maskRules == [email])
+    }
+  }
+
+  @Test("A saved removal reaches the other open windows of the row, so they never write it back")
+  func savedMaskRuleRemovalReachesOtherWindows() async throws {
+    try await Self.withDefaultsAsync { defaults in
+      var saved = Self.config()
+      let email = try ColumnMaskRule(pattern: "users.email", style: .email)
+      let card = try ColumnMaskRule(pattern: "card", style: .lastFour)
+      saved.maskRules = [email, card]
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      let editing = Self.workspace(saved, defaults: defaults)
+      // An opened file's extra rule stays in the other window
+      var file = saved
+      let phone = try ColumnMaskRule(pattern: "phone", style: .full)
+      file.maskRules = [phone]
+      let other = Self.workspace(file, defaults: defaults)
+      #expect(other.workspace.connectionConfig?.maskRules == [email, card, phone])
+      let unrelated = Self.workspace(Self.config(), defaults: defaults)
+      editing.openWorkspaces = { [editing, other, unrelated] }
+
+      var edited = saved
+      edited.maskRules = [email]
+      try await editing.connect(
+        config: edited, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+        maskRulesEdited: true, fromForm: true)
+
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [email])
+      #expect(other.workspace.connectionConfig?.maskRules == [email, phone])
+      #expect(other.editingConnectionConfig.maskRules == [email, phone])
+      #expect(unrelated.workspace.connectionConfig?.maskRules == [])
+      other.renameConnection(to: "Renamed", defaults: defaults, passwords: NoPasswordStore())
+      #expect(Self.savedEntry(saved, defaults: defaults)?.config.maskRules == [email, phone])
+    }
+  }
+
   @Test("An auto-connect from an opened file keeps the saved color and group")
   func fileConnectKeepsSavedAppearance() async throws {
     try await Self.withDefaultsAsync { defaults in

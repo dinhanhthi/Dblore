@@ -15,7 +15,8 @@ struct ConnectionFormModal: View {
   var submitTitle: String = "Connect"
   var showsRecentHistory: Bool = true
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
-  var onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)?
+  var onConnect:
+    ((ConnectionConfig, _ aiFieldsEdited: Bool, _ maskRulesEdited: Bool) async throws -> Void)?
   var unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)?
   var unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)?
   var unlockConnectError: Binding<String?>?
@@ -174,7 +175,9 @@ extension View {
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
-    onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)? = nil,
+    onConnect: (
+      (ConnectionConfig, _ aiFieldsEdited: Bool, _ maskRulesEdited: Bool) async throws -> Void
+    )? = nil,
     unrememberedCertificate: (() -> ClientCertificateStoreFactory.ConnectionMaterial?)? = nil,
     unrememberedSSHCredential: (() -> SSHCredentialStoreFactory.ConnectionCredential?)? = nil,
     unlockConnectError: Binding<String?>? = nil,
@@ -220,9 +223,10 @@ extension View {
       onTestConnection: { config in
         try await workspaceManager.testConnection(config: config)
       },
-      onConnect: { config, aiFieldsEdited in
+      onConnect: { config, aiFieldsEdited, maskRulesEdited in
         try await workspaceManager.connect(
-          config: config, aiFieldsEdited: aiFieldsEdited, fromForm: true)
+          config: config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
+          fromForm: true)
       },
       unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate },
       unrememberedSSHCredential: { workspaceManager.activeUnrememberedSSHCredential },
@@ -301,7 +305,7 @@ struct WorkspaceConnectUnlockSheet: View {
         isPresented: $isPresented,
         connectionConfig: $config,
         onTestConnection: { _ in true },
-        onConnect: { _, _ in }
+        onConnect: { _, _, _ in }
       )
     }
 }

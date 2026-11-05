@@ -148,17 +148,90 @@ extension WorkspaceManager {
   /// (`ColumnMaskRule.union`, the saved row's first and its style winning on the same pattern), so
   /// a save never writes fewer rules than the row has, whatever else the save edited, and an
   /// opened file's extra rules stay. Run on every save except one whose mask rules the user
-  /// edited (`maskRulesEdited`): that list is the one written, which is how a rule is removed.
-  /// Unchanged without that row, and with Remember off (nothing is written).
+  /// edited (`maskRulesEdited`): the form runs it with its `seed` first, and that list is the one
+  /// written. With a `seed` (the rules the form started from), only the rules the user removed
+  /// (in `seed`, not in `config`) are dropped from the saved row's; `config`'s come first, its
+  /// style winning, so a rule the form never showed (saved by another window meanwhile, or of a
+  /// saved connection the form moved to) stays. Unchanged without that row, and with Remember
+  /// off (nothing is written).
   static func keepingSavedMaskRules(
-    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+    _ config: ConnectionConfig, seed: [ColumnMaskRule]? = nil, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
     guard config.rememberConnection else { return config }
     let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
     guard let saved = exactSavedEntry(for: config, in: history)?.config else { return config }
     var config = config
-    config.maskRules = ColumnMaskRule.union(saved.maskRules, config.maskRules)
+    if let seed {
+      let removed = ColumnMaskRule.removedPatterns(seed, config.maskRules)
+      config.maskRules = ColumnMaskRule.union(
+        config.maskRules, saved.maskRules.filter { !removed.contains($0.normalizedPattern) })
+    } else {
+      config.maskRules = ColumnMaskRule.union(saved.maskRules, config.maskRules)
+    }
     return config
+  }
+
+  /// `keepingSavedMaskRules` for a save of the saved row `id` whose mask rules the form did not
+  /// edit: `config`'s are still the ones the form was seeded with (that row's when it opened), so
+  /// the ones the row lost since (removed by another window) are dropped first and never written
+  /// back. Unchanged with Remember off (nothing is written).
+  static func keepingSavedMaskRules(
+    _ config: ConnectionConfig, editing id: UUID, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    guard config.rememberConnection else { return config }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    var config = config
+    if let row = history.first(where: { $0.id == id })?.config {
+      let dropped = ColumnMaskRule.removedPatterns(config.maskRules, row.maskRules)
+      config.maskRules.removeAll { dropped.contains($0.normalizedPattern) }
+    }
+    return keepingSavedMaskRules(config, defaults: defaults)
+  }
+
+  /// The mask rules of the saved row a save of `config` overwrites; nil without that row, or
+  /// with Remember off (nothing is written)
+  static func savedRowMaskRules(
+    for config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> [ColumnMaskRule]? {
+    guard config.rememberConnection else { return nil }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    return exactSavedEntry(for: config, in: history)?.config.maskRules
+  }
+
+  /// After a save wrote edited mask rules (`saved`) over a row that had `before`: every other
+  /// open workspace of that saved row drops the rules the edit removed and takes the saved
+  /// ones, keeping its own extra rules (an opened file's), so its next save (rename, hidden
+  /// schemas, protection, an unedited form) never writes a removed rule back, and its
+  /// connection masks with them from the next query.
+  static func pushSavedMaskRules(
+    _ saved: ConnectionConfig, before: [ColumnMaskRule], to workspaces: [WorkspaceManager],
+    except sender: WorkspaceManager? = nil
+  ) {
+    let removed = ColumnMaskRule.removedPatterns(before, saved.maskRules)
+    let row = ConnectionHistoryEntry(config: saved)
+    for other in workspaces where other !== sender {
+      other.adoptSavedMaskRules(saved.maskRules, removed: removed, of: row)
+    }
+  }
+
+  private func adoptSavedMaskRules(
+    _ rules: [ColumnMaskRule], removed: Set<String>, of row: ConnectionHistoryEntry
+  ) {
+    let adopted = { (own: [ColumnMaskRule]) in
+      ColumnMaskRule.union(rules, own.filter { !removed.contains($0.normalizedPattern) })
+    }
+    if row.isSavedRow(of: editingConnectionConfig) {
+      editingConnectionConfig.maskRules = adopted(editingConnectionConfig.maskRules)
+    }
+    guard var current = workspace.connectionConfig, row.isSavedRow(of: current) else { return }
+    let rules = adopted(current.maskRules)
+    guard rules != current.maskRules else { return }
+    current.maskRules = rules
+    workspace.connectionConfig = current
+    markDirtyAndScheduleAutoSave()
+    syncConnectionStateToTabs()
+    let connectionManager = connectionManager
+    Task { await connectionManager.updateConnectedMaskRules(rules, of: current) }
   }
 
   /// `config` with the color, group, hidden schemas, scripts, attached databases and lock of the

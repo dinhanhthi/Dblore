@@ -372,10 +372,15 @@ struct AppWelcomeView: View {
 
   /// Connect creates a workspace. Save updates the recent card that was opened; unless the AI
   /// fields were edited it keeps the saved row's AI policy and rules, so a stale form copy never
-  /// loosens a policy another window saved meanwhile.
+  /// loosens a policy another window saved meanwhile, and unless the mask rules were edited it
+  /// adds the saved row's rules to the form's, minus the ones another window removed since the
+  /// form opened (edited, the form already dropped only the removed ones from them, and the open
+  /// windows of the row drop them too).
   /// A locked connection asks first (in Edit mode the edited row and its target); cancel keeps
   /// the form as it is. A protection weaker than the edited row asks the Safe Mode unlock too.
-  private func submitConnectionForm(_ config: ConnectionConfig, aiFieldsEdited: Bool) async throws {
+  private func submitConnectionForm(
+    _ config: ConnectionConfig, aiFieldsEdited: Bool, maskRulesEdited: Bool
+  ) async throws {
     // A save onto another connection's Keychain key fails before any prompt; checked again below
     if config.rememberConnection, editingConnectionId != nil || config.mongoHomeDatabase == nil,
       SessionManager.keyUsedByAnotherIdentity(
@@ -391,7 +396,10 @@ struct AppWelcomeView: View {
     }
     if let id = editingConnectionId {
       var row = aiFieldsEdited ? config : WorkspaceManager.keepingSavedAIFields(config)
-      row = WorkspaceManager.keepingSavedMaskRules(row)
+      if !maskRulesEdited {
+        row = WorkspaceManager.keepingSavedMaskRules(
+          row, editing: id, defaults: RecentManager.sharedDefaults)
+      }
       // Opened without its unreadable password and none typed: keep it, never save it empty
       if editingPasswordUnread, let edited {
         row = try recentManager.keepingSavedPassword(row, of: edited.config)
@@ -406,6 +414,11 @@ struct AppWelcomeView: View {
       _ = try await WorkspaceManager.unlockWelcomeEditWeakening(
         of: row, editing: id, defaults: RecentManager.sharedDefaults,
         unlock: unlockWeakening(of:))
+      // The rules the save replaces, for the open windows of the row (edited rules only)
+      let replacedMaskRules =
+        maskRulesEdited
+        ? WorkspaceManager.savedRowMaskRules(for: row, defaults: RecentManager.sharedDefaults)
+          ?? edited?.config.maskRules : nil
       guard recentManager.replaceConnection(id: id, with: row) else {
         // Relocked while the sheet was open, or the target's key was taken meanwhile
         if [edited?.config, row].compactMap(\.self).contains(where: {
@@ -420,10 +433,16 @@ struct AppWelcomeView: View {
         }
         throw SessionManagerError.saveFailed
       }
+      if let replacedMaskRules {
+        // The open windows of this row drop the removed rules too
+        WorkspaceManager.pushSavedMaskRules(
+          row, before: replacedMaskRules, to: windowManager.allWorkspaces)
+      }
       editingPasswordUnread = false
       return
     }
-    try await connectAndCreateWorkspaceForWelcome(config, aiFieldsEdited: aiFieldsEdited)
+    try await connectAndCreateWorkspaceForWelcome(
+      config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited)
   }
 
   /// A locked connection asks first and is tested with its saved password; Ask on connect asks
@@ -448,7 +467,7 @@ struct AppWelcomeView: View {
   /// Weaker protection than the saved row asks the Safe Mode unlock on this window first, once;
   /// cancel creates nothing and keeps the row's protection.
   private func connectAndCreateWorkspaceForWelcome(
-    _ config: ConnectionConfig, aiFieldsEdited: Bool
+    _ config: ConnectionConfig, aiFieldsEdited: Bool, maskRulesEdited: Bool
   ) async throws {
     // A save onto another connection's Keychain key fails before any unlock is asked
     if config.rememberConnection, config.mongoHomeDatabase == nil,
@@ -463,7 +482,8 @@ struct AppWelcomeView: View {
     do {
       // Ask on connect asks on this window: the workspace has none yet
       try await manager.connectFromWelcome(
-        config: config, aiFieldsEdited: aiFieldsEdited, weakeningUnlocked: unlocked,
+        config: config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
+        weakeningUnlocked: unlocked,
         passwordPromptAnchor: hostWindow.window)
       isShowingConnectionSidebar = false
       onWorkspaceSelected?(manager.id)

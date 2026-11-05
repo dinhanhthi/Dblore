@@ -74,6 +74,23 @@ struct ExportOptionsTests {
     #expect(!sql.contains("hunter2"))
   }
 
+  @Test("A column masked by a connection rule stays redacted when it is not ticked")
+  func maskedColumnStaysRedacted() {
+    let result = CellResult(
+      columns: [
+        ColumnInfo(name: "pwd", type: "text", masked: true), ColumnInfo(name: "note", type: "text"),
+      ],
+      rows: [[.string(ColumnMaskRule.maskText), .string("visible")]],
+      rowCount: 1,
+      tableName: "accounts")
+    let prepared = DataExporter.applying(ExportOptions(format: .sqlInsert), to: result)
+    #expect(prepared.rows[0][0] == .string("****"))
+    #expect(prepared.rows[0][1] == .string("visible"))
+    let sql = DataExporter.sqlInsert(result: prepared, dialect: .postgresql)
+    #expect(sql.contains("'****'"))
+    #expect(!sql.contains(ColumnMaskRule.maskText))
+  }
+
   @Test("Line breaks inside a cell become spaces only for formats that offer it")
   func lineBreakBecomesSpace() {
     let result = grid(columns: ["note"], rows: [[.string("a\nb")]])

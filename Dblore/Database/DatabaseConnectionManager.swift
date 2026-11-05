@@ -1046,6 +1046,17 @@ actor DatabaseConnectionManager {
     writeUnlockExpiry = nil
   }
 
+  /// The workspace's mask rules changed (another window saved a removal): the connected config
+  /// takes them, so the next query masks with them. No-op when not connected, or connected to
+  /// another connection than `workspaceConfig` meanwhile.
+  func updateConnectedMaskRules(_ rules: [ColumnMaskRule], of workspaceConfig: ConnectionConfig) {
+    guard let config, config.databaseType == workspaceConfig.databaseType,
+      ConnectionKeychainKey.password(for: config)
+        == ConnectionKeychainKey.password(for: workspaceConfig)
+    else { return }
+    self.config?.maskRules = rules
+  }
+
   /// Apply a runtime change of the connection's protection settings (protection level,
   /// commit style, Safe Mode, protected mode) to the connected config. No-op when not
   /// connected. `connectedPolicy` still reads only `protectedMode` from that config.

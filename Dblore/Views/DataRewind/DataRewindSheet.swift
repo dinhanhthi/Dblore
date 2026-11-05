@@ -203,6 +203,11 @@ struct DataRewindSheet: View {
             .font(.small)
             .foregroundColor(.foregroundMuted)
         } else {
+          if plan.masksValues {
+            Text("Masked values are shown as mask text; Rewind restores the real values.")
+              .font(.small)
+              .foregroundColor(.foregroundMuted)
+          }
           SQLCodeWell(sql: plan.preview, dialect: model.dialect)
             .frame(height: 220)
         }

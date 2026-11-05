@@ -252,6 +252,10 @@ class WorkspaceManager: Identifiable {
   /// The open Lock Workspace / Remove Lock sheet
   var lockSheet: LockWorkspaceModel?
 
+  /// The open workspaces, which a save of edited mask rules updates (injectable for tests)
+  @ObservationIgnored var openWorkspaces: () -> [WorkspaceManager] = {
+    WorkspaceWindowManager.shared.allWorkspaces
+  }
   /// Creates the manager of the window a tab moves to (injectable for tests)
   @ObservationIgnored var makeWindowManager: (ConnectionConfig?) -> WorkspaceManager = {
     WorkspaceWindowManager.shared.newWorkspace(connection: $0)
@@ -936,6 +940,8 @@ class WorkspaceManager: Identifiable {
       if savesConnection, config.mongoHomeDatabase == nil {
         if !aiFieldsEdited { config = Self.keepingSavedAIFields(config, defaults: defaults) }
         if !maskRulesEdited { config = Self.keepingSavedMaskRules(config, defaults: defaults) }
+        let savedMaskRules =
+          maskRulesEdited ? Self.savedRowMaskRules(for: config, defaults: defaults) : nil
         config =
           fromForm
           ? Self.keepingSavedHiddenSchemas(
@@ -943,6 +949,10 @@ class WorkspaceManager: Identifiable {
           : Self.keepingSavedAppearance(config, defaults: defaults)
         guard SessionManager.saveConnection(config, defaults: defaults, passwords: passwords) else {
           throw CertificateFormError.keychainSave
+        }
+        if let savedMaskRules {
+          Self.pushSavedMaskRules(
+            config, before: savedMaskRules, to: openWorkspaces(), except: self)
         }
       }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching

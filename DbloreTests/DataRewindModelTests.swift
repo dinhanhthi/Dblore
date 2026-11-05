@@ -67,6 +67,94 @@ struct DataRewindModelTests {
     #expect(history.first?.sql == plan.preview)
   }
 
+  @Test("A masked column shows mask text in the preview and History; the rewind restores it")
+  func maskedColumnPreviewKeepsRealRestore() async throws {
+    let fixture = try await Fixture(maskRules: [ColumnMaskRule(pattern: "label", style: .full)])
+    defer { fixture.remove() }
+    let id = try await fixture.edit(id: 1, label: "z")
+    let model = fixture.model(style: .immediate)
+    await model.load()
+
+    await model.setSelection([id])
+    let plan = try #require(model.plan)
+    #expect(plan.preview.contains(ColumnMaskRule.maskText))
+    #expect(!plan.preview.contains("'a'"))
+    #expect(!plan.preview.contains("z'"))
+    let values = plan.statements.flatMap(\.values).compactMap(\.self)
+    #expect(values.contains("a"))
+    #expect(values.contains { $0.contains("z") })
+    await model.rewind()
+
+    #expect(model.errorMessage == nil)
+    #expect(try await fixture.label(1) == .string("a"))
+    // History keeps the masked preview commented out, so Insert or Copy never runs mask text
+    let logged = try #require(await fixture.history.entries.first?.sql)
+    #expect(logged.contains(ColumnMaskRule.maskText))
+    #expect(
+      logged.split(whereSeparator: \.isNewline).allSatisfy { $0.hasPrefix("-- ") })
+    // An unmasked literal with a line break stays inside the comment
+    var broken = plan
+    broken.previews = ["UPDATE items SET note = 'x\nDELETE FROM items;' WHERE id = 1;"]
+    #expect(
+      DataRewindModel.historySQL(broken).split(whereSeparator: \.isNewline)
+        .allSatisfy { $0.hasPrefix("-- ") })
+  }
+
+  @Test("A failed rewind of a masked column hides the server's text, keeping its code")
+  func maskedFailureHidesServerText() throws {
+    var plan = RewindInverse()
+    plan.previews = [
+      "INSERT INTO users (id, email) VALUES ('7', '\u{2022}\u{2022}\u{2022}\u{2022}');"
+    ]
+    plan.origins = [
+      RewindInverse.Origin(
+        entryID: 1, created: Date(), table: "users", operation: .delete, key: "id = 7")
+    ]
+    plan.masksValues = true
+    let reasons = [
+      (
+        "ERROR 23505: duplicate key value violates unique constraint \"users_email_key\" "
+          + "DETAIL: Key (email)=(a@b.com) already exists.", "23505"
+      ),
+      ("ERROR 1062 (23000): Duplicate entry 'a@b.com' for key 'users.email'", "1062"),
+      ("UNIQUE constraint failed: a@b.com", nil),
+    ]
+    for (reason, code) in reasons {
+      let message = DataRewindModel.failureMessage(
+        DatabaseError.batchStatementFailed(
+          index: 0, sqlPrefix: "INSERT INTO users", reason: reason, rolledBack: true),
+        plan: plan)
+      #expect(!message.contains("a@b.com"))
+      #expect(message.contains("users row id = 7"))
+      if let code { #expect(message.contains(code)) }
+    }
+    let other = DataRewindModel.failureMessage(
+      NSError(
+        domain: "test", code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Key (email)=(a@b.com) already exists"]),
+      plan: plan)
+    #expect(!other.contains("a@b.com"))
+    let lost = DataRewindModel.failureMessage(
+      DatabaseError.connectionLost("Key (email)=(a@b.com) already exists"), plan: plan)
+    #expect(!lost.contains("a@b.com"))
+    // Dblore's own refusals keep their text
+    let blocked = DataRewindModel.failureMessage(
+      DatabaseError.blockedByProtection(
+        statementIndex: 0, kind: .dml, reason: "Writes are not allowed on this connection"),
+      plan: plan)
+    #expect(blocked.contains("Writes are not allowed on this connection"))
+    let cancelled = DataRewindModel.failureMessage(CancellationError(), plan: plan)
+    #expect(cancelled == "Nothing was rewound: \(CancellationError().localizedDescription)")
+    // A changed row says so: its reason holds counts, never values
+    let changed = DataRewindModel.failureMessage(
+      DatabaseError.batchStatementFailed(
+        index: 0, sqlPrefix: "INSERT INTO users",
+        reason: DatabaseConnectionManager.unexpectedRowCountReason + "1 row, affected 0",
+        rolledBack: true),
+      plan: plan)
+    #expect(changed.contains("changed since the edit"))
+  }
+
   @Test("Under Protected mode the rewind waits: rewound on Commit, still committed after Roll Back")
   func protectedRewindFollowsTheTransaction() async throws {
     let fixture = try await Fixture(protectedMode: true)
@@ -215,13 +303,16 @@ private final class Fixture {
   let history = RewindHistoryRecorder()
 
   /// `protectedMode` is the tab's: the edits themselves always commit at once
-  init(protectedMode: Bool = false) async throws {
+  /// `maskRules`: the connection's column mask rules (the saved rows have none)
+  init(protectedMode: Bool = false, maskRules: [ColumnMaskRule] = []) async throws {
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("dblore-rewind-model-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let connected = ConnectionConfig(
+    var connected = ConnectionConfig(
       databaseType: .sqlite, database: directory.appendingPathComponent("db.sqlite").path,
       username: "", protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    connected.maskRules = maskRules
+    await manager.setSavedMaskRules { _ in [] }
     try await manager.connect(config: connected)
     for statement in [
       "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT, score REAL)",

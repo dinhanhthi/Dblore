@@ -19,9 +19,11 @@ struct ConnectionFormContent: View {
   /// Callback to test connection - returns true if successful
   var onTestConnection: ((ConnectionConfig) async throws -> Bool)?
 
-  /// Callback to connect - called when user clicks Connect button. The flag is true only when
-  /// the user changed the AI policy or rules in this form (see `aiFieldsEdited`).
-  var onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)?
+  /// Callback to connect - called when user clicks Connect button. The flags are true only when
+  /// the user changed the AI policy or rules (`aiFieldsEdited`), or the mask rules
+  /// (`maskRulesEdited`), in this form.
+  var onConnect:
+    ((ConnectionConfig, _ aiFieldsEdited: Bool, _ maskRulesEdited: Bool) async throws -> Void)?
 
   /// Callback when connection is successful (optional, for closing sidebar etc.)
   var onConnectionSuccess: (() -> Void)?
@@ -114,6 +116,12 @@ struct ConnectionFormContent: View {
 
   /// AI policy and rules the form was seeded with (`seedAIFields`).
   @State var aiSeed = ConnectionAIDraft()
+  /// Mask rules the form was seeded with (`seedMaskRules`)
+  @State var maskSeed: [ColumnMaskRule] = []
+  /// The Masking section's add row: the typed pattern, its style and why it was refused
+  @State var newMaskPattern = ""
+  @State var newMaskStyle: ColumnMaskRule.Style = .full
+  @State var maskPatternError: String?
   /// Files of the Application Scripts folder the Scripts section offers
   @State var availableScripts: [String] = []
 
@@ -167,7 +175,9 @@ struct ConnectionFormContent: View {
   init(
     connectionConfig: Binding<ConnectionConfig>,
     onTestConnection: ((ConnectionConfig) async throws -> Bool)? = nil,
-    onConnect: ((ConnectionConfig, _ aiFieldsEdited: Bool) async throws -> Void)? = nil,
+    onConnect: (
+      (ConnectionConfig, _ aiFieldsEdited: Bool, _ maskRulesEdited: Bool) async throws -> Void
+    )? = nil,
     onConnectionSuccess: (() -> Void)? = nil,
     submitTitle: String = "Connect",
     showsRecentHistory: Bool = true,
@@ -276,6 +286,13 @@ struct ConnectionFormContent: View {
             sectionTitle("AI")
             aiSection()
           }
+
+          if connectionConfig.databaseType.capabilities.queryLanguage == .sql {
+            sectionCard {
+              sectionTitle("Masking")
+              maskingSection()
+            }
+          }
         }
         .padding(Spacing.md)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -295,6 +312,7 @@ struct ConnectionFormContent: View {
         refreshSQLiteFileBookmark()
         // After the Recent row load above, which replaces the form's values
         seedAIFields()
+        seedMaskRules()
       }
       .onReceive(
         NotificationCenter.default.publisher(for: .localDataChanged).receive(on: RunLoop.main),
@@ -352,6 +370,7 @@ struct ConnectionFormContent: View {
           restoreSSHDraft()
           restoreVaultDraft()
           seedAIFields()
+          seedMaskRules()
         }
         // SQLite Browse clears the row itself. Resolving a bookmark can change the
         // path string without the user picking a different connection.
@@ -681,6 +700,7 @@ struct ConnectionFormContent: View {
     if inputMode == .connectionString { showDraftConnectionString() }
     restoreVaultDraft()
     seedAIFields()
+    seedMaskRules()
   }
 
   /// The Connection String tab's text for the form's draft
@@ -1113,9 +1133,9 @@ struct ConnectionFormContent: View {
       return
     }
 
-    let config: ConnectionConfig
+    let prepared: ConnectionConfig
     do {
-      config = Self.withVaultRules(
+      prepared = Self.withVaultRules(
         withSSHConfig(try MongoConnectionDraft.prepared(preparedCertificateConfig())))
     } catch {
       testResult = .failure(error.localizedDescription)
@@ -1124,6 +1144,11 @@ struct ConnectionFormContent: View {
 
     isConnecting = true
     let aiFieldsEdited = aiFieldsEdited
+    let maskRulesEdited = maskRulesEdited
+    // Edited rules drop only what the user removed: a saved rule the form never showed stays
+    let config =
+      maskRulesEdited
+      ? WorkspaceManager.keepingSavedMaskRules(prepared, seed: maskSeed) : prepared
     let scopedMaterial = certificateMaterialForOperation(config).map {
       ClientCertificateStoreFactory.ScopedMaterial(
         account: ClientCertificateStoreFactory.account(for: config), material: $0)
@@ -1145,7 +1170,7 @@ struct ConnectionFormContent: View {
         try await ClientCertificateStoreFactory.$operationMaterial.withValue(scopedMaterial) {
           try await SSHCredentialStoreFactory.$operationCredential.withValue(scopedSSH) {
             try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
-              try await onConnectCallback(config, aiFieldsEdited)
+              try await onConnectCallback(config, aiFieldsEdited, maskRulesEdited)
             }
           }
         }
@@ -1162,6 +1187,8 @@ struct ConnectionFormContent: View {
         connectionConfig.passwordCommandScript = config.passwordCommandScript
         restoreVaultDraft()
         aiSeed = ConnectionAIDraft(config: config)
+        // The rules as saved (the saved row's are added unless the user edited the list)
+        seedMaskRules()
         isConnecting = false
         onConnectionSuccess?()
       } catch WorkspaceConnectError.unlockRequired {

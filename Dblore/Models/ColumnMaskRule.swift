@@ -113,6 +113,13 @@ nonisolated struct ColumnMaskRule: Codable, Hashable, Sendable {
     }
     return Array(merged.prefix(maxRules))
   }
+
+  /// The normalized patterns of `before` that `after` lacks: the rules an edit removed
+  static func removedPatterns(
+    _ before: [ColumnMaskRule], _ after: [ColumnMaskRule]
+  ) -> Set<String> {
+    Set(before.map(\.normalizedPattern)).subtracting(after.map(\.normalizedPattern))
+  }
 }
 
 nonisolated extension ColumnMaskRule {

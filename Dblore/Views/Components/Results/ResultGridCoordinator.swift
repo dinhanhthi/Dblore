@@ -287,7 +287,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       isHighlighted: isHighlighted,
       isCurrentMatch: isHighlighted && currentMatch?.matchType == .columnName(column.name),
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
-      isFiltered: isFiltered)
+      isFiltered: isFiltered, isMasked: column.masked)
   }
 
   /// Records `size` and the matching row height. True when the face changed, so the caller
@@ -1658,6 +1658,7 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       // The pin stays: `markFrozenThrough` widens a column only when the pin moves to it
       content.isFrozenThrough = cell.content.isFrozenThrough
       cell.content = content
+      tableColumn.headerToolTip = content.isMasked ? "Masked by a connection rule" : nil
     }
     guard let headerView = tableView.headerView else { return }
     let height = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
