@@ -6,7 +6,8 @@
 //  functions, procedures and triggers (a trigger with its table) and of the columns, in one
 //  bucket per schema. Built off the main actor after each schema load and published with the
 //  catalog arrays; hidden schemas and the temporary split are applied per query. Sequences and
-//  types (read on expand) are filtered from their own arrays.
+//  types (read on expand) are filtered from their own arrays. A PostgreSQL partition is listed
+//  under its parent table (`DatabaseTable.parentID`), not at the top.
 //
 
 import Foundation
@@ -18,6 +19,9 @@ nonisolated struct SidebarEntityIndex: Sendable {
     let position: Int
     let columns: [Int]?
     let expandForMatch: Bool
+    /// The partitions a filter hit on (or below) shows under this table, drawn opened; nil when
+    /// none (opened by hand, the row lists every partition, `Result.partitions`)
+    var partitions: [RelationMatch]? = nil
   }
 
   /// What the filter keeps, in array order. Functions, procedures and triggers are positions
@@ -42,6 +46,9 @@ nonisolated struct SidebarEntityIndex: Sendable {
     var bySchema: [String: Matches] = [:]
     /// The session's temporary objects (`SidebarSectionModel.temporarySplit`), never hidden
     var temporary = Matches()
+    /// Partitions of each partitioned table, positions in array order (the tables lists hold
+    /// only the tables not listed under a parent)
+    var partitions: [Int: [Int]] = [:]
 
     func inSchema(_ schema: String) -> Matches {
       bySchema[schema] ?? Matches()
@@ -61,19 +68,36 @@ nonisolated struct SidebarEntityIndex: Sendable {
       func shown<Item>(_ all: [Item], _ position: Int, _ schema: (Item) -> String) -> Bool {
         !all.indices.contains(position) || !gone.contains(schema(all[position]))
       }
+      func keepsPartition(_ position: Int) -> Bool {
+        shown(tables, position, \.schema) || tables[position].isTemporary
+      }
+      // A partition a filter showed under a listed parent leaves with its schema too
+      func pruned(_ match: RelationMatch) -> RelationMatch {
+        guard let children = match.partitions else { return match }
+        var match = match
+        let kept = children.filter { keepsPartition($0.position) }.map(pruned)
+        match.partitions = kept.isEmpty ? nil : kept
+        return match
+      }
       func kept(_ matches: Matches, keepsTable: (Int) -> Bool) -> Matches {
         Matches(
-          tables: matches.tables.filter { keepsTable($0.position) },
+          tables: matches.tables.filter { keepsTable($0.position) }.map(pruned),
           views: matches.views.filter { shown(views, $0.position, \.schema) },
           functions: matches.functions.filter { shown(functions, $0, \.schema) },
           procedures: matches.procedures.filter { shown(procedures, $0, \.schema) },
           triggers: matches.triggers.filter { shown(triggers, $0, \.schema) })
       }
       var result = self
-      result.bySchema = bySchema.filter { !gone.contains($0.key) }
+      result.bySchema = bySchema.filter { !gone.contains($0.key) }.mapValues {
+        kept($0) { _ in true }
+      }
       result.listed = kept(listed) { shown(tables, $0, \.schema) }
       result.temporary = kept(temporary) { position in
         shown(tables, position, \.schema) || tables[position].isTemporary
+      }
+      result.partitions = partitions.compactMapValues { children in
+        let kept = children.filter(keepsPartition)
+        return kept.isEmpty ? nil : kept
       }
       return result
     }
@@ -102,6 +126,11 @@ nonisolated struct SidebarEntityIndex: Sendable {
   private let schemaNames: [String]
   private let schemaOffsets: [[Int]]
   private let isTemporaryTable: [Bool]
+  /// Position of each table's parent (-1: none); empty when no table is a partition, so the
+  /// other engines pay nothing per query
+  private let parentOf: [Int32]
+  /// Partitions of each partitioned table, in array order
+  private let partitionsOf: [Int: [Int]]
   /// Distinct lowercased column names: a column name is scored once per keystroke
   private let columnNames: [String]
   /// Counts of the tables, views, functions, procedures and triggers it was built from
@@ -169,6 +198,25 @@ nonisolated struct SidebarEntityIndex: Sendable {
       schemaOffsets(triggers.map(\.schema)),
     ]
     self.isTemporaryTable = tables.map(\.isTemporary)
+    // Parent → partitions, once per catalog load (a parent that is not listed leaves the
+    // partition at the top)
+    var parentOf: [Int32] = []
+    var partitionsOf: [Int: [Int]] = [:]
+    if tables.contains(where: { $0.parentID != nil }) {
+      var positionOf: [UUID: Int] = [:]
+      positionOf.reserveCapacity(tables.count)
+      for (position, table) in tables.enumerated() { positionOf[table.id] = position }
+      parentOf = [Int32](repeating: -1, count: tables.count)
+      for (position, table) in tables.enumerated() {
+        guard let id = table.parentID, let parent = positionOf[id], parent != position else {
+          continue
+        }
+        parentOf[position] = Int32(parent)
+        partitionsOf[parent, default: []].append(position)
+      }
+    }
+    self.parentOf = parentOf
+    self.partitionsOf = partitionsOf
     self.counts = [tables.count, views.count, functions.count, procedures.count, triggers.count]
   }
 
@@ -193,7 +241,11 @@ nonisolated struct SidebarEntityIndex: Sendable {
       for (offset, entry) in bucket.tables.enumerated() {
         if offset % 512 == 511, Task.isCancelled { return Result() }
         let isTemporary = entry.isTemporary || isTemporarySchema
-        guard isTemporary || !isHidden, let match = match(entry, keywords, &hits) else {
+        guard isTemporary || !isHidden,
+          let match = match(
+            entry, keywords, &hits,
+            literal: nests(entry.position, hidden: hidden, temporarySchemas: temporarySchemas))
+        else {
           continue
         }
         if isTemporary {
@@ -225,7 +277,80 @@ nonisolated struct SidebarEntityIndex: Sendable {
     // Buckets come in no order: back to the arrays' order
     result.listed = Self.inArrayOrder(result.listed)
     result.temporary = Self.inArrayOrder(result.temporary)
-    return result
+    return underParents(result, hidden: hidden, temporarySchemas: temporarySchemas)
+  }
+
+  /// Whether the table at `position` is listed under its parent: it has one, and the parent is
+  /// listed (temporary, or of a schema not hidden)
+  private func nests(_ position: Int, hidden: Set<String>, temporarySchemas: Set<String>) -> Bool {
+    guard !parentOf.isEmpty, parentOf[position] >= 0 else { return false }
+    let parent = Int(parentOf[position])
+    let schema = schemaNames[schemaOffsets[0][parent]]
+    return isTemporaryTable[parent] || temporarySchemas.contains(schema) || !hidden.contains(schema)
+  }
+
+  /// `partitionsOf` without the partitions `hidden` leaves out (temporary ones stay), so an
+  /// opened parent neither lists nor counts them
+  private func partitionMap(hidden: Set<String>, temporarySchemas: Set<String>) -> [Int: [Int]] {
+    let gone = hidden.subtracting(temporarySchemas)
+    guard !partitionsOf.isEmpty, !gone.isEmpty else { return partitionsOf }
+    return partitionsOf.compactMapValues { children in
+      let shown = children.filter { child in
+        isTemporaryTable[child] || !gone.contains(schemaNames[schemaOffsets[0][child]])
+      }
+      return shown.isEmpty ? nil : shown
+    }
+  }
+
+  /// `result` with each kept partition moved under its parent, and the parents of a kept
+  /// partition added (opened down to it) where the filter did not keep them
+  private func underParents(
+    _ result: Result, hidden: Set<String>, temporarySchemas: Set<String>
+  ) -> Result {
+    guard !parentOf.isEmpty else { return result }
+    var kept: [Int: RelationMatch] = [:]
+    for match in result.listed.tables + result.temporary.tables { kept[match.position] = match }
+    var shown: [Int: Set<Int>] = [:]
+    var tops: Set<Int> = []
+    for position in kept.keys {
+      var child = position
+      var joinedKnownBranch = false
+      while nests(child, hidden: hidden, temporarySchemas: temporarySchemas) {
+        let parent = Int(parentOf[child])
+        // The branch above was walked from another kept partition
+        guard shown[parent, default: []].insert(child).inserted else {
+          joinedKnownBranch = true
+          break
+        }
+        child = parent
+      }
+      if !joinedKnownBranch { tops.insert(child) }
+    }
+    // Each row once, so a parent cycle in a bad catalog cannot recurse forever
+    var visited: Set<Int> = []
+    func row(_ position: Int) -> RelationMatch {
+      visited.insert(position)
+      let match = kept[position]
+      return RelationMatch(
+        position: position, columns: match?.columns, expandForMatch: match?.expandForMatch ?? false,
+        partitions: shown[position].map { $0.sorted().filter { !visited.contains($0) }.map(row) })
+    }
+    var grouped = result
+    grouped.listed.tables = []
+    grouped.temporary.tables = []
+    for schema in grouped.bySchema.keys { grouped.bySchema[schema]?.tables = [] }
+    for top in tops.sorted() {
+      let schema = schemaNames[schemaOffsets[0][top]]
+      if isTemporaryTable[top] || temporarySchemas.contains(schema) {
+        grouped.temporary.tables.append(row(top))
+      } else if !hidden.contains(schema) {
+        let match = row(top)
+        grouped.listed.tables.append(match)
+        grouped.bySchema[schema, default: Matches()].tables.append(match)
+      }
+    }
+    grouped.partitions = partitionMap(hidden: hidden, temporarySchemas: temporarySchemas)
+    return grouped
   }
 
   /// `filter` with no keyword, in one pass over the arrays' order: cheap enough for the main
@@ -240,6 +365,10 @@ nonisolated struct SidebarEntityIndex: Sendable {
     // Each object of a kind to the temporary ones, or to the listed ones and its schema's
     func place(_ kind: Int, _ add: (inout Matches, Int) -> Void) {
       for (position, schema) in schemaOffsets[kind].enumerated() {
+        // A partition is listed under its parent
+        if kind == 0, nests(position, hidden: hidden, temporarySchemas: temporarySchemas) {
+          continue
+        }
         if isTemporarySchema[schema] || (kind == 0 && isTemporaryTable[position]) {
           add(&result.temporary, position)
         } else if isListed[schema] {
@@ -259,6 +388,7 @@ nonisolated struct SidebarEntityIndex: Sendable {
     for (offset, schema) in schemaNames.enumerated() where isListed[offset] {
       result.bySchema[schema] = bySchema[offset]
     }
+    result.partitions = partitionMap(hidden: hidden, temporarySchemas: temporarySchemas)
     return result
   }
 
@@ -285,16 +415,21 @@ nonisolated struct SidebarEntityIndex: Sendable {
   }
 
   /// `SidebarEntityFilter.matchColumns` on the entry: a name hit keeps every column, a hit
-  /// covered by columns opens the row on the columns some keyword hits
+  /// covered by columns opens the row on the columns some keyword hits. A `literal` entry (a
+  /// partition listed under its parent) needs a literal hit on its name: siblings' names differ
+  /// by a character or two, so a typo or an abbreviation would hit them all, and the columns it
+  /// shares with its parent show on the parent.
   private func match(
-    _ entry: Entry, _ keywords: [String], _ hits: inout ColumnHits
+    _ entry: Entry, _ keywords: [String], _ hits: inout ColumnHits, literal: Bool = false
   ) -> RelationMatch? {
+    let least = literal ? SidebarEntityFilter.literalScore : Int.min
     let nameHits = keywords.map {
-      SidebarEntityFilter.score(lowercased: $0, in: entry.text) != nil
+      SidebarEntityFilter.score(lowercased: $0, in: entry.text).map { $0 >= least } ?? false
     }
     if !nameHits.contains(false) {
       return RelationMatch(position: entry.position, columns: nil, expandForMatch: false)
     }
+    if literal { return nil }
     for (keyword, nameHit) in nameHits.enumerated() where !nameHit {
       guard entry.columns.contains(where: { hits.hit(keyword, $0) }) else { return nil }
     }

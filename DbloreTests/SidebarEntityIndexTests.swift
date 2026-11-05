@@ -202,4 +202,120 @@ struct SidebarEntityIndexTests {
       #expect(Set(drawn.bySchema.keys) == Set(hidden.bySchema.keys), "\(keywords)")
     }
   }
+
+  // MARK: - Partitions
+
+  /// `events` partitioned three ways, `events_nov` partitioned again; `orphan_part`'s parent is
+  /// not listed
+  private static let partitioned = [
+    DatabaseTable(schema: "public", name: "events"),
+    DatabaseTable(schema: "public", name: "events_sep", parent: ("public", "events")),
+    DatabaseTable(schema: "public", name: "events_oct", parent: ("public", "events")),
+    DatabaseTable(schema: "public", name: "events_nov", parent: ("public", "events")),
+    DatabaseTable(schema: "public", name: "events_nov_eu", parent: ("public", "events_nov")),
+    DatabaseTable(schema: "public", name: "users"),
+    DatabaseTable(schema: "public", name: "orphan_part", parent: ("hidden", "gone")),
+  ]
+
+  private static func partitionedFilter(_ query: String) -> SidebarEntityIndex.Result {
+    SidebarEntityIndex(
+      tables: partitioned, views: [], functions: [], procedures: [], triggers: []
+    ).filter(keywords: SidebarEntityFilter.keywords(in: query), hidden: [], temporarySchemas: [])
+  }
+
+  @Test("Partitions list under their parent, nested ones under theirs")
+  func partitionsGroupUnderParent() {
+    let all = Self.partitionedFilter("")
+    #expect(all.listed.tables.map(\.position) == [0, 5, 6])
+    #expect(all.inSchema("public").tables.map(\.position) == [0, 5, 6])
+    #expect(all.partitions[0] == [1, 2, 3])
+    #expect(all.partitions[3] == [4])
+    #expect(all.partitions[5] == nil)
+  }
+
+  @Test("A filter hit on a partition shows its parents opened down to it")
+  func filterOnPartitionRevealsParent() {
+    typealias Match = SidebarEntityIndex.RelationMatch
+    func row(_ position: Int, _ partitions: [Match]? = nil) -> Match {
+      Match(position: position, columns: nil, expandForMatch: false, partitions: partitions)
+    }
+    let october = Self.partitionedFilter("oct")
+    #expect(october.listed.tables == [row(0, [row(2)])])
+    #expect(october.inSchema("public").tables == [row(0, [row(2)])])
+    #expect(Self.partitionedFilter("eu").listed.tables == [row(0, [row(3, [row(4)])])])
+    // A table without a parent is listed as before
+    #expect(Self.partitionedFilter("users").listed.tables == [row(5)])
+  }
+}
+
+extension SidebarEntityIndexTests {
+  /// Monthly partitions whose names differ by a character or two, so one typo of a keyword hits
+  /// every sibling; `events_2026_11` is partitioned again, `events_archive` lives in "archive"
+  private static let monthly = [
+    DatabaseTable(schema: "public", name: "events", columns: columns("id", "user_id")),
+    DatabaseTable(
+      schema: "public", name: "events_2026_09", columns: columns("id", "user_id"),
+      parent: ("public", "events")),
+    DatabaseTable(
+      schema: "public", name: "events_2026_10", columns: columns("id", "user_id"),
+      parent: ("public", "events")),
+    DatabaseTable(
+      schema: "public", name: "events_2026_11", columns: columns("id", "user_id"),
+      parent: ("public", "events")),
+    DatabaseTable(
+      schema: "public", name: "events_2026_11_eu", columns: columns("id", "user_id"),
+      parent: ("public", "events_2026_11")),
+    DatabaseTable(
+      schema: "public", name: "events_2026_11_us", columns: columns("id", "user_id"),
+      parent: ("public", "events_2026_11")),
+    DatabaseTable(
+      schema: "archive", name: "events_archive", columns: columns("id", "user_id"),
+      parent: ("public", "events")),
+  ]
+
+  private static func monthlyFilter(
+    _ query: String, hidden: Set<String> = []
+  ) -> SidebarEntityIndex.Result {
+    SidebarEntityIndex(
+      tables: monthly, views: [], functions: [], procedures: [], triggers: []
+    ).filter(
+      keywords: SidebarEntityFilter.keywords(in: query), hidden: hidden, temporarySchemas: [])
+  }
+
+  @Test("A filter reveals only the path down to the partitions it hits, not their siblings")
+  func filterRevealsOnlyHitPartitions() {
+    typealias Match = SidebarEntityIndex.RelationMatch
+    func row(_ position: Int, _ partitions: [Match]? = nil) -> Match {
+      Match(position: position, columns: nil, expandForMatch: false, partitions: partitions)
+    }
+    #expect(Self.monthlyFilter("2026_10").listed.tables == [row(0, [row(2)])])
+    #expect(Self.monthlyFilter("11_eu").listed.tables == [row(0, [row(3, [row(4)])])])
+    // A column hit shows on the parent; its partitions share the column and stay closed
+    let column = Self.monthlyFilter("user_id").listed.tables
+    #expect(column.map(\.position) == [0])
+    #expect(column.first?.partitions == nil)
+  }
+
+  @Test("A partition in a hidden schema is neither listed, counted nor revealed")
+  func hiddenSchemaPartitionLeaves() {
+    #expect(Self.monthlyFilter("").partitions[0] == [1, 2, 3, 6])
+    let hidden: Set<String> = ["archive"]
+    #expect(Self.monthlyFilter("", hidden: hidden).partitions[0] == [1, 2, 3])
+    #expect(Self.monthlyFilter("events_2026_10", hidden: hidden).partitions[0] == [1, 2, 3])
+    #expect(Self.monthlyFilter("archive", hidden: hidden).listed.tables.isEmpty)
+    // A result drawn before the schema was hidden drops it too
+    let drawn = Self.monthlyFilter("").hiding(
+      hidden, temporarySchemas: [], tables: Self.monthly, views: [], functions: [],
+      procedures: [], triggers: [])
+    #expect(drawn.partitions[0] == [1, 2, 3])
+    // So does a hidden partition a keyword result showed under its listed parent
+    let revealed = Self.monthlyFilter("archive")
+    #expect(revealed.listed.tables.first?.partitions?.map(\.position) == [6])
+    let hid = revealed.hiding(
+      hidden, temporarySchemas: [], tables: Self.monthly, views: [], functions: [],
+      procedures: [], triggers: [])
+    #expect(hid.listed.tables.map(\.position) == [0])
+    #expect(hid.listed.tables.first?.partitions == nil)
+    #expect(hid.inSchema("public").tables.first?.partitions == nil)
+  }
 }

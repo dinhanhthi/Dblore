@@ -72,4 +72,21 @@ struct SchemaCatalogTests {
       names.map { Array($0.unicodeScalars) }
         == ["a\"b", "c\\d", "\u{301}x y", "plain"].map { Array($0.unicodeScalars) })
   }
+
+  @Test("a partition row of the table listing points at its parent's table id")
+  func partitionParent() async throws {
+    let session = FakeDatabaseSession(
+      capabilities: .contract(), columns: [],
+      rows: [
+        [.string("public"), .string("events"), .null, .bool(false), .null, .null],
+        [
+          .string("archive"), .string("events_2026_10"), .int(5), .bool(false),
+          .string("public"), .string("events"),
+        ],
+      ], slowQueries: false)
+    let tables = try await PostgresSchemaIntrospector().tables(in: session)
+    #expect(tables.map(\.name) == ["events", "events_2026_10"])
+    #expect(tables[0].parentID == nil)
+    #expect(tables[1].parentID == tables[0].id)
+  }
 }

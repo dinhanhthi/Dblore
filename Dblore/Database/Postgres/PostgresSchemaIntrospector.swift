@@ -47,7 +47,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   }
 
   /// The session's own temp tables (pg_temp_N) are flagged; `pg_my_temp_schema()` is 0 until
-  /// the session creates one.
+  /// the session creates one. A partition (`relispartition`: its `pg_inherits` parent is a
+  /// partitioned table, relkind 'p', which needs no PostgreSQL 10 column) names its parent.
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     // Never analyzed (reltuples -1 on PG 14+, 0/0 before): fall back to the stats counter,
     // 0 there stays unknown (empty table, track_counts off or stats reset)
@@ -60,9 +61,16 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
           THEN CASE WHEN pg_catalog.pg_stat_get_live_tuples(c.oid) OPERATOR(pg_catalog.=) 0
             THEN NULL ELSE pg_catalog.pg_stat_get_live_tuples(c.oid) END
           ELSE c.reltuples::pg_catalog.int8 END AS row_estimate,
-        n.oid OPERATOR(pg_catalog.=) pg_catalog.pg_my_temp_schema() AS is_temporary
+        n.oid OPERATOR(pg_catalog.=) pg_catalog.pg_my_temp_schema() AS is_temporary,
+        pn.nspname::pg_catalog.text AS parent_schema,
+        pc.relname::pg_catalog.text AS parent_name
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      LEFT JOIN (pg_catalog.pg_inherits i
+          JOIN pg_catalog.pg_class pc ON pc.oid OPERATOR(pg_catalog.=) i.inhparent
+            AND pc.relkind OPERATOR(pg_catalog.=) 'p'::pg_catalog."char"
+          JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) pc.relnamespace)
+        ON i.inhrelid OPERATOR(pg_catalog.=) c.oid
       WHERE c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p']::pg_catalog."char"[])
         AND \(Self.notSystemOrToastSchema("n"))
         AND \(Self.hideOtherTempSchemas)
@@ -78,9 +86,17 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       tables.append(
         DatabaseTable(
           schema: schema, name: name, rowCount: CatalogValue.optionalInt(row[2]),
-          isTemporary: CatalogValue.bool(row[3]) ?? false))
+          isTemporary: CatalogValue.bool(row[3]) ?? false, parent: Self.parent(of: row)))
     }
     return tables
+  }
+
+  /// The parent columns (4, 5) of a table listing row, nil when not a partition
+  private static func parent(of row: [CellValue]) -> (schema: String, name: String)? {
+    guard row.count >= 6, let schema = CatalogValue.string(row[4]),
+      let name = CatalogValue.string(row[5])
+    else { return nil }
+    return (schema, name)
   }
 
   func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {

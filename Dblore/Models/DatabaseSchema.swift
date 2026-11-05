@@ -39,6 +39,9 @@ nonisolated struct DatabaseTable: Identifiable, Sendable {
   let collectionFlags: CollectionFlags
   /// Session-scoped table: SQLite `temp` schema, PostgreSQL `pg_my_temp_schema()`.
   let isTemporary: Bool
+  /// A PostgreSQL partition's parent: the `id` of the partitioned table's row (same kind, as a
+  /// partition is temporary exactly when its parent is). Nil for every other table and engine.
+  let parentID: UUID?
 
   /// Sidebar markers of a MongoDB collection.
   nonisolated struct CollectionFlags: OptionSet, Sendable {
@@ -55,10 +58,12 @@ nonisolated struct DatabaseTable: Identifiable, Sendable {
     isExpanded: Bool = false,
     rowCount: Int? = nil,
     collectionFlags: CollectionFlags = [],
-    isTemporary: Bool = false
+    isTemporary: Bool = false,
+    parent: (schema: String, name: String)? = nil
   ) {
-    self.id = schemaObjectID(
-      tag: isTemporary ? "temporary table" : "table", schema: schema, name: name)
+    let tag = isTemporary ? "temporary table" : "table"
+    self.id = schemaObjectID(tag: tag, schema: schema, name: name)
+    self.parentID = parent.map { schemaObjectID(tag: tag, schema: $0.schema, name: $0.name) }
     self.schema = schema
     self.name = name
     self.columns = columns

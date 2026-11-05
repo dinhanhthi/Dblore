@@ -396,7 +396,8 @@ extension WorkspaceManager {
 
         let joined = await Self.joinColumns(
           tables: fetchedTables, views: fetchedViews, functions: functions,
-          procedures: procedures, triggers: triggers, columnsByRelation: columnsByRelation)
+          procedures: procedures, triggers: triggers, columnsByRelation: columnsByRelation,
+          foreignKeys: foreignKeys)
 
         // The transaction opened meanwhile: later lookups were refused, keep the cache
         if await connectionManager.isMetadataPaused {
@@ -448,7 +449,7 @@ extension WorkspaceManager {
   @concurrent nonisolated private static func joinColumns(
     tables: [DatabaseTable], views: [DatabaseView], functions: [DatabaseFunction],
     procedures: [DatabaseProcedure], triggers: [DatabaseTrigger],
-    columnsByRelation: [String: [DatabaseColumn]]
+    columnsByRelation: [String: [DatabaseColumn]], foreignKeys: [ForeignKey]
   ) async -> (
     tables: [DatabaseTable], views: [DatabaseView], autocompleteIndex: SQLAutocompleteIndex,
     sidebarIndex: SidebarEntityIndex, paletteCatalog: CommandPaletteCatalog
@@ -467,7 +468,8 @@ extension WorkspaceManager {
       triggers: triggers)
     let paletteCatalog = CommandPaletteCatalog(tables: tables, views: views, functions: functions)
     return (
-      tables, views, SQLAutocompleteIndex(tables: tables), sidebarIndex, paletteCatalog
+      tables, views, SQLAutocompleteIndex(tables: tables, foreignKeys: foreignKeys), sidebarIndex,
+      paletteCatalog
     )
   }
 
