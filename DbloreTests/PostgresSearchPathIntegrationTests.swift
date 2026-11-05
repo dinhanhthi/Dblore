@@ -5,7 +5,10 @@
 // `hits` table are planted, then the app's real session and manager APIs run a schema load, a
 // structure load, a column-type enrichment, the enum and Copy Objects reads, the staged-key
 // lookup, the Copy Objects identity restart, the restore drop-target probe and a Cancel (side
-// connection, which re-runs the session-open read). Nothing may be recorded.
+// connection, which re-runs the session-open read). Nothing may be recorded. A restore case runs
+// a Dblore dump (a CHECK, a DEFAULT, an index expression, a view) in the victim's open
+// transaction: nothing is recorded, nothing restored depends on a planted object, and the
+// victim's search_path is the same after the restore.
 // Case A: the role's search_path puts the planted schema before pg_catalog. Case B: the
 // default search_path, the objects planted in public (which PUBLIC can create in on
 // PostgreSQL 14 and older). Against the docker test database as its superuser (CI).
@@ -268,6 +271,155 @@ struct PostgresSearchPathIntegrationTests {
     _ = try? await admin.executeInternal("DROP DATABASE IF EXISTS \(database) WITH (FORCE)")
     _ = try? await admin.executeInternal("DROP ROLE IF EXISTS \(role)")
     await admin.disconnect()
+  }
+
+  /// The restore case's source: its dump prints now(), lower(text), >(integer, integer) and
+  /// =(integer, integer) unqualified in a DEFAULT, an index, a CHECK and a view
+  private static let restored = "qa_sp_restored"
+  private static let restoreSource = [
+    "CREATE SCHEMA \(restored)",
+    """
+    CREATE TABLE \(restored).items (id integer PRIMARY KEY, name text NOT NULL,
+      qty integer NOT NULL CONSTRAINT items_qty_check CHECK (qty > 0),
+      added timestamptz DEFAULT now())
+    """,
+    "INSERT INTO \(restored).items (id, name, qty) VALUES (1, 'A', 1)",
+    "CREATE INDEX items_lower_name ON \(restored).items (lower(name))",
+    "CREATE VIEW \(restored).singles AS SELECT id, lower(name) AS lname FROM \(restored).items"
+      + " WHERE qty = 1",
+  ]
+
+  /// The calls of `restoreSource` that `traps` does not plant, recorded as `traps` records them
+  private static func restoreTraps(in schema: String) -> [String] {
+    func recorder(
+      _ name: String, _ arguments: String, returns: String, _ label: String, _ body: String
+    ) -> String {
+      """
+      CREATE FUNCTION \(schema).\(name)(\(arguments)) RETURNS \(returns) LANGUAGE plpgsql
+      SET search_path = pg_catalog, pg_temp
+      AS $$ BEGIN INSERT INTO \(schema).hits (what) VALUES ('\(label)'); \(body) END $$
+      """
+    }
+    return [
+      recorder("now", "", returns: "timestamptz", "now()", "RETURN pg_catalog.now();"),
+      recorder("lower", "text", returns: "text", "lower(text)", "RETURN pg_catalog.lower($1);"),
+      recorder(
+        "trap_gt_int4", "integer, integer", returns: "boolean", ">(integer, integer)",
+        "RETURN $1 > $2;"),
+      "CREATE OPERATOR \(schema).> (LEFTARG = integer, RIGHTARG = integer, "
+        + "FUNCTION = \(schema).trap_gt_int4)",
+    ]
+  }
+
+  @Test(
+    "A restore in the user's transaction binds no planted object and keeps their search_path",
+    .timeLimit(.minutes(3)))
+  func restoreIgnoresPlantedObjects() async throws {
+    let suffix = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))
+      .lowercased()
+    let source = "qa_sp_src_\(suffix)"
+    let database = "qa_sp_db_\(suffix)"
+    let role = "qa_sp_role_\(suffix)"
+    let password = "sp_\(suffix)"
+    let schema = "qa_sp_evil"
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-sp-restore-\(suffix)", isDirectory: true)
+
+    let admin = DatabaseConnectionManager()
+    try await admin.connect(config: Self.config(database: TestDatabase.database))
+    let seeder = DatabaseConnectionManager()
+    let planter = DatabaseConnectionManager()
+    let victim = DatabaseConnectionManager()
+    do {
+      _ = try await admin.executeInternal("CREATE DATABASE \(source)")
+      _ = try await admin.executeInternal("CREATE DATABASE \(database)")
+      _ = try await admin.executeInternal("CREATE ROLE \(role) LOGIN PASSWORD '\(password)'")
+
+      // The dump, written by the app from its own database
+      try await seeder.connect(config: Self.config(database: source))
+      for sql in Self.restoreSource {
+        _ = try await seeder.executeInternal(sql)
+      }
+      await seeder.disconnect()
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let file = directory.appendingPathComponent("dump.sql")
+      _ = try await SQLDumpWriter(
+        config: Self.config(database: source), material: nil, sshCredential: nil,
+        sshHostKeyPrompt: RejectingSSHHostKeyPrompt()
+      ).write(to: file)
+      let dump = try String(contentsOf: file, encoding: .utf8)
+
+      try await planter.connect(config: Self.config(database: database))
+      let setup = [
+        "GRANT CREATE ON DATABASE \(database) TO \(role)",
+        "CREATE SCHEMA \(schema)",
+        "GRANT USAGE ON SCHEMA \(schema) TO \(role)",
+        "ALTER ROLE \(role) SET search_path = \(schema), pg_catalog, public",
+      ]
+      for sql in setup + Self.traps(in: schema, role: role) + Self.restoreTraps(in: schema) {
+        _ = try await planter.executeInternal(sql)
+      }
+      try await victim.connect(
+        config: Self.config(database: database, username: role, password: password))
+
+      // Control: on the victim's path the dump's unqualified calls reach the traps
+      _ = try await victim.executeInternal(
+        "SELECT now(), lower('A'::pg_catalog.text), 2 > 1, 1 = 1")
+      let control = try await hits(schema, planter)
+      let missed = ["now()", "lower(text)", ">(integer, integer)", "=(integer, integer)"]
+        .filter { !control.contains($0) }
+      #expect(missed.isEmpty, "control missed \(missed): \(control)")
+      _ = try await planter.executeInternal("DELETE FROM \(schema).hits")
+
+      // In the victim's own transaction: RELEASE keeps a SET LOCAL, so the put-back must run
+      _ = try await victim.execute(userSQL: "BEGIN", policy: Self.open)
+      let before = try await searchPath(victim)
+      #expect(before == "\(schema), pg_catalog, public")
+      let summary = try await victim.executeGatedRestore(
+        script: dump, policy: Self.open, connectionEpoch: await victim.connectionEpoch)
+      #expect(summary.insideUserTransaction)
+      #expect(try await searchPath(victim) == before, "search_path after the restore")
+      _ = try await victim.execute(userSQL: "COMMIT", policy: Self.open)
+      #expect(try await hits(schema, planter) == [], "restore")
+
+      // The restored DEFAULT, CHECK, index and view run (as the planter, whose own path holds
+      // no trap); anything bound to a planted object would record a hit here
+      let restored = Self.restored
+      _ = try await planter.executeInternal(
+        "INSERT INTO \(restored).items (id, name, qty) VALUES (2, 'B', 1)")
+      let singles = try await planter.executeInternal("SELECT count(*) FROM \(restored).singles")
+      #expect(singles.rows.first?.first == .int(2), "the restored view")
+      #expect(try await hits(schema, planter) == [], "restored objects in use")
+      let bound = try await planter.executeInternal(
+        """
+        SELECT count(*) FROM pg_depend d
+        WHERE d.classid IN ('pg_class'::regclass, 'pg_attrdef'::regclass,
+            'pg_constraint'::regclass, 'pg_rewrite'::regclass)
+          AND ((d.refclassid = 'pg_proc'::regclass AND d.refobjid IN
+              (SELECT oid FROM pg_proc WHERE pronamespace = '\(schema)'::regnamespace))
+            OR (d.refclassid = 'pg_operator'::regclass AND d.refobjid IN
+              (SELECT oid FROM pg_operator WHERE oprnamespace = '\(schema)'::regnamespace)))
+        """)
+      #expect(bound.rows.first?.first == .int(0), "objects that depend on a planted one")
+    } catch {
+      Issue.record(error)
+    }
+    await seeder.disconnect()
+    await victim.disconnect()
+    await planter.disconnect()
+    for name in [source, database] {
+      _ = try? await admin.executeInternal("DROP DATABASE IF EXISTS \(name) WITH (FORCE)")
+    }
+    _ = try? await admin.executeInternal("DROP ROLE IF EXISTS \(role)")
+    await admin.disconnect()
+    try? FileManager.default.removeItem(at: directory)
+  }
+
+  /// `SHOW search_path` on the user's session
+  private func searchPath(_ manager: DatabaseConnectionManager) async throws -> String? {
+    let result = try await manager.execute(userSQL: "SHOW search_path", policy: Self.open)
+    guard case .string(let path)? = result.rows.first?.first else { return nil }
+    return path
   }
 
   /// What the traps recorded (in no set order)

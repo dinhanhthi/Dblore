@@ -20,6 +20,25 @@ extension DatabaseConnectionManager {
   /// Start of a batch failure's reason when a statement affected another row count
   static let unexpectedRowCountReason = "expected to affect "
 
+  /// Restore-only hook of a staged batch (PostgreSQL): right after SAVEPOINT / BEGIN the
+  /// user's search_path is read and pinned to `pg_catalog, pg_temp`, so a planted function or
+  /// operator on that path never binds into restored objects; right before RELEASE / COMMIT the
+  /// read value is put back (bound, `is_local` true). `RELEASE` keeps a `SET LOCAL`, so the
+  /// put-back is what ends the pin on success; on failure `ROLLBACK TO SAVEPOINT` (or ROLLBACK)
+  /// undoes it. None of these statements is recorded, counted or numbered with the batch.
+  struct SearchPathPin: Sendable {
+    static let readSQL = "SELECT pg_catalog.current_setting('search_path'::pg_catalog.text)"
+    static let pinSQL = CopyObjectsRun.postgresPinnedSearchPath
+    static let putBackSQL =
+      "SELECT pg_catalog.set_config('search_path'::pg_catalog.text, $1, true)"
+    /// Appended to a batch statement's error with one of `hintSQLStates` while the pin is active
+    static let hint =
+      "During a restore, functions and triggers run with search_path = pg_catalog, pg_temp: "
+      + "if one of them uses an unqualified name, qualify it or set its search_path"
+    /// Undefined function, table or object: a server-side body that used an unqualified name
+    static let hintSQLStates: Set<String> = ["42883", "42P01", "42704"]
+  }
+
   func setBatchCheckpointHook(_ hook: (@Sendable (Int) async -> Void)?) {
     batchCheckpointHook = hook
   }
@@ -145,10 +164,13 @@ extension DatabaseConnectionManager {
   /// `rewind` (one step per statement) records the Data Rewind entry after RELEASE / COMMIT:
   /// committed after the app's own COMMIT, else pending until the transaction ends. The
   /// `rewinding` entries become rewound at the same points (`recordRewound`).
+  /// `searchPathPin` (PostgreSQL restore only) wraps the statements in the pin, inside the
+  /// savepoint or the batch's own transaction; a failing read (no row or NULL), pin or put-back
+  /// fails the batch and rolls it back like a failing statement.
   func runStagedBatch(
     _ statements: [BoundStatement], caller: UUID?, protectedMode: Bool,
     cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil,
-    rewind: RewindPlan? = nil, rewinding: [Int64] = []
+    rewind: RewindPlan? = nil, rewinding: [Int64] = [], searchPathPin: SearchPathPin? = nil
   ) async throws -> [Int] {
     // User writes: refused after a DuckDB interrupt cancel since admission (`withSession`)
     let admission = UserStatementAdmission(
@@ -157,11 +179,11 @@ extension DatabaseConnectionManager {
       if protectedMode {
         return try await runProtectedBatch(
           statements, caller: caller, cancellationGeneration: cancellationGeneration,
-          progress: progress, rewind: rewind, rewinding: rewinding)
+          progress: progress, rewind: rewind, rewinding: rewinding, searchPathPin: searchPathPin)
       }
       return try await runUnprotectedBatch(
         statements, cancellationGeneration: cancellationGeneration, progress: progress,
-        rewind: rewind, rewinding: rewinding)
+        rewind: rewind, rewinding: rewinding, searchPathPin: searchPathPin)
     }
   }
 
@@ -330,7 +352,8 @@ extension DatabaseConnectionManager {
 
   private func runProtectedBatch(
     _ statements: [BoundStatement], caller: UUID?, cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64]
+    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64],
+    searchPathPin: SearchPathPin?
   ) async throws -> [Int] {
     let epoch = connectionEpoch
     try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
@@ -344,10 +367,12 @@ extension DatabaseConnectionManager {
     var capture = startRewindCapture(rewind, statementCount: statements.count)
     let counts: [Int]
     do {
+      let userSearchPath = try await pinSearchPath(searchPathPin)
       counts = try await applyBatch(
         statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-        progress: progress, capture: &capture)
+        progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil)
       try refuseCancelledBatch(since: cancellationGeneration)
+      try await putBackSearchPath(userSearchPath)
     } catch {
       try await throwIfInterruptRolledBack(since: epoch, generation: cancellationGeneration)
       throw await undoBatch(error, openedHere: opens)
@@ -366,7 +391,8 @@ extension DatabaseConnectionManager {
 
   private func runUnprotectedBatch(
     _ statements: [BoundStatement], cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64]
+    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64],
+    searchPathPin: SearchPathPin?
   ) async throws -> [Int] {
     var capture = startRewindCapture(rewind, statementCount: statements.count)
     if userTxOpen {
@@ -374,10 +400,12 @@ extension DatabaseConnectionManager {
       _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
       let counts: [Int]
       do {
+        let userSearchPath = try await pinSearchPath(searchPathPin)
         counts = try await applyBatch(
           statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-          progress: progress, capture: &capture)
+          progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil)
         try refuseCancelledBatch(since: cancellationGeneration)
+        try await putBackSearchPath(userSearchPath)
       } catch {
         discardUserEntriesIfLost(capture)
         try await throwIfInterruptRolledBack(since: epoch, generation: cancellationGeneration)
@@ -392,10 +420,12 @@ extension DatabaseConnectionManager {
     _ = try await sendTransactionControl(appOwnedBeginSQL)
     let counts: [Int]
     do {
+      let userSearchPath = try await pinSearchPath(searchPathPin)
       counts = try await applyBatch(
         statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-        progress: progress, capture: &capture)
+        progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil)
       try refuseCancelledBatch(since: cancellationGeneration)
+      try await putBackSearchPath(userSearchPath)
     } catch {
       _ = try? await sendTransactionControl("ROLLBACK")
       throw error
@@ -426,12 +456,34 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// With `pin`: the user's search_path (`SearchPathPin.readSQL`, fails closed on no row or
+  /// NULL), then the pin. Nil without `pin`, and nothing is sent.
+  private func pinSearchPath(_ pin: SearchPathPin?) async throws -> String? {
+    guard pin != nil else { return nil }
+    guard let row = try await readTransactionRow(SearchPathPin.readSQL), row.count == 1,
+      case .string(let userSearchPath) = row[0]
+    else {
+      throw DatabaseError.queryFailed(
+        "The restore could not read the session's search_path. Nothing was restored.", 0)
+    }
+    _ = try await sendTransactionControl(SearchPathPin.pinSQL)
+    return userSearchPath
+  }
+
+  /// The value `pinSearchPath` read, put back for the rest of the transaction (none: nothing)
+  private func putBackSearchPath(_ userSearchPath: String?) async throws {
+    guard let userSearchPath else { return }
+    _ = try await sendTransactionControl(SearchPathPin.putBackSQL, binds: [.text(userSearchPath)])
+  }
+
   /// Send each statement and check its expected affected rows when set. The caller owns the
   /// transaction. `rolledBack` is only the flag on the thrown error. With a `capture`, each
-  /// statement's row is read right before and right after it.
+  /// statement's row is read right before and right after it. `searchPathPinned`: a statement
+  /// error gets `SearchPathPin.hint` (`commandResult`).
   private func applyBatch(
     _ statements: [BoundStatement], rolledBack: Bool, cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?, capture: inout RewindCapture?
+    progress: (@Sendable (Int) -> Void)?, capture: inout RewindCapture?,
+    searchPathPinned: Bool = false
   ) async throws -> [Int] {
     var counts: [Int] = []
     counts.reserveCapacity(statements.count)
@@ -441,7 +493,7 @@ extension DatabaseConnectionManager {
       do {
         // A capture read that throws lost the transaction: fail as the statement would
         try await captureBefore(index, into: &capture)
-        rows = try await sendBound(statement)
+        rows = try await sendBound(statement, searchPathPinned: searchPathPinned)
       } catch {
         try refuseCancelledBatch(since: cancellationGeneration)
         throw Self.batchStatementFailed(
@@ -643,8 +695,12 @@ extension DatabaseConnectionManager {
     return confirmed
   }
 
-  private func sendBound(_ statement: BoundStatement) async throws -> Int {
-    let rows = try await affectedRows(sql: statement.sql, binds: statement.binds)
+  private func sendBound(
+    _ statement: BoundStatement, searchPathPinned: Bool = false
+  ) async throws -> Int {
+    let rows = try await commandResult(
+      sql: statement.sql, binds: statement.binds, searchPathPinned: searchPathPinned
+    ).affectedRows
     return try await confirmedRows(rows, check: statement.rowCheck)
   }
 
@@ -673,14 +729,23 @@ extension DatabaseConnectionManager {
   }
 
   /// The full reply of one command (MongoDB updates also carry `modifiedRows`).
-  func commandResult(sql: String, binds: [SQLBindValue]) async throws -> CommandResult {
+  /// `searchPathPinned`: a server error with one of `SearchPathPin.hintSQLStates` gets
+  /// `SearchPathPin.hint` appended.
+  func commandResult(
+    sql: String, binds: [SQLBindValue], searchPathPinned: Bool = false
+  ) async throws -> CommandResult {
     let startTime = Date()
     do {
       return try await withSession { try await $0.command(sql, binds: binds) }
     } catch let error as DatabaseError {
       throw error
     } catch {
-      throw queryFailure(error, query: sql, startTime: startTime)
+      let failure = queryFailure(error, query: sql, startTime: startTime)
+      guard searchPathPinned, let state = Self.serverSQLState(error),
+        SearchPathPin.hintSQLStates.contains(state),
+        case .queryFailed(let message, let executionTime) = failure
+      else { throw failure }
+      throw DatabaseError.queryFailed(message + "\n\n" + SearchPathPin.hint, executionTime)
     }
   }
 

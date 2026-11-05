@@ -1738,7 +1738,8 @@ extension DatabaseConnectionManager {
         }
         summary.statementsRun = try await runStagedBatch(
           bound, caller: caller, protectedMode: effective.protectedMode,
-          cancellationGeneration: generation, progress: report
+          cancellationGeneration: generation, progress: report,
+          searchPathPin: engine == .postgresql ? .init() : nil
         ).count
         summary.pending = effective.protectedMode
       case .mysql:

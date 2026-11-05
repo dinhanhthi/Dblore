@@ -1231,7 +1231,10 @@ struct SQLRestoreGateTests {
     let sent = factory.sessions.last?.statements ?? []
     #expect(sent.first == "BEGIN")
     #expect(sent.last == "COMMIT")
-    #expect(Array(sent.dropFirst().dropLast()) == plan.statements.map(\.text))
+    let pin = DatabaseConnectionManager.SearchPathPin.self
+    #expect(Array(sent.dropFirst().prefix(2)) == [pin.readSQL, pin.pinSQL])
+    #expect(Array(sent.dropFirst(3).dropLast(2)) == plan.statements.map(\.text))
+    #expect(sent.dropLast().last == pin.putBackSQL)
     #expect(summary.statementsRun == 12)
     #expect(!summary.pending)
     #expect(summary.counts == plan.summary.counts)
@@ -1303,7 +1306,10 @@ struct SQLRestoreGateTests {
     let sent = factory.statements
     #expect(sent.first == DatabaseConnectionManager.standardStringsQuery)
     #expect(sent.dropFirst().first == "BEGIN")
-    #expect(Array(sent.dropFirst(2).dropLast()) == plan.statements.map(\.text))
+    let pin = DatabaseConnectionManager.SearchPathPin.self
+    #expect(Array(sent.dropFirst(2).prefix(2)) == [pin.readSQL, pin.pinSQL])
+    #expect(Array(sent.dropFirst(4).dropLast(2)) == plan.statements.map(\.text))
+    #expect(Array(sent.suffix(2)) == [pin.putBackSQL, "COMMIT"])
   }
 
   @Test("PostgreSQL: standard_conforming_strings off refuses before anything is changed")
@@ -1456,10 +1462,11 @@ struct SQLRestoreGateTests {
     let savepoint = DatabaseConnectionManager.batchSavepoint
     let sent = session.statements
     #expect(sent.first == DatabaseConnectionManager.standardStringsQuery)
+    let pin = DatabaseConnectionManager.SearchPathPin.self
     #expect(
-      Array(sent.suffix(plan.statements.count + 2))
-        == ["SAVEPOINT \(savepoint)"] + plan.statements.map(\.text)
-        + ["RELEASE SAVEPOINT \(savepoint)"])
+      Array(sent.suffix(plan.statements.count + 5))
+        == ["SAVEPOINT \(savepoint)", pin.readSQL, pin.pinSQL] + plan.statements.map(\.text)
+        + [pin.putBackSQL, "RELEASE SAVEPOINT \(savepoint)"])
     #expect(sent.filter { $0 == "BEGIN" }.count == 1)
     #expect(!sent.contains("COMMIT"))
     #expect(await manager.transactionStatus().owner == caller)
@@ -1485,10 +1492,12 @@ struct SQLRestoreGateTests {
     #expect(summary.insideUserTransaction)
     #expect(!summary.pending)
     let savepoint = DatabaseConnectionManager.batchSavepoint
+    let pin = DatabaseConnectionManager.SearchPathPin.self
     #expect(
       session.statements
         == [DatabaseConnectionManager.standardStringsQuery, "BEGIN", "SAVEPOINT \(savepoint)"]
-        + plan.statements.map(\.text) + ["RELEASE SAVEPOINT \(savepoint)"])
+        + [pin.readSQL, pin.pinSQL] + plan.statements.map(\.text)
+        + [pin.putBackSQL, "RELEASE SAVEPOINT \(savepoint)"])
     #expect(await manager.userTxOpen)
   }
 
@@ -1510,10 +1519,11 @@ struct SQLRestoreGateTests {
       plan, policy: open, connectionEpoch: await manager.connectionEpoch, caller: UUID())
     #expect(!summary.insideUserTransaction)
     #expect(!summary.pending)
+    let pin = DatabaseConnectionManager.SearchPathPin.self
     #expect(
       session.statements
         == ["BEGIN", DatabaseConnectionManager.standardStringsQuery, "COMMIT", "BEGIN"]
-        + plan.statements.map(\.text) + ["COMMIT"])
+        + [pin.readSQL, pin.pinSQL] + plan.statements.map(\.text) + [pin.putBackSQL, "COMMIT"])
     #expect(await manager.transactionSnapshot() == .idle)
   }
 

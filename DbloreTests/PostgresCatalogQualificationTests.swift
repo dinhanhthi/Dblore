@@ -238,6 +238,10 @@ struct PostgresCatalogQualificationTests {
       ("table health statistics state", TableHealthQueries.postgresStatisticsStateSQL),
       ("table health unused indexes", TableHealthQueries.postgresUnusedIndexesSQL),
       ("table health dead tuples", TableHealthQueries.postgresDeadTuplesSQL),
+      // A PostgreSQL restore's search_path read, pin and put-back, on the user's session
+      ("restore search_path read", DatabaseConnectionManager.SearchPathPin.readSQL),
+      ("restore search_path pin", DatabaseConnectionManager.SearchPathPin.pinSQL),
+      ("restore search_path put-back", DatabaseConnectionManager.SearchPathPin.putBackSQL),
     ]
     for (name, sql) in statements {
       let found = CatalogSQLLint.violations(sql)
@@ -304,6 +308,9 @@ private enum CatalogSQLLint {
   /// `$n::pg_catalog.regclass`), see `boundNameLookups`.
   static func violations(_ sql: String, allowsBoundNameLookup: Bool = false) -> [String] {
     let tokens = SQLTokenizer.tokens(sql, dialect: .postgresql)
+    // `SET [LOCAL] name = value, ...` names a setting and takes literal values: nothing in it
+    // is looked up as a function, operator or relation
+    if tokens.first?.keyword == "SET" { return [] }
     var found: [String] = []
     func word(_ index: Int) -> String? {
       tokens.indices.contains(index) ? tokens[index].keyword : nil
