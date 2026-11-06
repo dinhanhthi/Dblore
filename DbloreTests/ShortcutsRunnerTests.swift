@@ -166,6 +166,43 @@ struct ShortcutsRunnerTests {
     await runner.pool.closeAll()
   }
 
+  /// Regression: Add Row into a PostgreSQL `public` table names its schema in the INSERT it
+  /// sends and records, never the bare table the user's search_path would resolve
+  @Test("Add Row into public.t sends and records INSERT INTO \"public\".\"t\"")
+  func addRowQualifiesPublicSchema() async throws {
+    let catalog = FakeDatabaseSessionFactory(
+      capabilities: .contract(),
+      queryAnswer: { sql, _ in
+        if sql.contains("pg_stat_get_live_tuples") {
+          return FakeQueryAnswer(
+            columns: [],
+            rows: [[.string("public"), .string("t"), .null, .bool(false), .null, .null]])
+        }
+        if sql.contains("c.oid::pg_catalog.int8") {
+          return FakeQueryAnswer(columns: [], rows: [[.int(1), .null]])
+        }
+        if sql.contains("attgenerated") {
+          return FakeQueryAnswer(
+            columns: [],
+            rows: [
+              [
+                .int(1), .string("n"), .string("integer"), .bool(false), .null, .string(""),
+                .string(""), .null,
+              ]
+            ])
+        }
+        return nil
+      })
+    let entry = Self.entry()
+    let runner = runner([entry], factory: catalog)
+    #expect(try await runner.addRow(connectionID: entry.id, table: "t", values: #"{"n": 1}"#) == 1)
+    let insert = #"INSERT INTO "public"."t" ("n") VALUES "#
+    #expect(
+      catalog.statements.filter { $0.hasPrefix("INSERT") }.map { $0.hasPrefix(insert) } == [true])
+    #expect(await history.entries.map { $0.sql.hasPrefix(insert) } == [true])
+    await runner.pool.closeAll()
+  }
+
   /// Regression A5: Add Row reads naive timestamp text as the wall clock it shows, never as
   /// local time shifted to UTC, and zoned text as the display zone's time; text for a type with
   /// no date value (or SQLite's) stays as typed

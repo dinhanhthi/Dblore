@@ -179,6 +179,9 @@ struct PostgresCatalogQualificationTests {
       ManagerRead(name: "copy target names", rows: [[.string("public")]], statements: 2) {
         _ = try await $0.copyTargetNames()
       },
+      ManagerRead(name: "import current schema", rows: [[.string("public")]], statements: 1) {
+        _ = try await $0.readImportCurrentSchema()
+      },
       ManagerRead(name: "staged integer key", rows: [[.bool(false), .int(3)]], statements: 1) {
         _ = try await $0.executeInternal(try #require(lookup), maxRows: 1)
       },

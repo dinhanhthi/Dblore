@@ -44,7 +44,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     }
   }
 
-  /// Schema omitted by `qualified` when the caller passes it explicitly.
+  /// Schema omitted by `qualified` when the caller passes it explicitly (PostgreSQL keeps it).
   /// MySQL has none: its schema is the connected database, so any named schema stays.
   var defaultSchema: String {
     switch engine {
@@ -173,10 +173,12 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     return safe
   }
 
-  /// `quoteIdentifier(name)`, or `schema.name` when `schema` is not the default.
+  /// `quoteIdentifier(name)` for a nil schema, else `schema.name`. Other dialects drop their
+  /// default schema; PostgreSQL keeps every schema, `public` too, so an app-run statement never
+  /// resolves a default-schema relation through the user's `search_path`.
   func qualified(schema: String?, name: String) throws -> String {
     let quotedName = try quoteIdentifier(name)
-    guard let schema, schema != defaultSchema else {
+    guard let schema, engine == .postgresql || schema != defaultSchema else {
       return quotedName
     }
     return try quoteIdentifier(schema) + "." + quotedName

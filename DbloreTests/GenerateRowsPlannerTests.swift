@@ -8,6 +8,18 @@ import Testing
 
 @testable import Dblore
 
+/// The SQL of every read, in order
+private final class ReadLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var sql: [String] = []
+
+  var all: [String] { lock.withLock { sql } }
+
+  func append(_ text: String) {
+    lock.withLock { sql.append(text) }
+  }
+}
+
 @Suite("Generate rows planner")
 struct GenerateRowsPlannerTests {
   private typealias Planner = GenerateRowsPlanner
@@ -290,6 +302,30 @@ struct GenerateRowsPlannerTests {
     let computedPlan = try await Planner.plan(
       structure: computed, dialect: .postgresql, read: reader())
     #expect(computedPlan.columns == ["email"])
+  }
+
+  /// Regression: a PostgreSQL read never names a `public` table bare, which would resolve
+  /// through the user's search_path
+  @Test("The referenced-key and MAX reads name a public table with its schema")
+  func readsQualifyPublicSchema() async throws {
+    let structure = table(
+      [column("id", "integer"), column("customer_id", "integer")],
+      constraints: [
+        .init(name: nil, kind: .primaryKey, columns: ["id"]),
+        foreignKey(["customer_id"], "customers", ["id"]),
+      ])
+    let sent = ReadLog()
+    let read = reader(keys: ["customers": [[.int(1)]]], max: ["id": .int(0)])
+    _ = try await Planner.plan(structure: structure, dialect: .postgresql) {
+      sent.append($0.statement.sql)
+      return try await read($0)
+    }
+    #expect(
+      sent.all == [
+        #"SELECT "id" FROM "public"."customers" WHERE "id" IS NOT NULL ORDER BY "id" LIMIT "#
+          + "\(Planner.maxSampledKeys)",
+        #"SELECT MAX("id") FROM "public"."t""#,
+      ])
   }
 
   @Test("A key holding an identity, sequence or random UUID column is left to the server")

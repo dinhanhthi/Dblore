@@ -24,7 +24,7 @@ private let quoteCases: [(SQLDialect, String, String)] = [
 
 private let qualifiedCases: [(SQLDialect, String?, String, String)] = [
   (.postgresql, nil, "users", #""users""#),
-  (.postgresql, "public", "users", #""users""#),
+  (.postgresql, "public", "users", #""public"."users""#),
   (.postgresql, "main", "users", #""main"."users""#),
   (.postgresql, "app", "users", #""app"."users""#),
   (.postgresql, "a\"b", "c\"d", #""a""b"."c""d""#),
@@ -258,7 +258,7 @@ struct SQLDialectTests {
   }
 
   @Test(
-    "The default schema is omitted; any other schema stays qualified",
+    "The default schema is omitted, except on PostgreSQL; any other schema stays qualified",
     arguments: qualifiedCases)
   func qualified(dialect: SQLDialect, schema: String?, name: String, expected: String) throws {
     #expect(try dialect.qualified(schema: schema, name: name) == expected)

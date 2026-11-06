@@ -47,9 +47,9 @@ struct JoinQueryBuilderTests {
     #expect(
       query.sql == """
         SELECT "orders"."id", "products"."name"
-        FROM "orders" AS "orders"
-        LEFT JOIN "order_items" AS "order_items" ON "order_items"."order_id" = "orders"."id"
-        LEFT JOIN "products" AS "products" ON "products"."id" = "order_items"."product_id"
+        FROM "public"."orders" AS "orders"
+        LEFT JOIN "public"."order_items" AS "order_items" ON "order_items"."order_id" = "orders"."id"
+        LEFT JOIN "public"."products" AS "products" ON "products"."id" = "order_items"."product_id"
         """)
     #expect(
       query.tables == [
@@ -98,9 +98,9 @@ struct JoinQueryBuilderTests {
     #expect(
       query.sql == """
         SELECT "orders"."id", "products"."name", "order_items"."quantity"
-        FROM "orders" AS "orders"
-        LEFT JOIN "order_items" AS "order_items" ON "order_items"."order_id" = "orders"."id"
-        LEFT JOIN "products" AS "products" ON "products"."id" = "order_items"."product_id"
+        FROM "public"."orders" AS "orders"
+        LEFT JOIN "public"."order_items" AS "order_items" ON "order_items"."order_id" = "orders"."id"
+        LEFT JOIN "public"."products" AS "products" ON "products"."id" = "order_items"."product_id"
         WHERE "order_items"."quantity" > '1'
         """)
     #expect(query.tables.map(\.alias) == ["orders", "order_items", "products"])
@@ -124,9 +124,9 @@ struct JoinQueryBuilderTests {
     #expect(
       query.sql == """
         SELECT "orders"."id", "countries"."name"
-        FROM "orders" AS "orders"
-        INNER JOIN "customers" AS "customers" ON "customers"."id" = "orders"."customer_id"
-        LEFT JOIN "countries" AS "countries" ON "countries"."code" = "customers"."country_code"
+        FROM "public"."orders" AS "orders"
+        INNER JOIN "public"."customers" AS "customers" ON "customers"."id" = "orders"."customer_id"
+        LEFT JOIN "public"."countries" AS "countries" ON "countries"."code" = "customers"."country_code"
         """)
     #expect(query.tables.allSatisfy { $0.isPicked })
   }
@@ -142,8 +142,8 @@ struct JoinQueryBuilderTests {
     #expect(
       postgres.sql == """
         SELECT "employees"."name" AS "employees_name", "employees_2"."name" AS "employees_2_name"
-        FROM "employees" AS "employees"
-        LEFT JOIN "employees" AS "employees_2" ON "employees_2"."id" = "employees"."manager_id"
+        FROM "public"."employees" AS "employees"
+        LEFT JOIN "public"."employees" AS "employees_2" ON "employees_2"."id" = "employees"."manager_id"
         """)
 
     let mysql = try Builder.query(picks: picks, foreignKeys: keys, dialect: .mysql)
@@ -169,8 +169,8 @@ struct JoinQueryBuilderTests {
     #expect(
       query.sql == """
         SELECT "shipments"."shipped_at"
-        FROM "shipments" AS "shipments"
-        INNER JOIN "order_lines" AS "order_lines" ON "order_lines"."order_id" = "shipments"."order_id" AND "order_lines"."line_no" = "shipments"."line_no"
+        FROM "public"."shipments" AS "shipments"
+        INNER JOIN "public"."order_lines" AS "order_lines" ON "order_lines"."order_id" = "shipments"."order_id" AND "order_lines"."line_no" = "shipments"."line_no"
         """)
   }
 
@@ -190,9 +190,9 @@ struct JoinQueryBuilderTests {
     #expect(
       query.sql == """
         SELECT "flights"."id", "airports"."code" AS "airports_code", "airports_2"."code" AS "airports_2_code"
-        FROM "flights" AS "flights"
-        INNER JOIN "airports" AS "airports" ON "airports"."id" = "flights"."origin_id"
-        INNER JOIN "airports" AS "airports_2" ON "airports_2"."id" = "flights"."destination_id"
+        FROM "public"."flights" AS "flights"
+        INNER JOIN "public"."airports" AS "airports" ON "airports"."id" = "flights"."origin_id"
+        INNER JOIN "public"."airports" AS "airports_2" ON "airports_2"."id" = "flights"."destination_id"
         """)
     #expect(query.tables.map(\.foreignKeyName) == [nil, "fk_origin", "fk_destination"])
   }
@@ -225,7 +225,7 @@ struct JoinQueryBuilderTests {
     #expect(
       single.sql == """
         SELECT "orders"."id"
-        FROM "orders" AS "orders"
+        FROM "public"."orders" AS "orders"
         WHERE "orders"."status" = 'open' OR "orders"."status" = 'new'
         """)
   }
@@ -234,7 +234,7 @@ struct JoinQueryBuilderTests {
   func noColumns() throws {
     let query = try Builder.query(
       picks: [Self.pick("orders")], foreignKeys: [], dialect: .postgresql)
-    #expect(query.sql == "SELECT *\nFROM \"orders\" AS \"orders\"")
+    #expect(query.sql == "SELECT *\nFROM \"public\".\"orders\" AS \"orders\"")
   }
 
   @Test("A table no foreign key reaches is refused, never cross joined")
