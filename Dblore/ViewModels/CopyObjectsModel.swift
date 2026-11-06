@@ -557,6 +557,11 @@ final class CopyObjectsModel: Identifiable {
     runGeneration += 1
     let generation = runGeneration
     isRunning = true
+    let runningWork = RunningWorkRegistry.shared.begin(
+      workspaceID: context.workspaceID, label: "Copy Objects to \(entry.shortDisplayName)",
+      kind: .copyObjects
+    ) { [weak self] in self?.cancel() }
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     cancelRequested = false
     progress = Progress(done: 0, total: 0)
     result = nil

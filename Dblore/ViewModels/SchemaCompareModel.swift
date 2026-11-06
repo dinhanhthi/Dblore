@@ -377,6 +377,10 @@ final class SchemaCompareModel: Identifiable {
 
   /// Writes its result only while it is the latest compare
   private func performCompare(_ generation: Int) async {
+    let runningWork = beginRunningWork("Schema compare", kind: .schemaCompare) { [weak self] in
+      self?.cancelCompare()
+    }
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     defer {
       if compareGeneration == generation {
         progress = nil
@@ -648,10 +652,17 @@ final class SchemaCompareModel: Identifiable {
     let sent = SentScript(
       schema: target.schema, statements: script.statements, items: items.filter(\.isSelected))
     isRunning = true
+    // The script has no Cancel: it is listed, and runs to its end
+    let runningWork = beginRunningWork(
+      "Schema compare script on \(target.schema)", kind: .schemaChange(databaseType)
+    ) {}
     runError = nil
     runReport = nil
     resultMessage = nil
-    defer { isRunning = false }
+    defer {
+      isRunning = false
+      RunningWorkRegistry.shared.end(runningWork)
+    }
     // Checked here too, so a reconnect since the compare sends nothing (the gate checks again)
     guard await context.database.structureEditorState().connectionEpoch == target.connectionEpoch
     else {
@@ -716,6 +727,17 @@ final class SchemaCompareModel: Identifiable {
       toastPresenter(message, .warning)
       await onApplied?()
     }
+  }
+
+  /// Lists the compare or its script in the workspace of the target connection (Quit and close
+  /// ask first)
+  private func beginRunningWork(
+    _ label: String, kind: RunningWorkRegistry.Kind, cancel: @escaping @MainActor () -> Void
+  ) -> RunningWorkRegistry.Token {
+    let manager = context.database as? DatabaseConnectionManager
+    return RunningWorkRegistry.shared.begin(
+      workspaceID: manager.flatMap { RunningWorkRegistry.workspaceID(of: $0) }, label: label,
+      kind: kind, cancel: cancel)
   }
 
   /// The sent table drops whose statements are all among the first `applied` that ran, to

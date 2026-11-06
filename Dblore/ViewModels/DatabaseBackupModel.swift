@@ -153,6 +153,8 @@ final class DatabaseBackupModel {
         config, await manager.activeUnrememberedCertificate,
         await manager.activeUnrememberedSSHCredential, manager.sshHostKeyPolicy.prompt)
     let id = begin(.dumping)
+    let runningWork = beginRunningWork("SQL dump of \(Self.baseName(config))", kind: .dump)
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     dumpProgress = SQLDumpProgress(tablesDone: 0, tableCount: 0, rowsWritten: 0)
     let started = ContinuousClock.now
     let report = reporter(id, .dumping) { $0.dumpProgress = $1 }
@@ -220,6 +222,8 @@ final class DatabaseBackupModel {
     let id = begin(.copying)
     copyProgress = nil
     let source = URL(fileURLWithPath: config.database)
+    let runningWork = beginRunningWork("Copy of \(source.lastPathComponent)", kind: .dump)
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     let copy = environment.copyDatabase
     let report = reporter(id, .copying) { $0.copyProgress = $1 }
     let work = Task {
@@ -461,6 +465,9 @@ final class DatabaseBackupModel {
       return
     }
     let id = begin(.restoring)
+    let runningWork = beginRunningWork(
+      "Restore of \(restoreFileName ?? "a SQL file")", kind: .restore(plan.engine))
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     restoreProgress = SQLRestoreProgress(
       statementsDone: 0, statementCount: plan.summary.statementCount)
     let started = ContinuousClock.now
@@ -606,6 +613,18 @@ final class DatabaseBackupModel {
     operationID = id
     self.activity = activity
     return id
+  }
+
+  /// Lists the running dump, copy or restore in the tab's workspace (Quit and close ask first);
+  /// Stop there is this model's Cancel
+  private func beginRunningWork(
+    _ label: String, kind: RunningWorkRegistry.Kind
+  ) -> RunningWorkRegistry.Token {
+    RunningWorkRegistry.shared.begin(
+      workspaceID: viewModel.historyWorkspace()?.id, label: label, kind: kind
+    ) { [weak self] in
+      Task { await self?.cancel() }
+    }
   }
 
   /// A progress callback (called off the main actor) that hops back here, dropped once the

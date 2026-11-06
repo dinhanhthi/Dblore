@@ -517,6 +517,8 @@ final class TableImportModel {
       dialect == .mysql
       ? ImportSQLBuilder.mysqlChunkByteCap(
         maxAllowedPacket: await manager.mysqlServerInfo?.maxAllowedPacket) : nil
+    let runningWork = beginRunningWork(in: viewModel) { [weak self] in self?.cancel() }
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     return await prepareImport(
       dialect: dialect, connectionEpoch: epoch, maxChunkBytes: maxChunkBytes,
       readMatches: { try await manager.readImportMatches($0) })
@@ -584,6 +586,22 @@ final class TableImportModel {
     errorMessage = nil
     return true
   }
+
+  /// Lists the import in `viewModel`'s workspace while a step runs (Quit and close ask first)
+  private func beginRunningWork(
+    in viewModel: NotebookViewModel, cancel: @escaping @MainActor () -> Void
+  ) -> RunningWorkRegistry.Token {
+    RunningWorkRegistry.shared.begin(
+      workspaceID: viewModel.historyWorkspace()?.id,
+      label: Self.runningWorkLabel(destination), kind: .dataImport, cancel: cancel)
+  }
+
+  /// The import's line in the running-work list, while it prepares and while its batch runs
+  private nonisolated static func runningWorkLabel(
+    _ destination: TableImportDestination
+  )
+    -> String
+  { "Import into \(destination.table)" }
 
   /// The whole file, parsed. `progress` gets the share done (0 to 1): the read is the first
   /// fifth, the parse the rest (delimited text only; a JSON parse reports only its end).
@@ -850,9 +868,11 @@ final class TableImportModel {
       row += count
     }
     try Task.checkCancellation()
-    return PendingStagedBatch(
+    var batch = PendingStagedBatch(
       statements: (create.map { [$0] } ?? []) + inserts, preview: summary,
       connectionEpoch: connectionEpoch, historySource: .dataImport, rowRanges: ranges)
+    batch.runningWorkLabel = runningWorkLabel(destination)
+    return batch
   }
 
   /// A keyed import: the match reads, then each row's outcome in `match.mode`, then INSERT
@@ -970,11 +990,11 @@ final class TableImportModel {
       schema: destination.schema, table: destination.table, columns: names,
       update: updates.first, counts: summary.counts, dialect: dialect)
     try Task.checkCancellation()
-    return PreparedImport(
-      batch: PendingStagedBatch(
-        statements: inserts + updates, preview: preview, connectionEpoch: connectionEpoch,
-        historySource: .dataImport, rowRanges: ranges),
-      summary: summary)
+    var batch = PendingStagedBatch(
+      statements: inserts + updates, preview: preview, connectionEpoch: connectionEpoch,
+      historySource: .dataImport, rowRanges: ranges)
+    batch.runningWorkLabel = runningWorkLabel(destination)
+    return PreparedImport(batch: batch, summary: summary)
   }
 
   private static func showOpenPanel() async -> URL? {

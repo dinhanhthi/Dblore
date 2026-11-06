@@ -243,6 +243,8 @@ final class MongoBackupModel {
     backupProgress = start
     backupToken = token
     state = .backingUp(start)
+    let runningWork = beginRunningWork("MongoDB backup of \(context.database)", kind: .dump)
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     let started = ContinuousClock.now
     let (manager, database) = (context.manager, context.database)
     let (caller, epoch) = (context.caller, connectionEpoch)
@@ -519,6 +521,9 @@ final class MongoBackupModel {
   /// Pass 2 off the main actor; records one History row and reloads the sidebar whatever the
   /// outcome
   private func run(_ confirmation: RestoreConfirmation, plan: MongoRestorePlan) async {
+    let runningWork = beginRunningWork(
+      "Restore of \(confirmation.fileName) into \(context.database)", kind: .restore(.mongodb))
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     restoreStarted = true
     cancelRequested = false
     generation += 1
@@ -556,6 +561,16 @@ final class MongoBackupModel {
         workspaceID: nil, workspaceName: nil, durationMs: Self.milliseconds(since: started),
         status: outcome.status, errorMessage: outcome.summary))
     await context.onRestored()
+  }
+
+  /// Lists the running backup or restore in the workspace of the connection (Quit and close ask
+  /// first); Stop there is this model's Cancel
+  private func beginRunningWork(
+    _ label: String, kind: RunningWorkRegistry.Kind
+  ) -> RunningWorkRegistry.Token {
+    RunningWorkRegistry.shared.begin(
+      workspaceID: RunningWorkRegistry.workspaceID(of: context.manager), label: label, kind: kind
+    ) { [weak self] in self?.cancel() }
   }
 
   private func reportRestore(_ progress: RestoreProgress, generation current: Int) {
