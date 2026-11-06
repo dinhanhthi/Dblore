@@ -3,8 +3,8 @@
 //  Dblore
 //
 //  One chat entry: markdown text, fenced code blocks with Copy / Insert, safety badge,
-//  the result card of a query the app ran for the assistant, a proposal card, or the card of an
-//  outside MCP tool call
+//  the result card of a query the app ran for the assistant, a proposal card, the card of an
+//  outside MCP tool call, or the card of a setting the assistant changed
 //
 
 import AppKit
@@ -38,6 +38,9 @@ struct AIMessageView: View {
   /// Runs a proposal after the user pressed Run on its card (`WorkspaceManager.runAIProposal`);
   /// nil disables Run
   var onRunProposal: ((AIProposal, String?) -> WorkspaceManager.AIProposalRunOutcome)? = nil
+  /// Reverts this entry's setting change (`AIAssistantViewModel.undoSettingChange`); nil
+  /// disables Undo
+  var onUndoSetting: (@MainActor () async -> Void)? = nil
   /// Run once (true) or Deny (false) on this entry's outside tool card; nil unless the call
   /// waits for the user
   var onDecideOutsideCall: ((Bool) -> Void)? = nil
@@ -65,6 +68,9 @@ struct AIMessageView: View {
         // The entry's text is only a label: outside calls are never replayed
         AIOutsideToolCardView(
           call: call, onDecide: onDecideOutsideCall, canRun: outsideRunEnabled)
+      } else if let change = entry.settingChange {
+        // The entry's text is only the history line of the change
+        AISettingChangeCardView(change: change, onUndo: onUndoSetting)
       } else if let review = entry.review, !entry.isError, !isStreaming, !entry.text.isEmpty {
         AIReviewCardView(
           request: review, text: entry.text,
