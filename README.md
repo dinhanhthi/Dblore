@@ -27,7 +27,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   select-list aliases after ORDER BY and the foreign-key condition after a join's ON, and also
   matches names in the middle (`ord` finds `purchase_orders`). Format SQL follows your indent,
   case, comma and line-width rules, and View > Zoom resizes the focused editor, grid or schema
-  diagram
+  diagram. Bookmark lines in a SQL tab with `Cmd+F2` or a gutter click, jump with `F2` and
+  `Shift+F2`; bookmarks are saved with the workspace
 - **Schema browser**: tables, columns and types, a quick filter and a canvas with foreign-key
   lines that you can copy or save as Mermaid or Graphviz DOT. Group tables and views into
   sidebar folders, hide schemas you do not use, and find a value in the text of every table.
@@ -77,12 +78,22 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Import and export**: import CSV, TSV and JSON as Insert, Update, Insert or Update or
   Insert skipping existing rows (matched by a primary or unique key), and several files or a
   folder in one transaction; export to Excel, CSV, JSON, Markdown, PDF, TSV, SQL `INSERT` and
-  Parquet (with the DuckDB plugin)
+  Parquet (with the DuckDB plugin). DuckDB takes imports too, except in Protected mode or with a
+  transaction open (it has no savepoint)
 - **Generate Rows**: fill a PostgreSQL, MySQL/MariaDB or SQLite table with up to 1,000,000
   rows of seeded sample data that follow its types, foreign keys and unique keys, in one
   transaction you can cancel
 - **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB database to a
-  `.sql` file, choosing Structure, Data and Drop per table, and restore it
+  `.sql` file, choosing Structure, Data and Drop per table, and restore it. Every statement is
+  checked before anything runs; a PostgreSQL restore runs the dump's DDL with a fixed
+  `search_path` and puts yours back. MySQL/MariaDB connections also restore mysqldump and
+  mariadb-dump files; a line it does not restore (GTID, triggers, routines, views, `USE`, a
+  non-utf8 character set) is refused before anything runs, naming the dump option to use. The
+  file must be valid UTF-8, so binary columns written as raw bytes cannot be read
+- **Running work**: Quit, closing a window and Disconnect first list the running queries,
+  imports, restores, dumps, copies, exports and schema compares, and stop them only when you
+  choose Stop (a Parquet export is listed at Quit only). A
+  restore says whether stopping rolls it back or keeps what already ran (MySQL, MongoDB)
 - **Safe Mode**: confirmation before destructive statements, Commit / Rollback for pending
   transactions, Touch ID to unlock. A Read-only connection can unlock data writes for 1 or 5
   minutes while its schema stays locked (never for MCP, the command line or Shortcuts; not for
@@ -124,8 +135,9 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   in results, copies, exports, AI, MCP, Shortcuts and the command line, and masked cells cannot
   be edited. It matches column names, so an alias or a computed column gets past it: it is not
   access control, and dumps, backups and Copy Objects keep real values
-- **Connection colors and groups**: tell connections apart at a glance by color and
-  `host:port@user`, and group them on the welcome screen
+- **Connection colors, groups and favorites**: tell connections apart at a glance by color and
+  `host:port@user`, group them on the welcome screen in up to three levels (`Prod / EU / Web`),
+  and star favorites, which show first and are never trimmed from the history
 - **Keyboard-first**: run cells and queries without leaving the keys, find and replace in
   editors, and find any command with `Cmd+K`
 
@@ -157,7 +169,7 @@ features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 
 | Plugin | Version | What it adds |
 | ------ | ------- | ------------ |
-| **DuckDB** | 1.5.6 | Open a `.duckdb` file (read-only by default, also from Finder), create one or use an in-memory database, browse its schema and query Parquet or CSV files, with a plan tree, SQL dump and restore, and Parquet export |
+| **DuckDB** | 1.5.6 | Open a `.duckdb` file (read-only by default, also from Finder), create one or use an in-memory database, browse its schema and query Parquet or CSV files, with a plan tree, data import, SQL dump and restore, and Parquet export |
 | **On-device AI** | 1.0.0 | Run AI models on this Mac with MLX for the AI chat and inline suggestions. Models download separately from Hugging Face, each file checked by its SHA-256, and are kept when you remove the plugin |
 
 ## Install

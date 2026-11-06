@@ -142,11 +142,12 @@ struct SQLRestoreSheet: View {
             .foregroundColor(.foregroundMuted)
         }
         Text(
-          "Reads Dblore SQL dumps of this engine up to 64 MiB (up to about 400 MiB of memory while "
-            + "it is checked). Every statement is checked before anything runs: only the statements "
-            + "a Dblore dump writes (tables, indexes, views, types, sequences and their rows) are "
-            + "accepted, and any other statement refuses the whole file. Restoring still runs "
-            + "the file's SQL on this connection: column defaults, checks, views and triggers "
+          "Reads Dblore SQL dumps of this engine, and mysqldump / mariadb-dump files on MySQL and "
+            + "MariaDB, up to 64 MiB (up to about 400 MiB of memory while it is checked). Every "
+            + "statement is checked before anything runs: only tables, indexes, views, types, "
+            + "sequences, their rows and a dump's own session settings are accepted (mysqldump "
+            + "views are refused), and any other statement refuses the whole file. Restoring still "
+            + "runs the file's SQL on this connection: column defaults, checks, views and triggers "
             + "in it run as written, so restore only dumps you trust."
         )
         .font(.small)
