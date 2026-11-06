@@ -1,5 +1,6 @@
 // DatabaseConnectionManager+Restore.swift
-// Restore of a Dblore SQL dump (`SQLDumpWriter`) through the gate. `SQLRestorePlan` reads the
+// Restore of a Dblore SQL dump (`SQLDumpWriter`) through the gate, and on MySQL of a mysqldump /
+// mariadb-dump file (`SQLRestorePlan+MySQLDump.swift`). `SQLRestorePlan` reads the
 // script once: the 64 MiB cap, the header engine, one split, then every statement is classified
 // and must be a statement shape the dump writer emits for that engine (leading tokens; a data
 // INSERT is read to its end and may hold only the literals the writer emits). A version 2 dump
@@ -92,11 +93,11 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
   /// `index` is 0-based among the script's statements
   case statementRefused(index: Int, reason: String)
   case sessionSettingsUnreadable(String)
-  /// MySQL: every statement ran, but resetting foreign key checks, sql_mode or time_zone failed
-  /// (the connection was closed)
+  /// MySQL: every statement ran, but resetting the session's settings (`resetRestoreSession`)
+  /// failed (the connection was closed)
   case sessionNotReset(statementsRun: Int, reason: String)
-  /// MySQL: the restore failed or was cancelled (`restoreFailure`), and resetting foreign key
-  /// checks, sql_mode or time_zone failed too (`reason`; the connection was closed)
+  /// MySQL: the restore failed or was cancelled (`restoreFailure`), and resetting the session's
+  /// settings failed too (`reason`; the connection was closed)
   case restoreFailedSessionClosed(restoreFailure: String, reason: String)
   /// PostgreSQL: statement `index` holds a plain string with a backslash, read as
   /// `standard_conforming_strings = on` reads it, and the session reports `value`
@@ -152,16 +153,18 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .statementRefused(let index, let reason):
       "Statement \(index + 1) is not part of a SQL dump: \(reason). Nothing was executed."
     case .sessionSettingsUnreadable(let reason):
-      "Could not read this session's sql_mode and time_zone to reset them after the restore "
-        + "(\(reason)). Nothing was executed."
+      "Could not read this session's settings (sql_mode, time_zone, unique checks, notes) and "
+        + "server version to reset them after the restore (\(reason)). Nothing was executed."
     case .sessionNotReset(let count, let reason):
-      "The restore ran all \(count) statements, but this session's foreign key checks, "
-        + "sql_mode or time_zone could not be reset (\(reason)), so the connection was closed "
-        + "to drop those settings. Reconnect to continue with a fresh session."
+      "The restore ran all \(count) statements, but this session's table locks, character set, "
+        + "foreign key and unique checks, notes, sql_mode or time_zone could not be reset "
+        + "(\(reason)), so the connection was closed to drop those settings. Reconnect to "
+        + "continue with a fresh session."
     case .restoreFailedSessionClosed(let failure, let reason):
-      "The restore stopped: \(failure) Resetting this session's foreign key checks, sql_mode "
-        + "and time_zone also failed (\(reason)), so the connection was closed to drop those "
-        + "settings. Reconnect to continue with a fresh session."
+      "The restore stopped: \(failure) Resetting this session's table locks, character set, "
+        + "foreign key and unique checks, notes, sql_mode and time_zone also failed (\(reason)), "
+        + "so the connection was closed to drop those settings. Reconnect to continue with a "
+        + "fresh session."
     case .standardStringsOff(let index, let value):
       "Statement \(index + 1) holds a quoted string with a backslash, written for "
         + "standard_conforming_strings on (the backslash is a character), but this session has "
@@ -260,6 +263,9 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// PostgreSQL: the dropped tables and types `executeGatedRestore` checks in the target
   /// (`checkPostgresDropTargets`), nil when the script drops neither
   let postgresDrops: PostgresDrops?
+  /// MySQL: the statements of mariadb-dump's `/*M!100616 ...*/` lines, sent only to MariaDB
+  /// 10.6.16 or later (any other server reads them as comments)
+  let mariaDBStatements: Set<Int>
 
   /// What a PostgreSQL script drops and creates, as `objectKey` parts (`[schema, name]`)
   struct PostgresDrops: Sendable, Equatable {
@@ -285,7 +291,9 @@ nonisolated struct SQLRestorePlan: Sendable {
     case .postgresql, .mysql, .sqlite, .duckdb: break
     case .mongodb: throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
-    let version = try Self.checkHeader(script, engine: engine)
+    // mariadb-dump's sandbox line has no `;`: dropped, as the exact first line only
+    let sandbox = engine == .mysql ? Self.mariaDBSandboxPrefix(script) : 0
+    let version = try Self.checkHeader(script.unicodeScalars.dropFirst(sandbox), engine: engine)
     let dialect = engine.dialect
     progress(.planning(statementsPlanned: 0, statementCount: 0))
     let pieces: [String]
@@ -293,7 +301,7 @@ nonisolated struct SQLRestorePlan: Sendable {
       // One buffer at a time: the text goes once its scalars are built, they go once split
       var scalars: [Unicode.Scalar] = []
       scalars.reserveCapacity(bytes)
-      scalars.append(contentsOf: script.unicodeScalars)
+      scalars.append(contentsOf: script.unicodeScalars.dropFirst(sandbox))
       _ = consume script
       // Both read statements as C strings: a NUL would cut the statement the whitelist approved
       if engine == .sqlite || engine == .duckdb, scalars.contains("\0") {
@@ -310,6 +318,8 @@ nonisolated struct SQLRestorePlan: Sendable {
     // Each DROP's targets, checked once the loop ends against the last CREATE of each object
     var drops: [(index: Int, target: DropTarget)] = []
     var lastCreated: [ObjectKey: Int] = [:]
+    // MySQL: mysqldump's paired session lines read so far
+    var mysqlDump = MySQLDumpState()
     for (planned, piece) in pieces.enumerated() {
       // A file read cancelled while it is planned stops here
       try Task.checkCancellation()
@@ -318,8 +328,11 @@ nonisolated struct SQLRestorePlan: Sendable {
       }
       guard let classified = SQLStatementClassifier.classifyStatement(piece, dialect: dialect)
       else { continue }
-      let accepted = try Self.accept(
-        classified, engine: engine, version: version, index: statements.count)
+      let accepted =
+        engine == .mysql
+        ? try Self.acceptMySQL(
+          classified, version: version, index: statements.count, state: &mysqlDump)
+        : try Self.accept(classified, engine: engine, version: version, index: statements.count)
       if engine == .duckdb, accepted.kind == .schema {
         try Self.checkDuckDBSequences(
           classified.text, created: &sequences, index: statements.count)
@@ -339,6 +352,10 @@ nonisolated struct SQLRestorePlan: Sendable {
         "a Dblore dump drops only what it creates after the DROP, and this script never creates "
           + "\(drop.target.key.kind) \(drop.target.name) after it")
     }
+    if engine == .mysql {
+      try mysqlDump.finish(created: Set(lastCreated.keys.filter { $0.kind == "TABLE" }))
+    }
+    mariaDBStatements = mysqlDump.mariaDBOnly
     self.engine = engine
     self.statements = statements
     self.kinds = kinds
@@ -369,9 +386,13 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// The first line must be `headerPrefix` (version 1) or `dropHeaderPrefix` (version 2) +
   /// `engine.rawValue`, then a space or the line end. Compared scalar by scalar (no canonical
   /// equivalence). Returns the version. A later version's header (`isNewerHeader`) is refused
-  /// as such.
-  private static func checkHeader(_ script: String, engine: DatabaseType) throws -> Int {
-    let line = script.unicodeScalars.prefix { $0 != "\n" && $0 != "\r" }
+  /// as such. On MySQL a mysqldump or mariadb-dump header (`isMySQLDumpHeader`) reads as
+  /// version 2: its `DROP TABLE IF EXISTS` follow the same rule.
+  private static func checkHeader(
+    _ script: Substring.UnicodeScalarView, engine: DatabaseType
+  ) throws -> Int {
+    let line = script.prefix { $0 != "\n" && $0 != "\r" }
+    if engine == .mysql, isMySQLDumpHeader(line) { return 2 }
     let version: Int
     if line.starts(with: headerPrefix.unicodeScalars) {
       version = 1
@@ -533,10 +554,10 @@ nonisolated struct SQLRestorePlan: Sendable {
   }
 
   /// The refusal reason for a MySQL `SET NAMES`, also inside a version comment, other than the
-  /// dump's own `SET NAMES utf8mb4;` (any other spelling, charset or COLLATE): it names the
-  /// statement's text without its comments (`strippingComments`, which keeps a version comment),
-  /// whitespace runs shown as one space, cut at 100 characters. Nil for
-  /// anything else. Nothing is rewritten: the session already pinned utf8mb4 on connect.
+  /// forms `mysqlDumpLine` accepts (`SET NAMES utf8mb4 | utf8 | utf8mb3`, run as utf8mb4; any
+  /// other spelling, charset or COLLATE): it names the statement's text without its comments
+  /// (`strippingComments`, which keeps a version comment), whitespace runs shown as one space,
+  /// cut at 100 characters (`setNamesRefusalReason`). Nil for anything else.
   private static func setNamesRefusal(_ text: String, _ tokens: [SQLToken]) -> String? {
     guard let first = tokens.first, first.isWord("SET") || first.kind == .executableComment,
       !mysqlSettingTokens.contains(tokens)
@@ -549,9 +570,49 @@ nonisolated struct SQLRestorePlan: Sendable {
     var shown = tokenizer.strippingComments(text).split(whereSeparator: \.isWhitespace)
       .joined(separator: " ")
     if shown.count > 100 { shown = shown.prefix(100) + "…" }
-    return "\"\(shown)\" sets the connection's character set, but Dblore restores only the "
-      + "statements its own dumps write (SET NAMES utf8mb4;), and this session already uses "
-      + "utf8mb4"
+    return setNamesRefusalReason(shown)
+  }
+
+  /// MySQL: mysqldump's session lines first (`mysqlDumpLine`, run as their opened statement and
+  /// paired in `state`; after the first footer line only footer lines), then the lines of other
+  /// mysqldump options, refused naming the option (`mysqlDumpOptionRefusal`), and any other
+  /// statement that is one version comment, then `accept`. Records the tables INSERTs write into.
+  private static func acceptMySQL(
+    _ statement: ClassifiedStatement, version: Int, index: Int, state: inout MySQLDumpState
+  ) throws -> Accepted {
+    let tokens = tokens(statement.text, .mysql)
+    let line = mysqlDumpLine(tokens)
+    if state.inFooter {
+      guard case .restore? = line?.role else {
+        throw refusal(index, mysqlDumpAfterFooterRefusal)
+      }
+    }
+    if let line {
+      try state.apply(line, index: index)
+      guard let opened = SQLStatementClassifier.classifyStatement(line.executed, dialect: .mysql)
+      else { throw refusal(index, describe(.unknown)) }
+      return Accepted(statement: opened, kind: .sessionSetting)
+    }
+    let tokenizer = SQLTokenizer(dialect: .mysql)
+    let opened = tokenizer.tokens(withVersionCommentsOpened(statement.text, tokenizer))
+    if let reason = mysqlDumpOptionRefusal(tokens, opened: opened) {
+      throw refusal(index, reason)
+    }
+    if tokens.count == 1, tokens[0].kind == .executableComment {
+      throw refusal(index, setNamesRefusal(statement.text, tokens) ?? mysqlVersionCommentRefusal)
+    }
+    let accepted = try accept(statement, engine: .mysql, version: version, index: index)
+    if accepted.kind == .data, let table = mysqlInsertTarget(tokens) {
+      state.inserted.insert(table)
+    }
+    return accepted
+  }
+
+  /// The table a MySQL INSERT writes into (`objectKey`), or nil
+  private static func mysqlInsertTarget(_ tokens: [SQLToken]) -> ObjectKey? {
+    var shape = ShapeReader(tokens)
+    guard shape.words("INSERT", "INTO"), let parts = shape.nameParts() else { return nil }
+    return objectKey("TABLE", parts, engine: .mysql, creating: false)
   }
 
   private static func refusal(_ index: Int, _ reason: String) -> SQLRestoreError {
@@ -817,7 +878,7 @@ nonisolated extension SQLRestorePlan {
   // MARK: - Drops
 
   /// An object a DROP names or a CREATE makes, as the engine tells names apart (`objectKey`)
-  fileprivate struct ObjectKey: Hashable, Sendable {
+  struct ObjectKey: Hashable, Sendable {
     /// TABLE, VIEW, SEQUENCE, DOMAIN or TYPE (a SQLite virtual table is a TABLE)
     let kind: String
     /// Name parts as UTF-8 bytes: compared byte for byte, never by canonical equivalence
@@ -896,7 +957,7 @@ nonisolated extension SQLRestorePlan {
   /// - DuckDB: `<schema>.<name>`, ASCII case-insensitive, never a system name
   ///   (`isDuckDBSystemName`); a CREATE's one-part name is in `main` (the catalog leaves `main`
   ///   out), a DROP's must be qualified.
-  fileprivate static func objectKey(
+  static func objectKey(
     _ kind: String, _ parts: [SQLToken], engine: DatabaseType, creating: Bool
   ) -> ObjectKey? {
     func folded(_ token: SQLToken) -> [UInt8] {
@@ -1171,9 +1232,10 @@ nonisolated extension SQLRestorePlan {
   /// schema), and the SQLite `DELETE FROM sqlite_sequence WHERE name = '<table>'`.
   /// The literals are those `SQLDumpDataRenderer` writes: quoted text everywhere (PostgreSQL
   /// `'...'` or `E'...'`, bytea as its `\x...` text, DuckDB BLOB as its `\x...` text), NULL,
-  /// `X'<hex>'` on MySQL and SQLite, and SQLite `quote()` numbers (`-`, digits, `.digits`,
-  /// `e+NN` / `e-NN`). No function call, cast, operator, identifier, DEFAULT or subquery can run
-  /// inside a row.
+  /// `X'<hex>'` on MySQL and SQLite, SQLite `quote()` numbers (`-`, digits, `.digits`,
+  /// `e+NN` / `e-NN`), and mysqldump's MySQL values: numbers (`-`, digits, `.digits`, `eNN` /
+  /// `e+NN` / `e-NN`), `0x<hex>`, `b'<bits>'` and `_binary '...'`. No function call, cast,
+  /// operator, identifier, DEFAULT or subquery can run inside a row.
   static func dataRefusal(_ tokens: [SQLToken], engine: DatabaseType) -> String? {
     var shape = ShapeReader(tokens)
     if engine == .sqlite, shape.words("DELETE", "FROM", "SQLITE_SEQUENCE", "WHERE", "NAME") {
@@ -1207,7 +1269,7 @@ nonisolated extension SQLRestorePlan {
     repeat {
       guard shape.symbol("(") else { return notLiteral(shape, engine) }
       repeat {
-        guard shape.literal(blobs: blobs, numbers: numbers) else {
+        guard shape.literal(blobs: blobs, numbers: numbers, mysql: engine == .mysql) else {
           return notLiteral(shape, engine)
         }
       } while shape.symbol(",")
@@ -1222,6 +1284,7 @@ nonisolated extension SQLRestorePlan {
       switch engine {
       case .postgresql, .duckdb: "quoted text and NULL"
       case .sqlite: "quoted text, numbers, X'...' blobs and NULL"
+      case .mysql: "quoted text, numbers, X'...', 0x..., b'...' and _binary '...' values and NULL"
       default: "quoted text, X'...' blobs and NULL"
       }
     return "a dump's INSERT holds only literal values (\(forms)), not \(shape.describeNext)"
@@ -1472,8 +1535,9 @@ nonisolated private struct ShapeReader {
   }
 
   /// One value as the dump writes it: a quoted string, NULL, an `X'<hex>'` blob (`blobs`) or a
-  /// number (`numbers`)
-  mutating func literal(blobs: Bool, numbers: Bool) -> Bool {
+  /// number (`numbers`). `mysql` (mysqldump's values) also: a number (`mysqlNumber`), `0x<hex>`,
+  /// `b'<bits>'` and `_binary '<text>'`.
+  mutating func literal(blobs: Bool, numbers: Bool, mysql: Bool = false) -> Bool {
     if kind(.string) || words("NULL") { return true }
     if blobs, peek("X"), index + 1 < tokens.count, tokens[index + 1].kind == .string,
       Self.isEvenHex(tokens[index + 1].text)
@@ -1481,7 +1545,57 @@ nonisolated private struct ShapeReader {
       index += 2
       return true
     }
+    if mysql { return mysqlValue() }
     return numbers && number()
+  }
+
+  /// MySQL `0x<hex>` (lexed as `0` and the word `X<hex>`), `b'<0 or 1 ...>'`, `_binary '...'`, or
+  /// a number (`mysqlNumber`)
+  private mutating func mysqlValue() -> Bool {
+    guard index < tokens.count else { return false }
+    let token = tokens[index]
+    let next = index + 1 < tokens.count ? tokens[index + 1] : nil
+    if token.isWord("0"), let hex = next?.keyword, hex.count > 1, hex.hasPrefix("X"),
+      hex.utf8.dropFirst().allSatisfy({
+        (0x30...0x39).contains($0) || (0x41...0x46).contains($0)
+      })
+    {
+      index += 2
+      return true
+    }
+    if token.isWord("B"), let next, next.kind == .string,
+      next.text.unicodeScalars.allSatisfy({ $0 == "0" || $0 == "1" })
+    {
+      index += 2
+      return true
+    }
+    if token.isWord("_BINARY"), next?.kind == .string {
+      index += 2
+      return true
+    }
+    return mysqlNumber()
+  }
+
+  /// MySQL number as mysqldump writes it, `[-]<digits>[.<digits>][e[+|-]<digits>]`, as the
+  /// tokenizer splits it: `-2.25e30` is `-` `2` `.` `25` `E30`, `1.5e-10` is `1` `.` `5` `E`
+  /// `-` `10` (digits end a number; a word starting with `E` follows)
+  private mutating func mysqlNumber() -> Bool {
+    let start = index
+    _ = symbol("-")
+    var valid = digits()
+    if valid, symbol(".") { valid = digits() }
+    if valid, index < tokens.count, let word = tokens[index].keyword, word.hasPrefix("E") {
+      let exponent = word.utf8.dropFirst()
+      if exponent.isEmpty {
+        index += 1
+        valid = (symbol("+") || symbol("-")) && digits()
+      } else {
+        valid = exponent.allSatisfy { (0x30...0x39).contains($0) }
+        index += 1
+      }
+    }
+    if !valid { index = start }
+    return valid
   }
 
   /// SQLite `quote()` number: `[-]<digits>[.<digits>][e(+|-)<digits>]` (`9.0e+999` lexes as
@@ -1523,8 +1637,11 @@ nonisolated private struct ShapeReader {
 }
 
 extension DatabaseConnectionManager {
-  /// App-owned read, before a MySQL restore, of the settings its script changes
-  static let restoreSessionQuery = "SELECT @@SESSION.sql_mode, @@SESSION.time_zone"
+  /// App-owned read, before a MySQL restore, of the settings its script changes and the server
+  /// version (whether mariadb-dump's `/*M!100616 ...*/` lines run, `restoreNoteVerbosityQuery`)
+  static let restoreSessionQuery =
+    "SELECT @@SESSION.sql_mode, @@SESSION.time_zone, @@SESSION.unique_checks, "
+    + "@@SESSION.sql_notes, VERSION()"
   /// App-owned read, before a PostgreSQL restore whose plan read plain backslash strings as
   /// standard-conforming (`SQLRestorePlan.standardStringsStatement`)
   static let standardStringsQuery = "SHOW standard_conforming_strings"
@@ -1640,11 +1757,13 @@ extension DatabaseConnectionManager {
   ///   (`DatabaseError.sequentialBatchRefused`). A DuckDB file opened read-only is refused with
   ///   how to reopen it writable (`SQLRestorePlan.duckdbReadOnlyFileMessage`).
   /// - MySQL: `executeGatedSequentialBatch` (refused with a transaction open or under Protected
-  ///   mode, `DatabaseError.sequentialBatchRefused`). The session's sql_mode and time_zone are
-  ///   read first (a Cancel meanwhile: `DatabaseError.batchCancelled`); afterwards, on success,
-  ///   failure or cancel, `SET FOREIGN_KEY_CHECKS=1` and the read values are sent again. If that
-  ///   fails the session is closed and reported lost (`SQLRestoreError.sessionNotReset` after a
-  ///   complete restore, `.restoreFailedSessionClosed` after a failure or cancel).
+  ///   mode, `DatabaseError.sequentialBatchRefused`). The session's settings and server version
+  ///   are read first (a Cancel meanwhile: `DatabaseError.batchCancelled`); the plan's
+  ///   `mariaDBStatements` are sent only to MariaDB 10.6.16 or later. Afterwards, on success,
+  ///   failure or cancel, `resetRestoreSession` unlocks the tables and sends the read values
+  ///   again. If that fails the session is closed and reported lost
+  ///   (`SQLRestoreError.sessionNotReset` after a complete restore, `.restoreFailedSessionClosed`
+  ///   after a failure or cancel).
   /// `progress` gets the statements done after each one. Returns the plan's summary with
   /// `statementsRun`, `pending` and `insideUserTransaction` set.
   func executeGatedRestore(
@@ -1790,20 +1909,28 @@ extension DatabaseConnectionManager {
     // Read in the same turn, so a Cancel during the settings read stops the restore. Nothing
     // was changed yet, so a refusal here owes no reset.
     let generation = batchCancellationGeneration
-    let settings: (sqlMode: String, timeZone: String)
+    let settings: RestoreSessionSettings
     do {
-      settings = try await readRestoreSessionSettings()
+      settings = try await readRestoreSessionSettings(
+        readsNoteVerbosity: !plan.mariaDBStatements.isEmpty)
     } catch {
       try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
       throw error
     }
     // `sendSequentially` reads the generation again with no suspension before it
     try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
-    let counts: [Int]
+    // mariadb-dump's `/*M!100616 ...*/` lines are comments on any other server
+    let sent = plan.statements.indices.filter {
+      settings.runsMariaDBStatements || !plan.mariaDBStatements.contains($0)
+    }
+    let total = plan.statements.count
+    // Statements done: those before the next one sent, all of them once the last one is
+    let report: @Sendable (Int) -> Void = { done in progress(done < sent.count ? sent[done] : total)
+    }
     do {
-      counts = try await executeGatedSequentialBatch(
-        plan.statements.map(\.text), policy: policy, connectionEpoch: epoch, caller: caller,
-        expectedRows: nil, progress: progress)
+      _ = try await executeGatedSequentialBatch(
+        sent.map { plan.statements[$0].text }, policy: policy, connectionEpoch: epoch,
+        caller: caller, expectedRows: nil, progress: report)
     } catch {
       if let failure = await resetRestoreSession(settings, epoch: epoch) {
         await closeUnresetSession()
@@ -1814,9 +1941,9 @@ extension DatabaseConnectionManager {
     }
     if let failure = await resetRestoreSession(settings, epoch: epoch) {
       await closeUnresetSession()
-      throw SQLRestoreError.sessionNotReset(statementsRun: counts.count, reason: failure)
+      throw SQLRestoreError.sessionNotReset(statementsRun: total, reason: failure)
     }
-    return counts.count
+    return total
   }
 
   /// After the restore's first read: a Cancel meanwhile (`DatabaseError.batchCancelled`) or
@@ -1933,8 +2060,8 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// The restore's session settings (foreign key checks off, the dump's sql_mode and
-  /// time_zone) could not be reset: the session is forgotten and closed, and reported lost
+  /// The restore's session settings (table locks, foreign key and unique checks, notes, the
+  /// dump's sql_mode and time_zone) could not be reset: the session is forgotten and closed, and reported lost
   /// (`SessionLostEvent`), so nothing else runs on it and Reconnect opens a freshly pinned one
   private func closeUnresetSession() async {
     guard session != nil else { return }
@@ -1949,33 +2076,39 @@ extension DatabaseConnectionManager {
     await Self.closeForgotten(forgotten, includingConnection: true)
   }
 
-  /// The session's sql_mode (without the flags the app's lexer cannot read,
-  /// `MySQLSession.pinnedSQLMode`) and time_zone, checked to be plain names before they are
-  /// written into the reset statement.
+  /// What a MySQL restore reads before it runs and sends again after it (`resetRestoreSession`)
+  struct RestoreSessionSettings: Sendable {
+    /// Without the flags the app's lexer cannot read (`MySQLSession.pinnedSQLMode`)
+    let sqlMode: String
+    let timeZone: String
+    /// 0 or 1
+    let uniqueChecks: Int
+    /// 0 or 1
+    let sqlNotes: Int
+    /// MariaDB 10.6.16 or later: the plan's `mariaDBStatements` run
+    let runsMariaDBStatements: Bool
+    /// Read only when the `mariaDBStatements` run
+    let noteVerbosity: String?
+  }
+
+  /// The session's sql_mode, time_zone, unique_checks and sql_notes and the server version
+  /// (`restoreSessionQuery`), then, on MariaDB 10.6.16 or later when `readsNoteVerbosity`, its
+  /// note_verbosity (`restoreNoteVerbosityQuery`), each checked to be plain names or 0 / 1
+  /// before they are written into the reset statements.
   /// - Throws: `SQLRestoreError.sessionSettingsUnreadable`; `DatabaseError` from the session.
-  private func readRestoreSessionSettings() async throws -> (sqlMode: String, timeZone: String) {
-    let row: [CellValue]?
-    do {
-      row = try await withSession { session in
-        var rows: [[CellValue]] = []
-        for try await row in try await session.query(Self.restoreSessionQuery, binds: []).rows {
-          rows.append(row)
-        }
-        return rows.first
-      }
-    } catch let error as DatabaseError {
-      throw error
-    } catch {
-      throw SQLRestoreError.sessionSettingsUnreadable(error.localizedDescription)
-    }
-    guard let row, row.count == 2, case .string(let zone) = row[1] else {
-      throw SQLRestoreError.sessionSettingsUnreadable("unexpected answer")
-    }
+  private func readRestoreSessionSettings(
+    readsNoteVerbosity: Bool
+  ) async throws -> RestoreSessionSettings {
+    func unreadable(_ reason: String) -> SQLRestoreError { .sessionSettingsUnreadable(reason) }
+    guard let row = try await restoreSettingsRow(Self.restoreSessionQuery), row.count == 5,
+      case .string(let zone) = row[1], case .string(let version) = row[4],
+      let server = MySQLServerInfo(version: version)
+    else { throw unreadable("unexpected answer") }
     let mode: String
     switch row[0] {
     case .string(let text): mode = MySQLSession.pinnedSQLMode(text)
     case .null: mode = ""
-    default: throw SQLRestoreError.sessionSettingsUnreadable("unexpected sql_mode")
+    default: throw unreadable("unexpected sql_mode")
     }
     let modeIsPlain = mode.unicodeScalars.allSatisfy {
       ("A"..."Z").contains($0) || ("a"..."z").contains($0) || ("0"..."9").contains($0)
@@ -1988,23 +2121,76 @@ extension DatabaseConnectionManager {
           || "_+-:/".unicodeScalars.contains($0)
       }
     guard modeIsPlain, zoneIsPlain else {
-      throw SQLRestoreError.sessionSettingsUnreadable("unexpected sql_mode or time_zone")
+      throw unreadable("unexpected sql_mode or time_zone")
     }
-    return (mode, zone)
+    guard let uniqueChecks = Self.switchValue(row[2]), let sqlNotes = Self.switchValue(row[3])
+    else { throw unreadable("unexpected unique_checks or sql_notes") }
+    let runsMariaDB =
+      server.flavor == .mariadb && (server.major, server.minor, server.patch) >= (10, 6, 16)
+    var noteVerbosity: String?
+    if runsMariaDB, readsNoteVerbosity {
+      guard let row = try await restoreSettingsRow(Self.restoreNoteVerbosityQuery),
+        row.count == 1, case .string(let value) = row[0],
+        value.unicodeScalars.allSatisfy({
+          ("a"..."z").contains($0) || ("A"..."Z").contains($0) || $0 == "_" || $0 == ","
+        })
+      else { throw unreadable("unexpected note_verbosity") }
+      noteVerbosity = value
+    }
+    return RestoreSessionSettings(
+      sqlMode: mode, timeZone: zone, uniqueChecks: uniqueChecks, sqlNotes: sqlNotes,
+      runsMariaDBStatements: runsMariaDB, noteVerbosity: noteVerbosity)
   }
 
-  /// Foreign key checks back on, then the sql_mode and time_zone read before the restore, on the
-  /// same session (a reconnect re-pinned a new one). Each statement is tried. Returns the first
-  /// failure, or nil.
+  /// The first row of an app-owned settings read
+  /// - Throws: `DatabaseError` from the session; any other failure as
+  ///   `SQLRestoreError.sessionSettingsUnreadable`
+  private func restoreSettingsRow(_ sql: String) async throws -> [CellValue]? {
+    do {
+      return try await withSession { session in
+        var rows: [[CellValue]] = []
+        for try await row in try await session.query(sql, binds: []).rows {
+          rows.append(row)
+        }
+        return rows.first
+      }
+    } catch let error as DatabaseError {
+      throw error
+    } catch {
+      throw SQLRestoreError.sessionSettingsUnreadable(error.localizedDescription)
+    }
+  }
+
+  /// A 0 / 1 session switch, as an integer or its text
+  private static func switchValue(_ cell: CellValue) -> Int? {
+    switch cell {
+    case .int(let value) where value == 0 || value == 1: value
+    case .string("0"): 0
+    case .string("1"): 1
+    default: nil
+    }
+  }
+
+  /// On the same session (a reconnect re-pinned a new one): the tables unlocked, the pinned
+  /// utf8mb4 set again, foreign key checks back on, then the unique_checks, sql_notes, sql_mode,
+  /// time_zone (and note_verbosity) read before the restore, and the user variables of the dump's
+  /// session lines cleared (`SQLRestorePlan.mysqlDumpClearVariables`). Each statement is tried.
+  /// Returns the first failure, or nil.
   private func resetRestoreSession(
-    _ settings: (sqlMode: String, timeZone: String), epoch: UInt64
+    _ settings: RestoreSessionSettings, epoch: UInt64
   ) async -> String? {
     guard epoch == connectionEpoch, session != nil else { return nil }
     var failure: String?
-    for sql in [
-      "SET FOREIGN_KEY_CHECKS=1",
+    var statements = [
+      "UNLOCK TABLES", "SET NAMES utf8mb4", "SET FOREIGN_KEY_CHECKS=1",
+      "SET SESSION unique_checks = \(settings.uniqueChecks), sql_notes = \(settings.sqlNotes)",
       "SET SESSION sql_mode = '\(settings.sqlMode)', time_zone = '\(settings.timeZone)'",
-    ] {
+    ]
+    if let noteVerbosity = settings.noteVerbosity {
+      statements.append("SET SESSION note_verbosity = '\(noteVerbosity)'")
+    }
+    statements.append(SQLRestorePlan.mysqlDumpClearVariables)
+    for sql in statements {
       do {
         _ = try await sendTransactionControl(sql)
       } catch {
