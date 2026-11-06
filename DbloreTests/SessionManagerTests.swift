@@ -689,6 +689,58 @@ struct SessionManagerTests {
     #expect(!store.deletedKeys.contains(row.keychainKey))
   }
 
+  // MARK: - Favorite connections
+
+  @Test(
+    "A favorite survives 50 newer connections and form saves without the star; the Keychain key is unchanged"
+  )
+  func favoriteSurvivesHistoryCap() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let registry = LockRegistry()
+    func save(_ config: ConnectionConfig) -> Bool {
+      SessionManager.saveConnection(
+        config, defaults: harness.defaults, passwords: harness.store, registry: registry)
+    }
+    func history() -> [ConnectionHistoryEntry] {
+      SessionManager.loadHistory(
+        defaults: harness.defaults, passwords: harness.store, registry: registry)
+    }
+    let favorite = ConnectionConfig(host: "fav.example", database: "app", username: "ada")
+    #expect(save(favorite))
+    let row = try #require(history().first)
+    #expect(SessionManager.setFavoriteConnection(true, id: row.id, defaults: harness.defaults))
+
+    // The form has no star: a draft re-saving or editing the row keeps it
+    var draft = favorite
+    draft.name = "Favorite"
+    draft.groupName = "QA B12 / Prod"
+    #expect(save(draft))
+    #expect(
+      SessionManager.replaceConnection(
+        id: row.id, with: draft, defaults: harness.defaults, passwords: harness.store,
+        registry: registry))
+    // Saved first, so the oldest row: the one a plain trim drops
+    for index in 0..<SessionManager.maxConnectionHistorySize {
+      #expect(save(ConnectionConfig(host: "db\(index).example", database: "app", username: "ada")))
+    }
+
+    let rows = history()
+    #expect(rows.count == SessionManager.maxConnectionHistorySize)
+    let kept = try #require(rows.first { $0.id == row.id })
+    #expect(kept.config.isFavoriteConnection)
+    #expect(kept.config.groupName == "QA B12 / Prod")
+    #expect(!rows.contains { $0.config.host == "db0.example" })
+    // Neither the group nor the star is part of the Keychain identity
+    #expect(kept.keychainKey == row.keychainKey)
+    #expect(
+      ConnectionKeychainKey.password(for: kept.config)
+        == ConnectionKeychainKey.password(for: favorite))
+
+    #expect(SessionManager.setFavoriteConnection(false, id: row.id, defaults: harness.defaults))
+    #expect(history().first { $0.id == row.id }?.config.isFavoriteConnection == false)
+  }
+
   /// A saved entry from a newer build whose engine this build does not know.
   private static func unknownEntry() throws -> [String: Any] {
     let entry = ConnectionHistoryEntry(

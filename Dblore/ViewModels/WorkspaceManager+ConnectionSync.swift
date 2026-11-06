@@ -241,11 +241,11 @@ extension WorkspaceManager {
     Task { await connectionManager.updateConnectedMaskRules(rules, of: current) }
   }
 
-  /// `config` with the color, group, hidden schemas, scripts, attached databases and lock of the
-  /// saved row a save of `config` overwrites, for saves that do not come from the connection form
-  /// (an opened file, a rename), so they never erase what the form or the sidebar set, and for an
-  /// opened file's config, so the form opens on the saved values. Unchanged without that row,
-  /// and with Remember off.
+  /// `config` with the color, group, favorite star, hidden schemas, scripts, attached databases
+  /// and lock of the saved row a save of `config` overwrites, for saves that do not come from
+  /// the connection form (an opened file, a rename), so they never erase what the form or the
+  /// sidebar set, and for an opened file's config, so the form opens on the saved values.
+  /// Unchanged without that row, and with Remember off.
   static func keepingSavedAppearance(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
   ) -> ConnectionConfig {
@@ -255,6 +255,7 @@ extension WorkspaceManager {
     var config = config
     config.colorTag = saved.colorTag
     config.groupName = saved.groupName
+    config.isFavoriteConnection = saved.isFavoriteConnection
     config.hiddenSchemas = saved.hiddenSchemas
     config.isLocked = saved.isLocked
     return config.withScripts(of: saved)

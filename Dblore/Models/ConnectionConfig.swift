@@ -463,6 +463,10 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   /// The saved row asks to unlock before use. Only the saved rows decide (`LockRegistry`), never
   /// a config's own value; a save keeps the saved row's flag, and no export writes it.
   var isLocked: Bool = false
+  /// Listed first, under Favorites, and never dropped by the history cap. Set only by the star
+  /// on a saved row (`SessionManager.setFavoriteConnection`) and by an import; a save keeps the
+  /// saved row's flag. Distinct from the favorite SQL statements of a workspace.
+  var isFavoriteConnection = false
   /// Files attached on connect, at most `attachedDatabasesLimit`; carried from the saved row like
   /// the scripts. A connect uses only `validatedAttachedDatabases()`.
   var attachedDatabases: [AttachedDatabase] = [] {
@@ -528,12 +532,29 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     return Array(kept.sorted().prefix(hiddenSchemasLimit))
   }
 
-  /// Trimmed and cut to `groupNameLimit` characters; blank becomes nil.
+  /// Deepest level of a group path; deeper levels merge into this one.
+  nonisolated static let groupDepthLimit = 3
+
+  /// A group path: split on `/`, each level trimmed, empty levels dropped, levels past
+  /// `groupDepthLimit` merged into the last one with spaces, joined with
+  /// `ConnectionAppearance.pathSeparator`, then cut to `groupNameLimit` characters in total.
+  /// Blank becomes nil. Stable: a normalized path normalizes to itself.
   nonisolated static func normalizedGroupName(_ name: String?) -> String? {
-    guard let name else { return nil }
-    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let cut = String(trimmed.prefix(groupNameLimit)).trimmingCharacters(in: .whitespacesAndNewlines)
-    return cut.isEmpty ? nil : cut
+    guard let name, let path = canonicalGroupPath(name) else { return nil }
+    guard path.count > groupNameLimit else { return path }
+    // The cut can only end inside a level or a separator: one more pass drops the dangling part
+    return canonicalGroupPath(String(path.prefix(groupNameLimit)))
+  }
+
+  private nonisolated static func canonicalGroupPath(_ name: String) -> String? {
+    var levels = name.split(separator: "/", omittingEmptySubsequences: false)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    if levels.count > groupDepthLimit {
+      let merged = levels[(groupDepthLimit - 1)...].joined(separator: " ")
+      levels = Array(levels.prefix(groupDepthLimit - 1)) + [merged]
+    }
+    return levels.isEmpty ? nil : levels.joined(separator: ConnectionAppearance.pathSeparator)
   }
 
   nonisolated static func clampedAIRules(_ rules: String) -> String {
@@ -578,6 +599,8 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     case preConnectScript, postDisconnectScript, passwordCommandScript, scriptTimeoutSeconds
     // Connection lock (absent unless locked)
     case isLocked
+    // Favorite connection (absent unless starred)
+    case isFavoriteConnection
     // Attached databases (absent unless set)
     case attachedDatabases
     // Column mask rules (absent unless set)
@@ -662,6 +685,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
       ((try? container.decodeIfPresent(Int.self, forKey: .scriptTimeoutSeconds))
       ?? nil).map(ConnectionScriptRunner.clampedTimeout)
     isLocked = try container.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false
+    // A value of the wrong type stars nothing
+    isFavoriteConnection =
+      ((try? container.decodeIfPresent(Bool.self, forKey: .isFavoriteConnection)) ?? nil) ?? false
     // A list of the wrong type attaches nothing; names and paths are checked on connect
     attachedDatabases = Array(
       (((try? container.decodeIfPresent([AttachedDatabase].self, forKey: .attachedDatabases))
@@ -742,6 +768,9 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     try container.encodeIfPresent(scriptTimeoutSeconds, forKey: .scriptTimeoutSeconds)
     if isLocked {
       try container.encode(isLocked, forKey: .isLocked)
+    }
+    if isFavoriteConnection {
+      try container.encode(isFavoriteConnection, forKey: .isFavoriteConnection)
     }
     if !attachedDatabases.isEmpty {
       try container.encode(attachedDatabases, forKey: .attachedDatabases)

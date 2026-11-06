@@ -1254,12 +1254,27 @@ enum DuckDBFilePicker {
   }
 }
 
-/// Group name field with a menu of the groups already used by saved connections. Typing goes
-/// to a draft: `groupName` trims on every write, which would drop a space typed between words.
+/// Group name field with a menu of the group paths already used by saved connections. A `/`
+/// nests a group, up to three levels (`ConnectionConfig.normalizedGroupName`). Typing goes to a
+/// draft: `groupName` trims on every write, which would drop a space typed between words.
 private struct ConnectionGroupField: View {
   @Binding var groupName: String?
   @State private var draft = ""
   @State private var savedGroups: [String] = []
+
+  /// The typed path as the menu checks it; picking a path replaces the draft
+  private var pickedGroup: Binding<String> {
+    Binding(
+      get: { ConnectionConfig.normalizedGroupName(draft) ?? "" },
+      set: { draft = $0 })
+  }
+
+  /// The saved paths, and the typed one when it is new, so the menu always checks a row
+  private var groupChoices: [String] {
+    let typed = ConnectionConfig.normalizedGroupName(draft)
+    guard let typed, !savedGroups.contains(typed) else { return savedGroups }
+    return savedGroups + [typed]
+  }
 
   var body: some View {
     HStack(spacing: Spacing.xs) {
@@ -1267,28 +1282,22 @@ private struct ConnectionGroupField: View {
         .textFieldStyle(.plain)
         .autocorrectionDisabled()
         .accessibilityLabel("Group")
+        .help("Nest groups with /, up to three levels, for example Prod / EU")
+        .inputCapsuleStyle()
 
       if !savedGroups.isEmpty {
-        Menu {
-          ForEach(savedGroups, id: \.self) { name in
-            Button(name) { draft = name }
+        CapsulePickerMenu(title: "Groups") {
+          Picker("", selection: pickedGroup) {
+            Text("None").tag("")
+            ForEach(groupChoices, id: \.self) { Text($0).tag($0) }
           }
-        } label: {
-          Image(systemName: "chevron.down")
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(.foregroundMuted)
-            .frame(width: 16)
-            .contentShape(Rectangle())
+          .pickerStyle(.inline)
+          .labelsHidden()
         }
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .linkPointer()
         .help("Saved groups")
         .accessibilityLabel("Saved groups")
       }
     }
-    .inputCapsuleStyle()
     .onAppear {
       draft = groupName ?? ""
       let history = SessionManager.loadHistory(passwords: NoPasswordStore())

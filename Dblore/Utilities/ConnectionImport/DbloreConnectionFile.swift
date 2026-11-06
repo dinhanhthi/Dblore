@@ -119,6 +119,9 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
     var aiRules: String
     var colorTag: String?
     var groupName: String?
+    /// True for a favorite connection; absent otherwise and from files without favorites, so
+    /// an older reader ignores it
+    var isFavoriteConnection: Bool?
     var hiddenSchemas: [String]
     /// Plain file names in the Application Scripts folder (absent from files without them)
     var preConnectScript: String?
@@ -304,6 +307,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     aiRules = config.aiRules
     colorTag = config.colorTag?.rawValue
     groupName = config.groupName
+    isFavoriteConnection = config.isFavoriteConnection ? true : nil
     hiddenSchemas = config.hiddenSchemas
     preConnectScript = config.preConnectScript
     postDisconnectScript = config.postDisconnectScript
@@ -415,6 +419,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     config.aiRules = ConnectionConfig.clampedAIRules(aiRules)
     config.hiddenSchemas = ConnectionConfig.normalizedHiddenSchemas(hiddenSchemas)
     config.maskRules = rules
+    config.isFavoriteConnection = isFavoriteConnection ?? false
 
     typealias Warning = DbloreConnectionFile.Warning
     if tls == .disable { warnings.append(Warning.tlsOff) }

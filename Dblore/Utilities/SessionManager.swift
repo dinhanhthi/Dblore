@@ -228,6 +228,9 @@ class SessionManager {
     let keptID = index.map { history[$0].id }
     // It keeps the row's lock too: a form draft never changes it (only the lock toggle does)
     if let index { config.isLocked = history[index].config.isLocked }
+    // And its star, which the form has no control for: only the star on a saved row or an
+    // import sets it
+    config.isFavoriteConnection = index.map { history[$0].config.isFavoriteConnection } ?? false
     // Every saved row of a locked identity carries the lock (another database of the login)
     let inheritsLock = hasLockedRow(of: config, in: history)
     if inheritsLock { config.isLocked = true }
@@ -247,9 +250,12 @@ class SessionManager {
     }
 
     // Trim to max size: the oldest unlocked rows go, never a locked row (its lock would be lost
-    // without asking) nor the row just saved; locked rows alone may stay over the cap
+    // without asking), a favorite, nor the row just saved; locked and favorite rows alone may
+    // stay over the cap
     while history.count > maxConnectionHistorySize,
-      let oldest = history.lastIndex(where: { !$0.config.isLocked && $0.id != newEntry.id })
+      let oldest = history.lastIndex(where: {
+        !$0.config.isLocked && !$0.config.isFavoriteConnection && $0.id != newEntry.id
+      })
     {
       history.remove(at: oldest)
     }
@@ -478,6 +484,8 @@ class SessionManager {
     // The form's toggle locked a retargeted draft no saved row matched: the lock is born here
     let locksDraft = config.isLocked
     config.isLocked = previous.config.isLocked || config.isLocked
+    // The row keeps its star: the form has no control for it
+    config.isFavoriteConnection = previous.config.isFavoriteConnection
     // Counted before the rows on the new key are removed: retargeting an unlocked row onto a
     // locked login keeps that login locked
     let inheritsLock = hasLockedRow(of: config, in: history)
@@ -703,6 +711,23 @@ class SessionManager {
         of: matched.map { history[$0].config }, lockedBefore: lockedBefore,
         generation: generation, registry: registry)
     }
+    return true
+  }
+
+  // MARK: - Favorite Connections
+
+  /// The star on a saved row: sets `isFavoriteConnection` on row `id` only. Display metadata,
+  /// so a locked row needs no unlock; its position and last-used date stay. Reads no Keychain
+  /// item. False when no row has `id` or the history could not be written.
+  @discardableResult
+  static func setFavoriteConnection(
+    _ favorite: Bool, id: UUID, defaults: UserDefaults = .standard
+  ) -> Bool {
+    var history = storedEntries(defaults: defaults).known
+    guard let index = history.firstIndex(where: { $0.id == id }) else { return false }
+    history[index].config.isFavoriteConnection = favorite
+    guard let encoded = encodedHistory(history, defaults: defaults) else { return false }
+    writeHistory { defaults.set(encoded, forKey: historyKey) }
     return true
   }
 

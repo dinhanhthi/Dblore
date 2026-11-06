@@ -146,6 +146,29 @@ struct DbloreConnectionFileTests {
     #expect(lenient.favorites == [.init(name: "a", sql: "SELECT 1")])
   }
 
+  @Test("The favorite star and a nested group round-trip in v1; a v1 file without them imports")
+  func favoriteConnectionRoundTrip() throws {
+    var config = Self.fullConfig()
+    config.groupName = "QA B12 / Prod / EU"
+    config.isFavoriteConnection = true
+    let file = DbloreConnectionFile(
+      connections: [try #require(DbloreConnectionFile.Connection(config: config))])
+    let data = try file.encoded()
+    #expect(try Self.json(data).contains("\"version\" : 1"))
+    let imported = try #require(DbloreConnectionFile.decode(data).contents().connections.first)
+    #expect(imported.config.isFavoriteConnection)
+    #expect(imported.config.groupName == "QA B12 / Prod / EU")
+
+    // Unstarred rows write no key; a file without it imports them unstarred
+    let plain = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    let plainData = try DbloreConnectionFile(connections: [plain]).encoded()
+    #expect(!(try Self.json(plainData)).contains("isFavoriteConnection"))
+    let older = try #require(
+      DbloreConnectionFile.decode(plainData).contents().connections.first)
+    #expect(!older.config.isFavoriteConnection)
+    #expect(older.config.groupName == "Prod")
+  }
+
   /// A MongoDB row at mongo.example.com:27017 carrying `uri`.
   private static func mongoEntry(
     uri: String, sslMode: SSLMode

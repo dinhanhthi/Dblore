@@ -104,6 +104,7 @@ struct DataModelConnectionConfigTests {
   func colorAndGroupCoding() throws {
     #expect(try encodedObject(ConnectionConfig(host: "h"))["colorTag"] == nil)
     #expect(try encodedObject(ConnectionConfig(host: "h"))["groupName"] == nil)
+    #expect(try encodedObject(ConnectionConfig(host: "h"))["isFavoriteConnection"] == nil)
     #expect(try encodedObject(ConnectionConfig(host: "h"))["hiddenSchemas"] == nil)
     #expect(try encodedObject(ConnectionConfig(host: "h"))["preConnectScript"] == nil)
     #expect(try encodedObject(ConnectionConfig(host: "h"))["scriptTimeoutSeconds"] == nil)
@@ -116,7 +117,9 @@ struct DataModelConnectionConfigTests {
     config.passwordCommandScript = "pw.sh"
     config.scriptTimeoutSeconds = 900
     #expect(config.scriptTimeoutSeconds == 300)
+    config.isFavoriteConnection = true
     let object = try encodedObject(config)
+    #expect(object["isFavoriteConnection"] as? Bool == true)
     #expect(object["preConnectScript"] as? String == "vpn-up.sh")
     #expect(object["postDisconnectScript"] == nil)
     #expect(object["colorTag"] as? String == "Pink")
@@ -126,6 +129,7 @@ struct DataModelConnectionConfigTests {
       ConnectionConfig.self, from: try JSONEncoder().encode(config))
     #expect(decoded.colorTag == .pink)
     #expect(decoded.groupName == "Prod")
+    #expect(decoded.isFavoriteConnection)
     #expect(decoded.hiddenSchemas == ["audit", "pg_toast"])
     #expect(decoded == config)
 
@@ -163,6 +167,29 @@ struct DataModelConnectionConfigTests {
     let blank = try JSONDecoder().decode(
       ConnectionConfig.self, from: try JSONSerialization.data(withJSONObject: object))
     #expect(blank.groupName == nil)
+  }
+
+  @Test("Group paths split on /, drop empty levels, merge levels past the third, stay within 64")
+  func groupPathNormalization() {
+    let normalize = ConnectionConfig.normalizedGroupName
+    #expect(normalize("Prod") == "Prod")
+    #expect(normalize(" QA B12/Prod //EU ") == "QA B12 / Prod / EU")
+    #expect(normalize(" / / ") == nil)
+    // A fourth level and beyond merge into the third
+    #expect(normalize("a/b/c/d/e") == "a / b / c d e")
+    // Cut to 64 characters without a dangling separator, and stable on a second pass
+    let long = String(repeating: "x", count: 61) + "/" + String(repeating: "y", count: 10)
+    let cut = normalize(long)
+    #expect(cut == String(repeating: "x", count: 61))
+    for path in [long, "a//b/c/d", String(repeating: "ab/", count: 40), "  Prod / EU  "] {
+      let once = normalize(path)
+      #expect((once?.count ?? 0) <= ConnectionConfig.groupNameLimit)
+      #expect(normalize(once) == once, "not stable: \(path)")
+    }
+    var config = ConnectionConfig(host: "localhost", groupName: "Prod/EU")
+    #expect(config.groupName == "Prod / EU")
+    config.groupName = "a/b/c/d"
+    #expect(config.groupName == "a / b / c d")
   }
 
   @Test("AI access and rules round-trip; an unknown policy decodes as use default")
