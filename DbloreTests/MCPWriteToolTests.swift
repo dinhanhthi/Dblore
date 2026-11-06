@@ -6,7 +6,8 @@
 // MongoDB a database, account or validation change, a `system.*` collection, or a `$out` /
 // `$merge` or `$lookup` / `$graphLookup` / `$unionWith` naming another database), is refused
 // before any approval; an allowed one (emoji joiners and unusual spaces in a literal, the
-// covered object kinds) reaches it; a denied or timed-out call executes nothing, and so does an approved one whose settings or saved
+// covered object kinds) reaches it; one that removes data for good asks the typed target name
+// (`DestructiveStatementRule`), and one whose target cannot be read is refused; a denied or timed-out call executes nothing, and so does an approved one whose settings or saved
 // connection changed during the wait; an approved one runs once on the writable manager,
 // recorded as `.mcp`, even if the client disconnects meanwhile (a cancelled run is an unknown
 // outcome), while the read tools keep the read-only manager.
@@ -545,6 +546,51 @@ struct MCPWriteToolTests {
     #expect(
       HiddenCharacterRule.markingInvisibles("'\u{2764}\u{FE0F}\u{1F469}\u{200D}\u{00AD}\u{200C}'")
         == "'\u{2764}[U+FE0F]\u{1F469}[U+200D][U+00AD][U+200C]'")
+  }
+
+  @Test("A change that removes data for good asks the typed name; an unnamed one is refused")
+  func destructiveAsksTypedName() async {
+    let approver = FakeApprover(answer: false)
+    let source = FakeWriteSource()
+    let data = Self.entry()
+    let duckdb = Self.entry(.duckdb) { $0.readOnlyFile = false }
+    let mongoData = Self.entry(.mongodb)
+    let mongo = Self.entry(.mongodb)
+    let service = service(
+      [data, duckdb, mongoData, mongo],
+      scopes: [data.id: .data, duckdb.id: .schema, mongoData.id: .data, mongo.id: .schema],
+      approver: approver, writes: source)
+    let removes = "This removes data for good."
+    let noWhere = "No WHERE: this changes every row."
+    let asked: [(ConnectionHistoryEntry, String, String?, [String])] = [
+      (data, "DELETE FROM t", "t", [noWhere, removes]),
+      (duckdb, "CREATE OR REPLACE TABLE d AS SELECT 1", "d", [removes]),
+      (mongoData, "db.users.deleteMany({})", "users", [noWhere, removes]),
+      // dropIndex keeps the plain Approve, whatever form names the index
+      (mongo, "db.users.dropIndex(\"a_1\")", nil, [removes]),
+      (mongo, "db.users.dropIndex({a: 1})", nil, [removes]),
+    ]
+    for (entry, sql, name, warnings) in asked {
+      _ = await write(service, entry.id, sql)
+      let request = approver.requests.last
+      #expect(request?.statement == sql)
+      #expect(request?.confirmName == name, "\(sql)")
+      #expect(request?.warnings == warnings, "\(sql)")
+    }
+    let refused: [(ConnectionHistoryEntry, String, MCPToolError)] = [
+      (data, "WITH x AS (SELECT 1) DELETE FROM t", .writeUnnamedTarget(allRows: true)),
+      (duckdb, "DROP TABLE a, b", .writeUnnamedTarget(allRows: false)),
+    ]
+    for (entry, sql, expected) in refused {
+      let result = await write(service, entry.id, sql)
+      #expect(result.isError)
+      #expect(result.text == expected.localizedDescription, "\(sql)")
+    }
+    #expect(
+      MCPToolError.writeUnnamedTarget(allRows: true).localizedDescription.hasPrefix(
+        "Name the table in a single-table statement, or add a WHERE."))
+    #expect(approver.requests.count == asked.count)
+    #expect(source.statements.isEmpty)
   }
 
   @Test("A denied or timed-out call executes nothing; an approved one runs once")

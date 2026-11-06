@@ -63,7 +63,7 @@ struct AIProposalRunTests {
     #expect(Self.check("TRUNCATE users").kind == .destructive)
     #expect(Self.check("SELECT 1; DROP VIEW v").kind == .destructive)
     let all = Self.check("DELETE FROM users")
-    #expect(all.kind == .write && all.affectsAllRows)
+    #expect(all.kind == .destructive && all.affectsAllRows && all.confirmName == "users")
   }
 
   @Test("DROP and TRUNCATE name their object as written; several objects name none")
@@ -272,6 +272,41 @@ struct AIProposalRunTests {
       // queries finish before the next statement is checked
       await manager.awaitSchemaLoad()
     }
+  }
+
+  @Test("A DELETE without WHERE needs the table name typed first")
+  func typedNameForDeleteWithoutWhere() async throws {
+    let live = FakeDatabaseSessionFactory(capabilities: .contract())
+    let manager = try await connectedManager(live: live)
+    let tabID = manager.newSQLFile()
+    let tab = try #require(manager.viewModel(for: tabID))
+    let sql = "DELETE FROM t"
+    let proposal = proposal(sql, for: manager)
+
+    for typed in [nil, "", "other", "T"] {
+      #expect(
+        manager.runAIProposal(proposal, confirmedName: typed)
+          == .refused("Type t to run this statement."))
+    }
+    try? await Task.sleep(for: .milliseconds(30))
+    #expect(!live.statements.contains(sql))
+    #expect(manager.runAIProposal(proposal, confirmedName: " t ") == .ran(tabID: tabID))
+    await waitUntil { live.statements.contains(sql) && !tab.isEditorQueryRunning }
+    #expect(live.statements.contains(sql))
+  }
+
+  @Test("A DELETE without WHERE whose table cannot be named is refused")
+  func unnamedDeleteWithoutWhereRefused() async throws {
+    let live = FakeDatabaseSessionFactory(capabilities: .contract())
+    let manager = try await connectedManager(live: live)
+    let sql = "WITH x AS (SELECT 1) DELETE FROM t"
+
+    #expect(
+      manager.runAIProposal(proposal(sql, for: manager), confirmedName: "t")
+        == .refused("Name the table in a single-table statement, or add a WHERE."))
+    try? await Task.sleep(for: .milliseconds(30))
+    #expect(manager.tabs.isEmpty)
+    #expect(!live.statements.contains(sql))
   }
 
   @Test("MongoDB drop() and deleteMany({}) need the collection name typed first")

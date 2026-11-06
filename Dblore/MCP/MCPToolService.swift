@@ -37,7 +37,9 @@
 // connection's database (`isCoveredMongoCommand`) are refused), the saved
 // connection's protection level, and its commit style: Review and Password need the user in
 // Dblore, so they are refused; Immediate and Confirm are covered by the approval. Then the user
-// approves that one call (`MCPWriteApproving`; Deny, the 120 s timeout once shown, a full queue
+// approves that one call (`MCPWriteApproving`; a change that removes data for good needs its
+// target's name typed, and one whose single target cannot be read is refused before asking,
+// `DestructiveStatementRule`; Deny, the 120 s timeout once shown, a full queue
 // or a cancelled request execute nothing), every check above runs again on the settings and saved
 // connection as they are then (anything narrowed or edited refuses), and it runs on the
 // connection's writable manager through the execution gate with the saved connection's policy.
@@ -156,6 +158,9 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
   case writeNonASCIIWord
   case writeTooLong
   case writeTooManyWaiting
+  /// Removes data for good, with no single target name to type: an UPDATE or DELETE that
+  /// changes every row (`allRows`) or another destructive statement
+  case writeUnnamedTarget(allRows: Bool)
   case writeConnectionChanged
   case writeOutcomeUnknown
   case cliReadOnly
@@ -233,6 +238,13 @@ nonisolated enum MCPToolError: Error, Equatable, LocalizedError {
     case .writeTooManyWaiting:
       "Too many write requests are waiting for approval in Dblore. Try again once they are "
         + "answered. Nothing was sent to the database."
+    case .writeUnnamedTarget(let allRows):
+      allRows
+        ? "Name the table in a single-table statement, or add a WHERE. Nothing was sent to the "
+          + "database."
+        : "This change removes data for good, and approving it needs one target name typed in "
+          + "Dblore; none could be read from the statement. Name a single object. Nothing was "
+          + "sent to the database."
     case .writeConnectionChanged:
       "The connection's settings changed in Dblore while the change waited for approval. "
         + "Nothing was sent to the database."
@@ -338,7 +350,10 @@ nonisolated struct MCPToolService: Sendable {
       + "MongoDB, database commands, users and roles, collMod, hideIndex, unhideIndex, "
       + "createView, system.* collections, and $out, $merge, $lookup, $graphLookup or "
       + "$unionWith naming another database are refused too. The user must "
-      + "approve every call in Dblore; a call not approved within 2 minutes of being shown is "
+      + "approve every call in Dblore; a change that removes data for good (DROP, TRUNCATE, "
+      + "CREATE OR REPLACE TABLE, an UPDATE or DELETE without WHERE, ...; on MongoDB drop and "
+      + "deleteMany({})) also needs its target's name typed there, and one whose single target "
+      + "cannot be read (WITH ... DELETE, several tables) is refused before asking; a call not approved within 2 minutes of being shown is "
       + "denied and nothing runs; requests wait in line behind others. Returns the affected row "
       + "count. Changes are recorded in Dblore's History.",
     inputSchema: schema(
@@ -554,13 +569,16 @@ nonisolated struct MCPToolService: Sendable {
     do {
       let (statement, _) = try await Self.checkCall(
         sql, statements: statements, config: entry.config, scope: scope, writes: writes)
+      let confirmName = try Self.confirmName(
+        of: statement, dialect: dialect, database: entry.config.database)
       let approved = try await writes.approver.approve(
         MCPWriteApprovalRequest(
           connectionID: entry.id, clientName: Self.clientName,
           connectionName: Self.label(of: entry.config),
           engine: entry.config.databaseType.displayName, statement: sql,
           classification: DatabaseConnectionManager.describe(statement.kind),
-          warnings: Self.warnings(statement)))
+          warnings: Self.warnings(statement, confirmName: confirmName),
+          confirmName: confirmName))
       guard approved, !Task.isCancelled else { throw MCPToolError.writeDenied }
       let policy = try await recheckAfterApproval(
         arguments, entry: entry, sql: sql, statements: statements, writes: writes)
@@ -1091,12 +1109,39 @@ nonisolated struct MCPToolService: Sendable {
     }
   }
 
-  /// No WHERE, and removes data for good.
-  private static func warnings(_ statement: ClassifiedStatement) -> [String] {
+  /// No WHERE, and removes data for good (a typed `confirmName`, or a MongoDB command the
+  /// classifier marks destructive).
+  private static func warnings(
+    _ statement: ClassifiedStatement, confirmName: String?
+  ) -> [String] {
     var warnings: [String] = []
     if statement.affectsAllRows { warnings.append("No WHERE: this changes every row.") }
-    if statement.isDestructive { warnings.append("This removes data for good.") }
+    if statement.isDestructive || confirmName != nil {
+      warnings.append("This removes data for good.")
+    }
     return warnings
+  }
+
+  /// The target's name the user types to approve `statement` (`DestructiveStatementRule`); nil
+  /// for a plain Approve. On MongoDB only `drop()` and `deleteMany` take the rule's result:
+  /// dropIndex removes no data and keeps the plain Approve, and dropDatabase never reaches here
+  /// (`isCoveredMongoCommand`). Throws `writeUnnamedTarget` when the rule reads no single target.
+  private static func confirmName(
+    of statement: ClassifiedStatement, dialect: SQLDialect, database: String
+  ) throws -> String? {
+    if dialect == .mongodb {
+      switch try? MongoshParser.parse(statement.text) {
+      case .admin(.drop), .deleteMany: break
+      default: return nil
+      }
+    }
+    switch DestructiveStatementRule.evaluate(statement, dialect: dialect, database: database) {
+    case .none: return nil
+    case .confirm(let name): return name
+    case .unnamed:
+      throw MCPToolError.writeUnnamedTarget(
+        allRows: statement.kind == .dml && statement.affectsAllRows)
+    }
   }
 
   /// `{"affected_rows": n}`; no rows are returned.

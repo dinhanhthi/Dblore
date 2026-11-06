@@ -79,13 +79,7 @@ struct AIProposalCardView: View {
           .buttonStyle(AICodeActionButtonStyle())
           .disabled(onInsert == nil)
           .help(onInsert == nil ? "No active tab" : "Insert into the active tab (does not run)")
-        Button("Run") { run(check) }
-          .buttonStyle(AICodeActionButtonStyle())
-          .disabled(!canRun(check))
-          .help(
-            onRun == nil
-              ? "Not connected"
-              : "Run in the active query tab, with the same checks as typed SQL")
+        runButton(check)
       }
       HStack(spacing: Spacing.xs) {
         badge(check.kind.label, color: color(check.kind))
@@ -97,6 +91,24 @@ struct AIProposalCardView: View {
     .padding(.horizontal, Spacing.sm)
     .padding(.vertical, Spacing.xs)
     .background(Color.cardHeaderBackground)
+  }
+
+  /// Run; red for a destructive statement, at the size of the header's other buttons
+  @ViewBuilder
+  private func runButton(_ check: AIProposalCheck) -> some View {
+    let button = Button("Run") { run(check) }
+      .disabled(!canRun(check))
+      .help(
+        onRun == nil
+          ? "Not connected"
+          : "Run in the active query tab, with the same checks as typed SQL")
+    if check.kind == .destructive {
+      button
+        .buttonStyle(DangerButtonStyle(hPadding: Spacing.sm))
+        .controlSize(.mini)
+    } else {
+      button.buttonStyle(AICodeActionButtonStyle())
+    }
   }
 
   /// The exact text, with the invisible characters it may run as markers

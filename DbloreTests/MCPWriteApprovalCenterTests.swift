@@ -1,8 +1,8 @@
 // MCPWriteApprovalCenterTests.swift
 // The MCP write approval broker: an unanswered request is denied after the timeout (counted
 // from when it is shown), a cancelled one is denied, an approval covers one call only (the next
-// call asks again), Approve is ignored just after a request shows, and at most
-// `maxWaiting` requests wait.
+// call asks again), Approve is ignored just after a request shows, a request with a target name
+// is approved only with that name typed for it, and at most `maxWaiting` requests wait.
 
 import Foundation
 import Testing
@@ -25,11 +25,14 @@ private final class RecordingPresenter: MCPWriteApprovalPresenting {
 @MainActor
 @Suite("MCP write approval center", .timeLimit(.minutes(1)))
 struct MCPWriteApprovalCenterTests {
-  private func request(connection: UUID = UUID()) -> MCPWriteApprovalRequest {
+  private func request(
+    connection: UUID = UUID(), confirmName: String? = nil
+  ) -> MCPWriteApprovalRequest {
     MCPWriteApprovalRequest(
       connectionID: connection, clientName: "agent", connectionName: "Orders",
       engine: "postgresql",
-      statement: "DELETE FROM t WHERE id = 1", classification: "Data modification", warnings: [])
+      statement: "DELETE FROM t WHERE id = 1", classification: "Data modification", warnings: [],
+      confirmName: confirmName)
   }
 
   /// Waits until `center` has `count` requests waiting.
@@ -112,6 +115,46 @@ struct MCPWriteApprovalCenterTests {
     let current = try #require(center.current)
     #expect(!center.approveEnabled)
     center.decide(current.id, approved: true)
+    #expect(center.current?.id == current.id)
+    center.decide(current.id, approved: false)
+    #expect(try await !result)
+  }
+
+  @Test("A request with a target name is approved only with that name typed for it")
+  func typedNameApproves() async throws {
+    let center = MCPWriteApprovalCenter(timeout: .seconds(3600), approveDelay: .zero)
+    let first = request(confirmName: "t")
+    let second = request(confirmName: "t")
+    async let firstResult = center.request(first)
+    try await waitFor(center)
+    async let secondResult = center.request(second)
+    try await waitFor(center, count: 2)
+    for typed in [nil, "", "T", "x"] {
+      center.decide(first.id, approved: true, typed: typed)
+      #expect(center.current?.id == first.id, "\(typed ?? "nil")")
+    }
+    // The name typed while the first shows does not approve the queued second
+    center.decide(second.id, approved: true, typed: "t")
+    #expect(center.queue.map(\.id) == [first.id, second.id])
+    center.decide(first.id, approved: true, typed: " t ")
+    #expect(try await firstResult)
+    #expect(center.current?.id == second.id)
+    // An answered id does nothing; the second needs its own typed name
+    center.decide(first.id, approved: true, typed: "t")
+    center.decide(second.id, approved: true)
+    #expect(center.current?.id == second.id)
+    center.decide(second.id, approved: true, typed: "t")
+    #expect(try await secondResult)
+    #expect(center.queue.isEmpty)
+  }
+
+  @Test("The matching name is still ignored while the enable delay runs")
+  func typedNameIgnoredDuringDelay() async throws {
+    let center = MCPWriteApprovalCenter(timeout: .seconds(3600), approveDelay: .seconds(3600))
+    async let result = center.request(request(confirmName: "t"))
+    try await waitFor(center)
+    let current = try #require(center.current)
+    center.decide(current.id, approved: true, typed: "t")
     #expect(center.current?.id == current.id)
     center.decide(current.id, approved: false)
     #expect(try await !result)

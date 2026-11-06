@@ -613,7 +613,7 @@ struct CLIContractTests {
       .writeMultipleStatements, .writeIsRead, .writeNotVerifiable, .writeOutOfScope,
       .writeBlockedByProtection, .writeCommitStyle, .writeCommitStyleDefault, .writeDenied,
       .writeHiddenCharacters, .writeNonASCIIWord, .writeTooLong, .writeTooManyWaiting,
-      .writeConnectionChanged, .writeOutcomeUnknown:
+      .writeUnnamedTarget, .writeConnectionChanged, .writeOutcomeUnknown:
       nil
     }
   }

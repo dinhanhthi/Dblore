@@ -43,17 +43,17 @@ nonisolated struct AIProposalCheck: Equatable {
   static let emptyRefusal = "This proposal has nothing to run."
   static let noNameRefusal =
     "Run needs one object name to confirm and none could be read from this statement. Insert it into a tab to run it there."
+  /// The no-name refusal of an UPDATE or DELETE without WHERE whose table cannot be read
+  static let allRowsNoNameRefusal = "Name the table in a single-table statement, or add a WHERE."
   static let destructiveWithOthersRefusal =
     "A destructive statement runs only on its own. Ask for one statement at a time, or insert it into a tab to run it there."
   static let hiddenCharactersRefusal =
     "This proposal holds invisible or text-direction characters, so it may not run what it shows. Insert or copy it and check it first."
 
   /// SQL classified with `SQLStatementClassifier` for `dialect` (MongoDB with
-  /// `MongoCommandClassifier`). Destructive: a SQL DROP or TRUNCATE, a MongoDB command the
-  /// classifier marks destructive (`drop()`, `dropIndex`, `dropDatabase()`), and a `deleteMany`
-  /// with an empty filter, which the classifier leaves as DML that affects all rows. SQL `DO`,
-  /// `EXECUTE` and `CALL` are destructive with no name, as is any SQL with a MySQL executable
-  /// comment (`/*! ... */`). `database` is the connection's, the
+  /// `MongoCommandClassifier`). Destructive: what `DestructiveStatementRule` marks `.confirm`
+  /// (with that name) or `.unnamed` (no name; an UPDATE or DELETE without WHERE gets
+  /// `allRowsNoNameRefusal`, any other `noNameRefusal`). `database` is the connection's, the
   /// target of `db.dropDatabase()` (on MongoDB the session's default name when the connection's
   /// is blank, `WorkspaceManager.mongoDatabaseName(of:)`). A destructive proposal needs
   /// exactly one statement, destructive with a readable name, else Run is off. Run is off too
@@ -71,13 +71,19 @@ nonisolated struct AIProposalCheck: Equatable {
     }
     var kind = Kind.read
     var names: [String?] = []
+    var allRowsUnnamed = false
     for statement in statements {
-      let destructive =
-        dialect == .mongodb
-        ? mongoDestructive(statement, database: database)
-        : sqlDestructive(statement.text, dialect: dialect)
-      if let destructive { names.append(destructive) }
-      kind = max(kind, destructive != nil ? .destructive : plainKind(statement))
+      switch DestructiveStatementRule.evaluate(statement, dialect: dialect, database: database) {
+      case .none:
+        kind = max(kind, plainKind(statement))
+      case .confirm(let name):
+        names.append(name)
+        kind = .destructive
+      case .unnamed:
+        names.append(nil)
+        kind = .destructive
+        allRowsUnnamed = statement.kind == .dml && statement.affectsAllRows
+      }
     }
     let name = names.count == 1 ? names[0] : nil
     let refusal: String?
@@ -86,7 +92,9 @@ nonisolated struct AIProposalCheck: Equatable {
     } else if kind == .destructive, statements.count > 1 {
       refusal = destructiveWithOthersRefusal
     } else {
-      refusal = kind == .destructive && name == nil ? noNameRefusal : nil
+      refusal =
+        kind == .destructive && name == nil
+        ? (allRowsUnnamed ? allRowsNoNameRefusal : noNameRefusal) : nil
     }
     return AIProposalCheck(
       kind: kind, affectsAllRows: statements.contains(where: \.affectsAllRows),
@@ -96,127 +104,6 @@ nonisolated struct AIProposalCheck: Equatable {
   private static func plainKind(_ statement: ClassifiedStatement) -> Kind {
     if statement.isReadOnlySafe { return .read }
     return SQLStatementClassifier.effectiveKind(statement.kind) == .ddl ? .schema : .write
-  }
-
-  /// nil when `statement` is not destructive; `.some(nil)` when it is but has no readable name
-  private static func mongoDestructive(
-    _ statement: ClassifiedStatement, database: String?
-  ) -> String?? {
-    let command = try? MongoshParser.parse(statement.text)
-    switch command {
-    case .admin(.drop(let collection)):
-      return .some(nonEmpty(collection))
-    case .admin(.dropIndex(_, let index)):
-      if case .string(let name) = index { return .some(nonEmpty(name)) }
-      return .some(nil)
-    case .admin(.dropDatabase(let name)):
-      return .some(nonEmpty(name ?? database))
-    case .deleteMany(let collection, _) where statement.affectsAllRows:
-      return .some(nonEmpty(collection))
-    default:
-      // A command the parser cannot read is unknown to the classifier: not destructive here,
-      // and Safe Mode treats it as a write
-      return statement.isDestructive ? .some(nil) : nil
-    }
-  }
-
-  /// nil when `text` is not a DROP or TRUNCATE; `.some(nil)` when it is but names no single
-  /// object. The name is read as written (unquoted words keep their case, quoted identifiers
-  /// lose their quotes), parts joined with ".". `DROP a, b` names no single object. A `DO`
-  /// block, `EXECUTE` or `CALL` runs code the text does not show: destructive, with no name.
-  /// So does a MySQL executable comment (`/*! ... */`), which MySQL runs as SQL.
-  private static func sqlDestructive(_ text: String, dialect: SQLDialect) -> String?? {
-    let pieces = lexemes(text, dialect: dialect)
-    if pieces.contains(where: \.isExecutableComment) { return .some(nil) }
-    guard let first = pieces.first?.keyword else { return nil }
-    if opaque.contains(first) { return .some(nil) }
-    guard first == "DROP" || first == "TRUNCATE" else { return nil }
-    var index = 1
-    func skip(_ words: Set<String>) {
-      while index < pieces.count, let word = pieces[index].keyword, words.contains(word) {
-        index += 1
-      }
-    }
-    if first == "DROP" {
-      skip(["TEMPORARY", "TEMP", "MATERIALIZED", "FOREIGN"])
-      guard index < pieces.count, let word = pieces[index].keyword, droppable.contains(word)
-      else { return .some(nil) }
-      index += 1
-      skip(["CONCURRENTLY"])
-    } else {
-      skip(["TABLE", "ONLY"])
-    }
-    if index + 1 < pieces.count, pieces[index].keyword == "IF",
-      pieces[index + 1].keyword == "EXISTS"
-    {
-      index += 2
-    }
-    var parts: [String] = []
-    while index < pieces.count, let part = pieces[index].name {
-      parts.append(part)
-      index += 1
-      guard index < pieces.count, pieces[index].symbol == "." else { break }
-      index += 1
-    }
-    guard !parts.isEmpty, index >= pieces.count || pieces[index].symbol != "," else {
-      return .some(nil)
-    }
-    return .some(nonEmpty(parts.joined(separator: ".")))
-  }
-
-  /// Statements that run a block, a prepared statement or a procedure
-  private static let opaque: Set<String> = ["DO", "EXECUTE", "CALL"]
-
-  /// Object kinds a DROP names before the object
-  private static let droppable: Set<String> = [
-    "TABLE", "VIEW", "INDEX", "SCHEMA", "DATABASE", "SEQUENCE", "FUNCTION", "PROCEDURE",
-    "TRIGGER", "TYPE", "DOMAIN", "EXTENSION", "EVENT", "MACRO", "COLLATION", "TABLESPACE",
-  ]
-
-  private struct Piece {
-    /// An unquoted word, ASCII uppercased; nil unless every scalar is ASCII
-    var keyword: String?
-    /// An unquoted word as written, or a quoted identifier's content
-    var name: String?
-    var symbol: String?
-    /// A MySQL executable comment (`/*! ... */`)
-    var isExecutableComment = false
-  }
-
-  /// The statement's lexemes without whitespace and comments
-  private static func lexemes(_ text: String, dialect: SQLDialect) -> [Piece] {
-    let tokenizer = SQLTokenizer(dialect: dialect)
-    let scalars = Array(text.unicodeScalars)
-    var pieces: [Piece] = []
-    var index = 0
-    while index < scalars.count {
-      let lexeme = tokenizer.lexeme(in: scalars, at: index)
-      let raw = SQLTokenizer.text(scalars, lexeme.range)
-      switch lexeme.kind {
-      case .whitespace, .comment:
-        break
-      case .word:
-        let ascii = raw.unicodeScalars.allSatisfy(\.isASCII)
-        pieces.append(Piece(keyword: ascii ? SQLTokenizer.asciiUppercased(raw) : nil, name: raw))
-      case .quoted(.quotedIdentifier, let content):
-        pieces.append(Piece(name: content))
-      case .symbol:
-        pieces.append(Piece(symbol: raw))
-      case .executableComment:
-        pieces.append(Piece(isExecutableComment: true))
-      default:
-        pieces.append(Piece())
-      }
-      index = max(lexeme.range.upperBound, index + 1)
-    }
-    return pieces
-  }
-
-  private static func nonEmpty(_ name: String?) -> String? {
-    guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return nil
-    }
-    return name
   }
 }
 
