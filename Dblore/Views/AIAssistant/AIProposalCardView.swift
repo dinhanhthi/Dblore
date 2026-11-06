@@ -5,7 +5,8 @@
 //  A statement the model proposed (propose_sql): its reason, the exact SQL or mongosh command,
 //  the kind the app reads from it, the MongoDB database it targets, and Copy / Insert / Run.
 //  Run only collects the typed name of a destructive statement and asks the workspace; nothing
-//  here runs by itself. Text with invisible format characters shows why it cannot run.
+//  here runs by itself. Text with hidden characters shows why it cannot run; an invisible
+//  character allowed inside a string literal shows as a `[U+XXXX]` marker.
 //
 
 import AppKit
@@ -98,13 +99,15 @@ struct AIProposalCardView: View {
     .background(Color.cardHeaderBackground)
   }
 
-  /// The exact text; a saved one longer than the cap shows its start only (it cannot run)
+  /// The exact text, with the invisible characters it may run as markers
+  /// (`HiddenCharacterRule.markingInvisibles`); a saved one longer than the cap shows its start
+  /// only (it cannot run)
   private var code: some View {
     let text =
       proposal.sql.count > AITools.maxSQLCharacters
       ? String(proposal.sql.prefix(AITools.maxSQLCharacters)) + "…" : proposal.sql
     return ScrollView(.horizontal, showsIndicators: false) {
-      Text(verbatim: text)
+      Text(verbatim: HiddenCharacterRule.markingInvisibles(text))
         .font(.monoMedium)
         .foregroundColor(.foreground)
         .textSelection(.enabled)

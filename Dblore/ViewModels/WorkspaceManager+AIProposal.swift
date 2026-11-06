@@ -57,7 +57,8 @@ nonisolated struct AIProposalCheck: Equatable {
   /// target of `db.dropDatabase()` (on MongoDB the session's default name when the connection's
   /// is blank, `WorkspaceManager.mongoDatabaseName(of:)`). A destructive proposal needs
   /// exactly one statement, destructive with a readable name, else Run is off. Run is off too
-  /// when the text holds invisible format characters (`hasHiddenCharacters`).
+  /// when the text holds characters that render other than they run
+  /// (`HiddenCharacterRule.hasHiddenCharacters`, the rule MCP writes use).
   static func make(sql: String, dialect: SQLDialect, database: String?) -> AIProposalCheck {
     guard sql.count <= AITools.maxSQLCharacters else {
       return AIProposalCheck(
@@ -80,7 +81,7 @@ nonisolated struct AIProposalCheck: Equatable {
     }
     let name = names.count == 1 ? names[0] : nil
     let refusal: String?
-    if hasHiddenCharacters(sql) {
+    if HiddenCharacterRule.hasHiddenCharacters(sql, dialect: dialect) {
       refusal = hiddenCharactersRefusal
     } else if kind == .destructive, statements.count > 1 {
       refusal = destructiveWithOthersRefusal
@@ -90,13 +91,6 @@ nonisolated struct AIProposalCheck: Equatable {
     return AIProposalCheck(
       kind: kind, affectsAllRows: statements.contains(where: \.affectsAllRows),
       confirmName: name, runRefusal: refusal)
-  }
-
-  /// True when `text` holds a Unicode format character (general category Cf): the bidi
-  /// embeddings, overrides and isolates (U+202A-U+202E, U+2066-U+2069), zero-width characters
-  /// and the like, which can make the shown text differ from what runs
-  static func hasHiddenCharacters(_ text: String) -> Bool {
-    text.unicodeScalars.contains { $0.properties.generalCategory == .format }
   }
 
   private static func plainKind(_ statement: ClassifiedStatement) -> Kind {

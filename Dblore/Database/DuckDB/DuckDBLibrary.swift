@@ -102,7 +102,7 @@ nonisolated final class DuckDBLibrary: @unchecked Sendable {
   let prepare: @convention(c) (Handle, CString, UnsafeMutablePointer<Handle>?) -> Int32
   let prepareError: @convention(c) (Handle) -> CString
   let destroyPrepare: @convention(c) (UnsafeMutablePointer<Handle>?) -> Void
-  let bindVarchar: @convention(c) (Handle, UInt64, CString) -> Int32
+  let bindVarcharLength: @convention(c) (Handle, UInt64, CString, UInt64) -> Int32
   let bindNull: @convention(c) (Handle, UInt64) -> Int32
   let executePrepared: @convention(c) (Handle, ResultPointer) -> Int32
   /// Deprecated in the C API since v1.0 but exported by v1.5.6; the only C entry point that
@@ -216,7 +216,7 @@ nonisolated final class DuckDBLibrary: @unchecked Sendable {
     prepare = try symbol("duckdb_prepare")
     prepareError = try symbol("duckdb_prepare_error")
     destroyPrepare = try symbol("duckdb_destroy_prepare")
-    bindVarchar = try symbol("duckdb_bind_varchar")
+    bindVarcharLength = try symbol("duckdb_bind_varchar_length")
     bindNull = try symbol("duckdb_bind_null")
     executePrepared = try symbol("duckdb_execute_prepared")
     pendingPreparedStreaming = try symbol("duckdb_pending_prepared_streaming")

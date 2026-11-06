@@ -543,7 +543,7 @@ struct MCPWriteToolTests {
     #expect(source.statements == cases.map(\.1))
     // The approval marks the invisible characters it lets through
     #expect(
-      MCPToolService.markingInvisibles("'\u{2764}\u{FE0F}\u{1F469}\u{200D}\u{00AD}\u{200C}'")
+      HiddenCharacterRule.markingInvisibles("'\u{2764}\u{FE0F}\u{1F469}\u{200D}\u{00AD}\u{200C}'")
         == "'\u{2764}[U+FE0F]\u{1F469}[U+200D][U+00AD][U+200C]'")
   }
 

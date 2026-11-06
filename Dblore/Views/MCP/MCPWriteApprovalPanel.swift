@@ -86,7 +86,7 @@ private struct MCPWriteApprovalView: View {
         .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
       ScrollView {
-        Text(MCPToolService.markingInvisibles(request.statement))
+        Text(HiddenCharacterRule.markingInvisibles(request.statement))
           .font(.mono)
           .foregroundColor(.foreground)
           .textSelection(.enabled)

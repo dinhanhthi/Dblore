@@ -124,12 +124,20 @@ struct AIProposalRunTests {
   func hiddenCharacters() {
     for scalar in ["\u{202A}", "\u{202E}", "\u{2066}", "\u{2069}", "\u{200B}", "\u{FEFF}"] {
       #expect(
-        AIProposalCheck.hasHiddenCharacters("SELECT 1 -- a\(scalar)b"), "\(scalar.debugDescription)"
-      )
+        HiddenCharacterRule.hasHiddenCharacters("SELECT 1 -- a\(scalar)b", dialect: .postgresql),
+        "\(scalar.debugDescription)")
     }
-    #expect(!AIProposalCheck.hasHiddenCharacters("SELECT 'café', '日本' -- note\n\tFROM t"))
+    #expect(
+      !HiddenCharacterRule.hasHiddenCharacters(
+        "SELECT 'café', '日本' -- note\n\tFROM t", dialect: .postgresql))
     let check = Self.check("SELECT * FROM users WHERE role = 'user\u{202E} \u{2066}'")
     #expect(check.kind == .read)
+    #expect(check.runRefusal == AIProposalCheck.hiddenCharactersRefusal)
+  }
+
+  @Test("MongoDB allows invisible characters nowhere, not even inside a string")
+  func mongoHiddenCharacters() {
+    let check = Self.check("db.c.insertOne({mood: \"\u{2764}\u{FE0F}\"})", .mongodb)
     #expect(check.runRefusal == AIProposalCheck.hiddenCharactersRefusal)
   }
 
@@ -434,6 +442,33 @@ struct AIProposalRunTests {
       manager.runAIProposal(proposal(sql, for: manager), confirmedName: nil)
         == .refused(AIProposalCheck.tooLongRefusal))
     #expect(manager.tabs.isEmpty)
+  }
+
+  @Test("A proposal with a NUL character is refused before anything is sent or opened")
+  func nulRefused() async throws {
+    let live = FakeDatabaseSessionFactory(capabilities: .contract())
+    let manager = try await connectedManager(live: live)
+    let sql = "DELETE FROM t\u{0} WHERE id = 1"
+
+    #expect(
+      manager.runAIProposal(proposal(sql, for: manager), confirmedName: nil)
+        == .refused(AIProposalCheck.hiddenCharactersRefusal))
+    #expect(manager.tabs.isEmpty)
+    #expect(!live.statements.contains(sql))
+  }
+
+  @Test("A ZWJ emoji inside a SQL string literal runs")
+  func zwjEmojiLiteralRuns() async throws {
+    let live = FakeDatabaseSessionFactory(capabilities: .contract())
+    let manager = try await connectedManager(live: live)
+    let tabID = manager.newSQLFile()
+    let sql = "SELECT '\u{1F469}\u{200D}\u{1F4BB}'"
+
+    #expect(
+      manager.runAIProposal(proposal(sql, for: manager), confirmedName: nil) == .ran(tabID: tabID))
+    await waitUntil { live.statements.contains(sql) }
+
+    #expect(live.statements.contains(sql))
   }
 
   @Test("Receiving and drawing a proposal runs nothing; only an explicit Run does")

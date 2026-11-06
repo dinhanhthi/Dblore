@@ -467,6 +467,7 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
   }
 
   private func prepare(_ sql: String, _ open: Handles) throws -> OpaquePointer? {
+    try Self.refuseNUL(sql)
     var statement: OpaquePointer?
     if open.library.prepare(open.connection, sql, &statement) != DuckDBState.success {
       let failure = error(open.library.prepareError(statement), fallback: "unable to prepare")
@@ -482,7 +483,8 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
       let state =
         switch value {
         case .null: open.library.bindNull(statement, index)
-        case .text(let text): open.library.bindVarchar(statement, index, text)
+        case .text(let text):
+          open.library.bindVarcharLength(statement, index, text, UInt64(text.utf8.count))
         }
       if state != DuckDBState.success {
         throw DuckDBSessionError(message: "unable to bind parameter $\(index)")
@@ -490,8 +492,17 @@ nonisolated final class DuckDBSession: DatabaseSession, @unchecked Sendable {
     }
   }
 
+  /// DuckDB reads statement text as a C string: everything after a U+0000 would be cut off,
+  /// so `DELETE FROM t<NUL> WHERE id = 1` would run as `DELETE FROM t`. Fail closed.
+  private static func refuseNUL(_ sql: String) throws {
+    guard sql.utf8.contains(0) else { return }
+    throw DuckDBSessionError(
+      message: "This statement contains a NUL character, which the database would cut off.")
+  }
+
   /// One internal statement (hardening). Never user SQL.
   private func exec(_ sql: String, _ open: Handles) throws {
+    try Self.refuseNUL(sql)
     var result = DuckDBResult()
     defer { open.library.destroyResult(&result) }
     if open.library.query(open.connection, sql, &result) != DuckDBState.success {
