@@ -267,8 +267,8 @@ struct DataRewindModelTests {
       let plan = try #require(model.plan)
       #expect(
         plan.statements.map(\.sql) == [
-          #"UPDATE "public"."v1" SET "b" = $1 WHERE "id" = $2"#
-            + #" AND "b"::text COLLATE "C" IS NOT DISTINCT FROM $3"#
+          #"UPDATE "public"."v1" SET "b" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#
+            + #" AND "b"::pg_catalog.text COLLATE pg_catalog."C" OPERATOR(pg_catalog.=) $3"#
         ])
       // The view was mapped again on a side connection; its mask rule names the base table
       #expect(fixture.factory.sessions.count == 2)

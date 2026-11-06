@@ -227,6 +227,8 @@ final class MultiFileImportModel {
       dialect == .mysql
       ? ImportSQLBuilder.mysqlChunkByteCap(
         maxAllowedPacket: await manager.mysqlServerInfo?.maxAllowedPacket) : nil
+    let runningWork = beginRunningWork(in: viewModel) { [weak self] in self?.cancel() }
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     return await prepareImport(
       dialect: dialect, connectionEpoch: epoch, maxChunkBytes: maxChunkBytes,
       readMatches: { try await manager.readImportMatches($0) })
@@ -355,8 +357,24 @@ final class MultiFileImportModel {
       statements: statements, preview: ([header] + previews).joined(separator: "\n\n"),
       connectionEpoch: connectionEpoch, historySource: .dataImport, rowRanges: rowRanges)
     batch.statementFiles = statementFiles
+    batch.runningWorkLabel = Self.runningWorkLabel(fileCount: included.count)
     return MultiFileImportBatch(
       batch: batch, files: included.map(\.displayName), summary: summary)
+  }
+
+  /// Lists the run in `viewModel`'s workspace while a step runs (Quit and close ask first)
+  private func beginRunningWork(
+    in viewModel: NotebookViewModel, cancel: @escaping @MainActor () -> Void
+  ) -> RunningWorkRegistry.Token {
+    RunningWorkRegistry.shared.begin(
+      workspaceID: viewModel.historyWorkspace()?.id,
+      label: Self.runningWorkLabel(fileCount: includedEntries.count), kind: .dataImport,
+      cancel: cancel)
+  }
+
+  /// The run's line in the running-work list, while it prepares and while its batch runs
+  private static func runningWorkLabel(fileCount count: Int) -> String {
+    "Import of \(count) file\(count == 1 ? "" : "s")"
   }
 
   /// The counts of one prepared file: its match summary when keyed, else every row inserted

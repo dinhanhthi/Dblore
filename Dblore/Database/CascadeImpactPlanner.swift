@@ -35,6 +35,11 @@
 // keys use row values (`(a, b) IN (...)`; SQLite through `VALUES`, which a row-value IN needs
 // on its right), DuckDB an OR of AND groups. SQLite enforces foreign keys only with
 // `PRAGMA foreign_keys` on: the plan carries that check to run first.
+// PostgreSQL names pg_catalog for everything it looks up, so an object planted in a schema on
+// the user's search_path never runs: `pg_catalog.count(*)`, key lists as OR chains (of AND
+// groups) of `OPERATOR(pg_catalog.=)`, and each subquery as `(a, b) OPERATOR(pg_catalog.=) ANY
+// (SELECT ...)`, which is what `IN (SELECT ...)` means there, NULLs included, with each key
+// column compared by pg_catalog's `=`. Keys always qualify: the values are the rows' own.
 // Nothing here is sent to a database.
 
 import Foundation
@@ -72,7 +77,7 @@ nonisolated enum CascadeImpactPlanner {
     var effect: Effect
     /// 1 references the deleted rows, 2 references rows deleted by a depth-1 cascade, ...
     var depth: Int
-    /// `SELECT COUNT(*) ...` with `:kN` placeholders
+    /// `SELECT COUNT(*) ...` (PostgreSQL `pg_catalog.count(*)`) with `:kN` placeholders
     var sql: String
     var parameters: [String: SQLBindValue]
   }
@@ -216,7 +221,7 @@ nonisolated enum CascadeImpactPlanner {
     var constraintName: String
     var effect: Effect
     var depth: Int
-    /// `SELECT COUNT(*) FROM table WHERE condition`
+    /// `SELECT COUNT(*) FROM table WHERE condition` (PostgreSQL `pg_catalog.count(*)`)
     var sql: Fragment
     /// The counted rows, on the table's own columns
     var condition: Fragment
@@ -273,7 +278,8 @@ nonisolated enum CascadeImpactPlanner {
           constraint: key.constraintName)
         let child = try relation(key.sourceSchema, key.sourceTable)
         var count = Fragment()
-        count.text("SELECT COUNT(*) FROM \(child) WHERE ")
+        let counted = dialect == .postgresql ? dialect.function("count", "*") : "COUNT(*)"
+        count.text("SELECT \(counted) FROM \(child) WHERE ")
         count.append(condition)
         let effect = effect(of: key)
         // Rows deleted in the same batch do not block their own delete
@@ -370,7 +376,8 @@ nonisolated enum CascadeImpactPlanner {
       }
     }
 
-    /// `(sources) IN (SELECT targets FROM relation WHERE condition)`
+    /// `(sources) IN (SELECT targets FROM relation WHERE condition)`; PostgreSQL
+    /// `(sources) OPERATOR(pg_catalog.=) ANY (SELECT ...)`
     private func subquery(
       _ sources: [String], _ targets: [String], relation: String, condition: Fragment,
       constraint: String
@@ -381,29 +388,37 @@ nonisolated enum CascadeImpactPlanner {
       }
       let columns = try targets.map(dialect.quoteIdentifier).joined(separator: ", ")
       var fragment = Fragment()
-      fragment.text("\(tuple(sources)) IN (SELECT \(columns) FROM \(relation) WHERE ")
+      let lead =
+        dialect == .postgresql
+        ? dialect.comparison(tuple(sources), .equal, "ANY (") : "\(tuple(sources)) IN ("
+      fragment.text("\(lead)SELECT \(columns) FROM \(relation) WHERE ")
       fragment.append(condition)
       fragment.text(")")
       return fragment
     }
 
-    /// `columns` equal to one of `values` (each in `columns` order).
+    /// `columns` equal to one of `values` (each in `columns` order). PostgreSQL has no
+    /// qualified `IN`: an OR chain of `OPERATOR(pg_catalog.=)`, as `SQLDialect.inList` writes,
+    /// of AND groups for a composite key (the DuckDB form).
     private func keyList(_ columns: [String], _ values: [[CellValue]]) -> Fragment {
       var fragment = Fragment()
-      if columns.count > 1, dialect == .duckdb {
+      let grouped = columns.count > 1
+      if dialect == .postgresql || (grouped && dialect == .duckdb) {
         fragment.text("(")
         for (row, value) in values.enumerated() {
-          fragment.text(row == 0 ? "(" : " OR (")
+          fragment.text(row == 0 ? (grouped ? "(" : "") : (grouped ? " OR (" : " OR "))
           for (index, column) in columns.enumerated() {
-            fragment.text(index == 0 ? "\(column) = " : " AND \(column) = ")
+            fragment.text((index == 0 ? "" : " AND ") + dialect.comparison(column, .equal, ""))
             fragment.value(index < value.count ? value[index] : .null)
           }
-          fragment.text(")")
+          if grouped {
+            fragment.text(")")
+          }
         }
         fragment.text(")")
         return fragment
       }
-      let rowValues = columns.count > 1
+      let rowValues = grouped
       fragment.text("\(tuple(columns)) IN (" + (rowValues && dialect == .sqlite ? "VALUES " : ""))
       for (row, value) in values.enumerated() {
         fragment.text(row == 0 ? (rowValues ? "(" : "") : (rowValues ? ", (" : ", "))

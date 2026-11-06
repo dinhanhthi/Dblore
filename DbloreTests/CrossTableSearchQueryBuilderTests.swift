@@ -52,8 +52,9 @@ struct CrossTableSearchQueryBuilderTests {
         dialect: .postgresql))
     #expect(
       postgres.sql
-        == #"SELECT "co""l`x", CASE WHEN CAST("co""l`x" AS text) = :v THEN 1 END "#
-        + #"FROM "my""schema"."ta""ble" WHERE CAST("co""l`x" AS text) = :v LIMIT 50"#)
+        == #"SELECT "co""l`x", CASE WHEN "co""l`x"::pg_catalog.text OPERATOR(pg_catalog.=) :v"#
+        + #" THEN 1 END FROM "my""schema"."ta""ble""#
+        + #" WHERE "co""l`x"::pg_catalog.text OPERATOR(pg_catalog.=) :v LIMIT 50"#)
 
     let mysql = try #require(
       try Builder.statement(
@@ -80,8 +81,9 @@ struct CrossTableSearchQueryBuilderTests {
     "Contains ignores case on every dialect; Equals stays an exact comparison",
     arguments: [
       (
-        SQLDialect.postgresql, #"CAST("email" AS text) ILIKE :v ESCAPE '!'"#,
-        #"CAST("email" AS text) = :v"#
+        SQLDialect.postgresql,
+        #""email"::pg_catalog.text OPERATOR(pg_catalog.~~*) pg_catalog.like_escape(:v, '!')"#,
+        #""email"::pg_catalog.text OPERATOR(pg_catalog.=) :v"#
       ),
       (
         .duckdb, #"CAST("email" AS VARCHAR) ILIKE :v ESCAPE '!'"#, #"CAST("email" AS VARCHAR) = :v"#
@@ -135,7 +137,9 @@ struct CrossTableSearchQueryBuilderTests {
     #expect(statement.sql.hasPrefix("SELECT \(quoted.joined(separator: ", ")), CASE WHEN "))
     // The match still compares each column's text
     for name in quoted {
-      #expect(statement.sql.contains("CAST(\(name) AS "))
+      #expect(
+        statement.sql.contains(
+          dialect == .postgresql ? "\(name)::pg_catalog.text " : "CAST(\(name) AS "))
     }
   }
 
@@ -156,7 +160,9 @@ struct CrossTableSearchQueryBuilderTests {
         dialect: .postgresql))
 
     #expect(statement.parameters == [Builder.valueParameter: .text("%50!%!_off!!%")])
-    #expect(statement.sql.contains("CAST(\"email\" AS text) ILIKE :v ESCAPE '!'"))
+    #expect(
+      statement.sql.contains(
+        #""email"::pg_catalog.text OPERATOR(pg_catalog.~~*) pg_catalog.like_escape(:v, '!')"#))
     #expect(statement.sql.contains(" OR "))
 
     let equals = try #require(
@@ -204,9 +210,12 @@ struct CrossTableSearchQueryBuilderTests {
     arguments: [
       (
         Builder.Mode.contains, SQLDialect.postgresql,
-        #""c"::text ILIKE E'%C:\\t!%!_!!%' ESCAPE '!'"#
+        #""c"::pg_catalog.text OPERATOR(pg_catalog.~~*) pg_catalog.like_escape(E'%C:\\t!%!_!!%', '!')"#
       ),
-      (.equals, .postgresql, #""c"::text LIKE E'C:\\t!%!_!!' ESCAPE '!'"#),
+      (
+        .equals, .postgresql,
+        #""c"::pg_catalog.text OPERATOR(pg_catalog.~~) pg_catalog.like_escape(E'C:\\t!%!_!!', '!')"#
+      ),
       (.contains, .mysql, #"LOWER(CAST(`c` AS CHAR)) LIKE LOWER('%C:\\t!%!_!!%') ESCAPE '!'"#),
       (.equals, .mysql, #"CAST(`c` AS CHAR) LIKE 'C:\\t!%!_!!' ESCAPE '!'"#),
       (.contains, .sqlite, #"LOWER("c") LIKE LOWER('%C:\t!%!_!!%') ESCAPE '!'"#),

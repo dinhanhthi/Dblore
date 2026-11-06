@@ -484,6 +484,11 @@ final class ParquetExportRun {
       guard let url = await DataExporter.chooseParquetDestination(queryIndex: queryIndex),
         !Task.isCancelled
       else { return }
+      // No workspace is known here: the export is listed at Quit only
+      let runningWork = RunningWorkRegistry.shared.begin(
+        workspaceID: nil, label: "Parquet export to \(url.lastPathComponent)", kind: .dataExport
+      ) { self.cancel() }
+      defer { RunningWorkRegistry.shared.end(runningWork) }
       rowsWritten = 0
       do {
         try await DataExporter.exportParquet(

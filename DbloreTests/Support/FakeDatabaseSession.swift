@@ -263,6 +263,16 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
     defer { endInFlight(token) }
     if let hook = takeQueryHook() { await hook(sql) }
     if let failingQuery, sql.contains(failingQuery) { throw failingQueryError }
+    // A PostgreSQL restore's own search_path read, like a control statement: never slow,
+    // the server's default path unless `queryAnswer` scripts it
+    if sql == DatabaseConnectionManager.SearchPathPin.readSQL {
+      if let answer = queryAnswer?(sql, binds) {
+        return Self.rowSource(columns: answer.columns, rows: answer.rows)
+      }
+      return Self.rowSource(
+        columns: [ColumnInfo(name: "current_setting", type: "text")],
+        rows: [[.string("\"$user\", public")]])
+    }
     if slowQueries, lock.withLock({ slowOnly.map { sql.contains($0) } ?? true }) {
       try await waitUntilInterrupted()
     }

@@ -196,6 +196,15 @@ class WorkspaceWindowManager {
 
   // MARK: - Workspace Operations
 
+  /// The active workspace, else a new one shown in a window (New Tab, New Notebook, New SQL
+  /// File, New Markdown Note)
+  func activeWorkspaceOrNew() -> WorkspaceManager {
+    if let active = activeWorkspaceManager { return active }
+    let manager = newWorkspace()
+    showPendingWorkspace(manager.id)
+    return manager
+  }
+
   /// Create a new empty workspace
   /// Note: Caller should open window using openWindow(value: manager.id) after calling this
   @discardableResult
@@ -437,11 +446,15 @@ class WorkspaceWindowManager {
     }
   }
 
-  /// Close a workspace
+  /// Close a workspace. Unless `force`, it asks first: its running work ("Stop and Close"),
+  /// then a pending transaction and unsaved changes (`canClose`). The disconnect after that
+  /// does not ask about running work again. A second close or Disconnect while it asks about
+  /// running work or stops it is ignored (`confirmStoppingRunningWork`).
   func closeWorkspace(id: UUID, force: Bool = false) async -> Bool {
     guard let manager = workspaces[id] else { return true }
 
     if !force {
+      guard await manager.confirmStoppingRunningWork(.close(workspaceID: id)) else { return false }
       let canClose = await manager.canClose()
       guard canClose else { return false }
     }

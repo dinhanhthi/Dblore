@@ -296,6 +296,14 @@ class RecentManager {
     return removed
   }
 
+  /// Stars or unstars one recent connection. False when its row is gone or not written.
+  @discardableResult
+  func setFavoriteConnection(_ favorite: Bool, id: UUID) -> Bool {
+    let saved = SessionManager.setFavoriteConnection(favorite, id: id, defaults: defaults)
+    connectionsRevision += 1
+    return saved
+  }
+
   /// Clear all recent connections; refused while a row's lock is not unlocked
   func clearConnections() {
     SessionManager.clearAllHistory(defaults: defaults, passwords: passwords, registry: registry)

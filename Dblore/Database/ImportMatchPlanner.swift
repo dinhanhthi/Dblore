@@ -5,6 +5,11 @@
 // and classifies the rows from the counts the reads return. The caller runs the reads.
 // A read is `SELECT pos, COUNT(*) FROM (<positioned key rows>) v JOIN <table> t ON t.k = v.k ...
 // GROUP BY pos`. Positions are integer literals (file row indexes); every key value is a bind.
+// PostgreSQL names pg_catalog's `count` and casts and compares through `SQLDialect`'s helpers:
+// each key's operator is `OPERATOR(pg_catalog.=)` unless its column type keeps the bare one
+// (`SQLOperandKind`, a citext key), and the keyed UPDATE uses the same `KeyColumn`s, so the read
+// and the write compare a key the same way. The table is named with its schema, `public` too
+// (`ImportSQLBuilder.relation`), so a same-named table earlier on the search_path is not read.
 // PostgreSQL, SQLite and DuckDB list the rows in VALUES, MySQL/MariaDB in a UNION ALL derived
 // table. Each read passes `ReadOnlyQueryGuard`.
 // - PostgreSQL and DuckDB bind untyped text, and a VALUES list has no target column to type it,
@@ -98,6 +103,9 @@ nonisolated enum ImportMatchPlanner {
   struct KeyColumn: Sendable, Equatable {
     var name: String
     var match: Match
+    var dialect: SQLDialect
+    /// From the column's type text (`TableStructure.Column.dataType`)
+    var operand: SQLOperandKind
 
     enum Match: Sendable, Equatable {
       case plain
@@ -122,6 +130,8 @@ nonisolated enum ImportMatchPlanner {
 
     init(_ column: TableStructure.Column, dialect: SQLDialect) throws {
       name = column.name
+      self.dialect = dialect
+      operand = SQLOperandKind(columnType: column.dataType)
       switch dialect {
       case .postgresql, .duckdb:
         guard let type = Self.castType(column.dataType, dialect: dialect) else {
@@ -138,14 +148,15 @@ nonisolated enum ImportMatchPlanner {
 
     /// The key value in the key rows: the placeholder, cast on PostgreSQL / DuckDB
     func value(_ placeholder: String) -> String {
-      if case .cast(let type) = match { return "CAST(\(placeholder) AS \(type))" }
+      if case .cast(let type) = match { return dialect.cast(placeholder, to: type) }
       return placeholder
     }
 
-    /// `target = value`, with the MySQL collation or numeric cast on `value`
+    /// `target = value`, with the MySQL collation or numeric cast on `value`; PostgreSQL
+    /// `OPERATOR(pg_catalog.=)` unless the column type keeps the bare `=`
     func equals(_ target: String, _ value: String) -> String {
       switch match {
-      case .plain, .cast, .float: "\(target) = \(value)"
+      case .plain, .cast, .float: dialect.comparison(target, .equal, value, operand: operand)
       case .collate(let collation): "\(target) = \(value) COLLATE \(collation)"
       case .convert(let characterSet, let collation):
         "\(target) = CONVERT(\(value) USING \(characterSet)) COLLATE \(collation)"
@@ -289,7 +300,7 @@ nonisolated enum ImportMatchPlanner {
     let chunkSize = min(
       maxRowsPerRead, (bindLimit ?? ImportSQLBuilder.defaultBindLimit(dialect)) / keys.count)
     guard chunkSize > 0 else { throw Error.bindLimitExceeded }
-    let relation = try dialect.qualified(schema: schema, name: table)
+    let relation = try ImportSQLBuilder.relation(schema: schema, table: table, dialect: dialect)
     let condition = try keys.enumerated().map { offset, entry in
       entry.key.equals(
         "t." + (try dialect.quoteIdentifier(entry.key.name)),
@@ -405,8 +416,9 @@ nonisolated enum ImportMatchPlanner {
           "(\(row.position), " + keys.map(next).joined(separator: ", ") + ")"
         }.joined(separator: ", ") + ") AS v" + (dialect == .sqlite ? "" : "(pos, \(names))")
     }
+    let counted = dialect == .postgresql ? dialect.function("count", "*") : "COUNT(*)"
     let sql =
-      "SELECT \(position), COUNT(*) FROM (\(source) JOIN \(relation) AS t ON \(condition) "
+      "SELECT \(position), \(counted) FROM (\(source) JOIN \(relation) AS t ON \(condition) "
       + "GROUP BY \(position)"
     let classified: [ClassifiedStatement]
     do {

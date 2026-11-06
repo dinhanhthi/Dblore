@@ -230,7 +230,8 @@ struct RowDetailTests {
     #expect(edit?.columnNames == ["age", "nickname"])
     #expect(
       edit?.statement.sql
-        == #"UPDATE ONLY public.users SET "age" = $1, "nickname" = $2 WHERE "id" = $3"#)
+        == #"UPDATE ONLY public.users SET "age" = $1, "nickname" = $2"#
+        + #" WHERE "id" OPERATOR(pg_catalog.=) $3"#)
     #expect(edit?.statement.values == ["31", "hi", "1"])
     #expect(viewModel.queryConfirmationState.showDialog)
   }
@@ -492,7 +493,9 @@ struct RowDetailTests {
 
     let edit = try #require(viewModel.pendingInlineEdit)
     #expect(edit.tableName == "public.users")
-    #expect(edit.statement.sql == #"UPDATE ONLY public.users SET "age" = $1 WHERE "id" = $2"#)
+    #expect(
+      edit.statement.sql
+        == #"UPDATE ONLY public.users SET "age" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
     #expect(edit.statement.values == ["31", "1"])
     // Accepting sends it against users (no connection: the send fails, not "read-only")
     await viewModel.executePendingQuery()
@@ -527,7 +530,9 @@ struct RowDetailTests {
     #expect(!toasts.contains(NotebookViewModel.notEditableMessage))
     let edit = try #require(viewModel.pendingInlineEdit)
     #expect(edit.cellId == cellA.id)
-    #expect(edit.statement.sql == #"UPDATE ONLY public.users SET "age" = $1 WHERE "id" = $2"#)
+    #expect(
+      edit.statement.sql
+        == #"UPDATE ONLY public.users SET "age" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
   }
 
   // MARK: - Sync

@@ -47,7 +47,8 @@ struct RowChangeSQLBuilderTests {
     #expect(statements.count == 1)
     #expect(
       statements[0].sql
-        == #"DELETE FROM "t" WHERE "order_id" = $1 AND "line_no" = $2"#)
+        == #"DELETE FROM "t" WHERE "order_id" OPERATOR(pg_catalog.=) $1"#
+        + #" AND "line_no" OPERATOR(pg_catalog.=) $2"#)
     #expect(statements[0].values == ["10", "2"])
   }
 
@@ -64,14 +65,20 @@ struct RowChangeSQLBuilderTests {
     let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql)
     #expect(statements.count == 1)
-    #expect(statements[0].sql == #"DELETE FROM "t" WHERE "id" = $1 AND "sub" = $2"#)
+    #expect(
+      statements[0].sql
+        == #"DELETE FROM "t" WHERE "id" OPERATOR(pg_catalog.=) $1"#
+        + #" AND "sub" OPERATOR(pg_catalog.=) $2"#)
     #expect(statements[0].values == [nil, "a"])
     #expect(statements[0].binds == [.null, .text("a")])
     #expect(!statements[0].sql.contains("'a'"))
 
     let preview = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: tableColumns, dialect: .postgresql)
-    #expect(preview == #"DELETE FROM "t" WHERE "id" = NULL AND "sub" = 'a';"#)
+    #expect(
+      preview
+        == #"DELETE FROM "t" WHERE "id" OPERATOR(pg_catalog.=) NULL"#
+        + #" AND "sub" OPERATOR(pg_catalog.=) 'a';"#)
   }
 
   @Test("A keyless UPDATE or DELETE throws and names the table instead of being dropped")
@@ -111,9 +118,13 @@ struct RowChangeSQLBuilderTests {
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
     #expect(
       statements.map(\.sql) == [
-        #"DELETE FROM "public"."t" WHERE tableoid = $1::oid AND ctid = $2::tid AND xmin = $3::xid"#,
-        #"UPDATE "public"."t" SET "name" = $1 WHERE tableoid = $2::oid AND ctid = $3::tid"#
-          + " AND xmin = $4::xid",
+        #"DELETE FROM "public"."t" WHERE tableoid OPERATOR(pg_catalog.=) $1::pg_catalog.oid"#
+          + " AND ctid OPERATOR(pg_catalog.=) $2::pg_catalog.tid"
+          + " AND xmin OPERATOR(pg_catalog.=) $3::pg_catalog.xid",
+        #"UPDATE "public"."t" SET "name" = $1"#
+          + " WHERE tableoid OPERATOR(pg_catalog.=) $2::pg_catalog.oid"
+          + " AND ctid OPERATOR(pg_catalog.=) $3::pg_catalog.tid"
+          + " AND xmin OPERATOR(pg_catalog.=) $4::pg_catalog.xid",
       ])
     #expect(statements[0].values == ["16384", "(0,1)", "742"])
     #expect(statements[1].values == ["b", "16390", "(0,1)", "742"])
@@ -122,7 +133,8 @@ struct RowChangeSQLBuilderTests {
       try RowChangeSQLBuilder.previewText(
         for: set, target: editTarget, columns: columns(), dialect: .postgresql
       ).hasPrefix(
-        #"DELETE FROM "public"."t" WHERE tableoid = '16384'::oid AND ctid = '(0,1)'::tid"#))
+        #"DELETE FROM "public"."t" WHERE tableoid OPERATOR(pg_catalog.=) '16384'::pg_catalog.oid"#
+          + #" AND ctid OPERATOR(pg_catalog.=) '(0,1)'::pg_catalog.tid"#))
   }
 
   @Test("A SQLite keyless row is named by rowid and IS on its loaded typed, non-binary values")
@@ -166,8 +178,10 @@ struct RowChangeSQLBuilderTests {
       rowLocator: .pgLocator, locator: RowLocatorValues(texts: ["16384", "(0,3)", "900"]))
     #expect(
       postgres.sql
-        == #"UPDATE ONLY "public"."t" SET "name" = $1 WHERE tableoid = $2::oid"#
-        + " AND ctid = $3::tid AND xmin = $4::xid")
+        == #"UPDATE ONLY "public"."t" SET "name" = $1"#
+        + " WHERE tableoid OPERATOR(pg_catalog.=) $2::pg_catalog.oid"
+        + " AND ctid OPERATOR(pg_catalog.=) $3::pg_catalog.tid"
+        + " AND xmin OPERATOR(pg_catalog.=) $4::pg_catalog.xid")
     #expect(postgres.values == ["y", "16384", "(0,3)", "900"])
     #expect(postgres.rowCheck == nil)
 
@@ -218,8 +232,9 @@ struct RowChangeSQLBuilderTests {
 
     let postgres = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
-    #expect(postgres[0].sql == #"DELETE FROM ONLY "t" WHERE "id" = $1"#)
-    #expect(postgres[1].sql == #"UPDATE ONLY "t" SET "name" = $1 WHERE "id" = $2"#)
+    #expect(postgres[0].sql == #"DELETE FROM ONLY "t" WHERE "id" OPERATOR(pg_catalog.=) $1"#)
+    #expect(
+      postgres[1].sql == #"UPDATE ONLY "t" SET "name" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
     #expect(postgres[2].sql == #"INSERT INTO "t" ("name") VALUES ($1)"#)
     #expect(!postgres[2].sql.contains("ONLY"))
 
@@ -252,7 +267,7 @@ struct RowChangeSQLBuilderTests {
     #expect(
       try RowChangeSQLBuilder.statements(
         for: edit, target: view, columns: viewColumns, dialect: .postgresql
-      ).map(\.sql) == [#"UPDATE public.v1 SET "name" = $1 WHERE "key" = $2"#])
+      ).map(\.sql) == [#"UPDATE public.v1 SET "name" = $1 WHERE "key" OPERATOR(pg_catalog.=) $2"#])
 
     // The target a page re-read rebuilds for the staged set keeps the view
     let viewModel = NotebookViewModel()
@@ -330,11 +345,11 @@ struct RowChangeSQLBuilderTests {
     let preview = try RowChangeSQLBuilder.previewText(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
 
-    #expect(bound[0].sql == #"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#)
+    #expect(bound[0].sql == #"UPDATE "t" SET "name" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
     #expect(bound[0].values == ["o'brien", "1"])
     #expect(bound[0].binds == [.text("o'brien"), .text("1")])
     #expect(!bound[0].sql.contains("o'brien"))
-    #expect(preview == #"UPDATE "t" SET "name" = 'o''brien' WHERE "id" = 1;"#)
+    #expect(preview == #"UPDATE "t" SET "name" = 'o''brien' WHERE "id" OPERATOR(pg_catalog.=) 1;"#)
     #expect(preview != bound[0].sql)
   }
 
@@ -386,7 +401,7 @@ struct RowChangeSQLBuilderTests {
 
     #expect(
       sql == [
-        #"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#,
+        #"UPDATE "t" SET "name" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#,
         #"INSERT INTO "t" ("name") VALUES ($1)"#,
         #"INSERT INTO "t" DEFAULT VALUES"#,
       ])
@@ -401,12 +416,15 @@ struct RowChangeSQLBuilderTests {
 
     let statements = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
-    #expect(statements.map(\.sql) == [#"UPDATE "t" SET "name" = DEFAULT WHERE "id" = $1"#])
+    #expect(
+      statements.map(\.sql) == [
+        #"UPDATE "t" SET "name" = DEFAULT WHERE "id" OPERATOR(pg_catalog.=) $1"#
+      ])
     #expect(statements.first?.values == ["1"])
     #expect(
       try RowChangeSQLBuilder.previewText(
         for: set, target: editTarget, columns: columns(), dialect: .postgresql)
-        == #"UPDATE "t" SET "name" = DEFAULT WHERE "id" = 1;"#)
+        == #"UPDATE "t" SET "name" = DEFAULT WHERE "id" OPERATOR(pg_catalog.=) 1;"#)
 
     #expect(throws: RowChangeError.serverDefaultUnsupported) {
       try RowChangeSQLBuilder.statements(
@@ -418,7 +436,8 @@ struct RowChangeSQLBuilderTests {
       original: .string("a"))
     let edited = try RowChangeSQLBuilder.statements(
       for: set, target: editTarget, columns: columns(), dialect: .postgresql)
-    #expect(edited.map(\.sql) == [#"UPDATE "t" SET "name" = $1 WHERE "id" = $2"#])
+    #expect(
+      edited.map(\.sql) == [#"UPDATE "t" SET "name" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#])
     #expect(edited.first?.values == ["b", "1"])
   }
 

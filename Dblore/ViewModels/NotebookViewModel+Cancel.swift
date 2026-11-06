@@ -82,20 +82,43 @@ extension NotebookViewModel {
   /// - Returns: true if the connection was closed to stop a statement.
   @discardableResult
   func cancelRunningStatement(cancelQueue: Bool, alwaysConfirm: Bool = false) async -> Bool {
-    guard let connectionManager else { return false }
+    await stopRunningStatement(cancelQueue: cancelQueue, alwaysConfirm: alwaysConfirm) == .cancelled
+  }
+
+  /// What `stopRunningStatement` did
+  enum StatementStopOutcome: Equatable {
+    case cancelled
+    case nothingRunning
+    /// The user answered the warning with "Keep running"
+    case keptRunning
+  }
+
+  /// `cancelRunningStatement`, telling a declined warning apart from nothing to stop (a quit,
+  /// close or disconnect's Stop is cancelled by it)
+  func stopRunningStatement(
+    cancelQueue: Bool, alwaysConfirm: Bool = false
+  ) async -> StatementStopOutcome {
+    guard let connectionManager else { return .nothingRunning }
+    // Stop in the quit, close or disconnect prompt already answered for the transaction its
+    // line named: ask once. Read before the first await, so a cancel still reading the status
+    // when that stop's wait ends never asks. A transaction that opened or changed since the
+    // prompt was drawn was never named: its warning is asked.
+    let consent = stopConsent()
     while true {
       let status = await connectionManager.runningStatementStatus()
       guard status.inFlight else {
         if cancelQueue { cancelAllCells() }
-        return false
+        return .nothingRunning
       }
       let ownedByAnotherTab = status.owner.map { $0 != id } ?? false
-      if let warning = QueryCancelWarning.make(
-        state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab,
-        keepsTransaction: status.keepsTransaction, interrupts: status.interrupts,
-        interruptRollsBack: status.interruptRollsBack) ?? (alwaysConfirm ? stopPrompt(status) : nil)
+      if consent?.covers(status) != true,
+        let warning = QueryCancelWarning.make(
+          state: status.state, userTxOpen: status.userTxOpen, ownedByAnotherTab: ownedByAnotherTab,
+          keepsTransaction: status.keepsTransaction, interrupts: status.interrupts,
+          interruptRollsBack: status.interruptRollsBack)
+          ?? (alwaysConfirm ? stopPrompt(status) : nil)
       {
-        guard await confirmCancel(warning) else { return false }
+        guard await confirmCancel(warning) else { return .keptRunning }
       }
       // Before the reset: a queued cell must not start on the reopened session
       if cancelQueue { cancelAllCells() }
@@ -103,8 +126,8 @@ extension NotebookViewModel {
         expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
         expectedEpoch: status.epoch)
       switch outcome {
-      case .cancelled: return true
-      case .nothingRunning: return false
+      case .cancelled: return .cancelled
+      case .nothingRunning: return .nothingRunning
       case .transactionChanged: continue
       }
     }

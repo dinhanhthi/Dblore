@@ -176,6 +176,14 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var isResolvingPendingTransaction = false
   /// Asks "Commit / Roll back / Cancel"; nil = NSAlert (tests inject an answer)
   @ObservationIgnored var pendingTransactionPrompt: PendingTransactionPrompt?
+  /// Running work a close or disconnect asks about (tests inject their own, with its prompt)
+  @ObservationIgnored var runningWork = RunningWorkRegistry.shared
+  /// The user's close or Disconnect asks about running work or stops it: a second click is
+  /// ignored until that ends (`confirmStoppingRunningWork`)
+  @ObservationIgnored var isAskingAboutRunningWork = false
+  /// A user transaction (`BEGIN` with Protected off) was open at the last refresh
+  /// (`refreshPendingTransaction`)
+  @ObservationIgnored var isUserTransactionOpen = false
 
   // MARK: - Tabs
 
@@ -794,7 +802,7 @@ class WorkspaceManager: Identifiable {
   private func store(_ document: SQLEditorDocument, for tabId: UUID) {
     document.onExternalReload = { [weak self, weak document] in
       guard let document, let viewModel = self?.viewModels[tabId] else { return }
-      viewModel.editorContent = document.content
+      viewModel.replaceEditorContentKeepingBookmarks(document.content)
     }
     editorDocuments[tabId] = document
   }
@@ -1546,6 +1554,7 @@ class WorkspaceManager: Identifiable {
       let viewModel = createViewModel(for: notebook)
       viewModel.viewMode = tabRef.documentType == .markdown ? .markdown : .editor
       viewModel.editorContent = content
+      viewModel.restoreLineBookmarks(tabRef.lineBookmarks)
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
@@ -1726,6 +1735,10 @@ class WorkspaceManager: Identifiable {
       guard let self else { return nil }
       return (id: self.workspace.id, name: self.workspace.name)
     }
+    viewModel.stopConsent = { [weak self] in
+      guard let self else { return nil }
+      return self.runningWork.stopConsent(workspaceID: self.id)
+    }
     viewModel.isAIAllowed = { [weak self] in self?.isAIAllowed() ?? false }
     viewModel.aiInlineSchema = { [weak self] prefix in await self?.aiInlineSchema(prefix: prefix) }
     viewModel.connectGenerationForRun = { [weak self] in self?.connectGenerationForRun() }
@@ -1751,6 +1764,8 @@ class WorkspaceManager: Identifiable {
     viewModel.resultsSavedWithFile = { [weak self] in
       self?.settingsResolver.includeResultsOnSave ?? AppSettings.shared.includeResultsOnSave
     }
+    // Line bookmarks live in the workspace tab entry, not in the tab's file
+    viewModel.onLineBookmarksChanged = { [weak self] in self?.markDirtyAndScheduleAutoSave() }
 
     return viewModel
   }
@@ -2157,6 +2172,8 @@ class WorkspaceManager: Identifiable {
     let isMarkdown = documentType == .markdown
     viewModel.viewMode = isMarkdown ? .markdown : .editor
     viewModel.editorContent = script
+    // The bookmarks saved with the tab, placed on the restored text
+    viewModel.restoreLineBookmarks(workspace.tabs.first { $0.id == tabId }?.lineBookmarks)
     viewModels[tabId] = viewModel
     ensureOverlayTab(
       id: tabId, documentType: documentType,

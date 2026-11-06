@@ -34,8 +34,11 @@ struct DataViewerFilterTests {
     #expect(viewModel.dataViewer?.filter == viewModel.filterDraft)
     #expect(viewModel.dataViewer?.page == 1)
     #expect(viewModel.dataViewer?.totalRows == nil)
-    #expect(viewModel.dataViewer?.pageSQL.contains("WHERE \"name\" = 'bob'") == true)
-    #expect(viewModel.dataViewer?.countSQL.contains("WHERE \"name\" = 'bob'") == true)
+    #expect(
+      viewModel.dataViewer?.pageSQL.contains("WHERE \"name\" OPERATOR(pg_catalog.=) 'bob'") == true)
+    #expect(
+      viewModel.dataViewer?.countSQL.contains("WHERE \"name\" OPERATOR(pg_catalog.=) 'bob'") == true
+    )
   }
 
   @Test("Apply with a blank draft keeps the filter empty and the SQL unchanged")
@@ -86,6 +89,88 @@ struct DataViewerFilterTests {
 
     viewModel.deleteSavedFilter(viewModel.savedFilters[0])
     #expect(viewModel.savedFilters.isEmpty)
+  }
+
+  // MARK: - Operand kind from the schema cache
+
+  /// A PostgreSQL view model on `public.users` with a `name` column of `nameType`, connected
+  /// to nothing (each read fails), so the page and count SQL are built but not run
+  private func makeTypedViewModel(nameType: String) -> NotebookViewModel {
+    let viewModel = makeViewModel()
+    viewModel.connectionManager = DatabaseConnectionManager()
+    viewModel.databaseTables = [
+      DatabaseTable(
+        schema: "public", name: "users",
+        columns: [
+          DatabaseColumn(name: "id", type: "integer", isPrimaryKey: true),
+          DatabaseColumn(name: "name", type: nameType),
+        ])
+    ]
+    viewModel.filterDraft = TableFilter(conditions: [condition("name", "bob")])
+    return viewModel
+  }
+
+  private func hasWhere(_ viewModel: NotebookViewModel, _ clause: String) -> Bool {
+    viewModel.dataViewer?.pageSQL.contains("WHERE \(clause)") == true
+      && viewModel.dataViewer?.countSQL.contains("WHERE \(clause)") == true
+  }
+
+  @Test("A citext column of the cached table keeps the bare =; an uncached table qualifies it")
+  func citextColumnKeepsBareOperator() async {
+    let viewModel = makeTypedViewModel(nameType: "citext")
+    await viewModel.applyFilter()
+    #expect(hasWhere(viewModel, "\"name\" = 'bob'"))
+
+    // Changed column types count the filtered total again (the count read fails here)
+    viewModel.dataViewer?.totalRows = 7
+    viewModel.databaseTables = []
+    await viewModel.loadDataViewerPage()
+    #expect(hasWhere(viewModel, "\"name\" OPERATOR(pg_catalog.=) 'bob'"))
+    #expect(viewModel.dataViewer?.totalRows == nil)
+  }
+
+  @Test("An open transaction does not mark the user types read as failed")
+  func pendingTransactionDefersUserTypesRead() async throws {
+    let manager = WorkspaceManager(
+      workspace: Workspace(connectionConfig: ConnectionConfig()), restoreTabs: false)
+    manager.connectionState = .connected
+    manager.pendingTransaction = .appTx(pending: [])
+    let viewModel = try #require(manager.viewModel(for: manager.newNotebook()))
+
+    viewModel.requestUserTypes()
+    for _ in 0..<20 { await Task.yield() }
+    #expect(manager.databaseUserTypes.error == nil)
+
+    // After Commit or Rollback the next page asks (the unconnected read fails)
+    manager.pendingTransaction = .idle
+    viewModel.requestUserTypes()
+    for _ in 0..<200 where manager.databaseUserTypes.error == nil {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(manager.databaseUserTypes.error != nil)
+  }
+
+  @Test("A domain over citext keeps the bare = once the user types are cached")
+  func domainOverCitextKeepsBareOperator() async {
+    let viewModel = makeTypedViewModel(nameType: "email")
+    var requests = 0
+    viewModel.requestUserTypes = { requests += 1 }
+    await viewModel.applyFilter()
+    #expect(hasWhere(viewModel, "\"name\" OPERATOR(pg_catalog.=) 'bob'"))
+    #expect(requests > 0)
+
+    let domain = { (name: String, base: String) in
+      DatabaseUserType(
+        schema: "public", name: name,
+        kind: .domain(baseType: base, notNull: false, defaultExpression: nil, constraints: []))
+    }
+    // Domain over domain: email -> work_email_base -> public.citext
+    viewModel.databaseTables[0].columns[1] = DatabaseColumn(name: "name", type: "public.email")
+    viewModel.workspaceUserTypes = {
+      [domain("email", "work_email_base"), domain("work_email_base", "public.citext")]
+    }
+    await viewModel.applyFilter()
+    #expect(hasWhere(viewModel, "\"name\" = 'bob'"))
   }
 
 }

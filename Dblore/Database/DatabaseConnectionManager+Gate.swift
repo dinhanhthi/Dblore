@@ -319,15 +319,19 @@ extension DatabaseConnectionManager {
   /// open transaction. `rewind` (one step per statement) reads each row for Data Rewind around
   /// its statement; nil sends the same statements as before. `rewinding`: the Data Rewind entries
   /// this batch undoes (a rewind's own batch), marked rewound once it is committed (D5).
+  /// `isDataImport` (a table import): the engine must support data import rather than row
+  /// edits, and on DuckDB, which has no savepoint, Protected mode or an open transaction is
+  /// refused (`DatabaseError.sequentialBatchRefused`) before anything is sent.
   func executeGatedBatch(
     _ statements: [BoundStatement], policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil, rewind: RewindPlan? = nil, rewinding: [Int64] = []
+    caller: UUID? = nil, rewind: RewindPlan? = nil, rewinding: [Int64] = [],
+    isDataImport: Bool = false
   ) async throws -> [Int] {
     try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
-    try refuseIfRowEditsUnsupported()
+    try refuseIfRowEditsUnsupported(isDataImport: isDataImport)
     let effective = effectivePolicy(for: policy)
     // Decision is pure and finishes before any await that could send SQL.
     if case .blocked(let index, let kind, let reason) = Self.evaluateBatch(
@@ -339,6 +343,9 @@ extension DatabaseConnectionManager {
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     try refuseIfAborted()
+    if isDataImport, let reason = duckDBImportRefusalReason(policy: policy) {
+      throw DatabaseError.sequentialBatchRefused(reason)
+    }
     guard session != nil else { throw DatabaseError.notConnected }
     try refuseIfConnectionClosed()
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
@@ -422,13 +429,41 @@ extension DatabaseConnectionManager {
     }
   }
 
+  /// Why a DuckDB import is refused under Protected mode
+  static let duckDBImportProtectedModeRefusal =
+    "Turn Protected mode off for this connection to import into DuckDB: DuckDB has no "
+    + "savepoint, so the import cannot wait for Commit inside the pending transaction."
+  /// Why a DuckDB import is refused while a transaction is open
+  static let duckDBImportTransactionOpenRefusal =
+    "Commit or roll back the open transaction first, then import: DuckDB has no savepoint, "
+    + "so a failed import could not be undone inside it."
+
   /// Throws `DatabaseError.notEditable` when the connected engine has no grid edits
-  /// (`supportsRowStaging` false: DuckDB, MongoDB), before anything is sent or the owner is
-  /// claimed. The UI already refuses them; this keeps the SQL edit paths off such a session.
-  private func refuseIfRowEditsUnsupported() throws {
-    guard let type = config?.databaseType, !type.capabilities.supportsRowStaging else { return }
+  /// (`supportsRowStaging` false: DuckDB, MongoDB), or for `isDataImport` no data import
+  /// (`supportsDataImport` false: MongoDB), before anything is sent or the owner is claimed.
+  /// The UI already refuses them; this keeps the SQL edit paths off such a session.
+  private func refuseIfRowEditsUnsupported(isDataImport: Bool = false) throws {
+    guard let type = config?.databaseType else { return }
+    let capabilities = type.capabilities
+    if isDataImport {
+      guard !capabilities.supportsDataImport else { return }
+      throw DatabaseError.notEditable(
+        "data import is not available for \(type.rawValue) connections")
+    }
+    guard !capabilities.supportsRowStaging else { return }
     throw DatabaseError.notEditable(
       "row edits are not available for \(type.rawValue) connections")
+  }
+
+  /// Why a data import with `policy` is refused on DuckDB, nil when it may run (or on another
+  /// engine). DuckDB has no SAVEPOINT, which the batch sends inside a transaction (Protected
+  /// mode, or the user's own). The import sheet asks before Safe Mode confirms; the gate asks
+  /// again before anything is sent.
+  func duckDBImportRefusalReason(policy: ProtectionPolicy) -> String? {
+    guard config?.databaseType == .duckdb else { return nil }
+    if effectivePolicy(for: policy).protectedMode { return Self.duckDBImportProtectedModeRefusal }
+    if !txState.isIdle || userTxOpen { return Self.duckDBImportTransactionOpenRefusal }
+    return nil
   }
 
   /// One result for a whole script: a single statement's result as is; otherwise the last

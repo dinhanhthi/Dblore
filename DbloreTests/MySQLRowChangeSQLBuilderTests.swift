@@ -167,7 +167,8 @@ struct MySQLRowChangeSQLBuilderTests {
     let postgres = try CellUpdateStatement.make(
       qualifiedName: "public.t", columnName: "a", newValue: "1", primaryKeyColumns: ["id"],
       rowData: ["id": .int(1)], updateOnly: true)
-    #expect(postgres.sql == #"UPDATE ONLY public.t SET "a" = $1 WHERE "id" = $2"#)
+    #expect(
+      postgres.sql == #"UPDATE ONLY public.t SET "a" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
     #expect(postgres.rowCheck == nil)
   }
 

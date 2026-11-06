@@ -372,7 +372,8 @@ struct SQLDumpWriterTests {
       overridingSystemValue: false, hasData: true)
     #expect(
       try SQLDumpDataRenderer.selectStatement(postgres, engine: .postgresql)
-        == "SELECT 'v' || \"n\"::text, 'v' || \"b\"::text FROM ONLY \"s\".\"t\"")
+        == "SELECT 'v' OPERATOR(pg_catalog.||) \"n\"::pg_catalog.text,"
+        + " 'v' OPERATOR(pg_catalog.||) \"b\"::pg_catalog.text FROM ONLY \"s\".\"t\"")
     let sqlite = SQLDumpDDL.TableInsert(
       schema: "main", name: "t", target: "\"t\"", columns: [Self.column(1, "a", "")],
       overridingSystemValue: false, hasData: true)

@@ -804,7 +804,8 @@ struct DatabaseBackupModelTests {
       ("-- Dblore SQL dump 1 engine=PostgreSQL created=x\n"
       + "CREATE TABLE \"public\".\"a\" (id int);\n")
       .write(to: file, atomically: true, encoding: .utf8)
-    // Reads wait until interrupted; the restore's BEGIN, CREATE and COMMIT do not
+    // Reads wait until interrupted; the restore's BEGIN, search_path read, CREATE and COMMIT
+    // do not
     let factory = FakeDatabaseSessionFactory(
       capabilities: DatabaseType.postgresql.capabilities, slowQueries: true)
     let manager = DatabaseConnectionManager(sessionFactory: factory)

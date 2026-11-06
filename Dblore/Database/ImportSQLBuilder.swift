@@ -51,7 +51,7 @@ nonisolated enum ImportSQLBuilder {
     schema: String?, table: String, columns: [Column], dialect: SQLDialect
   ) throws -> BoundStatement {
     guard !columns.isEmpty else { throw Error.invalidColumns }
-    let relation = try dialect.qualified(schema: schema, name: table)
+    let relation = try Self.relation(schema: schema, table: table, dialect: dialect)
     let definitions = try columns.map { column in
       try dialect.quoteIdentifier(column.name) + " " + columnType(column, dialect: dialect)
     }.joined(separator: ", ")
@@ -149,6 +149,18 @@ nonisolated enum ImportSQLBuilder {
     }
   }
 
+  /// The quoted table, with its schema when there is one: always on PostgreSQL (`public` too, so
+  /// nothing on the user's search_path is read or written instead) and with
+  /// `qualifiesDefaultSchema`; otherwise without the dialect's default schema.
+  static func relation(
+    schema: String?, table: String, dialect: SQLDialect, qualifiesDefaultSchema: Bool = false
+  ) throws -> String {
+    guard let schema, qualifiesDefaultSchema || dialect == .postgresql else {
+      return try dialect.qualified(schema: schema, name: table)
+    }
+    return try dialect.quoteIdentifier(schema) + "." + dialect.quoteIdentifier(table)
+  }
+
   /// INSERT statements of at most 1,000 rows, within the bind limit and `maxChunkBytes`. Each
   /// `.bind` entry takes the next placeholder through its column's marker; `.inline` takes none.
   /// `qualifiesDefaultSchema` keeps the schema even when it is the dialect's default.
@@ -160,12 +172,9 @@ nonisolated enum ImportSQLBuilder {
     let maximumBinds = bindLimit ?? defaultBindLimit(dialect)
     let chunkSize = min(1_000, maximumBinds / names.count)
     guard chunkSize > 0 else { throw Error.bindLimitExceeded }
-    let relation =
-      if qualifiesDefaultSchema, let schema {
-        try dialect.quoteIdentifier(schema) + "." + dialect.quoteIdentifier(table)
-      } else {
-        try dialect.qualified(schema: schema, name: table)
-      }
+    let relation = try Self.relation(
+      schema: schema, table: table, dialect: dialect,
+      qualifiesDefaultSchema: qualifiesDefaultSchema)
     let quoted = try names.map { try dialect.quoteIdentifier($0) }.joined(separator: ", ")
     let prefix = "INSERT INTO \(relation) (\(quoted)) VALUES "
     var statements: [BoundStatement] = []
@@ -250,8 +259,9 @@ nonisolated enum ImportSQLBuilder {
 
   /// `UPDATE <table> SET <mapped non-key columns> WHERE <key>` for one file row, expecting one
   /// row. The key compares as the match read does (`KeyColumn.equals`, with its cast, COLLATE
-  /// or CONVERT). MySQL counts changed rows only, so the statement carries the row check of a
-  /// staged UPDATE: a row the write leaves unchanged still counts as the one expected.
+  /// or CONVERT, and on PostgreSQL the same qualified or bare operator). MySQL counts changed
+  /// rows only, so the statement carries the row check of a staged UPDATE: a row the write
+  /// leaves unchanged still counts as the one expected.
   static func updateStatement(
     schema: String?, table: String, columns: [Column], row: [String?],
     keys: [ImportMatchPlanner.KeyColumn], dialect: SQLDialect
@@ -264,7 +274,7 @@ nonisolated enum ImportSQLBuilder {
     let keyNames = Set(keys.map(\.name))
     let assigned = columns.indices.filter { !keyNames.contains(columns[$0].name) }
     guard !assigned.isEmpty else { throw Error.invalidColumns }
-    let relation = try dialect.qualified(schema: schema, name: table)
+    let relation = try Self.relation(schema: schema, table: table, dialect: dialect)
     let assignments = try assigned.enumerated().map { offset, index in
       let marker = dialect.placeholder(offset + 1)
       let value =
@@ -350,7 +360,7 @@ nonisolated enum ImportSQLBuilder {
     createTable: BoundStatement?, schema: String?, table: String, columns: [String],
     rowCount: Int, dialect: SQLDialect
   ) throws -> String {
-    let relation = try dialect.qualified(schema: schema, name: table)
+    let relation = try Self.relation(schema: schema, table: table, dialect: dialect)
     let names = try columns.map(dialect.quoteIdentifier).joined(separator: ", ")
     let insert = "INSERT INTO \(relation) (\(names)) -- \(rowCount) rows from file"
     guard let createTable else { return insert }
@@ -363,7 +373,7 @@ nonisolated enum ImportSQLBuilder {
     schema: String?, table: String, columns: [String], update: BoundStatement?,
     counts: MatchCounts, dialect: SQLDialect
   ) throws -> String {
-    let relation = try dialect.qualified(schema: schema, name: table)
+    let relation = try Self.relation(schema: schema, table: table, dialect: dialect)
     let names = try columns.map(dialect.quoteIdentifier).joined(separator: ", ")
     var statements: [String] = []
     if counts.inserts > 0 { statements.append("INSERT INTO \(relation) (\(names))") }

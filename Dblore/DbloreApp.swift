@@ -221,27 +221,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   /// post-disconnect script or a Vault lease are closed (their scripts started, their leases
   /// revoked) before the app exits. A connect still waiting for its lease is not among them
   /// (its slot is empty until the lease arrives): that lease ends at its TTL.
+  ///
+  /// First of all, running work (queries, imports, copies, dumps, restores) asks once ("Stop and
+  /// Quit" / "Cancel"); with nothing running, "Confirm before quitting" asks on Cmd+Q.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard confirmKeyboardQuit() else { return .terminateCancel }
     let managers = WorkspaceWindowManager.shared.allWorkspaces
-    // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
-    let resolves = managers.contains(where: {
-      !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting
-    })
+    let registry = RunningWorkRegistry.shared
+    // Read now: `NSApp.currentEvent` is gone once the quit waits
+    let confirmBeforeQuit = asksBeforeKeyboardQuit
     let closing = managers.map(\.connectionManager).filter(\.closesAtQuit)
-    guard resolves || !closing.isEmpty else {
+    // Nothing runs, nothing is pending and nothing closes: at most the generic question
+    if registry.items.isEmpty, closing.isEmpty,
+      managers.allSatisfy({ $0.pendingTransaction.isIdle && !$0.isAnyTabExecuting })
+    {
+      guard !confirmBeforeQuit || confirmKeyboardQuit() else { return .terminateCancel }
       isTerminating = true
       recordLaunchSession()
       return .terminateNow
     }
+    // Waits without blocking the app; every path replies once
     Task { @MainActor in
-      if resolves {
-        for manager in managers {
-          guard await manager.resolvePendingTransaction(action: .quit) else {
-            NSApp.reply(toApplicationShouldTerminate: false)
-            return
-          }
-        }
+      guard
+        await WorkspaceManager.answerQuitQuestions(
+          managers, runningWork: registry, confirmBeforeQuit: confirmBeforeQuit,
+          confirmQuit: confirmKeyboardQuit)
+      else {
+        NSApp.reply(toApplicationShouldTerminate: false)
+        return
       }
       isTerminating = true
       recordLaunchSession()
@@ -302,10 +308,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// With "Confirm before quitting" on, Cmd+Q asks first. Quit from the Dock, logout and
   /// update relaunches come without a key event, so they never ask.
+  private var asksBeforeKeyboardQuit: Bool {
+    AppSettings.shared.confirmBeforeQuit && NSApp.currentEvent?.type == .keyDown
+      && !SessionManager.isRunningAsTestHost
+  }
+
+  /// The generic "Quit Dblore?" when nothing runs (running work asks its own question instead)
   private func confirmKeyboardQuit() -> Bool {
-    guard AppSettings.shared.confirmBeforeQuit, NSApp.currentEvent?.type == .keyDown,
-      !SessionManager.isRunningAsTestHost
-    else { return true }
     let alert = NSAlert()
     alert.messageText = "Quit Dblore?"
     alert.informativeText = "You can turn this off in Settings > General."
@@ -566,6 +575,24 @@ extension FocusedValues {
     set { self[FindPreviousActionKey.self] = newValue }
   }
 
+  /// Toggles the line bookmark at the caret; nil outside a SQL editor tab
+  var toggleLineBookmarkAction: (() -> Void)? {
+    get { self[ToggleLineBookmarkActionKey.self] }
+    set { self[ToggleLineBookmarkActionKey.self] = newValue }
+  }
+
+  /// Moves the caret to the next line bookmark; nil outside a SQL editor tab
+  var nextLineBookmarkAction: (() -> Void)? {
+    get { self[NextLineBookmarkActionKey.self] }
+    set { self[NextLineBookmarkActionKey.self] = newValue }
+  }
+
+  /// Moves the caret to the previous line bookmark; nil outside a SQL editor tab
+  var previousLineBookmarkAction: (() -> Void)? {
+    get { self[PreviousLineBookmarkActionKey.self] }
+    set { self[PreviousLineBookmarkActionKey.self] = newValue }
+  }
+
   /// Whether schema visualizer is active
   var isSchemaVisualizerActive: Bool? {
     get { self[IsSchemaVisualizerActiveKey.self] }
@@ -605,6 +632,19 @@ struct FindNextActionKey: FocusedValueKey {
 
 /// FocusedValue key for find previous match.
 struct FindPreviousActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// FocusedValue keys for the SQL editor's line bookmarks.
+struct ToggleLineBookmarkActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct NextLineBookmarkActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct PreviousLineBookmarkActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
@@ -1054,11 +1094,12 @@ struct TabCommands: Commands {
       || WorkspaceWindowManager.shared.activeWorkspaceManager?.lockCoverage != nil
   }
 
-  /// Get active workspace or create new one; nil (nothing created) while covered
+  /// Get active workspace or create new one, shown in a window; nil (nothing created) while
+  /// covered
   private var activeWorkspaceOrNew: WorkspaceManager? {
     FocusedActionRegistry.shared.commandWorkspace(
       WorkspaceWindowManager.shared.activeWorkspaceManager,
-      orNew: { WorkspaceWindowManager.shared.newWorkspace() })
+      orNew: { WorkspaceWindowManager.shared.activeWorkspaceOrNew() })
   }
 
   /// The workspace Save Workspace / Save As act on, nil while covered
@@ -1286,6 +1327,12 @@ struct EditorCommands: Commands {
   @BridgedFocusedValue(\.findReplaceAction) private var findReplaceAction
   @BridgedFocusedValue(\.findNextAction) private var findNextAction
   @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.toggleLineBookmarkAction) private var toggleLineBookmarkAction
+  @BridgedFocusedValue(\.nextLineBookmarkAction) private var nextLineBookmarkAction
+  @BridgedFocusedValue(\.previousLineBookmarkAction) private var previousLineBookmarkAction
+
+  /// The F2 key (a function key has no character of its own: AppKit's private-use scalar)
+  private static let f2Key = KeyEquivalent(Character(Unicode.Scalar(UInt32(NSF2FunctionKey))!))
 
   var body: some Commands {
     // Chỉ show khi documentMode == .editor
@@ -1331,6 +1378,26 @@ struct EditorCommands: Commands {
           findPreviousAction?()
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
+
+        Divider()
+
+        Button("Toggle Bookmark") {
+          toggleLineBookmarkAction?()
+        }
+        .keyboardShortcut(Self.f2Key, modifiers: .command)
+        .disabled(toggleLineBookmarkAction == nil)
+
+        Button("Next Bookmark") {
+          nextLineBookmarkAction?()
+        }
+        .keyboardShortcut(Self.f2Key, modifiers: [])
+        .disabled(nextLineBookmarkAction == nil)
+
+        Button("Previous Bookmark") {
+          previousLineBookmarkAction?()
+        }
+        .keyboardShortcut(Self.f2Key, modifiers: .shift)
+        .disabled(previousLineBookmarkAction == nil)
       }
 
       // View Menu - Sidebar toggles

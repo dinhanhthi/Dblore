@@ -168,7 +168,7 @@ extension WorkspaceManager {
         tab, bookmark: tabBookmarks[tab.id],
         dataViewer: state.map {
           .init(schema: $0.schema, name: $0.name, orderColumns: $0.orderColumns)
-        })
+        }, lineBookmarks: viewModels[tab.id]?.savedLineBookmarks)
     }
     let saved = workspace.tabs
     workspace.tabs += unrestoredLockedTabs.filter { ref in

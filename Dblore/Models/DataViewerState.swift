@@ -32,6 +32,11 @@ struct DataViewerState: Equatable {
   var databaseType: DatabaseType = .postgresql
   /// The applied filter (SQL engines only)
   var filter = TableFilter(conditions: [])
+  /// Column name → schema type text (`DatabaseColumn.type`, a cached domain's base type) of the
+  /// viewed relation, from the schema cache: picks the operand kind of each PostgreSQL filter
+  /// comparison. Empty until the cache has the relation, so every comparison is
+  /// `pg_catalog`-qualified.
+  var columnTypes: [String: String] = [:]
   /// MongoDB: the applied filter document as typed (relaxed JSON / mongosh notation), "" for none
   var documentFilter = ""
   /// MongoDB: the header sort, nil for the default `{_id: 1}`
@@ -108,13 +113,14 @@ struct DataViewerState: Equatable {
     do {
       return try databaseType.dialect.quoteIdentifier(name)
     } catch {
-      return CellUpdateStatement.quoteIdentifier(name)
+      return CellUpdateStatement.quoteIdentifier(name, dialect: databaseType.dialect)
     }
   }
 
   /// ` WHERE <clause>` for the applied filter, empty without a complete condition
   private var whereSQL: String {
-    filter.whereClause(dialect: databaseType.dialect).map { " WHERE " + $0 } ?? ""
+    filter.whereClause(dialect: databaseType.dialect, columnTypes: columnTypes)
+      .map { " WHERE " + $0 } ?? ""
   }
 
   /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1).
@@ -145,7 +151,11 @@ struct DataViewerState: Equatable {
 
   var countSQL: String {
     assert(databaseType != .mongodb, "MongoDB counts are mongoQueries()")
-    return "SELECT count(*) FROM \(relation)\(whereSQL)"
+    switch databaseType {
+    case .postgresql:
+      return "SELECT \(databaseType.dialect.function("count", "*")) FROM \(relation)\(whereSQL)"
+    default: return "SELECT count(*) FROM \(relation)\(whereSQL)"
+    }
   }
 
   /// Number of pages (at least 1), nil while the total is unknown
@@ -294,13 +304,14 @@ extension DataViewerState {
     }
   }
 
-  /// PostgreSQL `tableoid`, `ctid` and `xmin` as text, or the SQLite rowid alias, under
-  /// `locatorColumns`
+  /// PostgreSQL `tableoid`, `ctid` and `xmin` as `pg_catalog.text`, or the SQLite rowid alias,
+  /// under `locatorColumns`
   private var locatorExpressions: [String] {
     let sources: [String]
     switch rowLocator {
     case nil: sources = []
-    case .pgLocator: sources = ["tableoid::text", "ctid::text", "xmin::text"]
+    case .pgLocator:
+      sources = ["tableoid", "ctid", "xmin"].map { databaseType.dialect.cast($0, to: "text") }
     case .sqliteRowid(let alias, _): sources = [alias.rawValue]
     }
     return zip(sources, locatorColumns).map { "\($0) AS \(quotedIdentifier($1))" }
@@ -326,6 +337,7 @@ extension DataViewerState {
     switch databaseType {
     case .mysql: return "LENGTH(\(column))"
     case .sqlite: return "CASE WHEN typeof(\(column)) = 'blob' THEN length(\(column)) END"
+    case .postgresql: return databaseType.dialect.function("octet_length", column)
     default: return "octet_length(\(column))"
     }
   }

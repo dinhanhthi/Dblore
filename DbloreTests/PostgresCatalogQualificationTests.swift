@@ -3,7 +3,8 @@
 // unqualified function or operator over every schema on the path and prefers an exact-type match
 // to a pg_catalog candidate that needs a cast, so every catalog statement names pg_catalog for
 // each relation, function, operator, cast type and regclass literal. Each introspector entry point
-// runs against a fake session that records its SQL; each statement is linted token by token.
+// runs against a fake session that records its SQL; each statement is linted token by token
+// (`PostgresQualificationLint`, shared with the user data suite).
 
 import Foundation
 import Testing
@@ -111,9 +112,24 @@ struct PostgresCatalogQualificationTests {
         "\(entry.name) sent \(session.statements.count) statements")
       let allowsLookup = Self.boundNameLookups[entry.name] != nil
       for sql in session.statements {
-        let found = CatalogSQLLint.violations(sql, allowsBoundNameLookup: allowsLookup)
+        let found = PostgresQualificationLint.violations(sql, allowsBoundNameLookup: allowsLookup)
         #expect(found.isEmpty, "\(entry.name): \(found.joined(separator: "; "))\n\(sql)")
       }
+    }
+  }
+
+  @Test("The dump's PostgreSQL catalog reads are qualified")
+  func dumpCatalogReadsAreQualified() async throws {
+    // They run under `SET LOCAL search_path = ''` too; qualified so this lint covers them. No
+    // rows: no table is listed, so the introspector's structure reads (linted above) do not run.
+    let session = FakeDatabaseSession(
+      capabilities: .contract(), columns: [], rows: [], slowQueries: false)
+    _ = try await SQLDumpCatalog.postgresInput(session)
+    // Tables, indexes, constraints, types, sequences, views
+    #expect(session.statements.count == 6, "sent \(session.statements.count) statements")
+    for sql in session.statements {
+      let found = PostgresQualificationLint.violations(sql)
+      #expect(found.isEmpty, "\(found.joined(separator: "; "))\n\(sql)")
     }
   }
 
@@ -183,7 +199,7 @@ struct PostgresCatalogQualificationTests {
       let sent = factory.statements
       #expect(sent.count == read.statements, "\(read.name) sent \(sent.count) statements: \(sent)")
       for sql in sent {
-        let found = CatalogSQLLint.violations(sql)
+        let found = PostgresQualificationLint.violations(sql)
         #expect(found.isEmpty, "\(read.name): \(found.joined(separator: "; "))\n\(sql)")
       }
       await manager.disconnect()
@@ -238,9 +254,13 @@ struct PostgresCatalogQualificationTests {
       ("table health statistics state", TableHealthQueries.postgresStatisticsStateSQL),
       ("table health unused indexes", TableHealthQueries.postgresUnusedIndexesSQL),
       ("table health dead tuples", TableHealthQueries.postgresDeadTuplesSQL),
+      // A PostgreSQL restore's search_path read, pin and put-back, on the user's session
+      ("restore search_path read", DatabaseConnectionManager.SearchPathPin.readSQL),
+      ("restore search_path pin", DatabaseConnectionManager.SearchPathPin.pinSQL),
+      ("restore search_path put-back", DatabaseConnectionManager.SearchPathPin.putBackSQL),
     ]
     for (name, sql) in statements {
-      let found = CatalogSQLLint.violations(sql)
+      let found = PostgresQualificationLint.violations(sql)
       #expect(found.isEmpty, "\(name): \(found.joined(separator: "; "))\n\(sql)")
     }
   }
@@ -269,9 +289,14 @@ struct PostgresCatalogQualificationTests {
       "SELECT pg_catalog.col_description(1, 1)",
       "SELECT pg_catalog.shobj_description(1, 'pg_database')",
       "SELECT 1 FROM information_schema.columns c",
+      "SELECT count(*) FROM pg_catalog.pg_class",
+      "SELECT c.relname::text FROM pg_catalog.pg_class c",
+      "SELECT CAST(c.relname AS text) FROM pg_catalog.pg_class c",
+      "SELECT CAST($1 AS uuid)",
+      "SELECT $1::\"char\"",
     ]
     for sql in flagged {
-      #expect(!CatalogSQLLint.violations(sql).isEmpty, "not flagged: \(sql)")
+      #expect(!PostgresQualificationLint.violations(sql).isEmpty, "not flagged: \(sql)")
     }
     let qualified = """
       SELECT pg_catalog.count(*), c.oid::pg_catalog.int8,
@@ -282,141 +307,20 @@ struct PostgresCatalogQualificationTests {
         AND c.oid OPERATOR(pg_catalog.<>) 'pg_catalog.pg_class'::pg_catalog.regclass
         AND c.oid OPERATOR(pg_catalog.=) $1::pg_catalog.oid
       """
-    #expect(CatalogSQLLint.violations(qualified) == [])
-  }
-}
-
-/// Token-level rules for a catalog statement. Words are uppercased by `SQLTokenizer`; strings
-/// and quoted identifiers are opaque, so a user name or a pattern never matches a rule.
-private enum CatalogSQLLint {
-  /// Grammar constructs and keywords that may precede `(` without being looked up by name
-  private static let notFunctions: Set<String> = [
-    "COALESCE", "GREATEST", "LEAST", "CASE", "EXISTS", "ANY", "ALL", "ARRAY", "CAST", "ROW",
-    "EXTRACT", "POSITION", "SUBSTRING", "TRIM", "VALUES", "AND", "OR", "NOT", "WHERE", "SELECT",
-    "THEN", "ELSE", "WHEN", "ON", "FROM", "JOIN", "LATERAL", "BY", "IS", "FILTER", "OVER",
-    // Flagged on their own (`wordViolations`)
-    "IN", "USING",
-  ]
-  /// Symbols that are punctuation, not operators (`*` and `:` and `$` are checked apart)
-  private static let punctuation: Set<String> = ["(", ")", ",", ".", "[", "]", ";"]
-
-  /// `allowsBoundNameLookup`: a bound name may resolve through search_path (`to_regclass($n)`,
-  /// `$n::pg_catalog.regclass`), see `boundNameLookups`.
-  static func violations(_ sql: String, allowsBoundNameLookup: Bool = false) -> [String] {
-    let tokens = SQLTokenizer.tokens(sql, dialect: .postgresql)
-    var found: [String] = []
-    func word(_ index: Int) -> String? {
-      tokens.indices.contains(index) ? tokens[index].keyword : nil
-    }
-    func symbol(_ index: Int, _ text: String) -> Bool {
-      tokens.indices.contains(index) && tokens[index].isSymbol(text)
-    }
-    func qualified(_ index: Int) -> Bool {
-      symbol(index - 1, ".") && word(index - 2) == "PG_CATALOG"
-    }
-    var i = 0
-    while i < tokens.count {
-      let token = tokens[i]
-      if token.kind == .symbol {
-        switch token.text {
-        case _ where punctuation.contains(token.text):
-          break
-        case "*" where (symbol(i - 1, "(") && symbol(i + 1, ")")) || word(i - 1) == "SELECT":
-          break
-        case "$" where word(i + 1).map { $0.allSatisfy(\.isNumber) } ?? false:
-          break
-        case ":" where symbol(i + 1, ":"):
-          found += castViolations(tokens, at: i, allowsBoundNameLookup: allowsBoundNameLookup)
-          i += 2
-          continue
-        default:
-          found.append("operator \(token.text) outside OPERATOR(pg_catalog.…)")
-        }
-        i += 1
-        continue
-      }
-      guard let text = token.keyword else {
-        i += 1
-        continue
-      }
-      if text == "OPERATOR", symbol(i + 1, "(") {
-        var end = i + 2
-        while end < tokens.count, !tokens[end].isSymbol(")") { end += 1 }
-        let operatorSymbols = tokens[min(i + 4, end)..<end]
-        if word(i + 2) != "PG_CATALOG" || !symbol(i + 3, ".") || operatorSymbols.isEmpty
-          || operatorSymbols.contains(where: { $0.kind != .symbol })
-        {
-          found.append("OPERATOR(…) not in pg_catalog")
-        }
-        i = end + 1
-        continue
-      }
-      found += wordViolations(text, at: i, word: word, symbol: symbol, qualified: qualified)
-      if text == "TO_REGCLASS", !allowsBoundNameLookup {
-        found.append("to_regclass resolves a name through search_path")
-      }
-      i += 1
-    }
-    return found
-  }
-
-  private static func wordViolations(
-    _ text: String, at i: Int, word: (Int) -> String?, symbol: (Int, String) -> Bool,
-    qualified: (Int) -> Bool
-  ) -> [String] {
-    var found: [String] = []
-    switch text {
-    case "PG_CATALOG" where !symbol(i + 1, "."):
-      found.append("pg_catalog not followed by a name")
-    case "NULLIF", "LIKE", "ILIKE", "SIMILAR", "BETWEEN", "NATURAL":
-      found.append("\(text) looks its operator up by name")
-    case "IN" where symbol(i + 1, "("), "USING" where symbol(i + 1, "("),
-      "DISTINCT" where word(i + 1) == "FROM":
-      found.append("\(text) looks its operator up by name")
-    case "CASE" where word(i + 1) != "WHEN":
-      found.append("simple CASE looks = up by name")
-    // On PostgreSQL 13 and older these are LANGUAGE sql functions (and information_schema's
-    // views call `_pg_*` ones) whose string body is parsed when they run, with the caller's
-    // search_path and unqualified operators, so qualifying the call does not help. Read
-    // pg_catalog.pg_description and pg_attribute / pg_type instead.
-    case "OBJ_DESCRIPTION", "COL_DESCRIPTION", "SHOBJ_DESCRIPTION":
-      found.append("\(text) runs a SQL body with the caller's search_path on PG 13 and older")
-    case "INFORMATION_SCHEMA" where symbol(i + 1, "."):
-      found.append("information_schema runs SQL bodies with the caller's search_path on PG 13")
-    default:
-      break
-    }
-    if text.hasPrefix("PG_"), text != "PG_CATALOG", !qualified(i) {
-      found.append("unqualified catalog name \(text)")
-    }
-    guard symbol(i + 1, "(") else { return found }
-    if symbol(i - 1, ".") {
-      if !qualified(i) { found.append("function \(text) qualified outside pg_catalog") }
-    } else if !notFunctions.contains(text), word(i - 1) != "AS", word(i - 1) != "ORDINALITY",
-      !text.hasPrefix("PG_")
-    {
-      found.append("unqualified function \(text)(")
-    }
-    return found
-  }
-
-  /// `::` at `i`: the type is `pg_catalog.<name>`; a regclass literal names a pg_catalog
-  /// relation; a bound regclass is a name lookup.
-  private static func castViolations(
-    _ tokens: [SQLToken], at i: Int, allowsBoundNameLookup: Bool
-  ) -> [String] {
-    guard i + 4 < tokens.count, tokens[i + 2].keyword == "PG_CATALOG",
-      tokens[i + 3].isSymbol("."),
-      tokens[i + 4].kind == .word || tokens[i + 4].kind == .quotedIdentifier
-    else { return ["unqualified cast type"] }
-    guard tokens[i + 4].keyword == "REGCLASS", i > 0 else { return [] }
-    let operand = tokens[i - 1]
-    if operand.kind == .string {
-      return operand.text.hasPrefix("pg_catalog.") ? [] : ["regclass literal '\(operand.text)'"]
-    }
-    if i > 1, tokens[i - 2].isSymbol("$"), !allowsBoundNameLookup {
-      return ["bound regclass resolves a name through search_path"]
-    }
-    return []
+    #expect(PostgresQualificationLint.violations(qualified) == [])
+    let commonTableExpression = """
+      WITH RECURSIVE used AS (SELECT 1 AS oid)
+      SELECT 1 FROM used u WHERE u.oid OPERATOR(pg_catalog.=) ANY (SELECT oid FROM used)
+      """
+    #expect(PostgresQualificationLint.violations(commonTableExpression) == [])
+    // SQL keyword type names are bound by the parser, a user type keeps its name, and a named
+    // bind is no operator
+    let keywordTypes = """
+      SELECT $1::integer, $1::double precision, $1::character varying(20),
+        $1::timestamp with time zone, $1::numeric(10, 2), $1::my_enum, $1::pg_catalog.text[],
+        CAST($1 AS bigint), CAST(($1) AS bit varying(3)), CAST($1 AS public.mood)
+      WHERE $1 OPERATOR(pg_catalog.=) :name
+      """
+    #expect(PostgresQualificationLint.violations(keywordTypes) == [])
   }
 }

@@ -147,7 +147,8 @@ struct MongoDialectMarkerTests {
     #expect(mongo.supportsUpdateOnly == pg.supportsUpdateOnly)
     #expect(mongo.likeIsCaseInsensitive == pg.likeIsCaseInsensitive)
     let values: [CellValue] = [
-      .null, .bool(true), .int(3), .double(1.5), .double(.nan), .double(-.infinity),
+      // Non-finite doubles: PostgreSQL alone casts to `pg_catalog.float8` (SQLDialectTests)
+      .null, .bool(true), .int(3), .double(1.5),
       .string("it's"), .string(#"a\b"#), .json("{}"), .date(Date(timeIntervalSince1970: 0)),
       .data(Data([0x01, 0xAB])),
     ]

@@ -2,10 +2,10 @@
 // Data reads and value literals of a SQL dump. Every value is read as text per column and never
 // decoded into a `CellValue` number or date (which loses NUMERIC precision and fractional
 // seconds):
-// - PostgreSQL selects `'v' || "col"::text`. Each value carries a one-character prefix that
-//   `literal` removes, so '' and NULL never read alike; NULL stays NULL (text concatenated
-//   with NULL is NULL). The text becomes a quoted string literal (`bytea` is its
-//   `\x...` form, which `SET LOCAL bytea_output = 'hex'` pins).
+// - PostgreSQL selects `'v' OPERATOR(pg_catalog.||) "col"::pg_catalog.text`. Each value
+//   carries a one-character prefix that `literal` removes, so '' and NULL never read alike;
+//   NULL stays NULL (text concatenated with NULL is NULL). The text becomes a quoted string
+//   literal (`bytea` is its `\x...` form, which `SET LOCAL bytea_output = 'hex'` pins).
 // - MySQL selects `HEX(col)` for binary, blob, bit and spatial columns (written `X'...'`) and
 //   `CAST(col AS CHAR)` for the rest (written as a quoted string, backslash-escaped). The
 //   `HEX()` text is checked to be hex digits.
@@ -41,18 +41,19 @@ nonisolated enum SQLDumpDataRenderer {
       ? "SELECT \(from)" : "SELECT \(values.joined(separator: ", ")) \(from)"
   }
 
-  /// One column read as text: PostgreSQL `'v' || col::text`, MySQL `HEX(col)` for
-  /// `mysqlHexTypes` and `CAST(col AS CHAR)` otherwise, SQLite `quote(col)`, DuckDB `hex(col)`
-  /// for BLOB and `CAST(col AS VARCHAR)` otherwise. `quotedName` is already quoted. MongoDB has
-  /// no text form and reads as SQLite. Shared with the Data Rewind capture (`RewindCaptureSQL`,
-  /// which refuses DuckDB and MongoDB).
+  /// One column read as text: PostgreSQL `'v' OPERATOR(pg_catalog.||) col::pg_catalog.text`,
+  /// MySQL `HEX(col)` for `mysqlHexTypes` and `CAST(col AS CHAR)` otherwise, SQLite
+  /// `quote(col)`, DuckDB `hex(col)` for BLOB and `CAST(col AS VARCHAR)` otherwise.
+  /// `quotedName` is already quoted. MongoDB has no text form and reads as SQLite. Shared with
+  /// the Data Rewind capture (`RewindCaptureSQL`, which refuses DuckDB and MongoDB).
   static func textExpression(
     _ quotedName: String, typeName: String, engine: DatabaseType
   )
     -> String
   {
     switch engine {
-    case .postgresql: "'v' || \(quotedName)::text"
+    case .postgresql:
+      SQLDialect.postgresql.concatenation("'v'", SQLDialect.postgresql.cast(quotedName, to: "text"))
     case .mysql:
       isMySQLHexType(typeName) ? "HEX(\(quotedName))" : "CAST(\(quotedName) AS CHAR)"
     case .duckdb:

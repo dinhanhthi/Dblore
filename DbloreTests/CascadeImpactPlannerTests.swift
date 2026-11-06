@@ -24,7 +24,9 @@ struct CascadeImpactPlannerTests {
     #expect(step.constraintName == "orders_user_fk")
     #expect(step.depth == 1)
     #expect(
-      step.sql == #"SELECT COUNT(*) FROM "public"."orders" WHERE "user_id" IN (:k1, :k2)"#)
+      step.sql
+        == #"SELECT pg_catalog.count(*) FROM "public"."orders" WHERE ("user_id" \#(eq) :k1 "#
+        + #"OR "user_id" \#(eq) :k2)"#)
     #expect(step.parameters == ["k1": .text("1"), "k2": .text("2")])
     #expect(plan.enforcementCheck == nil)
 
@@ -54,9 +56,13 @@ struct CascadeImpactPlannerTests {
     #expect(plan.steps.allSatisfy { $0.effect == .deleted })
     #expect(
       plan.steps[1].sql
-        == #"SELECT COUNT(*) FROM "public"."a" WHERE "b_id" IN "#
-        + #"(SELECT "id" FROM "public"."b" WHERE "a_id" IN (:k1))"#
+        == #"SELECT pg_catalog.count(*) FROM "public"."a" WHERE "b_id" \#(eq) ANY "#
+        + #"(SELECT "id" FROM "public"."b" WHERE ("a_id" \#(eq) :k1))"#
     )
+    // The qualified ANY subquery still passes the read-only check the counts run behind
+    #expect(throws: Never.self) {
+      try ReadOnlyQueryGuard.check(plan.steps[1].sql, dialect: .postgresql)
+    }
   }
 
   @Test("Key values are binds in every dialect, never SQL text")
@@ -79,11 +85,13 @@ struct CascadeImpactPlannerTests {
         #expect(step.parameters.values.contains(.text("needle'x")), "\(dialect)")
       }
       #expect(plan.enforcementCheck == (dialect == .sqlite ? "PRAGMA foreign_keys" : nil))
-      // Composite keys: row values (SQLite through VALUES), DuckDB an OR of AND groups
+      // Composite keys: row values (SQLite through VALUES), DuckDB and PostgreSQL an OR of AND
+      // groups (PostgreSQL with pg_catalog's =)
       let expected: String =
         switch dialect {
         case .postgresql:
-          #"SELECT COUNT(*) FROM "public"."lines" WHERE ("o_code", "o_no") IN ((:k1, :k2))"#
+          #"SELECT pg_catalog.count(*) FROM "public"."lines" "#
+            + #"WHERE (("o_code" \#(eq) :k1 AND "o_no" \#(eq) :k2))"#
         case .mysql:
           "SELECT COUNT(*) FROM `public`.`lines` WHERE (`o_code`, `o_no`) IN ((:k1, :k2))"
         case .sqlite:
@@ -109,16 +117,18 @@ struct CascadeImpactPlannerTests {
     #expect(step.effect == .blocking)
     #expect(
       step.sql
-        == #"SELECT COUNT(*) FROM "public"."categories" WHERE "parent_id" IN (:k1, :k2) "#
-        + #"AND NOT ("id" IN (:k3, :k4))"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."categories" "#
+        + #"WHERE ("parent_id" \#(eq) :k1 OR "parent_id" \#(eq) :k2) "#
+        + #"AND NOT (("id" \#(eq) :k3 OR "id" \#(eq) :k4))"#)
     #expect(
       step.parameters == ["k1": .text("1"), "k2": .text("2"), "k3": .text("1"), "k4": .text("2")])
     // One DELETE per staged row: a parent deleted before its staged child may still fail
     try #require(plan.steps.map(\.effect) == [.blocking, .mayBlock])
     #expect(
       plan.steps[1].sql
-        == #"SELECT COUNT(*) FROM "public"."categories" WHERE "parent_id" IN (:k1, :k2) "#
-        + #"AND (("id" IN (:k3, :k4)))"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."categories" "#
+        + #"WHERE ("parent_id" \#(eq) :k1 OR "parent_id" \#(eq) :k2) "#
+        + #"AND ((("id" \#(eq) :k3 OR "id" \#(eq) :k4)))"#)
   }
 
   @Test("A blocker on a table the cascade deletes does not count the cascaded rows")
@@ -143,9 +153,9 @@ struct CascadeImpactPlannerTests {
     // Replies deleted with their post are left out: only replies on other posts are counted
     #expect(
       plan.steps[1].sql
-        == #"SELECT COUNT(*) FROM "public"."comments" WHERE "parent_id" IN "#
-        + #"(SELECT "id" FROM "public"."comments" WHERE "post_id" IN (:k1)) "#
-        + #"AND NOT COALESCE(("post_id" IN (:k2)), FALSE)"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."comments" WHERE "parent_id" \#(eq) ANY "#
+        + #"(SELECT "id" FROM "public"."comments" WHERE ("post_id" \#(eq) :k1)) "#
+        + #"AND NOT COALESCE((("post_id" \#(eq) :k2)), FALSE)"#)
     #expect(plan.steps[1].parameters == ["k1": .text("1"), "k2": .text("1")])
 
     // MySQL checks NO ACTION row by row during the cascade: the left-out rows may still block
@@ -182,8 +192,9 @@ struct CascadeImpactPlannerTests {
     #expect(step.constraintName == "messages_recipient_fk")
     #expect(
       step.sql
-        == #"SELECT COUNT(*) FROM "public"."messages" WHERE "recipient_id" IN (:k1) "#
-        + #"AND NOT COALESCE(("sender_id" IN (:k2)), FALSE)"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."messages" "#
+        + #"WHERE ("recipient_id" \#(eq) :k1) "#
+        + #"AND NOT COALESCE((("sender_id" \#(eq) :k2)), FALSE)"#)
     #expect(step.parameters == ["k1": .text("7"), "k2": .text("7")])
     #expect(CascadeImpactSummary.grouped([(step, 1)]).blocksCommit)
     // The count still passes the read-only check it runs behind
@@ -202,8 +213,8 @@ struct CascadeImpactPlannerTests {
     #expect(restrict.steps.map(\.effect) == [.deleted, .blocking, .mayBlock])
     #expect(
       restrict.steps[2].sql
-        == #"SELECT COUNT(*) FROM "public"."messages" WHERE "recipient_id" IN (:k1) "#
-        + #"AND (("sender_id" IN (:k2)))"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."messages" "#
+        + #"WHERE ("recipient_id" \#(eq) :k1) AND ((("sender_id" \#(eq) :k2)))"#)
 
     // One DELETE per staged row: a message 8 sent to 7 still refers to 7 when 7 goes first
     let twoRows = try self.plan(
@@ -213,8 +224,9 @@ struct CascadeImpactPlannerTests {
     try #require(twoRows.steps.map(\.effect) == [.deleted, .blocking, .mayBlock])
     #expect(
       twoRows.steps[2].sql
-        == #"SELECT COUNT(*) FROM "public"."messages" WHERE "recipient_id" IN (:k1, :k2) "#
-        + #"AND (("sender_id" IN (:k3, :k4)))"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."messages" "#
+        + #"WHERE ("recipient_id" \#(eq) :k1 OR "recipient_id" \#(eq) :k2) "#
+        + #"AND ((("sender_id" \#(eq) :k3 OR "sender_id" \#(eq) :k4)))"#)
     let summary = CascadeImpactSummary.grouped([(twoRows.steps[1], 0), (twoRows.steps[2], 1)])
     #expect(!summary.blocksCommit)
     #expect(summary.affected.map(\.text).first?.contains("up to 1 row") == true)
@@ -241,8 +253,8 @@ struct CascadeImpactPlannerTests {
     try #require(plan.steps.map(\.effect) == [.deleted, .mayBlock, .blocking])
     #expect(
       plan.steps[1].sql
-        == #"SELECT COUNT(*) FROM "public"."comments" WHERE "root_id" IN (:k1) "#
-        + #"AND NOT ("id" IN (:k2)) AND NOT COALESCE(("parent_id" IN (:k3)), FALSE)"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."comments" WHERE ("root_id" \#(eq) :k1) "#
+        + #"AND NOT (("id" \#(eq) :k2)) AND NOT COALESCE((("parent_id" \#(eq) :k3)), FALSE)"#)
     #expect(!CascadeImpactSummary.grouped([(plan.steps[1], 2)]).blocksCommit)
     #expect(CascadeImpactSummary.grouped([(plan.steps[2], 1)]).blocksCommit)
   }
@@ -296,9 +308,9 @@ struct CascadeImpactPlannerTests {
     #expect(plan.steps.map(\.effect) == [.deleted, .blocking, .mayBlock, .deleted])
     #expect(
       plan.steps[1].sql
-        == #"SELECT COUNT(*) FROM "public"."invoices" WHERE "order_id" IN "#
-        + #"(SELECT "id" FROM "public"."orders" WHERE "user_id" IN (:k1)) "#
-        + #"AND NOT COALESCE(("user_id" IN (:k2)), FALSE)"#)
+        == #"SELECT pg_catalog.count(*) FROM "public"."invoices" WHERE "order_id" \#(eq) ANY "#
+        + #"(SELECT "id" FROM "public"."orders" WHERE ("user_id" \#(eq) :k1)) "#
+        + #"AND NOT COALESCE((("user_id" \#(eq) :k2)), FALSE)"#)
   }
 
   @Test("SQLite names a key by its columns and matches the table name in any case")
@@ -339,6 +351,9 @@ struct CascadeImpactPlannerTests {
       return
     }
   }
+
+  /// pg_catalog's `=`, as every PostgreSQL count compares keys
+  private let eq = "OPERATOR(pg_catalog.=)"
 
   private func key(
     _ name: String, child: String, _ sourceColumns: [String], parent: String,

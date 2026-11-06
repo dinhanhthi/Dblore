@@ -46,7 +46,7 @@ struct DataViewerStateTests {
   func quotedIdentifiers() {
     let viewer = state(schema: #"my"s"#, name: #"we"ird"#)
     #expect(viewer.pageSQL.hasPrefix(#"SELECT * FROM "my""s"."we""ird" "#))
-    #expect(viewer.countSQL == #"SELECT count(*) FROM "my""s"."we""ird""#)
+    #expect(viewer.countSQL == #"SELECT pg_catalog.count(*) FROM "my""s"."we""ird""#)
   }
 
   @Test("Empty schema gives an unqualified relation")
@@ -113,10 +113,12 @@ struct DataViewerStateTests {
     viewer.page = 2
     #expect(
       viewer.pageSQL
-        == #"SELECT * FROM "public"."users" WHERE "name" = 'o''brien' ORDER BY "id" LIMIT 100 OFFSET 100"#
+        == #"SELECT * FROM "public"."users" WHERE "name" OPERATOR(pg_catalog.=) 'o''brien' ORDER BY "id" LIMIT 100 OFFSET 100"#
     )
     #expect(
-      viewer.countSQL == #"SELECT count(*) FROM "public"."users" WHERE "name" = 'o''brien'"#)
+      viewer.countSQL
+        == #"SELECT pg_catalog.count(*) FROM "public"."users" WHERE "name" OPERATOR(pg_catalog.=) 'o''brien'"#
+    )
     #expect(CellUpdateStatement.singleRelation(in: viewer.pageSQL) != nil)
   }
 
@@ -134,7 +136,24 @@ struct DataViewerStateTests {
     viewer.filter.conditions[0].op = .ilike
     #expect(viewer.countSQL.hasSuffix(#"WHERE LOWER("name") LIKE LOWER('o''brien')"#))
     viewer.databaseType = .postgresql
-    #expect(viewer.countSQL.hasSuffix(#"WHERE "name"::text ILIKE 'o''brien'"#))
+    #expect(
+      viewer.countSQL.hasSuffix(
+        #"WHERE "name"::pg_catalog.text OPERATOR(pg_catalog.~~*) 'o''brien'"#))
+  }
+
+  @Test("A qualified PostgreSQL filter (ILIKE with escape, IN) keeps the page editable")
+  func qualifiedFilterKeepsSingleRelation() {
+    var viewer = state(orderColumns: ["id"])
+    viewer.filter = TableFilter(conditions: [
+      FilterCondition(column: "name", op: .ilike, value: "a!%", likeEscape: "!"),
+      FilterCondition(column: "id", op: .in, value: "1, 2"),
+    ])
+    let sql = viewer.pageSQL
+    #expect(
+      sql.contains(
+        #""name"::pg_catalog.text OPERATOR(pg_catalog.~~*) pg_catalog.like_escape('a!%', '!')"#))
+    #expect(sql.contains(#"("id" OPERATOR(pg_catalog.=) '1' OR "id" OPERATOR(pg_catalog.=) '2')"#))
+    #expect(CellUpdateStatement.singleRelation(in: sql) == #""public"."users""#)
   }
 
   @Test("loadKey changes with the applied filter")
@@ -163,7 +182,7 @@ struct DataViewerStateTests {
     #expect(
       viewer.pageSQL
         == #"SELECT "id", substring("photo" from 1 for 65536) AS "photo", "name", "#
-        + #"octet_length("photo") AS "dblore_byte_length_1" FROM "public"."users" "#
+        + #"pg_catalog.octet_length("photo") AS "dblore_byte_length_1" FROM "public"."users" "#
         + #"ORDER BY "id" LIMIT 100"#)
     #expect(viewer.lengthColumns == ["dblore_byte_length_1"])
     #expect(CellUpdateStatement.singleRelation(in: viewer.pageSQL) == #""public"."users""#)
@@ -262,8 +281,9 @@ struct DataViewerStateTests {
     postgres.rowLocator = .pgLocator
     #expect(
       postgres.pageSQL
-        == #"SELECT *, tableoid::text AS "dblore_tableoid", ctid::text AS "dblore_ctid", "#
-        + #"xmin::text AS "dblore_xmin" FROM "public"."users" LIMIT 100"#)
+        == #"SELECT *, tableoid::pg_catalog.text AS "dblore_tableoid", "#
+        + #"ctid::pg_catalog.text AS "dblore_ctid", xmin::pg_catalog.text AS "dblore_xmin" "#
+        + #"FROM "public"."users" LIMIT 100"#)
     #expect(CellUpdateStatement.singleRelation(in: postgres.pageSQL) == #""public"."users""#)
 
     var sqlite = state(schema: "main", name: "notes")

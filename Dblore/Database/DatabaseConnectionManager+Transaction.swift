@@ -698,7 +698,10 @@ extension DatabaseConnectionManager {
         + "the server. \(error.localizedDescription)")
   }
 
-  func sendTransactionControl(_ sql: String) async throws -> CommandResult {
+  /// `binds`: an app-owned statement with a bound value (the restore's search_path put-back)
+  func sendTransactionControl(
+    _ sql: String, binds: [SQLBindValue] = []
+  ) async throws -> CommandResult {
     let startTime = Date()
     // A ROLLBACK (also to a savepoint) writes nothing: a staged batch's cleanup after a DuckDB
     // interrupt cancel is still sent (`withSession`)
@@ -706,8 +709,25 @@ extension DatabaseConnectionManager {
     do {
       return try await Self.$userStatementAdmission.withValue(admission) {
         try await withSession { session in
-          try await session.command(sql, binds: [])
+          try await session.command(sql, binds: binds)
         }
+      }
+    } catch {
+      throw transactionControlError(error, sql: sql, startTime: startTime)
+    }
+  }
+
+  /// The first row of an app-owned read sent inside a batch's transaction, on the same session
+  /// and admission as `sendTransactionControl`; nil when it returns no row. Never recorded.
+  func readTransactionRow(_ sql: String) async throws -> [CellValue]? {
+    let startTime = Date()
+    do {
+      return try await withSession { session in
+        var rows: [[CellValue]] = []
+        for try await row in try await session.query(sql, binds: []).rows {
+          rows.append(row)
+        }
+        return rows.first
       }
     } catch {
       throw transactionControlError(error, sql: sql, startTime: startTime)

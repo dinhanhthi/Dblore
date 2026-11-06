@@ -58,6 +58,36 @@ struct TableImportModelTests {
     #expect(batch.rowRanges == [1...2])
   }
 
+  @Test("PostgreSQL import into an existing table with no Schema names the loaded table's schema")
+  func postgresExistingTableTakesLoadedSchema() async throws {
+    let url = temporaryFile("id,name\n1,a\n2,b\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: nil, table: "t")
+    model.tables = [DatabaseTable(schema: "public", name: "t")]
+    let structure = keyStructure(
+      columns: [column("id", "integer"), column("name", "text")], indexes: [],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    model.matchKey = model.matchKeys.first
+    model.mode = .insertOrUpdate
+    // Row 1 exists, read only through the qualified relation (a bare "t" matches nothing)
+    let batch = try await model.prepareBatch(
+      dialect: .postgresql, connectionEpoch: 1,
+      readMatches: { $0.sql.contains(#""public"."t""#) ? [[.int(0), .int(1)]] : [] })
+
+    try #require(batch.statements.map { String($0.sql.prefix(6)) } == ["INSERT", "UPDATE"])
+    #expect(batch.statements[0].sql.hasPrefix(#"INSERT INTO "public"."t" "#))
+    #expect(batch.statements[1].sql.hasPrefix(#"UPDATE "public"."t" "#))
+    #expect(batch.preview.contains(#""public"."t""#))
+
+    model.matchKey = nil
+    model.mode = .insert
+    let plain = try await model.prepareBatch(dialect: .postgresql, connectionEpoch: 1)
+    #expect(plain.statements.map(\.sql).allSatisfy { $0.hasPrefix(#"INSERT INTO "public"."t" "#) })
+  }
+
   @Test("A column first seen after the preview cannot be silently omitted")
   func lateJSONColumn() async throws {
     let rows = (0..<100).map { "{\"id\":\($0)}" }.joined(separator: "\n")
@@ -323,6 +353,48 @@ struct TableImportModelTests {
     let entry = await recorder.nextEntry()
     #expect(entry.status == .error)
     #expect(entry.errorMessage == "Rows 1–2: Import failed")
+  }
+
+  @Test("An import confirmed in Safe Mode is listed as running work while it runs, not after")
+  func confirmedImportIsRunningWork() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-import-running-\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .alertAll, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    _ = try await manager.executeInternal("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    // The shared list is process-wide: other suites' work is told apart by this label
+    let label = "Import into t \(UUID().uuidString)"
+    var batch = PendingStagedBatch(
+      statements: [BoundStatement(sql: "INSERT INTO t (id) VALUES (?1)", values: ["7"])],
+      preview: "INSERT INTO t (id) -- 1 row from file",
+      connectionEpoch: await manager.connectionEpoch, historySource: .dataImport,
+      rowRanges: [1...1])
+    batch.runningWorkLabel = label
+    func listed() -> [RunningWorkRegistry.Item] {
+      RunningWorkRegistry.shared.items.filter { $0.label == label }
+    }
+    var duringRun: [RunningWorkRegistry.Item] = []
+    viewModel.onStatementsExecuted = { duringRun = listed() }
+
+    // The sheet closes once Safe Mode asks: nothing runs, nothing is listed
+    #expect(await viewModel.beginImportBatch(batch) == nil)
+    #expect(viewModel.queryConfirmationState.showDialog)
+    #expect(listed().isEmpty)
+    await viewModel.executePendingQuery()
+
+    #expect(duringRun.map(\.kind) == [.dataImport])
+    #expect(listed().isEmpty)
+    let stored = try await manager.executeInternal("SELECT id FROM t")
+    #expect(stored.rows == [[.int(7)]])
   }
 
   @Test("JSON preview of a single-line array with very long records returns the same rows")

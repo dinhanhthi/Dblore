@@ -70,6 +70,9 @@ struct HighlightedTextEditor: View {
   /// AI ghost text: an explicit opt-in (nil, the default, shows none). Only SQL query tabs and
   /// SQL notebook cells set it; a MongoDB field or a read-only text never takes it.
   var inlineCompletion: AIInlineCompletionController?
+  /// Called before each edit of the text: the range, the text still unchanged, and the
+  /// replacement (the SQL editor tab moves its line bookmarks with it)
+  var onWillReplaceText: ((NSRange, NSString, String) -> Void)?
 
   var body: some View {
     HighlightedTextEditorRepresentable(
@@ -89,7 +92,8 @@ struct HighlightedTextEditor: View {
       fontSize: fontSize,
       isEditable: isEditable,
       mongoQueryEditing: mongoQueryEditing,
-      inlineCompletion: inlineCompletion
+      inlineCompletion: inlineCompletion,
+      onWillReplaceText: onWillReplaceText
     )
     .frame(height: maxHeight ?? height)
   }
@@ -113,6 +117,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   var isEditable = true
   var mongoQueryEditing = false
   var inlineCompletion: AIInlineCompletionController?
+  var onWillReplaceText: ((NSRange, NSString, String) -> Void)?
 
   /// The ghost text controller this editor shows: none for a MongoDB field or read-only text
   var shownInlineCompletion: AIInlineCompletionController? {
@@ -242,6 +247,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
 
     // Update onTextChanged callback in coordinator (for dirty state tracking)
     context.coordinator.onTextChanged = onTextChanged
+    context.coordinator.onWillReplaceText = onWillReplaceText
 
     // Update autocomplete provider
     textView.autocompleteProvider = autocompleteProvider
@@ -320,9 +326,11 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
   }
 
   func makeCoordinator() -> Coordinator {
-    Coordinator(
+    let coordinator = Coordinator(
       text: $text, height: $height, isEmpty: $isEmpty, onTextChanged: onTextChanged
     )
+    coordinator.onWillReplaceText = onWillReplaceText
+    return coordinator
   }
 
   @MainActor
@@ -331,6 +339,7 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     var height: Binding<CGFloat>
     var isEmpty: Binding<Bool>
     var onTextChanged: (() -> Void)?  // Called when user types in the editor
+    var onWillReplaceText: ((NSRange, NSString, String) -> Void)?
 
     /// This editor's own undo stack (see `undoManager(for:)`)
     let undoManager = UndoManager()
@@ -430,6 +439,20 @@ struct HighlightedTextEditorRepresentable: NSViewRepresentable {
     /// cell, and keeps actions for text views that were torn down or replaced.
     func undoManager(for view: NSTextView) -> UndoManager? {
       undoManager
+    }
+
+    /// Reports each edit before it lands, with the text it changes: typing, paste and every
+    /// replacement made through `shouldChangeText(in:replacementString:)`. Never refuses one.
+    func textView(
+      _ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange,
+      replacementString: String?
+    ) -> Bool {
+      if let onWillReplaceText, let replacementString,
+        let storage = textView.textStorage?.mutableString
+      {
+        onWillReplaceText(affectedCharRange, storage, replacementString)
+      }
+      return true
     }
 
     func textDidChange(_ notification: Notification) {

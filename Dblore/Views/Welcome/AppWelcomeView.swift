@@ -86,6 +86,9 @@ struct AppWelcomeView: View {
           onOpenConnection: openConnectionAsWorkspace,
           onEditConnection: editConnection,
           onRemoveConnection: removeConnection,
+          onSetFavoriteConnection: { entry, favorite in
+            recentManager.setFavoriteConnection(favorite, id: entry.id)
+          },
           onExportConnections: showConnectionExport,
           onNewWorkspace: createNewWorkspace,
           onConnect: showConnectionForm
@@ -626,6 +629,8 @@ struct WelcomeRecents: View {
   let onOpenConnection: (ConnectionHistoryEntry) -> Void
   let onEditConnection: (ConnectionHistoryEntry) -> Void
   let onRemoveConnection: (ConnectionHistoryEntry) -> Void
+  /// Writes the star of a saved row; the list shows the new state before it runs
+  let onSetFavoriteConnection: (ConnectionHistoryEntry, Bool) -> Void
   let onExportConnections: () -> Void
   /// Start actions offered when there is nothing recent yet
   let onNewWorkspace: () -> Void
@@ -641,6 +646,10 @@ struct WelcomeRecents: View {
   @State private var tab: RecentsTab = .workspaces
   /// Row being opened; every row is disabled meanwhile
   @State private var loadingId: UUID?
+  /// Paths of the groups whose connections and subgroups are hidden
+  @State private var collapsedGroups: Set<String> = []
+  /// Stars flipped by a click and not written yet, so the row moves at once
+  @State private var pendingFavorites: [UUID: Bool] = [:]
 
   private var query: String { filter.trimmingCharacters(in: .whitespaces) }
 
@@ -752,38 +761,78 @@ struct WelcomeRecents: View {
     }
   }
 
-  /// Grouped under section headers; ungrouped connections come last, under "Ungrouped" only
-  /// when some connection has a group.
+  /// Favorites first, then the group tree (each header indented by its level and collapsible),
+  /// then ungrouped connections, under "Ungrouped" only when a header is shown above them.
+  /// While filtering every group is open, so no match is hidden.
   @ViewBuilder
   private var connectionRows: some View {
     let rows = shownConnections
-    let groups = ConnectionAppearance.grouped(rows)
-    let showsHeaders = groups.contains { $0.name != nil }
-    ForEach(groups, id: \.name) { group in
+    let favorites = rows.filter(isFavorite)
+    let tree = ConnectionAppearance.tree(rows.filter { !isFavorite($0) })
+    let collapsed = query.isEmpty ? collapsedGroups : []
+    let showsHeaders = !favorites.isEmpty || !tree.groups.isEmpty
+    if !favorites.isEmpty {
+      sectionHeader("Favorites")
+      connectionList(favorites, depth: 0)
+    }
+    ForEach(ConnectionAppearance.flattened(tree.groups, collapsed: collapsed), id: \.path) {
+      node in
+      groupHeader(node, isCollapsed: collapsed.contains(node.path))
+      if !collapsed.contains(node.path) {
+        connectionList(node.entries, depth: node.depth + 1)
+      }
+    }
+    if !tree.ungrouped.isEmpty {
       if showsHeaders {
-        groupHeader(group.name ?? "Ungrouped")
+        sectionHeader("Ungrouped")
       }
-      ForEach(group.entries, id: \.id) { connection in
-        RecentConnectionRow(
-          connection: connection,
-          isLoading: loadingId == connection.id,
-          onSelect: { entry in
-            loadingId = entry.id
-            onOpenConnection(entry)
-          },
-          onConfigure: { onEditConnection(connection) },
-          onRemove: { onRemoveConnection(connection) }
-        )
-      }
+      connectionList(tree.ungrouped, depth: 0)
     }
     if rows.isEmpty {
       emptyListText(connections.isEmpty ? "No recent connections" : noMatchText)
     }
   }
 
+  private func connectionList(_ entries: [ConnectionHistoryEntry], depth: Int) -> some View {
+    ForEach(entries, id: \.id) { connection in
+      RecentConnectionRow(
+        connection: connection,
+        isLoading: loadingId == connection.id,
+        isFavorite: isFavorite(connection),
+        onSelect: { entry in
+          loadingId = entry.id
+          onOpenConnection(entry)
+        },
+        onToggleFavorite: { toggleFavorite(connection) },
+        onConfigure: { onEditConnection(connection) },
+        onRemove: { onRemoveConnection(connection) }
+      )
+      .padding(.leading, Self.indent(depth))
+    }
+  }
+
+  private static func indent(_ depth: Int) -> CGFloat { CGFloat(depth) * Spacing.md }
+
+  private func isFavorite(_ entry: ConnectionHistoryEntry) -> Bool {
+    pendingFavorites[entry.id] ?? entry.config.isFavoriteConnection
+  }
+
+  /// The star flips at once; the history is written after this click's update
+  private func toggleFavorite(_ entry: ConnectionHistoryEntry) {
+    let favorite = !isFavorite(entry)
+    pendingFavorites[entry.id] = favorite
+    Task { @MainActor in
+      // SwiftUI commits the flipped star before the write and the reload run
+      await Task.yield()
+      onSetFavoriteConnection(entry, favorite)
+      // The reloaded list carries the written star (or the old one, when it was not written)
+      if pendingFavorites[entry.id] == favorite { pendingFavorites[entry.id] = nil }
+    }
+  }
+
   private var noMatchText: String { "Nothing matches \"\(query)\"" }
 
-  private func groupHeader(_ name: String) -> some View {
+  private func sectionHeader(_ name: String) -> some View {
     Text(name)
       .font(.subheadline.weight(.semibold))
       .foregroundColor(.foregroundMuted)
@@ -792,6 +841,38 @@ struct WelcomeRecents: View {
       .padding(.top, Spacing.sm)
       .padding(.bottom, Spacing.xxs)
       .accessibilityAddTraits(.isHeader)
+  }
+
+  /// A group's level name behind a disclosure chevron, indented by its depth
+  private func groupHeader(_ node: ConnectionGroupNode, isCollapsed: Bool) -> some View {
+    Button {
+      // Filtering opens every group: the chevron does nothing then
+      guard query.isEmpty else { return }
+      if collapsedGroups.contains(node.path) {
+        collapsedGroups.remove(node.path)
+      } else {
+        collapsedGroups.insert(node.path)
+      }
+    } label: {
+      HStack(spacing: Spacing.xs) {
+        Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+          .font(.system(size: 9, weight: .semibold))
+          .frame(width: 10)
+        Text(node.name)
+          .font(.subheadline.weight(.semibold))
+          .truncationMode(.tail)
+        Spacer(minLength: 0)
+      }
+    }
+    .buttonStyle(
+      GhostButtonStyle(fillsWidth: true, hPadding: Spacing.sm, vPadding: Spacing.xxs)
+    )
+    .padding(.leading, Self.indent(node.depth))
+    .padding(.top, node.depth == 0 ? Spacing.sm : 0)
+    .help(node.path)
+    .accessibilityLabel(node.path)
+    .accessibilityValue(isCollapsed ? "Collapsed" : "Expanded")
+    .accessibilityAddTraits(.isHeader)
   }
 
   private func emptyListText(_ text: String) -> some View {
@@ -945,11 +1026,15 @@ struct RecentWorkspaceRow: View {
 struct RecentConnectionRow: View {
   let connection: ConnectionHistoryEntry
   let isLoading: Bool
+  /// Shown by the star; the list may know it before the history does
+  let isFavorite: Bool
   let onSelect: (ConnectionHistoryEntry) -> Void
+  let onToggleFavorite: () -> Void
   let onConfigure: () -> Void
   let onRemove: () -> Void
 
   @State private var isHovering = false
+  @State private var isHoveringStar = false
   @State private var isHoveringConfigure = false
   @State private var isHoveringRemove = false
 
@@ -985,6 +1070,7 @@ struct RecentConnectionRow: View {
               .help("Locked")
               .accessibilityLabel("Locked")
           }
+          starButton
         }
       } detail: {
         Text(connection.config.endpointLabel)
@@ -1012,6 +1098,23 @@ struct RecentConnectionRow: View {
 
   private var showsRecentActions: Bool {
     (isHovering || isHoveringConfigure || isHoveringRemove) && !isLoading
+  }
+
+  /// Always shown on a favorite; on another row only while the row is hovered
+  private var starButton: some View {
+    let isShown = isFavorite || isHovering || isHoveringStar
+    let help = isFavorite ? "Remove from Favorites" : "Add to Favorites"
+    return Button(action: onToggleFavorite) {
+      Image(systemName: isFavorite ? "star.fill" : "star")
+        .foregroundColor(isFavorite ? .warning : nil)
+    }
+    .buttonStyle(GhostButtonStyle(iconOnly: true))
+    .controlSize(.mini)
+    .onHover { isHoveringStar = $0 }
+    .opacity(isShown ? 1 : 0)
+    .allowsHitTesting(isShown)
+    .help(help)
+    .accessibilityLabel(help)
   }
 }
 
@@ -1233,6 +1336,7 @@ private struct PreviewWelcome: View {
         onOpenConnection: { _ in },
         onEditConnection: { _ in },
         onRemoveConnection: { _ in },
+        onSetFavoriteConnection: { _, _ in },
         onExportConnections: {},
         onNewWorkspace: {},
         onConnect: {}

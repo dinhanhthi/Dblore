@@ -2,6 +2,36 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Security`, `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Security
+
+- **PostgreSQL restore.** A restore runs the dump's DDL (CHECK constraints, defaults, view bodies, index expressions) with `search_path = pg_catalog, pg_temp` and puts your value back afterwards. Before, a function or operator planted in a schema on your path could become part of the restored objects. Triggers and functions the restore fires run under that path too. [#c5e00609](https://github.com/dinhanhthi/Dblore/commit/c5e00609)
+- **PostgreSQL statements on your data.** Edits, row locators, Data Rewind, the data viewer and its filters, foreign-key lookups, Find a Value in Every Table, the cascade preview, import and Copy Objects name PostgreSQL's built-in operators, functions and casts, and import and Copy Objects always name the schema, `public` included. Before, a function, operator, table or view created by another role in a schema on your `search_path` could run in their place. [#a46618fd](https://github.com/dinhanhthi/Dblore/commit/a46618fd) [#0c1b679b](https://github.com/dinhanhthi/Dblore/commit/0c1b679b) [#08362ec8](https://github.com/dinhanhthi/Dblore/commit/08362ec8) [#e0bdc5f4](https://github.com/dinhanhthi/Dblore/commit/e0bdc5f4) [#4d55c30b](https://github.com/dinhanhthi/Dblore/commit/4d55c30b)
+- **Known limits.** Filters, import keys and Copy Objects paging keep the extension's own operators on citext, PostGIS, hstore, ltree, cube and the isbn family, and that list matches the type name only, so a user type with one of those names keeps them too. A cast to a user type uses the name printed when the schema loaded. Outside the data viewer a domain is not resolved to its base type, so an import key on a domain over citext compares as case-sensitive text. The cascade preview undercounts child rows whose citext foreign key differs in case from the parent, and FK lookup does not find their parent. Copy Objects reads a table whose key has a user-type column by position, which is slower. Generate Rows and Shortcuts still name a `public` table without its schema. Keys of edits, row locators, Data Rewind, the cascade preview and FK lookup always use the built-in `=`, so a citext primary key compares as text (no index use) and a key on ltree, hstore or geometry is refused. A filter or import key on an extension type outside the list either errors or compares as the built-in type it casts to. In the data viewer, a domain over a listed type compares as text until the user types have loaded.
+
+### Added
+
+- **Restore mysqldump and mariadb-dump files.** On MySQL/MariaDB connections, Restore SQL Dump reads mysqldump 8.x and mariadb-dump files: their header and footer settings, per-table character set lines, `LOCK TABLES`, `DISABLE KEYS`, `DROP TABLE IF EXISTS` for tables the file creates, and rows of numbers, text, `_binary`, `0x` and `b''` values. `SET NAMES utf8` and `utf8mb3` run as `utf8mb4`, and the session's settings are reset after every restore, also a failed or stopped one. Lines Dblore does not restore are refused before anything runs, naming the dump option to use: GTID lines (`--set-gtid-purged=OFF`), triggers and routines (`--skip-triggers`, no `--routines`), `USE` and `CREATE DATABASE` (no `--databases`), views (`--ignore-table` for each view) and other character sets (`--default-character-set=utf8mb4`). The file must be valid UTF-8, so binary columns written as raw bytes cannot be read. [#3382299b](https://github.com/dinhanhthi/Dblore/commit/3382299b)
+- **Line bookmarks.** In a SQL editor tab, `Cmd+F2` or a click in the line number gutter toggles a bookmark, `F2` and `Shift+F2` jump to the next and previous one, wrapping around. Bookmarks follow edits and are saved with the workspace. [#45e4c944](https://github.com/dinhanhthi/Dblore/commit/45e4c944)
+- **Nested groups and favorite connections.** A group name such as `Prod / EU / Web` shows as nested groups on the welcome screen (up to three levels) and in the connect form's history menu, and the Group field offers the existing paths. Star a connection to list it under Favorites first; favorites are never trimmed from the 50-entry history and travel in the Dblore connections file. [#3427ae03](https://github.com/dinhanhthi/Dblore/commit/3427ae03)
+- **Running-work prompt.** Quit (Cmd+Q, the menu, the Dock or logout), closing a workspace window and Disconnect list the running queries, imports, restores, dumps, copies, exports and schema compares first, with Stop and Cancel (a Parquet export is listed at Quit only). A restore says whether stopping rolls it back (PostgreSQL, SQLite, DuckDB) or keeps the statements already run (MySQL, MongoDB). [#e1eb54a7](https://github.com/dinhanhthi/Dblore/commit/e1eb54a7) [#b92fdb3e](https://github.com/dinhanhthi/Dblore/commit/b92fdb3e)
+- **DuckDB data import.** CSV, TSV and JSON import into DuckDB tables, new or existing, keyed updates included. It is refused in Protected mode or with a transaction open, since DuckDB has no savepoint. Row edits, Paste Rows and Generate Rows stay off on DuckDB. [#4d55c30b](https://github.com/dinhanhthi/Dblore/commit/4d55c30b)
+
+### Fixed
+
+- **SQLite read-only toggle.** The connect form shows the Read-only switch once a SQLite file is chosen. [#4d55c30b](https://github.com/dinhanhthi/Dblore/commit/4d55c30b)
+- **Import schema.** An import with the Schema field empty names the table's schema in its SQL, preview and history. [#4d55c30b](https://github.com/dinhanhthi/Dblore/commit/4d55c30b)
+- **New commands with no workspace.** New Tab, New Notebook, New SQL File and New Markdown Note open a window when no workspace is open. [#4d55c30b](https://github.com/dinhanhthi/Dblore/commit/4d55c30b)
+
+### Upgrade notes
+
+- **PostgreSQL restores.** A trigger or function that uses unqualified names and fires during a restore now fails (the error says why), so some restores that worked before need those names qualified.
+- **Quit asks when work runs.** The running-work prompt shows whatever Confirm before quitting with Cmd+Q says, also for a Dock or logout quit; the setting still decides the plain "Quit Dblore?" when nothing runs.
+- **Group names.** An existing group name that contains `/` (such as `CI/CD`) now shows as nested groups and is saved as `CI / CD`; a fourth level and deeper merge into the third.
+- **PostgreSQL edits on extension-type keys.** Editing, staging or rewinding rows of a table whose key column is ltree, hstore or geometry now fails with an error instead of running, and the cascade and FK previews over such keys fail too.
+- **Favorites and MCP.** Starring or unstarring a connection that MCP is using reconnects its pooled session on the agent's next request. Older builds ignore the favorite flag (`isFavoriteConnection`) and the bookmarks saved in a workspace (`lineBookmarks`).
+
 ## v0.9.2 (2026-11-05)
 
 ### Security
@@ -26,7 +56,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **PostgreSQL errors and types.** Errors start with their SQLSTATE (`ERROR 22012: division by zero`), and a query on one quoted or schema-qualified table shows the column's full type (`NUMERIC(10,2)`). [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4)
 - **Copy as INSERT and SQL INSERT export.** They write the schema and table as two quoted names (`"public"."orders"`), so the INSERT runs. [#87be440e](https://github.com/dinhanhthi/Dblore/commit/87be440e)
 - **Import.** Text timestamps without a zone import as a timestamp without time zone ("Timestamp (no zone)"), keeping their wall clock. [#87be440e](https://github.com/dinhanhthi/Dblore/commit/87be440e) [#4202518f](https://github.com/dinhanhthi/Dblore/commit/4202518f)
-- **Restore.** A MySQL file with its own `SET NAMES` line is refused with that statement quoted. [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4) [#9ee2df28](https://github.com/dinhanhthi/Dblore/commit/9ee2df28)
+- **Restore.** A MySQL file with its own `SET NAMES` line is refused with that statement quoted; the next release accepts `utf8`, `utf8mb3` and `utf8mb4`. [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4) [#9ee2df28](https://github.com/dinhanhthi/Dblore/commit/9ee2df28)
 - **Launch windows.** A launch while the display sleeps shows a single Welcome window, and a file opened at launch in Restore mode keeps the restored workspaces together as tabs in their own window. [#1662b7f4](https://github.com/dinhanhthi/Dblore/commit/1662b7f4)
 
 ### Upgrade notes
@@ -34,7 +64,7 @@ All notable user-visible changes to Dblore, newest first. Each release is a sect
 - **MCP and the command-line tool output changed.** PostgreSQL errors start with `<severity> <sqlstate>: `, for example `ERROR 22012: division by zero` or `FATAL 28P01: …` for a refused login, also when the connect fails. A read of one quoted or schema-qualified table returns the catalog type (`NUMERIC(10,2)` instead of `numeric`).
 - **Masking is not access control.** It matches column names, so an alias or a computed column in SQL written by you, the AI or an MCP agent gets past it. Filters, sorting and Find in every table still search the real values, and SQL dumps, backups, Copy Objects, Schema Compare and the Data Rewind store keep them. While a transaction is open, a table renamed by another session since this connection last read it is matched under its old name until the transaction ends.
 - **Mask rules and older builds.** Connections with rules save a `maskRules` key; an older build ignores it and drops the rules when it saves that connection again. Notebook files mark masked columns with `"masked": true`, which older builds ignore.
-- **PostgreSQL `search_path`.** Statements Dblore builds over your data (cell edits, filters, foreign-key lookups, Data Rewind) and restored dumps still resolve operators through your `search_path`; a fix follows.
+- **PostgreSQL `search_path`.** Statements Dblore builds over your data (cell edits, filters, foreign-key lookups, Data Rewind) and restored dumps still resolve operators through your `search_path`; the next release fixes it.
 - **Views.** PostgreSQL auto-updatable views take cell updates only, never row deletes or inserts; views with INSTEAD OF triggers, without a mappable key or over something other than a table stay read-only. MySQL/MariaDB views stay read-only.
 
 ## v0.9.1 (2026-11-03)

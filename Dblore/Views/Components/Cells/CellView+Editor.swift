@@ -27,6 +27,8 @@ struct SQLEditorView: View {
   var isEditable = true
   /// AI ghost text of a SQL query tab or SQL notebook cell; nil (the default) shows none
   var inlineCompletion: AIInlineCompletionController?
+  /// Each edit before it lands (see `HighlightedTextEditor.onWillReplaceText`)
+  var onWillReplaceText: ((NSRange, NSString, String) -> Void)?
 
   private var editorFontSize: CGFloat { AppSettings.shared.editorFontSize }
 
@@ -71,7 +73,8 @@ struct SQLEditorView: View {
         dialect: dialect,
         fontSize: editorFontSize,
         isEditable: isEditable,
-        inlineCompletion: inlineCompletion
+        inlineCompletion: inlineCompletion,
+        onWillReplaceText: onWillReplaceText
       )
     }
     .padding(isEditorMode ? .leading : .all, Spacing.sm)

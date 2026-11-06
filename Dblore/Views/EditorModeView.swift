@@ -115,6 +115,10 @@ struct EditorModeView: View {
       }
     }
     .bridgedFocusedSceneValue(\.zoomTarget, zoomTarget)
+    // Switching tabs can reuse this view and its text view: the new tab's model takes it
+    .onChange(of: viewModel.id, initial: true) {
+      viewModel.editorTextView = textViewRef
+    }
   }
 
   /// Object source tab: banner over a read-only editor. No result pane, nothing runs.
@@ -214,7 +218,10 @@ struct EditorModeView: View {
             text: viewModel.editorContent,
             textView: textViewRef,
             gutterWidth: gutterWidth,
-            editorFontSize: appSettings.editorFontSize
+            editorFontSize: appSettings.editorFontSize,
+            bookmarkedLines: Set(viewModel.lineBookmarks.lines),
+            onToggleBookmark: viewModel.acceptsLineBookmarks
+              ? { [viewModel] line in viewModel.toggleLineBookmark(line: line) } : nil
           )
           .frame(width: gutterWidth, height: editorHeight)
         }
@@ -237,7 +244,13 @@ struct EditorModeView: View {
           wordWrapEnabled: appSettings.wordWrapEnabled,
           dialect: viewModel.notebook.connectionConfig?.databaseType.dialect ?? .postgresql,
           isEditable: !isReadOnly,
-          inlineCompletion: isReadOnly ? nil : viewModel.aiInlineCompletion(cellId: nil)
+          inlineCompletion: isReadOnly ? nil : viewModel.aiInlineCompletion(cellId: nil),
+          // Bookmarks follow the lines they mark
+          onWillReplaceText: isReadOnly
+            ? nil
+            : { [viewModel] range, text, replacement in
+              viewModel.applyLineBookmarkEdit(replacing: range, in: text, with: replacement)
+            }
         )
       }
 

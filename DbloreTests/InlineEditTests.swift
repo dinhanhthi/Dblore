@@ -17,7 +17,9 @@ struct CellUpdateStatementTests {
     let statement = try CellUpdateStatement.make(
       qualifiedName: #"public."we""ird""#, columnName: "co\"l", newValue: "x'; DROP TABLE t; --",
       primaryKeyColumns: ["id"], rowData: ["id": .int(7), "co\"l": .string("old")])
-    #expect(statement.sql == #"UPDATE public."we""ird" SET "co""l" = $1 WHERE "id" = $2"#)
+    #expect(
+      statement.sql
+        == #"UPDATE public."we""ird" SET "co""l" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
     #expect(statement.values == ["x'; DROP TABLE t; --", "7"])
     #expect(statement.binds == [.text("x'; DROP TABLE t; --"), .text("7")])
     #expect(!statement.sql.contains("DROP TABLE"))
@@ -31,7 +33,8 @@ struct CellUpdateStatementTests {
       rowData: ["order_id": .int(10), "line_no": .int(2), "qty": .int(1)])
     #expect(
       statement.sql
-        == #"UPDATE sales.orders SET "qty" = $1 WHERE "order_id" = $2 AND "line_no" = $3"#)
+        == #"UPDATE sales.orders SET "qty" = $1 WHERE "order_id" OPERATOR(pg_catalog.=) $2"#
+        + #" AND "line_no" OPERATOR(pg_catalog.=) $3"#)
     #expect(statement.values == ["5", "10", "2"])
   }
 
@@ -117,7 +120,8 @@ struct CellUpdateStatementTests {
     let statement = try CellUpdateStatement.make(
       qualifiedName: "public.t", columnName: "a", newValue: "1", primaryKeyColumns: ["id"],
       rowData: ["id": .int(1)], updateOnly: true)
-    #expect(statement.sql == #"UPDATE ONLY public.t SET "a" = $1 WHERE "id" = $2"#)
+    #expect(
+      statement.sql == #"UPDATE ONLY public.t SET "a" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
     let classified = SQLStatementClassifier.classify(statement.sql)
     #expect(classified.count == 1)
     #expect(classified.first?.kind == .dml)
@@ -138,7 +142,9 @@ struct CellUpdateStatementTests {
       qualifiedName: "public.t",
       assignments: [(column: "a", value: "1"), (column: "note", value: nil)],
       primaryKeyColumns: ["id"], rowData: ["id": .int(7), "a": .int(0), "note": .string("x")])
-    #expect(statement.sql == #"UPDATE public.t SET "a" = $1, "note" = $2 WHERE "id" = $3"#)
+    #expect(
+      statement.sql
+        == #"UPDATE public.t SET "a" = $1, "note" = $2 WHERE "id" OPERATOR(pg_catalog.=) $3"#)
     #expect(statement.values == ["1", nil, "7"])
     #expect(statement.binds == [.text("1"), .null, .text("7")])
     #expect(statement.rowCheck == nil)
@@ -154,7 +160,7 @@ struct CellUpdateStatementTests {
     #expect(
       statement.sql
         == #"UPDATE ONLY sales.orders SET "qty" = $1, "note" = $2"#
-        + #" WHERE "order_id" = $3 AND "line_no" = $4"#)
+        + #" WHERE "order_id" OPERATOR(pg_catalog.=) $3 AND "line_no" OPERATOR(pg_catalog.=) $4"#)
     #expect(statement.values == ["5", "n", "10", "2"])
   }
 

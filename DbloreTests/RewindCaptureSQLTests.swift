@@ -17,8 +17,9 @@ struct RewindCaptureSQLTests {
       keyValues: [.int(7)], engine: .postgresql)
     #expect(
       postgres.sql
-        == "SELECT 'v' || \"id\"::text, 'v' || \"name\"::text FROM ONLY public.people"
-        + " WHERE \"id\" = $1 FOR UPDATE")
+        == "SELECT 'v' OPERATOR(pg_catalog.||) \"id\"::pg_catalog.text,"
+        + " 'v' OPERATOR(pg_catalog.||) \"name\"::pg_catalog.text FROM ONLY public.people"
+        + " WHERE \"id\" OPERATOR(pg_catalog.=) $1 FOR UPDATE")
     #expect(postgres.values == ["7"])
 
     let partitioned = try RewindCaptureSQL.selectStatement(
@@ -26,7 +27,8 @@ struct RewindCaptureSQLTests {
       columns: [Self.column("id", "int8")], keyValues: [.int(1)], engine: .postgresql)
     #expect(
       partitioned.sql
-        == "SELECT 'v' || \"id\"::text FROM public.events WHERE \"id\" = $1 FOR UPDATE")
+        == "SELECT 'v' OPERATOR(pg_catalog.||) \"id\"::pg_catalog.text FROM public.events"
+        + " WHERE \"id\" OPERATOR(pg_catalog.=) $1 FOR UPDATE")
 
     // ColumnInfo spells MySQL types in upper case; byte keys go through UNHEX like the edit
     let mysql = try RewindCaptureSQL.selectStatement(
@@ -186,8 +188,10 @@ struct RewindCaptureSQLTests {
       target: target, columns: Self.ordersViewColumns, keyValues: [.int(7)], engine: .postgresql)
     #expect(
       capture.sql
-        == "SELECT 'v' || \"key\"::text, 'v' || \"total\"::text, 'v' || \"doubled\"::text"
-        + " FROM public.v1 WHERE \"key\" = $1 FOR UPDATE")
+        == "SELECT 'v' OPERATOR(pg_catalog.||) \"key\"::pg_catalog.text,"
+        + " 'v' OPERATOR(pg_catalog.||) \"total\"::pg_catalog.text,"
+        + " 'v' OPERATOR(pg_catalog.||) \"doubled\"::pg_catalog.text"
+        + " FROM public.v1 WHERE \"key\" OPERATOR(pg_catalog.=) $1 FOR UPDATE")
 
     // Back through the view by its key; the expression column is never written. A rule naming
     // the base table masks the view's column (no origin: fails closed, as in the grid)
@@ -202,8 +206,8 @@ struct RewindCaptureSQLTests {
       masks: ColumnMaskRuleSet([try ColumnMaskRule(pattern: "orders.total", style: .full)]))
     #expect(
       inverse.statements.map(\.sql) == [
-        #"UPDATE "public"."v1" SET "total" = $1 WHERE "key" = $2"#
-          + #" AND "total"::text COLLATE "C" IS NOT DISTINCT FROM $3"#
+        #"UPDATE "public"."v1" SET "total" = $1 WHERE "key" OPERATOR(pg_catalog.=) $2"#
+          + #" AND "total"::pg_catalog.text COLLATE pg_catalog."C" OPERATOR(pg_catalog.=) $3"#
       ])
     #expect(inverse.statements.first?.values == ["5", "7", "6"])
     // One row expected: a row the edit moved out of the view matches none and stops the rewind

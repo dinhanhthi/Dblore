@@ -332,6 +332,12 @@ final class MongoImportModel {
     let target = confirmation.target
     let collection = target.collection
     let total = confirmation.documentCount
+    // Listed in the connection's workspace (Quit and close ask first); Stop there is Cancel
+    let runningWork = RunningWorkRegistry.shared.begin(
+      workspaceID: RunningWorkRegistry.workspaceID(of: context.manager),
+      label: "Import into \(collection)", kind: .dataImport
+    ) { [weak self] in self?.cancel() }
+    defer { RunningWorkRegistry.shared.end(runningWork) }
     importStarted = true
     state = .running(inserted: 0, total: total)
     let started = Date()

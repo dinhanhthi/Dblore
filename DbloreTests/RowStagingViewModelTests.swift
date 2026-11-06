@@ -239,7 +239,7 @@ struct RowStagingViewModelTests {
 
     await viewModel.commitStaged()
     #expect(viewModel.dataViewer?.changeSet == nil)
-    let update = #"UPDATE public.v1 SET "nickname" = $1 WHERE "id" = $2"#
+    let update = #"UPDATE public.v1 SET "nickname" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#
     let commit = try #require(tab.statements.lastIndex(of: "COMMIT"))
     #expect(Array(tab.statements[(commit - 2)...commit]) == [update, update, "COMMIT"])
   }

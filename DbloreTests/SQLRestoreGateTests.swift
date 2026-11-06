@@ -254,15 +254,30 @@ struct SQLRestoreGateTests {
   }
 
   @Test(
-    "A SET NAMES other than the dump's is refused with its statement number and text",
+    "SET NAMES utf8, utf8mb3 or utf8mb4 as Dblore and mysqldump write it runs as utf8mb4",
     arguments: [
-      ("SET NAMES utf8;", "SET NAMES utf8"),
+      "SET NAMES utf8;", "SET NAMES utf8mb3;", "/*!40101 SET NAMES utf8 */;",
+      "/*!40101 SET NAMES utf8mb4 */;", "/*!50503 SET NAMES utf8mb4 */;",
+      "-- charset note\n# legacy\n/* old */ SET NAMES utf8;",
+    ])
+  func setNamesUTF8Accepted(statement: String) throws {
+    let script = Self.header(.mysql) + "\nCREATE TABLE a (id int);\n" + statement + "\n"
+    let plan = try Self.plan(script, .mysql)
+    #expect(plan.statements.count == 2)
+    #expect(plan.statements[1].text == "SET NAMES utf8mb4")
+    #expect(plan.kinds[1] == .sessionSetting)
+  }
+
+  @Test(
+    "A SET NAMES in another form or character set is refused with its statement number and text",
+    arguments: [
       ("set names 'utf8mb4';", "set names 'utf8mb4'"),
       ("SET NAMES utf8mb4 COLLATE utf8mb4_bin;", "SET NAMES utf8mb4 COLLATE utf8mb4_bin"),
       ("SET\tNAMES\n  \"utf8mb4\";", "SET NAMES \"utf8mb4\""),
-      ("/*!40101 SET NAMES utf8 */;", "/*!40101 SET NAMES utf8 */"),
-      ("/*!40101 SET NAMES utf8mb4 */;", "/*!40101 SET NAMES utf8mb4 */"),
-      ("-- charset note\n# legacy\n/* old */ SET NAMES utf8;", "SET NAMES utf8"),
+      ("SET NAMES latin1;", "SET NAMES latin1"),
+      ("/*!40101 SET NAMES latin1 */;", "/*!40101 SET NAMES latin1 */"),
+      ("/*!40101 SET NAMES gbk */;", "/*!40101 SET NAMES gbk */"),
+      ("-- charset note\n# legacy\n/* old */ SET NAMES latin1;", "SET NAMES latin1"),
     ])
   func setNamesRefused(statement: String, shown: String) {
     let script = Self.header(.mysql) + "\nCREATE TABLE a (id int);\n" + statement + "\n"
@@ -275,8 +290,10 @@ struct SQLRestoreGateTests {
     #expect(
       error?.localizedDescription
         == "Statement 2 is not part of a SQL dump: \"\(shown)\" sets the connection's character "
-        + "set, but Dblore restores only the statements its own dumps write (SET NAMES utf8mb4;), "
-        + "and this session already uses utf8mb4. Nothing was executed.")
+        + "set, but Dblore restores only SET NAMES utf8mb4, utf8 or utf8mb3 as its own dumps and "
+        + "mysqldump write them (run as utf8mb4, the character set of this session); for another "
+        + "character set, make the dump again with --default-character-set=utf8mb4. "
+        + "Nothing was executed.")
   }
 
   @Test(
@@ -480,9 +497,24 @@ struct SQLRestoreGateTests {
       (.postgresql, "INSERT INTO a (lower(id)) VALUES ('1');", notColumns),
       (.mysql, "INSERT INTO a (id) VALUES (LOAD_FILE('/etc/passwd'));", utility),
       (.mysql, "INSERT INTO a (id) VALUES ('1' + 1);", notLiteral),
-      (.mysql, "INSERT INTO a (id) VALUES (1);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1 + 1);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1 2);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (--1);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1.);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (.5);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1e);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1e5e5);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1e+);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1 DIV 2);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (0x);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (0xZZ);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (1x0A);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (b'012');", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (_binary 0x0A);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (_binary @x);", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (_latin1'x');", notLiteral),
       (.mysql, "INSERT INTO a (id) VALUES (@x);", notLiteral),
-      (.mysql, "INSERT INTO a (id) VALUES (_binary'x');", notLiteral),
+      (.mysql, "INSERT INTO a (id) VALUES (id);", notLiteral),
       (.mysql, "INSERT INTO a (id) VALUES (X'0G');", notLiteral),
       (.mysql, "INSERT INTO a (id) VALUES ((SELECT '1'));", notLiteral),
       (.mysql, "INSERT INTO a (id) VALUES ('1') ON DUPLICATE KEY UPDATE id = '2';", notAtEnd),
@@ -505,6 +537,25 @@ struct SQLRestoreGateTests {
     }
     #expect(index == 1)
     #expect(refusal.contains(reason), "\(statement): \(refusal)")
+  }
+
+  @Test("MySQL INSERT rows hold numbers, 0x / X'' / b'' / _binary values, text and NULL")
+  func mysqlInsertLiterals() throws {
+    let values =
+      "(1, -2, 3.25, -0.001, 0.00000000015, -2.25e30, 1e30, 1.5e-10, 2E+5, 0x0A1b, "
+      + "X'0a', b'0101', B'', _binary 'x\\'y', _binary'!', 'a', \"b\", NULL)"
+    let script = [
+      Self.header(.mysql), "CREATE TABLE a (id int);",
+      "INSERT INTO `a` VALUES \(values),\n(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0, X'', b'1', B'0', "
+        + "_binary '', '', '', '', NULL);",
+    ].joined(separator: "\n")
+    let plan = try Self.plan(script, .mysql)
+    #expect(plan.kinds == [.schema, .data])
+    // The other engines keep their own literals
+    let sqlite = [Self.header(.sqlite), "INSERT INTO a VALUES (0x0A);"].joined(separator: "\n")
+    #expect(Self.planError(sqlite, .sqlite) != nil)
+    let postgres = [Self.header(.postgresql), "INSERT INTO a VALUES (1);"].joined(separator: "\n")
+    #expect(Self.planError(postgres, .postgresql) != nil)
   }
 
   private func expectRefusedAtIndex1(_ engine: DatabaseType, _ statement: String) {
@@ -1105,11 +1156,36 @@ struct SQLRestoreGateTests {
       protectedMode: protectedMode)
   }
 
+  /// The answer to `restoreSessionQuery`: sql_mode, time_zone, unique_checks, sql_notes and
+  /// the server version
+  private static func mysqlSettingsRow(
+    mode: String = "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", uniqueChecks: Int = 1,
+    sqlNotes: Int = 1, version: String = "8.4.11"
+  ) -> [CellValue] {
+    [.string(mode), .string("+00:00"), .int(uniqueChecks), .int(sqlNotes), .string(version)]
+  }
+
+  /// What a MySQL restore sends after its statements, on every path
+  private static func mysqlReset(
+    mode: String = "STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION", uniqueChecks: Int = 1,
+    sqlNotes: Int = 1, noteVerbosity: String? = nil
+  ) -> [String] {
+    [
+      "UNLOCK TABLES", "SET NAMES utf8mb4", "SET FOREIGN_KEY_CHECKS=1",
+      "SET SESSION unique_checks = \(uniqueChecks), sql_notes = \(sqlNotes)",
+      "SET SESSION sql_mode = '\(mode)', time_zone = '+00:00'",
+    ] + (noteVerbosity.map { ["SET SESSION note_verbosity = '\($0)'"] } ?? []) + [
+      "SET @OLD_CHARACTER_SET_CLIENT = NULL, @OLD_CHARACTER_SET_RESULTS = NULL, "
+        + "@OLD_COLLATION_CONNECTION = NULL, @OLD_TIME_ZONE = NULL, @OLD_UNIQUE_CHECKS = NULL, "
+        + "@OLD_FOREIGN_KEY_CHECKS = NULL, @OLD_SQL_MODE = NULL, @OLD_SQL_NOTES = NULL, "
+        + "@OLD_NOTE_VERBOSITY = NULL, @saved_cs_client = NULL"
+    ]
+  }
+
   private func connect(
     _ type: DatabaseType, level: ConnectionProtectionLevel = .none, protectedMode: Bool = false,
-    rows: [[CellValue]] = [
-      [.string("STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION"), .string("+00:00")]
-    ], slowQueries: Bool = false, failingQuery: String? = nil
+    rows: [[CellValue]] = [mysqlSettingsRow()], slowQueries: Bool = false,
+    failingQuery: String? = nil
   ) async throws -> (DatabaseConnectionManager, FakeDatabaseSessionFactory) {
     let factory = FakeDatabaseSessionFactory(
       capabilities: type.capabilities, rows: rows, slowQueries: slowQueries,
@@ -1231,7 +1307,10 @@ struct SQLRestoreGateTests {
     let sent = factory.sessions.last?.statements ?? []
     #expect(sent.first == "BEGIN")
     #expect(sent.last == "COMMIT")
-    #expect(Array(sent.dropFirst().dropLast()) == plan.statements.map(\.text))
+    let pin = DatabaseConnectionManager.SearchPathPin.self
+    #expect(Array(sent.dropFirst().prefix(2)) == [pin.readSQL, pin.pinSQL])
+    #expect(Array(sent.dropFirst(3).dropLast(2)) == plan.statements.map(\.text))
+    #expect(sent.dropLast().last == pin.putBackSQL)
     #expect(summary.statementsRun == 12)
     #expect(!summary.pending)
     #expect(summary.counts == plan.summary.counts)
@@ -1303,7 +1382,10 @@ struct SQLRestoreGateTests {
     let sent = factory.statements
     #expect(sent.first == DatabaseConnectionManager.standardStringsQuery)
     #expect(sent.dropFirst().first == "BEGIN")
-    #expect(Array(sent.dropFirst(2).dropLast()) == plan.statements.map(\.text))
+    let pin = DatabaseConnectionManager.SearchPathPin.self
+    #expect(Array(sent.dropFirst(2).prefix(2)) == [pin.readSQL, pin.pinSQL])
+    #expect(Array(sent.dropFirst(4).dropLast(2)) == plan.statements.map(\.text))
+    #expect(Array(sent.suffix(2)) == [pin.putBackSQL, "COMMIT"])
   }
 
   @Test("PostgreSQL: standard_conforming_strings off refuses before anything is changed")
@@ -1456,10 +1538,11 @@ struct SQLRestoreGateTests {
     let savepoint = DatabaseConnectionManager.batchSavepoint
     let sent = session.statements
     #expect(sent.first == DatabaseConnectionManager.standardStringsQuery)
+    let pin = DatabaseConnectionManager.SearchPathPin.self
     #expect(
-      Array(sent.suffix(plan.statements.count + 2))
-        == ["SAVEPOINT \(savepoint)"] + plan.statements.map(\.text)
-        + ["RELEASE SAVEPOINT \(savepoint)"])
+      Array(sent.suffix(plan.statements.count + 5))
+        == ["SAVEPOINT \(savepoint)", pin.readSQL, pin.pinSQL] + plan.statements.map(\.text)
+        + [pin.putBackSQL, "RELEASE SAVEPOINT \(savepoint)"])
     #expect(sent.filter { $0 == "BEGIN" }.count == 1)
     #expect(!sent.contains("COMMIT"))
     #expect(await manager.transactionStatus().owner == caller)
@@ -1485,10 +1568,12 @@ struct SQLRestoreGateTests {
     #expect(summary.insideUserTransaction)
     #expect(!summary.pending)
     let savepoint = DatabaseConnectionManager.batchSavepoint
+    let pin = DatabaseConnectionManager.SearchPathPin.self
     #expect(
       session.statements
         == [DatabaseConnectionManager.standardStringsQuery, "BEGIN", "SAVEPOINT \(savepoint)"]
-        + plan.statements.map(\.text) + ["RELEASE SAVEPOINT \(savepoint)"])
+        + [pin.readSQL, pin.pinSQL] + plan.statements.map(\.text)
+        + [pin.putBackSQL, "RELEASE SAVEPOINT \(savepoint)"])
     #expect(await manager.userTxOpen)
   }
 
@@ -1510,10 +1595,11 @@ struct SQLRestoreGateTests {
       plan, policy: open, connectionEpoch: await manager.connectionEpoch, caller: UUID())
     #expect(!summary.insideUserTransaction)
     #expect(!summary.pending)
+    let pin = DatabaseConnectionManager.SearchPathPin.self
     #expect(
       session.statements
         == ["BEGIN", DatabaseConnectionManager.standardStringsQuery, "COMMIT", "BEGIN"]
-        + plan.statements.map(\.text) + ["COMMIT"])
+        + [pin.readSQL, pin.pinSQL] + plan.statements.map(\.text) + [pin.putBackSQL, "COMMIT"])
     #expect(await manager.transactionSnapshot() == .idle)
   }
 
@@ -1570,11 +1656,7 @@ struct SQLRestoreGateTests {
     #expect(total == 5)
     #expect(log.values.map(\.statementsDone) == [1, 2])
     #expect(!session.statements.contains { $0.contains("VALUES ('2')") })
-    #expect(
-      session.statements.suffix(2) == [
-        "SET FOREIGN_KEY_CHECKS=1",
-        "SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION', time_zone = '+00:00'",
-      ])
+    #expect(Array(session.statements.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
   }
 
   @Test("MySQL: statement 3 fails and the reset fails too: the session is closed, both are told")
@@ -1597,9 +1679,8 @@ struct SQLRestoreGateTests {
     #expect(!reason.isEmpty)
     let message = try #require((error as? SQLRestoreError)?.errorDescription)
     #expect(message.contains("closed") && message.contains("Reconnect"))
-    // Both reset statements were tried before the session was dropped
-    #expect(session.statements.contains("SET FOREIGN_KEY_CHECKS=1"))
-    #expect(session.statements.last?.hasPrefix("SET SESSION sql_mode = ") == true)
+    // Every reset statement was tried before the session was dropped
+    #expect(Array(session.statements.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
     #expect(session.didClose)
     #expect(await manager.isConnected == false)
     #expect(await manager.lastSessionLoss != nil)
@@ -1634,21 +1715,193 @@ struct SQLRestoreGateTests {
     #expect(summary.count(.sessionSetting) == 5)
     let sent = Array(session.statements.dropFirst(before))
     #expect(sent.first == DatabaseConnectionManager.restoreSessionQuery)
-    #expect(sent.count == 1 + 7 + 2)
+    #expect(sent.count == 1 + 7 + Self.mysqlReset().count)
     #expect(!sent.contains("BEGIN") && !sent.contains("START TRANSACTION"))
-    #expect(sent.last?.hasPrefix("SET SESSION sql_mode = ") == true)
+    #expect(Array(sent.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
   }
 
   @Test("MySQL: unexpected session settings refuse the restore before any change")
   func mysqlUnreadableSettings() async throws {
     let (manager, factory) = try await connect(
-      .mysql, rows: [[.string("STRICT'; DROP TABLE x; --"), .string("+00:00")]])
+      .mysql, rows: [Self.mysqlSettingsRow(mode: "STRICT'; DROP TABLE x; --")])
     let error = await restoreError(manager, Self.mysqlScript(["INSERT INTO a VALUES ('1');"]))
     guard case .sessionSettingsUnreadable? = error as? SQLRestoreError else {
       Issue.record("Expected sessionSettingsUnreadable, got \(String(describing: error))")
       return
     }
     #expect(factory.statements == [DatabaseConnectionManager.restoreSessionQuery])
+  }
+
+  @Test(
+    "MySQL: unexpected unique_checks, sql_notes or server version refuse before any change",
+    arguments: [
+      mysqlSettingsRow(uniqueChecks: 2), mysqlSettingsRow(sqlNotes: -1),
+      mysqlSettingsRow(version: "unknown"),
+      [
+        .string("STRICT_TRANS_TABLES"), .string("+00:00"), .string("1; DROP"), .int(1),
+        .string("8.4.11"),
+      ],
+      [.string("STRICT_TRANS_TABLES"), .string("+00:00")],
+    ])
+  func mysqlUnreadableNewSettings(row: [CellValue]) async throws {
+    let (manager, factory) = try await connect(.mysql, rows: [row])
+    let error = await restoreError(manager, MySQLDumpFixtures.mysqlDump)
+    guard case .sessionSettingsUnreadable? = error as? SQLRestoreError else {
+      Issue.record("Expected sessionSettingsUnreadable, got \(String(describing: error))")
+      return
+    }
+    #expect(factory.statements == [DatabaseConnectionManager.restoreSessionQuery])
+  }
+
+  // MARK: - MySQL: mysqldump files
+
+  /// A MySQL fake whose `restoreSessionQuery` reports `version`, and whose note_verbosity read
+  /// answers `basic,explain`
+  private func connectServer(
+    version: String, uniqueChecks: Int = 1, sqlNotes: Int = 1
+  ) async throws -> (DatabaseConnectionManager, FakeDatabaseSession) {
+    let settings = Self.mysqlSettingsRow(
+      uniqueChecks: uniqueChecks, sqlNotes: sqlNotes, version: version)
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: DatabaseType.mysql.capabilities,
+      queryAnswer: { sql, _ in
+        switch sql {
+        case DatabaseConnectionManager.restoreSessionQuery:
+          FakeQueryAnswer(columns: [], rows: [settings])
+        case DatabaseConnectionManager.restoreNoteVerbosityQuery:
+          FakeQueryAnswer(columns: [], rows: [[.string("basic,explain")]])
+        default: nil
+        }
+      })
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(config: Self.config(.mysql))
+    return (manager, try #require(factory.sessions.last))
+  }
+
+  @Test("MySQL: a mysqldump file runs its statements, then the reset in order")
+  func mysqldumpResetOrder() async throws {
+    let (manager, session) = try await connectServer(
+      version: "8.4.11", uniqueChecks: 0, sqlNotes: 0)
+    let plan = try Self.plan(MySQLDumpFixtures.mysqlDump, .mysql)
+    let before = session.statements.count
+    let log = ProgressLog()
+    let summary = try await manager.executeGatedRestore(
+      plan, policy: open, connectionEpoch: await manager.connectionEpoch,
+      progress: { log.append($0) })
+    #expect(summary.statementsRun == plan.statements.count)
+    #expect(log.values.last?.statementsDone == plan.statements.count)
+    let sent = Array(session.statements.dropFirst(before))
+    #expect(
+      sent
+        == [DatabaseConnectionManager.restoreSessionQuery] + plan.statements.map(\.text)
+        + Self.mysqlReset(uniqueChecks: 0, sqlNotes: 0))
+    #expect(!sent.contains { $0.contains("UNIQUE_CHECKS=0") })
+  }
+
+  @Test("MySQL: a mariadb-dump file's /*M!100616 ...*/ lines are dropped on a MySQL server")
+  func mariaDBLinesDroppedOnMySQL() async throws {
+    let (manager, session) = try await connectServer(version: "8.4.11")
+    let plan = try Self.plan(MySQLDumpFixtures.mariaDBDump, .mysql)
+    let noteLines = plan.statements.map(\.text).filter { $0.contains("NOTE_VERBOSITY") }
+    #expect(noteLines.count == 2)
+    let before = session.statements.count
+    let log = ProgressLog()
+    let summary = try await manager.executeGatedRestore(
+      plan, policy: open, connectionEpoch: await manager.connectionEpoch,
+      progress: { log.append($0) })
+    #expect(summary.statementsRun == plan.statements.count)
+    #expect(log.values.last?.statementsDone == plan.statements.count)
+    let sent = Array(session.statements.dropFirst(before))
+    // Only the reset's clearing of the user variables names it
+    #expect(
+      !sent.dropLast(Self.mysqlReset().count).contains {
+        $0.contains("NOTE_VERBOSITY") || $0.contains("note_verbosity")
+      })
+    #expect(sent.count == 1 + plan.statements.count - 2 + Self.mysqlReset().count)
+    #expect(Array(sent.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
+  }
+
+  @Test("MySQL: on MariaDB 10.6.16+ the note_verbosity lines run and it is reset afterwards")
+  func mariaDBNoteVerbosityReset() async throws {
+    let (manager, session) = try await connectServer(version: "11.4.13-MariaDB-ubu2404")
+    let plan = try Self.plan(MySQLDumpFixtures.mariaDBDump, .mysql)
+    let before = session.statements.count
+    _ = try await manager.executeGatedRestore(
+      plan, policy: open, connectionEpoch: await manager.connectionEpoch)
+    let sent = Array(session.statements.dropFirst(before))
+    #expect(
+      sent
+        == [
+          DatabaseConnectionManager.restoreSessionQuery,
+          DatabaseConnectionManager.restoreNoteVerbosityQuery,
+        ] + plan.statements.map(\.text) + Self.mysqlReset(noteVerbosity: "basic,explain"))
+  }
+
+  @Test("MySQL: before MariaDB 10.6.16 the note_verbosity lines are dropped and not reset")
+  func oldMariaDBDropsNoteVerbosity() async throws {
+    let (manager, session) = try await connectServer(version: "10.6.15-MariaDB")
+    let plan = try Self.plan(MySQLDumpFixtures.mariaDBDump, .mysql)
+    let before = session.statements.count
+    _ = try await manager.executeGatedRestore(
+      plan, policy: open, connectionEpoch: await manager.connectionEpoch)
+    let sent = Array(session.statements.dropFirst(before))
+    // Only the reset's clearing of the user variables names it
+    #expect(
+      !sent.dropLast(Self.mysqlReset().count).contains {
+        $0.contains("NOTE_VERBOSITY") || $0.contains("note_verbosity")
+      })
+    #expect(Array(sent.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
+  }
+
+  @Test("MySQL: a mysqldump restore that fails partway still unlocks and resets everything")
+  func mysqldumpResetAfterFailure() async throws {
+    let (manager, session) = try await connectServer(version: "8.4.11")
+    session.failNextCommand(containing: "INSERT INTO `tags`")
+    let error = await restoreError(manager, MySQLDumpFixtures.mysqlDump)
+    guard case .batchPartiallyApplied? = error as? DatabaseError else {
+      Issue.record("Expected batchPartiallyApplied, got \(String(describing: error))")
+      return
+    }
+    #expect(Array(session.statements.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
+    #expect(await manager.isConnected)
+  }
+
+  @Test(
+    "MySQL: a mysqldump restore stopped partway still unlocks and resets everything",
+    .timeLimit(.minutes(1)))
+  func mysqldumpResetAfterStop() async throws {
+    let (manager, session) = try await connectServer(version: "8.4.11")
+    session.holdNextCommand(containing: "INSERT INTO `items`")
+    let plan = try Self.plan(MySQLDumpFixtures.mysqlDump, .mysql)
+    let epoch = await manager.connectionEpoch
+    let policy = open
+    let restore = Task {
+      try await manager.executeGatedRestore(plan, policy: policy, connectionEpoch: epoch)
+    }
+    while session.heldCommandCount < 1 { try await Task.sleep(for: .milliseconds(5)) }
+    let status = await manager.runningStatementStatus()
+    let outcome = await manager.cancelRunningStatement(
+      expectedGeneration: status.generation, expectedUserTxOpen: status.userTxOpen,
+      expectedEpoch: status.epoch)
+    #expect(outcome == .cancelled)
+    session.releaseHeldCommands()
+    await #expect(throws: (any Error).self) { try await restore.value }
+    #expect(!session.statements.contains { $0.hasPrefix("INSERT INTO `tags`") })
+    #expect(Array(session.statements.suffix(Self.mysqlReset().count)) == Self.mysqlReset())
+  }
+
+  @Test("MySQL: Safe Mode confirms a mysqldump restore, and its session lines block nothing")
+  func safeModeRestoresMySQLDump() async throws {
+    let (manager, _) = try await connectServer(version: "8.4.11")
+    let plan = try Self.plan(MySQLDumpFixtures.mysqlDump, .mysql)
+    let policy = ProtectionPolicy(protectionLevel: .none, safeMode: .safeAll)
+    #expect(DatabaseBackupModel.restoreBlockReason(plan, policy: policy) == nil)
+    let rows = DatabaseBackupModel.restoreConfirmation(plan)
+    #expect(rows.count == plan.statements.count - plan.summary.count(.data))
+    #expect(rows.contains { $0.kindLabel == "Session setting" && $0.preview == "UNLOCK TABLES" })
+    let summary = try await manager.executeGatedRestore(
+      plan, policy: policy, connectionEpoch: await manager.connectionEpoch)
+    #expect(summary.statementsRun == plan.statements.count)
   }
 
   @Test("MySQL: Cancel during the session settings read sends no dump statement and no reset")

@@ -399,6 +399,102 @@ struct CopyObjectsRunTests {
     await manager.disconnect()
   }
 
+  // MARK: - PostgreSQL source reads
+
+  @Test("PostgreSQL source: the count, page and keyset reads name pg_catalog")
+  func postgresSourceReads() throws {
+    let read = try Self.postgresRead(
+      [
+        ("id", "integer"), ("code", "text"), ("data", "bytea"), ("tags", "text[]"),
+        ("at", "timestamp with time zone"),
+      ], key: ["id", "code"], target: Self.sqlite)
+    // A table in the default schema is named with it: unqualified, the user's search_path
+    // could find a same-named table planted in an earlier schema
+    #expect(read.relation == #""public"."t""#)
+    #expect(read.countSQL == #"SELECT pg_catalog.count(*) FROM "public"."t""#)
+    let columns =
+      #"SELECT 'v' OPERATOR(pg_catalog.||) "id"::pg_catalog.text, "#
+      + #"'v' OPERATOR(pg_catalog.||) "code"::pg_catalog.text, "#
+      + #"'v' OPERATOR(pg_catalog.||) pg_catalog.encode("data", 'hex'), "#
+      + #"'v' OPERATOR(pg_catalog.||) pg_catalog.to_json("tags")::pg_catalog.text, "#
+      + #"'v' OPERATOR(pg_catalog.||) pg_catalog.to_char("at" AT TIME ZONE 'UTC', "#
+      + #"'YYYY-MM-DD HH24:MI:SS.US'), "#
+      + #"'v' OPERATOR(pg_catalog.||) "id"::pg_catalog.text, "#
+      + #"'v' OPERATOR(pg_catalog.||) "code"::pg_catalog.text FROM "public"."t""#
+    #expect(
+      read.select(after: nil, offset: 0).sql == columns + #" ORDER BY "id", "code" LIMIT 500"#)
+    let next = read.select(after: ["7", "a"], offset: 0, limit: 9)
+    #expect(
+      next.sql
+        == columns + #" WHERE ("id", "code") OPERATOR(pg_catalog.>) ($1, $2)"#
+        + #" ORDER BY "id", "code" LIMIT 9"#)
+    #expect(next.binds == [.text("7"), .text("a")])
+  }
+
+  @Test("PostgreSQL source: a citext key keeps its own > and =, an integer key qualifies")
+  func postgresCitextKeyset() throws {
+    // A qualified > on citext compares as text: the page boundary would skip or repeat rows
+    let citext = try Self.postgresRead([("name", "citext")], key: ["name"], target: .postgresql)
+    #expect(
+      citext.select(after: ["Ada"], offset: 0).sql.hasSuffix(
+        #"WHERE "name" > $1 ORDER BY "name" LIMIT 500"#))
+    let mixed = try Self.postgresRead(
+      [("id", "integer"), ("name", "public.citext")], key: ["id", "name"], target: .postgresql)
+    let chain = mixed.select(after: ["1", "Ada"], offset: 0)
+    #expect(
+      chain.sql.hasSuffix(
+        #"WHERE (("id" OPERATOR(pg_catalog.>) $1) OR ("id" OPERATOR(pg_catalog.=) $1 AND "#
+          + #""name" > $2)) ORDER BY "id", "name" LIMIT 500"#))
+    #expect(chain.binds == [.text("1"), .text("Ada")])
+    // The = on a leading citext key column is bare too
+    let leading = try Self.postgresRead(
+      [("name", "citext"), ("id", "integer")], key: ["name", "id"], target: .postgresql)
+    #expect(
+      leading.select(after: ["Ada", "1"], offset: 0).sql.contains(
+        #"WHERE (("name" > $1) OR ("name" = $1 AND "id" OPERATOR(pg_catalog.>) $2))"#))
+    let integer = try Self.postgresRead([("id", "integer")], key: ["id"], target: .postgresql)
+    #expect(
+      integer.select(after: ["1"], offset: 0).sql.hasSuffix(
+        #"WHERE "id" OPERATOR(pg_catalog.>) $1 ORDER BY "id" LIMIT 500"#))
+  }
+
+  @Test("PostgreSQL source: a key of a user type (a domain over citext) is read by position")
+  func postgresUserTypeKeyByPosition() throws {
+    // pg_catalog's > on a domain over citext compares as text while ORDER BY sorts as citext
+    for type in ["email", "public.email", #""Email""#] {
+      let read = try Self.postgresRead(
+        [("id", "integer"), ("name", type)], key: ["id", "name"], target: .postgresql)
+      #expect(read.readsByPosition, "\(type)")
+      let page = read.select(after: nil, offset: 1000, limit: 9).sql
+      #expect(!page.contains("WHERE"), "\(type)")
+      #expect(page.hasSuffix(#" ORDER BY "id", "name" LIMIT 9 OFFSET 1000"#), "\(page)")
+    }
+    for type in ["integer", "citext", "public.citext", "timestamp(3) with time zone", "uuid"] {
+      let read = try Self.postgresRead([("k", type)], key: ["k"], target: .postgresql)
+      #expect(!read.readsByPosition, "\(type)")
+    }
+  }
+
+  /// The read of `public.t` (`columns` as name and `format_type` text, keyed by `key`) from a
+  /// PostgreSQL source into `target`
+  static func postgresRead(
+    _ columns: [(String, String)], key: [String], target: Engine
+  ) throws -> CopyObjectsTableRead {
+    let source = TableStructure(
+      tableID: .postgresql(oid: 1), schema: "public", name: "t",
+      columns: columns.enumerated().map {
+        TableStructure.Column(
+          ordinal: $0.offset + 1, name: $0.element.0, dataType: $0.element.1,
+          isNullable: !key.contains($0.element.0))
+      },
+      indexes: [],
+      constraints: [TableStructure.Constraint(name: nil, kind: .primaryKey, columns: key)])
+    let plan = try CopyObjectsPlanner.plan(
+      [.init(structure: source)], source: .postgresql, target: target,
+      targetSchema: target == .postgresql ? "public" : "main", existingNames: [])
+    return try CopyObjectsTableRead(plan.tables[0], source: .postgresql, target: target)
+  }
+
   // MARK: - Helpers
 
   /// Runs `body` with two new SQLite file URLs, removed afterwards

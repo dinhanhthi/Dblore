@@ -107,7 +107,7 @@ struct TableHighlightContent: View {
 
   /// The rule's conditions as SQL, with " (row)" for a whole-row rule
   private func summary(of rule: TableHighlight, dialect: SQLDialect) -> String {
-    let conditions = rule.filter.whereClause(dialect: dialect) ?? ""
+    let conditions = rule.filter.whereClause(dialect: dialect, form: .plain) ?? ""
     return rule.style == .row ? conditions + " (row)" : conditions
   }
 }

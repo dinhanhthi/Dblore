@@ -59,6 +59,8 @@ struct ConnectionAppearanceSyncTests {
       saved.preConnectScript = "vpn-up.sh"
       #expect(
         SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+      let savedRow = try #require(Self.savedEntry(saved, defaults: defaults))
+      #expect(SessionManager.setFavoriteConnection(true, id: savedRow.id, defaults: defaults))
 
       var file = saved
       file.colorTag = nil
@@ -68,6 +70,7 @@ struct ConnectionAppearanceSyncTests {
       let kept = WorkspaceManager.keepingSavedAppearance(file, defaults: defaults)
       #expect(kept.colorTag == .pink)
       #expect(kept.groupName == "Prod")
+      #expect(kept.isFavoriteConnection)
       #expect(kept.preConnectScript == "vpn-up.sh")
       #expect(kept.passwordCommandScript == nil)
       let opened = WorkspaceManager.keepingSavedScripts(file, defaults: defaults)

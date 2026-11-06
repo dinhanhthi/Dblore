@@ -118,15 +118,17 @@ extension WorkspaceManager {
     startSchemaLoad()
   }
 
-  /// Read the actor's transaction state into `pendingTransaction`. The origin tab is the tab
-  /// whose token (`NotebookViewModel.id`) the actor recorded as the transaction owner.
+  /// Read the actor's transaction state into `pendingTransaction` (and whether a user
+  /// transaction is open). The origin tab is the tab whose token (`NotebookViewModel.id`) the
+  /// actor recorded as the transaction owner.
   func refreshPendingTransaction() async {
-    let status = await connectionManager.transactionStatus()
+    let status = await connectionManager.runningStatementStatus()
     let originTabId = status.owner.flatMap { owner in
       viewModels.first { $0.value.id == owner }?.key
     }
     pendingTransactionGeneration = status.generation
     isStatementInFlight = status.inFlight
+    isUserTransactionOpen = status.userTxOpen
     applyTransactionState(status.state, originTabId: originTabId)
   }
 
@@ -145,6 +147,113 @@ extension WorkspaceManager {
     viewModels.values.contains {
       ($0.executionQueue?.isProcessing ?? false) || $0.isEditorQueryRunning
     }
+  }
+
+  /// The tabs running cells or an editor query, as the running-work prompt lists them. Inside
+  /// a pending Protected transaction or a user transaction, each line says what Stop rolls back
+  /// (the mirror's count, as the query's own Cancel would warn); its `consent` is that mirror.
+  var runningQueries: [RunningWorkRegistry.RunningQuery] {
+    // Every engine cancels with an interrupt (`DatabaseConnectionManager.runningStatementStatus`)
+    let engine = workspace.connectionConfig?.databaseType
+    let consequence = QueryCancelWarning.stopConsequence(
+      state: pendingTransaction, userTxOpen: isUserTransactionOpen,
+      keepsTransaction: engine?.interruptKeepsTransaction ?? false, interrupts: engine != nil,
+      interruptRollsBack: engine?.interruptAbortsTransaction ?? false)
+    let consent = RunningWorkRegistry.StopConsent(
+      generation: pendingTransactionGeneration, userTxOpen: isUserTransactionOpen)
+    return tabs.compactMap { tab in
+      guard let viewModel = viewModels[tab.id],
+        (viewModel.executionQueue?.isProcessing ?? false) || viewModel.isEditorQueryRunning
+      else { return nil }
+      let title = AISchemaContext.oneLine(tab.title).trimmingCharacters(in: .whitespaces)
+      return .init(
+        workspaceID: id, label: "Query in \(title)", stopConsequence: consequence,
+        consent: consent)
+    }
+  }
+
+  /// Stops every running query of this workspace on the server, with its queued cells (the
+  /// running-work prompt's Stop: `RunningWorkRegistry.stop` keeps each cancel from asking again
+  /// about the transaction its line named).
+  /// - Returns: one task per cancel; true when its warning was answered "Keep running"
+  func stopRunningQueries() -> [Task<Bool, Never>] {
+    viewModels.values.filter {
+      ($0.executionQueue?.isProcessing ?? false) || $0.isEditorQueryRunning
+    }.map { viewModel in
+      Task { await viewModel.stopRunningStatement(cancelQueue: true) == .keptRunning }
+    }
+  }
+
+  /// Asks before `scope` (this workspace's close or disconnect) stops its running work; Stop
+  /// cancels the running statements (waiting for their warnings' answers), then the other work,
+  /// and waits for it a bounded time (`RunningWorkRegistry.stop`).
+  /// - Returns: false if the user cancelled (everything keeps running), answered a running
+  ///   statement's cancel warning with "Keep running" after Stop, or this workspace's
+  ///   running work is still being asked about or stopped (a second click: no second prompt,
+  ///   close or disconnect). Only this far: a COMMIT / ROLLBACK the transaction prompt chose
+  ///   after it must stay escapable from the banner, the Command Palette or a second close.
+  func confirmStoppingRunningWork(_ scope: RunningWorkRegistry.Scope) async -> Bool {
+    guard !isAskingAboutRunningWork, !runningWork.stopsWithoutAsking(workspaceID: id) else {
+      return false
+    }
+    isAskingAboutRunningWork = true
+    defer { isAskingAboutRunningWork = false }
+    // A running statement may have opened a transaction the mirror does not show yet
+    if isAnyTabExecuting, connectionState.isConnected {
+      await refreshPendingTransaction()
+      guard !runningWork.stopsWithoutAsking(workspaceID: id) else { return false }
+    }
+    let queries = runningQueries
+    switch runningWork.ask(scope, runningQueries: queries) {
+    case .cancel:
+      return false
+    case .stop:
+      return await runningWork.stop(
+        scope, queries: queries, stopQueries: stopRunningQueries,
+        queriesRunning: { self.isAnyTabExecuting })
+    case .proceed, .confirmQuit:
+      return true
+    }
+  }
+
+  /// What a quit asks of `managers`, each question once: their running work ("Stop and Quit"),
+  /// or with nothing running `confirmQuit` when `confirmBeforeQuit`; then every pending
+  /// Protected transaction (Commit / Discard / Cancel). A running statement may have opened a
+  /// transaction the mirror does not show yet: it is read before the prompt, which names its
+  /// rollback, and again after Stop, so a stop that ended the run never drops it unasked.
+  /// - Returns: false if the user cancelled one, or answered a running statement's cancel
+  ///   warning with "Keep running" after Stop (the app keeps running)
+  static func answerQuitQuestions(
+    _ managers: [WorkspaceManager], runningWork: RunningWorkRegistry, confirmBeforeQuit: Bool,
+    confirmQuit: () -> Bool
+  ) async -> Bool {
+    let executing = managers.filter(\.isAnyTabExecuting)
+    for manager in executing where manager.connectionState.isConnected {
+      await manager.refreshPendingTransaction()
+    }
+    let queries = managers.flatMap(\.runningQueries)
+    switch runningWork.ask(.quit, runningQueries: queries, confirmBeforeQuit: confirmBeforeQuit) {
+    case .cancel:
+      return false
+    case .confirmQuit:
+      guard confirmQuit() else { return false }
+    case .proceed:
+      break
+    case .stop:
+      guard
+        await runningWork.stop(
+          .quit, queries: queries, stopQueries: { managers.flatMap { $0.stopRunningQueries() } },
+          queriesRunning: { managers.contains(where: \.isAnyTabExecuting) })
+      else { return false }
+    }
+    // A tab running now or before the prompt may have opened one since: resolve refreshes
+    for manager in managers
+    where !manager.pendingTransaction.isIdle || manager.isAnyTabExecuting
+      || executing.contains(where: { $0 === manager })
+    {
+      guard await manager.resolvePendingTransaction(action: .quit) else { return false }
+    }
+    return true
   }
 
   /// Opening time is set on the idle -> pending transition; everything is cleared on idle.
@@ -384,9 +493,16 @@ extension WorkspaceManager {
   // MARK: - Disconnect
 
   /// Disconnect; a pending Protected transaction is resolved first (prompt, or `resolution`).
-  /// - Returns: false if the user cancelled (still connected, transaction kept).
+  /// - Parameter asksForRunningWork: the user's own Disconnect: running work is asked about
+  ///   first ("Stop and Disconnect"). A close (which asked already) and internal callers do not.
+  /// - Returns: false if the user cancelled (still connected, transaction and work kept).
   @discardableResult
-  func disconnect(resolution: PendingTransactionResolution? = nil) async -> Bool {
+  func disconnect(
+    resolution: PendingTransactionResolution? = nil, asksForRunningWork: Bool = false
+  ) async -> Bool {
+    if asksForRunningWork {
+      guard await confirmStoppingRunningWork(.disconnect(workspaceID: id)) else { return false }
+    }
     let wasConnected = connectionState == .connected
     guard await resolvePendingTransaction(action: .disconnect, resolution: resolution) else {
       return false

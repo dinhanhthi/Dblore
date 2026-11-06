@@ -86,7 +86,8 @@ nonisolated struct ProtectionPolicy: Sendable {
       return "A Read-only DuckDB connection opens its file read-only. Edit the connection to write."
     }
     if config.databaseType == .sqlite, config.readOnlyFile {
-      return "This SQLite file is open read-only. Edit the connection to write."
+      return
+        "This SQLite file is open read-only. Edit the connection and turn off Read-only to write."
     }
     return nil
   }

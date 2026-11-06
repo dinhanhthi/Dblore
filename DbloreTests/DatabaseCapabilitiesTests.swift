@@ -120,7 +120,7 @@ struct DatabaseCapabilitiesTests {
     supportsUpdateOnly: false,
     supportsDefaultInUpdate: false,
     supportsRowStaging: false,
-    supportsDataImport: false,
+    supportsDataImport: true,
     supportsForeignKeyLookup: false,
     requiresPlugin: true,
     isAvailable: true,

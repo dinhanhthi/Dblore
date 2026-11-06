@@ -273,7 +273,13 @@ final class MongoExportModel {
     let progress: @Sendable (Int) async -> Void = { [weak self] written in
       await self?.report(written: written, generation: current)
     }
+    // Listed in the connection's workspace (Quit and close ask first); Stop there is Cancel
+    let runningWork = RunningWorkRegistry.shared.begin(
+      workspaceID: RunningWorkRegistry.workspaceID(of: manager), label: "Export of \(collection)",
+      kind: .dataExport
+    ) { [weak self] in self?.cancel() }
     runTask = Task { [weak self] in
+      defer { RunningWorkRegistry.shared.end(runningWork) }
       let outcome: State
       do {
         let count = try await PerfSignpost.interval("mongo.export") {

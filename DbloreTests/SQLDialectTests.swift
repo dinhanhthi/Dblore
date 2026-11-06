@@ -73,9 +73,11 @@ private let sharedLiteralDialectCases: [(SQLDialect, CellValue, String)] = [
 private let byteSample = Data([0x00, 0x0A, 0xFF])
 
 private let specialLiteralCases: [(SQLDialect, CellValue, String)] = [
-  (.postgresql, .double(.nan), "'NaN'::float8"),
-  (.postgresql, .double(.infinity), "'Infinity'::float8"),
-  (.postgresql, .double(-.infinity), "'-Infinity'::float8"),
+  (.postgresql, .double(.nan), "'NaN'::pg_catalog.float8"),
+  (.postgresql, .double(.infinity), "'Infinity'::pg_catalog.float8"),
+  (.postgresql, .double(-.infinity), "'-Infinity'::pg_catalog.float8"),
+  (.mongodb, .double(.nan), "'NaN'::float8"),
+  (.mongodb, .double(-.infinity), "'-Infinity'::float8"),
   (.sqlite, .double(.nan), "NULL"),
   (.sqlite, .double(.infinity), "NULL"),
   (.sqlite, .double(-.infinity), "NULL"),
@@ -155,6 +157,72 @@ private let explainCases: [(SQLDialect, Bool, Bool, String?, String)] = [
   (.duckdb, true, false, "json", "EXPLAIN (ANALYZE, FORMAT JSON)"),
   (.duckdb, false, true, "json", "EXPLAIN (FORMAT JSON)"),
   (.duckdb, true, true, "json", "EXPLAIN (ANALYZE, FORMAT JSON)"),
+]
+
+/// Security: a PostgreSQL statement on user data names `pg_catalog`'s operators, functions and
+/// built-in types, so nothing planted in a schema on the `search_path` runs. Each row is one
+/// dialect's output for the same calls; every non-PostgreSQL row is today's text.
+private func qualificationSample(_ dialect: SQLDialect, columnType: String?) -> [String] {
+  let operand = SQLOperandKind(columnType: columnType)
+  return [
+    dialect.comparison("c", .lessOrEqual, "$1", operand: operand),
+    dialect.inList("c", ["'a'", "'b'"], operand: operand),
+    dialect.inList("c", ["'a'", "'b'"], negated: true, operand: operand),
+    dialect.like(column: "c", pattern: "'a!%'", escape: "'!'"),
+    dialect.like(column: "c", pattern: "'a'", caseInsensitive: true),
+    dialect.like(column: "c", pattern: "'a'", escape: "'!'", negated: true, caseInsensitive: true),
+    dialect.function("count", "*"),
+    dialect.concatenation("'v'", "c"),
+    dialect.cast("$1", to: "uuid"),
+  ]
+}
+
+private let qualifiedPostgresSample = [
+  "c OPERATOR(pg_catalog.<=) $1",
+  "(c OPERATOR(pg_catalog.=) 'a' OR c OPERATOR(pg_catalog.=) 'b')",
+  "(c OPERATOR(pg_catalog.<>) 'a' AND c OPERATOR(pg_catalog.<>) 'b')",
+  "c::pg_catalog.text OPERATOR(pg_catalog.~~) pg_catalog.like_escape('a!%', '!')",
+  "c::pg_catalog.text OPERATOR(pg_catalog.~~*) 'a'",
+  "c::pg_catalog.text OPERATOR(pg_catalog.!~~*) pg_catalog.like_escape('a', '!')",
+  "pg_catalog.count(*)",
+  "'v' OPERATOR(pg_catalog.||) c",
+  "$1::pg_catalog.uuid",
+]
+
+private let unchangedDialectSamples: [(SQLDialect, [String])] = [
+  (
+    .mysql,
+    [
+      "c <= $1", "c IN ('a', 'b')", "c NOT IN ('a', 'b')",
+      "CAST(c AS CHAR) LIKE 'a!%' ESCAPE '!'", "LOWER(CAST(c AS CHAR)) LIKE LOWER('a')",
+      "CAST(c AS CHAR) NOT LIKE 'a' ESCAPE '!'", "count(*)", "CONCAT('v', c)",
+      "CAST($1 AS uuid)",
+    ]
+  ),
+  (
+    .sqlite,
+    [
+      "c <= $1", "c IN ('a', 'b')", "c NOT IN ('a', 'b')", "c LIKE 'a!%' ESCAPE '!'",
+      "LOWER(c) LIKE LOWER('a')", "c NOT LIKE 'a' ESCAPE '!'", "count(*)", "'v' || c",
+      "CAST($1 AS uuid)",
+    ]
+  ),
+  (
+    .duckdb,
+    [
+      "c <= $1", "c IN ('a', 'b')", "c NOT IN ('a', 'b')", "c::VARCHAR LIKE 'a!%' ESCAPE '!'",
+      "c::VARCHAR ILIKE 'a'", "c::VARCHAR NOT ILIKE 'a' ESCAPE '!'", "count(*)", "'v' || c",
+      "CAST($1 AS uuid)",
+    ]
+  ),
+  (
+    .mongodb,
+    [
+      "c <= $1", "c IN ('a', 'b')", "c NOT IN ('a', 'b')", "c::text LIKE 'a!%' ESCAPE '!'",
+      "c::text ILIKE 'a'", "c::text NOT ILIKE 'a' ESCAPE '!'", "count(*)", "'v' || c",
+      "CAST($1 AS uuid)",
+    ]
+  ),
 ]
 
 @Suite("SQL Dialect")
@@ -269,6 +337,59 @@ struct SQLDialectTests {
   func caseInsensitiveLike(dialect: SQLDialect, expected: String) {
     #expect(
       dialect.caseInsensitiveLike(column: #""weird""name""#, pattern: "'o''brien'") == expected)
+  }
+
+  @Test(
+    "PostgreSQL names pg_catalog's operators and functions for any non-extension column type",
+    arguments: [nil, "integer", "int4[]", "my_enum", "public.my_domain", "some_unknown_type"]
+      as [String?])
+  func postgresQualified(columnType: String?) {
+    #expect(qualificationSample(.postgresql, columnType: columnType) == qualifiedPostgresSample)
+  }
+
+  @Test("Other dialects write today's text", arguments: unchangedDialectSamples)
+  func otherDialectsUnqualified(dialect: SQLDialect, expected: [String]) {
+    #expect(qualificationSample(dialect, columnType: nil) == expected)
+  }
+
+  /// pg_catalog has no operator for these types: a qualified one would make a citext filter
+  /// case-sensitive or a PostGIS comparison fail
+  @Test(
+    "A listed extension type keeps the bare operator",
+    arguments: [
+      "citext", "public.citext", #""ext"."citext""#, "citext[]", "geometry(Point,4326)",
+      "extensions.ltree[]", "isbn13",
+    ])
+  func extensionTypesStayBare(columnType: String) {
+    let operand = SQLOperandKind(columnType: columnType)
+    #expect(operand == .bare)
+    #expect(SQLDialect.postgresql.comparison("c", .equal, "$1", operand: operand) == "c = $1")
+    #expect(
+      SQLDialect.postgresql.inList("c", ["1", "2"], negated: true, operand: operand)
+        == "(c <> 1 AND c <> 2)")
+  }
+
+  /// `::pg_catalog.integer` does not exist: the parser binds keyword type names itself
+  @Test(
+    "A cast keeps keyword type names and user types; other built-in names get pg_catalog",
+    arguments: [
+      ("integer", "$1::integer"),
+      ("character varying(20)", "$1::character varying(20)"),
+      ("timestamp(3) with time zone", "$1::timestamp(3) with time zone"),
+      ("double precision[]", "$1::double precision[]"),
+      ("numeric(10,2)", "$1::numeric(10,2)"),
+      ("text", "$1::pg_catalog.text"),
+      ("text[]", "$1::pg_catalog.text[]"),
+      ("int4", "$1::pg_catalog.int4"),
+      ("timestamptz", "$1::pg_catalog.timestamptz"),
+      (#""char""#, #"$1::pg_catalog."char""#),
+      ("pg_catalog.jsonb", "$1::pg_catalog.jsonb"),
+      ("my_enum", "$1::my_enum"),
+      ("app.text", "$1::app.text"),
+      ("citext", "$1::citext"),
+    ])
+  func postgresCast(type: String, expected: String) {
+    #expect(SQLDialect.postgresql.cast("$1", to: type) == expected)
   }
 
   @Test("A PostgreSQL backslash is an escape string; quotes stay doubled; SQLite stays plain")

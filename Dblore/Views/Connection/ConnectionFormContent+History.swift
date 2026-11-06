@@ -17,14 +17,20 @@ extension ConnectionFormContent {
   func connectionHistorySection() -> some View {
     VStack(alignment: .leading, spacing: Spacing.xs) {
       Menu {
-        let groups = ConnectionAppearance.grouped(historyForSelectedType())
-        ForEach(groups, id: \.name) { group in
-          if let name = group.name {
-            Section(name) { historyRows(group.entries) }
-          } else {
-            historyRows(group.entries)
+        // Favorites first, then a section per group level that has connections, titled with its
+        // whole path (a menu shows one level of sections), then the ungrouped connections
+        let history = historyForSelectedType()
+        let favorites = history.filter(\.config.isFavoriteConnection)
+        let tree = ConnectionAppearance.tree(history.filter { !$0.config.isFavoriteConnection })
+        if !favorites.isEmpty {
+          Section("Favorites") { historyRows(favorites) }
+        }
+        ForEach(ConnectionAppearance.flattened(tree.groups), id: \.path) { node in
+          if !node.entries.isEmpty {
+            Section(node.path) { historyRows(node.entries) }
           }
         }
+        historyRows(tree.ungrouped)
 
         Divider()
 

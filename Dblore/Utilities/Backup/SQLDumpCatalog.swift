@@ -25,14 +25,18 @@ nonisolated enum SQLDumpCatalog {
 
   /// User relations: not in a system schema, not temporary, not owned by an extension
   private static let postgresUserRelation = """
-    n.nspname <> 'information_schema' AND left(n.nspname, 3) <> 'pg_'
-      AND c.relpersistence <> 't'
+    n.nspname OPERATOR(pg_catalog.<>) 'information_schema'
+      AND pg_catalog.left(n.nspname, 3) OPERATOR(pg_catalog.<>) 'pg_'
+      AND c.relpersistence OPERATOR(pg_catalog.<>) 't'
       AND NOT EXISTS (
-        SELECT 1 FROM pg_depend e
-        WHERE e.classid = 'pg_class'::regclass AND e.objid = c.oid AND e.deptype = 'e')
+        SELECT 1 FROM pg_catalog.pg_depend e
+        WHERE e.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+          AND e.objid OPERATOR(pg_catalog.=) c.oid AND e.deptype OPERATOR(pg_catalog.=) 'e')
     """
 
-  private static let postgresTableFilter = "c.relkind IN ('r', 'p') AND \(postgresUserRelation)"
+  private static let postgresTableFilter =
+    "c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p']::pg_catalog.\"char\"[])"
+    + " AND \(postgresUserRelation)"
 
   static func postgresInput(_ reader: any DatabaseSession) async throws -> SQLDumpDDL.PostgresInput
   {
@@ -40,13 +44,15 @@ nonisolated enum SQLDumpCatalog {
     let listed = try await rows(
       reader,
       """
-      SELECT c.oid::int8, n.nspname::text, c.relname::text, pg_get_partkeydef(c.oid),
-        pn.nspname::text, pc.relname::text, pg_get_expr(c.relpartbound, c.oid)
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      LEFT JOIN pg_inherits i ON c.relispartition AND i.inhrelid = c.oid
-      LEFT JOIN pg_class pc ON pc.oid = i.inhparent
-      LEFT JOIN pg_namespace pn ON pn.oid = pc.relnamespace
+      SELECT c.oid::pg_catalog.int8, n.nspname::pg_catalog.text, c.relname::pg_catalog.text,
+        pg_catalog.pg_get_partkeydef(c.oid), pn.nspname::pg_catalog.text,
+        pc.relname::pg_catalog.text, pg_catalog.pg_get_expr(c.relpartbound, c.oid)
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      LEFT JOIN pg_catalog.pg_inherits i
+        ON c.relispartition AND i.inhrelid OPERATOR(pg_catalog.=) c.oid
+      LEFT JOIN pg_catalog.pg_class pc ON pc.oid OPERATOR(pg_catalog.=) i.inhparent
+      LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) pc.relnamespace
       WHERE \(postgresTableFilter)
       ORDER BY n.nspname, c.relname
       """)
@@ -98,12 +104,15 @@ nonisolated enum SQLDumpCatalog {
     for row in try await rows(
       reader,
       """
-      SELECT x.indrelid::int8, ic.relname::text, pg_get_indexdef(x.indexrelid),
-        EXISTS (SELECT 1 FROM pg_inherits h WHERE h.inhrelid = x.indexrelid)
-      FROM pg_index x
-      JOIN pg_class ic ON ic.oid = x.indexrelid
-      JOIN pg_class c ON c.oid = x.indrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
+      SELECT x.indrelid::pg_catalog.int8, ic.relname::pg_catalog.text,
+        pg_catalog.pg_get_indexdef(x.indexrelid),
+        EXISTS (
+          SELECT 1 FROM pg_catalog.pg_inherits h
+          WHERE h.inhrelid OPERATOR(pg_catalog.=) x.indexrelid)
+      FROM pg_catalog.pg_index x
+      JOIN pg_catalog.pg_class ic ON ic.oid OPERATOR(pg_catalog.=) x.indexrelid
+      JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) x.indrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
       WHERE \(postgresTableFilter)
       """)
     {
@@ -136,15 +145,16 @@ nonisolated enum SQLDumpCatalog {
     for row in try await rows(
       reader,
       """
-      SELECT con.conrelid::int8, con.conname::text, con.contype::text,
-        pg_get_constraintdef(con.oid), con.coninhcount > 0 AND NOT con.conislocal,
-        NOT con.convalidated
-      FROM pg_constraint con
-      JOIN pg_class c ON c.oid = con.conrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE \(postgresTableFilter) AND con.conparentid = 0
-        AND (con.contype IN ('f', 'x') OR (con.contype = 'c' AND NOT con.convalidated)
-          OR (con.coninhcount > 0 AND NOT con.conislocal))
+      SELECT con.conrelid::pg_catalog.int8, con.conname::pg_catalog.text,
+        con.contype::pg_catalog.text, pg_catalog.pg_get_constraintdef(con.oid),
+        con.coninhcount OPERATOR(pg_catalog.>) 0 AND NOT con.conislocal, NOT con.convalidated
+      FROM pg_catalog.pg_constraint con
+      JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) con.conrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      WHERE \(postgresTableFilter) AND con.conparentid OPERATOR(pg_catalog.=) 0
+        AND (con.contype OPERATOR(pg_catalog.=) ANY (ARRAY['f', 'x']::pg_catalog."char"[])
+          OR (con.contype OPERATOR(pg_catalog.=) 'c' AND NOT con.convalidated)
+          OR (con.coninhcount OPERATOR(pg_catalog.>) 0 AND NOT con.conislocal))
       """)
     {
       guard row.count >= 6, let table = CatalogValue.int(row[0]),
@@ -173,26 +183,37 @@ nonisolated enum SQLDumpCatalog {
     for row in try await rows(
       reader,
       """
-      SELECT n.nspname::text, c.relname::text, format_type(s.seqtypid, NULL), s.seqstart::text,
-        s.seqincrement::text, s.seqmin::text, s.seqmax::text, s.seqcycle, tn.nspname::text,
-        tc.relname::text, a.attname::text, d.deptype::text, ps.last_value::text,
-        (SELECT COALESCE(jsonb_agg(DISTINCT jsonb_build_array(un.nspname, uc.relname)), '[]')::text
-          FROM pg_depend ud
-          JOIN pg_attrdef ad ON ad.oid = ud.objid
-          JOIN pg_class uc ON uc.oid = ad.adrelid
-          JOIN pg_namespace un ON un.oid = uc.relnamespace
-          WHERE ud.classid = 'pg_attrdef'::regclass AND ud.refclassid = 'pg_class'::regclass
-            AND ud.refobjid = s.seqrelid)
-      FROM pg_sequence s
-      JOIN pg_class c ON c.oid = s.seqrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      LEFT JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = s.seqrelid
-        AND d.refclassid = 'pg_class'::regclass AND d.deptype IN ('a', 'i')
-      LEFT JOIN pg_class tc ON tc.oid = d.refobjid
-      LEFT JOIN pg_namespace tn ON tn.oid = tc.relnamespace
-      LEFT JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
-      LEFT JOIN pg_sequences ps ON ps.schemaname = n.nspname AND ps.sequencename = c.relname
-      WHERE n.nspname <> 'information_schema' AND left(n.nspname, 3) <> 'pg_'
+      SELECT n.nspname::pg_catalog.text, c.relname::pg_catalog.text,
+        pg_catalog.format_type(s.seqtypid, NULL), s.seqstart::pg_catalog.text,
+        s.seqincrement::pg_catalog.text, s.seqmin::pg_catalog.text, s.seqmax::pg_catalog.text,
+        s.seqcycle, tn.nspname::pg_catalog.text, tc.relname::pg_catalog.text,
+        a.attname::pg_catalog.text, d.deptype::pg_catalog.text, ps.last_value::pg_catalog.text,
+        (SELECT COALESCE(
+            pg_catalog.jsonb_agg(DISTINCT pg_catalog.jsonb_build_array(un.nspname, uc.relname)),
+            '[]')::pg_catalog.text
+          FROM pg_catalog.pg_depend ud
+          JOIN pg_catalog.pg_attrdef ad ON ad.oid OPERATOR(pg_catalog.=) ud.objid
+          JOIN pg_catalog.pg_class uc ON uc.oid OPERATOR(pg_catalog.=) ad.adrelid
+          JOIN pg_catalog.pg_namespace un ON un.oid OPERATOR(pg_catalog.=) uc.relnamespace
+          WHERE ud.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_attrdef'::pg_catalog.regclass
+            AND ud.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+            AND ud.refobjid OPERATOR(pg_catalog.=) s.seqrelid)
+      FROM pg_catalog.pg_sequence s
+      JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) s.seqrelid
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      LEFT JOIN pg_catalog.pg_depend d
+        ON d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.objid OPERATOR(pg_catalog.=) s.seqrelid
+        AND d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+        AND d.deptype OPERATOR(pg_catalog.=) ANY (ARRAY['a', 'i']::pg_catalog."char"[])
+      LEFT JOIN pg_catalog.pg_class tc ON tc.oid OPERATOR(pg_catalog.=) d.refobjid
+      LEFT JOIN pg_catalog.pg_namespace tn ON tn.oid OPERATOR(pg_catalog.=) tc.relnamespace
+      LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid OPERATOR(pg_catalog.=) d.refobjid
+        AND a.attnum OPERATOR(pg_catalog.=) d.refobjsubid
+      LEFT JOIN pg_catalog.pg_sequences ps ON ps.schemaname OPERATOR(pg_catalog.=) n.nspname
+        AND ps.sequencename OPERATOR(pg_catalog.=) c.relname
+      WHERE n.nspname OPERATOR(pg_catalog.<>) 'information_schema'
+        AND pg_catalog.left(n.nspname, 3) OPERATOR(pg_catalog.<>) 'pg_'
       ORDER BY n.nspname, c.relname
       """)
     {
@@ -232,30 +253,44 @@ nonisolated enum SQLDumpCatalog {
     for row in try await rows(
       reader,
       """
-      WITH RECURSIVE used(oid) AS (
-        SELECT a.atttypid FROM pg_attribute a
-        JOIN pg_class c ON c.oid = a.attrelid
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE \(postgresTableFilter) AND a.attnum > 0 AND NOT a.attisdropped
+      WITH RECURSIVE used AS (
+        SELECT a.atttypid AS oid FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+        WHERE \(postgresTableFilter) AND a.attnum OPERATOR(pg_catalog.>) 0
+          AND NOT a.attisdropped
         UNION
-        SELECT CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.typelem END
-        FROM used u JOIN pg_type t ON t.oid = u.oid
-        WHERE t.typtype = 'd' OR (t.typcategory = 'A' AND t.typelem <> 0)
+        SELECT CASE WHEN t.typtype OPERATOR(pg_catalog.=) 'd' THEN t.typbasetype
+          ELSE t.typelem END
+        FROM used u JOIN pg_catalog.pg_type t ON t.oid OPERATOR(pg_catalog.=) u.oid
+        WHERE t.typtype OPERATOR(pg_catalog.=) 'd'
+          OR (t.typcategory OPERATOR(pg_catalog.=) 'A' AND t.typelem OPERATOR(pg_catalog.<>) 0)
       )
-      SELECT n.nspname::text, t.typname::text, t.typtype::text,
-        (SELECT COALESCE(json_agg(e.enumlabel::text ORDER BY e.enumsortorder), '[]')::text
-          FROM pg_enum e WHERE e.enumtypid = t.oid),
-        format_type(t.typbasetype, t.typtypmod), pg_get_expr(t.typdefaultbin, 0), t.typnotnull,
-        (SELECT COALESCE(json_agg(json_build_array(dc.conname::text, pg_get_constraintdef(dc.oid))
-            ORDER BY dc.conname), '[]')::text
-          FROM pg_constraint dc WHERE dc.contypid = t.oid AND dc.contype = 'c'),
-        (SELECT COALESCE(json_agg(dc.conname::text), '[]')::text
-          FROM pg_constraint dc
-          WHERE dc.contypid = t.oid AND dc.contype = 'c' AND NOT dc.convalidated)
-      FROM pg_type t
-      JOIN pg_namespace n ON n.oid = t.typnamespace
-      WHERE t.oid IN (SELECT oid FROM used) AND t.typtype IN ('e', 'd')
-        AND n.nspname <> 'information_schema' AND left(n.nspname, 3) <> 'pg_'
+      SELECT n.nspname::pg_catalog.text, t.typname::pg_catalog.text, t.typtype::pg_catalog.text,
+        (SELECT COALESCE(
+            pg_catalog.json_agg(e.enumlabel::pg_catalog.text ORDER BY e.enumsortorder),
+            '[]')::pg_catalog.text
+          FROM pg_catalog.pg_enum e WHERE e.enumtypid OPERATOR(pg_catalog.=) t.oid),
+        pg_catalog.format_type(t.typbasetype, t.typtypmod),
+        pg_catalog.pg_get_expr(t.typdefaultbin, 0), t.typnotnull,
+        (SELECT COALESCE(
+            pg_catalog.json_agg(
+              pg_catalog.json_build_array(
+                dc.conname::pg_catalog.text, pg_catalog.pg_get_constraintdef(dc.oid))
+              ORDER BY dc.conname),
+            '[]')::pg_catalog.text
+          FROM pg_catalog.pg_constraint dc
+          WHERE dc.contypid OPERATOR(pg_catalog.=) t.oid AND dc.contype OPERATOR(pg_catalog.=) 'c'),
+        (SELECT COALESCE(pg_catalog.json_agg(dc.conname::pg_catalog.text), '[]')::pg_catalog.text
+          FROM pg_catalog.pg_constraint dc
+          WHERE dc.contypid OPERATOR(pg_catalog.=) t.oid AND dc.contype OPERATOR(pg_catalog.=) 'c'
+            AND NOT dc.convalidated)
+      FROM pg_catalog.pg_type t
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) t.typnamespace
+      WHERE t.oid OPERATOR(pg_catalog.=) ANY (SELECT oid FROM used)
+        AND t.typtype OPERATOR(pg_catalog.=) ANY (ARRAY['e', 'd']::pg_catalog."char"[])
+        AND n.nspname OPERATOR(pg_catalog.<>) 'information_schema'
+        AND pg_catalog.left(n.nspname, 3) OPERATOR(pg_catalog.<>) 'pg_'
       ORDER BY t.oid
       """)
     {
@@ -289,17 +324,23 @@ nonisolated enum SQLDumpCatalog {
     try await rows(
       reader,
       """
-      SELECT n.nspname::text, c.relname::text, pg_get_viewdef(c.oid),
-        (SELECT COALESCE(jsonb_agg(DISTINCT jsonb_build_array(dn.nspname, dc.relname)), '[]')::text
-          FROM pg_rewrite r
-          JOIN pg_depend d ON d.classid = 'pg_rewrite'::regclass AND d.objid = r.oid
-          JOIN pg_class dc ON dc.oid = d.refobjid
-          JOIN pg_namespace dn ON dn.oid = dc.relnamespace
-          WHERE r.ev_class = c.oid AND d.refclassid = 'pg_class'::regclass
-            AND d.refobjid <> c.oid)
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind = 'v' AND \(postgresUserRelation)
+      SELECT n.nspname::pg_catalog.text, c.relname::pg_catalog.text,
+        pg_catalog.pg_get_viewdef(c.oid),
+        (SELECT COALESCE(
+            pg_catalog.jsonb_agg(DISTINCT pg_catalog.jsonb_build_array(dn.nspname, dc.relname)),
+            '[]')::pg_catalog.text
+          FROM pg_catalog.pg_rewrite r
+          JOIN pg_catalog.pg_depend d
+            ON d.classid OPERATOR(pg_catalog.=) 'pg_catalog.pg_rewrite'::pg_catalog.regclass
+            AND d.objid OPERATOR(pg_catalog.=) r.oid
+          JOIN pg_catalog.pg_class dc ON dc.oid OPERATOR(pg_catalog.=) d.refobjid
+          JOIN pg_catalog.pg_namespace dn ON dn.oid OPERATOR(pg_catalog.=) dc.relnamespace
+          WHERE r.ev_class OPERATOR(pg_catalog.=) c.oid
+            AND d.refclassid OPERATOR(pg_catalog.=) 'pg_catalog.pg_class'::pg_catalog.regclass
+            AND d.refobjid OPERATOR(pg_catalog.<>) c.oid)
+      FROM pg_catalog.pg_class c
+      JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+      WHERE c.relkind OPERATOR(pg_catalog.=) 'v' AND \(postgresUserRelation)
       ORDER BY n.nspname, c.relname
       """
     ).compactMap { row in

@@ -68,6 +68,7 @@ struct TabMoveWindowTests {
     try await source.openFile(url: url)
     let id = source.tabs[0].id
     source.tabBookmarks[id] = Data([7])
+    source.viewModel(for: id)?.toggleLineBookmark(line: 1)
 
     var resolved: [Data] = []
     target.accessHooks.resolve = { data in
@@ -79,6 +80,8 @@ struct TabMoveWindowTests {
     #expect(resolved == [Data([7])])
     #expect(target.tabs.map(\.fileURL) == [url])
     #expect(target.tabBookmarks[target.tabs[0].id] == Data([7]))
+    // Line bookmarks move with the tab
+    #expect(target.viewModel(for: target.tabs[0].id)?.lineBookmarks.lines == [1])
     #expect(source.tabs.isEmpty)
   }
 

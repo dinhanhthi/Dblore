@@ -24,7 +24,9 @@ struct ForeignKeyNavigationTests {
     let sql = try #require(session.statements.first)
     #expect(session.statements.count == 1)
     #expect(
-      sql == #"SELECT * FROM "main"."parent" WHERE "b" = $1 AND "a" = $2 LIMIT 2"#)
+      sql
+        == #"SELECT * FROM "main"."parent" WHERE "b" OPERATOR(pg_catalog.=) $1"#
+        + #" AND "a" OPERATOR(pg_catalog.=) $2 LIMIT 2"#)
     #expect(session.statementBinds == [[.text("1"), .text(Self.secret)]])
     #expect(!sql.contains(Self.secret))
     #expect(!sql.contains("= NULL"))
@@ -104,7 +106,7 @@ struct ForeignKeyNavigationTests {
     #expect(viewer.dataViewer?.filter.conditions.map(\.op) == [.equals])
     #expect(viewer.dataViewer?.filter.conditions.map(\.value) == ["7"])
     #expect(viewer.filterDraft.conditions.map(\.value) == ["7"])
-    #expect(viewer.dataViewer?.pageSQL.contains(#"WHERE "id" = '7'"#) == true)
+    #expect(viewer.dataViewer?.pageSQL.contains(#"WHERE "id" OPERATOR(pg_catalog.=) '7'"#) == true)
   }
 
   @Test("A jump with an empty string filters on quoted empty, and a composite keeps both")
@@ -124,7 +126,7 @@ struct ForeignKeyNavigationTests {
         values: ["user_id": .string("")]))
     let usersId = try #require(manager.tabs.last?.id)
     let users = try #require(manager.viewModel(for: usersId))
-    #expect(users.dataViewer?.pageSQL.contains(#"= ''"#) == true)
+    #expect(users.dataViewer?.pageSQL.contains(#"OPERATOR(pg_catalog.=) ''"#) == true)
     #expect(users.dataViewer?.filter.conditions.map(\.emptyStringIsValue) == [true])
 
     #expect(
@@ -134,8 +136,8 @@ struct ForeignKeyNavigationTests {
     let accountsId = try #require(manager.tabs.last?.id)
     let accounts = try #require(manager.viewModel(for: accountsId))
     let page = try #require(accounts.dataViewer?.pageSQL)
-    #expect(page.contains(#""tenant" = 'acme'"#))
-    #expect(page.contains(#""code" = ''"#))
+    #expect(page.contains(#""tenant" OPERATOR(pg_catalog.=) 'acme'"#))
+    #expect(page.contains(#""code" OPERATOR(pg_catalog.=) ''"#))
     #expect(accounts.dataViewer?.filter.conditions.map(\.emptyStringIsValue) == [false, true])
   }
 
@@ -161,7 +163,7 @@ struct ForeignKeyNavigationTests {
     #expect(manager.activeTabId == ordersId)
     #expect(orders.dataViewer?.name == "orders")
     #expect(orders.dataViewer?.filter == filter)
-    #expect(orders.dataViewer?.pageSQL.contains(#"WHERE "id" = '7'"#) == true)
+    #expect(orders.dataViewer?.pageSQL.contains(#"WHERE "id" OPERATOR(pg_catalog.=) '7'"#) == true)
     #expect(orders.hasPendingStagedChanges == false)
   }
 
@@ -202,7 +204,8 @@ struct ForeignKeyNavigationTests {
     let viewModel = try #require(manager.viewModel(for: id))
     #expect(viewModel.dataViewer?.filter == users)
     #expect(viewModel.filterDraft == users)
-    #expect(viewModel.dataViewer?.pageSQL.contains(#"WHERE "id" = '7'"#) == true)
+    #expect(
+      viewModel.dataViewer?.pageSQL.contains(#"WHERE "id" OPERATOR(pg_catalog.=) '7'"#) == true)
 
     let orders = Self.equals("code", "ab")
     manager.openDataViewer(schema: "public", name: "orders", orderColumns: [], filter: orders)
@@ -211,7 +214,8 @@ struct ForeignKeyNavigationTests {
     #expect(viewModel.dataViewer?.name == "orders")
     #expect(viewModel.dataViewer?.filter == orders)
     #expect(viewModel.filterDraft == orders)
-    #expect(viewModel.dataViewer?.pageSQL.contains(#"WHERE "code" = 'ab'"#) == true)
+    #expect(
+      viewModel.dataViewer?.pageSQL.contains(#"WHERE "code" OPERATOR(pg_catalog.=) 'ab'"#) == true)
   }
 
   @Test("An existing data viewer applies the filter; a nil filter leaves it")
@@ -232,7 +236,8 @@ struct ForeignKeyNavigationTests {
     #expect(viewModel.dataViewer?.page == 1)
     #expect(viewModel.dataViewer?.totalRows == nil)
     #expect(viewModel.dataViewer?.orderColumns == ["id"])
-    #expect(viewModel.dataViewer?.pageSQL.contains(#"WHERE "id" = '7'"#) == true)
+    #expect(
+      viewModel.dataViewer?.pageSQL.contains(#"WHERE "id" OPERATOR(pg_catalog.=) '7'"#) == true)
     #expect(viewModel.filterDraft == filter)
 
     manager.openDataViewer(schema: "public", name: "users", orderColumns: [])

@@ -1,8 +1,8 @@
 // CapabilityGatingTests.swift
 // SQLite skips Keychain save/load/delete. PostgreSQL still uses host:port:database:username.
-// Staged and inline row edits, table import and foreign key lookup follow the engine's
-// capability flags: DuckDB refuses them with a clear message, PostgreSQL keeps them. The structure
-// menu and the SQL INSERT export format are hidden for MongoDB.
+// Staged and inline row edits and foreign key lookup follow the engine's capability flags:
+// DuckDB refuses them with a clear message, PostgreSQL keeps them. Table import is open on both.
+// The structure menu and the SQL INSERT export format are hidden for MongoDB.
 
 import Foundation
 import Testing
@@ -92,14 +92,14 @@ struct CapabilityGatingTests {
 
   // MARK: - Import
 
-  @Test("DuckDB refuses a table import before reading the file")
+  @Test("DuckDB and PostgreSQL open a table import and reach the file step")
   func importFollowsCapability() async {
     let model = TableImportModel(chooseFile: { nil })
     let duck = NotebookViewModel()
     duck.notebook.connectionConfig = config(.duckdb)
     duck.connectionManager = DatabaseConnectionManager()
     #expect(await model.submit(to: duck) == false)
-    #expect(model.errorMessage == "Importing data is not available for DuckDB connections")
+    #expect(model.errorMessage == TableImportError.noFile.localizedDescription)
 
     let postgres = NotebookViewModel()
     postgres.notebook.connectionConfig = config(.postgresql)

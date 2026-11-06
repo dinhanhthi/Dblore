@@ -97,6 +97,13 @@ class NotebookViewModel {
   /// Workspace mode: the connection's timed write unlock (`protectionPolicy` honors it). Set
   /// by `WorkspaceManager`.
   @ObservationIgnored weak var writeUnlock: WriteUnlockController?
+  /// Workspace mode: the workspace's cached enums, domains and composites, nil while unread.
+  /// The data viewer resolves a domain column to its base type with them. Set by
+  /// `WorkspaceManager`.
+  @ObservationIgnored var workspaceUserTypes: @MainActor () -> [DatabaseUserType]? = { nil }
+  /// Workspace mode: starts the workspace's lazy user type read (the sidebar's) without waiting
+  /// for it. Set by `WorkspaceManager`.
+  @ObservationIgnored var requestUserTypes: @MainActor () -> Void = {}
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?
@@ -195,6 +202,10 @@ class NotebookViewModel {
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
+  /// SQL editor line bookmarks (see NotebookViewModel+LineBookmarks.swift)
+  var lineBookmarks = LineBookmarks()
+  /// A user change of `lineBookmarks` (toggle, edit). Set by `WorkspaceManager` to save them.
+  @ObservationIgnored var onLineBookmarksChanged: (@MainActor () -> Void)?
   /// Markdown note shows the WYSIWYG preview instead of the code editor. Session only, never encoded.
   var isMarkdownPreview = false
   /// Read state of an object source tab's definition. Session only, never encoded.
@@ -297,6 +308,12 @@ class NotebookViewModel {
   @ObservationIgnored var historySettings = AppSettings.shared
   /// Workspace this tab belongs to, read when a statement is recorded.
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
+  /// The transaction the quit, close or disconnect prompt named for this tab, once its Stop was
+  /// clicked: a cancel of the running statement does not ask again while the transaction is
+  /// still that one. Nil asks as usual. A workspace reads its own `runningWork`.
+  @ObservationIgnored var stopConsent: @MainActor () -> RunningWorkRegistry.StopConsent? = {
+    nil
+  }
   /// Fired after at least one history row is saved, so an open history list can reload.
   @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
   /// Whether a save writes results (and pins). A workspace injects its resolved setting.

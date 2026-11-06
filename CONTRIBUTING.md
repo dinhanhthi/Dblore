@@ -140,7 +140,7 @@ A PostgreSQL or SQLite table without a primary key is edited by `RowLocatorKind`
 indexes them by page row, never by values; an UPDATE or DELETE that matches no row is a conflict.
 MySQL/MariaDB introspection returns no locator, so those tables still need a primary key.
 
-## SQL text and PostgreSQL catalog reads
+## SQL text and PostgreSQL qualification
 
 Swift compares `Character`s (grapheme clusters): a quote or backslash followed by a combining
 mark is one `Character` that is not equal to the bare symbol. Never escape or scan SQL with
@@ -157,7 +157,20 @@ reads `pg_catalog` directly instead of SQL-language helpers such as `obj_descrip
 `pg_catalog.to_regclass($1)` on a bound user-typed name is the only carve-out.
 `PostgresCatalogQualificationTests` lints every introspector statement (pinning how many each
 entry point sends), the manager's own catalog reads and the static catalog SQL, so add a new
-entry point or statement there. `PostgresSearchPathIntegrationTests` (`.requiresPostgres`)
+entry point or statement there.
+
+SQL the app builds on user data (edits, row locators, Data Rewind, the data viewer and filters,
+foreign-key lookups, Find a Value, cascade preview, import, Copy Objects) runs under the same
+path. Write its operators, functions and casts with the `SQLDialect` helpers (`comparison`,
+`inList`, `like`, `cast`, `function`, `concatenation`), never by hand: on PostgreSQL they name
+`pg_catalog`, and every other dialect's text stays byte-identical. A comparison on a
+filter, import key or Copy Objects keyset takes `SQLOperandKind(columnType:)`, which keeps the
+bare operator only for the listed extension types (citext, PostGIS, hstore, ltree, ...). Name the
+schema on PostgreSQL even when it is `public` (`qualified(schema:name:)` drops the default
+schema; see `ImportSQLBuilder.relation`). `PostgresUserDataQualificationTests` runs every such
+builder's PostgreSQL output through `DbloreTests/Support/PostgresQualificationLint.swift`, so add
+a new builder there. A PostgreSQL restore pins `search_path = pg_catalog, pg_temp` around the
+dump (`SQLRestoreSearchPathPinTests`). `PostgresSearchPathIntegrationTests` (`.requiresPostgres`)
 checks planted objects against a real server.
 
 ## SQL dump format

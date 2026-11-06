@@ -28,8 +28,10 @@ nonisolated enum ForeignKeyLookup: Sendable {
     return nil
   }
 
-  /// `SELECT * FROM <quoted target> WHERE <target column> = :fk1 AND … LIMIT 2`.
-  /// Keys are `fk1`, `fk2`, … (no colon), one per source column, in source-column order.
+  /// `SELECT * FROM <quoted target> WHERE <target column> = :fk1 AND … LIMIT 2`. PostgreSQL
+  /// compares with `OPERATOR(pg_catalog.=)` whatever the column type: the values are the source
+  /// row's own stored values. Keys are `fk1`, `fk2`, … (no colon), one per source column, in
+  /// source-column order.
   /// Nil when a component is missing or NULL, or the two column lists differ.
   static func lookupSQL(
     for foreignKey: ForeignKey,
@@ -47,7 +49,7 @@ nonisolated enum ForeignKeyLookup: Sendable {
       let column = quotedIdentifier(pair.column, dialect: dialect)
       let placeholder = CellUpdateStatement.bindPlaceholder(
         ":\(name)", pair.value, dialect: dialect)
-      terms.append("\(column) = \(placeholder)")
+      terms.append(dialect.comparison(column, .equal, placeholder))
     }
     let relation = quotedRelation(
       schema: foreignKey.targetSchema, table: foreignKey.targetTable, dialect: dialect)

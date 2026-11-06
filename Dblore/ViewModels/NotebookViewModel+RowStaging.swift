@@ -24,6 +24,9 @@ struct PendingStagedBatch: Sendable {
   /// Import only: the import sheet is still open to show the failure detail. False once the
   /// sheet closed for the Safe Mode confirmation.
   var reportsToImportSheet = true
+  /// Import only: its line in the running-work list Quit, close and disconnect show; nil lists
+  /// it as "Data import"
+  var runningWorkLabel: String? = nil
   /// MongoDB: the commands, sent one by one through `executeGatedSequentialBatch` (never
   /// `executeGatedBatch`, which wraps them in BEGIN / COMMIT); `statements` is then empty.
   var mongoCommands: [String]? = nil
@@ -424,6 +427,16 @@ extension NotebookViewModel {
       showToast("No database connection available", type: .error)
       return "No database connection available"
     }
+    // An import is listed where it runs, after a Safe Mode confirmation too (Quit, close and
+    // disconnect ask first); Stop stops it through this tab's connection
+    let runningWork =
+      batch.historySource == .dataImport
+      ? RunningWorkRegistry.shared.begin(
+        workspaceID: historyWorkspace()?.id, label: batch.runningWorkLabel ?? "Data import",
+        kind: .dataImport
+      ) { [weak self] in Task { await self?.cancelRunningStatement(cancelQueue: false) } }
+      : nil
+    defer { runningWork.map(RunningWorkRegistry.shared.end) }
     if let commands = batch.mongoCommands {
       return await runConfirmedDocumentBatch(
         batch, commands: commands, connectionManager: connectionManager)
@@ -444,7 +457,8 @@ extension NotebookViewModel {
       } else {
         rowCount = try await connectionManager.executeGatedBatch(
           batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
-          caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil
+          caller: id, rewind: batch.historySource == .dataViewerEdit ? batch.rewindPlan : nil,
+          isDataImport: batch.historySource == .dataImport
         ).reduce(0, +)
         ranStatements = batch.statements.map(\.sql)
       }
@@ -493,8 +507,15 @@ extension NotebookViewModel {
   }
 
   /// Gate pre-check and Safe Mode confirmation for an import in this tab's transaction.
+  /// A DuckDB refusal (Protected mode, a transaction open) is returned before Safe Mode asks,
+  /// so the sheet shows it.
   func beginImportBatch(_ batch: PendingStagedBatch) async -> String? {
     if let reason = importUnsupportedReason { return reason }
+    if notebook.connectionConfig?.databaseType == .duckdb, let manager = connectionManager,
+      let reason = await manager.duckDBImportRefusalReason(policy: protectionPolicy)
+    {
+      return reason
+    }
     guard !hasPendingStagedChanges else {
       return "Commit or discard staged changes before importing"
     }
