@@ -108,7 +108,9 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   context, and each connection sets whether AI may see it (default, Always, Ask once per
   session or Never). Tools read table structure, and run read-only queries only when you allow it,
   and proposed SQL waits as a card for you to run. Row values are sent only if you turn on
-  "Send result rows to AI". Optional inline suggestions appear as gray text in SQL editors
+  "Send result rows to AI". Optional inline suggestions appear as gray text in SQL editors. The
+  chat also changes app settings (`/settings` starts a request) such as theme, editor, formatter
+  and results, at once with Undo; security, AI provider, MCP and session limits stay manual
 - **Outside MCP servers**: add an MCP server by URL and let the AI chat call the tools you
   tick, one approved call at a time
 - **MCP server**: let AI agents read the connections you allow (never a locked one), on this

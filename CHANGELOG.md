@@ -2,6 +2,16 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Security`, `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- **Change settings from the AI chat.** Ask the chat to change Dblore's settings (theme, accent, editor, formatter, results, notifications and more). A change applies at once and shows a card with the old and new value and Undo; Undo reverts only while the setting still has the new value, otherwise the card says "Changed since; not undone". It works with no connection and on a connection whose AI access is off, since it reads no connection data, but not with on-device models. Security, AI provider and keys, MCP, Shortcuts, Safe Mode and session limits stay manual: the AI names the Settings tab to open instead, and History and Data Rewind can only be turned on from the chat. `/settings` fills the composer with a settings request, and the empty chat panel suggests examples. [#a5d0f230](https://github.com/dinhanhthi/Dblore/commit/a5d0f230) [#e3999132](https://github.com/dinhanhthi/Dblore/commit/e3999132)
+
+### Upgrade notes
+
+- **Custom `settings` command.** A saved custom slash command named `settings` is renamed `settings-2`, since `/settings` is now built in.
+
 ## v0.9.3 (2026-11-06)
 
 ### Security
