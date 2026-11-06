@@ -37,6 +37,9 @@ extension AIAssistantViewModel {
     /// The turn may offer the AI tools (not on-device, a tool runner and a connection); the gate
     /// and a review turn still take them away
     var offersTools = false
+    /// The turn may offer the settings tools (not on-device and a tool runner); no connection
+    /// needed
+    var offersSettingsTools = false
     /// Key of a local OpenAI-compatible server that may refuse native tools (`toolEndpoint`)
     var toolEndpoint: String? = nil
     /// The question's @mentions; empty unless the gate allowed the connection at send time
@@ -75,9 +78,11 @@ extension AIAssistantViewModel {
   /// connection the gate allows sends its schema, MongoDB screen, rules, earlier messages, the
   /// catalog of a reviewed statement and the question's @mentions, and runs queries (never on a
   /// review turn); otherwise the
-  /// request carries the new question and the dialect only. A turn that offers tools (allowed,
-  /// no review, `offersTools`) runs the tool loop instead, without run blocks; only such a turn
-  /// adds the outside MCP tools, listed when it starts (`makeOutsideToolSession`).
+  /// request carries the new question and the dialect only. A turn that offers the data tools
+  /// (allowed, no review, `offersTools`) or the settings tools (no review, `offersSettingsTools`,
+  /// with or without a connection) runs the tool loop instead, without run blocks; only a turn
+  /// with the data tools adds the outside MCP tools, listed when it starts
+  /// (`makeOutsideToolSession`).
   func runTurn(
     _ context: TurnContext, history: [AIChatMessage], entryId: UUID, token: Int
   ) async {
@@ -95,13 +100,17 @@ extension AIAssistantViewModel {
       return  // Stopped while the catalog was read
     }
     let runsQueries = context.runsQueries && review == nil
-    let tools =
+    let dataTools =
       allowed && review == nil && context.offersTools
       ? AITools.specs(runsQueries: runsQueries, isMongo: context.dialect == .mongodb) : []
+    // The settings tools read no connection: offered without one and on a denied one too
+    let settingsTools = context.offersSettingsTools && review == nil ? AppSettingsTools.specs : []
+    // A turn with only the settings tools gets no run-block rules
+    let settingsOnly = dataTools.isEmpty && !settingsTools.isEmpty
     // Outside tools ride on the built-in ones: never on-device, on a connection the gate does not
     // allow, on a review turn or without a connection
     var outside: OutsideTurn?
-    if !tools.isEmpty, let session = makeOutsideToolSession?() {
+    if !dataTools.isEmpty, let session = makeOutsideToolSession?() {
       let listing = await session.list()
       guard !Task.isCancelled, token == generation else { return }
       let offered = AITools.outsideTools(listing.servers)
@@ -141,15 +150,18 @@ extension AIAssistantViewModel {
     } else {
       request = await Self.buildRequest(
         model: context.model, question: context.question, explicit: explicit,
-        snapshot: snapshot, history: sent, runsQueries: allowed && runsQueries,
+        snapshot: snapshot, history: sent,
+        runsQueries: allowed && runsQueries && !settingsOnly,
         compactPrompt: context.compactPrompt, screen: screen, review: review, rules: rules,
-        tools: !tools.isEmpty)
+        tools: !dataTools.isEmpty)
     }
-    guard tools.isEmpty else {
+    guard dataTools.isEmpty, settingsTools.isEmpty else {
+      if !settingsTools.isEmpty { request.system += "\n\n" + AIPrompts.settingsToolRules }
       if outside != nil { request.system += "\n\n" + AIPrompts.outsideToolRules }
       await runToolLoop(
-        request, tools: tools + (outside?.tools.map(\.spec) ?? []), context: context,
-        entryId: entryId, token: token, outside: outside)
+        request, tools: dataTools + settingsTools + (outside?.tools.map(\.spec) ?? []),
+        context: context, entryId: entryId, token: token,
+        carriesConnectionData: allowed && context.access != nil, outside: outside)
       return
     }
     guard await streamReply(request, from: context.client, into: entryId),

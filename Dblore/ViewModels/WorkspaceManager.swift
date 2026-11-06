@@ -566,6 +566,10 @@ class WorkspaceManager: Identifiable {
         call, dialect: dialect, sessionKey: sessionKey, mongoDatabase: mongoDatabase,
         runsQueries: runsQueries, sendsResultRows: sendsResultRows)
     }
+    aiAssistant.isSettingShadowed = { [weak self] key in
+      SettingKey(rawValue: key).map { self?.settingsResolver.isOverriddenInWorkspace($0) ?? false }
+        ?? false
+    }
     aiAssistant.makeOutsideToolSession = { OutsideMCPTurnTools() }
     aiAssistant.proposalRunner = { [weak self] proposal, confirmedName in
       self?.runAIProposal(proposal, confirmedName: confirmedName)

@@ -488,7 +488,11 @@ struct AIOutsideToolLoopTests {
 
       #expect(session.listCount == 0, "\(provider)")
       #expect(model.requests.count == 1)
-      #expect(model.requests.first?.tools.isEmpty == true)
+      // A denied connection still gets the settings tools; never a data or an outside tool
+      let dataTools = Set(AITools.specs(runsQueries: true, isMongo: false).map(\.name))
+      let offered = model.requests.first?.tools.map(\.name) ?? []
+      #expect(!offered.contains(Self.toolName))
+      #expect(offered.allSatisfy { !dataTools.contains($0) })
       #expect(model.requests.first?.system.contains(AIPrompts.outsideToolRules) == false)
       #expect(session.calls.isEmpty)
     }

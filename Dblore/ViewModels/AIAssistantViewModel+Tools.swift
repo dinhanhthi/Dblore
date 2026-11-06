@@ -87,10 +87,12 @@ extension AIAssistantViewModel {
   /// Runs the turn's steps into `entryId` and the entries after it. `tools` is fixed for the
   /// turn: nothing a reply or a tool result says changes it. Ends on an answer without tool
   /// calls, an error, Stop, a stale `token` or the step limit. A call to one of `outside`'s
-  /// tools goes to `runOutsideTool`.
+  /// tools goes to `runOutsideTool`, a settings call to `runSettingsTool`. When
+  /// `carriesConnectionData` (the gate allowed the turn's connection at send), the turn stops
+  /// after any step once the gate no longer allows it.
   func runToolLoop(
     _ base: AIChatRequest, tools: [AIToolSpec], context: TurnContext, entryId: UUID, token: Int,
-    outside: OutsideTurn? = nil
+    carriesConnectionData: Bool, outside: OutsideTurn? = nil
   ) async {
     let names = Set(tools.map(\.name))
     let outsideTools = Dictionary(
@@ -158,6 +160,8 @@ extension AIAssistantViewModel {
         if index < Self.maxToolCallsPerStep, let tool = outsideTools[call.name], let outside {
           result = await runOutsideTool(
             call, tool, session: outside.session, context: context, token: token)
+        } else if index < Self.maxToolCallsPerStep, Self.settingsToolNames.contains(call.name) {
+          result = await runSettingsTool(call, token: token)
         } else if index < Self.maxToolCallsPerStep {
           result = await runTool(call, context: context, names: names, token: token)
         } else {
@@ -166,8 +170,9 @@ extension AIAssistantViewModel {
         guard let result else { return }
         results.append(result)
       }
-      // The results go back only while the gate still allows the connection
-      guard aiAccessCheck().decision == .allowed else {
+      // A turn that carries connection data sends its results back only while the gate still
+      // allows the connection, settings-only steps included
+      if carriesConnectionData, aiAccessCheck().decision != .allowed {
         messages.append(
           AIChatEntry(
             id: UUID(), role: .assistant,
@@ -485,24 +490,35 @@ extension AIAssistantViewModel {
   /// it holds exactly one call and its result, with an id of at most `maxToolIDBytes`, a name
   /// the app offers, and arguments that are one JSON object within `maxToolInputBytes` (the
   /// result's content too). An entry of another connection than `sessionKey` (or of none) is
-  /// dropped too. A replayed call is never run.
+  /// dropped too, except a settings call (it read no connection). An undone setting change
+  /// replays with a note. A replayed call is never run.
   static func toolHistoryMessages(for entry: AIChatEntry, sessionKey: String?) -> [AIChatMessage] {
-    guard let key = entry.toolSessionKey, key == sessionKey,
-      let calls = entry.toolCalls, let results = entry.toolResults,
+    guard let calls = entry.toolCalls, let results = entry.toolResults,
       calls.count == 1, results.count == 1, let call = calls.first, let result = results.first,
       isValidSavedCall(call), result.id == call.id,
-      result.content.utf8.count <= AISSEParser.maxToolInputBytes
+      result.content.utf8.count <= AISSEParser.maxToolInputBytes,
+      settingsToolNames.contains(call.name)
+        || (entry.toolSessionKey.map { $0 == sessionKey } ?? false)
     else { return [] }
+    let content =
+      entry.settingChange?.state == .undone
+      ? result.content + "\nThe user undid this change." : result.content
     return [
       AIChatMessage(
         role: .assistant, text: AIPrompts.toolCallText(name: call.name, inputJSON: call.inputJSON)),
       AIChatMessage(
-        role: .user, text: AIPrompts.toolResultText(name: call.name, content: result.content)),
+        role: .user, text: AIPrompts.toolResultText(name: call.name, content: content)),
     ]
   }
 
+  /// Names of the app settings tools, which run without the workspace's tool runner
+  static let settingsToolNames: Set<String> = [
+    AppSettingsTools.listSettings, AppSettingsTools.changeSetting,
+  ]
+
   private static let offeredToolNames = Set(
-    AITools.specs(runsQueries: true, isMongo: false).map(\.name))
+    AITools.specs(runsQueries: true, isMongo: false).map(\.name)
+      + AppSettingsTools.specs.map(\.name))
 
   private static func isValidSavedCall(_ call: AIToolCall) -> Bool {
     guard !call.id.isEmpty, call.id.utf8.count <= AISSEParser.maxToolIDBytes,

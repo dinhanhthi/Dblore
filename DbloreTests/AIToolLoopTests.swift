@@ -130,8 +130,12 @@ struct AIToolLoopTests {
     _ client: FakeToolClient, runner: FakeToolRunner, settings: AISettings? = nil,
     policy: AIAccessPolicy = .always
   ) -> AIAssistantViewModel {
+    // App settings on a suite of their own: a settings tool call never writes the real ones
+    let appSettings = AppSettings(
+      defaults: UserDefaults(suiteName: "AIToolLoopTests-app-\(UUID().uuidString)")!)
     let vm = AIAssistantViewModel(
-      settings: settings ?? makeSettings(), makeClient: { _, _, _ in client })
+      settings: settings ?? makeSettings(), makeClient: { _, _, _ in client },
+      appSettings: appSettings, requestNotificationAuthorization: { false })
     vm.schemaSource = {
       AISchemaSnapshot(
         tables: [
@@ -181,7 +185,7 @@ struct AIToolLoopTests {
     #expect(requests.count == 3)
     #expect(runner.calls.map(\.call.id) == ["t1", "t2"])
     #expect(runner.calls.allSatisfy { !$0.runsQueries && !$0.sendsRows })
-    let tools = AITools.specs(runsQueries: false, isMongo: false)
+    let tools = AITools.specs(runsQueries: false, isMongo: false) + AppSettingsTools.specs
     #expect(requests.allSatisfy { $0.tools == tools })
     #expect(
       Array(requests[1].messages.suffix(2)) == [
@@ -452,15 +456,15 @@ struct AIToolLoopTests {
 
   // MARK: - Turns without tools
 
-  @Test("a denied connection offers no tools and runs none")
-  func deniedOffersNoTools() async {
+  @Test("a denied connection offers only the settings tools and runs no data tool")
+  func deniedOffersOnlySettingsTools() async {
     let client = FakeToolClient([.events([.toolCall(call("t1")), .stop(.toolUse)])])
     let runner = FakeToolRunner()
     let vm = makeVM(client, runner: runner, policy: .never)
     await ask(vm)
 
     #expect(client.requests.count == 1)
-    #expect(client.requests[0].tools.isEmpty)
+    #expect(client.requests[0].tools == AppSettingsTools.specs)
     #expect(!client.requests[0].system.contains(AITools.listTables))
     #expect(runner.calls.isEmpty)
   }
@@ -497,6 +501,85 @@ struct AIToolLoopTests {
     #expect(client.requests[0].system.contains("```sql run"))
     #expect(!client.requests[0].system.contains(AITools.runReadQuery))
     #expect(runner.calls.isEmpty)
+  }
+
+  // MARK: - Settings tools
+
+  /// A change_setting call that turns the theme from Dark (the default) to Light
+  private func lightTheme(_ id: String) -> AIToolCall {
+    call(id, AppSettingsTools.changeSetting, #"{"key":"themePreference","value":"Light"}"#)
+  }
+
+  @Test("with no connection or access denied, change_setting applies and its result goes back")
+  func settingsChangeWithoutConnectionData() async throws {
+    let entry = try #require(AppSettingsTools.entry("themePreference"))
+    let changed = AIPrompts.settingChanged(
+      title: entry.title, old: entry.display("Dark"), new: entry.display("Light"))
+    for policy: AIAccessPolicy? in [nil, .never] {
+      let client = FakeToolClient([
+        .events([.toolCall(lightTheme("s1")), .stop(.toolUse)]),
+        .events([.text("Done."), .stop(.endTurn)]),
+      ])
+      let runner = FakeToolRunner()
+      let vm = makeVM(client, runner: runner, policy: policy ?? .always)
+      if policy == nil { vm.aiAccessSource = { nil } }
+      await ask(vm, "Switch to the light theme")
+
+      let label = "\(String(describing: policy))"
+      #expect(vm.appSettings.themePreference == .light, "\(label)")
+      #expect(runner.calls.isEmpty, "\(label)")
+      #expect(client.requests.count == 2, "\(label)")
+      #expect(
+        client.requests.last?.messages.last
+          == AIChatMessage(
+            role: .user,
+            blocks: [.toolResult(AIToolResult(id: "s1", content: changed, isError: false))]),
+        "\(label)")
+      let card = vm.messages.first { $0.settingChange != nil }
+      #expect(card?.settingChange?.state == .applied, "\(label)")
+      #expect(card?.toolSessionKey == nil, "\(label)")
+      #expect(vm.messages.last?.text == "Done.", "\(label)")
+    }
+  }
+
+  @Test("a settings-only turn without a connection gets the settings rules, no run-block rules")
+  func settingsOnlyPrompt() async {
+    let client = FakeToolClient([.events([.text("Done."), .stop(.endTurn)])])
+    let runner = FakeToolRunner()
+    let vm = makeVM(client, runner: runner, settings: makeSettings(runsQueries: true))
+    vm.aiAccessSource = { nil }
+    await ask(vm, "Which settings can you change?")
+
+    #expect(client.requests.count == 1)
+    #expect(client.requests[0].tools == AppSettingsTools.specs)
+    #expect(client.requests[0].system.contains(AIPrompts.settingsToolRules))
+    #expect(!client.requests[0].system.contains("```sql run"))
+  }
+
+  @Test("access turned off during a settings-only step stops the turn after that step")
+  func accessOffAfterSettingsStep() async {
+    let client = FakeToolClient([
+      .events([.toolCall(lightTheme("s1")), .stop(.toolUse)]),
+      .events([.text("Done."), .stop(.endTurn)]),
+    ])
+    let runner = FakeToolRunner()
+    let vm = makeVM(client, runner: runner)
+    let denied = access(.never)
+    // Read while the change applies: the user turns AI off for the connection meanwhile
+    vm.isSettingShadowed = { [weak vm] _ in
+      vm?.aiAccessSource = { denied }
+      return false
+    }
+    await ask(vm)
+
+    #expect(vm.appSettings.themePreference == .light)
+    #expect(vm.messages.contains { $0.settingChange?.state == .applied })
+    #expect(runner.calls.isEmpty)
+    #expect(client.requests.count == 1)
+    #expect(!vm.isGenerating)
+    #expect(
+      vm.messages.last?.text
+        == AIAssistantViewModel.ToolLoopError.accessOff.localizedDescription)
   }
 
   // MARK: - Refused steps
@@ -606,11 +689,11 @@ struct AIToolLoopTests {
   func savedEntriesReplay() async {
     func entry(
       _ calls: [AIToolCall], _ results: [AIToolResult],
-      key: String? = AIAccessGate.sessionKey(for: config())
+      key: String? = AIAccessGate.sessionKey(for: config()), change: AISettingChange? = nil
     ) -> AIChatEntry {
       AIChatEntry(
         id: UUID(), role: .assistant, text: "Ran tool", isError: false, toolCalls: calls,
-        toolResults: results, toolSessionKey: key)
+        toolResults: results, toolSessionKey: key, settingChange: change)
     }
     func result(_ id: String, _ content: String = "catalog") -> AIToolResult {
       AIToolResult(id: id, content: content, isError: false)
@@ -629,12 +712,22 @@ struct AIToolLoopTests {
       entry([call("x4"), call("x5")], [result("x4", "bad-count"), result("x5")]),
       entry([call("x6")], [result("x6", "bad-unkeyed")], key: nil),
       entry([call("x7")], [result("x7", "bad-other-key")], key: "postgresql|other|1|db"),
+      // Settings entries are saved with no session key; an undone one replays with a note
+      entry(
+        [lightTheme("s1")], [result("s1", "theme-changed")], key: nil,
+        change: AISettingChange(
+          key: "themePreference", oldValue: "Dark", newValue: "Light", shadowed: false,
+          state: .undone)),
+      entry(
+        [call("x8", AITools.runReadQuery, #"{"sql":"SELECT 1"}"#)],
+        [result("x8", "bad-unkeyed-query")], key: nil),
     ]
     await ask(vm, "Next")
 
     #expect(runner.calls.isEmpty)
     let sent = client.requests.first?.messages.map(\.text).joined(separator: "\n") ?? ""
-    #expect(sent.contains(AIPrompts.toolResultText(name: AITools.listTables, content: "catalog")))
+    let catalog = AIPrompts.toolResultText(name: AITools.listTables, content: "catalog")
+    #expect(sent.contains(catalog))
     for bad in [
       "drop_database", "bad-input", "bad-id", "bad-pair", "bad-count", "bad-name", "bad-unkeyed",
       "bad-other-key",
@@ -642,6 +735,33 @@ struct AIToolLoopTests {
       #expect(!sent.contains(bad))
     }
     #expect(client.requests.first?.messages.allSatisfy { !$0.hasToolBlocks } == true)
+
+    // The settings entry replays as an assistant + user pair on any connection, or none
+    let setting = lightTheme("s1")
+    let pair = [
+      AIChatMessage(
+        role: .assistant,
+        text: AIPrompts.toolCallText(name: setting.name, inputJSON: setting.inputJSON)),
+      AIChatMessage(
+        role: .user,
+        text: AIPrompts.toolResultText(
+          name: setting.name, content: "theme-changed\nThe user undid this change.")),
+    ]
+    func replaysSetting(_ request: AIChatRequest?) -> Bool {
+      let messages = request?.messages ?? []
+      return messages.indices.dropLast().contains { Array(messages[$0...$0 + 1]) == pair }
+    }
+    #expect(replaysSetting(client.requests.first))
+    for source: AIAccessContext? in [otherAccess(), nil] {
+      vm.aiAccessSource = { source }
+      vm.connectionDidChange()
+      await ask(vm, "Again")
+      let later = client.requests.last?.messages.map(\.text).joined(separator: "\n") ?? ""
+      #expect(replaysSetting(client.requests.last), "\(source == nil ? "none" : "other")")
+      #expect(!later.contains(catalog) && !later.contains("bad-unkeyed-query"))
+    }
+    #expect(client.requests.count == 3)
+    #expect(runner.calls.isEmpty)
   }
 
   @Test("removingToolBlock drops only the first closed tool block")
