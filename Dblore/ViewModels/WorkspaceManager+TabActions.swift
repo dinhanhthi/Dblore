@@ -133,6 +133,10 @@ extension WorkspaceManager {
       }
       throw CocoaError(.userCancelled)
     }
+    // Line bookmarks move with the tab, placed on the reopened text
+    if let added = newManager.tabs.map(\.id).first(where: { !existing.contains($0) }) {
+      newManager.viewModels[added]?.restoreLineBookmarks(viewModels[tabId]?.savedLineBookmarks)
+    }
     requestCloseTab(id: tabId)
   }
 

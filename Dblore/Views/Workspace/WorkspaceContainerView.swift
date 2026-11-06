@@ -952,6 +952,15 @@ struct WorkspaceTabContentView: View {
       .bridgedFocusedSceneValue(\.findReplaceAction, findReplaceAction)
       .bridgedFocusedSceneValue(\.findNextAction, findNextAction)
       .bridgedFocusedSceneValue(\.findPreviousAction, findPreviousAction)
+      .bridgedFocusedSceneValue(
+        \.toggleLineBookmarkAction, lineBookmarkAction { $0.toggleLineBookmarkAtCaret() }
+      )
+      .bridgedFocusedSceneValue(
+        \.nextLineBookmarkAction, lineBookmarkAction { $0.goToNextLineBookmark() }
+      )
+      .bridgedFocusedSceneValue(
+        \.previousLineBookmarkAction, lineBookmarkAction { $0.goToPreviousLineBookmark() }
+      )
       .onAppear {
         setupDocumentChangedCallback()
         syncConnectionState()
@@ -1064,6 +1073,15 @@ struct WorkspaceTabContentView: View {
 
   private var findPreviousAction: () -> Void {
     { [viewModel] in viewModel.navigateToPreviousMatch() }
+  }
+
+  /// Nil outside a SQL editor tab (notebook, note, data viewer, read-only source): the
+  /// Bookmark menu items are disabled there
+  private func lineBookmarkAction(
+    _ action: @escaping (NotebookViewModel) -> Void
+  ) -> (() -> Void)? {
+    guard viewModel.acceptsLineBookmarks else { return nil }
+    return { [viewModel] in action(viewModel) }
   }
 
   // MARK: - Notebook Content

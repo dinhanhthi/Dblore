@@ -13,17 +13,25 @@ struct LineNumberGutterView: NSViewRepresentable {
   let gutterWidth: CGFloat
   /// Editor face. Gutter digits draw one point smaller. Default matches the editor font size.
   var editorFontSize: CGFloat = AppSettings.defaultEditorFontSize
+  /// Bookmarked logical lines (1-based), marked on their first visual row
+  var bookmarkedLines: Set<Int> = []
+  /// A click in the gutter toggles the bookmark of the logical line under it (nil: no clicks)
+  var onToggleBookmark: ((Int) -> Void)?
 
   func makeNSView(context: Context) -> LineNumberGutterNSView {
     let gutterView = LineNumberGutterNSView()
     gutterView.gutterWidth = gutterWidth
     gutterView.editorFontSize = editorFontSize
+    gutterView.bookmarkedLines = bookmarkedLines
+    gutterView.onToggleBookmark = onToggleBookmark
     return gutterView
   }
 
   func updateNSView(_ gutterView: LineNumberGutterNSView, context: Context) {
     gutterView.gutterWidth = gutterWidth
     gutterView.editorFontSize = editorFontSize
+    gutterView.bookmarkedLines = bookmarkedLines
+    gutterView.onToggleBookmark = onToggleBookmark
     gutterView.updateLineNumbers(text: text, textView: textView)
   }
 
@@ -37,6 +45,10 @@ struct LineNumberGutterView: NSViewRepresentable {
 class LineNumberGutterNSView: NSView {
   var gutterWidth: CGFloat = 40
   var editorFontSize: CGFloat = AppSettings.defaultEditorFontSize
+  var bookmarkedLines: Set<Int> = [] {
+    didSet { if bookmarkedLines != oldValue { needsDisplay = true } }
+  }
+  var onToggleBookmark: ((Int) -> Void)?
 
   /// Empty-line box measured for a 13pt monospaced face. The editor default is 12pt, so
   /// that size and every other size scale from this measurement. Non-empty lines use the
@@ -76,6 +88,7 @@ class LineNumberGutterNSView: NSView {
   private var textColor: NSColor = .gray
   private var highlightedTextColor: NSColor = .white
   private var lineHighlightColor: NSColor = .clear
+  private var bookmarkColor: NSColor = .controlAccentColor
 
   override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
@@ -99,6 +112,7 @@ class LineNumberGutterNSView: NSView {
     textColor = NSColor(Color.foregroundSubtle)
     highlightedTextColor = NSColor(Color.foreground)
     lineHighlightColor = NSColor(Color.inputBackground)
+    bookmarkColor = NSColor(Color.accent)
     layer?.backgroundColor = backgroundColor.cgColor
   }
 
@@ -318,6 +332,12 @@ class LineNumberGutterNSView: NSView {
       .paragraphStyle: paragraphStyle,
     ]
 
+    let bookmarkedAttributes: [NSAttributedString.Key: Any] = [
+      .font: font,
+      .foregroundColor: bookmarkColor,
+      .paragraphStyle: paragraphStyle,
+    ]
+
     for (number, yPosition, height) in lineNumbers {
       // In flipped coordinate system, y increases downward from top
       // yPosition is relative to text container origin, scrollOffset moves the visible area
@@ -351,8 +371,11 @@ class LineNumberGutterNSView: NSView {
         height: height
       )
 
-      // Use highlighted color for current line number
-      let attributes = isCurrentLine ? highlightedAttributes : normalAttributes
+      // Bookmarked lines draw in the accent, else the current line is highlighted
+      let isBookmarked = bookmarkedLines.contains(number)
+      let attributes =
+        isBookmarked
+        ? bookmarkedAttributes : isCurrentLine ? highlightedAttributes : normalAttributes
 
       // Top-align the line number (important for word-wrapped lines)
       let textSize = numberString.size(withAttributes: attributes)
@@ -363,12 +386,45 @@ class LineNumberGutterNSView: NSView {
         height: textSize.height
       )
 
+      // Bookmark: an accent bar at the leading edge of the line's first visual row
+      if isBookmarked {
+        let barRect = CGRect(x: 2, y: adjustedY + 1, width: 3, height: max(textSize.height - 2, 2))
+        context.setFillColor(bookmarkColor.cgColor)
+        context.addPath(
+          CGPath(roundedRect: barRect, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil))
+        context.fillPath()
+      }
+
       numberString.draw(in: topAlignedRect, withAttributes: attributes)
     }
   }
 
   override var isFlipped: Bool {
     return true  // Use flipped coordinate system (origin at top-left) to match NSTextView
+  }
+
+  /// Toggles the bookmark of the logical line under the click, at once. A wrapped line's entry
+  /// spans all of its visual rows, so any of them hits that line.
+  override func mouseDown(with event: NSEvent) {
+    guard let onToggleBookmark else {
+      super.mouseDown(with: event)
+      return
+    }
+    let point = convert(event.locationInWindow, from: nil)
+    let scrollOffset = observedClipView?.bounds.origin.y ?? 0
+    // Inverse of draw's `yPosition - scrollOffset + topOffset`
+    let contentY = point.y + scrollOffset - topOffset
+    guard
+      let hit = lineNumbers.first(where: {
+        contentY >= $0.yPosition && contentY < $0.yPosition + $0.height
+      })
+    else { return }
+    if bookmarkedLines.contains(hit.number) {
+      bookmarkedLines.remove(hit.number)
+    } else {
+      bookmarkedLines.insert(hit.number)
+    }
+    onToggleBookmark(hit.number)
   }
 }
 

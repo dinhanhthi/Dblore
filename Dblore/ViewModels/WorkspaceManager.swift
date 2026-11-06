@@ -794,7 +794,7 @@ class WorkspaceManager: Identifiable {
   private func store(_ document: SQLEditorDocument, for tabId: UUID) {
     document.onExternalReload = { [weak self, weak document] in
       guard let document, let viewModel = self?.viewModels[tabId] else { return }
-      viewModel.editorContent = document.content
+      viewModel.replaceEditorContentKeepingBookmarks(document.content)
     }
     editorDocuments[tabId] = document
   }
@@ -1546,6 +1546,7 @@ class WorkspaceManager: Identifiable {
       let viewModel = createViewModel(for: notebook)
       viewModel.viewMode = tabRef.documentType == .markdown ? .markdown : .editor
       viewModel.editorContent = content
+      viewModel.restoreLineBookmarks(tabRef.lineBookmarks)
 
       tabs.append(tab)
       viewModels[tab.id] = viewModel
@@ -1751,6 +1752,8 @@ class WorkspaceManager: Identifiable {
     viewModel.resultsSavedWithFile = { [weak self] in
       self?.settingsResolver.includeResultsOnSave ?? AppSettings.shared.includeResultsOnSave
     }
+    // Line bookmarks live in the workspace tab entry, not in the tab's file
+    viewModel.onLineBookmarksChanged = { [weak self] in self?.markDirtyAndScheduleAutoSave() }
 
     return viewModel
   }
@@ -2157,6 +2160,8 @@ class WorkspaceManager: Identifiable {
     let isMarkdown = documentType == .markdown
     viewModel.viewMode = isMarkdown ? .markdown : .editor
     viewModel.editorContent = script
+    // The bookmarks saved with the tab, placed on the restored text
+    viewModel.restoreLineBookmarks(workspace.tabs.first { $0.id == tabId }?.lineBookmarks)
     viewModels[tabId] = viewModel
     ensureOverlayTab(
       id: tabId, documentType: documentType,

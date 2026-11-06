@@ -566,6 +566,24 @@ extension FocusedValues {
     set { self[FindPreviousActionKey.self] = newValue }
   }
 
+  /// Toggles the line bookmark at the caret; nil outside a SQL editor tab
+  var toggleLineBookmarkAction: (() -> Void)? {
+    get { self[ToggleLineBookmarkActionKey.self] }
+    set { self[ToggleLineBookmarkActionKey.self] = newValue }
+  }
+
+  /// Moves the caret to the next line bookmark; nil outside a SQL editor tab
+  var nextLineBookmarkAction: (() -> Void)? {
+    get { self[NextLineBookmarkActionKey.self] }
+    set { self[NextLineBookmarkActionKey.self] = newValue }
+  }
+
+  /// Moves the caret to the previous line bookmark; nil outside a SQL editor tab
+  var previousLineBookmarkAction: (() -> Void)? {
+    get { self[PreviousLineBookmarkActionKey.self] }
+    set { self[PreviousLineBookmarkActionKey.self] = newValue }
+  }
+
   /// Whether schema visualizer is active
   var isSchemaVisualizerActive: Bool? {
     get { self[IsSchemaVisualizerActiveKey.self] }
@@ -605,6 +623,19 @@ struct FindNextActionKey: FocusedValueKey {
 
 /// FocusedValue key for find previous match.
 struct FindPreviousActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// FocusedValue keys for the SQL editor's line bookmarks.
+struct ToggleLineBookmarkActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct NextLineBookmarkActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+struct PreviousLineBookmarkActionKey: FocusedValueKey {
   typealias Value = () -> Void
 }
 
@@ -1287,6 +1318,12 @@ struct EditorCommands: Commands {
   @BridgedFocusedValue(\.findReplaceAction) private var findReplaceAction
   @BridgedFocusedValue(\.findNextAction) private var findNextAction
   @BridgedFocusedValue(\.findPreviousAction) private var findPreviousAction
+  @BridgedFocusedValue(\.toggleLineBookmarkAction) private var toggleLineBookmarkAction
+  @BridgedFocusedValue(\.nextLineBookmarkAction) private var nextLineBookmarkAction
+  @BridgedFocusedValue(\.previousLineBookmarkAction) private var previousLineBookmarkAction
+
+  /// The F2 key (a function key has no character of its own: AppKit's private-use scalar)
+  private static let f2Key = KeyEquivalent(Character(Unicode.Scalar(UInt32(NSF2FunctionKey))!))
 
   var body: some Commands {
     // Chỉ show khi documentMode == .editor
@@ -1332,6 +1369,26 @@ struct EditorCommands: Commands {
           findPreviousAction?()
         }
         .keyboardShortcut("g", modifiers: [.command, .shift])
+
+        Divider()
+
+        Button("Toggle Bookmark") {
+          toggleLineBookmarkAction?()
+        }
+        .keyboardShortcut(Self.f2Key, modifiers: .command)
+        .disabled(toggleLineBookmarkAction == nil)
+
+        Button("Next Bookmark") {
+          nextLineBookmarkAction?()
+        }
+        .keyboardShortcut(Self.f2Key, modifiers: [])
+        .disabled(nextLineBookmarkAction == nil)
+
+        Button("Previous Bookmark") {
+          previousLineBookmarkAction?()
+        }
+        .keyboardShortcut(Self.f2Key, modifiers: .shift)
+        .disabled(previousLineBookmarkAction == nil)
       }
 
       // View Menu - Sidebar toggles

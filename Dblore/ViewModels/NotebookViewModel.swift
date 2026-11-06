@@ -202,6 +202,10 @@ class NotebookViewModel {
   // MARK: - View Mode State
   var viewMode: ViewMode = .notebook
   var editorContent: String = ""  // Content for editor mode
+  /// SQL editor line bookmarks (see NotebookViewModel+LineBookmarks.swift)
+  var lineBookmarks = LineBookmarks()
+  /// A user change of `lineBookmarks` (toggle, edit). Set by `WorkspaceManager` to save them.
+  @ObservationIgnored var onLineBookmarksChanged: (@MainActor () -> Void)?
   /// Markdown note shows the WYSIWYG preview instead of the code editor. Session only, never encoded.
   var isMarkdownPreview = false
   /// Read state of an object source tab's definition. Session only, never encoded.

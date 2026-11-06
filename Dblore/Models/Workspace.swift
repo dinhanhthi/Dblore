@@ -190,6 +190,9 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
   var dataViewer: DataViewerReference?
   /// Pinned tab (nil in workspaces saved before pinning, meaning unpinned)
   var isPinned: Bool?
+  /// SQL editor line bookmarks with their line anchors (nil without any, and in workspaces saved
+  /// before bookmarks)
+  var lineBookmarks: [LineBookmarks.Entry]?
 
   /// Table/view of a pinned data viewer tab
   struct DataViewerReference: Codable, Equatable, Sendable {
@@ -205,7 +208,8 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
     title: String,
     bookmark: Data? = nil,
     dataViewer: DataViewerReference? = nil,
-    isPinned: Bool? = nil
+    isPinned: Bool? = nil,
+    lineBookmarks: [LineBookmarks.Entry]? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -214,6 +218,7 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
     self.bookmark = bookmark
     self.dataViewer = dataViewer
     self.isPinned = isPinned
+    self.lineBookmarks = lineBookmarks
   }
 
   /// Bookmark bytes differ between creations of the same file, so equality ignores them
@@ -221,11 +226,13 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
     lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.documentType == rhs.documentType
       && lhs.title == rhs.title && lhs.dataViewer == rhs.dataViewer
       && (lhs.isPinned ?? false) == (rhs.isPinned ?? false)
+      && (lhs.lineBookmarks ?? []) == (rhs.lineBookmarks ?? [])
   }
 
   /// Create from a TabItem
   static func from(
-    _ tab: TabItem, bookmark: Data? = nil, dataViewer: DataViewerReference? = nil
+    _ tab: TabItem, bookmark: Data? = nil, dataViewer: DataViewerReference? = nil,
+    lineBookmarks: [LineBookmarks.Entry]? = nil
   ) -> WorkspaceTabReference {
     WorkspaceTabReference(
       id: tab.id,
@@ -234,7 +241,8 @@ struct WorkspaceTabReference: Codable, Identifiable, Equatable, Sendable {
       title: tab.title,
       bookmark: bookmark,
       dataViewer: dataViewer,
-      isPinned: tab.isPinned ? true : nil
+      isPinned: tab.isPinned ? true : nil,
+      lineBookmarks: lineBookmarks
     )
   }
 
