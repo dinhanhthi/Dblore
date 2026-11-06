@@ -146,4 +146,137 @@ struct WorkspaceWindowLifecycleTests {
     // Focusing it would leave the workspace with no window once it closes
     #expect(seams.opened == [id])
   }
+
+  /// A workspace of `windows` whose running-work prompts are counted and answered by `answer`
+  private func workspaceWithRunningWork(
+    _ windows: WorkspaceWindowManager, answer: @escaping () -> Bool
+  ) -> (WorkspaceManager, RunningWorkRegistry) {
+    let manager = windows.activeWorkspaceOrNew()
+    let registry = RunningWorkRegistry()
+    registry.presentPrompt = { _ in answer() }
+    manager.runningWork = registry
+    return (manager, registry)
+  }
+
+  @Test("A close with running work asks once: Cancel keeps the workspace, Stop stops and closes")
+  func closeAsksOnceForRunningWork() async {
+    let windows = windows(WindowSeams())
+    var prompts = 0
+    var stops = false
+    let (manager, registry) = workspaceWithRunningWork(windows) {
+      prompts += 1
+      return stops
+    }
+    var cancels = 0
+    // Its cancel never ends it: the import still runs when the close's disconnect comes
+    let importRun = registry.begin(
+      workspaceID: manager.id, label: "Import into orders", kind: .dataImport
+    ) { cancels += 1 }
+    registry.stopLimit = .milliseconds(100)
+
+    #expect(await windows.closeWorkspace(id: manager.id) == false)
+    #expect(windows.workspaces[manager.id] === manager)
+    #expect(prompts == 1)
+    #expect(cancels == 0)
+
+    // Connected: the close's disconnect must not ask a second time
+    manager.connectionState = .connected
+    stops = true
+    #expect(await windows.closeWorkspace(id: manager.id))
+    #expect(windows.workspaces[manager.id] == nil)
+    #expect(prompts == 2)
+    #expect(cancels == 1)
+    #expect(registry.items.map(\.label) == ["Import into orders"])
+    registry.end(importRun)
+  }
+
+  @Test("A second close or disconnect while Stop waits asks nothing and closes nothing")
+  func secondCloseWhileStopping() async {
+    let windows = windows(WindowSeams())
+    var prompts = 0
+    let (manager, registry) = workspaceWithRunningWork(windows) {
+      prompts += 1
+      return true
+    }
+    // A cancel that hangs: the stop waits its whole limit
+    let copy = registry.begin(
+      workspaceID: manager.id, label: "Copy Objects to shop", kind: .copyObjects
+    ) {}
+    registry.stopLimit = .milliseconds(500)
+    manager.connectionState = .connected
+
+    let first = Task { await windows.closeWorkspace(id: manager.id) }
+    for _ in 0..<1000 where !registry.stopsWithoutAsking(workspaceID: manager.id) {
+      await Task.yield()
+    }
+    #expect(registry.stopsWithoutAsking(workspaceID: manager.id))
+    #expect(await windows.closeWorkspace(id: manager.id) == false)
+    #expect(await manager.disconnect(asksForRunningWork: true) == false)
+    #expect(prompts == 1)
+    #expect(manager.connectionState == .connected)
+
+    #expect(await first.value)
+    #expect(windows.workspaces[manager.id] == nil)
+    #expect(prompts == 1)
+    registry.end(copy)
+  }
+
+  @Test("A query running inside a pending transaction says Stop rolls the transaction back")
+  func runningQueryNamesRollback() async throws {
+    let windows = windows(WindowSeams())
+    var prompts: [RunningWorkRegistry.Prompt] = []
+    let manager = windows.activeWorkspaceOrNew()
+    let registry = RunningWorkRegistry()
+    registry.presentPrompt = { prompt in
+      prompts.append(prompt)
+      return false
+    }
+    manager.runningWork = registry
+    let tabId = manager.newNotebook()
+    manager.viewModels[tabId]?.isEditorQueryRunning = true
+    let pending = SQLStatementClassifier.classify(
+      "UPDATE t SET v = 1 WHERE id = 1; DELETE FROM t WHERE id = 2"
+    ).map { StatementSummary(statement: $0, affectedRows: 1) }
+    manager.pendingTransaction = .appTx(pending: pending)
+    manager.transactionOriginTabId = tabId
+
+    #expect(await manager.confirmStoppingRunningWork(.close(workspaceID: manager.id)) == false)
+    let line = try #require(prompts.last?.lines.first)
+    #expect(line.hasPrefix("Query in "))
+    #expect(line.hasSuffix(" will be stopped; this will roll back 2 pending changes"))
+
+    // A user BEGIN (Protected off) has no count
+    manager.pendingTransaction = .idle
+    manager.transactionOriginTabId = nil
+    manager.isUserTransactionOpen = true
+    #expect(await manager.confirmStoppingRunningWork(.close(workspaceID: manager.id)) == false)
+    #expect(
+      prompts.last?.lines.first?.hasSuffix(
+        " will be stopped; this will roll back the open transaction")
+        == true)
+    manager.viewModels[tabId]?.isEditorQueryRunning = false
+    _ = await windows.closeWorkspace(id: manager.id, force: true)
+  }
+
+  @Test("Disconnect asks about running work only for the user's own Disconnect")
+  func disconnectAsksOnlyWhenAsked() async {
+    let windows = windows(WindowSeams())
+    var prompts = 0
+    let (manager, registry) = workspaceWithRunningWork(windows) {
+      prompts += 1
+      return false
+    }
+    registry.begin(workspaceID: manager.id, label: "Copy Objects to shop", kind: .copyObjects) {}
+
+    manager.connectionState = .connected
+    #expect(await manager.disconnect(asksForRunningWork: true) == false)
+    #expect(manager.connectionState == .connected)
+    #expect(prompts == 1)
+
+    // Internal callers (a close, a connection switch) never ask
+    #expect(await manager.disconnect())
+    #expect(manager.connectionState == .disconnected)
+    #expect(prompts == 1)
+    _ = await windows.closeWorkspace(id: manager.id, force: true)
+  }
 }

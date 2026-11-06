@@ -211,7 +211,7 @@ extension WorkspaceManager {
     case .disconnect:
       // Disconnecting again would clear the certificate the loss banner's Reconnect needs
       guard connectionState.isConnected || connectionState.isConnecting else { return false }
-      Task { await disconnect() }
+      Task { await disconnect(asksForRunningWork: true) }
     case .commit:
       // Same guards as the banner: nothing while ending or the origin tab is running
       guard case .appTx = pendingTransaction, !isTransactionOriginRunning else { return false }

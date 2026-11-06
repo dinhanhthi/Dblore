@@ -179,7 +179,7 @@ struct WorkspaceInfoModal: View {
   private var disconnectButton: some View {
     Button {
       Task {
-        if await workspaceManager.disconnect() {
+        if await workspaceManager.disconnect(asksForRunningWork: true) {
           isPresented = false
         }
       }

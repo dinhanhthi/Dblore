@@ -141,6 +141,73 @@ struct RunningWorkRegistryTests {
     #expect(cancelled == ["copy", "import"])
   }
 
+  @Test(
+    "Quit with work running asks once, whatever Confirm before quit; Stop or Cancel is the answer")
+  func quitAsksOnce() {
+    /// The prompts shown, and the answer they get
+    final class Answers {
+      var prompts: [RunningWorkRegistry.Prompt] = []
+      var stops = false
+    }
+    let registry = RunningWorkRegistry()
+    let answers = Answers()
+    registry.presentPrompt = { prompt in
+      answers.prompts.append(prompt)
+      return answers.stops
+    }
+    // Nothing runs: only the generic question, which the caller asks (no running-work prompt)
+    #expect(registry.ask(.quit, runningQueries: [], confirmBeforeQuit: true) == .confirmQuit)
+    #expect(registry.ask(.quit, runningQueries: [], confirmBeforeQuit: false) == .proceed)
+    #expect(answers.prompts.isEmpty)
+
+    // Cmd+Q with the setting on and a dump running: the running-work prompt alone
+    registry.begin(workspaceID: first, label: "SQL dump of shop", kind: .dump) {}
+    #expect(registry.ask(.quit, runningQueries: [], confirmBeforeQuit: true) == .cancel)
+    #expect(answers.prompts.map(\.lines) == [["SQL dump of shop"]])
+    #expect(answers.prompts.first?.stopTitle == "Stop and Quit")
+
+    answers.stops = true
+    #expect(registry.ask(.quit, runningQueries: [], confirmBeforeQuit: true) == .stop)
+    #expect(answers.prompts.count == 2)
+  }
+
+  @Test("Stop waits until the work ended, and never longer than its limit when a cancel hangs")
+  func stopWaitIsBounded() async {
+    let registry = RunningWorkRegistry()
+    var stoppedQuietly: [Bool] = []
+    var copy: RunningWorkRegistry.Token?
+    copy = registry.begin(workspaceID: first, label: "Copy", kind: .copyObjects) {
+      // A second close or disconnect while the stop waits is ignored
+      stoppedQuietly.append(registry.stopsWithoutAsking(workspaceID: first))
+      copy.map(registry.end)
+    }
+    var queryRuns = true
+    let clock = ContinuousClock()
+    // No wall-clock bound here: a loaded test host can starve the main actor for many seconds.
+    // The stop ending its work and every query is what the checks below prove.
+    await registry.stop(
+      .close(workspaceID: first),
+      stopQueries: {
+        queryRuns = false
+        return []
+      },
+      queriesRunning: { queryRuns }, limit: .seconds(30))
+    #expect(!queryRuns)
+    #expect(stoppedQuietly == [true])
+    #expect(registry.items.isEmpty)
+    // After the stop, a close or disconnect asks as usual
+    #expect(!registry.stopsWithoutAsking(workspaceID: first))
+
+    // A cancel that never ends its work, and a query that never stops: the wait ends at the limit
+    registry.begin(workspaceID: second, label: "Import", kind: .dataImport) {}
+    let hung = await clock.measure {
+      await registry.stop(
+        .quit, stopQueries: { [] }, queriesRunning: { true }, limit: .milliseconds(200))
+    }
+    #expect(hung >= .milliseconds(200))
+    #expect(registry.items.map(\.label) == ["Import"])
+  }
+
   @Test("A label is shown on one line: breaks, control and bidi characters become spaces")
   func labelOnOneLine() {
     let registry = RunningWorkRegistry()

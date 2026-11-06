@@ -143,7 +143,7 @@ struct PendingTransactionBanner: View {
           summary.ending, elapsed: context.date.timeIntervalSince(since))
         {
           Button {
-            Task { await workspaceManager.disconnect() }
+            Task { await workspaceManager.disconnect(asksForRunningWork: true) }
           } label: {
             Text(title)
               .transactionActionLabel()

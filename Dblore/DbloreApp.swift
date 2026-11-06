@@ -221,27 +221,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   /// post-disconnect script or a Vault lease are closed (their scripts started, their leases
   /// revoked) before the app exits. A connect still waiting for its lease is not among them
   /// (its slot is empty until the lease arrives): that lease ends at its TTL.
+  ///
+  /// First of all, running work (queries, imports, copies, dumps, restores) asks once ("Stop and
+  /// Quit" / "Cancel"); with nothing running, "Confirm before quitting" asks on Cmd+Q.
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard confirmKeyboardQuit() else { return .terminateCancel }
     let managers = WorkspaceWindowManager.shared.allWorkspaces
-    // A running tab may have opened a transaction the mirror does not show yet: resolve refreshes
-    let resolves = managers.contains(where: {
-      !$0.pendingTransaction.isIdle || $0.isAnyTabExecuting
-    })
+    let registry = RunningWorkRegistry.shared
+    // Read now: `NSApp.currentEvent` is gone once the quit waits
+    let confirmBeforeQuit = asksBeforeKeyboardQuit
     let closing = managers.map(\.connectionManager).filter(\.closesAtQuit)
-    guard resolves || !closing.isEmpty else {
+    // Nothing runs, nothing is pending and nothing closes: at most the generic question
+    if registry.items.isEmpty, closing.isEmpty,
+      managers.allSatisfy({ $0.pendingTransaction.isIdle && !$0.isAnyTabExecuting })
+    {
+      guard !confirmBeforeQuit || confirmKeyboardQuit() else { return .terminateCancel }
       isTerminating = true
       recordLaunchSession()
       return .terminateNow
     }
+    // Waits without blocking the app; every path replies once
     Task { @MainActor in
-      if resolves {
-        for manager in managers {
-          guard await manager.resolvePendingTransaction(action: .quit) else {
-            NSApp.reply(toApplicationShouldTerminate: false)
-            return
-          }
-        }
+      guard
+        await WorkspaceManager.answerQuitQuestions(
+          managers, runningWork: registry, confirmBeforeQuit: confirmBeforeQuit,
+          confirmQuit: confirmKeyboardQuit)
+      else {
+        NSApp.reply(toApplicationShouldTerminate: false)
+        return
       }
       isTerminating = true
       recordLaunchSession()
@@ -302,10 +308,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// With "Confirm before quitting" on, Cmd+Q asks first. Quit from the Dock, logout and
   /// update relaunches come without a key event, so they never ask.
+  private var asksBeforeKeyboardQuit: Bool {
+    AppSettings.shared.confirmBeforeQuit && NSApp.currentEvent?.type == .keyDown
+      && !SessionManager.isRunningAsTestHost
+  }
+
+  /// The generic "Quit Dblore?" when nothing runs (running work asks its own question instead)
   private func confirmKeyboardQuit() -> Bool {
-    guard AppSettings.shared.confirmBeforeQuit, NSApp.currentEvent?.type == .keyDown,
-      !SessionManager.isRunningAsTestHost
-    else { return true }
     let alert = NSAlert()
     alert.messageText = "Quit Dblore?"
     alert.informativeText = "You can turn this off in Settings > General."

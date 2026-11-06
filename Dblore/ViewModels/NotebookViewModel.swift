@@ -308,6 +308,12 @@ class NotebookViewModel {
   @ObservationIgnored var historySettings = AppSettings.shared
   /// Workspace this tab belongs to, read when a statement is recorded.
   @ObservationIgnored var historyWorkspace: @MainActor () -> (id: UUID, name: String)? = { nil }
+  /// The transaction the quit, close or disconnect prompt named for this tab, once its Stop was
+  /// clicked: a cancel of the running statement does not ask again while the transaction is
+  /// still that one. Nil asks as usual. A workspace reads its own `runningWork`.
+  @ObservationIgnored var stopConsent: @MainActor () -> RunningWorkRegistry.StopConsent? = {
+    nil
+  }
   /// Fired after at least one history row is saved, so an open history list can reload.
   @ObservationIgnored var onHistoryRecorded: (@MainActor () -> Void)?
   /// Whether a save writes results (and pins). A workspace injects its resolved setting.

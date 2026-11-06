@@ -176,6 +176,14 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var isResolvingPendingTransaction = false
   /// Asks "Commit / Roll back / Cancel"; nil = NSAlert (tests inject an answer)
   @ObservationIgnored var pendingTransactionPrompt: PendingTransactionPrompt?
+  /// Running work a close or disconnect asks about (tests inject their own, with its prompt)
+  @ObservationIgnored var runningWork = RunningWorkRegistry.shared
+  /// The user's close or Disconnect asks about running work or stops it: a second click is
+  /// ignored until that ends (`confirmStoppingRunningWork`)
+  @ObservationIgnored var isAskingAboutRunningWork = false
+  /// A user transaction (`BEGIN` with Protected off) was open at the last refresh
+  /// (`refreshPendingTransaction`)
+  @ObservationIgnored var isUserTransactionOpen = false
 
   // MARK: - Tabs
 
@@ -1726,6 +1734,10 @@ class WorkspaceManager: Identifiable {
     viewModel.historyWorkspace = { [weak self] in
       guard let self else { return nil }
       return (id: self.workspace.id, name: self.workspace.name)
+    }
+    viewModel.stopConsent = { [weak self] in
+      guard let self else { return nil }
+      return self.runningWork.stopConsent(workspaceID: self.id)
     }
     viewModel.isAIAllowed = { [weak self] in self?.isAIAllowed() ?? false }
     viewModel.aiInlineSchema = { [weak self] prefix in await self?.aiInlineSchema(prefix: prefix) }

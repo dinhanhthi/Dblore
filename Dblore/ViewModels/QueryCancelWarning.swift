@@ -61,13 +61,12 @@ nonisolated struct QueryCancelWarning: Sendable, Equatable {
   ) -> QueryCancelWarning? {
     guard !keepsTransaction else { return nil }
     let hedged = interrupts && !interruptRollsBack
-    let verb = hedged ? "may roll back" : "will roll back"
+    let verb = rollbackVerb(interrupts: interrupts, interruptRollsBack: interruptRollsBack)
     let button = hedged ? stopTitle : confirmTitle
     if !state.isIdle {
-      let count = state.pending.count
       let owner = ownedByAnotherTab ? "another tab's " : ""
       return QueryCancelWarning(
-        title: "Cancelling \(verb) \(owner)\(count) pending change\(count == 1 ? "" : "s")",
+        title: "Cancelling \(verb) \(owner)\(pendingChanges(state))",
         detail: PendingTransactionSummary(state: state).reviewText, buttonTitle: button)
     }
     guard userTxOpen else { return nil }
@@ -87,5 +86,27 @@ nonisolated struct QueryCancelWarning: Sendable, Equatable {
       detail: "The connection is closed to stop the query, so the server rolls back the "
         + "transaction opened with BEGIN in this tab or another tab (temp tables, SET and "
         + "search_path are lost too).")
+  }
+
+  /// What stopping a running query does, after its line in the quit, close or disconnect
+  /// prompt: the rollback `make` would warn about, with its count and verb; nil when `make`
+  /// warns nothing (no pending change, no open transaction, or an interrupt that keeps it)
+  static func stopConsequence(
+    state: TransactionState, userTxOpen: Bool, keepsTransaction: Bool = false,
+    interrupts: Bool = false, interruptRollsBack: Bool = false
+  ) -> String? {
+    guard !keepsTransaction, !state.isIdle || userTxOpen else { return nil }
+    let verb = rollbackVerb(interrupts: interrupts, interruptRollsBack: interruptRollsBack)
+    let lost = state.isIdle ? "the open transaction" : pendingChanges(state)
+    return "will be stopped; this \(verb) \(lost)"
+  }
+
+  private static func rollbackVerb(interrupts: Bool, interruptRollsBack: Bool) -> String {
+    interrupts && !interruptRollsBack ? "may roll back" : "will roll back"
+  }
+
+  private static func pendingChanges(_ state: TransactionState) -> String {
+    let count = state.pending.count
+    return "\(count) pending change\(count == 1 ? "" : "s")"
   }
 }
