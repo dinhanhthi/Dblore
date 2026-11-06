@@ -68,6 +68,7 @@ struct AISlashCommandTests {
   func validation() {
     let saved = command("daily")
     #expect(Command.validate(command("explain"), among: []) == .reservedName)
+    #expect(Command.validate(command("settings"), among: []) == .reservedName)
     #expect(Command.validate(command("Bad"), among: []) == .invalidName)
     #expect(Command.validate(command("daily"), among: [saved]) == .duplicateName)
     #expect(Command.validate(command("new", " \n"), among: []) == .emptyTemplate)
@@ -134,18 +135,19 @@ struct AISlashCommandTests {
     let names = Command.available(
       custom: [command("zeta"), command("alpha")], dialect: .postgresql
     ).map(\.name)
-    #expect(names == ["explain", "fix", "review", "optimize", "alpha", "zeta"])
+    #expect(names == ["explain", "fix", "review", "optimize", "settings", "alpha", "zeta"])
   }
 
   @Test("MongoDB connections offer no /review or /optimize")
   func availableOnMongo() {
     let names = Command.available(custom: [command("alpha")], dialect: .mongodb).map(\.name)
-    #expect(names == ["explain", "fix", "alpha"])
+    #expect(names == ["explain", "fix", "settings", "alpha"])
   }
 
   @Test("a built-in name resolves to the built-in")
   func resolve() {
     #expect(Command.resolve("fix", custom: []) == .builtIn(.fix))
+    #expect(Command.resolve("settings", custom: [command("settings")]) == .builtIn(.settings))
     let alpha = command("alpha")
     #expect(Command.resolve("alpha", custom: [alpha]) == .custom(alpha))
     #expect(Command.resolve("nope", custom: []) == nil)
@@ -184,6 +186,15 @@ struct AISlashCommandTests {
       """
     let kept = try JSONDecoder().decode(AIConfiguration.self, from: Data(mixed.utf8))
     #expect(kept.customCommands.map(\.name) == ["ok"])
+
+    // `settings` became a built-in: a command saved under it is kept, renamed to a free name
+    let saved = command("settings", "Mine")
+    let renamed = Command.sanitized([saved])
+    #expect(renamed.map(\.name) == ["settings-2"])
+    #expect(renamed.first?.id == saved.id)
+    #expect(renamed.first?.template == "Mine")
+    #expect(
+      Command.sanitized([saved, command("settings-2")]).map(\.name) == ["settings-3", "settings-2"])
 
     let notArray = #"{"configs":{"ollama":{"baseURL":"u","model":"m"}},"customCommands":7}"#
     let survived = try JSONDecoder().decode(AIConfiguration.self, from: Data(notArray.utf8))
@@ -373,6 +384,23 @@ struct AISlashCommandTests {
     #expect(
       mongo.runSlashCommand(in: editorTab("db.orders.find({})", type: .mongodb))
         == .unavailable(.optimize))
+  }
+
+  @Test("/settings fills the draft with no tab, keeps the argument; not on an on-device model")
+  func settingsCommand() {
+    let vm = makeVM()
+    vm.draft = "/settings bigger font"
+    #expect(vm.runSlashCommand(in: nil) == .filled(withheld: false))
+    #expect(vm.draft == "Change Dblore settings: bigger font")
+    vm.draft = "/settings"
+    #expect(vm.runSlashCommand(in: nil) == .filled(withheld: false))
+    #expect(vm.draft == "Which Dblore settings can you change for me?")
+    #expect(vm.messages.isEmpty)
+
+    vm.providerOverride = .appleIntelligence
+    vm.draft = "/settings x"
+    #expect(vm.runSlashCommand(in: editorTab()) == .unavailable(.settings))
+    #expect(vm.draft == "/settings x")
   }
 
   @Test("an unknown name or plain text changes nothing")

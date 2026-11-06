@@ -44,14 +44,15 @@ struct AIComposerSuggestionsTests {
     let custom = AICustomCommand(name: "indexes", template: "List indexes\n{{schema}}")
     let commands = AISlashCommand.available(custom: [custom], dialect: .postgresql)
     let listed = items("/", commands: commands)
-    #expect(listed.map(\.title) == ["/explain", "/fix", "/review", "/optimize", "/indexes"])
+    #expect(
+      listed.map(\.title) == ["/explain", "/fix", "/review", "/optimize", "/settings", "/indexes"])
     #expect(listed.last?.detail == "List indexes")
   }
 
   @Test("MongoDB lists no Review or Optimize")
   func mongoListsNoReview() {
     let commands = AISlashCommand.available(custom: [], dialect: .mongodb)
-    #expect(items("/", commands: commands).map(\.title) == ["/explain", "/fix"])
+    #expect(items("/", commands: commands).map(\.title) == ["/explain", "/fix", "/settings"])
   }
 
   @Test("a partial name filters ignoring case, and a pick replaces the draft")

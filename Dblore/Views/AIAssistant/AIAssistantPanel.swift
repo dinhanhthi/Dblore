@@ -316,13 +316,43 @@ struct AIAssistantPanel: View {
   }
 
   private var emptyState: some View {
-    Text(emptyStateText)
-      .font(.labelText)
-      .foregroundColor(.foregroundMuted)
-      .multilineTextAlignment(.center)
-      .padding(Spacing.xl)
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    VStack(spacing: Spacing.md) {
+      Text(emptyStateText)
+        .font(.labelText)
+        .foregroundColor(.foregroundMuted)
+        .multilineTextAlignment(.center)
+      // Settings tools are never offered to an on-device model; needsSetup shows the setup
+      // card instead of this view
+      if assistant.activeProvider?.isOnDevice != true {
+        settingsHint
+      }
+    }
+    .padding(Spacing.xl)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
+
+  /// The assistant can change Dblore's settings: example chips fill the draft, nothing is sent
+  private var settingsHint: some View {
+    VStack(spacing: Spacing.sm) {
+      Text("You can also ask me to change Dblore's settings, like the theme or the editor font.")
+        .font(.labelText)
+        .foregroundColor(.foregroundMuted)
+        .multilineTextAlignment(.center)
+      VStack(spacing: Spacing.xs) {
+        ForEach(Self.settingsExamples, id: \.self) { example in
+          Button(example) {
+            assistant.draft = ""
+            assistant.draft = example
+          }
+          .buttonStyle(AIChipButtonStyle())
+        }
+      }
+    }
+  }
+
+  private static let settingsExamples = [
+    "Switch to light theme", "Make the editor font bigger", "Show line numbers",
+  ]
 
   /// Discloses whether read-only queries run
   private var emptyStateText: String {
@@ -359,6 +389,7 @@ struct AIAssistantPanel: View {
               isStreaming: assistant.isGenerating && index == messages.count - 1,
               onApplyReview: reviewApplyHandler,
               onRunProposal: assistant.proposalRunner,
+              onUndoSetting: { await assistant.undoSettingChange(entry.id) },
               onDecideOutsideCall: assistant.isAwaitingOutsideApproval(entry.id)
                 ? { assistant.decideOutsideCall(entry.id, approved: $0) } : nil,
               outsideRunEnabled: assistant.isOutsideRunEnabled(entry.id))
@@ -718,6 +749,8 @@ struct AIAssistantPanel: View {
       "/explain needs a query in the active tab"
     case .unavailable(.fix):
       "No error to fix: /fix needs a query that failed"
+    case .unavailable(.settings):
+      "/settings needs a provider with tools, not an on-device model"
     case .unavailable(let builtIn):
       "/\(builtIn.rawValue) needs a SQL query in the active tab"
     case .filled(withheld: true):

@@ -430,6 +430,7 @@
             <li><strong>Run read-only queries</strong> (<strong>Settings &gt; AI &gt; Privacy</strong>, off by default): the assistant writes a query, Dblore runs it and shows you the rows. Only a single read-only statement runs, in a read-only transaction; anything else is refused and shown as SQL. Row values and errors are never sent to the model.</li>
             <li>In bubble mode, drag an edge of the card to resize it.</li>
             <li>The chat can also call tools of MCP servers you add, one approved call at a time. See <a href="#outside-mcp">Outside MCP servers</a>.</li>
+            <li><strong>Change settings:</strong> ask the chat to change Dblore's settings (theme, editor, formatter, results, notifications…). The change applies at once and shows a card "old → new" with <strong>Undo</strong>. It works with no connection and on connections whose AI access is off, since it reads no connection data, but not with on-device models. Security, AI provider and keys, MCP, Shortcuts, Safe Mode and session limits stay manual: the assistant names the Settings tab instead. <code>/settings</code> fills the message box with a settings request, and the empty chat panel suggests examples.</li>
             <li>For fully local use, point it at Ollama, LM Studio or <code>mlx_lm.server</code>.</li>
 </ul>
           </section>

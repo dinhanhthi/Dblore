@@ -39,10 +39,19 @@ extension AIAssistantViewModel {
   }
 
   /// The quick actions' conditions: Explain needs SQL, Fix SQL and its error, Review and
-  /// Optimize `offersReview` (never MongoDB)
+  /// Optimize `offersReview` (never MongoDB). Settings needs no tab, only a provider with tools.
   private func runBuiltIn(
     _ builtIn: AISlashCommand.BuiltIn, argument: String, tab: NotebookViewModel?
   ) -> SlashOutcome {
+    if builtIn == .settings {
+      // On-device models get no tools, so they cannot change settings
+      if activeProvider?.isOnDevice == true { return .unavailable(.settings) }
+      draft = ""
+      draft =
+        argument.isEmpty
+        ? "Which Dblore settings can you change for me?" : "Change Dblore settings: " + argument
+      return .filled(withheld: false)
+    }
     guard let tab, let sql = tab.aiCurrentSQL else { return .unavailable(builtIn) }
     let error = tab.aiLastError
     let offersReview = Self.offersReview(in: tab, dialect: sqlDialect)
@@ -58,6 +67,7 @@ extension AIAssistantViewModel {
     case .fix: fixError(sql: sql, error: error ?? "", sessionKey: tab.aiSessionKey)
     case .review: review(.review, in: tab)
     case .optimize: review(.optimize, in: tab)
+    case .settings: break  // Filled above: it needs no tab
     }
     if !argument.isEmpty { draft += "\n\n" + argument }
     return .filled(withheld: false)

@@ -37,6 +37,9 @@ struct AIChatEntry: Identifiable, Equatable, Codable {
   /// Set on the entry of an outside MCP tool call: what its card shows. Never replayed to later
   /// turns and never run again.
   var outsideCall: AIOutsideCall? = nil
+  /// Set on the entry of a change_setting call that changed a setting: what its Undo card
+  /// shows. Title and tab come from `AppSettingsTools.entry(key)`.
+  var settingChange: AISettingChange? = nil
 
   enum QueryOutcome: String, Codable {
     /// The database (or the connection) returned an error
@@ -83,6 +86,28 @@ struct AIOutsideCall: Codable, Equatable {
     case failed
     /// Stopped before an answer reached the assistant
     case stopped
+  }
+}
+
+/// An app setting the assistant changed (change_setting), for its Undo card. Saved chats are
+/// plain JSON: Undo validates the key and both values again (`AppSettingsTools.validateUndo`).
+struct AISettingChange: Codable, Equatable, Sendable {
+  /// The `AppSettings` property name
+  let key: String
+  /// Canonical raw values (`AppSettingsTools`)
+  let oldValue: String
+  let newValue: String
+  /// A workspace or connection value overrides the setting, so the change may not show
+  var shadowed: Bool
+  /// An Undo back to notifications on was refused permission; the state stays `applied`
+  var notificationsStayedOff: Bool = false
+  var state: State
+
+  enum State: String, Codable {
+    case applied
+    case undone
+    /// The user changed the setting since, so Undo wrote nothing
+    case changedSince
   }
 }
 
@@ -196,6 +221,11 @@ final class AIAssistantViewModel {
     (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient
   /// Ghost text requests, cancelled before a request bound for the on-device model
   @ObservationIgnored private let inlineCompletions: AIInlineCompletionRegistry
+  /// The app settings the settings tools read and change
+  @ObservationIgnored let appSettings: AppSettings
+  /// Asks for notification permission when a change turns long-query notifications on.
+  /// Injected so tests never prompt.
+  @ObservationIgnored let requestNotificationAuthorization: () async -> Bool
   @ObservationIgnored var schemaSource: () -> AISchemaSnapshot = { .empty }
   /// The MongoDB collection screen of the active tab, read at send time; nil elsewhere
   @ObservationIgnored var mongoScreenSource: () -> AIMongoAssist.Screen? = { nil }
@@ -246,6 +276,8 @@ final class AIAssistantViewModel {
   /// The connection's AI access, read on user actions (send, retry, live answer, one-shot),
   /// never from a view body. Nil without a connection: nothing to protect.
   @ObservationIgnored var aiAccessSource: () -> AIAccessContext? = { nil }
+  /// True when a workspace or connection value overrides the app setting of the key
+  @ObservationIgnored var isSettingShadowed: (String) -> Bool = { _ in false }
   /// A send held until the user allows AI for the connection this session
   private(set) var pendingApproval: PendingApproval?
   /// The connection of the last send is private to AI; nil when it was not
@@ -262,11 +294,17 @@ final class AIAssistantViewModel {
     makeClient: @escaping (AIProviderKind, AIProviderConfig, String?) throws -> any AIChatClient = {
       try AIClientFactory.make(kind: $0, config: $1, apiKey: $2)
     },
-    inlineCompletions: AIInlineCompletionRegistry = .shared
+    inlineCompletions: AIInlineCompletionRegistry = .shared,
+    appSettings: AppSettings = .shared,
+    requestNotificationAuthorization: @escaping () async -> Bool = {
+      await QueryCompletionNotifier().requestAuthorization()
+    }
   ) {
     self.settings = settings
     self.makeClient = makeClient
     self.inlineCompletions = inlineCompletions
+    self.appSettings = appSettings
+    self.requestNotificationAuthorization = requestNotificationAuthorization
     localDataChanges.start { [weak self] note in
       guard LocalDataCategory.notification(note, includes: .aiChats) else { return }
       Task { @MainActor [weak self] in
@@ -501,6 +539,8 @@ final class AIAssistantViewModel {
       review: review,
       // On-device models get no tools; without a connection there is nothing to read
       offersTools: !provider.isOnDevice && toolRunner != nil && access.context != nil,
+      // The settings tools need no connection
+      offersSettingsTools: !provider.isOnDevice && toolRunner != nil,
       toolEndpoint: Self.toolEndpoint(provider, settings.config(for: provider)),
       mentions: mentions, mentionTab: mentionTab(for: mentions, sessionKey: sessionKey))
     let history = makeHistory()
@@ -682,8 +722,9 @@ final class AIAssistantViewModel {
   // MARK: - Helpers
 
   /// History of the conversation (which already ends with the new question). Query results and
-  /// errors are placeholders (`historyMessage`), tool entries of the current connection text
-  /// (`toolHistoryMessages`); running queries and outside tool calls are left out.
+  /// errors are placeholders (`historyMessage`), tool entries text (`toolHistoryMessages`): data
+  /// tool entries only on the current connection, settings tool entries (`list_settings` /
+  /// `change_setting`) on any connection; running queries and outside tool calls are left out.
   func makeHistory() -> [AIChatMessage] {
     let key = Self.sessionKey(aiAccessSource())
     let sent =

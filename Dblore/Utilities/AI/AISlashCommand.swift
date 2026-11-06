@@ -18,7 +18,7 @@ nonisolated enum AISlashCommand: Equatable, Sendable {
   case custom(AICustomCommand)
 
   nonisolated enum BuiltIn: String, CaseIterable, Sendable {
-    case explain, fix, review, optimize
+    case explain, fix, review, optimize, settings
 
     var summary: String {
       switch self {
@@ -26,6 +26,7 @@ nonisolated enum AISlashCommand: Equatable, Sendable {
       case .fix: "Fix the current query's error"
       case .review: "Review the current query"
       case .optimize: "Optimize the current query"
+      case .settings: "Change Dblore settings"
       }
     }
 
@@ -160,12 +161,19 @@ nonisolated enum AISlashCommand: Equatable, Sendable {
   }
 
   /// The saved commands that pass `validate`, in order, the first of a name or id kept, at most
-  /// `maxCustomCommands`
+  /// `maxCustomCommands`. One named `settings`, saved before that became a built-in, is kept
+  /// under the next free name (`settings-2`, `settings-3`, ...).
   static func sanitized(_ commands: [AICustomCommand]) -> [AICustomCommand] {
     commands.reduce(into: []) { kept, command in
-      guard !kept.contains(where: { $0.id == command.id }),
-        validate(command, among: kept) == nil
-      else { return }
+      guard !kept.contains(where: { $0.id == command.id }) else { return }
+      var command = command
+      if command.name == BuiltIn.settings.rawValue {
+        let used = Set(commands.map(\.name) + kept.map(\.name))
+        var suffix = 2
+        while used.contains("settings-\(suffix)") { suffix += 1 }
+        command.name = "settings-\(suffix)"
+      }
+      guard validate(command, among: kept) == nil else { return }
       kept.append(command)
     }
   }
