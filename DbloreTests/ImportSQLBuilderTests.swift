@@ -236,9 +236,15 @@ struct ImportSQLBuilderTests {
   /// neither or only one), an integer key gets pg_catalog's `=` in both
   @Test("A PostgreSQL key compares with the same operator in the match read and the UPDATE")
   func postgresKeyOperatorsAgree() throws {
+    // citext owned by its extension in `public`, from the schema read
+    let citext = PostgresColumnType(
+      oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+      operatorSchema: "public")
+    var name = column("name", "citext")
+    name.postgresType = citext
     let structure = TableStructure(
       tableID: .postgresql(oid: 1), schema: "s", name: "t",
-      columns: [column("id", "integer"), column("name", "citext"), column("note", "text")],
+      columns: [column("id", "integer"), name, column("note", "text")],
       indexes: [], constraints: [])
     let keys = try ["id", "name"].map { name in
       try key(try #require(structure.columns.first { $0.name == name }), .postgresql)
@@ -256,14 +262,19 @@ struct ImportSQLBuilderTests {
       ],
       row: ["1", "Ada", "x"], keys: keys, dialect: .postgresql)
 
-    #expect(keys.map(\.operand) == [.qualified, .bare])
-    #expect(read.sql.contains(#"(VALUES (0, $1::integer, $2::citext))"#))
+    #expect(keys.map { SQLOperandKind(column: $0.postgresType) } == [.qualified, .bare])
+    #expect(read.sql.contains(#"(VALUES (0, $1::integer, $2::public.citext))"#))
     #expect(
-      read.sql.contains(#"ON t."id" OPERATOR(pg_catalog.=) v.k0 AND t."name" = v.k1 GROUP"#))
+      read.sql.contains(
+        #"ON t."id" OPERATOR(pg_catalog.=) v.k0 AND t."name" OPERATOR(public.=) v.k1 GROUP"#))
     #expect(
       update.sql
         == #"UPDATE "s"."t" SET "note" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2::integer "#
-        + #"AND "name" = $3::citext"#)
+        + #"AND "name" OPERATOR(public.=) $3::public.citext"#)
+    for sql in [read.sql, update.sql] {
+      let found = PostgresQualificationLint.violations(sql, columnTypeData: ["name": citext])
+      #expect(found.isEmpty, "\(found)\n\(sql)")
+    }
     // Safe Mode classifies the previewed UPDATE as a keyed write
     let classified = SQLStatementClassifier.classify(update.sql, dialect: .postgresql)
     #expect(classified.map(\.kind) == [.dml])

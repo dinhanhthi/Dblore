@@ -6,10 +6,12 @@
 // A read is `SELECT pos, COUNT(*) FROM (<positioned key rows>) v JOIN <table> t ON t.k = v.k ...
 // GROUP BY pos`. Positions are integer literals (file row indexes); every key value is a bind.
 // PostgreSQL names pg_catalog's `count` and casts and compares through `SQLDialect`'s helpers:
-// each key's operator is `OPERATOR(pg_catalog.=)` unless its column type keeps the bare one
-// (`SQLOperandKind`, a citext key), and the keyed UPDATE uses the same `KeyColumn`s, so the read
-// and the write compare a key the same way. The table is named with its schema, `public` too
-// (`ImportSQLBuilder.relation`), so a same-named table earlier on the search_path is not read.
+// each key's operator is `OPERATOR(pg_catalog.=)`, or its extension's own (`OPERATOR(public.=)`
+// for a citext key, after a cast to the base type for a domain over one) as the schema read's
+// type data says (`TableStructure.Column.postgresType`), and the keyed UPDATE uses the same
+// `KeyColumn`s, so the read and the write compare a key the same way. The table is named with
+// its schema, `public` too (`ImportSQLBuilder.relation`), so a same-named table earlier on the
+// search_path is not read.
 // PostgreSQL, SQLite and DuckDB list the rows in VALUES, MySQL/MariaDB in a UNION ALL derived
 // table. Each read passes `ReadOnlyQueryGuard`.
 // - PostgreSQL and DuckDB bind untyped text, and a VALUES list has no target column to type it,
@@ -17,6 +19,10 @@
 //   a bind compared with the column (`WHERE k = $1`) takes: an explicit cast to `varchar(n)`,
 //   `char(n)` or `numeric(p,s)` truncates or rounds, which could match another row, and
 //   `character` / `bit` without a length mean length 1, so they become `bpchar` / `varbit`.
+//   A type outside `pg_catalog` is cast to the schema-qualified name the schema read gives
+//   (`castName`), never the type text, which omits a schema on the search_path. Without a
+//   `castName` the type text is cast only when it names a `pg_catalog` type; else the key is
+//   refused.
 //   DuckDB keeps the type as its catalog shows it.
 // - SQLite compares through the column's affinity and collation (the column is the left side).
 // - MySQL/MariaDB build the derived table in the connection's utf8mb4 (`SET NAMES utf8mb4`):
@@ -104,8 +110,8 @@ nonisolated enum ImportMatchPlanner {
     var name: String
     var match: Match
     var dialect: SQLDialect
-    /// From the column's type text (`TableStructure.Column.dataType`)
-    var operand: SQLOperandKind
+    /// PostgreSQL type data from the schema read (`TableStructure.Column.postgresType`)
+    var postgresType: PostgresColumnType?
 
     enum Match: Sendable, Equatable {
       case plain
@@ -131,12 +137,19 @@ nonisolated enum ImportMatchPlanner {
     init(_ column: TableStructure.Column, dialect: SQLDialect) throws {
       name = column.name
       self.dialect = dialect
-      operand = SQLOperandKind(columnType: column.dataType)
+      postgresType = column.postgresType
       switch dialect {
       case .postgresql, .duckdb:
-        guard let type = Self.castType(column.dataType, dialect: dialect) else {
+        let castName = dialect == .postgresql ? column.postgresType?.castName : nil
+        guard let type = castName ?? Self.castType(column.dataType, dialect: dialect) else {
           throw Error.unsupportedKey(
             column: column.name, reason: "its type can't be written as SQL.")
+        }
+        // Without a `castName` the type text must name a pg_catalog type: a user or extension
+        // type's text omits its schema on the search_path
+        guard dialect != .postgresql || castName != nil || Self.isPostgresBuiltIn(type) else {
+          throw Error.unsupportedKey(
+            column: column.name, reason: "its type's schema is not known.")
         }
         match = .cast(type)
       case .mysql:
@@ -153,10 +166,10 @@ nonisolated enum ImportMatchPlanner {
     }
 
     /// `target = value`, with the MySQL collation or numeric cast on `value`; PostgreSQL
-    /// `OPERATOR(pg_catalog.=)` unless the column type keeps the bare `=`
+    /// names the operator's schema (`SQLDialect.comparison(_:_:_:type:)`)
     func equals(_ target: String, _ value: String) -> String {
       switch match {
-      case .plain, .cast, .float: dialect.comparison(target, .equal, value, operand: operand)
+      case .plain, .cast, .float: dialect.comparison(target, .equal, value, type: postgresType)
       case .collate(let collation): "\(target) = \(value) COLLATE \(collation)"
       case .convert(let characterSet, let collation):
         "\(target) = CONVERT(\(value) USING \(characterSet)) COLLATE \(collation)"
@@ -195,8 +208,9 @@ nonisolated enum ImportMatchPlanner {
       }
     }
 
-    /// The type a PostgreSQL / DuckDB key bind is cast to, or nil when the catalog text holds
-    /// anything but letters, digits, spaces, `_ ( ) , . [ ]` and paired `"`
+    /// The type a DuckDB key bind, or a PostgreSQL `pg_catalog` one without a `castName`
+    /// (`isPostgresBuiltIn`), is cast to, or nil when the catalog text holds anything but
+    /// letters, digits, spaces, `_ ( ) , . [ ]` and paired `"`
     private static func castType(_ dataType: String, dialect: SQLDialect) -> String? {
       let type = dataType.trimmingCharacters(in: .whitespaces)
       let punctuation = Set("_(),.[]\" ".unicodeScalars)
@@ -227,6 +241,30 @@ nonisolated enum ImportMatchPlanner {
       default: return unmodified
       }
     }
+
+    /// Whether a PostgreSQL `castType` result names a `pg_catalog` type whatever the search_path:
+    /// a name `SQLDialect.cast` qualifies, `"char"`, a keyword type `format_type` writes (the
+    /// parser binds it), the same names with a `pg_catalog.` prefix, and arrays of those
+    private static func isPostgresBuiltIn(_ type: String) -> Bool {
+      var base = Substring(type)
+      while base.hasSuffix("[]") { base = base.dropLast(2) }
+      if base.lowercased().hasPrefix("pg_catalog.") { base = base.dropFirst(11) }
+      // Unquoted names fold to lower case; the quoted `"char"` is matched as written
+      let name = base.lowercased()
+      return base == #""char""# || TypeName.postgresBuiltIns.contains(name)
+        || postgresKeywordTypes.contains(name)
+    }
+
+    /// The SQL keyword names `format_type` writes for `pg_catalog` types, without typmods
+    private static let postgresKeywordTypes: Set<String> = [
+      "smallint", "integer", "bigint", "real", "double precision", "numeric", "boolean",
+      "character varying", "bit varying", "timestamp without time zone",
+      "timestamp with time zone", "time without time zone", "time with time zone", "interval",
+      "interval year", "interval month", "interval day", "interval hour", "interval minute",
+      "interval second", "interval year to month", "interval day to hour",
+      "interval day to minute", "interval day to second", "interval hour to minute",
+      "interval hour to second", "interval minute to second",
+    ]
 
     private static func mysqlMatch(_ column: TableStructure.Column) throws -> Match {
       if let characterSet = column.characterSet {

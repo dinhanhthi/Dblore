@@ -93,9 +93,12 @@ struct DataViewerFilterTests {
 
   // MARK: - Operand kind from the schema cache
 
-  /// A PostgreSQL view model on `public.users` with a `name` column of `nameType`, connected
-  /// to nothing (each read fails), so the page and count SQL are built but not run
-  private func makeTypedViewModel(nameType: String) -> NotebookViewModel {
+  /// A PostgreSQL view model on `public.users` with a `name` column of `nameType` and its
+  /// schema read's type data, connected to nothing (each read fails), so the page and count SQL
+  /// are built but not run
+  private func makeTypedViewModel(
+    nameType: String, postgresType: PostgresColumnType?
+  ) -> NotebookViewModel {
     let viewModel = makeViewModel()
     viewModel.connectionManager = DatabaseConnectionManager()
     viewModel.databaseTables = [
@@ -103,7 +106,7 @@ struct DataViewerFilterTests {
         schema: "public", name: "users",
         columns: [
           DatabaseColumn(name: "id", type: "integer", isPrimaryKey: true),
-          DatabaseColumn(name: "name", type: nameType),
+          DatabaseColumn(name: "name", type: nameType, postgresType: postgresType),
         ])
     ]
     viewModel.filterDraft = TableFilter(conditions: [condition("name", "bob")])
@@ -115,11 +118,15 @@ struct DataViewerFilterTests {
       && viewModel.dataViewer?.countSQL.contains("WHERE \(clause)") == true
   }
 
-  @Test("A citext column of the cached table keeps the bare =; an uncached table qualifies it")
-  func citextColumnKeepsBareOperator() async {
-    let viewModel = makeTypedViewModel(nameType: "citext")
+  @Test(
+    "A citext column of the cached table uses its extension's =; an uncached table qualifies it")
+  func citextColumnUsesExtensionOperator() async {
+    let citext = PostgresColumnType(
+      oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+      operatorSchema: "public")
+    let viewModel = makeTypedViewModel(nameType: "citext", postgresType: citext)
     await viewModel.applyFilter()
-    #expect(hasWhere(viewModel, "\"name\" = 'bob'"))
+    #expect(hasWhere(viewModel, "\"name\" OPERATOR(public.=) 'bob'"))
 
     // Changed column types count the filtered total again (the count read fails here)
     viewModel.dataViewer?.totalRows = 7
@@ -129,48 +136,22 @@ struct DataViewerFilterTests {
     #expect(viewModel.dataViewer?.totalRows == nil)
   }
 
-  @Test("An open transaction does not mark the user types read as failed")
-  func pendingTransactionDefersUserTypesRead() async throws {
-    let manager = WorkspaceManager(
-      workspace: Workspace(connectionConfig: ConnectionConfig()), restoreTabs: false)
-    manager.connectionState = .connected
-    manager.pendingTransaction = .appTx(pending: [])
-    let viewModel = try #require(manager.viewModel(for: manager.newNotebook()))
-
-    viewModel.requestUserTypes()
-    for _ in 0..<20 { await Task.yield() }
-    #expect(manager.databaseUserTypes.error == nil)
-
-    // After Commit or Rollback the next page asks (the unconnected read fails)
-    manager.pendingTransaction = .idle
-    viewModel.requestUserTypes()
-    for _ in 0..<200 where manager.databaseUserTypes.error == nil {
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(manager.databaseUserTypes.error != nil)
-  }
-
-  @Test("A domain over citext keeps the bare = once the user types are cached")
-  func domainOverCitextKeepsBareOperator() async {
-    let viewModel = makeTypedViewModel(nameType: "email")
-    var requests = 0
-    viewModel.requestUserTypes = { requests += 1 }
+  @Test("A domain over citext compares cast to citext; a citext no extension owns qualifies")
+  func domainOverCitextComparesCast() async {
+    let domain = PostgresColumnType(
+      oid: 16_401, operand: .bare, castName: "public.email", compareCast: "public.citext",
+      operatorSchema: "public")
+    let viewModel = makeTypedViewModel(nameType: "email", postgresType: domain)
     await viewModel.applyFilter()
-    #expect(hasWhere(viewModel, "\"name\" OPERATOR(pg_catalog.=) 'bob'"))
-    #expect(requests > 0)
+    #expect(
+      hasWhere(viewModel, "\"name\"::public.citext OPERATOR(public.=) 'bob'::public.citext"))
 
-    let domain = { (name: String, base: String) in
-      DatabaseUserType(
-        schema: "public", name: name,
-        kind: .domain(baseType: base, notNull: false, defaultExpression: nil, constraints: []))
-    }
-    // Domain over domain: email -> work_email_base -> public.citext
-    viewModel.databaseTables[0].columns[1] = DatabaseColumn(name: "name", type: "public.email")
-    viewModel.workspaceUserTypes = {
-      [domain("email", "work_email_base"), domain("work_email_base", "public.citext")]
-    }
-    await viewModel.applyFilter()
-    #expect(hasWhere(viewModel, "\"name\" = 'bob'"))
+    let evil = PostgresColumnType(
+      oid: 16_402, operand: .qualified, castName: "evil.citext", compareCast: nil,
+      operatorSchema: nil)
+    let planted = makeTypedViewModel(nameType: "evil.citext", postgresType: evil)
+    await planted.applyFilter()
+    #expect(hasWhere(planted, "\"name\" OPERATOR(pg_catalog.=) 'bob'"))
   }
 
 }

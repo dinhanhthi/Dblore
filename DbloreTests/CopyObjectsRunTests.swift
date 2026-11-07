@@ -431,61 +431,115 @@ struct CopyObjectsRunTests {
     #expect(next.binds == [.text("7"), .text("a")])
   }
 
-  @Test("PostgreSQL source: a citext key keeps its own > and =, an integer key qualifies")
+  /// citext owned by its extension in `public`
+  static let citext = PostgresColumnType(
+    oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+    operatorSchema: "public")
+  /// A domain over citext: compared cast to citext
+  static let citextDomain = PostgresColumnType(
+    oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+    operatorSchema: "public")
+  /// `evil.citext`, a domain over text no extension owns: its type text reads "citext" when
+  /// `evil` comes first on the search_path
+  static let evilCitext = PostgresColumnType(
+    oid: 16_402, operand: .qualified, castName: "evil.citext", compareCast: nil,
+    operatorSchema: nil)
+
+  @Test("PostgreSQL source: a citext key uses its extension's > and =, an integer key qualifies")
   func postgresCitextKeyset() throws {
-    // A qualified > on citext compares as text: the page boundary would skip or repeat rows
-    let citext = try Self.postgresRead([("name", "citext")], key: ["name"], target: .postgresql)
+    // pg_catalog's > on citext compares as text: the page boundary would skip or repeat rows
+    let citext = try Self.postgresRead(
+      [("name", "citext")], key: ["name"], target: .postgresql, types: ["name": Self.citext])
     #expect(
       citext.select(after: ["Ada"], offset: 0).sql.hasSuffix(
-        #"WHERE "name" > $1 ORDER BY "name" LIMIT 500"#))
+        #"WHERE "name" OPERATOR(public.>) $1 ORDER BY "name" LIMIT 500"#))
     let mixed = try Self.postgresRead(
-      [("id", "integer"), ("name", "public.citext")], key: ["id", "name"], target: .postgresql)
+      [("id", "integer"), ("name", "public.citext")], key: ["id", "name"], target: .postgresql,
+      types: ["name": Self.citext])
     let chain = mixed.select(after: ["1", "Ada"], offset: 0)
     #expect(
       chain.sql.hasSuffix(
         #"WHERE (("id" OPERATOR(pg_catalog.>) $1) OR ("id" OPERATOR(pg_catalog.=) $1 AND "#
-          + #""name" > $2)) ORDER BY "id", "name" LIMIT 500"#))
+          + #""name" OPERATOR(public.>) $2)) ORDER BY "id", "name" LIMIT 500"#))
     #expect(chain.binds == [.text("1"), .text("Ada")])
-    // The = on a leading citext key column is bare too
+    // The = on a leading citext key column uses the extension's operator too
     let leading = try Self.postgresRead(
-      [("name", "citext"), ("id", "integer")], key: ["name", "id"], target: .postgresql)
+      [("name", "citext"), ("id", "integer")], key: ["name", "id"], target: .postgresql,
+      types: ["name": Self.citext])
     #expect(
       leading.select(after: ["Ada", "1"], offset: 0).sql.contains(
-        #"WHERE (("name" > $1) OR ("name" = $1 AND "id" OPERATOR(pg_catalog.>) $2))"#))
+        #"WHERE (("name" OPERATOR(public.>) $1) OR ("name" OPERATOR(public.=) $1 AND "#
+          + #""id" OPERATOR(pg_catalog.>) $2))"#))
     let integer = try Self.postgresRead([("id", "integer")], key: ["id"], target: .postgresql)
     #expect(
       integer.select(after: ["1"], offset: 0).sql.hasSuffix(
         #"WHERE "id" OPERATOR(pg_catalog.>) $1 ORDER BY "id" LIMIT 500"#))
   }
 
-  @Test("PostgreSQL source: a key of a user type (a domain over citext) is read by position")
+  @Test("PostgreSQL source: a domain over citext key pages with citext's > and = on both sides")
+  func postgresCitextDomainKeyset() throws {
+    // ORDER BY sorts the domain as citext: both sides are cast to citext, so the boundary
+    // follows the same order and an operator planted on the domain itself never applies
+    let domain = try Self.postgresRead(
+      [("name", "cit_dom")], key: ["name"], target: .postgresql,
+      types: ["name": Self.citextDomain])
+    #expect(!domain.readsByPosition)
+    #expect(
+      domain.select(after: ["Ada"], offset: 0).sql.hasSuffix(
+        #"WHERE "name"::public.citext OPERATOR(public.>) $1::public.citext"#
+          + #" ORDER BY "name" LIMIT 500"#))
+    let leading = try Self.postgresRead(
+      [("name", "public.cit_dom"), ("id", "integer")], key: ["name", "id"], target: .postgresql,
+      types: ["name": Self.citextDomain])
+    let chain = leading.select(after: ["Ada", "1"], offset: 0)
+    #expect(
+      chain.sql.hasSuffix(
+        #"WHERE (("name"::public.citext OPERATOR(public.>) $1::public.citext) OR "#
+          + #"("name"::public.citext OPERATOR(public.=) $1::public.citext AND "#
+          + #""id" OPERATOR(pg_catalog.>) $2)) ORDER BY "name", "id" LIMIT 500"#))
+    #expect(chain.binds == [.text("Ada"), .text("1")])
+  }
+
+  @Test("PostgreSQL source: a key of a user type with no extension operator is read by position")
   func postgresUserTypeKeyByPosition() throws {
-    // pg_catalog's > on a domain over citext compares as text while ORDER BY sorts as citext
-    for type in ["email", "public.email", #""Email""#] {
+    // No comparison is known to follow the type's order: a look-alike `evil.citext` (its type
+    // text reads "citext"), a domain or enum the schema read gave no type data for
+    let cases: [(String, PostgresColumnType?)] = [
+      ("citext", Self.evilCitext), ("evil.citext", Self.evilCitext), ("email", nil),
+      ("public.email", nil), (#""Email""#, nil), ("citext", nil), ("public.citext", nil),
+    ]
+    for (type, data) in cases {
       let read = try Self.postgresRead(
-        [("id", "integer"), ("name", type)], key: ["id", "name"], target: .postgresql)
+        [("id", "integer"), ("name", type)], key: ["id", "name"], target: .postgresql,
+        types: data.map { ["name": $0] } ?? [:])
       #expect(read.readsByPosition, "\(type)")
       let page = read.select(after: nil, offset: 1000, limit: 9).sql
       #expect(!page.contains("WHERE"), "\(type)")
       #expect(page.hasSuffix(#" ORDER BY "id", "name" LIMIT 9 OFFSET 1000"#), "\(page)")
     }
-    for type in ["integer", "citext", "public.citext", "timestamp(3) with time zone", "uuid"] {
-      let read = try Self.postgresRead([("k", type)], key: ["k"], target: .postgresql)
+    let keyed: [(String, PostgresColumnType?)] = [
+      ("integer", nil), ("citext", Self.citext), ("public.citext", Self.citext),
+      ("cit_dom", Self.citextDomain), ("timestamp(3) with time zone", nil), ("uuid", nil),
+    ]
+    for (type, data) in keyed {
+      let read = try Self.postgresRead(
+        [("k", type)], key: ["k"], target: .postgresql, types: data.map { ["k": $0] } ?? [:])
       #expect(!read.readsByPosition, "\(type)")
     }
   }
 
-  /// The read of `public.t` (`columns` as name and `format_type` text, keyed by `key`) from a
-  /// PostgreSQL source into `target`
+  /// The read of `public.t` (`columns` as name and `format_type` text, keyed by `key`, with the
+  /// schema read's `types` by column name) from a PostgreSQL source into `target`
   static func postgresRead(
-    _ columns: [(String, String)], key: [String], target: Engine
+    _ columns: [(String, String)], key: [String], target: Engine,
+    types: [String: PostgresColumnType] = [:]
   ) throws -> CopyObjectsTableRead {
     let source = TableStructure(
       tableID: .postgresql(oid: 1), schema: "public", name: "t",
       columns: columns.enumerated().map {
         TableStructure.Column(
           ordinal: $0.offset + 1, name: $0.element.0, dataType: $0.element.1,
-          isNullable: !key.contains($0.element.0))
+          isNullable: !key.contains($0.element.0), postgresType: types[$0.element.0])
       },
       indexes: [],
       constraints: [TableStructure.Constraint(name: nil, kind: .primaryKey, columns: key)])

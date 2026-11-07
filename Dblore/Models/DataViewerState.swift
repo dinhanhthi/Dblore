@@ -32,11 +32,11 @@ struct DataViewerState: Equatable {
   var databaseType: DatabaseType = .postgresql
   /// The applied filter (SQL engines only)
   var filter = TableFilter(conditions: [])
-  /// Column name → schema type text (`DatabaseColumn.type`, a cached domain's base type) of the
-  /// viewed relation, from the schema cache: picks the operand kind of each PostgreSQL filter
-  /// comparison. Empty until the cache has the relation, so every comparison is
-  /// `pg_catalog`-qualified.
-  var columnTypes: [String: String] = [:]
+  /// Column name → the schema read's type data (`DatabaseColumn.postgresType`) of the viewed
+  /// relation, from the schema cache: picks the operator of each PostgreSQL filter comparison.
+  /// A column without type data (a built-in type, or the cache does not have the relation yet)
+  /// compares with `pg_catalog`'s operator.
+  var columnTypeData: [String: PostgresColumnType] = [:]
   /// MongoDB: the applied filter document as typed (relaxed JSON / mongosh notation), "" for none
   var documentFilter = ""
   /// MongoDB: the header sort, nil for the default `{_id: 1}`
@@ -119,7 +119,7 @@ struct DataViewerState: Equatable {
 
   /// ` WHERE <clause>` for the applied filter, empty without a complete condition
   private var whereSQL: String {
-    filter.whereClause(dialect: databaseType.dialect, columnTypes: columnTypes)
+    filter.whereClause(dialect: databaseType.dialect, columnTypeData: columnTypeData)
       .map { " WHERE " + $0 } ?? ""
   }
 

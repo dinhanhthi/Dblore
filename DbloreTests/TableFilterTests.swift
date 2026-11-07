@@ -151,6 +151,28 @@ struct TableFilterTests {
     #expect(filter.whereClause(dialect: dialect.dialect, qualifier: nil) == expected)
   }
 
+  @Test("A column's type data picks its extension's operator; other data qualifies")
+  func extensionOperatorFromTypeData() {
+    let citext = PostgresColumnType(
+      oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+      operatorSchema: "public")
+    let domain = PostgresColumnType(
+      oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+      operatorSchema: "public")
+    // `evil.citext`, owned by no extension
+    let evil = PostgresColumnType(
+      oid: 16_402, operand: .qualified, castName: "evil.citext", compareCast: nil,
+      operatorSchema: nil)
+    let filter = TableFilter(conditions: [
+      condition("a", .equals, "x"), condition("b", .in, "x, y"), condition("e", .greaterThan, "x"),
+    ])
+    #expect(
+      filter.whereClause(
+        dialect: .postgresql, columnTypeData: ["a": citext, "b": domain, "e": evil])
+        == #""a" OPERATOR(public.=) 'x' AND ("b"::public.citext OPERATOR(public.=) 'x'::public.citext OR "b"::public.citext OPERATOR(public.=) 'y'::public.citext) AND "e" OPERATOR(pg_catalog.>) 'x'"#
+    )
+  }
+
   @Test("Empty filter has no clause")
   func emptyFilter() {
     #expect(TableFilter(conditions: []).isEmpty)

@@ -98,8 +98,7 @@ class NotebookViewModel {
   /// by `WorkspaceManager`.
   @ObservationIgnored weak var writeUnlock: WriteUnlockController?
   /// Workspace mode: the workspace's cached enums, domains and composites, nil while unread.
-  /// The data viewer resolves a domain column to its base type with them. Set by
-  /// `WorkspaceManager`.
+  /// Set by `WorkspaceManager`.
   @ObservationIgnored var workspaceUserTypes: @MainActor () -> [DatabaseUserType]? = { nil }
   /// Workspace mode: starts the workspace's lazy user type read (the sidebar's) without waiting
   /// for it. Set by `WorkspaceManager`.

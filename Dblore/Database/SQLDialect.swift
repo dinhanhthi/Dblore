@@ -486,33 +486,20 @@ nonisolated enum SQLComparison: String, Sendable, CaseIterable {
   case greaterOrEqual = ">="
 }
 
-/// Whether a PostgreSQL comparison on a column names `pg_catalog`'s operator. Only a fixed list
-/// of extension base types (and their arrays) keeps the bare operator, because `pg_catalog` has
-/// none for them (a qualified `=` would make a citext filter case-sensitive or fail on PostGIS).
-/// Every other type text qualifies: built-ins, arrays, enums, domains, composites, ranges,
-/// unknown names and a missing type, so an unlisted extension type fails visibly. A caller that
-/// knows a domain's base type passes that instead (the data viewer, from the cached user types).
+/// Whether a PostgreSQL comparison on a column names `pg_catalog`'s operator (`.qualified`) or
+/// the owning extension's (`.bare`, written `OPERATOR(<extension schema>.op)` by
+/// `comparison(_:_:_:type:)`), because `pg_catalog` has none for a listed extension type (a
+/// qualified `=` would make a citext filter case-sensitive or fail on PostGIS). Only the schema
+/// read's type data decides it, never a type's name.
 nonisolated enum SQLOperandKind: Sendable, Equatable {
   case qualified
   case bare
-
-  /// `columnType` is the schema's `format_type` text (`DatabaseColumn.type`), never a result's
-  /// `ColumnInfo.type`; the schema prefix, quotes, typmod and `[]` are ignored
-  init(columnType: String?) {
-    let name = columnType.flatMap { TypeName.parts($0).last?.name }
-    self = name.map(Self.extensionTypes.contains) == true ? .bare : .qualified
-  }
 
   /// From the schema read's type data: `.bare` only for an extension type whose operator schema
   /// is known; no type data, or no schema, is `.qualified`
   init(column type: PostgresColumnType?) {
     self = type?.operand == .bare && type?.operatorSchema != nil ? .bare : .qualified
   }
-
-  private static let extensionTypes: Set<String> = [
-    "citext", "geometry", "geography", "hstore", "ltree", "lquery", "ltxtquery", "cube", "isbn",
-    "isbn13", "issn", "issn13", "ean13", "ismn", "ismn13", "upc",
-  ]
 }
 
 /// A PostgreSQL column's type as the schema read classifies it on the server
@@ -588,5 +575,6 @@ nonisolated enum TypeName {
     "regcollation", "tsvector", "tsquery", "pg_lsn", "pg_snapshot", "txid_snapshot",
     "int4range", "int8range", "numrange", "tsrange", "tstzrange", "daterange", "int4multirange",
     "int8multirange", "nummultirange", "tsmultirange", "tstzmultirange", "datemultirange",
+    "oidvector", "int2vector", "pg_node_tree", "aclitem",
   ]
 }

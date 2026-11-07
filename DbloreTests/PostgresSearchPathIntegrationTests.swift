@@ -675,8 +675,9 @@ struct PostgresSearchPathIntegrationTests {
     let cached = try await victim.fetchAllColumns()[table.qualifiedName] ?? []
     #expect(cached.map(\.name) == ["id", "name", "note", "body"])
     var state = DataViewerState(schema: "public", name: "t", orderColumns: ["id"])
-    state.columnTypes = Dictionary(
-      cached.map { ($0.name, $0.type) }, uniquingKeysWith: { first, _ in first })
+    state.columnTypeData = Dictionary(
+      cached.compactMap { column in column.postgresType.map { (column.name, $0) } },
+      uniquingKeysWith: { first, _ in first })
     state.lazyColumns = DataViewerState.lazyColumns(
       cached.map { ($0.name, $0.type, $0.isPrimaryKey) }, databaseType: .postgresql,
       orderColumns: state.orderColumns)
