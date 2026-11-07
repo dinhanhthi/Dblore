@@ -248,11 +248,14 @@ nonisolated enum RowChangeSQLBuilder {
       if index > 0 {
         draft.text(" AND ")
       }
-      // The value goes after `<column> OPERATOR(pg_catalog.=) ` (PostgreSQL); a key compares
-      // qualified whatever its type: the values are the row's own stored values
-      draft.text(dialect.comparison(quote(column, dialect: dialect), .equal, ""))
+      // The value goes after `<column> OPERATOR(pg_catalog.=) ` (PostgreSQL), or the key
+      // column's extension operator from its type data (`EditTarget.keyTypes`)
+      let parts = dialect.comparisonParts(
+        quote(column, dialect: dialect), .equal, type: target.keyTypes[column])
+      draft.text(parts.lead)
       let value = index < values.count ? values[index] : .null
       draft.value(value)
+      draft.text(parts.trail)
     }
   }
 

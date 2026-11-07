@@ -35,6 +35,43 @@ struct ForeignKeyNavigationTests {
     #expect(await settledSQL(recorder).isEmpty)
   }
 
+  @Test("Lookup compares with the target table's column types, never the viewed table's")
+  func lookupUsesTargetColumnTypes() async throws {
+    let citext = PostgresColumnType(
+      oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+      operatorSchema: "public")
+    let citextDomain = PostgresColumnType(
+      oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+      operatorSchema: "public")
+    let cases: [(viewed: PostgresColumnType?, target: PostgresColumnType?, term: String)] = [
+      (citext, nil, #""id" OPERATOR(pg_catalog.=) $1"#),
+      (nil, citextDomain, #""id"::public.citext OPERATOR(public.=) $1::public.citext"#),
+    ]
+    for (viewed, target, term) in cases {
+      let (viewModel, session, _) = try await connectedViewModel(protection: .none)
+      viewModel.databaseForeignKeys = [userKey]
+      viewModel.databaseTables = [
+        DatabaseTable(
+          schema: "public", name: "orders",
+          columns: [
+            DatabaseColumn(name: "id", type: "t", isPrimaryKey: true, postgresType: viewed),
+            DatabaseColumn(name: "user_id", type: "t"),
+          ]),
+        DatabaseTable(
+          schema: "public", name: "users",
+          columns: [
+            DatabaseColumn(name: "id", type: "t", isPrimaryKey: true, postgresType: target)
+          ]),
+      ]
+      _ = try await viewModel.lookupReferencedRow(
+        column: "user_id", schema: "public", table: "orders", rowColumns: ["id", "user_id"],
+        values: ["user_id": .string("Ann")])
+      #expect(
+        session.statements == [#"SELECT * FROM "public"."users" WHERE "# + term + " LIMIT 2"])
+      #expect(session.statementBinds == [[.text("Ann")]])
+    }
+  }
+
   @Test("A null component, a missing schema, or a missing reference sends nothing")
   func noLookupSendsNothing() async throws {
     let (viewModel, session, _) = try await connectedViewModel(protection: .none)

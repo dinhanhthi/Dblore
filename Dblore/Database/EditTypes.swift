@@ -20,8 +20,9 @@ nonisolated struct RowExistenceCheck: Sendable, Equatable {
 
 /// `UPDATE [ONLY] <table> SET <c1> = $1[, ...] WHERE <pk1> = $n [AND ...]` for grid cells of a row
 /// (a keyless row: its `RowLocatorKind` terms instead). PostgreSQL keys compare with
-/// `OPERATOR(pg_catalog.=)` whatever their type: the values are the row's own stored values.
-/// MySQL: backticks and `?`. Identifiers are quoted; values never appear in the SQL text.
+/// `OPERATOR(pg_catalog.=)`, or a key column's extension operator from its type data
+/// (`SQLDialect.comparisonParts`). MySQL: backticks and `?`. Identifiers are quoted; values
+/// never appear in the SQL text.
 nonisolated struct CellUpdateStatement: Sendable, Equatable {
   let sql: String
   /// New values in SET order (bytes as `inputText`), then the primary-key values in key order
@@ -39,12 +40,13 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   static func make(
     qualifiedName: String, columnName: String, newValue: String?, primaryKeyColumns: [String],
     rowData: [String: CellValue], updateOnly: Bool = false, dialect: SQLDialect = .postgresql,
-    rowLocator: RowLocatorKind? = nil, locator: RowLocatorValues? = nil
+    rowLocator: RowLocatorKind? = nil, locator: RowLocatorValues? = nil,
+    keyTypes: [String: PostgresColumnType] = [:]
   ) throws -> CellUpdateStatement {
     try make(
       qualifiedName: qualifiedName, assignments: [(column: columnName, value: newValue)],
       primaryKeyColumns: primaryKeyColumns, rowData: rowData, updateOnly: updateOnly,
-      dialect: dialect, rowLocator: rowLocator, locator: locator)
+      dialect: dialect, rowLocator: rowLocator, locator: locator, keyTypes: keyTypes)
   }
 
   /// Builds one UPDATE setting every `assignments` column of `rowData`, keyed by
@@ -61,13 +63,15 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   ///   - rowLocator: the target's locator kind (`EditTarget.rowLocator`); nil keys by
   ///     `primaryKeyColumns`
   ///   - locator: the page row's entry of the side locator table (`RowLocatorValues`)
+  ///   - keyTypes: PostgreSQL type data of key columns (`EditTarget.keyTypes`); a key column
+  ///     without it compares with `pg_catalog`'s `=`
   /// - Throws: `DatabaseError.notEditable` when there is no assignment, the row cannot be
   ///   targeted by its primary key or its locator, or a binary column's text is not valid base64
   static func make(
     qualifiedName: String, assignments: [(column: String, value: String?)],
     primaryKeyColumns: [String], rowData: [String: CellValue], updateOnly: Bool = false,
     dialect: SQLDialect = .postgresql, rowLocator: RowLocatorKind? = nil,
-    locator: RowLocatorValues? = nil
+    locator: RowLocatorValues? = nil, keyTypes: [String: PostgresColumnType] = [:]
   ) throws -> CellUpdateStatement {
     guard isServerQualifiedName(qualifiedName, dialect: dialect) else {
       throw DatabaseError.notEditable("unsupported table name \"\(qualifiedName)\"")
@@ -102,8 +106,9 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
         keyValues.append(text)
         let placeholder = bindPlaceholder(
           dialect.placeholder(assignments.count + index + 1), value, dialect: dialect)
-        conditions.append(
-          dialect.comparison(quoteIdentifier(column, dialect: dialect), .equal, placeholder))
+        let parts = dialect.comparisonParts(
+          quoteIdentifier(column, dialect: dialect), .equal, type: keyTypes[column])
+        conditions.append(parts.lead + placeholder + parts.trail)
       }
     }
     let only = updateOnly && dialect.supportsUpdateOnly ? "ONLY " : ""
@@ -608,6 +613,7 @@ typealias ResultTargets = (editTarget: EditTarget?, lookupRelation: LookupRelati
 /// execution creates a new `generation`, so an edit can be checked against the result it was
 /// opened from, and carries the `connectionEpoch` it was resolved on, so the actor refuses it
 /// after a reconnect or connection switch. Callers compare `tableID`; they do not read a catalog OID.
+/// `keyTypes` is not part of `==` (see there).
 nonisolated struct EditTarget: Sendable, Equatable {
   let qualifiedName: String
   let tableID: TableRef
@@ -629,12 +635,18 @@ nonisolated struct EditTarget: Sendable, Equatable {
   /// A PostgreSQL updatable view (`EditTable.viewBase`): cells are updated through the view's
   /// name with its mapped key; staged DELETE and INSERT are refused. Nil for a table.
   let viewBase: ViewBaseMap?
+  /// PostgreSQL type data by column name (`DatabaseColumn.postgresType` from the schema cache),
+  /// read for the key columns: one with an extension type compares with its extension's
+  /// operator. A key without it (built-in type, relation not cached, other engines) compares
+  /// qualified.
+  let keyTypes: [String: PostgresColumnType]
 
   init(
     qualifiedName: String, tableID: TableRef, primaryKeyColumns: [String],
     connectionEpoch: UInt64 = 0, updateOnly: Bool = false, generation: UUID = UUID(),
     schema: String? = nil, name: String? = nil, generatedColumns: Set<String> = [],
-    rowLocator: RowLocatorKind? = nil, viewBase: ViewBaseMap? = nil
+    rowLocator: RowLocatorKind? = nil, viewBase: ViewBaseMap? = nil,
+    keyTypes: [String: PostgresColumnType] = [:]
   ) {
     self.qualifiedName = qualifiedName
     self.tableID = tableID
@@ -647,6 +659,19 @@ nonisolated struct EditTarget: Sendable, Equatable {
     self.generatedColumns = generatedColumns
     self.rowLocator = rowLocator
     self.viewBase = viewBase
+    self.keyTypes = keyTypes
+  }
+
+  /// Every field but `keyTypes`: it comes from the schema cache, which can load or refresh
+  /// between two builds of the same target (a re-read keeps the staged generation), and must
+  /// not make a live target look replaced. A target without it only compares qualified.
+  static func == (lhs: EditTarget, rhs: EditTarget) -> Bool {
+    lhs.qualifiedName == rhs.qualifiedName && lhs.tableID == rhs.tableID
+      && lhs.primaryKeyColumns == rhs.primaryKeyColumns
+      && lhs.connectionEpoch == rhs.connectionEpoch && lhs.updateOnly == rhs.updateOnly
+      && lhs.generation == rhs.generation && lhs.schema == rhs.schema && lhs.name == rhs.name
+      && lhs.generatedColumns == rhs.generatedColumns && lhs.rowLocator == rhs.rowLocator
+      && lhs.viewBase == rhs.viewBase
   }
 
   /// This target with the masked `columns` (`ColumnInfo.masked`: their cells hold mask text)
@@ -663,6 +688,6 @@ nonisolated struct EditTarget: Sendable, Equatable {
       qualifiedName: qualifiedName, tableID: tableID, primaryKeyColumns: primaryKeyColumns,
       connectionEpoch: connectionEpoch, updateOnly: updateOnly, generation: generation,
       schema: schema, name: name, generatedColumns: generatedColumns.union(masked),
-      rowLocator: rowLocator, viewBase: viewBase)
+      rowLocator: rowLocator, viewBase: viewBase, keyTypes: keyTypes)
   }
 }

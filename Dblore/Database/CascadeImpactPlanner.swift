@@ -35,11 +35,23 @@
 // keys use row values (`(a, b) IN (...)`; SQLite through `VALUES`, which a row-value IN needs
 // on its right), DuckDB an OR of AND groups. SQLite enforces foreign keys only with
 // `PRAGMA foreign_keys` on: the plan carries that check to run first.
-// PostgreSQL names pg_catalog for everything it looks up, so an object planted in a schema on
+// PostgreSQL names the schema of everything it looks up, so an object planted in a schema on
 // the user's search_path never runs: `pg_catalog.count(*)`, key lists as OR chains (of AND
 // groups) of `OPERATOR(pg_catalog.=)`, and each subquery as `(a, b) OPERATOR(pg_catalog.=) ANY
 // (SELECT ...)`, which is what `IN (SELECT ...)` means there, NULLs included, with each key
-// column compared by pg_catalog's `=`. Keys always qualify: the values are the rows' own.
+// column compared by pg_catalog's `=`. A key column with the schema read's type data
+// (`columnTypes`, looked up in the column's own relation) compares through
+// `SQLDialect.comparisonParts`: a citext, ltree or hstore key with its extension's operator
+// (`OPERATOR(public.=)`), a domain over one cast to its base type on both sides. A child column
+// uses it only when it agrees with the parent column it references (the same type oid, or the
+// same extension base type: a domain over citext referencing citext casts both sides to
+// citext, as the key's own `=` compares); any other pair (a citext column referencing a text
+// key) compares with pg_catalog's `=`, as the foreign key itself does. Key lists compare each
+// column on its own; a subquery's row comparison names one operator for all its columns, so it
+// uses the type data when every column pair agrees on one operator and one cast, each column
+// cast on both sides. Residual: a mixed composite key's subquery stays qualified (no one
+// operator fits it, and an `EXISTS` form would change the NULL semantics of
+// `NOT (... = ANY ...)`).
 // Nothing here is sent to a database.
 
 import Foundation
@@ -98,10 +110,13 @@ nonisolated enum CascadeImpactPlanner {
 
   /// Counts for deleting the rows of `schema.table` whose `keyColumns` hold each of `keys`
   /// (values in `keyColumns` order). `foreignKeys` is every key of the database.
+  /// `columnTypes`: PostgreSQL type data by `"schema.relation"` (the keys of
+  /// `SchemaCatalog.columnsByRelation`), then column; a column without any compares qualified.
   /// `batchAlsoWrites`: the same batch edits or inserts rows, so every blocker is `.mayBlock`.
   static func impact(
     deletingFrom schema: String, table: String, keyColumns: [String], keys: [[CellValue]],
-    foreignKeys: [ForeignKey], dialect: SQLDialect, batchAlsoWrites: Bool = false
+    foreignKeys: [ForeignKey], dialect: SQLDialect,
+    columnTypes: [String: [String: PostgresColumnType]] = [:], batchAlsoWrites: Bool = false
   ) -> Impact {
     guard keys.count <= maxKeys else {
       return .notComputed("More than \(maxKeys.formatted()) rows are deleted.")
@@ -111,7 +126,7 @@ nonisolated enum CascadeImpactPlanner {
       return .plan(Plan(steps: [], enforcementCheck: check))
     }
     var planner = Walk(
-      foreignKeys: foreignKeys, dialect: dialect,
+      foreignKeys: foreignKeys, dialect: dialect, columnTypes: columnTypes,
       deleted: Deleted(schema: schema, table: table, keyColumns: keyColumns, keys: keys))
     let steps: [CountStep]
     do {
@@ -252,14 +267,20 @@ nonisolated enum CascadeImpactPlanner {
   fileprivate struct Walk {
     let foreignKeys: [ForeignKey]
     let dialect: SQLDialect
+    /// `"schema.relation"` → column → PostgreSQL type data
+    let columnTypes: [String: [String: PostgresColumnType]]
     let deleted: Deleted
     var counts: [Count] = []
     /// Tables a CASCADE step deletes from but the walk did not follow (a cycle or `maxDepth`)
     var unfollowed: Set<String> = []
 
-    init(foreignKeys: [ForeignKey], dialect: SQLDialect, deleted: Deleted) {
+    init(
+      foreignKeys: [ForeignKey], dialect: SQLDialect,
+      columnTypes: [String: [String: PostgresColumnType]], deleted: Deleted
+    ) {
       self.foreignKeys = foreignKeys
       self.dialect = dialect
+      self.columnTypes = columnTypes
       self.deleted = deleted
     }
 
@@ -267,15 +288,20 @@ nonisolated enum CascadeImpactPlanner {
       schema: String, table: String, rows: Rows, depth: Int, path: Set<String>
     ) throws {
       let parent = try relation(schema, table)
+      let parentTypes = typeData(schema, table)
       for key in foreignKeys
       where key.targetSchema == schema && sameTable(key.targetTable, table) {
         guard counts.count < CascadeImpactPlanner.maxSteps else {
           throw Failure(
             reason: "More than \(CascadeImpactPlanner.maxSteps) related counts are needed.")
         }
+        let childTypes = typeData(key.sourceSchema, key.sourceTable)
+        let pairTypes = zip(key.sourceColumns, key.targetColumns).map {
+          Self.agreed(childTypes[$0], parentTypes[$1])
+        }
         let condition = try match(
-          key.sourceColumns, to: key.targetColumns, of: rows, parent: parent,
-          constraint: key.constraintName)
+          key.sourceColumns, to: key.targetColumns, types: pairTypes, of: rows, parent: parent,
+          parentTypes: parentTypes, constraint: key.constraintName)
         let child = try relation(key.sourceSchema, key.sourceTable)
         var count = Fragment()
         let counted = dialect == .postgresql ? dialect.function("count", "*") : "COUNT(*)"
@@ -286,7 +312,9 @@ nonisolated enum CascadeImpactPlanner {
         let ownRows =
           effect == .blocking && key.sourceSchema == deleted.schema
             && sameTable(key.sourceTable, deleted.table)
-          ? keyList(try deleted.keyColumns.map(dialect.quoteIdentifier), deleted.keys) : nil
+          ? keyList(
+            try deleted.keyColumns.map(dialect.quoteIdentifier), deleted.keys,
+            types: deleted.keyColumns.map { typeData(deleted.schema, deleted.table)[$0] }) : nil
         counts.append(
           Count(
             schema: key.sourceSchema, table: key.sourceTable, constraintName: name(of: key),
@@ -347,10 +375,35 @@ nonisolated enum CascadeImpactPlanner {
       }
     }
 
-    /// `sources` (child columns) matched against `targets` (parent columns) of `rows`.
+    /// The type data of the columns of `schema.table`; empty when there is none
+    private func typeData(_ schema: String, _ table: String) -> [String: PostgresColumnType] {
+      columnTypes["\(schema).\(table)"] ?? [:]
+    }
+
+    /// The type data a child column and the parent column it references compare with: the
+    /// child's for the same type oid; for two extension operands of the same base type (two
+    /// domains over citext, a domain over citext and citext itself) the side with a
+    /// `compareCast`, so both sides are cast to it. Any other pair (a citext column referencing
+    /// a text key, through the implicit cast) is nil: compared qualified, as the foreign key
+    /// itself compares.
+    private static func agreed(
+      _ child: PostgresColumnType?, _ parent: PostgresColumnType?
+    ) -> PostgresColumnType? {
+      guard let child, let parent else { return nil }
+      if child.oid == parent.oid { return child }
+      guard SQLOperandKind(column: child) == .bare, SQLOperandKind(column: parent) == .bare,
+        child.operatorSchema == parent.operatorSchema,
+        let base = child.compareCast ?? child.castName,
+        base == parent.compareCast ?? parent.castName
+      else { return nil }
+      return child.compareCast != nil ? child : parent
+    }
+
+    /// `sources` (child columns) matched against `targets` (parent columns) of `rows`. `types`:
+    /// each source / target pair's agreed type data; `parentTypes`: the parent relation's.
     private func match(
-      _ sources: [String], to targets: [String], of rows: Rows, parent: String,
-      constraint: String
+      _ sources: [String], to targets: [String], types: [PostgresColumnType?], of rows: Rows,
+      parent: String, parentTypes: [String: PostgresColumnType], constraint: String
     ) throws -> Fragment {
       guard !sources.isEmpty, sources.count == targets.count else {
         throw Failure(reason: "Foreign key \"\(constraint)\" has no matching column lists.")
@@ -363,34 +416,56 @@ nonisolated enum CascadeImpactPlanner {
         if positions.count == targets.count, Set(targets).count == columns.count {
           return keyList(
             quotedSources,
-            values.map { row in positions.map { row.indices.contains($0) ? row[$0] : .null } })
+            values.map { row in positions.map { row.indices.contains($0) ? row[$0] : .null } },
+            types: types)
         }
-        let condition = keyList(try columns.map(dialect.quoteIdentifier), values)
+        let condition = keyList(
+          try columns.map(dialect.quoteIdentifier), values, types: columns.map { parentTypes[$0] })
         return try subquery(
-          quotedSources, targets, relation: parent, condition: condition,
+          quotedSources, targets, types: types, relation: parent, condition: condition,
           constraint: constraint)
       case .selected(let relation, let condition):
         return try subquery(
-          quotedSources, targets, relation: relation, condition: condition,
+          quotedSources, targets, types: types, relation: relation, condition: condition,
           constraint: constraint)
       }
     }
 
     /// `(sources) IN (SELECT targets FROM relation WHERE condition)`; PostgreSQL
-    /// `(sources) OPERATOR(pg_catalog.=) ANY (SELECT ...)`
+    /// `(sources) OPERATOR(pg_catalog.=) ANY (SELECT ...)`. When every column pair has agreed
+    /// type data (`types`) with one extension operator and one `compareCast`, the row compares
+    /// with that operator, each column cast on both sides:
+    /// `("c"::public.citext, "d"::public.citext) OPERATOR(public.=) ANY (SELECT
+    /// "p"::public.citext, "q"::public.citext ...)`.
     private func subquery(
-      _ sources: [String], _ targets: [String], relation: String, condition: Fragment,
-      constraint: String
+      _ sources: [String], _ targets: [String], types: [PostgresColumnType?], relation: String,
+      condition: Fragment, constraint: String
     ) throws -> Fragment {
       guard sources.count == 1 || dialect != .duckdb else {
         throw Failure(
           reason: "Foreign key \"\(constraint)\" references columns that are not the row key.")
       }
-      let columns = try targets.map(dialect.quoteIdentifier).joined(separator: ", ")
+      // A row comparison names one operator for all its columns: a mixed key stays qualified
+      // (see the file header)
+      let first = types.first ?? nil
+      let shared =
+        dialect == .postgresql && types.count == sources.count
+          && types.allSatisfy {
+            SQLOperandKind(column: $0) == .bare && $0?.operatorSchema == first?.operatorSchema
+              && $0?.compareCast == first?.compareCast
+          }
+        ? first : nil
+      let schema = shared?.operatorSchema
+      let cast = shared?.compareCast.map { "::\($0)" } ?? ""
+      let columns = try targets.map { try dialect.quoteIdentifier($0) + cast }
+        .joined(separator: ", ")
+      let row = tuple(sources.map { $0 + cast })
       var fragment = Fragment()
       let lead =
-        dialect == .postgresql
-        ? dialect.comparison(tuple(sources), .equal, "ANY (") : "\(tuple(sources)) IN ("
+        dialect != .postgresql
+        ? "\(tuple(sources)) IN ("
+        : (schema.map { "\(row) OPERATOR(\($0).=) " } ?? dialect.comparison(row, .equal, ""))
+          + "ANY ("
       fragment.text("\(lead)SELECT \(columns) FROM \(relation) WHERE ")
       fragment.append(condition)
       fragment.text(")")
@@ -399,8 +474,11 @@ nonisolated enum CascadeImpactPlanner {
 
     /// `columns` equal to one of `values` (each in `columns` order). PostgreSQL has no
     /// qualified `IN`: an OR chain of `OPERATOR(pg_catalog.=)`, as `SQLDialect.inList` writes,
-    /// of AND groups for a composite key (the DuckDB form).
-    private func keyList(_ columns: [String], _ values: [[CellValue]]) -> Fragment {
+    /// of AND groups for a composite key (the DuckDB form); a column with type data (`types`, in
+    /// `columns` order) compares through `SQLDialect.comparisonParts`.
+    private func keyList(
+      _ columns: [String], _ values: [[CellValue]], types: [PostgresColumnType?]
+    ) -> Fragment {
       var fragment = Fragment()
       let grouped = columns.count > 1
       if dialect == .postgresql || (grouped && dialect == .duckdb) {
@@ -408,8 +486,13 @@ nonisolated enum CascadeImpactPlanner {
         for (row, value) in values.enumerated() {
           fragment.text(row == 0 ? (grouped ? "(" : "") : (grouped ? " OR (" : " OR "))
           for (index, column) in columns.enumerated() {
-            fragment.text((index == 0 ? "" : " AND ") + dialect.comparison(column, .equal, ""))
+            let parts = dialect.comparisonParts(
+              column, .equal, type: index < types.count ? types[index] : nil)
+            fragment.text((index == 0 ? "" : " AND ") + parts.lead)
             fragment.value(index < value.count ? value[index] : .null)
+            if !parts.trail.isEmpty {
+              fragment.text(parts.trail)
+            }
           }
           if grouped {
             fragment.text(")")

@@ -218,7 +218,7 @@ extension NotebookViewModel {
         updateOnly: target.updateOnly, dialect: sqlDialect, rowLocator: target.rowLocator,
         locator: target.rowLocator.flatMap {
           editorResult?.truncation?.locatorKey(row: state.originalRow, kind: $0)?.locator
-        }),
+        }, keyTypes: target.keyTypes),
       statement == edit.statement
     else { return }
 

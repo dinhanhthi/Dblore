@@ -116,9 +116,27 @@ extension NotebookViewModel {
       qualifiedName: table.qualifiedName, tableID: tableID, primaryKeyColumns: primaryKey,
       connectionEpoch: table.connectionEpoch, updateOnly: table.updateOnly, schema: table.schema,
       name: table.name, generatedColumns: table.generatedColumns, rowLocator: rowLocator,
-      viewBase: table.viewBase
+      viewBase: table.viewBase,
+      keyTypes: cachedKeyTypes(schema: table.schema, name: table.name, keys: primaryKey)
     ).masking(columns)
     return (target, lookup)
+  }
+
+  /// Key column → type data (`DatabaseColumn.postgresType`) of the table or view `schema.name`
+  /// in the schema cache, never a catalog read. A relation the cache does not have, or a key
+  /// column of a built-in type, is absent: compared qualified.
+  private func cachedKeyTypes(
+    schema: String?, name: String?, keys: [String]
+  ) -> [String: PostgresColumnType] {
+    guard !keys.isEmpty, let schema, let name else { return [:] }
+    let columns =
+      databaseTables.first { $0.schema == schema && $0.name == name }?.columns
+      ?? databaseViews.first { $0.schema == schema && $0.name == name }?.columns ?? []
+    return Dictionary(
+      columns.compactMap { column in
+        keys.contains(column.name) ? column.postgresType.map { (column.name, $0) } : nil
+      },
+      uniquingKeysWith: { first, _ in first })
   }
 
   /// True when every column is a plain column of `table` (its origin is the table and its
@@ -794,7 +812,7 @@ extension NotebookViewModel {
         qualifiedName: target.qualifiedName, assignments: bound,
         primaryKeyColumns: target.primaryKeyColumns, rowData: rowData,
         updateOnly: target.updateOnly, dialect: sqlDialect, rowLocator: target.rowLocator,
-        locator: locator)
+        locator: locator, keyTypes: target.keyTypes)
     } catch {
       showToast(error.localizedDescription, type: .error)
       return false
@@ -988,7 +1006,7 @@ extension NotebookViewModel {
                   primaryKeyColumns: target.primaryKeyColumns,
                   rowData: CellResult.rowData(columns: result.columns, row: result.rows[index]),
                   dialect: sqlDialect, rowLocator: target.rowLocator,
-                  locator: locator(index)?.locator)
+                  locator: locator(index)?.locator, keyTypes: target.keyTypes)
               else { return false }
               return statement.values.dropFirst(count) == edit.statement.values.dropFirst(count)
             })

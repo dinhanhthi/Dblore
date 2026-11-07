@@ -357,6 +357,13 @@ struct PostgresUserDataQualificationTests {
       Statement(name: "fk jump page", sql: viewer.pageSQL),
       Statement(name: "fk jump count", sql: viewer.countSQL),
     ])
+    // A citext / domain-over-citext target column: its extension's operator, after that column
+    let typeData = ["b": Self.citext, "a": Self.citextDomain]
+    let typed = try #require(
+      ForeignKeyLookup.lookupSQL(
+        for: key, values: values, dialect: Self.dialect, columnTypes: typeData))
+    #expect(typed.sql.components(separatedBy: "OPERATOR(public.=)").count == 3)
+    expectQualified([Statement(name: "typed fk lookup", sql: typed.sql, columnTypeData: typeData)])
     // The batch 11 lookup: a bare = per key column
     let bare = #"SELECT * FROM "main"."parent" WHERE "b" = :fk1 AND "a" = :fk2 LIMIT 2"#
     #expect(PostgresQualificationLint.violations(bare).count == 2)

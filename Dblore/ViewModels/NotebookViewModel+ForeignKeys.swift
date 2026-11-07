@@ -27,7 +27,9 @@ extension NotebookViewModel {
     guard
       let key = referencedKey(
         column: column, schema: schema, table: table, rowColumns: rowColumns),
-      let query = ForeignKeyLookup.lookupSQL(for: key, values: values, dialect: sqlDialect)
+      let query = ForeignKeyLookup.lookupSQL(
+        for: key, values: values, dialect: sqlDialect,
+        columnTypes: referencedColumnTypes(schema: key.targetSchema, name: key.targetTable))
     else { return nil }
     guard let connectionManager else { throw DatabaseError.notConnected }
     // LIMIT 2 is in the SQL. Cap the read at 2 so a smaller result cap cannot hide the second row.
@@ -62,6 +64,18 @@ extension NotebookViewModel {
     return ForeignKeyLookup.reference(
       for: column, schema: schema, table: table, foreignKeys: lookupForeignKeys,
       rowColumns: rowColumns)
+  }
+
+  /// Target column → type data (`DatabaseColumn.postgresType`) of the referenced table in the
+  /// schema cache, never the viewed table's. A foreign key references a table, not a view. A
+  /// table the cache does not have, or a built-in column type, is absent: compared qualified.
+  private func referencedColumnTypes(
+    schema: String, name: String
+  ) -> [String: PostgresColumnType] {
+    let columns = databaseTables.first { $0.schema == schema && $0.name == name }?.columns ?? []
+    return Dictionary(
+      columns.compactMap { column in column.postgresType.map { (column.name, $0) } },
+      uniquingKeysWith: { first, _ in first })
   }
 
   /// Primary-key columns of a known table, else heap order. Same choice as the sidebar.

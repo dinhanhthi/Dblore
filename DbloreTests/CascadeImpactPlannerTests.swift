@@ -352,8 +352,233 @@ struct CascadeImpactPlannerTests {
     }
   }
 
+  @Test("A citext key compares with its extension's operator, at each level of the cascade")
+  func citextKeyUsesExtensionOperator() throws {
+    let keys = [
+      key("accounts_user_fk", child: "accounts", ["user_id"], parent: "users", ["id"], .cascade),
+      key(
+        "logins_account_fk", child: "logins", ["account_id"], parent: "accounts", ["id"],
+        .cascade),
+    ]
+    let types = [
+      "public.users": ["id": Self.citext],
+      "public.accounts": ["id": Self.citext, "user_id": Self.citext],
+      "public.logins": ["account_id": Self.citext],
+    ]
+    let plan = try plan(
+      CascadeImpactPlanner.impact(
+        deletingFrom: "public", table: "users", keyColumns: ["id"], keys: [[.string("Ann")]],
+        foreignKeys: keys, dialect: .postgresql, columnTypes: types))
+
+    // A child row holding "ann" is counted: citext's own = matches it, pg_catalog's would not
+    #expect(
+      plan.steps.map(\.sql) == [
+        #"SELECT pg_catalog.count(*) FROM "public"."accounts" WHERE ("user_id" \#(ext) :k1)"#,
+        #"SELECT pg_catalog.count(*) FROM "public"."logins" WHERE "account_id" \#(ext) ANY "#
+          + #"(SELECT "id" FROM "public"."accounts" WHERE ("user_id" \#(ext) :k1))"#,
+      ])
+    expectClean(plan, ["user_id": Self.citext, "account_id": Self.citext, "id": Self.citext])
+  }
+
+  @Test("A key on a domain over citext casts both sides, in the key list and the subquery")
+  func domainKeyCastsBothSides() throws {
+    let keys = [
+      key("b_a_fk", child: "b", ["a_id"], parent: "a", ["id"], .cascade),
+      key("c_b_fk", child: "c", ["b_id"], parent: "b", ["code"], .cascade),
+      // A composite key mixing a domain and an int4 column stays qualified (one operator)
+      key("d_b_fk", child: "d", ["b_code", "b_num"], parent: "b", ["code", "num"], .cascade),
+    ]
+    let types = [
+      "public.a": ["id": Self.citextDomain],
+      "public.b": ["a_id": Self.citextDomain, "code": Self.citextDomain],
+      "public.c": ["b_id": Self.citextDomain],
+      "public.d": ["b_code": Self.citextDomain],
+    ]
+    let plan = try plan(
+      CascadeImpactPlanner.impact(
+        deletingFrom: "public", table: "a", keyColumns: ["id"], keys: [[.string("X")]],
+        foreignKeys: keys, dialect: .postgresql, columnTypes: types))
+
+    let cast = "::public.citext"
+    let condition = #"("a_id"\#(cast) \#(ext) :k1\#(cast))"#
+    #expect(
+      plan.steps.map(\.sql) == [
+        #"SELECT pg_catalog.count(*) FROM "public"."b" WHERE "# + condition,
+        #"SELECT pg_catalog.count(*) FROM "public"."c" WHERE "b_id"\#(cast) \#(ext) ANY "#
+          + #"(SELECT "code"\#(cast) FROM "public"."b" WHERE \#(condition))"#,
+        #"SELECT pg_catalog.count(*) FROM "public"."d" WHERE ("b_code", "b_num") \#(eq) ANY "#
+          + #"(SELECT "code", "num" FROM "public"."b" WHERE \#(condition))"#,
+      ])
+    expectClean(
+      plan, ["a_id": Self.citextDomain, "b_id": Self.citextDomain, "code": Self.citextDomain])
+  }
+
+  @Test("Each column takes its own table's type; a citext child of a text parent is qualified")
+  func typesComeFromTheColumnsOwnTable() throws {
+    let keys = [
+      // `items.id` is int4, `tags.id` citext: the int4 key never borrows the citext type
+      key("items_parent_fk", child: "items", ["parent_id"], parent: "items", ["id"], .noAction),
+      key("tags_parent_fk", child: "tags", ["parent_id"], parent: "tags", ["id"], .noAction),
+      // A citext column referencing a text key (the implicit cast): compared as the key is
+      key("notes_user_fk", child: "notes", ["user_name"], parent: "users", ["name"], .cascade),
+      key("pins_note_fk", child: "pins", ["note_tag"], parent: "notes", ["tag"], .cascade),
+    ]
+    let types = [
+      "public.tags": ["id": Self.citext, "parent_id": Self.citext],
+      "public.notes": ["user_name": Self.citext, "tag": Self.citext],
+      "public.pins": ["note_tag": Self.citextDomain],
+    ]
+    func sql(_ table: String, _ column: String) throws -> [String] {
+      try plan(
+        CascadeImpactPlanner.impact(
+          deletingFrom: "public", table: table, keyColumns: [column], keys: [[.int(1)]],
+          foreignKeys: keys, dialect: .postgresql, columnTypes: types)
+      ).steps.map(\.sql)
+    }
+
+    #expect(
+      try sql("items", "id") == [
+        #"SELECT pg_catalog.count(*) FROM "public"."items" WHERE ("parent_id" \#(eq) :k1) "#
+          + #"AND NOT (("id" \#(eq) :k2))"#
+      ])
+    #expect(
+      try sql("tags", "id") == [
+        #"SELECT pg_catalog.count(*) FROM "public"."tags" WHERE ("parent_id" \#(ext) :k1) "#
+          + #"AND NOT (("id" \#(ext) :k2))"#
+      ])
+    // `users.name` is text, `notes.user_name` citext: they do not agree, so pg_catalog's =.
+    // `pins.note_tag` is a domain over citext and `notes.tag` citext itself: the same base
+    // type, so citext's own = (the key's), both sides cast to citext
+    #expect(
+      try sql("users", "name") == [
+        #"SELECT pg_catalog.count(*) FROM "public"."notes" WHERE ("user_name" \#(eq) :k1)"#,
+        #"SELECT pg_catalog.count(*) FROM "public"."pins" WHERE "note_tag"::public.citext "#
+          + #"\#(ext) ANY (SELECT "tag"::public.citext FROM "public"."notes" "#
+          + #"WHERE ("user_name" \#(eq) :k1))"#,
+      ])
+  }
+
+  @Test("A domain over citext and citext itself compare as citext, both sides cast")
+  func domainAndBaseTypeAgree() throws {
+    let cast = "::public.citext"
+    // A domain child referencing a citext key, and a citext child referencing a domain key
+    let keys = [
+      key("pins_note_fk", child: "pins", ["note_tag"], parent: "notes", ["tag"], .cascade),
+      key("marks_pin_fk", child: "marks", ["pin_tag"], parent: "pins", ["code"], .cascade),
+      key("flags_pin_fk", child: "flags", ["pin_code"], parent: "pins", ["code"], .noAction),
+    ]
+    let types = [
+      "public.notes": ["tag": Self.citext],
+      "public.pins": ["note_tag": Self.citextDomain, "code": Self.citextDomain],
+      "public.marks": ["pin_tag": Self.citext],
+      "public.flags": ["pin_code": Self.citext],
+    ]
+    let fromNotes = try plan(
+      CascadeImpactPlanner.impact(
+        deletingFrom: "public", table: "notes", keyColumns: ["tag"], keys: [[.string("Zed")]],
+        foreignKeys: keys, dialect: .postgresql, columnTypes: types))
+    let pins = #"("note_tag"\#(cast) \#(ext) :k1\#(cast))"#
+    let subquery = #"ANY (SELECT "code"\#(cast) FROM "public"."pins" WHERE \#(pins))"#
+    #expect(
+      fromNotes.steps.map(\.sql) == [
+        #"SELECT pg_catalog.count(*) FROM "public"."pins" WHERE "# + pins,
+        #"SELECT pg_catalog.count(*) FROM "public"."marks" WHERE "pin_tag"\#(cast) \#(ext) "#
+          + subquery,
+        #"SELECT pg_catalog.count(*) FROM "public"."flags" WHERE "pin_code"\#(cast) \#(ext) "#
+          + subquery,
+      ])
+    // The citext child's key list against the domain key
+    let fromPins = try plan(
+      CascadeImpactPlanner.impact(
+        deletingFrom: "public", table: "pins", keyColumns: ["code"], keys: [[.string("Zed")]],
+        foreignKeys: keys, dialect: .postgresql, columnTypes: types))
+    #expect(
+      fromPins.steps.map(\.sql) == [
+        #"SELECT pg_catalog.count(*) FROM "public"."marks" WHERE ("pin_tag"\#(cast) \#(ext) "#
+          + #":k1\#(cast))"#,
+        #"SELECT pg_catalog.count(*) FROM "public"."flags" WHERE ("pin_code"\#(cast) \#(ext) "#
+          + #":k1\#(cast))"#,
+      ])
+    // The lint cannot tell a cast citext column from a domain one: the domain side is linted,
+    // the plain citext side's statements are checked as written above
+    expectClean(
+      CascadeImpactPlanner.Plan(steps: [fromNotes.steps[0]], enforcementCheck: nil),
+      ["note_tag": Self.citextDomain])
+    for step in fromNotes.steps + fromPins.steps {
+      #expect(throws: Never.self) { try ReadOnlyQueryGuard.check(step.sql, dialect: .postgresql) }
+    }
+  }
+
+  @Test("A composite key whose column pairs all agree compares the row with their operator")
+  func compositeKeyWithAgreeingColumns() throws {
+    // Each key references `p (a, b)` while `p` is deleted by `id`: the subquery form
+    let keys = [
+      key("c_p_fk", child: "c", ["x", "y"], parent: "p", ["a", "b"], .cascade),
+      key("d_q_fk", child: "d", ["x", "y"], parent: "q", ["a", "b"], .cascade),
+      // `t` is text: a citext child of it does not agree, so the row stays qualified
+      key("e_p_fk", child: "e", ["x", "y"], parent: "p", ["a", "t"], .cascade),
+    ]
+    let types = [
+      "public.p": ["a": Self.citext, "b": Self.citext],
+      "public.c": ["x": Self.citext, "y": Self.citext],
+      "public.q": ["a": Self.citextDomain, "b": Self.citextDomain],
+      "public.d": ["x": Self.citextDomain, "y": Self.citextDomain],
+      "public.e": ["x": Self.citext, "y": Self.citext],
+    ]
+    func sql(_ table: String) throws -> [String] {
+      try plan(
+        CascadeImpactPlanner.impact(
+          deletingFrom: "public", table: table, keyColumns: ["id"], keys: [[.int(1)]],
+          foreignKeys: keys, dialect: .postgresql, columnTypes: types)
+      ).steps.map(\.sql)
+    }
+
+    let cast = "::public.citext"
+    #expect(
+      try sql("p") == [
+        #"SELECT pg_catalog.count(*) FROM "public"."c" WHERE ("x", "y") \#(ext) ANY "#
+          + #"(SELECT "a", "b" FROM "public"."p" WHERE ("id" \#(eq) :k1))"#,
+        #"SELECT pg_catalog.count(*) FROM "public"."e" WHERE ("x", "y") \#(eq) ANY "#
+          + #"(SELECT "a", "t" FROM "public"."p" WHERE ("id" \#(eq) :k1))"#,
+      ])
+    #expect(
+      try sql("q") == [
+        #"SELECT pg_catalog.count(*) FROM "public"."d" WHERE ("x"\#(cast), "y"\#(cast)) "#
+          + #"\#(ext) ANY (SELECT "a"\#(cast), "b"\#(cast) FROM "public"."q" "#
+          + #"WHERE ("id" \#(eq) :k1))"#
+      ])
+    // The lint matches an operator after one column only: the row forms are checked as
+    // written above
+    for step in try sql("p") + sql("q") {
+      #expect(throws: Never.self) { try ReadOnlyQueryGuard.check(step, dialect: .postgresql) }
+    }
+  }
+
+  /// No lint finding with the columns' type data, and the read-only check the counts run behind
+  /// still passes
+  private func expectClean(
+    _ plan: CascadeImpactPlanner.Plan, _ columnTypeData: [String: PostgresColumnType]
+  ) {
+    for step in plan.steps {
+      #expect(
+        PostgresQualificationLint.violations(step.sql, columnTypeData: columnTypeData) == [],
+        "\(step.sql)")
+      #expect(throws: Never.self) { try ReadOnlyQueryGuard.check(step.sql, dialect: .postgresql) }
+    }
+  }
+
   /// pg_catalog's `=`, as every PostgreSQL count compares keys
   private let eq = "OPERATOR(pg_catalog.=)"
+  /// citext's own `=`, owned by its extension in `public`
+  private let ext = "OPERATOR(public.=)"
+  /// citext owned by its extension in `public`
+  private static let citext = PostgresColumnType(
+    oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+    operatorSchema: "public")
+  /// A domain over citext: compared cast to citext
+  private static let citextDomain = PostgresColumnType(
+    oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+    operatorSchema: "public")
 
   private func key(
     _ name: String, child: String, _ sourceColumns: [String], parent: String,

@@ -161,6 +161,7 @@ extension NotebookViewModel {
     }
     let schema = target.schema ?? ""
     let keyColumns = target.primaryKeyColumns
+    let columnTypes = dialect == .postgresql ? cascadeColumnTypes() : [:]
     let caller = id
     let epoch = target.connectionEpoch
     let side = connectionManager.makeReadOnlySideManager()
@@ -174,7 +175,7 @@ extension NotebookViewModel {
         let impact = CascadeImpactPlanner.impact(
           deletingFrom: schema, table: table, keyColumns: keyColumns, keys: keys,
           foreignKeys: try await side.fetchForeignKeys(), dialect: dialect,
-          batchAlsoWrites: alsoWrites)
+          columnTypes: columnTypes, batchAlsoWrites: alsoWrites)
         let summary = try await Self.countCascadeImpact(
           impact, connectionManager: connectionManager, counter: side, dialect: dialect,
           caller: caller, expectedEpoch: epoch)
@@ -185,6 +186,25 @@ extension NotebookViewModel {
         throw error
       }
     }
+  }
+
+  /// `"schema.relation"` → column → type data of the cached tables and views
+  /// (`DatabaseColumn.postgresType`), never a catalog read. A relation the cache does not have,
+  /// or a column without type data (a built-in type), is absent: its keys compare qualified.
+  private func cascadeColumnTypes() -> [String: [String: PostgresColumnType]] {
+    let relations =
+      databaseTables.map { ($0.qualifiedName, $0.columns) }
+      + databaseViews.map { ($0.qualifiedName, $0.columns) }
+    var types: [String: [String: PostgresColumnType]] = [:]
+    for (name, columns) in relations where types[name] == nil {
+      let typed = Dictionary(
+        columns.compactMap { column in column.postgresType.map { (column.name, $0) } },
+        uniquingKeysWith: { first, _ in first })
+      if !typed.isEmpty {
+        types[name] = typed
+      }
+    }
+    return types
   }
 
   /// SQLite's `temp` schema, PostgreSQL's `pg_temp…`: only the tab's session sees their tables

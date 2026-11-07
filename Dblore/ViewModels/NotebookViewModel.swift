@@ -97,12 +97,6 @@ class NotebookViewModel {
   /// Workspace mode: the connection's timed write unlock (`protectionPolicy` honors it). Set
   /// by `WorkspaceManager`.
   @ObservationIgnored weak var writeUnlock: WriteUnlockController?
-  /// Workspace mode: the workspace's cached enums, domains and composites, nil while unread.
-  /// Set by `WorkspaceManager`.
-  @ObservationIgnored var workspaceUserTypes: @MainActor () -> [DatabaseUserType]? = { nil }
-  /// Workspace mode: starts the workspace's lazy user type read (the sidebar's) without waiting
-  /// for it. Set by `WorkspaceManager`.
-  @ObservationIgnored var requestUserTypes: @MainActor () -> Void = {}
   /// Workspace mode: awaited after every statement execution in this tab, so the workspace
   /// refreshes its pending-transaction mirror. Set by `WorkspaceManager`.
   @ObservationIgnored var onStatementsExecuted: (@MainActor () async -> Void)?

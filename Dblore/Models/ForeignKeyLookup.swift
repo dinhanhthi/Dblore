@@ -29,14 +29,17 @@ nonisolated enum ForeignKeyLookup: Sendable {
   }
 
   /// `SELECT * FROM <quoted target> WHERE <target column> = :fk1 AND … LIMIT 2`. PostgreSQL
-  /// compares with `OPERATOR(pg_catalog.=)` whatever the column type: the values are the source
-  /// row's own stored values. Keys are `fk1`, `fk2`, … (no colon), one per source column, in
-  /// source-column order.
+  /// compares through `SQLDialect.comparison(_:_:_:type:)` with the target column's type data
+  /// from `columnTypes` (keyed by target column name): an extension type's own operator
+  /// (`OPERATOR(public.=)`, both sides cast for a domain over it), else
+  /// `OPERATOR(pg_catalog.=)`. The empty default is qualified on every column. Keys are `fk1`,
+  /// `fk2`, … (no colon), one per source column, in source-column order.
   /// Nil when a component is missing or NULL, or the two column lists differ.
   static func lookupSQL(
     for foreignKey: ForeignKey,
     values: [String: CellValue],
-    dialect: SQLDialect
+    dialect: SQLDialect,
+    columnTypes: [String: PostgresColumnType] = [:]
   ) -> (sql: String, parameters: [String: SQLBindValue])? {
     guard let pairs = components(of: foreignKey, values: values, dialect: dialect) else {
       return nil
@@ -49,7 +52,8 @@ nonisolated enum ForeignKeyLookup: Sendable {
       let column = quotedIdentifier(pair.column, dialect: dialect)
       let placeholder = CellUpdateStatement.bindPlaceholder(
         ":\(name)", pair.value, dialect: dialect)
-      terms.append(dialect.comparison(column, .equal, placeholder))
+      terms.append(
+        dialect.comparison(column, .equal, placeholder, type: columnTypes[pair.column]))
     }
     let relation = quotedRelation(
       schema: foreignKey.targetSchema, table: foreignKey.targetTable, dialect: dialect)

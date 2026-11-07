@@ -204,6 +204,63 @@ struct RowChangeSQLBuilderTests {
     #expect(error?.localizedDescription.contains("primary key") == false)
   }
 
+  @Test("Key columns with extension type data compare with their extension's operator")
+  func extensionKeyOperands() throws {
+    let rowKey = RowChangeSet.RowKey(values: [.string("A"), .int(1)])
+    // The domain casts both sides to citext; "line" has no type data and stays pg_catalog's
+    let cases: [(PostgresColumnType, String, String)] = [
+      (citext, #""id" OPERATOR(public.=) "#, ""),
+      (citextDomain, #""id"::public.citext OPERATOR(public.=) "#, "::public.citext"),
+    ]
+    for (type, lead, trail) in cases {
+      let keyTypes = ["id": type]
+      let editTarget = target(primaryKeyColumns: ["id", "line"], keyTypes: keyTypes)
+      var set = RowChangeSet(target: editTarget)
+      set.stageDelete(row: rowKey)
+      try set.stageEdit(
+        row: RowChangeSet.RowKey(values: [.string("B"), .int(2)]), column: "name",
+        value: .string("x"), original: .string("y"))
+      let bound = try RowChangeSQLBuilder.statements(
+        for: set, target: editTarget, columns: columns(), dialect: .postgresql
+      ).map(\.sql)
+      let preview = try RowChangeSQLBuilder.previewText(
+        for: set, target: editTarget, columns: columns(), dialect: .postgresql)
+      let cell = try CellUpdateStatement.make(
+        qualifiedName: #""public"."t""#, assignments: [(column: "name", value: "x")],
+        primaryKeyColumns: ["id", "line"], rowData: ["id": .string("A"), "line": .int(1)],
+        dialect: .postgresql, keyTypes: keyTypes)
+      func keys(_ id: String, _ line: String) -> String {
+        "\(lead)\(id)\(trail) AND \"line\" OPERATOR(pg_catalog.=) \(line)"
+      }
+      #expect(
+        bound == [
+          #"DELETE FROM "t" WHERE "# + keys("$1", "$2"),
+          #"UPDATE "t" SET "name" = $1 WHERE "# + keys("$2", "$3"),
+        ])
+      #expect(
+        preview.split(separator: "\n").first.map(String.init)
+          == #"DELETE FROM "t" WHERE "# + keys("'A'", "1") + ";")
+      #expect(cell.sql == #"UPDATE "public"."t" SET "name" = $1 WHERE "# + keys("$2", "$3"))
+      #expect(cell.values == ["x", "A", "1"])
+      for sql in bound + preview.split(separator: "\n").map(String.init) + [cell.sql] {
+        let found = PostgresQualificationLint.violations(sql, columnTypeData: keyTypes)
+        #expect(found.isEmpty, "\(found)\n\(sql)")
+      }
+      // Masking keeps the type data; it is not part of the target's identity
+      let masked = [ColumnInfo(name: "name", type: "text", masked: true)]
+      #expect(editTarget.masking(masked)?.keyTypes == keyTypes)
+      let generation = UUID()
+      #expect(
+        target(keyTypes: keyTypes, generation: generation) == target(generation: generation))
+    }
+    // Without type data a key compares with pg_catalog's =
+    #expect(
+      try CellUpdateStatement.make(
+        qualifiedName: #""public"."t""#, assignments: [(column: "name", value: "x")],
+        primaryKeyColumns: ["id"], rowData: ["id": .string("A")], dialect: .postgresql
+      ).sql == #"UPDATE "public"."t" SET "name" = $1 WHERE "id" OPERATOR(pg_catalog.=) $2"#)
+  }
+
   @Test("A column name with a quote is doubled")
   func quotedColumnDoublesEmbeddedQuote() throws {
     let editTarget = target()
@@ -511,12 +568,22 @@ struct RowChangeSQLBuilderTests {
 }
 
 private func target(
-  primaryKeyColumns: [String] = ["id"], updateOnly: Bool = false
+  primaryKeyColumns: [String] = ["id"], updateOnly: Bool = false,
+  keyTypes: [String: PostgresColumnType] = [:], generation: UUID = UUID()
 ) -> EditTarget {
   EditTarget(
     qualifiedName: #""t""#, tableID: .postgresql(oid: 1), primaryKeyColumns: primaryKeyColumns,
-    updateOnly: updateOnly)
+    updateOnly: updateOnly, generation: generation, keyTypes: keyTypes)
 }
+
+/// citext owned by its extension in `public`
+private let citext = PostgresColumnType(
+  oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+  operatorSchema: "public")
+/// A domain over citext: compared cast to citext
+private let citextDomain = PostgresColumnType(
+  oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+  operatorSchema: "public")
 
 private func columns() -> [ColumnInfo] {
   [
