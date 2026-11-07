@@ -49,6 +49,8 @@ nonisolated struct TableStructure: Sendable, Equatable {
     var extra: String?
     var characterSet: String?
     var collation: String?
+    /// PostgreSQL type data from the schema read. Nil for built-in types and on other engines.
+    var postgresType: PostgresColumnType? = nil
   }
 
   /// How the engine fills a column without a value

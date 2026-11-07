@@ -317,6 +317,41 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     return "(" + terms.joined(separator: negated ? " AND " : " OR ") + ")"
   }
 
+  /// `lhs op rhs` for a column with the schema read's type data. PostgreSQL always names the
+  /// operator's schema: `pg_catalog`'s, or the owning extension's for its listed types
+  /// (`OPERATOR(public.=)`), so an operator planted in another schema on the `search_path` is
+  /// never chosen. A domain over such a type compares both sides cast to its base type. Every
+  /// other dialect writes `comparison(_:_:_:operand:)`'s text.
+  func comparison(
+    _ lhs: String, _ op: SQLComparison, _ rhs: String, type: PostgresColumnType?
+  ) -> String {
+    let parts = comparisonParts(lhs, op, type: type)
+    return parts.lead + rhs + parts.trail
+  }
+
+  /// `comparison(_:_:_:type:)` around a value written later (a bind or a subquery): `lead` goes
+  /// before it (`col OPERATOR(public.=) `, with the column cast for a domain), `trail` after it
+  /// (`::<compareCast>`, or empty)
+  func comparisonParts(
+    _ lhs: String, _ op: SQLComparison, type: PostgresColumnType?
+  ) -> (lead: String, trail: String) {
+    guard engine == .postgresql, let type, SQLOperandKind(column: type) == .bare,
+      let schema = type.operatorSchema
+    else { return (comparison(lhs, op, "", operand: .qualified), "") }
+    let cast = type.compareCast.map { "::\($0)" } ?? ""
+    return ("\(lhs)\(cast) OPERATOR(\(schema).\(op.rawValue)) ", cast)
+  }
+
+  /// `inList(_:_:negated:operand:)` for a column with the schema read's type data: on PostgreSQL
+  /// each term is `comparison(_:_:_:type:)`
+  func inList(
+    _ column: String, _ items: [String], negated: Bool = false, type: PostgresColumnType?
+  ) -> String {
+    guard engine == .postgresql else { return inList(column, items, negated: negated) }
+    let terms = items.map { comparison(column, negated ? .notEqual : .equal, $0, type: type) }
+    return "(" + terms.joined(separator: negated ? " AND " : " OR ") + ")"
+  }
+
   /// `column [NOT] LIKE pattern [ESCAPE escape]`, case-insensitive (`ILIKE`, or both sides
   /// lowered on SQLite and MySQL) when asked. Fragments are inserted unchanged. PostgreSQL is
   /// `column::pg_catalog.text OPERATOR(pg_catalog.~~)` (`~~*`, `!~~`, `!~~*`), and an escape
@@ -468,10 +503,32 @@ nonisolated enum SQLOperandKind: Sendable, Equatable {
     self = name.map(Self.extensionTypes.contains) == true ? .bare : .qualified
   }
 
+  /// From the schema read's type data: `.bare` only for an extension type whose operator schema
+  /// is known; no type data, or no schema, is `.qualified`
+  init(column type: PostgresColumnType?) {
+    self = type?.operand == .bare && type?.operatorSchema != nil ? .bare : .qualified
+  }
+
   private static let extensionTypes: Set<String> = [
     "citext", "geometry", "geography", "hstore", "ltree", "lquery", "ltxtquery", "cube", "isbn",
     "isbn13", "issn", "issn13", "ean13", "ismn", "ismn13", "upc",
   ]
+}
+
+/// A PostgreSQL column's type as the schema read classifies it on the server
+nonisolated struct PostgresColumnType: Sendable, Equatable {
+  /// `pg_attribute.atttypid`
+  let oid: UInt32
+  /// `.bare` for a listed extension type (through domains), owned by its extension
+  let operand: SQLOperandKind
+  /// The column's own type, schema-qualified and quoted (`public.cit_dom`, `public.citext[]`);
+  /// nil in `pg_catalog`
+  let castName: String?
+  /// For a domain over a listed extension type: that base type, schema-qualified and quoted
+  /// (`public.citext`); both sides of a comparison are cast to it
+  let compareCast: String?
+  /// For the `.bare` operand: the owning extension's schema, quoted (`public`)
+  let operatorSchema: String?
 }
 
 /// The parts of a PostgreSQL type text

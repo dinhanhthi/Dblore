@@ -99,6 +99,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     return (schema, name)
   }
 
+  /// Each column's type data comes from its type oid (cell 8) through `columnTypes`.
   func allColumns(in session: any DatabaseSession) async throws -> [String: [DatabaseColumn]] {
     let query = """
       SELECT
@@ -118,7 +119,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
           WHERE i.indrelid OPERATOR(pg_catalog.=) c.oid AND i.indisunique AND NOT i.indisprimary
             AND pg_catalog.array_length(i.indkey, 1) OPERATOR(pg_catalog.=) 1
             AND a.attnum OPERATOR(pg_catalog.=) ANY (i.indkey)
-        ) AS is_unique
+        ) AS is_unique,
+        a.atttypid::pg_catalog.int8
       FROM pg_catalog.pg_attribute a
       JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) a.attrelid
       JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
@@ -130,6 +132,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       ORDER BY n.nspname, c.relname, a.attnum
       """
     var columnRows: [SchemaCatalog.ColumnRow] = []
+    var typeOIDs: [UInt32?] = []
     for row in try await rows(in: session, sql: query) {
       guard row.count >= 8,
         let schema = CatalogValue.string(row[0]),
@@ -145,6 +148,11 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         SchemaCatalog.ColumnRow(
           schema: schema, relation: relation, name: name, formatType: formatType,
           notNull: notNull, isIdentity: isIdentity, isPK: isPK, isUnique: isUnique))
+      typeOIDs.append(row.count > 8 ? CatalogValue.oid(row[8]) : nil)
+    }
+    let types = try await columnTypes(Set(typeOIDs.compactMap { $0 }), in: session)
+    for index in columnRows.indices {
+      columnRows[index].postgresType = typeOIDs[index].flatMap { types[$0] }
     }
     return SchemaCatalog.columnsByRelation(columnRows)
   }
