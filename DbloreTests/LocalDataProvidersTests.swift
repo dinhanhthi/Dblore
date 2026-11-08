@@ -7,7 +7,7 @@ import Testing
 @testable import Dblore
 
 @MainActor
-@Suite("Local data providers", .serialized)
+@Suite("Local data providers", .serialized, .timeLimit(.minutes(1)))
 struct LocalDataProvidersTests {
   @Test("Query history summary, round-trip, and an unrelated preference")
   func queryHistory() async throws {
@@ -587,11 +587,15 @@ struct LocalDataProvidersTests {
       forName: .localDataChanged, object: nil, queue: nil
     ) { note in
       if let value = note.userInfo?[LocalDataCategory.userInfoKey] as? String {
-        box.values.append(value)
+        box.append(value)
       }
     }
     defer { NotificationCenter.default.removeObserver(token) }
     try await body()
+    // An off-main post reaches observers through the main queue: let those queued so far run
+    await withCheckedContinuation { continuation in
+      DispatchQueue.main.async { continuation.resume() }
+    }
     return box.values
   }
 
@@ -656,5 +660,12 @@ struct LocalDataProvidersTests {
 }
 
 private final class NoteBox: @unchecked Sendable {
-  var values: [String] = []
+  private var notes: [String] = []
+  private let lock = NSLock()
+
+  var values: [String] { lock.withLock { notes } }
+
+  func append(_ note: String) {
+    lock.withLock { notes.append(note) }
+  }
 }

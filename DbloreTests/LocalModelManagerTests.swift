@@ -431,7 +431,7 @@ struct LocalModelManagerTests {
     #expect(manager.installedIDs == ["new"])
   }
 
-  @Test func localModelsChangeRefreshesInstalledAndUnused() async throws {
+  @Test(.timeLimit(.minutes(1))) func localModelsChangeRefreshesInstalledAndUnused() async throws {
     await LocalDataNotificationGate.shared.acquire()
     defer { LocalDataNotificationGate.shared.release() }
     let root = makeRoot()

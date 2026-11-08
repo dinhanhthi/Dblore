@@ -18,7 +18,12 @@ nonisolated struct LocalDefaultsClient: @unchecked Sendable {
 }
 
 nonisolated enum LocalDataNotifications {
+  /// Observers run on the main queue, so an off-main post hops there instead of waiting for it
   static func post(_ category: LocalDataCategory) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { post(category) }
+      return
+    }
     NotificationCenter.default.post(
       name: .localDataChanged,
       object: nil,

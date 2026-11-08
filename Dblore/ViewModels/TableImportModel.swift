@@ -753,6 +753,11 @@ final class TableImportModel {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
     let maxBytes = 8 * 1_024 * 1_024
+    // Each row needs its own record end (a line end, or a JSON object's `}`), so no parse can
+    // reach `rowLimit` rows before enough have been read, nor gain a row without a new one
+    let neededEnds = format == .json ? rowLimit : rowLimit + (hasHeader ? 1 : 0)
+    var recordEnds = 0
+    var endsAtLastParse = 0
     var data = Data()
     while data.count < maxBytes {
       try Task.checkCancellation()
@@ -761,14 +766,9 @@ final class TableImportModel {
         return try parse(data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit)
       }
       data.append(chunk)
-      // Without a new line end the delimited candidate is unchanged, so its parse would be too
-      if format != .json, !chunk.contains(where: { $0 == 10 || $0 == 13 }) { continue }
-      // A JSON record (array element or NDJSON line) can only complete at `}`, `]` or a new line
-      if format == .json,
-        !chunk.contains(where: { $0 == 0x7D || $0 == 0x5D || $0 == 10 || $0 == 13 })
-      {
-        continue
-      }
+      recordEnds += Self.recordEnds(in: chunk, format: format)
+      guard recordEnds >= neededEnds, recordEnds > endsAtLastParse else { continue }
+      endsAtLastParse = recordEnds
       let candidate: Data
       if format == .json {
         // A read may stop inside a UTF-8 codepoint. Parse a valid prefix so the reader
@@ -795,6 +795,25 @@ final class TableImportModel {
       }
     }
     throw TableImportError.previewLimit
+  }
+
+  /// Upper bound of the records `chunk` can end: line ends (CRLF once) for delimited text,
+  /// `}` bytes for JSON
+  private nonisolated static func recordEnds(in chunk: Data, format: TableImportFormat) -> Int {
+    chunk.withUnsafeBytes { bytes in
+      var count = 0
+      for index in bytes.indices {
+        switch bytes[index] {
+        case 0x7D where format == .json: count += 1
+        case 10 where format != .json: count += 1
+        // A CR followed by LF ends one line; a CR at the chunk's end counts on its own
+        case 13 where format != .json:
+          if index + 1 == bytes.endIndex || bytes[index + 1] != 10 { count += 1 }
+        default: break
+        }
+      }
+      return count
+    }
   }
 
   private nonisolated static func parse(

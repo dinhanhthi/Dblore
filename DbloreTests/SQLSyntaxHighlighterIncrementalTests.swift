@@ -17,6 +17,7 @@ struct SQLSyntaxHighlighterIncrementalTests {
 
   private func same(_ lhs: NSColor?, _ rhs: NSColor?) -> Bool {
     guard let lhs, let rhs else { return lhs == nil && rhs == nil }
+    if lhs === rhs || lhs == rhs { return true }
     guard let l = lhs.usingColorSpace(.sRGB), let r = rhs.usingColorSpace(.sRGB) else {
       return false
     }
@@ -46,14 +47,19 @@ struct SQLSyntaxHighlighterIncrementalTests {
     (text as NSString).substring(with: r)
   }
 
-  /// First mismatch between two attributed strings (foreground color and font), or nil
+  /// First mismatch between two attributed strings (foreground color and font), or nil.
+  /// Walks attribute runs: attributes are constant within a run, so every index is still checked.
   private func mismatch(_ a: NSAttributedString, _ b: NSAttributedString) -> Int? {
     guard a.length == b.length else { return -1 }
-    for i in 0..<a.length {
-      let x = a.attributes(at: i, effectiveRange: nil)
-      let y = b.attributes(at: i, effectiveRange: nil)
+    var i = 0
+    while i < a.length {
+      var ra = NSRange()
+      var rb = NSRange()
+      let x = a.attributes(at: i, effectiveRange: &ra)
+      let y = b.attributes(at: i, effectiveRange: &rb)
       if !same(x[.foregroundColor] as? NSColor, y[.foregroundColor] as? NSColor) { return i }
       if (x[.font] as? NSFont) != (y[.font] as? NSFont) { return i }
+      i = min(NSMaxRange(ra), NSMaxRange(rb))
     }
     return nil
   }
