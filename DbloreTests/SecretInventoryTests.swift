@@ -219,6 +219,11 @@ struct SecretInventoryTests {
     let text = try String(contentsOf: source, encoding: .utf8)
     #expect(!text.contains("kSecReturnData"))
     #expect(!text.contains("kSecReturnPersistentRef"))
+    // No keychain read that returns secret bytes, so listing never pulls a secret
+    #expect(!text.contains(".read(account:"))
+    #expect(!text.contains(".readProtected("))
+    #expect(!text.contains(".copy(service:"))
+    #expect(!text.contains(".copyWithoutUI("))
     #expect(text.contains("removePassword"))
     #expect(text.contains("KeychainSSHCredentialStore.serviceName"))
     #expect(text.contains("KeychainSSHKnownHostStore.serviceName"))
