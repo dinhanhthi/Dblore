@@ -116,7 +116,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **MCP server**: let AI agents read the connections you allow (never a locked one), on this
   Mac only, with capped connections and requests. Off by default. An opt-in write tool runs one
   change at a time on connections you give a write scope, and only after you approve the exact
-  statement in Dblore
+  statement in Dblore; a destructive one (DROP, TRUNCATE, DELETE or UPDATE without WHERE) needs
+  its target's name typed first
 - **Command-line tool**: `dblore connections` and `dblore query` read the connections the MCP
   server shares (read-only), as CSV, TSV, JSON, JSON Lines or a table. Pair once with
   `dblore pair --port N` from Settings > MCP and type the code it shows; Settings also gives the
