@@ -84,6 +84,12 @@ nonisolated enum SQLRestoreReadProgress: Sendable, Equatable {
 /// the catalog reads of `executeGatedRestore`); those two closed the connection.
 nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
   case tooLarge(bytes: Int)
+  /// `index` is 0-based among the file's statements; `bytes` its UTF-8 size, or what was read
+  /// of it when it is still open
+  case statementTooLarge(index: Int, bytes: Int)
+  /// A file read in chunks: statement `index` (0-based) was not found in the text it was split
+  /// from, so its place in the file is unknown
+  case statementNotLocated(index: Int)
   case headerMissing
   /// The header is a Dblore dump's, of a version after 2
   case newerDumpVersion
@@ -137,6 +143,12 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .tooLarge(let bytes):
       "This file is \(bytes / 1_048_576) MiB; a SQL dump restore reads files up to 64 MiB. "
         + "Nothing was executed."
+    case .statementTooLarge(let index, let bytes):
+      "Statement \(index + 1) is \(bytes / 1_048_576) MiB; a restore sends statements up to "
+        + "64 MiB. Nothing was executed."
+    case .statementNotLocated(let index):
+      "Statement \(index + 1) could not be matched to its place in the file, so the file cannot "
+        + "be read safely. Nothing was executed."
     case .headerMissing:
       "This file is not a Dblore SQL dump: its first line is not \""
         + SQLRestorePlan.headerPrefix + "<engine> ...\". Nothing was executed."
@@ -218,6 +230,8 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// text is freed once they are built, and they are freed once split. 64 MiB of SQL costs about
   /// 256 MiB of scalars plus the statements' text, up to about 400 MiB at peak
   static let maxScriptBytes = 64 * 1024 * 1024
+  /// Largest statement a file read in chunks (`SQLStatementStream`) holds and sends
+  static let maxStatementBytes = 64 * 1024 * 1024
   /// First line of every dump (`SQLDumpAssembler.header`), followed by the engine's raw value
   static let headerPrefix = "-- Dblore SQL dump 1 engine="
   /// First line of a dump that holds a DROP (version 2). Builds that read only version 1 refuse
@@ -309,76 +323,31 @@ nonisolated struct SQLRestorePlan: Sendable {
       }
       pieces = SQLTokenizer(dialect: dialect).splitStatements(scalars: scalars)
     }
+    var planner = SQLRestorePlanner(engine: engine, version: version)
     var statements: [ClassifiedStatement] = []
     var kinds: [SQLRestoreStatementKind] = []
-    var options: [String] = []
-    var standardStrings: Int?
-    // DuckDB: the sequences the file created so far (`checkDuckDBSequences`)
-    var sequences = Set<[String]>()
-    // Each DROP's targets, checked once the loop ends against the last CREATE of each object
-    var drops: [(index: Int, target: DropTarget)] = []
-    var lastCreated: [ObjectKey: Int] = [:]
-    // MySQL: mysqldump's paired session lines read so far
-    var mysqlDump = MySQLDumpState()
     for (planned, piece) in pieces.enumerated() {
       // A file read cancelled while it is planned stops here
       try Task.checkCancellation()
       if planned.isMultiple(of: 4_096) {
         progress(.planning(statementsPlanned: planned, statementCount: pieces.count))
       }
-      guard let classified = SQLStatementClassifier.classifyStatement(piece, dialect: dialect)
-      else { continue }
-      let accepted =
-        engine == .mysql
-        ? try Self.acceptMySQL(
-          classified, version: version, index: statements.count, state: &mysqlDump)
-        : try Self.accept(classified, engine: engine, version: version, index: statements.count)
-      if engine == .duckdb, accepted.kind == .schema {
-        try Self.checkDuckDBSequences(
-          classified.text, created: &sequences, index: statements.count)
-      }
-      drops += accepted.drops.map { (statements.count, $0) }
-      if let created = accepted.created { lastCreated[created] = statements.count }
-      if accepted.standardStrings, standardStrings == nil { standardStrings = statements.count }
+      guard let accepted = try planner.accept(piece) else { continue }
       statements.append(accepted.statement)
       kinds.append(accepted.kind)
-      options += accepted.options
     }
     progress(.planning(statementsPlanned: pieces.count, statementCount: pieces.count))
-    // A DROP only clears the way for an object of the same kind and name created after it
-    for drop in drops where lastCreated[drop.target.key, default: -1] < drop.index {
-      throw Self.refusal(
-        drop.index,
-        "a Dblore dump drops only what it creates after the DROP, and this script never creates "
-          + "\(drop.target.key.kind) \(drop.target.name) after it")
-    }
-    if engine == .mysql {
-      try mysqlDump.finish(created: Set(lastCreated.keys.filter { $0.kind == "TABLE" }))
-    }
-    mariaDBStatements = mysqlDump.mariaDBOnly
+    try planner.finish()
+    mariaDBStatements = planner.mariaDBStatements
     self.engine = engine
     self.statements = statements
     self.kinds = kinds
-    standardStringsStatement = standardStrings
-    droppedSQLiteTables =
-      engine == .sqlite
-      ? Set(drops.filter { $0.target.key.kind == "TABLE" }.map { $0.target.key.parts[0] }) : []
-    droppedSQLiteNames = engine == .sqlite ? Set(drops.map { $0.target.key.parts[0] }) : []
-    droppedDuckDBSchemas =
-      engine == .duckdb
-      ? Set(drops.map { String(decoding: $0.target.key.parts[0], as: UTF8.self) }) : []
-    let dropped = { (kind: String) in
-      Set(drops.filter { $0.target.key.kind == kind }.map(\.target.key.parts))
-    }
-    let postgres = PostgresDrops(
-      tables: dropped("TABLE"), types: dropped("TYPE"),
-      createdSequences: Set(lastCreated.keys.filter { $0.kind == "SEQUENCE" }.map(\.parts)))
-    postgresDrops =
-      engine == .postgresql && !(postgres.tables.isEmpty && postgres.types.isEmpty)
-      ? postgres : nil
-    summary = SQLRestoreSummary(
-      engine: engine, statementCount: statements.count,
-      counts: kinds.reduce(into: [:]) { $0[$1, default: 0] += 1 }, serverVersionOptions: options)
+    standardStringsStatement = planner.standardStringsStatement
+    droppedSQLiteTables = planner.droppedSQLiteTables
+    droppedSQLiteNames = planner.droppedSQLiteNames
+    droppedDuckDBSchemas = planner.droppedDuckDBSchemas
+    postgresDrops = planner.postgresDrops
+    summary = planner.summary
   }
 
   // MARK: - Header
@@ -426,7 +395,7 @@ nonisolated struct SQLRestorePlan: Sendable {
 
   // MARK: - Accepted statements
 
-  private struct Accepted {
+  fileprivate struct Accepted {
     let statement: ClassifiedStatement
     let kind: SQLRestoreStatementKind
     var options: [String] = []
@@ -448,7 +417,7 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// (the plan then checks each target is created after it). Anything else (roles, users,
   /// grants, extensions, functions, other DROPs, UPDATE, other DELETEs, reads, SET, transaction
   /// control, utilities, other PRAGMAs) is refused.
-  private static func accept(
+  fileprivate static func accept(
     _ statement: ClassifiedStatement, engine: DatabaseType, version: Int, index: Int
   ) throws -> Accepted {
     let dialect = engine.dialect
@@ -522,7 +491,7 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// one-part name is the table's schema's sequence (DuckDB looks there first, then in `main`,
   /// which this check does not follow), a one-part table or sequence is in `main`. Names
   /// compare ASCII case-insensitively, as DuckDB compares identifiers.
-  private static func checkDuckDBSequences(
+  fileprivate static func checkDuckDBSequences(
     _ text: String, created: inout Set<[String]>, index: Int
   ) throws {
     let tokens = tokens(text, .duckdb)
@@ -577,7 +546,7 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// paired in `state`; after the first footer line only footer lines), then the lines of other
   /// mysqldump options, refused naming the option (`mysqlDumpOptionRefusal`), and any other
   /// statement that is one version comment, then `accept`. Records the tables INSERTs write into.
-  private static func acceptMySQL(
+  fileprivate static func acceptMySQL(
     _ statement: ClassifiedStatement, version: Int, index: Int, state: inout MySQLDumpState
   ) throws -> Accepted {
     let tokens = tokens(statement.text, .mysql)
@@ -615,7 +584,7 @@ nonisolated struct SQLRestorePlan: Sendable {
     return objectKey("TABLE", parts, engine: .mysql, creating: false)
   }
 
-  private static func refusal(_ index: Int, _ reason: String) -> SQLRestoreError {
+  fileprivate static func refusal(_ index: Int, _ reason: String) -> SQLRestoreError {
     .statementRefused(index: index, reason: reason)
   }
 
@@ -771,6 +740,128 @@ nonisolated struct SQLRestorePlan: Sendable {
       resetsSessionBrakes: statement.resetsSessionBrakes,
       changesPrivileges: statement.changesPrivileges, createsTable: statement.createsTable)
   }
+}
+
+// MARK: - Planner
+
+/// Classifies and accepts a dump's statements one at a time, in file order (`SQLRestorePlan`'s
+/// rules: `accept`, `acceptMySQL`, DuckDB sequences, DROPs, mysqldump's paired lines), keeping
+/// only what the end-of-file checks and the plan's counts need, never the statements' text.
+/// Once `accept` or `finish` throws, the planner is not used again.
+nonisolated struct SQLRestorePlanner: Sendable {
+  /// A statement the restore sends
+  struct Accepted: Sendable {
+    /// Its index among the accepted statements (the index of a refusal)
+    let index: Int
+    /// As sent and checked by the gate
+    let statement: ClassifiedStatement
+    let kind: SQLRestoreStatementKind
+  }
+
+  let engine: DatabaseType
+  /// The header's version (`checkHeader`)
+  let version: Int
+  private let dialect: SQLDialect
+  /// Statements accepted so far
+  private(set) var statementCount = 0
+  private var counts: [SQLRestoreStatementKind: Int] = [:]
+  private var options: [String] = []
+  /// PostgreSQL: the first statement read as `standard_conforming_strings = on` reads it
+  private(set) var standardStringsStatement: Int?
+  /// DuckDB: the sequences the file created so far (`checkDuckDBSequences`)
+  private var sequences = Set<[String]>()
+  /// Each DROP's targets, checked by `finish` against the last CREATE of each object
+  private var drops: [(index: Int, target: SQLRestorePlan.DropTarget)] = []
+  private var lastCreated: [SQLRestorePlan.ObjectKey: Int] = [:]
+  /// MySQL: mysqldump's paired session lines read so far
+  private var mysqlDump = MySQLDumpState()
+
+  /// `engine` is PostgreSQL, MySQL, SQLite or DuckDB
+  init(engine: DatabaseType, version: Int) {
+    self.engine = engine
+    self.version = version
+    dialect = engine.dialect
+  }
+
+  /// Classifies and accepts the next piece of the split; nil when it holds no statement
+  /// (comments or whitespace only), which takes no index.
+  /// - Throws: `SQLRestoreError.statementRefused` for a statement outside the dump's shapes
+  mutating func accept(_ piece: String) throws -> Accepted? {
+    guard let classified = SQLStatementClassifier.classifyStatement(piece, dialect: dialect)
+    else { return nil }
+    let index = statementCount
+    let accepted =
+      engine == .mysql
+      ? try SQLRestorePlan.acceptMySQL(
+        classified, version: version, index: index, state: &mysqlDump)
+      : try SQLRestorePlan.accept(classified, engine: engine, version: version, index: index)
+    if engine == .duckdb, accepted.kind == .schema {
+      try SQLRestorePlan.checkDuckDBSequences(classified.text, created: &sequences, index: index)
+    }
+    drops += accepted.drops.map { (index, $0) }
+    if let created = accepted.created { lastCreated[created] = index }
+    if accepted.standardStrings, standardStringsStatement == nil {
+      standardStringsStatement = index
+    }
+    statementCount += 1
+    counts[accepted.kind, default: 0] += 1
+    options += accepted.options
+    return Accepted(index: index, statement: accepted.statement, kind: accepted.kind)
+  }
+
+  /// The checks once every statement is accepted: each DROP's object created after it, then
+  /// on MySQL mysqldump's paired lines closed (`MySQLDumpState.finish`)
+  func finish() throws {
+    // A DROP only clears the way for an object of the same kind and name created after it
+    for drop in drops where lastCreated[drop.target.key, default: -1] < drop.index {
+      throw SQLRestorePlan.refusal(
+        drop.index,
+        "a Dblore dump drops only what it creates after the DROP, and this script never creates "
+          + "\(drop.target.key.kind) \(drop.target.name) after it")
+    }
+    if engine == .mysql {
+      try mysqlDump.finish(created: Set(lastCreated.keys.filter { $0.kind == "TABLE" }))
+    }
+  }
+
+  /// Counts of the statements accepted so far
+  var summary: SQLRestoreSummary {
+    SQLRestoreSummary(
+      engine: engine, statementCount: statementCount, counts: counts,
+      serverVersionOptions: options)
+  }
+
+  /// `SQLRestorePlan.droppedSQLiteTables`
+  var droppedSQLiteTables: Set<[UInt8]> {
+    engine == .sqlite
+      ? Set(drops.filter { $0.target.key.kind == "TABLE" }.map { $0.target.key.parts[0] }) : []
+  }
+
+  /// `SQLRestorePlan.droppedSQLiteNames`
+  var droppedSQLiteNames: Set<[UInt8]> {
+    engine == .sqlite ? Set(drops.map { $0.target.key.parts[0] }) : []
+  }
+
+  /// `SQLRestorePlan.droppedDuckDBSchemas`
+  var droppedDuckDBSchemas: Set<String> {
+    engine == .duckdb
+      ? Set(drops.map { String(decoding: $0.target.key.parts[0], as: UTF8.self) }) : []
+  }
+
+  /// `SQLRestorePlan.postgresDrops`
+  var postgresDrops: SQLRestorePlan.PostgresDrops? {
+    let dropped = { (kind: String) in
+      Set(drops.filter { $0.target.key.kind == kind }.map(\.target.key.parts))
+    }
+    let postgres = SQLRestorePlan.PostgresDrops(
+      tables: dropped("TABLE"), types: dropped("TYPE"),
+      createdSequences: Set(lastCreated.keys.filter { $0.kind == "SEQUENCE" }.map(\.parts)))
+    return engine == .postgresql && !(postgres.tables.isEmpty && postgres.types.isEmpty)
+      ? postgres : nil
+  }
+
+  /// `SQLRestorePlan.mariaDBStatements`
+  var mariaDBStatements: Set<Int> { mysqlDump.mariaDBOnly }
 }
 
 // MARK: - Dump statement shapes
