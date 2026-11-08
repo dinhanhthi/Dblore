@@ -25,18 +25,20 @@ nonisolated struct StatementSummary: Sendable, Equatable {
   let isEarlierChanges: Bool
   let executedAt: Date
 
-  /// `dialect` lexes the label (callers pass the connection's; the default serves tests)
+  /// `dialect` lexes the label (callers pass the connection's; the default serves tests);
+  /// `kindLabel` replaces it for a summary whose text is not SQL
   init(
     statement: ClassifiedStatement, affectedRows: Int?, executedAt: Date = Date(),
-    dialect: SQLDialect = .postgresql
+    dialect: SQLDialect = .postgresql, kindLabel: String? = nil
   ) {
     sql = statement.text.trimmingCharacters(in: .whitespacesAndNewlines)
     let collapsed = statement.text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     sqlPreview =
       collapsed.count > Self.maxPreviewLength
       ? String(collapsed.prefix(Self.maxPreviewLength)) + "…" : collapsed
-    kindLabel =
-      SQLTokenizer(dialect: dialect).tokens(statement.text).first { $0.kind == .word }?.keyword
+    self.kindLabel =
+      kindLabel
+      ?? SQLTokenizer(dialect: dialect).tokens(statement.text).first { $0.kind == .word }?.keyword
       ?? DatabaseConnectionManager.describe(statement.kind)
     self.affectedRows = affectedRows
     rowsUnknown =

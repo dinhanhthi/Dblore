@@ -93,7 +93,7 @@ struct SQLStatementStreamTests {
       let data = Data(text.utf8)
       let url = try Self.file(Array(data))
       defer { try? FileManager.default.removeItem(at: url) }
-      // Today's whole-file path: `readScript` decodes, `SQLRestorePlan.init` strips and splits
+      // The whole-text path: the file decoded, `SQLRestorePlan(script:)` strips and splits
       let whole = try #require(String(data: data, encoding: .utf8))
       let sandbox = engine == .mysql ? SQLRestorePlan.mariaDBSandboxPrefix(whole) : 0
       let scalars = Array(whole.unicodeScalars.dropFirst(sandbox))

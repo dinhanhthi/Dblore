@@ -1,7 +1,8 @@
 // DatabaseConnectionManager+Restore.swift
 // Restore of a Dblore SQL dump (`SQLDumpWriter`) through the gate, and on MySQL of a mysqldump /
-// mariadb-dump file (`SQLRestorePlan+MySQLDump.swift`). `SQLRestorePlan` reads the
-// script once: the 64 MiB cap, the header engine, one split, then every statement is classified
+// mariadb-dump file (`SQLRestorePlan+MySQLDump.swift`). `SQLRestorePlan` reads a script (64 MiB
+// cap, one split) or a file in chunks (pass 1, keeping digests, not text): the header engine,
+// then every statement is classified
 // and must be a statement shape the dump writer emits for that engine (leading tokens; a data
 // INSERT is read to its end and may hold only the literals the writer emits). A version 2 dump
 // may also drop, with `DROP <kind> IF EXISTS` and never CASCADE, the tables, views, sequences,
@@ -22,6 +23,7 @@
 // mode) and afterwards always resets the session settings the dump changed, or closes the
 // session when that fails.
 
+import CryptoKit
 import Foundation
 
 /// What a restored statement is, for the confirmation and history
@@ -83,13 +85,21 @@ nonisolated enum SQLRestoreReadProgress: Sendable, Equatable {
 /// only the `SHOW standard_conforming_strings` read, the drop target and foreign key cases only
 /// the catalog reads of `executeGatedRestore`); those two closed the connection.
 nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
+  /// A script planned from text (`SQLRestorePlan(script:)`) over `maxScriptBytes`
   case tooLarge(bytes: Int)
-  /// `index` is 0-based among the file's statements; `bytes` its UTF-8 size, or what was read
-  /// of it when it is still open
+  /// `index` is 0-based among the file's statements (`SQLStatementStream` counts split pieces,
+  /// which `SQLRestorePlan(file:)` renumbers as the planner numbers statements); `bytes` its
+  /// UTF-8 size, or what was read of it when it is still open
   case statementTooLarge(index: Int, bytes: Int)
+  /// A file's Safe Mode rows (previews and full texts) pass `maxConfirmationBytes`
+  case confirmationTooLarge
   /// A file read in chunks: statement `index` (0-based) was not found in the text it was split
   /// from, so its place in the file is unknown
   case statementNotLocated(index: Int)
+  /// Pass 2 (`RestoreStatementSource`) read statement `index` (0-based) differently from pass 1,
+  /// or a statement past pass 1's count, or found it missing; the statements before it may have
+  /// run. `engine` words what ran.
+  case fileChanged(index: Int, engine: DatabaseType)
   case headerMissing
   /// The header is a Dblore dump's, of a version after 2
   case newerDumpVersion
@@ -146,9 +156,25 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
     case .statementTooLarge(let index, let bytes):
       "Statement \(index + 1) is \(bytes / 1_048_576) MiB; a restore sends statements up to "
         + "64 MiB. Nothing was executed."
+    case .confirmationTooLarge:
+      "This dump has more schema statements than Dblore can list for confirmation (over 16 MiB "
+        + "of text). Nothing was executed."
     case .statementNotLocated(let index):
       "Statement \(index + 1) could not be matched to its place in the file, so the file cannot "
         + "be read safely. Nothing was executed."
+    case .fileChanged(let index, let engine):
+      switch (engine, index) {
+      case (.mysql, 0):
+        "The file changed after it was checked (statement 1). Nothing was executed."
+      case (.mysql, 1):
+        "The file changed after it was checked: statement 1 ran, statement 2 and later did not."
+      case (.mysql, _):
+        "The file changed after it was checked: statements 1 to \(index) ran, statement "
+          + "\(index + 1) and later did not."
+      default:
+        "The file changed after it was checked (statement \(index + 1)). The restore was rolled "
+          + "back."
+      }
     case .headerMissing:
       "This file is not a Dblore SQL dump: its first line is not \""
         + SQLRestorePlan.headerPrefix + "<engine> ...\". Nothing was executed."
@@ -223,15 +249,20 @@ nonisolated enum SQLRestoreError: LocalizedError, Equatable, Sendable {
   }
 }
 
-/// A dump script read once (pure, off the actor): the statements to send, as classified for the
-/// gate, and their counts for the confirmation. `executeGatedRestore` runs it as is.
+/// A dump planned once (pure, off the actor): where the statements to send are, as classified
+/// for the gate, and their counts for the confirmation. `executeGatedRestore` checks the gate's
+/// classifications, then runs a `.memory` plan's statements as they are and a `.file` plan's as
+/// pass 2 reads them again (`RestoreStatementSource`, each one checked against its record).
 nonisolated struct SQLRestorePlan: Sendable {
-  /// The splitter holds the script as Unicode scalars (about 4 bytes each), alone: the script's
-  /// text is freed once they are built, and they are freed once split. 64 MiB of SQL costs about
-  /// 256 MiB of scalars plus the statements' text, up to about 400 MiB at peak
+  /// `init(script:)` only (a file-backed plan has no file cap). The splitter holds the script as
+  /// Unicode scalars (about 4 bytes each), alone: the script's text is freed once they are
+  /// built, and they are freed once split. 64 MiB of SQL costs about 256 MiB of scalars plus the
+  /// statements' text, up to about 400 MiB at peak
   static let maxScriptBytes = 64 * 1024 * 1024
   /// Largest statement a file read in chunks (`SQLStatementStream`) holds and sends
   static let maxStatementBytes = 64 * 1024 * 1024
+  /// Most preview and full text a file-backed plan keeps for its Safe Mode rows
+  static let maxConfirmationBytes = 16 * 1024 * 1024
   /// First line of every dump (`SQLDumpAssembler.header`), followed by the engine's raw value
   static let headerPrefix = "-- Dblore SQL dump 1 engine="
   /// First line of a dump that holds a DROP (version 2). Builds that read only version 1 refuse
@@ -254,11 +285,14 @@ nonisolated struct SQLRestorePlan: Sendable {
   }
 
   let engine: DatabaseType
-  /// Statements to send, in order. A SQLite trigger the splitter kept whole and a MySQL
-  /// CREATE TABLE with server-version options classify as DDL here (the classifier fails
-  /// closed on them as unknown; DDL is blocked wherever unknown is).
-  let statements: [ClassifiedStatement]
+  /// The header's version (`checkHeader`): pass 2 plans the file again with it
+  let headerVersion: Int
+  /// The statements to send, in order
+  let source: Source
   let kinds: [SQLRestoreStatementKind]
+  /// A file-backed plan's Safe Mode rows, built in pass 1 from the text of every statement but
+  /// the data (`DatabaseBackupModel.restoreConfirmationRow`); empty for `.memory`
+  let confirmationRows: [StatementConfirmation]
   /// Counts before anything runs
   let summary: SQLRestoreSummary
   /// PostgreSQL: the first statement read as `standard_conforming_strings = on` reads it (a
@@ -280,6 +314,72 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// MySQL: the statements of mariadb-dump's `/*M!100616 ...*/` lines, sent only to MariaDB
   /// 10.6.16 or later (any other server reads them as comments)
   let mariaDBStatements: Set<Int>
+
+  /// Where the statements are. A SQLite trigger the splitter kept whole and a MySQL CREATE TABLE
+  /// with server-version options classify as DDL here (the classifier fails closed on them as
+  /// unknown; DDL is blocked wherever unknown is).
+  enum Source: Sendable {
+    /// Planned from text (`init(script:)`): tests and small scripts
+    case memory([ClassifiedStatement])
+    /// Planned from the file (`init(file:)`), one record per statement, by index; the text is
+    /// read again to run it
+    case file(URL, [Record])
+  }
+
+  /// A statement of a file-backed plan, without its text
+  struct Record: Sendable, Equatable {
+    /// SHA-256 of the split piece's UTF-8 (`SQLStatementStream.Statement.digest`)
+    let digest: SHA256Digest
+    let kind: SQLRestoreStatementKind
+    let classification: GateClassification
+  }
+
+  /// What the gate's `evaluate` reads of a statement: its kind and these flags
+  struct GateClassification: Sendable, Equatable {
+    let kind: StatementKind
+    let nonTransactional: Bool
+    let resetsSessionBrakes: Bool
+    let changesPrivileges: Bool
+    let createsTable: Bool
+
+    init(_ statement: ClassifiedStatement) {
+      kind = statement.kind
+      nonTransactional = statement.nonTransactional
+      resetsSessionBrakes = statement.resetsSessionBrakes
+      changesPrivileges = statement.changesPrivileges
+      createsTable = statement.createsTable
+    }
+
+    /// The same kind and flags with no text, which `evaluate` reads as the statement
+    var gateStatement: ClassifiedStatement {
+      ClassifiedStatement(
+        text: "", kind: kind, hasReturning: false, hasTopLevelReturning: false,
+        affectsAllRows: false, nonTransactional: nonTransactional,
+        resetsSessionBrakes: resetsSessionBrakes, changesPrivileges: changesPrivileges,
+        createsTable: createsTable)
+    }
+  }
+
+  /// A `.memory` plan's statements. A file-backed plan keeps no text: reading this on one stops
+  /// the app rather than give nothing to run.
+  var statements: [ClassifiedStatement] {
+    guard case .memory(let statements) = source else {
+      preconditionFailure("A file-backed restore plan keeps no statement text")
+    }
+    return statements
+  }
+
+  /// The statements as `evaluate` reads them, in order (a file-backed plan's without text),
+  /// built one at a time: no array the size of the statement count
+  var gateStatements: LazyMapSequence<Range<Int>, ClassifiedStatement> {
+    let source = source
+    return (0..<summary.statementCount).lazy.map { index in
+      switch source {
+      case .memory(let statements): statements[index]
+      case .file(_, let records): records[index].classification.gateStatement
+      }
+    }
+  }
 
   /// What a PostgreSQL script drops and creates, as `objectKey` parts (`[schema, name]`)
   struct PostgresDrops: Sendable, Equatable {
@@ -340,14 +440,93 @@ nonisolated struct SQLRestorePlan: Sendable {
     try planner.finish()
     mariaDBStatements = planner.mariaDBStatements
     self.engine = engine
-    self.statements = statements
+    headerVersion = version
+    source = .memory(statements)
     self.kinds = kinds
+    confirmationRows = []
     standardStringsStatement = planner.standardStringsStatement
     droppedSQLiteTables = planner.droppedSQLiteTables
     droppedSQLiteNames = planner.droppedSQLiteNames
     droppedDuckDBSchemas = planner.droppedDuckDBSchemas
     postgresDrops = planner.postgresDrops
     summary = planner.summary
+  }
+
+  /// Pass 1 of a file-backed restore: reads `url` in chunks (`SQLStatementStream`) and plans it
+  /// as `init(script:)` plans its text, keeping per statement only its digest, kind and the
+  /// gate's classification, and for every statement but the data its Safe Mode row (up to
+  /// `maxConfirmationBytes` of preview and full text, `SQLRestoreError.confirmationTooLarge`
+  /// past it). Refusals number statements as the planner does (`Accepted.index`). `progress`
+  /// gets the bytes read of the file's size after each chunk.
+  /// - Throws: `SQLRestoreError` as `init(script:)` (but `.tooLarge`: a file has no cap; a
+  ///   statement over `maxStatementBytes` is `.statementTooLarge`); `DatabaseBackupError.notUTF8`;
+  ///   `CancellationError`; the file's open or read error
+  init(
+    file url: URL, engine: DatabaseType, chunkSize: Int = 1_048_576,
+    maxStatementBytes: Int = SQLRestorePlan.maxStatementBytes,
+    maxConfirmationBytes: Int = SQLRestorePlan.maxConfirmationBytes,
+    progress: (SQLRestoreReadProgress) -> Void = { _ in }
+  ) throws {
+    var stream = try SQLStatementStream(
+      url: url, engine: engine, chunkSize: chunkSize, maxStatementBytes: maxStatementBytes)
+    var reported = 0
+    progress(.reading(bytesRead: 0, byteCount: stream.byteCount))
+    func report() {
+      guard stream.bytesRead != reported else { return }
+      reported = stream.bytesRead
+      progress(.reading(bytesRead: reported, byteCount: max(stream.byteCount, reported)))
+    }
+    let line = try stream.firstLine()
+    let version = try Self.checkHeader(Substring(line).unicodeScalars, engine: engine)
+    let dialect = engine.dialect
+    var planner = SQLRestorePlanner(engine: engine, version: version)
+    var records: [Record] = []
+    var kinds: [SQLRestoreStatementKind] = []
+    var rows: [StatementConfirmation] = []
+    var rowBytes = 0
+    while let statement = try Self.renumbered(planner.statementCount, { try stream.next() }) {
+      report()
+      guard let accepted = try planner.accept(statement.text) else { continue }
+      records.append(
+        Record(
+          digest: statement.digest, kind: accepted.kind,
+          classification: GateClassification(accepted.statement)))
+      kinds.append(accepted.kind)
+      if let row = DatabaseBackupModel.restoreConfirmationRow(
+        accepted.statement, kind: accepted.kind, index: accepted.index, dialect: dialect)
+      {
+        rowBytes += row.preview.utf8.count + (row.fullText?.utf8.count ?? 0)
+        guard rowBytes <= maxConfirmationBytes else { throw SQLRestoreError.confirmationTooLarge }
+        rows.append(row)
+      }
+    }
+    report()
+    try planner.finish()
+    mariaDBStatements = planner.mariaDBStatements
+    self.engine = engine
+    headerVersion = version
+    source = .file(url, records)
+    self.kinds = kinds
+    confirmationRows = rows
+    standardStringsStatement = planner.standardStringsStatement
+    droppedSQLiteTables = planner.droppedSQLiteTables
+    droppedSQLiteNames = planner.droppedSQLiteNames
+    droppedDuckDBSchemas = planner.droppedDuckDBSchemas
+    postgresDrops = planner.postgresDrops
+    summary = planner.summary
+  }
+
+  /// The stream numbers a statement it cannot read by split piece, comment-only pieces too. It
+  /// throws only once the pieces before were returned (and planned), so the failing one is the
+  /// planner's next statement: numbered `index`, as every other refusal numbers it.
+  private static func renumbered<T>(_ index: Int, _ read: () throws -> T) throws -> T {
+    do {
+      return try read()
+    } catch SQLRestoreError.statementTooLarge(_, let bytes) {
+      throw SQLRestoreError.statementTooLarge(index: index, bytes: bytes)
+    } catch SQLRestoreError.statementNotLocated {
+      throw SQLRestoreError.statementNotLocated(index: index)
+    }
   }
 
   // MARK: - Header
@@ -357,7 +536,7 @@ nonisolated struct SQLRestorePlan: Sendable {
   /// equivalence). Returns the version. A later version's header (`isNewerHeader`) is refused
   /// as such. On MySQL a mysqldump or mariadb-dump header (`isMySQLDumpHeader`) reads as
   /// version 2: its `DROP TABLE IF EXISTS` follow the same rule.
-  private static func checkHeader(
+  fileprivate static func checkHeader(
     _ script: Substring.UnicodeScalarView, engine: DatabaseType
   ) throws -> Int {
     let line = script.prefix { $0 != "\n" && $0 != "\r" }
@@ -862,6 +1041,144 @@ nonisolated struct SQLRestorePlanner: Sendable {
 
   /// `SQLRestorePlan.mariaDBStatements`
   var mariaDBStatements: Set<Int> { mysqlDump.mariaDBOnly }
+}
+
+// MARK: - Statement source (pass 2)
+
+/// Pass 2 of a file-backed restore: reads the plan's file again (`SQLStatementStream`), plans it
+/// again (`SQLRestorePlanner`, same engine and header version) and hands out each statement only
+/// once it is the one pass 1 recorded at its index: the same digest of its split piece (never
+/// its byte range), kind and gate classification. Each comes as `init(script:)` plans it, so its
+/// `statement.text` is what the runner sends (a MySQL session line opened) and its `index` is
+/// the one `mariaDBStatements` holds.
+///
+/// A statement that differs, one missing at the end of the file, one past pass 1's count, a
+/// changed header, and any error reading or planning the file's text (it read cleanly in pass 1)
+/// throw `SQLRestoreError.fileChanged` with the index of the statement being read, never
+/// pass 1's "Nothing was executed." errors. `CancellationError` (checked before each chunk) and
+/// the file's open or read errors pass through. After a throw every `next()` throws it again.
+///
+/// The runner pulls statements inside its transaction and must call `next()` until it returns
+/// nil before it commits: nil comes only once the rest of the file holds no statement and the
+/// planner's end-of-file checks pass. Synchronous, on the caller's executor (the connection
+/// actor), one chunk at a time.
+///
+/// Sandbox access: `SQLRestorePlan(file:)` does not open it. The caller opens one
+/// `SecurityScopedAccessToken` before pass 1 and hands it here; the source keeps it alive, so
+/// access lasts from pass 1 to the end of pass 2 (the caller releases it, or drops both).
+nonisolated struct RestoreStatementSource {
+  let engine: DatabaseType
+  /// Statements pass 1 planned: the progress total
+  let total: Int
+  /// Statements handed out so far: the progress done, and the index of the next one
+  private(set) var yielded = 0
+  private let records: [SQLRestorePlan.Record]
+  private var stream: SQLStatementStream
+  private var planner: SQLRestorePlanner
+  private let access: SecurityScopedAccessToken?
+  /// Thrown again by every later `next()`
+  private var failure: (any Error)?
+  private var finished = false
+
+  /// Opens the file and checks its header against pass 1's.
+  /// - Throws: `SQLRestoreError.fileChanged(index: 0, ...)` when the header changed; the file's
+  ///   open or read error; `CancellationError`
+  init(
+    plan: SQLRestorePlan, access: SecurityScopedAccessToken? = nil, chunkSize: Int = 1_048_576,
+    maxStatementBytes: Int = SQLRestorePlan.maxStatementBytes
+  ) throws {
+    guard case .file(let url, let records) = plan.source else {
+      preconditionFailure("A statement source reads a file-backed restore plan")
+    }
+    var stream = try SQLStatementStream(
+      url: url, engine: plan.engine, chunkSize: chunkSize, maxStatementBytes: maxStatementBytes)
+    do {
+      let line = try stream.firstLine()
+      let version = try SQLRestorePlan.checkHeader(
+        Substring(line).unicodeScalars, engine: plan.engine)
+      guard version == plan.headerVersion else {
+        throw SQLRestoreError.fileChanged(index: 0, engine: plan.engine)
+      }
+    } catch {
+      throw Self.changed(error, index: 0, engine: plan.engine)
+    }
+    engine = plan.engine
+    total = records.count
+    self.records = records
+    self.stream = stream
+    planner = SQLRestorePlanner(engine: plan.engine, version: plan.headerVersion)
+    self.access = access
+  }
+
+  /// The next statement, checked against pass 1; nil after the last.
+  /// - Throws: `SQLRestoreError.fileChanged`; `CancellationError`; the file's read error
+  mutating func next() throws -> SQLRestorePlanner.Accepted? {
+    if let failure { throw failure }
+    if finished { return nil }
+    do {
+      guard let accepted = try read() else {
+        finished = true
+        return nil
+      }
+      yielded += 1
+      return accepted
+    } catch {
+      let thrown = Self.changed(error, index: yielded, engine: engine)
+      failure = thrown
+      throw thrown
+    }
+  }
+
+  /// The next statement accepted and equal to pass 1's record at its index
+  private mutating func read() throws -> SQLRestorePlanner.Accepted? {
+    while let piece = try stream.next() {
+      guard let accepted = try planner.accept(piece.text) else { continue }
+      guard accepted.index == yielded, yielded < records.count else { throw changed }
+      let record = records[yielded]
+      guard piece.digest == record.digest, accepted.kind == record.kind,
+        SQLRestorePlan.GateClassification(accepted.statement) == record.classification
+      else { throw changed }
+      return accepted
+    }
+    guard yielded == records.count else { throw changed }
+    try planner.finish()
+    return nil
+  }
+
+  private var changed: SQLRestoreError { .fileChanged(index: yielded, engine: engine) }
+
+  /// An error about the file's text (it read and planned cleanly in pass 1) as `fileChanged`
+  /// at `index`; any other error (cancel, the file's open or read error) as is
+  private static func changed(_ error: any Error, index: Int, engine: DatabaseType) -> any Error {
+    guard error is SQLRestoreError || error is DatabaseBackupError else { return error }
+    return SQLRestoreError.fileChanged(index: index, engine: engine)
+  }
+}
+
+/// A restore plan's statements in order, one at a time: a `.memory` plan's as they are, a `.file`
+/// plan's through pass 2 (`RestoreStatementSource`, opened by `init`). Not Sendable: built and
+/// read inside the connection actor, in the turn that sends them.
+nonisolated struct RestoreStatements {
+  private let plan: SQLRestorePlan
+  private var file: RestoreStatementSource?
+  /// `.memory`: the index of the next statement
+  private var index = 0
+
+  /// - Throws: `RestoreStatementSource.init`'s errors for a `.file` plan
+  init(_ plan: SQLRestorePlan, access: SecurityScopedAccessToken?) throws {
+    self.plan = plan
+    if case .file = plan.source { file = try RestoreStatementSource(plan: plan, access: access) }
+  }
+
+  /// The next statement; nil after the last (for a file, once pass 2 found nothing after it)
+  /// - Throws: `RestoreStatementSource.next`'s errors
+  mutating func next() throws -> SQLRestorePlanner.Accepted? {
+    if file != nil { return try file!.next() }
+    guard case .memory(let statements) = plan.source, index < statements.count else { return nil }
+    defer { index += 1 }
+    return SQLRestorePlanner.Accepted(
+      index: index, statement: statements[index], kind: plan.kinds[index])
+  }
 }
 
 // MARK: - Dump statement shapes
@@ -1840,9 +2157,14 @@ extension DatabaseConnectionManager {
   /// may come before a refusal: in the same actor turn as the first change, a read-only policy
   /// refuses any restore and every statement must pass `evaluate` against `effectivePolicy(for:)`
   /// (`DatabaseError.blockedByProtection`; schema-only refuses DDL).
+  /// The statements are read one at a time as they are sent (`RestoreStatements`): a `.file`
+  /// plan's through pass 2, opened with `access` kept alive, so a statement the file changed
+  /// after pass 1 is never sent (`SQLRestoreError.fileChanged`, which rolls the batch back and
+  /// on MySQL stops before it).
   /// - PostgreSQL / SQLite: one staged batch with no row-count checks (`runStagedBatch`), so a
   ///   failure rolls everything back; under Protected mode it joins the app transaction
-  ///   (`pending`). A failed COMMIT is rolled back.
+  ///   (`pending`) with one pending summary per statement kind ("RESTORE N data statements").
+  ///   A failed COMMIT is rolled back.
   /// - DuckDB: the same batch, never inside a transaction (BEGIN ... COMMIT): DuckDB has no
   ///   SAVEPOINT, so Protected mode and an open transaction are refused
   ///   (`DatabaseError.sequentialBatchRefused`). A DuckDB file opened read-only is refused with
@@ -1859,7 +2181,8 @@ extension DatabaseConnectionManager {
   /// `statementsRun`, `pending` and `insideUserTransaction` set.
   func executeGatedRestore(
     _ plan: SQLRestorePlan, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil, progress: @escaping @Sendable (SQLRestoreProgress) -> Void = { _ in }
+    caller: UUID? = nil, access: SecurityScopedAccessToken? = nil,
+    progress: @escaping @Sendable (SQLRestoreProgress) -> Void = { _ in }
   ) async throws -> SQLRestoreSummary {
     try refuseIfRelocked(config)
     guard epoch == connectionEpoch else {
@@ -1908,22 +2231,23 @@ extension DatabaseConnectionManager {
     // restore always writes (`SELECT pg_catalog.setval(...)` classifies as a read), so read-only
     // refuses it.
     let effective = effectivePolicy(for: policy)
+    let gated = plan.gateStatements
     if effective.protectionLevel == .readOnly {
       let readOnlyFile = config.map(SQLRestorePlan.isReadOnlyDuckDBFile) == true
       throw DatabaseError.blockedByProtection(
-        statementIndex: 0, kind: plan.statements.first?.kind ?? .dml,
+        statementIndex: 0, kind: gated.first?.kind ?? .dml,
         reason: readOnlyFile
           ? SQLRestorePlan.duckdbReadOnlyFileMessage
           : "Restoring a SQL dump is not allowed on a read-only connection")
     }
     if case .blocked(let index, let kind, let reason) = Self.evaluate(
-      plan.statements, policy: effective, dialect: engine.dialect)
+      gated, policy: effective, dialect: engine.dialect)
     {
       throw DatabaseError.blockedByProtection(statementIndex: index, kind: kind, reason: reason)
     }
     var summary = plan.summary
-    if plan.statements.isEmpty { return summary }
-    let total = plan.statements.count
+    let total = plan.summary.statementCount
+    if total == 0 { return summary }
     let report: @Sendable (Int) -> Void = {
       progress(SQLRestoreProgress(statementsDone: $0, statementCount: total))
     }
@@ -1943,19 +2267,14 @@ extension DatabaseConnectionManager {
         guard session != nil else { throw DatabaseError.notConnected }
         try refuseIfConnectionClosed()
         summary.insideUserTransaction = userTxOpen
-        let bound = plan.statements.map {
-          BoundStatement(sql: $0.text, values: [], expectedRows: nil, classified: $0)
-        }
-        summary.statementsRun = try await runStagedBatch(
-          bound, caller: caller, protectedMode: effective.protectedMode,
-          cancellationGeneration: generation, progress: report,
-          searchPathPin: engine == .postgresql ? .init() : nil
-        ).count
+        summary.statementsRun = try await runRestoreBatch(
+          plan, access: access, caller: caller, protectedMode: effective.protectedMode,
+          generation: generation, progress: report)
         summary.pending = effective.protectedMode
       case .mysql:
         summary.statementsRun = try await runMySQLRestore(
-          plan, policy: policy, effective: effective, epoch: epoch, caller: caller,
-          progress: report)
+          plan, access: access, policy: policy, effective: effective, epoch: epoch,
+          caller: caller, progress: report)
       case .mongodb:
         throw SQLRestoreError.unsupportedEngine(engine.rawValue)
       }
@@ -1964,6 +2283,76 @@ extension DatabaseConnectionManager {
   }
 
   // MARK: - Private
+
+  /// PostgreSQL / SQLite / DuckDB: the plan's statements as one staged batch, read as they are
+  /// sent (the search_path pinned on PostgreSQL). Kept for after the batch, whatever the
+  /// statement count: per statement kind its count and the data's rows (one pending summary
+  /// each under Protected mode) and the first statement that changes the schema the sidebar
+  /// shows (noted as the whole batch would be).
+  private func runRestoreBatch(
+    _ plan: SQLRestorePlan, access: SecurityScopedAccessToken?, caller: UUID?,
+    protectedMode: Bool, generation: UInt64, progress: @escaping @Sendable (Int) -> Void
+  ) async throws -> Int {
+    var statements = try RestoreStatements(plan, access: access)
+    var kind = SQLRestoreStatementKind.data
+    var counts: [SQLRestoreStatementKind: Int] = [:]
+    var dataRows = 0
+    var schemaChange: ClassifiedStatement?
+    let dialect = plan.engine.dialect
+    return try await runStagedBatch(
+      count: plan.summary.statementCount,
+      next: {
+        guard let accepted = try statements.next() else { return nil }
+        kind = accepted.kind
+        if schemaChange == nil, ProtectedTransactionRules.changesVisibleSchema(accepted.statement) {
+          schemaChange = accepted.statement
+        }
+        return BoundStatement(
+          sql: accepted.statement.text, values: [], expectedRows: nil,
+          classified: accepted.statement)
+      }, caller: caller, protectedMode: protectedMode, cancellationGeneration: generation,
+      progress: progress, searchPathPin: plan.engine == .postgresql ? .init() : nil,
+      ran: { rows in
+        counts[kind, default: 0] += 1
+        if kind == .data { dataRows += rows }
+      },
+      recordSummaries: {
+        for kind in SQLRestoreStatementKind.allCases {
+          guard let count = counts[kind] else { continue }
+          recordPending(
+            Self.restoreSummary(
+              kind, count: count, rows: kind == .data ? dataRows : nil, dialect: dialect))
+        }
+      },
+      noteSchema: {
+        if let schemaChange { noteSchemaChange(schemaChange) }
+      })
+  }
+
+  /// A restore's Protected-mode pending summary of its `count` statements of `kind`: the label
+  /// RESTORE and the text "3 data statements", which the pending list shows as one line
+  private static func restoreSummary(
+    _ kind: SQLRestoreStatementKind, count: Int, rows: Int?, dialect: SQLDialect
+  ) -> StatementSummary {
+    let noun: String
+    let statementKind: StatementKind
+    switch kind {
+    case .drop: (noun, statementKind) = ("drop statement", .ddl)
+    case .schema: (noun, statementKind) = ("schema statement", .ddl)
+    case .trigger: (noun, statementKind) = ("trigger", .ddl)
+    case .data: (noun, statementKind) = ("data statement", .dml)
+    case .sequenceValue: (noun, statementKind) = ("sequence value", .read)
+    case .sessionSetting:
+      (noun, statementKind) = ("session setting", .sessionSet(touchesBrake: false))
+    }
+    let text = "\(count) \(noun)\(count == 1 ? "" : "s")"
+    let statement = ClassifiedStatement(
+      text: text, kind: statementKind, hasReturning: false, hasTopLevelReturning: false,
+      affectsAllRows: false, nonTransactional: false, resetsSessionBrakes: false,
+      changesPrivileges: false, createsTable: false)
+    return StatementSummary(
+      statement: statement, affectedRows: rows, dialect: dialect, kindLabel: "RESTORE")
+  }
 
   /// DuckDB has no SAVEPOINT, which the batch sends inside a transaction (Protected mode, or the
   /// user's own): both are refused before anything is sent
@@ -1979,8 +2368,9 @@ extension DatabaseConnectionManager {
 
   /// One by one in autocommit; the session settings are reset afterwards on every path
   private func runMySQLRestore(
-    _ plan: SQLRestorePlan, policy: ProtectionPolicy, effective: ProtectionPolicy,
-    epoch: UInt64, caller: UUID?, progress: @escaping @Sendable (Int) -> Void
+    _ plan: SQLRestorePlan, access: SecurityScopedAccessToken?, policy: ProtectionPolicy,
+    effective: ProtectionPolicy, epoch: UInt64, caller: UUID?,
+    progress: @escaping @Sendable (Int) -> Void
   ) async throws -> Int {
     // `executeGatedSequentialBatch` refuses these too; checked here before the settings read
     try refuseIfOwnedByAnotherCaller(caller)
@@ -2010,18 +2400,23 @@ extension DatabaseConnectionManager {
     }
     // `sendSequentially` reads the generation again with no suspension before it
     try refuseIfRestoreInterrupted(since: generation, epoch: epoch)
-    // mariadb-dump's `/*M!100616 ...*/` lines are comments on any other server
-    let sent = plan.statements.indices.filter {
-      settings.runsMariaDBStatements || !plan.mariaDBStatements.contains($0)
-    }
-    let total = plan.statements.count
-    // Statements done: those before the next one sent, all of them once the last one is
-    let report: @Sendable (Int) -> Void = { done in progress(done < sent.count ? sent[done] : total)
-    }
+    // mariadb-dump's `/*M!100616 ...*/` lines are comments on any other server: read, not sent
+    let skipped = settings.runsMariaDBStatements ? [] : plan.mariaDBStatements
+    let total = plan.summary.statementCount
     do {
-      _ = try await executeGatedSequentialBatch(
-        sent.map { plan.statements[$0].text }, policy: policy, connectionEpoch: epoch,
-        caller: caller, expectedRows: nil, progress: report)
+      var statements = try RestoreStatements(plan, access: access)
+      try await executeGatedSequentialBatch(
+        gated: plan.gateStatements, total: total - skipped.count,
+        next: {
+          while let accepted = try statements.next() {
+            guard !skipped.contains(accepted.index) else { continue }
+            // Statements done: those before the next one sent
+            if accepted.index > 0 { progress(accepted.index) }
+            return accepted.statement.text
+          }
+          progress(total)
+          return nil
+        }, policy: policy, connectionEpoch: epoch, caller: caller)
     } catch {
       if let failure = await resetRestoreSession(settings, epoch: epoch) {
         await closeUnresetSession()

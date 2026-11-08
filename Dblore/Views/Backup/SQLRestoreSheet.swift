@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// Restore SQL Dump: an open panel (the file is read and checked off the main actor), what the
+/// Restore SQL Dump: an open panel (the file is checked in chunks off the main actor), what the
 /// dump holds per kind and the notes for this engine, then the Safe Mode confirmation, then
 /// the restore on the tab's connection with progress and Cancel.
 struct SQLRestoreSheet: View {
@@ -143,8 +143,8 @@ struct SQLRestoreSheet: View {
         }
         Text(
           "Reads Dblore SQL dumps of this engine, and mysqldump / mariadb-dump files on MySQL and "
-            + "MariaDB, up to 64 MiB (up to about 400 MiB of memory while it is checked). Every "
-            + "statement is checked before anything runs: only tables, indexes, views, types, "
+            + "MariaDB. The file is read twice: checked, then run. Every statement (up to 64 MiB "
+            + "each) is checked before anything runs: only tables, indexes, views, types, "
             + "sequences, their rows and a dump's own session settings are accepted (mysqldump "
             + "views are refused), and any other statement refuses the whole file. Restoring still "
             + "runs the file's SQL on this connection: column defaults, checks, views and triggers "
@@ -253,7 +253,7 @@ struct SQLRestoreSheet: View {
     }
   }
 
-  /// The bytes read, then the statements checked (indeterminate while the file is split)
+  /// The bytes checked of the file's size (a script planned from text reports statements)
   private func readProgress(_ progress: SQLRestoreReadProgress?) -> some View {
     let fraction: Double?
     let text: String
@@ -261,7 +261,7 @@ struct SQLRestoreSheet: View {
     case .reading(let bytesRead, let byteCount):
       fraction = byteCount == 0 ? nil : Double(bytesRead) / Double(byteCount)
       text =
-        "Reading the file: \(DataByteCount.text(Int64(bytesRead))) of "
+        "Checking the file: \(DataByteCount.text(Int64(bytesRead))) of "
         + DataByteCount.text(Int64(byteCount))
     case .planning(let planned, let count) where count > 0:
       fraction = Double(planned) / Double(count)
@@ -271,7 +271,7 @@ struct SQLRestoreSheet: View {
       text = "Splitting the file into statements..."
     case nil:
       fraction = nil
-      text = "Reading the file..."
+      text = "Checking the file..."
     }
     return VStack(alignment: .leading, spacing: Spacing.xs) {
       ProgressView(value: fraction)

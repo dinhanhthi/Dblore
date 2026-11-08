@@ -5,8 +5,8 @@ import CryptoKit
 import Foundation
 
 /// The statements of a SQL dump file, read through `FileHandle` in chunks and split as the
-/// whole-text restore read does (`readScript`, then `SQLRestorePlan.init`): the same text, one
-/// statement at a time, so memory follows the largest statement, not the file. On MySQL
+/// whole-text plan does (the file decoded as UTF-8, then `SQLRestorePlan(script:)`): the same
+/// text, one statement at a time, so memory follows the largest statement, not the file. On MySQL
 /// mariadb-dump's sandbox first line is dropped before the split, as there. Each statement
 /// comes with a byte range in the file and the SHA-256 of its UTF-8, so a second read can check
 /// it is the statement the first read saw.
@@ -43,7 +43,8 @@ nonisolated struct SQLStatementStream {
   private var split = SQLTokenizer.SplitState()
   /// Statements split and not yet returned, last first
   private var ready: [Statement] = []
-  /// Statements split so far: the index of the next one
+  /// Statements split so far: the index of the next one (comment-only pieces too;
+  /// `SQLRestorePlan(file:)` renumbers a refusal as the planner numbers statements)
   private var splitCount = 0
   /// A refusal met after `ready`'s statements, thrown once they are returned
   private var failure: SQLRestoreError?

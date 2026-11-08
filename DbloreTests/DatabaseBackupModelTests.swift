@@ -3,8 +3,9 @@
 // manager's config, unremembered certificate and SSH secret and host-key prompt; a save
 // destination that is the open SQLite file is refused before anything starts; one History row
 // per dump and restore (success, failure, cancel, none with History off); the restore file is
-// read and planned off the main actor (size checked before reading), refused restores are
-// explained before the confirmation, and Safe Mode asks before the restore runs.
+// checked in chunks off the main actor (pass 1, its caps refused there, Cancel stops the read),
+// its security-scoped access kept until the run ends, refused restores are explained before
+// the confirmation, and Safe Mode asks before the restore runs.
 
 import Foundation
 import SQLite3
@@ -401,11 +402,21 @@ struct DatabaseBackupModelTests {
     let file = try fixture.write(Self.sqliteDump, name: "dump.sql")
     var executed = 0
     fixture.viewModel.onStatementsExecuted = { executed += 1 }
+    let access = AccessLog()
     let model = DatabaseBackupModel(
-      viewModel: fixture.viewModel, environment: Self.environment(open: file, style: .immediate))
+      viewModel: fixture.viewModel,
+      environment: Self.environment(open: file, style: .immediate, access: access))
 
     await model.chooseRestoreFile()
+    // Another file (here the same one again) releases the first one's access
+    await model.chooseRestoreFile()
+    #expect(access.started == 2 && access.stopped == 1)
     let plan = try #require(model.restorePlan)
+    guard case .file(let source, _) = plan.source else {
+      Issue.record("The sheet read a plan that is not file-backed")
+      return
+    }
+    #expect(source == file)
     #expect(model.restoreFileName == "dump.sql")
     #expect(plan.summary.statementCount == 3)
     #expect(plan.summary.count(.schema) == 1 && plan.summary.count(.data) == 1)
@@ -418,6 +429,8 @@ struct DatabaseBackupModelTests {
     #expect(model.restoreProgress == SQLRestoreProgress(statementsDone: 3, statementCount: 3))
     #expect(try Self.count(fixture.database, "restored") == 2)
     #expect(executed == 1)
+    // Kept from pass 1 through the run (pass 2), released once the run ends
+    #expect(access.started == 2 && access.stopped == 2)
     let entry = try #require(await fixture.recorder.entries.first)
     #expect(entry.source == .restore && entry.kind == .schema && entry.status == .success)
     #expect(entry.sql == "Restore SQL dump: 3 statements")
@@ -583,12 +596,15 @@ struct DatabaseBackupModelTests {
     let fixture = try await SQLiteFixture()
     defer { fixture.remove() }
     let file = try fixture.write(Self.sqliteDump, name: "dump.sql")
+    let access = AccessLog()
     let model = DatabaseBackupModel(
-      viewModel: fixture.viewModel, environment: Self.environment(open: file, style: .confirm))
+      viewModel: fixture.viewModel,
+      environment: Self.environment(open: file, style: .confirm, access: access))
     await model.chooseRestoreFile()
     await model.restore()
     #expect(model.isConfirmingRestore)
     model.sheetDisappeared()
+    #expect(access.started == 1 && access.stopped == 1)
     #expect(!model.isConfirmingRestore)
     #expect(model.restoreConfirmation.isEmpty)
     // A late Touch ID answer sends nothing
@@ -613,55 +629,115 @@ struct DatabaseBackupModelTests {
     #expect(entry.sql == "Restore SQL dump: 4 statements")
   }
 
-  @Test func readingAPlanReportsBytesReadThenStatementsPlanned() throws {
+  @Test func readingAPlanReportsTheBytesChecked() throws {
     let directory = try Self.temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
     let file = directory.appendingPathComponent("rows.sql")
-    // Over 1 MiB (more than one read) and over 4,096 statements (more than one plan report)
+    // Over 2 MiB: three 1 MiB chunks (the stream reads one ahead)
     let rows = String(
       repeating: "INSERT INTO \"restored\" (\"id\", \"v\") VALUES (1, 'abcdefghij');\n",
-      count: 20_000)
+      count: 40_000)
     try (Self.sqliteDump + rows).write(to: file, atomically: true, encoding: .utf8)
     let log = ReadProgressLog()
     let (plan, size) = try DatabaseBackupModel.readPlan(url: file, engine: .sqlite) {
       log.append($0)
     }
-    let reports = log.values
-    let count = plan.summary.statementCount
-    #expect(count == 20_003)
+    #expect(plan.summary.statementCount == 40_003)
+    #expect(size == Data((Self.sqliteDump + rows).utf8).count)
     var reads: [Int] = []
-    var planned: [Int] = []
-    for report in reports {
-      switch report {
-      case .reading(let bytesRead, let byteCount):
-        #expect(planned.isEmpty && byteCount == size)
-        reads.append(bytesRead)
-      case .planning(let statementsPlanned, let statementCount):
-        #expect(statementCount == 0 || statementCount == count)
-        planned.append(statementsPlanned)
+    for report in log.values {
+      guard case .reading(let bytesRead, let byteCount) = report else {
+        Issue.record("A file is checked as it is read, never split whole: \(report)")
+        continue
       }
+      #expect(byteCount == size)
+      reads.append(bytesRead)
     }
-    #expect(reads.count > 2 && reads == reads.sorted() && reads.last == size)
-    #expect(planned.count > 2 && planned == planned.sorted())
-    #expect(reports.last == .planning(statementsPlanned: count, statementCount: count))
+    #expect(reads.count > 2 && reads == reads.sorted() && reads.last == size, "\(reads)")
   }
 
-  @Test func restoreRefusesAFileOverTheLimitBeforeReadingIt() async throws {
+  @Test func restoreRefusesInPassOneAStatementOrRowsOverTheirCap() async throws {
     let fixture = try await SQLiteFixture()
     defer { fixture.remove() }
-    let file = fixture.directory.appendingPathComponent("huge.sql")
-    FileManager.default.createFile(atPath: file.path, contents: Data())
-    let handle = try FileHandle(forWritingTo: file)
-    try handle.truncate(atOffset: UInt64(SQLRestorePlan.maxScriptBytes + 1))
-    try handle.close()
-    let model = DatabaseBackupModel(
-      viewModel: fixture.viewModel, environment: Self.environment(open: file, style: .immediate))
-    await model.chooseRestoreFile()
-    #expect(model.restorePlan == nil)
-    #expect(
-      model.errorMessage
-        == SQLRestoreError.tooLarge(bytes: SQLRestorePlan.maxScriptBytes + 1).localizedDescription)
+    let big = try fixture.write(
+      Self.sqliteDump + "INSERT INTO \"restored\" (\"id\", \"v\") VALUES (3, '"
+        + String(repeating: "x", count: 5_000) + "');\n", name: "big.sql")
+    let plain = try fixture.write(Self.sqliteDump, name: "dump.sql")
+    for (file, maxStatementBytes, maxConfirmationBytes) in [
+      (big, 4_096, SQLRestorePlan.maxConfirmationBytes),
+      (plain, SQLRestorePlan.maxStatementBytes, 16),
+    ] {
+      let access = AccessLog()
+      var environment = Self.environment(open: file, style: .immediate, access: access)
+      environment.readRestorePlan = { url, engine, progress in
+        try DatabaseBackupModel.readPlan(
+          url: url, engine: engine, maxStatementBytes: maxStatementBytes,
+          maxConfirmationBytes: maxConfirmationBytes, progress: progress)
+      }
+      let model = DatabaseBackupModel(viewModel: fixture.viewModel, environment: environment)
+      await model.chooseRestoreFile()
+      #expect(model.restorePlan == nil)
+      #expect(model.activity == nil)
+      #expect(access.started == 1 && access.stopped == 1)
+      if file == big {
+        // The planner's numbering: PRAGMA, CREATE, INSERT, then the big INSERT
+        #expect(model.errorMessage?.hasPrefix("Statement 4 is ") == true)
+        #expect(model.errorMessage?.hasSuffix("up to 64 MiB. Nothing was executed.") == true)
+      } else {
+        #expect(model.errorMessage == SQLRestoreError.confirmationTooLarge.localizedDescription)
+      }
+    }
+    #expect(try Self.tableExists(fixture.database, "restored") == false)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func cancelDuringPassOneStopsReading() async throws {
+    let fixture = try await SQLiteFixture()
+    defer { fixture.remove() }
+    // Over 2 MiB: three 1 MiB chunks; Cancel comes after the first report past 0 (2 MiB)
+    let file = try fixture.write(
+      Self.sqliteDump
+        + String(
+          repeating: "INSERT INTO \"restored\" (\"id\", \"v\") VALUES (1, 'abcdefghij');\n",
+          count: 40_000), name: "rows.sql")
+    let size = try #require(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+    let log = ReadProgressLog()
+    let (firstChunk, chunkRead) = AsyncStream<Void>.makeStream()
+    let resume = DispatchSemaphore(value: 0)
+    let access = AccessLog()
+    var environment = Self.environment(open: file, style: .immediate, access: access)
+    // Holds pass 1 after its first chunk until the test pressed Cancel
+    environment.readRestorePlan = { url, engine, progress in
+      try DatabaseBackupModel.readPlan(url: url, engine: engine) { report in
+        progress(report)
+        let first =
+          log.values.isEmpty
+          || log.values.allSatisfy { $0 == .reading(bytesRead: 0, byteCount: size) }
+        log.append(report)
+        if first, case .reading(let bytesRead, _) = report, bytesRead > 0 {
+          chunkRead.yield()
+          resume.wait()
+        }
+      }
+    }
+    let model = DatabaseBackupModel(viewModel: fixture.viewModel, environment: environment)
+    let load = Task { await model.chooseRestoreFile() }
+    var arrivals = firstChunk.makeAsyncIterator()
+    await arrivals.next()
+    #expect(model.activity == .reading)
+    await model.cancel()
     #expect(model.activity == nil)
+    resume.signal()
+    await load.value
+    let reads = log.values.compactMap { report -> Int? in
+      guard case .reading(let bytesRead, _) = report else { return nil }
+      return bytesRead
+    }
+    // The read stopped at its first chunk: the rest of the file was never read
+    #expect(Set(reads.filter { $0 > 0 }).count == 1)
+    #expect(try #require(reads.max()) < size)
+    #expect(model.restorePlan == nil && model.errorMessage == nil)
+    #expect(access.started == 1 && access.stopped == 1)
   }
 
   @Test func restoreOfAnotherEnginesDumpIsExplained() async throws {
@@ -697,6 +773,26 @@ struct DatabaseBackupModelTests {
     let sqlite = try SQLRestorePlan(script: Self.sqliteDump, engine: .sqlite)
     let schemaOnly = ProtectionPolicy(protectionLevel: .schemaOnly)
     #expect(DatabaseBackupModel.restoreBlockReason(sqlite, policy: schemaOnly) != nil)
+    // A file-backed plan (pass 1's classifications) gives the text plan's answers, naming the
+    // same refused statement
+    let directory = try Self.temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    for (engine, text) in [
+      (DatabaseType.sqlite, Self.sqliteDump), (.postgresql, SQLRestoreFilePlanTests.postgresDump),
+    ] {
+      let url = directory.appendingPathComponent("\(engine.rawValue).sql")
+      try text.write(to: url, atomically: true, encoding: .utf8)
+      let memory = try SQLRestorePlan(script: text, engine: engine)
+      let (file, _) = try DatabaseBackupModel.readPlan(url: url, engine: engine)
+      for policy in [open, schemaOnly, protected, readOnly] {
+        #expect(
+          DatabaseBackupModel.restoreBlockReason(file, policy: policy)
+            == DatabaseBackupModel.restoreBlockReason(memory, policy: policy))
+      }
+      #expect(
+        DatabaseBackupModel.restoreBlockReason(file, policy: schemaOnly)?.hasPrefix("Statement ")
+          == true)
+    }
     // Protected mode keeps a PostgreSQL / SQLite restore pending until Commit: not refused
     #expect(DatabaseBackupModel.restoreBlockReason(sqlite, policy: protected) == nil)
     // DuckDB has no savepoints: Protected mode is refused, and a file opened read-only says how
@@ -718,6 +814,26 @@ struct DatabaseBackupModelTests {
     #expect(
       DatabaseBackupModel.restoreBlockReason(duckdb, policy: readOnly)?.contains("read-only")
         == true)
+  }
+
+  @Test("The sheet's refusal, worked out off the main actor, is the gate's answer")
+  func blockReasonOffTheMainActor() async throws {
+    let fixture = try await SQLiteFixture(protectionLevel: .schemaOnly)
+    defer { fixture.remove() }
+    let file = try fixture.write(Self.sqliteDump, name: "dump.sql")
+    let expected = DatabaseBackupModel.restoreBlockReason(
+      try SQLRestorePlan(script: Self.sqliteDump, engine: .sqlite),
+      policy: ProtectionPolicy(protectionLevel: .schemaOnly))
+    #expect(expected?.hasPrefix("Statement 1: ") == true)
+    let model = DatabaseBackupModel(
+      viewModel: fixture.viewModel, environment: Self.environment(open: file, style: .confirm))
+    await model.chooseRestoreFile()
+    #expect(model.restorePlan != nil)
+    #expect(model.restoreBlockedReason == expected)
+    await model.restore()
+    #expect(model.restoreBlockedReason == expected)
+    #expect(model.activity == nil && !model.isConfirmingRestore)
+    #expect(try Self.tableExists(fixture.database, "restored") == false)
   }
 
   @Test func protectedModeRestoreWaitsForCommit() async throws {
@@ -872,12 +988,13 @@ struct DatabaseBackupModelTests {
   // MARK: - Helpers
 
   private static func environment(
-    save: URL? = nil, open: URL? = nil, style: CommitStyle = .immediate
+    save: URL? = nil, open: URL? = nil, style: CommitStyle = .immediate, access: AccessLog? = nil
   ) -> DatabaseBackupModel.Environment {
     var environment = DatabaseBackupModel.Environment.live
     environment.chooseSaveURL = { _, _ in save }
     environment.chooseOpenURL = { open }
     environment.commitStyle = { _ in style }
+    if let access { environment.startAccess = { access.token($0) } }
     return environment
   }
 
@@ -928,14 +1045,17 @@ struct DatabaseBackupModelTests {
     let viewModel: NotebookViewModel
     let recorder: BackupHistoryRecorder
 
-    init(protectedMode: Bool = false, lockSource: LockRegistry = .shared) async throws {
+    init(
+      protectedMode: Bool = false, protectionLevel: ConnectionProtectionLevel = .none,
+      lockSource: LockRegistry = .shared
+    ) async throws {
       manager = DatabaseConnectionManager(lockSource: lockSource)
       recorder = BackupHistoryRecorder()
       directory = try DatabaseBackupModelTests.temporaryDirectory()
       database = directory.appendingPathComponent("source.db")
       config = ConnectionConfig(
-        databaseType: .sqlite, database: database.path, username: "", protectionLevel: .none,
-        safeMode: .silent, protectedMode: protectedMode)
+        databaseType: .sqlite, database: database.path, username: "",
+        protectionLevel: protectionLevel, safeMode: .silent, protectedMode: protectedMode)
       try await manager.connect(config: config)
       for statement in [
         "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)",
@@ -1080,4 +1200,20 @@ private final class ReadProgressLog: @unchecked Sendable {
 
   func append(_ progress: SQLRestoreReadProgress) { lock.withLock { recorded.append(progress) } }
   var values: [SQLRestoreReadProgress] { lock.withLock { recorded } }
+}
+
+/// Security-scoped access the restore took and released
+private final class AccessLog: @unchecked Sendable {
+  private let lock = NSLock()
+  private var counts = (started: 0, stopped: 0)
+
+  var started: Int { lock.withLock { counts.started } }
+  var stopped: Int { lock.withLock { counts.stopped } }
+
+  /// A granted token that counts its stop
+  func token(_ url: URL) -> SecurityScopedAccessToken {
+    lock.withLock { counts.started += 1 }
+    return SecurityScopedAccessToken(
+      url: url, start: { _ in true }, stop: { [self] _ in lock.withLock { counts.stopped += 1 } })
+  }
 }

@@ -554,8 +554,9 @@ extension DatabaseConnectionManager {
   /// - Protected mode (any level): no transaction control and no statement that cannot run in
   ///   a transaction (the app owns the transaction); `dialect` picks the MySQL wording for an
   ///   implicit commit, and refuses every MongoDB write (no transactions).
+  /// `statements` may be lazy (a file-backed restore plan's, built one at a time).
   nonisolated static func evaluate(
-    _ statements: [ClassifiedStatement], policy: ProtectionPolicy,
+    _ statements: some Sequence<ClassifiedStatement>, policy: ProtectionPolicy,
     dialect: SQLDialect = .postgresql
   ) -> GateDecision {
     for (index, statement) in statements.enumerated() {

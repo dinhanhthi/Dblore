@@ -1328,7 +1328,8 @@ struct SQLRestoreGateTests {
       caller: caller)
     #expect(summary.pending)
     #expect(await manager.transactionStatus().owner == caller)
-    #expect(await manager.transactionSnapshot().pending.count == 12)
+    // One summary per kind: schema, data, sequence values
+    #expect(await manager.transactionSnapshot().pending.count == 3)
   }
 
   @Test("A restored table whose DDL holds a backslash string refreshes the sidebar")
@@ -1546,7 +1547,10 @@ struct SQLRestoreGateTests {
     #expect(sent.filter { $0 == "BEGIN" }.count == 1)
     #expect(!sent.contains("COMMIT"))
     #expect(await manager.transactionStatus().owner == caller)
-    #expect(await manager.transactionSnapshot().pending.count == 1 + plan.statements.count)
+    // The edit's summary, then one per kind of the restore
+    #expect(
+      await manager.transactionSnapshot().pending.count
+        == 1 + SQLRestoreStatementKind.allCases.filter { plan.summary.count($0) > 0 }.count)
   }
 
   @Test(

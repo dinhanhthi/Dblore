@@ -73,23 +73,32 @@ struct SQLRestoreSearchPathPinTests {
   @Test("Protected mode: read, pin, dump, the read value put back bound, then RELEASE")
   func protectedModeOrder() async throws {
     let userPath = "a, public"
-    let (manager, session) = try await connect(protectedMode: true) { sql, _ in
-      sql == Pin.readSQL
-        ? FakeQueryAnswer(
-          columns: [ColumnInfo(name: "current_setting", type: "text")],
-          rows: [[.string(userPath)]])
-        : nil
+    let texts = try SQLRestorePlan(script: Self.postgresDump, engine: .postgresql).statements
+      .map(\.text)
+    // The dump planned from its text, then from its file (pass 2 reads it as it is sent)
+    let file = try SQLRestoreFilePlanTests.file(Self.postgresDump)
+    defer { try? FileManager.default.removeItem(at: file) }
+    for plan in [
+      try SQLRestorePlan(script: Self.postgresDump, engine: .postgresql),
+      try SQLRestorePlan(file: file, engine: .postgresql),
+    ] {
+      let (manager, session) = try await connect(protectedMode: true) { sql, _ in
+        sql == Pin.readSQL
+          ? FakeQueryAnswer(
+            columns: [ColumnInfo(name: "current_setting", type: "text")],
+            rows: [[.string(userPath)]])
+          : nil
+      }
+      let summary = try await restore(manager, plan)
+      #expect(summary.pending)
+      let sent = session.statements
+      #expect(
+        Array(sent.suffix(texts.count + 5))
+          == ["SAVEPOINT \(Self.savepoint)", Pin.readSQL, Pin.pinSQL] + texts
+          + [Pin.putBackSQL, "RELEASE SAVEPOINT \(Self.savepoint)"])
+      let putBack = try #require(sent.firstIndex(of: Pin.putBackSQL))
+      #expect(session.statementBinds[putBack] == [.text(userPath)])
     }
-    let plan = try SQLRestorePlan(script: Self.postgresDump, engine: .postgresql)
-    let summary = try await restore(manager, plan)
-    #expect(summary.pending)
-    let sent = session.statements
-    #expect(
-      Array(sent.suffix(plan.statements.count + 5))
-        == ["SAVEPOINT \(Self.savepoint)", Pin.readSQL, Pin.pinSQL] + plan.statements.map(\.text)
-        + [Pin.putBackSQL, "RELEASE SAVEPOINT \(Self.savepoint)"])
-    let putBack = try #require(sent.firstIndex(of: Pin.putBackSQL))
-    #expect(session.statementBinds[putBack] == [.text(userPath)])
   }
 
   @Test("A SQLite restore sends no search_path read, pin or put-back")

@@ -2,10 +2,12 @@
 // Drives the SQL dump, SQLite file copy and restore sheets for the active tab. The dump opens
 // its own connection (`SQLDumpWriter`) from the tab manager's in-memory config, unremembered
 // certificate and SSH secret, and host-key prompt (DuckDB: it reads on the tab's own manager
-// instead, never a second instance); the restore reads and plans the file off the
-// main actor, then runs it on the tab's connection through the gate (`executeGatedRestore`)
-// after the Safe Mode confirmation. Progress callbacks arrive off the main actor and hop back
-// here. One History row per dump and per restore (success, failure, cancel) when History is on.
+// instead, never a second instance); the restore checks the file in chunks off the main actor
+// (pass 1), then runs it on the tab's connection through the gate (`executeGatedRestore`, which
+// reads it again, pass 2) after the Safe Mode confirmation, holding the file's security-scoped
+// access from pass 1 until the run ends. Progress callbacks arrive off the main actor and hop
+// back here. One History row per dump and per restore (success, failure, cancel) when History
+// is on.
 
 import AppKit
 import Foundation
@@ -61,10 +63,12 @@ final class DatabaseBackupModel {
         -> SQLiteFileBackup.Progress
     /// The tab's commit style (Safe Mode), as the query confirmation reads it
     var commitStyle: @MainActor (NotebookViewModel) -> CommitStyle
-    /// Reads and plans a restore file (`readPlan`), run off the main actor, reporting how far
+    /// Checks a restore file (`readPlan`, pass 1), run off the main actor, reporting how far
     var readRestorePlan:
       @Sendable (URL, DatabaseType, @escaping @Sendable (SQLRestoreReadProgress) -> Void)
         async throws -> (SQLRestorePlan, Int)
+    /// Starts the restore file's security-scoped access (kept from pass 1 until the run ends)
+    var startAccess: @MainActor (URL) -> SecurityScopedAccessToken
 
     static let live = Environment(
       chooseSaveURL: { await DatabaseBackupModel.showSavePanel(name: $0, fileExtension: $1) },
@@ -81,7 +85,8 @@ final class DatabaseBackupModel {
         viewModel.notebook.connectionConfig?.resolvedCommitStyle(
           fallback: AppSettings.shared.commitStyle) ?? AppSettings.shared.commitStyle
       },
-      readRestorePlan: { try DatabaseBackupModel.readPlan(url: $0, engine: $1, progress: $2) })
+      readRestorePlan: { try DatabaseBackupModel.readPlan(url: $0, engine: $1, progress: $2) },
+      startAccess: { SecurityScopedAccessToken(url: $0) })
   }
 
   /// The active tab: its connection, protection policy, History and notebook id (`caller`)
@@ -120,6 +125,12 @@ final class DatabaseBackupModel {
   /// is shared by every tab: once the batch returned, whatever runs there belongs to another tab,
   /// so Cancel (or the sheet going away) must not stop it.
   @ObservationIgnored private var restoreBatchInFlight = false
+  /// The restore file's security-scoped access: taken before pass 1, released when another file
+  /// is chosen, the read fails or stops, the sheet goes away, or the run ends
+  @ObservationIgnored private var restoreAccess: SecurityScopedAccessToken?
+  /// `restore()` is checking the gate's answer off the main actor (`activity` is `.restoring`):
+  /// Cancel or the sheet going away stops it before anything runs
+  @ObservationIgnored private var checkingRestore = false
 
   init(viewModel: NotebookViewModel, environment: Environment = .live) {
     self.viewModel = viewModel
@@ -311,11 +322,12 @@ final class DatabaseBackupModel {
     await loadRestore(from: url)
   }
 
-  /// Reads and plans `url` off the main actor (the size is checked before reading), for the
-  /// connected engine and connection
+  /// Checks `url` off the main actor (pass 1, in chunks), for the connected engine and connection,
+  /// then the gate's answer there too, under the policy when the read started
   func loadRestore(from url: URL) async {
     guard activity == nil else { return }
     clearMessages()
+    releaseRestoreAccess()
     restorePlan = nil
     restoreBlockedReason = nil
     restoreProgress = nil
@@ -329,25 +341,31 @@ final class DatabaseBackupModel {
       return
     }
     let epoch = await manager.connectionEpoch
+    restoreAccess = environment.startAccess(url)
     let id = begin(.reading)
     let read = environment.readRestorePlan
     let report = reporter(id, .reading) { $0.restoreReadProgress = $1 }
+    let policy = viewModel.protectionPolicy
+    let config = viewModel.notebook.connectionConfig
     let work = Task.detached(priority: .userInitiated) {
-      try await read(url, engine, report)
+      let (plan, size) = try await read(url, engine, report)
+      return (plan, size, Self.restoreBlockReason(plan, policy: policy, config: config))
     }
     cancelWork = { work.cancel() }
     do {
-      let (plan, size) = try await work.value
+      let (plan, size, blockedReason) = try await work.value
       if operationID == id {
         restorePlan = plan
         restoreFileSize = size
         planEpoch = epoch
-        restoreBlockedReason = Self.restoreBlockReason(
-          plan, policy: viewModel.protectionPolicy, config: viewModel.notebook.connectionConfig)
+        restoreBlockedReason = blockedReason
       }
     } catch {
-      if operationID == id, Self.historyStatus(for: error) != .cancelled {
-        errorMessage = error.localizedDescription
+      if operationID == id {
+        releaseRestoreAccess()
+        if Self.historyStatus(for: error) != .cancelled {
+          errorMessage = error.localizedDescription
+        }
       }
     }
     end(id)
@@ -355,17 +373,31 @@ final class DatabaseBackupModel {
 
   /// Checks the gate's answer, then asks Safe Mode when the commit style confirms writes (Confirm
   /// and Password ask for every non-empty restore: a restore always writes, even one of only
-  /// sequence values or session settings), or runs the restore at once
+  /// sequence values or session settings), or runs the restore at once. The click shows the
+  /// restore starting at once; the gate's answer walks every statement (millions for a dump of
+  /// one INSERT per row), so it is worked out off the main actor.
   func restore() async {
     guard activity == nil, !isConfirmingRestore, !restoreCompleted, let plan = restorePlan else {
       return
     }
     clearMessages()
-    restoreBlockedReason = Self.restoreBlockReason(
-      plan, policy: viewModel.protectionPolicy, config: viewModel.notebook.connectionConfig)
+    // A failed run's count would show during the check
+    restoreProgress = nil
+    let id = begin(.restoring)
+    checkingRestore = true
+    let policy = viewModel.protectionPolicy
+    let config = viewModel.notebook.connectionConfig
+    let blockedReason = await Task.detached(priority: .userInitiated) {
+      Self.restoreBlockReason(plan, policy: policy, config: config)
+    }.value
+    // Cancel, or the sheet going away, stopped the check: nothing runs
+    guard operationID == id else { return }
+    checkingRestore = false
+    end(id)
+    restoreBlockedReason = blockedReason
     guard restoreBlockedReason == nil else { return }
     let style = environment.commitStyle(viewModel)
-    if !plan.statements.isEmpty, style == .confirm || style == .password {
+    if plan.summary.statementCount > 0, style == .confirm || style == .password {
       confirmationRequiresPassword = style.requiresPassword
       restoreConfirmation = Self.restoreConfirmation(plan)
       isConfirmingRestore = true
@@ -392,42 +424,51 @@ final class DatabaseBackupModel {
   /// dropped, whitespace runs collapsed), cut as the query confirmation cuts it. A cut row and
   /// every trigger also carry their whole text (`fullText`, behind "Show full statement") and a note: how much the
   /// preview leaves out, and for a trigger the table whose writes run its body. INSERTs (and
-  /// SQLite's `DELETE FROM sqlite_sequence`) stay a count.
+  /// SQLite's `DELETE FROM sqlite_sequence`) stay a count. A file-backed plan's rows were built
+  /// the same way in pass 1 (`SQLRestorePlan.confirmationRows`).
   nonisolated static func restoreConfirmation(_ plan: SQLRestorePlan) -> [StatementConfirmation] {
+    guard case .memory(let statements) = plan.source else { return plan.confirmationRows }
     let dialect = plan.engine.dialect
-    return zip(plan.statements, plan.kinds).enumerated().compactMap { index, pair in
-      let (statement, kind) = pair
-      let label: String
-      switch kind {
-      case .data: return nil
-      case .drop: label = "Drop"
-      case .schema: label = "Schema"
-      case .trigger: label = "Trigger"
-      case .sequenceValue: label = "Sequence value"
-      case .sessionSetting: label = "Session setting"
-      }
-      let line = NotebookViewModel.collapsedLine(statement.text, dialect: dialect)
-      let omitted = NotebookViewModel.previewOmittedCount(line)
-      var notes: [String] = []
-      if kind == .trigger {
-        let table = SQLRestorePlan.triggerTable(statement.text) ?? "its table"
-        notes.append("Trigger body runs on every later write to \(table)")
-      }
-      if omitted > 0 {
-        notes.append("Statement continues for \(omitted.formatted()) more characters")
-      }
-      var row = StatementConfirmation(
-        index: index, preview: NotebookViewModel.oneLinePreview(statement.text, dialect: dialect),
-        kindLabel: label, affectsAllRows: statement.affectsAllRows,
-        touchesBrake: statement.resetsSessionBrakes,
-        changesPrivileges: statement.changesPrivileges)
-      row.isTruncated = omitted > 0
-      if !notes.isEmpty {
-        row.fullText = statement.text
-        row.fullTextNotes = notes
-      }
-      return row
+    return zip(statements, plan.kinds).enumerated().compactMap { index, pair in
+      restoreConfirmationRow(pair.0, kind: pair.1, index: index, dialect: dialect)
     }
+  }
+
+  /// The Safe Mode row of restore statement `index` (`restoreConfirmation`), nil for data
+  nonisolated static func restoreConfirmationRow(
+    _ statement: ClassifiedStatement, kind: SQLRestoreStatementKind, index: Int,
+    dialect: SQLDialect
+  ) -> StatementConfirmation? {
+    let label: String
+    switch kind {
+    case .data: return nil
+    case .drop: label = "Drop"
+    case .schema: label = "Schema"
+    case .trigger: label = "Trigger"
+    case .sequenceValue: label = "Sequence value"
+    case .sessionSetting: label = "Session setting"
+    }
+    let line = NotebookViewModel.collapsedLine(statement.text, dialect: dialect)
+    let omitted = NotebookViewModel.previewOmittedCount(line)
+    var notes: [String] = []
+    if kind == .trigger {
+      let table = SQLRestorePlan.triggerTable(statement.text) ?? "its table"
+      notes.append("Trigger body runs on every later write to \(table)")
+    }
+    if omitted > 0 {
+      notes.append("Statement continues for \(omitted.formatted()) more characters")
+    }
+    var row = StatementConfirmation(
+      index: index, preview: NotebookViewModel.oneLinePreview(statement.text, dialect: dialect),
+      kindLabel: label, affectsAllRows: statement.affectsAllRows,
+      touchesBrake: statement.resetsSessionBrakes,
+      changesPrivileges: statement.changesPrivileges)
+    row.isTruncated = omitted > 0
+    if !notes.isEmpty {
+      row.fullText = statement.text
+      row.fullTextNotes = notes
+    }
+    return row
   }
 
   /// Why the gate would refuse `plan` under `policy` (the connection's own policy; the
@@ -450,7 +491,7 @@ final class DatabaseBackupModel {
       return SQLRestorePlan.duckdbProtectedModeMessage
     }
     if case .blocked(let index, _, let reason) = DatabaseConnectionManager.evaluate(
-      plan.statements, policy: policy, dialect: plan.engine.dialect)
+      plan.gateStatements, policy: policy, dialect: plan.engine.dialect)
     {
       return "Statement \(index + 1): \(reason)"
     }
@@ -463,6 +504,10 @@ final class DatabaseBackupModel {
     else {
       errorMessage = "No database connection available"
       return
+    }
+    // Released after an earlier run: a retry reads the file again
+    if restoreAccess == nil, case .file(let url, _) = plan.source {
+      restoreAccess = environment.startAccess(url)
     }
     let id = begin(.restoring)
     let runningWork = beginRunningWork(
@@ -479,7 +524,7 @@ final class DatabaseBackupModel {
       defer { restoreBatchInFlight = false }
       summary = try await manager.executeGatedRestore(
         plan, policy: viewModel.protectionPolicy, connectionEpoch: epoch, caller: viewModel.id,
-        progress: reporter(id, .restoring) { $0.restoreProgress = $1 })
+        access: restoreAccess, progress: reporter(id, .restoring) { $0.restoreProgress = $1 })
       status = .success
       restoreCompleted = true
       restoreProgress = SQLRestoreProgress(
@@ -494,6 +539,7 @@ final class DatabaseBackupModel {
         errorMessage = failure
       }
     }
+    releaseRestoreAccess()
     await recordHistory(started: started) { workspaceID, workspaceName, duration in
       QueryHistoryEntry.restoreSummary(
         summary, config: config, workspaceID: workspaceID, workspaceName: workspaceName,
@@ -515,68 +561,41 @@ final class DatabaseBackupModel {
     return "Restored \(count)."
   }
 
-  /// The file's text, planned for `engine`. Throws `SQLRestoreError.tooLarge` before reading a
-  /// file over the limit. `progress` gets the bytes read after each 1 MiB, then the statements
-  /// planned (`SQLRestorePlan.init`). One whole-file buffer at a time: the bytes are freed once
-  /// decoded, the text once its scalars are built.
+  /// Pass 1 of a restore: the file checked in chunks for `engine` (`SQLRestorePlan(file:)`),
+  /// never read whole. The caller holds the file's security-scoped access from here until the
+  /// run ends. `progress` gets the bytes checked of the file's size after each chunk. Returns the
+  /// plan and the bytes read. `maxStatementBytes` and `maxConfirmationBytes` are the plan's caps.
   nonisolated static func readPlan(
-    url: URL, engine: DatabaseType, progress: (SQLRestoreReadProgress) -> Void = { _ in }
+    url: URL, engine: DatabaseType, maxStatementBytes: Int = SQLRestorePlan.maxStatementBytes,
+    maxConfirmationBytes: Int = SQLRestorePlan.maxConfirmationBytes,
+    progress: (SQLRestoreReadProgress) -> Void = { _ in }
   ) throws -> (SQLRestorePlan, Int) {
-    let accessed = url.startAccessingSecurityScopedResource()
-    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-    var (script, bytes) = try readScript(url: url, progress: progress)
-    try Task.checkCancellation()
+    var bytes = 0
     let plan = try PerfSignpost.interval("restore.plan") {
-      // Hand the plan the only copy of the text, so it is freed once split
-      let owned = script
-      script = ""
-      return try SQLRestorePlan(script: consume owned, engine: engine, progress: progress)
+      try SQLRestorePlan(
+        file: url, engine: engine, maxStatementBytes: maxStatementBytes,
+        maxConfirmationBytes: maxConfirmationBytes
+      ) { report in
+        if case .reading(let bytesRead, _) = report { bytes = bytesRead }
+        progress(report)
+      }
     }
     return (plan, bytes)
-  }
-
-  /// The file's UTF-8 text and its size in bytes. The bytes are freed when this returns.
-  private nonisolated static func readScript(
-    url: URL, progress: (SQLRestoreReadProgress) -> Void
-  ) throws -> (String, Int) {
-    let handle = try FileHandle(forReadingFrom: url)
-    defer { try? handle.close() }
-    let limit = SQLRestorePlan.maxScriptBytes
-    let size = try handle.seekToEnd()
-    guard size <= UInt64(limit) else { throw SQLRestoreError.tooLarge(bytes: Int(clamping: size)) }
-    try handle.seek(toOffset: 0)
-    var data = Data()
-    data.reserveCapacity(Int(size))
-    progress(.reading(bytesRead: 0, byteCount: Int(size)))
-    while true {
-      try Task.checkCancellation()
-      // `read` returns each chunk autoreleased: without the pool every chunk would stay until
-      // the whole read ends, a second copy of the file
-      let appended = try autoreleasepool {
-        let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
-        data.append(chunk)
-        return chunk.count
-      }
-      if appended == 0 { break }
-      // The file grew after the size check
-      guard data.count <= limit else { throw SQLRestoreError.tooLarge(bytes: data.count) }
-      progress(.reading(bytesRead: data.count, byteCount: max(Int(size), data.count)))
-    }
-    guard let script = String(data: data, encoding: .utf8) else {
-      throw DatabaseBackupError.notUTF8
-    }
-    return (script, data.count)
   }
 
   // MARK: - Cancel
 
   /// The sheet went away (closed, or its tab closed while it worked): a late Safe Mode answer
-  /// restores nothing, and the running dump, copy, read or restore stops (a read at once)
+  /// restores nothing, and the running dump, copy, read or restore stops (a read at once). The
+  /// restore file's access ends now, or when the stopped run ends.
   func sheetDisappeared() {
     cancelRestoreConfirmation()
     switch activity {
     case .reading: stopReading()
-    case nil: break
+    case nil: releaseRestoreAccess()
+    case .restoring where checkingRestore:
+      stopRestoreCheck()
+      releaseRestoreAccess()
     case .dumping, .copying, .restoring: Task { await cancel() }
     }
   }
@@ -584,10 +603,14 @@ final class DatabaseBackupModel {
   /// Stops the running operation: a dump, copy or read by task cancellation, a restore through
   /// the connection (as Stop does for a running statement), only while the restore's own batch
   /// runs (afterwards it only records History and refreshes the tab). A cancelled read ends at
-  /// once: its plan, if planning still finishes, is dropped.
+  /// once: its plan, if planning still finishes, is dropped; so does the restore's gate check.
   func cancel() async {
     switch activity {
     case .restoring:
+      if checkingRestore {
+        stopRestoreCheck()
+        return
+      }
       guard restoreBatchInFlight else { return }
       _ = await viewModel.cancelRunningStatement(cancelQueue: false)
     case .reading:
@@ -604,6 +627,19 @@ final class DatabaseBackupModel {
     cancelWork = nil
     operationID = UUID()
     activity = nil
+    releaseRestoreAccess()
+  }
+
+  /// `restore()`'s gate check ends without running anything
+  private func stopRestoreCheck() {
+    checkingRestore = false
+    operationID = UUID()
+    activity = nil
+  }
+
+  private func releaseRestoreAccess() {
+    restoreAccess?.release()
+    restoreAccess = nil
   }
 
   // MARK: - Private

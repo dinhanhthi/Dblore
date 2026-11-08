@@ -2,7 +2,8 @@
 // Inline grid edits must update exactly one row. Protected mode runs the edit in the app
 // transaction behind an app-owned savepoint; without Protected mode the edit gets its own
 // app-owned BEGIN ... COMMIT, or runs inside the transaction the user opened.
-// A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement;
+// A staged batch uses the same rules behind savepoint `dblore_batch`, one summary per statement
+// (a SQL dump restore pulls its statements one at a time and records one per statement kind);
 // a streamed batch (Generate Rows, Copy Objects) too, with one summary per run plus one per
 // prelude and postlude statement.
 // MySQL counts changed rows (CLIENT_FOUND_ROWS is off): an UPDATE with a row check that
@@ -172,18 +173,46 @@ extension DatabaseConnectionManager {
     cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil,
     rewind: RewindPlan? = nil, rewinding: [Int64] = [], searchPathPin: SearchPathPin? = nil
   ) async throws -> [Int] {
+    var remaining = statements.makeIterator()
+    var counts: [Int] = []
+    counts.reserveCapacity(statements.count)
+    _ = try await runStagedBatch(
+      count: statements.count, next: { remaining.next() }, caller: caller,
+      protectedMode: protectedMode, cancellationGeneration: cancellationGeneration,
+      progress: progress, rewind: rewind, rewinding: rewinding, searchPathPin: searchPathPin,
+      ran: { counts.append($0) }, recordSummaries: { recordBatch(statements, counts: counts) },
+      noteSchema: { noteSchemaSQL(statements) })
+    return counts
+  }
+
+  /// The staged batch over statements `next` hands out one at a time inside the batch's
+  /// transaction, after the pin (`count`: how many, for the Data Rewind capture). The batch pulls
+  /// until `next` returns nil before it releases or commits; a throw from `next` rolls the batch
+  /// back like a failing statement and is thrown as is. Nothing is kept per statement here: `ran`
+  /// gets each statement's row count once it ran, `recordSummaries` records the Protected-mode
+  /// pending summaries (after RELEASE) and `noteSchema` notes the schema changes (after RELEASE
+  /// or COMMIT). Returns the statements run.
+  func runStagedBatch(
+    count: Int, next: () throws -> BoundStatement?, caller: UUID?, protectedMode: Bool,
+    cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)? = nil,
+    rewind: RewindPlan? = nil, rewinding: [Int64] = [], searchPathPin: SearchPathPin? = nil,
+    ran: (Int) -> Void, recordSummaries: () -> Void, noteSchema: () -> Void
+  ) async throws -> Int {
     // User writes: refused after a DuckDB interrupt cancel since admission (`withSession`)
     let admission = UserStatementAdmission(
       epoch: connectionEpoch, generation: cancellationGeneration)
     return try await Self.$userStatementAdmission.withValue(admission) {
       if protectedMode {
         return try await runProtectedBatch(
-          statements, caller: caller, cancellationGeneration: cancellationGeneration,
-          progress: progress, rewind: rewind, rewinding: rewinding, searchPathPin: searchPathPin)
+          count: count, next: next, caller: caller,
+          cancellationGeneration: cancellationGeneration, progress: progress, rewind: rewind,
+          rewinding: rewinding, searchPathPin: searchPathPin, ran: ran,
+          recordSummaries: recordSummaries, noteSchema: noteSchema)
       }
       return try await runUnprotectedBatch(
-        statements, cancellationGeneration: cancellationGeneration, progress: progress,
-        rewind: rewind, rewinding: rewinding, searchPathPin: searchPathPin)
+        count: count, next: next, cancellationGeneration: cancellationGeneration,
+        progress: progress, rewind: rewind, rewinding: rewinding, searchPathPin: searchPathPin,
+        ran: ran, noteSchema: noteSchema)
     }
   }
 
@@ -364,10 +393,11 @@ extension DatabaseConnectionManager {
   // MARK: - Private
 
   private func runProtectedBatch(
-    _ statements: [BoundStatement], caller: UUID?, cancellationGeneration: UInt64,
-    progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64],
-    searchPathPin: SearchPathPin?
-  ) async throws -> [Int] {
+    count: Int, next: () throws -> BoundStatement?, caller: UUID?,
+    cancellationGeneration: UInt64, progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?,
+    rewinding: [Int64], searchPathPin: SearchPathPin?, ran: (Int) -> Void,
+    recordSummaries: () -> Void, noteSchema: () -> Void
+  ) async throws -> Int {
     let epoch = connectionEpoch
     try await adoptUserTransactionIfNeeded(protectedMode: true, caller: caller)
     let opens = txState.isIdle
@@ -377,13 +407,13 @@ extension DatabaseConnectionManager {
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
-    var capture = startRewindCapture(rewind, statementCount: statements.count)
-    let counts: [Int]
+    var capture = startRewindCapture(rewind, statementCount: count)
+    let done: Int
     do {
       let userSearchPath = try await pinSearchPath(searchPathPin)
-      counts = try await applyBatch(
-        statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-        progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil)
+      done = try await applyBatch(
+        next, rolledBack: true, cancellationGeneration: cancellationGeneration,
+        progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil, ran: ran)
       try refuseCancelledBatch(since: cancellationGeneration)
       try await putBackSearchPath(userSearchPath)
     } catch {
@@ -395,28 +425,29 @@ extension DatabaseConnectionManager {
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
-    recordBatch(statements, counts: counts)
+    recordSummaries()
     recordRewind(capture, committed: false)
     recordRewound(rewinding, committed: false)
-    noteSchemaSQL(statements)
-    return counts
+    noteSchema()
+    return done
   }
 
   private func runUnprotectedBatch(
-    _ statements: [BoundStatement], cancellationGeneration: UInt64,
+    count: Int, next: () throws -> BoundStatement?, cancellationGeneration: UInt64,
     progress: (@Sendable (Int) -> Void)?, rewind: RewindPlan?, rewinding: [Int64],
-    searchPathPin: SearchPathPin?
-  ) async throws -> [Int] {
-    var capture = startRewindCapture(rewind, statementCount: statements.count)
+    searchPathPin: SearchPathPin?, ran: (Int) -> Void, noteSchema: () -> Void
+  ) async throws -> Int {
+    var capture = startRewindCapture(rewind, statementCount: count)
     if userTxOpen {
       let epoch = connectionEpoch
       _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
-      let counts: [Int]
+      let done: Int
       do {
         let userSearchPath = try await pinSearchPath(searchPathPin)
-        counts = try await applyBatch(
-          statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-          progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil)
+        done = try await applyBatch(
+          next, rolledBack: true, cancellationGeneration: cancellationGeneration,
+          progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil,
+          ran: ran)
         try refuseCancelledBatch(since: cancellationGeneration)
         try await putBackSearchPath(userSearchPath)
       } catch {
@@ -427,16 +458,16 @@ extension DatabaseConnectionManager {
       _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
       recordRewind(capture, committed: false)
       recordRewound(rewinding, committed: false)
-      noteSchemaSQL(statements)
-      return counts
+      noteSchema()
+      return done
     }
     _ = try await sendTransactionControl(appOwnedBeginSQL)
-    let counts: [Int]
+    let done: Int
     do {
       let userSearchPath = try await pinSearchPath(searchPathPin)
-      counts = try await applyBatch(
-        statements, rolledBack: true, cancellationGeneration: cancellationGeneration,
-        progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil)
+      done = try await applyBatch(
+        next, rolledBack: true, cancellationGeneration: cancellationGeneration,
+        progress: progress, capture: &capture, searchPathPinned: userSearchPath != nil, ran: ran)
       try refuseCancelledBatch(since: cancellationGeneration)
       try await putBackSearchPath(userSearchPath)
     } catch {
@@ -446,8 +477,8 @@ extension DatabaseConnectionManager {
     try await commitOwnBatch()
     recordRewind(capture, committed: true)
     recordRewound(rewinding, committed: true)
-    noteSchemaSQL(statements)
-    return counts
+    noteSchema()
+    return done
   }
 
   /// COMMIT of a batch's own BEGIN; a COMMIT that fails or is answered with a rollback is
@@ -489,19 +520,28 @@ extension DatabaseConnectionManager {
     _ = try await sendTransactionControl(SearchPathPin.putBackSQL, binds: [.text(userSearchPath)])
   }
 
-  /// Send each statement and check its expected affected rows when set. The caller owns the
-  /// transaction. `rolledBack` is only the flag on the thrown error. With a `capture`, each
-  /// statement's row is read right before and right after it. `searchPathPinned`: a statement
-  /// error gets `SearchPathPin.hint` (`commandResult`).
+  /// Pull each statement from `next` until it returns nil, send it and check its expected
+  /// affected rows when set; `ran` gets its count. The caller owns the transaction. A throw from
+  /// `next` is thrown as is (a cancel meanwhile as `batchCancelled`). `rolledBack` is only the
+  /// flag on the thrown error. With a `capture`, each statement's row is read right before and
+  /// right after it. `searchPathPinned`: a statement error gets `SearchPathPin.hint`
+  /// (`commandResult`). Returns the statements run.
   private func applyBatch(
-    _ statements: [BoundStatement], rolledBack: Bool, cancellationGeneration: UInt64,
+    _ next: () throws -> BoundStatement?, rolledBack: Bool, cancellationGeneration: UInt64,
     progress: (@Sendable (Int) -> Void)?, capture: inout RewindCapture?,
-    searchPathPinned: Bool = false
-  ) async throws -> [Int] {
-    var counts: [Int] = []
-    counts.reserveCapacity(statements.count)
-    for (index, statement) in statements.enumerated() {
+    searchPathPinned: Bool = false, ran: (Int) -> Void
+  ) async throws -> Int {
+    var index = 0
+    while true {
       try refuseCancelledBatch(since: cancellationGeneration)
+      let pulled: BoundStatement?
+      do {
+        pulled = try next()
+      } catch {
+        try refuseCancelledBatch(since: cancellationGeneration)
+        throw error
+      }
+      guard let statement = pulled else { return index }
       let rows: Int
       do {
         // A capture read that throws lost the transaction: fail as the statement would
@@ -529,10 +569,10 @@ extension DatabaseConnectionManager {
       }
       // SQLite's sqlite3_changes64 can retain the previous DML count after CREATE TABLE.
       let isDDL = classification(of: statement)?.kind == .ddl
-      counts.append(statement.expectedRows == nil && isDDL ? 0 : rows)
-      progress?(counts.count)
+      ran(statement.expectedRows == nil && isDDL ? 0 : rows)
+      index += 1
+      progress?(index)
     }
-    return counts
   }
 
   /// Send `prelude`, then make, check and send each chunk of `source` in turn, then `postlude`;
