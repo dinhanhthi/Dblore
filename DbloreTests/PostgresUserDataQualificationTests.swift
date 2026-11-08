@@ -2,7 +2,8 @@
 // Statements the app builds on user tables run with the user's search_path, where a planted
 // `=(integer,integer)` or `count` in an earlier schema would win over pg_catalog's. Each
 // migrated builder's PostgreSQL output goes through `PostgresQualificationLint`; a bare
-// comparison passes only on a column the builder was given a denylisted extension type for.
+// comparison never passes, and an extension's `OPERATOR(<schema>.op)` only on a column whose
+// type data the builder was given names that extension's schema.
 
 import Foundation
 import Testing
@@ -12,12 +13,12 @@ import Testing
 @MainActor
 @Suite("PostgreSQL statements on user data are pg_catalog-qualified")
 struct PostgresUserDataQualificationTests {
-  /// One builder output: its PostgreSQL text and the column types the builder was given for
-  /// columns that keep the bare operator
+  /// One builder output: its PostgreSQL text and the type data the builder was given for columns
+  /// compared with their extension's operator
   private struct Statement {
     let name: String
     let sql: String
-    var extensionTypedColumns: [String: String] = [:]
+    var columnTypeData: [String: PostgresColumnType] = [:]
   }
 
   private static let dialect = SQLDialect.postgresql
@@ -57,25 +58,13 @@ struct PostgresUserDataQualificationTests {
       Statement(name: "concatenation", sql: "SELECT " + dialect.concatenation(column, "'x'")),
       Statement(name: "NaN literal", sql: "SELECT " + dialect.literal(.double(.nan))),
       Statement(name: "-Infinity literal", sql: "SELECT " + dialect.literal(.double(-.infinity))),
-      // A citext column keeps the bare operator, for the column it was given
-      Statement(
-        name: "citext comparison",
-        sql: "SELECT 1 WHERE "
-          + dialect.comparison(column, .equal, "'a'", operand: .init(columnType: "citext")),
-        extensionTypedColumns: ["c": "citext"]),
-      Statement(
-        name: "citext in list",
-        sql: "SELECT 1 WHERE "
-          + dialect.inList(
-            column, ["'a'", "'b'"], negated: true, operand: .init(columnType: "public.citext")),
-        extensionTypedColumns: ["c": "public.citext"]),
     ]
   }
 
   private func expectQualified(_ statements: [Statement]) {
     for statement in statements {
       let found = PostgresQualificationLint.violations(
-        statement.sql, extensionTypedColumns: statement.extensionTypedColumns)
+        statement.sql, columnTypeData: statement.columnTypeData)
       #expect(
         found.isEmpty, "\(statement.name): \(found.joined(separator: "; "))\n\(statement.sql)")
     }
@@ -86,21 +75,70 @@ struct PostgresUserDataQualificationTests {
     expectQualified(Self.dialectHelpers)
   }
 
-  @Test("A bare comparison passes only on a column given a denylisted extension type")
-  func bareComparisonNeedsExtensionType() {
-    let bare = Self.dialectHelpers.filter { !$0.extensionTypedColumns.isEmpty }
-    #expect(bare.count == 2)
-    for statement in bare {
-      let column = statement.extensionTypedColumns.keys.first ?? ""
-      let unknown = PostgresQualificationLint.violations(statement.sql)
-      let qualifiedType = PostgresQualificationLint.violations(
-        statement.sql, extensionTypedColumns: [column: "integer"])
-      let otherColumn = PostgresQualificationLint.violations(
-        statement.sql, extensionTypedColumns: ["d": "citext"])
-      #expect(!unknown.isEmpty, "\(statement.name) passed with no column type")
-      #expect(!qualifiedType.isEmpty, "\(statement.name) passed as integer")
-      #expect(!otherColumn.isEmpty, "\(statement.name) passed on another column's type")
+  @Test("A bare comparison is a violation on every column, an extension type's too")
+  func bareComparisonIsViolation() {
+    let bare = [
+      #"SELECT 1 WHERE "c" = 'a'"#, #"SELECT 1 WHERE ("c" <> 'a' AND "c" <> 'b')"#,
+      #"SELECT 1 WHERE "c" > $1"#,
+    ]
+    let typeData: [[String: PostgresColumnType]] = [
+      [:], ["c": Self.citext], ["c": Self.citextDomain],
+    ]
+    for sql in bare {
+      for data in typeData {
+        let found = PostgresQualificationLint.violations(sql, columnTypeData: data)
+        #expect(!found.isEmpty, "\(sql) passed with \(data)")
+      }
     }
+  }
+
+  /// citext owned by its extension in `public`
+  private static let citext = PostgresColumnType(
+    oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+    operatorSchema: "public")
+  /// A domain over citext: compared cast to citext
+  private static let citextDomain = PostgresColumnType(
+    oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+    operatorSchema: "public")
+
+  @Test("An extension's operator passes only after its column, with that column's schema")
+  func extensionOperatorNeedsTypeData() {
+    let column = #""c""#
+    let statements = [
+      Statement(
+        name: "citext comparison",
+        sql: "SELECT 1 WHERE " + Self.dialect.comparison(column, .equal, "'a'", type: Self.citext),
+        columnTypeData: ["c": Self.citext]),
+      Statement(
+        name: "domain in list",
+        sql: "SELECT 1 WHERE "
+          + Self.dialect.inList(
+            #""o"."c""#, ["'a'", "'b'"], negated: true, type: Self.citextDomain),
+        columnTypeData: ["c": Self.citextDomain]),
+    ]
+    expectQualified(statements)
+    // `evil.citext`: no extension owns it, so its data carries the qualified operand
+    let evil = PostgresColumnType(
+      oid: 16_402, operand: .qualified, castName: "evil.citext", compareCast: nil,
+      operatorSchema: nil)
+    let otherSchema = PostgresColumnType(
+      oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+      operatorSchema: "evil")
+    // No data, another column's, a qualified operand, another schema, the other cast form
+    let wrongData: [[[String: PostgresColumnType]]] = [
+      [[:], ["d": Self.citext], ["c": evil], ["c": otherSchema], ["c": Self.citextDomain]],
+      [[:], ["d": Self.citextDomain], ["c": evil], ["c": otherSchema], ["c": Self.citext]],
+    ]
+    for (statement, wrong) in zip(statements, wrongData) {
+      for data in wrong {
+        let found = PostgresQualificationLint.violations(statement.sql, columnTypeData: data)
+        #expect(!found.isEmpty, "\(statement.name) passed with \(data)")
+      }
+    }
+    // A planted schema's operator on a citext column
+    let planted = #"SELECT 1 WHERE "c" OPERATOR(evil.=) 'a'"#
+    #expect(
+      !PostgresQualificationLint.violations(planted, columnTypeData: ["c": Self.citext]).isEmpty)
   }
 
   @Test("TableFilter's PostgreSQL where clause is qualified")
@@ -319,6 +357,13 @@ struct PostgresUserDataQualificationTests {
       Statement(name: "fk jump page", sql: viewer.pageSQL),
       Statement(name: "fk jump count", sql: viewer.countSQL),
     ])
+    // A citext / domain-over-citext target column: its extension's operator, after that column
+    let typeData = ["b": Self.citext, "a": Self.citextDomain]
+    let typed = try #require(
+      ForeignKeyLookup.lookupSQL(
+        for: key, values: values, dialect: Self.dialect, columnTypes: typeData))
+    #expect(typed.sql.components(separatedBy: "OPERATOR(public.=)").count == 3)
+    expectQualified([Statement(name: "typed fk lookup", sql: typed.sql, columnTypeData: typeData)])
     // The batch 11 lookup: a bare = per key column
     let bare = #"SELECT * FROM "main"."parent" WHERE "b" = :fk1 AND "a" = :fk2 LIMIT 2"#
     #expect(PostgresQualificationLint.violations(bare).count == 2)
@@ -411,13 +456,13 @@ struct PostgresUserDataQualificationTests {
       .init(column: "id", op: .greaterThan, value: "1"),
       .init(column: "name", op: .equals, value: "a"),
     ])
-    state.columnTypes = ["id": "integer", "name": "citext"]
-    let extensionTyped = ["name": "citext"]
+    state.columnTypeData = ["name": Self.citext]
+    let typeData = ["name": Self.citext]
     expectQualified([
-      Statement(name: "page", sql: state.pageSQL, extensionTypedColumns: extensionTyped),
-      Statement(name: "count", sql: state.countSQL, extensionTypedColumns: extensionTyped),
+      Statement(name: "page", sql: state.pageSQL, columnTypeData: typeData),
+      Statement(name: "count", sql: state.countSQL, columnTypeData: typeData),
     ])
-    #expect(state.countSQL.hasSuffix(#""name" = 'a'"#))
+    #expect(state.countSQL.hasSuffix(#""name" OPERATOR(public.=) 'a'"#))
   }
 
   @Test("Copy Objects' PostgreSQL source count, page read and keyset read are qualified")
@@ -428,21 +473,29 @@ struct PostgresUserDataQualificationTests {
         ("at", "timestamp with time zone"),
       ], key: ["id", "code"], target: .sqlite(libraryVersion: SQLiteLibraryVersion.current))
     let citext = try CopyObjectsRunTests.postgresRead(
-      [("name", "citext")], key: ["name"], target: .postgresql)
+      [("name", "citext")], key: ["name"], target: .postgresql, types: ["name": Self.citext])
     let mixed = try CopyObjectsRunTests.postgresRead(
-      [("id", "integer"), ("name", "citext")], key: ["id", "name"], target: .postgresql)
-    // The citext key keeps the bare > and =, for the column it was given
-    let extensionTyped = ["name": "citext"]
+      [("id", "integer"), ("name", "citext")], key: ["id", "name"], target: .postgresql,
+      types: ["name": Self.citext])
+    let domain = try CopyObjectsRunTests.postgresRead(
+      [("id", "integer"), ("name", "cit_dom")], key: ["id", "name"], target: .postgresql,
+      types: ["name": Self.citextDomain])
+    // The citext key compares with its extension's > and =, for the column it was given; the
+    // domain over citext casts both sides to citext first
+    let typeData = ["name": Self.citext]
     let statements = [
       Statement(name: "copy count", sql: read.countSQL),
       Statement(name: "copy first read", sql: read.select(after: nil, offset: 0).sql),
       Statement(name: "copy keyset read", sql: read.select(after: ["1", "a"], offset: 0).sql),
       Statement(
         name: "copy citext keyset read", sql: citext.select(after: ["a"], offset: 0).sql,
-        extensionTypedColumns: extensionTyped),
+        columnTypeData: typeData),
       Statement(
         name: "copy citext chain read", sql: mixed.select(after: ["1", "a"], offset: 0).sql,
-        extensionTypedColumns: extensionTyped),
+        columnTypeData: typeData),
+      Statement(
+        name: "copy domain chain read", sql: domain.select(after: ["1", "a"], offset: 0).sql,
+        columnTypeData: ["name": Self.citextDomain]),
     ]
     for statement in statements {
       #expect(throws: Never.self) {
@@ -452,8 +505,9 @@ struct PostgresUserDataQualificationTests {
       #expect(statement.sql.contains(#" FROM "public"."t""#), "\(statement.name)")
     }
     expectQualified(statements)
-    // The chain's bare > on "name" passes only through the citext column type
-    #expect(PostgresQualificationLint.violations(statements[4].sql).count == 1)
+    // The chains' extension operators on "name" pass only through that column's type data
+    #expect(!PostgresQualificationLint.violations(statements[4].sql).isEmpty)
+    #expect(!PostgresQualificationLint.violations(statements[5].sql).isEmpty)
     // The batch 11 reads: an unqualified COUNT, bare || and text casts, a bare row comparison
     let bareCount = #"SELECT COUNT(*) FROM "public"."t""#
     let bareRead =
@@ -465,13 +519,16 @@ struct PostgresUserDataQualificationTests {
 
   @Test("A keyed import names its schema and casts, counts and compares keys qualified")
   func keyedImportIsQualified() throws {
-    func column(_ name: String, _ type: String) -> TableStructure.Column {
-      TableStructure.Column(ordinal: 1, name: name, dataType: type, isNullable: true)
+    func column(
+      _ name: String, _ type: String, _ data: PostgresColumnType? = nil
+    ) -> TableStructure.Column {
+      TableStructure.Column(
+        ordinal: 1, name: name, dataType: type, isNullable: true, postgresType: data)
     }
     let structure = TableStructure(
       tableID: .postgresql(oid: 1), schema: "public", name: "t",
       columns: [
-        column("id", "integer"), column("code", "text"), column("name", "citext"),
+        column("id", "integer"), column("code", "text"), column("name", "citext", Self.citext),
         column("note", "character varying(20)"),
       ],
       indexes: [], constraints: [])
@@ -489,15 +546,12 @@ struct PostgresUserDataQualificationTests {
       schema: "public", table: "t",
       columns: names.map { .init(name: $0, kind: $0 == "id" ? .integer : .text) }, row: row,
       keys: keys, dialect: Self.dialect)
-    // The citext key keeps the bare =, for the column it was given
-    let extensionTyped = ["name": "citext"]
+    // The citext key compares with its extension's operator, for the column it was given
+    let typeData = ["name": Self.citext]
     expectQualified(
       plan.reads.map {
-        Statement(name: "import match read", sql: $0.sql, extensionTypedColumns: extensionTyped)
-      } + [
-        Statement(
-          name: "import keyed update", sql: update.sql, extensionTypedColumns: extensionTyped)
-      ])
+        Statement(name: "import match read", sql: $0.sql, columnTypeData: typeData)
+      } + [Statement(name: "import keyed update", sql: update.sql, columnTypeData: typeData)])
     // The table is named with its schema, `public` too: a bare "t" would resolve through the
     // user's search_path, where a same-named table or view could come first
     let columns = names.map { ImportSQLBuilder.Column(name: $0, kind: .text) }
@@ -521,7 +575,8 @@ struct PostgresUserDataQualificationTests {
     #expect(
       matchSummary.contains(#"INSERT INTO "public"."t" ("#)
         && matchSummary.contains(#"UPDATE "public"."t" SET "#))
-    // The batch 11 read and update: an unqualified COUNT and text cast, bare = on every key
+    // The batch 11 read and update: an unqualified COUNT and text cast, bare = on every key,
+    // the citext key's too
     let bareRead =
       #"SELECT v.pos, COUNT(*) FROM (VALUES (0, CAST($1 AS integer), CAST($2 AS text), "#
       + #"CAST($3 AS citext))) AS v(pos, k0, k1, k2) JOIN "public"."t" AS t "#
@@ -530,10 +585,66 @@ struct PostgresUserDataQualificationTests {
       #"UPDATE "public"."t" SET "note" = $1 WHERE "id" = CAST($2 AS integer) "#
       + #"AND "code" = CAST($3 AS text) AND "name" = CAST($4 AS citext)"#
     #expect(
-      PostgresQualificationLint.violations(bareRead, extensionTypedColumns: extensionTyped).count
-        == 4)
+      PostgresQualificationLint.violations(bareRead, columnTypeData: typeData).count == 5)
     #expect(
-      PostgresQualificationLint.violations(bareUpdate, extensionTypedColumns: extensionTyped)
-        .count == 3)
+      PostgresQualificationLint.violations(bareUpdate, columnTypeData: typeData).count == 4)
+  }
+
+  @Test("A look-alike evil.citext column compares with pg_catalog's operators everywhere")
+  func lookAlikeExtensionTypeIsQualified() throws {
+    // A domain over text in `evil` named like the extension type: no extension owns it, so its
+    // type data carries the qualified operand and no operator schema
+    let evil = PostgresColumnType(
+      oid: 16_402, operand: .qualified, castName: "evil.citext", compareCast: nil,
+      operatorSchema: nil)
+    let typeData = ["name": evil]
+    let filter = TableFilter(conditions: [
+      .init(column: "name", op: .equals, value: "a"),
+      .init(column: "name", op: .in, value: "a, b"),
+      .init(column: "name", op: .greaterThan, value: "a"),
+    ]).whereClause(dialect: Self.dialect, columnTypeData: typeData)
+    let column = TableStructure.Column(
+      ordinal: 1, name: "name", dataType: "citext", isNullable: false, postgresType: evil)
+    let note = TableStructure.Column(
+      ordinal: 2, name: "note", dataType: "text", isNullable: true, postgresType: nil)
+    let structure = TableStructure(
+      tableID: .postgresql(oid: 1), schema: "public", name: "t", columns: [column, note],
+      indexes: [], constraints: [])
+    let plan = try ImportMatchPlanner.plan(
+      schema: "public", table: "t", keyColumns: ["name"], columns: ["name", "note"],
+      rows: [["Ada", "x"]], structure: structure, dialect: Self.dialect)
+    let update = try ImportSQLBuilder.updateStatement(
+      schema: "public", table: "t",
+      columns: [.init(name: "name", kind: .text), .init(name: "note", kind: .text)],
+      row: ["Ada", "x"], keys: [try ImportMatchPlanner.KeyColumn(column, dialect: Self.dialect)],
+      dialect: Self.dialect)
+    // Copy Objects knows no comparison that follows its order: read by position, no keyset
+    let copy = try CopyObjectsRunTests.postgresRead(
+      [("id", "integer"), ("name", "citext")], key: ["id", "name"], target: .postgresql,
+      types: typeData)
+    #expect(copy.readsByPosition)
+    let copyPage = copy.select(after: nil, offset: 500).sql
+    #expect(!copyPage.contains("WHERE"))
+    let statements =
+      [
+        Statement(
+          name: "filter", sql: #"SELECT * FROM "public"."t" WHERE "# + (filter ?? ""),
+          columnTypeData: typeData),
+        Statement(name: "import keyed update", sql: update.sql, columnTypeData: typeData),
+        Statement(name: "copy count", sql: copy.countSQL, columnTypeData: typeData),
+        Statement(name: "copy page", sql: copyPage, columnTypeData: typeData),
+      ]
+      + plan.reads.map {
+        Statement(name: "import match read", sql: $0.sql, columnTypeData: typeData)
+      }
+    expectQualified(statements)
+    for statement in statements {
+      let operators = statement.sql.components(separatedBy: "OPERATOR(").count
+      let catalog = statement.sql.components(separatedBy: "OPERATOR(pg_catalog.").count
+      #expect(operators == catalog, "\(statement.name): \(statement.sql)")
+    }
+    #expect(filter?.contains(#""name" OPERATOR(pg_catalog.>) 'a'"#) == true)
+    #expect(plan.reads.allSatisfy { $0.sql.contains(#"t."name" OPERATOR(pg_catalog.=) v.k0"#) })
+    #expect(update.sql.contains(#""name" OPERATOR(pg_catalog.=) "#))
   }
 }

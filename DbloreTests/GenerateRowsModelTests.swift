@@ -104,6 +104,49 @@ struct GenerateRowsModelTests {
     #expect(model.previewRows == first)
   }
 
+  /// Regression: on PostgreSQL the summary Safe Mode and History show names the table as its
+  /// INSERTs do, `"public"."t"`, never the bare name the user's search_path would resolve
+  @Test("A PostgreSQL run's summary names the relation its INSERTs are sent to")
+  func postgresSummaryNamesSentRelation() async throws {
+    let factory = FakeDatabaseSessionFactory(
+      capabilities: DatabaseType.postgresql.capabilities,
+      queryAnswer: { sql, _ in
+        if sql.contains("c.oid::pg_catalog.int8") {
+          return FakeQueryAnswer(columns: [], rows: [[.int(1), .null]])
+        }
+        guard sql.contains("attgenerated") else { return nil }
+        let title: [CellValue] = [
+          .int(1), .string("title"), .string("text"), .bool(true), .null, .string(""),
+          .string(""), .null,
+        ]
+        return FakeQueryAnswer(columns: [], rows: [title])
+      })
+    let config = ConnectionConfig(
+      databaseType: .postgresql, host: "fake", port: 5432, database: "db", username: "u",
+      sslMode: .disable, protectionLevel: .none, safeMode: .alertAll, protectedMode: false)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    let model = GenerateRowsModel(schema: "public", table: "t")
+    await model.load(for: viewModel)
+    #expect(model.errorMessage == nil)
+    model.rowCount = 3
+
+    #expect(await model.generate(in: viewModel))
+    let pending = try #require(viewModel.pendingStagedBatch)
+    let streamed = try #require(pending.streamed)
+    #expect(streamed.relation == #""public"."t""#)
+    #expect(pending.preview.hasPrefix(#"INSERT INTO "public"."t" ("title") -- 3 generated rows"#))
+    let inserts = try #require(try await streamed.nextChunk())
+    #expect(!inserts.isEmpty)
+    #expect(inserts.allSatisfy { $0.sql.hasPrefix(#"INSERT INTO "public"."t" ("title") VALUES "#) })
+    viewModel.cancelPendingQuery()
+  }
+
   // MARK: - Helpers
 
   /// A connected SQLite tab on a new database file with an empty `people` table

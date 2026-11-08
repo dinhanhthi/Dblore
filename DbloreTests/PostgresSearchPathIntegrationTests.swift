@@ -12,7 +12,9 @@
 // with Rewind and its undo, data viewer pages and filters, a cascade preview count, a keyed
 // import, Copy Objects source reads) runs the app's statements on `public` tables with more
 // operators and functions planted, and a same-named decoy of the table first on the path:
-// nothing is recorded and every result comes from the real table.
+// nothing is recorded and every result comes from the real table. A type case loads columns of
+// the real contrib citext, a domain over it, its array and a look-alike `evil.citext` first on the
+// path: the schema and structure reads classify each one (skipped without contrib citext).
 // Case A: the role's search_path puts the planted schema before pg_catalog. Case B: the
 // default search_path, the objects planted in public (which PUBLIC can create in on
 // PostgreSQL 14 and older). Against the docker test database as its superuser (CI).
@@ -673,8 +675,9 @@ struct PostgresSearchPathIntegrationTests {
     let cached = try await victim.fetchAllColumns()[table.qualifiedName] ?? []
     #expect(cached.map(\.name) == ["id", "name", "note", "body"])
     var state = DataViewerState(schema: "public", name: "t", orderColumns: ["id"])
-    state.columnTypes = Dictionary(
-      cached.map { ($0.name, $0.type) }, uniquingKeysWith: { first, _ in first })
+    state.columnTypeData = Dictionary(
+      cached.compactMap { column in column.postgresType.map { (column.name, $0) } },
+      uniquingKeysWith: { first, _ in first })
     state.lazyColumns = DataViewerState.lazyColumns(
       cached.map { ($0.name, $0.type, $0.isPrimaryKey) }, databaseType: .postgresql,
       orderColumns: state.orderColumns)
@@ -799,6 +802,116 @@ struct PostgresSearchPathIntegrationTests {
       #expect(try nextRows.map { try read.key($0) } == [["2"]], "\(target): keyset page")
       #expect(try await hits(schema, planter) == [], "Copy Objects source reads, \(target)")
     }
+  }
+
+  /// The typed table's columns: built-ins, the real citext, a domain over it, its array and a
+  /// look-alike `evil.citext` (first on the reader's path, so a bare `citext` would name it).
+  /// Every type is schema-qualified.
+  private static let typeSetup = [
+    "CREATE EXTENSION citext SCHEMA public",
+    "CREATE SCHEMA evil",
+    "CREATE DOMAIN evil.citext AS pg_catalog.text",
+    "CREATE DOMAIN public.cit_dom AS public.citext",
+    """
+    CREATE TABLE public.typed (id pg_catalog.int4 PRIMARY KEY, plain pg_catalog.text,
+      ci public.citext, dom public.cit_dom, arr public.citext[], fake evil.citext)
+    """,
+  ]
+
+  @Test(
+    "The schema and structure reads classify citext, a domain over it, its array and a look-alike",
+    .timeLimit(.minutes(3)))
+  func columnTypesClassifyExtensionTypes() async throws {
+    let admin = DatabaseConnectionManager()
+    try await admin.connect(config: Self.config(database: TestDatabase.database))
+    // contrib citext is optional on a server: without it there is nothing to classify
+    let available = try await admin.executeInternal(
+      "SELECT count(*) FROM pg_catalog.pg_available_extensions WHERE name = 'citext'")
+    guard available.rows.first?.first == .int(1) else {
+      await admin.disconnect()
+      try Test.cancel("contrib citext is not available on this server")
+    }
+
+    let suffix = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(10))
+      .lowercased()
+    let database = "qa_sp_db_\(suffix)"
+    let role = "qa_sp_role_\(suffix)"
+    let password = "sp_\(suffix)"
+    let planter = DatabaseConnectionManager()
+    let reader = DatabaseConnectionManager()
+    do {
+      _ = try await admin.executeInternal("CREATE DATABASE \(database)")
+      _ = try await admin.executeInternal("CREATE ROLE \(role) LOGIN PASSWORD '\(password)'")
+
+      try await planter.connect(config: Self.config(database: database))
+      let grants = [
+        "GRANT USAGE ON SCHEMA public, evil TO \(role)",
+        "GRANT SELECT ON public.typed TO \(role)",
+        "ALTER ROLE \(role) SET search_path = evil, public, pg_catalog",
+      ]
+      for sql in Self.typeSetup + grants {
+        _ = try await planter.executeInternal(sql)
+      }
+
+      // Each column's atttypid, read as the planter
+      let attributes = try await planter.executeInternal(
+        """
+        SELECT a.attname::pg_catalog.text, a.atttypid::pg_catalog.int8
+        FROM pg_catalog.pg_attribute a
+        WHERE a.attrelid = 'public.typed'::pg_catalog.regclass AND a.attnum > 0
+          AND NOT a.attisdropped
+        """
+      ).rows
+      var oids: [String: UInt32] = [:]
+      for row in attributes {
+        if case .string(let name)? = row.first, case .int(let oid)? = row.last {
+          oids[name] = UInt32(exactly: oid)
+        }
+      }
+      let oid = { (name: String) throws -> UInt32 in try #require(oids[name], "\(name)") }
+      let expected: [String: PostgresColumnType?] = [
+        "id": nil,
+        "plain": nil,
+        "ci": PostgresColumnType(
+          oid: try oid("ci"), operand: .bare, castName: "public.citext", compareCast: nil,
+          operatorSchema: "public"),
+        "dom": PostgresColumnType(
+          oid: try oid("dom"), operand: .bare, castName: "public.cit_dom",
+          compareCast: "public.citext", operatorSchema: "public"),
+        "arr": PostgresColumnType(
+          oid: try oid("arr"), operand: .qualified, castName: "public.citext[]",
+          compareCast: nil, operatorSchema: nil),
+        "fake": PostgresColumnType(
+          oid: try oid("fake"), operand: .qualified, castName: "evil.citext", compareCast: nil,
+          operatorSchema: nil),
+      ]
+
+      // The reads run on the trap path
+      try await reader.connect(
+        config: Self.config(database: database, username: role, password: password))
+      #expect(try await searchPath(reader) == "evil, public, pg_catalog")
+
+      let table = try #require(
+        try await reader.fetchTables().first { $0.schema == "public" && $0.name == "typed" })
+      let columns = try await reader.fetchAllColumns()[table.qualifiedName] ?? []
+      #expect(columns.map(\.name) == ["id", "plain", "ci", "dom", "arr", "fake"])
+      for column in columns {
+        #expect(column.postgresType == expected[column.name] ?? nil, "schema load: \(column.name)")
+      }
+
+      let structure = try await reader.fetchTableStructure(schema: "public", table: "typed")
+      #expect(structure.columns.map(\.name) == ["id", "plain", "ci", "dom", "arr", "fake"])
+      for column in structure.columns {
+        #expect(column.postgresType == expected[column.name] ?? nil, "structure: \(column.name)")
+      }
+    } catch {
+      Issue.record(error)
+    }
+    await reader.disconnect()
+    await planter.disconnect()
+    _ = try? await admin.executeInternal("DROP DATABASE IF EXISTS \(database) WITH (FORCE)")
+    _ = try? await admin.executeInternal("DROP ROLE IF EXISTS \(role)")
+    await admin.disconnect()
   }
 
   /// `public.t`'s note of row `id`, read as the planter

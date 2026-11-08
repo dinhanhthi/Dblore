@@ -430,6 +430,39 @@ struct DuckDBSessionTests {
     }
   }
 
+  // MARK: - NUL in text
+
+  @Test("A bound text value with U+0000 is stored and read back with every byte")
+  func nulTextValueKeepsEveryByte() async throws {
+    try await withSession { session in
+      let value = "a\u{0}b"
+      _ = try await session.command("CREATE TABLE notes (id INTEGER, body VARCHAR)", binds: [])
+      _ = try await session.command(
+        "INSERT INTO notes VALUES (1, $1)", binds: [.text(value)])
+      let stored = try await collect(session, "SELECT strlen(body) FROM notes")
+      #expect(stored.rows == [[.int(value.utf8.count)]])
+      let selected = try await collect(session, "SELECT body FROM notes")
+      #expect(selected.rows == [[.string(value)]])
+      if case .string(let text) = selected.rows.first?.first {
+        #expect(text.utf8.count == value.utf8.count)
+      }
+    }
+  }
+
+  @Test("A statement with U+0000 is refused and deletes no row")
+  func nulStatementTextNeverDeletesAllRows() async throws {
+    try await withSession { session in
+      _ = try await session.command("CREATE TABLE t (id INTEGER)", binds: [])
+      _ = try await session.command("INSERT INTO t VALUES (1), (2)", binds: [])
+      let error = await #expect(throws: DuckDBSessionError.self) {
+        _ = try await session.command("DELETE FROM t\u{0} WHERE id = 1", binds: [])
+      }
+      #expect(error?.message.contains("NUL character") == true)
+      let remaining = try await collect(session, "SELECT id FROM t ORDER BY id")
+      #expect(remaining.rows == [[.int(1)], [.int(2)]])
+    }
+  }
+
   // MARK: - Cap, cancel, timeout, errors
 
   @Test("Stopping a read early keeps the session and its temp table")

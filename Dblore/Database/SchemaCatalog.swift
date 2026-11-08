@@ -20,6 +20,8 @@ enum SchemaCatalog {
     let isIdentity: Bool
     let isPK: Bool
     let isUnique: Bool
+    /// PostgreSQL type data of the column; nil for a built-in type or when the read has none
+    var postgresType: PostgresColumnType? = nil
   }
 
   /// Uppercases a `format_type` string and shortens the time zone suffixes.
@@ -42,7 +44,8 @@ enum SchemaCatalog {
           isNullable: !row.notNull,
           isPrimaryKey: row.isPK,
           isIdentity: row.isIdentity,
-          isUnique: row.isUnique && !row.isPK
+          isUnique: row.isUnique && !row.isPK,
+          postgresType: row.postgresType
         ))
     }
     return result

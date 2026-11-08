@@ -723,7 +723,7 @@ extension NotebookViewModel {
       primaryKeyColumns: target.primaryKeyColumns, connectionEpoch: target.connectionEpoch,
       updateOnly: target.updateOnly, generation: set.generation, schema: target.schema,
       name: target.name, generatedColumns: target.generatedColumns,
-      rowLocator: target.rowLocator, viewBase: target.viewBase)
+      rowLocator: target.rowLocator, viewBase: target.viewBase, keyTypes: target.keyTypes)
   }
 
   /// Live data-viewer target with a primary key, or a keyless one whose page was read with its

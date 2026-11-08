@@ -157,6 +157,8 @@ struct TableImportSheet: View {
     }
     // A new destination reloads its keys; `.task(id:)` cancels the load of the previous one
     .task(id: model.destination) { await loadMatchKeys() }
+    // The SQL preview of a new table with no Schema names the schema the import will use
+    .task(id: createsNewTable && model.destination.schema == nil) { await loadCurrentSchema() }
     .onChange(of: model.mappings) { _, _ in model.syncMatchChoice() }
     .onChange(of: isPresented) { _, presented in
       if !presented && !didSubmit && editedModel == nil { model.cancel() }
@@ -459,14 +461,20 @@ struct TableImportSheet: View {
 
   private var sqlSection: some View {
     SettingsGroupCard(title: "SQL preview") {
-      Text(createTableSQL)
-        .font(.monoSmall)
-        .foregroundColor(.foregroundMuted)
-        .textSelection(.enabled)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Spacing.sm)
-        .background(Color.appBackground)
-        .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
+      Group {
+        if let sql = createTableSQL {
+          Text(sql)
+            .font(.monoSmall)
+            .foregroundColor(.foregroundMuted)
+            .textSelection(.enabled)
+        } else {
+          ImportLoadingRow(text: "Reading the current schema...")
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(Spacing.sm)
+      .background(Color.appBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
     }
   }
 
@@ -507,32 +515,10 @@ struct TableImportSheet: View {
     return try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
   }
 
-  private var createTableSQL: String {
+  /// Nil while the PostgreSQL schema of a new table with no Schema is read
+  private var createTableSQL: String? {
     guard createsNewTable else { return modeDescription(model.mode) }
-    let included = model.mappings.indices.filter { model.mappings[$0].included }
-    let mapped = included.map {
-      ImportSQLBuilder.Column(name: model.mappings[$0].targetName, kind: model.mappings[$0].kind)
-    }
-    // DuckDB decimal digits from the preview rows (the import measures every row)
-    let columns =
-      sqlDialect == .duckdb
-      ? TableImportModel.withDecimalDigits(
-        mapped,
-        rows: model.previewRows.map { row in
-          included.map { row.indices.contains($0) ? row[$0] : nil }
-        })
-      : mapped
-    guard !columns.isEmpty, !model.destination.table.isEmpty else {
-      return "Choose a file and enter a table name to preview CREATE TABLE."
-    }
-    do {
-      return try ImportSQLBuilder.createTable(
-        schema: model.destination.schema, table: model.destination.table,
-        columns: columns, dialect: sqlDialect
-      ).sql + ";"
-    } catch {
-      return error.localizedDescription
-    }
+    return model.createTablePreview(dialect: sqlDialect)
   }
 
   private var sqlDialect: SQLDialect {
@@ -641,6 +627,15 @@ struct TableImportSheet: View {
     if !model.destination.createsTable { keysDebounce = .milliseconds(350) }
     await model.loadMatchKeys(after: delay) {
       try await manager.fetchTableStructure(schema: $0, table: $1)
+    }
+  }
+
+  /// Reads PostgreSQL's current_schema() off the main actor for the SQL preview (the model
+  /// skips it for other engines, a typed Schema or a schema already read).
+  private func loadCurrentSchema() async {
+    guard let manager = viewModel.connectionManager else { return }
+    await model.loadCurrentSchema(dialect: sqlDialect) {
+      try await manager.readImportCurrentSchema()
     }
   }
 

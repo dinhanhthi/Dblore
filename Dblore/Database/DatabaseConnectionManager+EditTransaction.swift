@@ -207,6 +207,19 @@ extension DatabaseConnectionManager {
     return result.rows
   }
 
+  /// PostgreSQL current_schema() for an import with no Schema (`TableImportModel.prepareBatch`):
+  /// nil when it is NULL (no schema of the search_path exists). Refused while relocked. Allowed
+  /// in a transaction, since the import runs in it (a SET LOCAL search_path counts). Runs with
+  /// the user's search_path (the schema it resolves is the point), so the function names
+  /// pg_catalog.
+  func readImportCurrentSchema() async throws -> String? {
+    try refuseIfRelocked(config)
+    let result = try await executeSingleStatement(
+      "SELECT pg_catalog.current_schema()", maxRows: 1)
+    guard case .string(let schema)? = result.rows.first?.first else { return nil }
+    return schema
+  }
+
   /// One `GenerateRowsPlanner` read (a key's current MAX, or referenced keys), refused and
   /// guarded as `readImportMatches` is: on this session before the run's streamed batch opens a
   /// transaction. A read past its purpose's row count fails rather than drop keys.

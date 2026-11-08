@@ -134,6 +134,25 @@ struct ForeignKeyLookupTests {
         == #"SELECT * FROM "public"."users" WHERE \#(quoted) OPERATOR(pg_catalog.=) :fk1 LIMIT 2"#)
   }
 
+  @Test("A typed target column compares with its extension's operator; no type data is qualified")
+  func lookupSQLUsesTargetColumnTypes() {
+    let orders = key(source: ["user_id"], target: ["id"])
+    let values: [String: CellValue] = ["user_id": .string("Ann")]
+    let cases: [([String: PostgresColumnType], String)] = [
+      (["id": Self.citext], #""id" OPERATOR(public.=) :fk1"#),
+      (["id": Self.citextDomain], #""id"::public.citext OPERATOR(public.=) :fk1::public.citext"#),
+      ([:], #""id" OPERATOR(pg_catalog.=) :fk1"#),
+    ]
+    for (types, term) in cases {
+      let query = ForeignKeyLookup.lookupSQL(
+        for: orders, values: values, dialect: .postgresql, columnTypes: types)
+      #expect(query?.sql == #"SELECT * FROM "public"."users" WHERE "# + term + " LIMIT 2")
+      #expect(query?.parameters == ["fk1": .text("Ann")])
+      let sql = query?.sql ?? ""
+      #expect(PostgresQualificationLint.violations(sql, columnTypeData: types) == [], "\(sql)")
+    }
+  }
+
   @Test("A null or missing component is not a lookup and not a filter")
   func nullComponentHasNoLookup() {
     let composite = key(source: ["tenant", "user_id"], target: ["tenant", "id"])
@@ -244,6 +263,15 @@ struct ForeignKeyLookupTests {
   func preEpochDateFloorsTheSecond() {
     #expect(lookupText(Date(timeIntervalSince1970: -0.5)) == .text("1969-12-31T23:59:59.500000Z"))
   }
+
+  /// citext, owned by an extension in `public`
+  private static let citext = PostgresColumnType(
+    oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+    operatorSchema: "public")
+  /// A domain over citext: compared cast to citext
+  private static let citextDomain = PostgresColumnType(
+    oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+    operatorSchema: "public")
 
   private func lookupText(_ date: Date) -> SQLBindValue? {
     ForeignKeyLookup.lookupSQL(

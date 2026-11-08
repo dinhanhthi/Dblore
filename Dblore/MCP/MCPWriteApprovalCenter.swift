@@ -5,7 +5,8 @@
 // shown one at a time; at most `maxWaiting` wait, a further one is refused at once
 // (`MCPToolError.writeTooManyWaiting`). Approve is ignored for `approveDelay` (1 s) from when
 // the panel is put on screen with a request, so a click or key meant for the previous one never
-// approves it. Nothing is
+// approves it. A request that removes data for good (`confirmName`) is approved only with its
+// target's name typed for it. Nothing is
 // remembered after an answer, so every call asks again (no standing grants). The server denies
 // the waiting requests of a connection that loses its write scope or leaves the allowlist, and
 // all of them when write tools or MCP are turned off and when the server stops or restarts
@@ -31,6 +32,9 @@ nonisolated struct MCPWriteApprovalRequest: Sendable, Equatable, Identifiable {
   let classification: String
   /// Classifier warnings: no WHERE, removes data for good
   let warnings: [String]
+  /// The target's name the user types before Approve takes effect
+  /// (`DestructiveStatementRule`); nil: a plain Approve
+  var confirmName: String? = nil
 }
 
 /// How the tool service asks for approval; `MCPWriteApprovalCenter` in the app.
@@ -110,9 +114,17 @@ final class MCPWriteApprovalCenter {
   }
 
   /// The user's answer to one request; an answered or unknown id is ignored, and so is an
-  /// approval of a request not shown or still in its `approveDelay`.
-  func decide(_ id: UUID, approved: Bool) {
-    if approved, id != current?.id || !approveEnabled { return }
+  /// approval of a request not shown or still in its `approveDelay`, or one whose `confirmName`
+  /// `typed` (the text typed for that request) does not match.
+  func decide(_ id: UUID, approved: Bool, typed: String? = nil) {
+    if approved {
+      guard let current, id == current.id, approveEnabled else { return }
+      if let name = current.confirmName,
+        !TypedNameConfirmation.matches(typed ?? "", name: name)
+      {
+        return
+      }
+    }
     guard let continuation = continuations.removeValue(forKey: id) else { return }
     timers.removeValue(forKey: id)?.cancel()
     queue.removeAll { $0.id == id }

@@ -10,6 +10,8 @@
 //  with Deny (Escape), Deny all (more than one waiting) and Approve once. Approve is not the
 //  default button, so Return never approves, and it stays disabled for the center's approve
 //  delay after a request shows, so a click or key meant for something else never approves.
+//  A request that removes data for good adds a field for its target's name: Approve stays
+//  disabled until the name typed for that request matches (`TypedNameConfirmation.matches`).
 //  A new request activates the app and bounces the Dock icon.
 //
 
@@ -86,7 +88,7 @@ private struct MCPWriteApprovalView: View {
         .font(.bodyText)
         .foregroundColor(.foregroundSubtle)
       ScrollView {
-        Text(MCPToolService.markingInvisibles(request.statement))
+        Text(HiddenCharacterRule.markingInvisibles(request.statement))
           .font(.mono)
           .foregroundColor(.foreground)
           .textSelection(.enabled)
@@ -117,19 +119,9 @@ private struct MCPWriteApprovalView: View {
       )
       .font(.bodyText)
       .foregroundColor(.foregroundSubtle)
-      HStack(spacing: Spacing.md) {
-        if waiting > 0 {
-          Button("Deny all") { center.denyAll() }
-            .buttonStyle(FilledSecondaryButtonStyle())
-        }
-        Spacer()
-        Button("Deny") { center.decide(request.id, approved: false) }
-          .buttonStyle(FilledSecondaryButtonStyle())
-          .keyboardShortcut(.cancelAction)
-        Button("Approve once") { center.decide(request.id, approved: true) }
-          .buttonStyle(DangerButtonStyle())
-          .disabled(!center.approveEnabled)
-      }
+      // One identity per request: the typed name resets for each, as this view is reused
+      MCPWriteApprovalActions(center: center, request: request, waiting: waiting)
+        .id(request.id)
     }
     .padding(Spacing.lg)
   }
@@ -153,6 +145,57 @@ private struct MCPWriteApprovalView: View {
         .foregroundColor(.foreground)
         .lineLimit(2)
         .textSelection(.enabled)
+    }
+  }
+}
+
+/// The target's name field (a request with `confirmName`) and the buttons of one request.
+private struct MCPWriteApprovalActions: View {
+  let center: MCPWriteApprovalCenter
+  let request: MCPWriteApprovalRequest
+  let waiting: Int
+
+  @State private var typed = ""
+  @FocusState private var isFieldFocused: Bool
+
+  private var nameMatches: Bool {
+    request.confirmName.map { TypedNameConfirmation.matches(typed, name: $0) } ?? true
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Spacing.md) {
+      if let name = request.confirmName {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+          Text("Type \(Text(name).font(.mono).foregroundColor(.foreground)) to approve")
+            .font(.bodyText)
+            .foregroundColor(.foregroundSubtle)
+            .textSelection(.enabled)
+          // No submit action: Return never approves
+          TextField("Name", text: $typed)
+            .font(.mono)
+            .textFieldStyle(.plain)
+            .autocorrectionDisabled()
+            .inputCapsuleStyle()
+            .focused($isFieldFocused)
+        }
+        .onAppear {
+          // Deferred: focus set during the first layout pass is dropped
+          DispatchQueue.main.async { isFieldFocused = true }
+        }
+      }
+      HStack(spacing: Spacing.md) {
+        if waiting > 0 {
+          Button("Deny all") { center.denyAll() }
+            .buttonStyle(FilledSecondaryButtonStyle())
+        }
+        Spacer()
+        Button("Deny") { center.decide(request.id, approved: false) }
+          .buttonStyle(FilledSecondaryButtonStyle())
+          .keyboardShortcut(.cancelAction)
+        Button("Approve once") { center.decide(request.id, approved: true, typed: typed) }
+          .buttonStyle(DangerButtonStyle())
+          .disabled(!center.approveEnabled || !nameMatches)
+      }
     }
   }
 }

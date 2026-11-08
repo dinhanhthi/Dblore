@@ -96,6 +96,8 @@ nonisolated enum TableImportError: Error, LocalizedError, Sendable {
   case matchReadFailed(String)
   /// Every row is skipped or refused
   case nothingToWrite(skipped: Int, refused: Int)
+  /// PostgreSQL with no Schema, and current_schema() is NULL
+  case noCurrentSchema
 
   var errorDescription: String? {
     switch self {
@@ -116,6 +118,8 @@ nonisolated enum TableImportError: Error, LocalizedError, Sendable {
       "Could not check which rows already exist, so nothing was written: \(detail)"
     case .nothingToWrite(let skipped, let refused):
       "No rows to write: \(skipped) skipped, \(refused) refused."
+    case .noCurrentSchema:
+      "No current schema: pick a schema for the new table."
     }
   }
 }
@@ -173,6 +177,9 @@ final class TableImportModel {
   private(set) var isReviewingMatches = false
   /// A plain notice for the summary (not an error): every row is skipped or refused
   private(set) var notice: String?
+  /// PostgreSQL current_schema() for the SQL preview of a new table with no Schema
+  /// (`loadCurrentSchema`): nil until read, `.success(nil)` when it is NULL
+  private(set) var previewCurrentSchema: Result<String?, Error>?
 
   @ObservationIgnored private let chooseFile: @MainActor () async -> URL?
   @ObservationIgnored private var parseTask: Task<ParsedImportFile, Error>?
@@ -185,6 +192,7 @@ final class TableImportModel {
   @ObservationIgnored private var operationID = UUID()
   @ObservationIgnored private var previewEncoding: String.Encoding?
   @ObservationIgnored private var matchKeysRequest = UUID()
+  @ObservationIgnored private var currentSchemaRequest = UUID()
 
   init(chooseFile: @escaping @MainActor () async -> URL? = TableImportModel.showOpenPanel) {
     self.chooseFile = chooseFile
@@ -398,15 +406,82 @@ final class TableImportModel {
     return offered
   }
 
+  /// Reads PostgreSQL's current_schema() through `read` (the manager's, off the main actor) for
+  /// the SQL preview of a new table with no Schema: the schema the import names (it reads it
+  /// again at submit). Skipped for other engines, a typed Schema, or a schema already read.
+  func loadCurrentSchema(
+    dialect: SQLDialect, read: @Sendable () async throws -> String?
+  ) async {
+    guard dialect == .postgresql, destination.createsTable,
+      destination.schema?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+    else { return }
+    if case .success? = previewCurrentSchema { return }
+    let request = UUID()
+    currentSchemaRequest = request
+    previewCurrentSchema = nil
+    let result: Result<String?, Error>
+    do {
+      result = .success(try await read())
+    } catch {
+      result = .failure(error)
+    }
+    // A cancelled read stays unread, so the next load reads again
+    guard currentSchemaRequest == request else { return }
+    if case .failure(let error) = result, error is CancellationError { return }
+    previewCurrentSchema = result
+  }
+
+  /// The CREATE TABLE a new-table import runs (`buildBatch`'s), for the sheet's SQL preview:
+  /// DuckDB decimal digits come from the preview rows. On PostgreSQL with no Schema it names the
+  /// schema `loadCurrentSchema` read, as the import does; nil until it is read.
+  func createTablePreview(dialect: SQLDialect) -> String? {
+    let included = mappings.indices.filter { mappings[$0].included }
+    let mapped = Self.importColumns(
+      mappings: mappings, destination: destination, tables: tables, dialect: dialect)
+    let columns =
+      dialect == .duckdb
+      ? Self.withDecimalDigits(
+        mapped,
+        rows: previewRows.map { row in
+          included.map { row.indices.contains($0) ? row[$0] : nil }
+        })
+      : mapped
+    guard !columns.isEmpty, !destination.table.isEmpty else {
+      return "Choose a file and enter a table name to preview CREATE TABLE."
+    }
+    var schema = destination.schema
+    if dialect == .postgresql,
+      schema?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+    {
+      switch previewCurrentSchema {
+      case nil: return nil
+      case .success(let current?) where !current.isEmpty: schema = current
+      case .success: return TableImportError.noCurrentSchema.errorDescription
+      case .failure(let error):
+        return "Could not read the current schema: " + error.localizedDescription
+      }
+    }
+    do {
+      return try ImportSQLBuilder.createTable(
+        schema: schema, table: destination.table, columns: columns, dialect: dialect
+      ).sql + ";"
+    } catch {
+      return error.localizedDescription
+    }
+  }
+
   /// Reparse off the main actor so the preview does not keep the whole file in memory.
   /// `maxChunkBytes` caps each INSERT's bind bytes (MySQL `max_allowed_packet`).
   /// With a `matchKey` (existing table), every row is first matched through `readMatches`
   /// (the tab manager's `readImportMatches`), off the main actor, then routed by `mode` into
   /// INSERT chunks and one UPDATE per row, refused or skipped; `matchSummary` keeps the
   /// counts. A failed read throws before any statement is built.
+  /// On PostgreSQL a destination with no Schema names the schema `readCurrentSchema` returns
+  /// (the manager's current_schema() read, off the main actor) in every statement.
   func prepareBatch(
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil,
-    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])? = nil
+    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])? = nil,
+    readCurrentSchema: (@Sendable () async throws -> String?)? = nil
   ) async throws -> PendingStagedBatch {
     guard let fileURL else { throw TableImportError.noFile }
     guard !destination.table.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -449,7 +524,9 @@ final class TableImportModel {
     progress = 0.6
     let mappings = self.mappings
     let tables = self.tables
-    let destination = Self.resolvingSchema(self.destination, tables: tables, dialect: dialect)
+    let destination = try await Self.resolvingSchema(
+      self.destination, tables: tables, dialect: dialect, readCurrentSchema: readCurrentSchema)
+    guard self.operationID == operationID else { throw CancellationError() }
     let build = Task.detached(priority: .userInitiated) {
       let columns = Self.importColumns(
         mappings: mappings, destination: destination, tables: tables, dialect: dialect)
@@ -521,13 +598,15 @@ final class TableImportModel {
     defer { RunningWorkRegistry.shared.end(runningWork) }
     return await prepareImport(
       dialect: dialect, connectionEpoch: epoch, maxChunkBytes: maxChunkBytes,
-      readMatches: { try await manager.readImportMatches($0) })
+      readMatches: { try await manager.readImportMatches($0) },
+      readCurrentSchema: { try await manager.readImportCurrentSchema() })
   }
 
   /// `prepareImport(for:)` with the tab's values. A keyed batch starts the summary review.
   func prepareImport(
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil,
-    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])?
+    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])?,
+    readCurrentSchema: (@Sendable () async throws -> String?)? = nil
   ) async -> Bool {
     endMatchReview()
     guard !Task.isCancelled else {
@@ -539,7 +618,7 @@ final class TableImportModel {
     do {
       let batch = try await prepareBatch(
         dialect: dialect, connectionEpoch: connectionEpoch, maxChunkBytes: maxChunkBytes,
-        readMatches: readMatches)
+        readMatches: readMatches, readCurrentSchema: readCurrentSchema)
       try Task.checkCancellation()
       errorMessage = nil
       if let summary = matchSummary {
@@ -762,17 +841,31 @@ final class TableImportModel {
     }
   }
 
-  /// An existing PostgreSQL destination with no schema takes the loaded table's (as
-  /// `loadMatchKeys` reads it), so the import names it instead of resolving the bare name
-  /// through the search_path. Other engines keep the destination as typed: on MySQL the
-  /// loaded schema is the database, which the statements would then name.
-  private nonisolated static func resolvingSchema(
-    _ destination: TableImportDestination, tables: [DatabaseTable], dialect: SQLDialect
-  ) -> TableImportDestination {
-    guard dialect == .postgresql, destination.schema == nil,
-      let table = existingTable(destination: destination, tables: tables)
+  /// A PostgreSQL destination with no schema (nil or blank) is named instead of resolving the
+  /// bare name through the search_path: an existing one takes the loaded table's schema (as
+  /// `loadMatchKeys` reads it), else the schema `readCurrentSchema` returns, the one a bare
+  /// CREATE TABLE would use. NULL (or no reader) refuses. Other engines keep the destination
+  /// as typed: on MySQL the loaded schema is the database, which the statements would then name.
+  private static func resolvingSchema(
+    _ destination: TableImportDestination, tables: [DatabaseTable], dialect: SQLDialect,
+    readCurrentSchema: (@Sendable () async throws -> String?)?
+  ) async throws -> TableImportDestination {
+    guard dialect == .postgresql,
+      destination.schema?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
     else { return destination }
-    return .existing(schema: table.schema, table: destination.table)
+    let unnamed: TableImportDestination =
+      destination.createsTable
+      ? .new(schema: nil, table: destination.table)
+      : .existing(schema: nil, table: destination.table)
+    if let table = existingTable(destination: unnamed, tables: tables) {
+      return .existing(schema: table.schema, table: destination.table)
+    }
+    guard let schema = try await readCurrentSchema?(), !schema.isEmpty else {
+      throw TableImportError.noCurrentSchema
+    }
+    return destination.createsTable
+      ? .new(schema: schema, table: destination.table)
+      : .existing(schema: schema, table: destination.table)
   }
 
   /// Lowercased column name to declared type for an existing destination. Empty when unknown.

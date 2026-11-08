@@ -32,12 +32,13 @@ struct PostgresCatalogQualificationTests {
     "primaryKeyColumns": "the name is the user's table, resolved as the user's SQL resolves it",
   ]
 
-  // Every method of PostgresSchemaIntrospector (and its +Structure extension) that takes a
-  // session, checked by grepping `session: any DatabaseSession` in both files: tables,
-  // allColumns, views, functions, procedures, triggers, definition(of:) (routineDefinition for
-  // functions and procedures, the trigger read, no SQL for sequences and user types), users,
-  // roles, sequences, userTypes, foreignKeys, editTable, viewEditCandidate, enrichColumnTypes
-  // (through enrichedColumns), rowCount, primaryKeyColumns, tableStructure (structureColumns,
+  // Every method of PostgresSchemaIntrospector (and its +Structure and PostgresColumnTypeSQL
+  // extensions) that takes a session, checked by grepping `session: any DatabaseSession` in the
+  // three files: tables, allColumns (and columnTypes, which it and structureColumns call), views,
+  // functions, procedures, triggers, definition(of:) (routineDefinition for functions and
+  // procedures, the trigger read, no SQL for sequences and user types), users, roles, sequences,
+  // userTypes, foreignKeys, editTable, viewEditCandidate, enrichColumnTypes (through
+  // enrichedColumns), rowCount, primaryKeyColumns, tableStructure (structureColumns,
   // structureIndexes, structureConstraints) and the `rows` helper they all use. The list below
   // matches it.
   private var entryPoints: [EntryPoint] {
@@ -49,7 +50,14 @@ struct PostgresCatalogQualificationTests {
     let column = ColumnInfo(name: "v", type: "NUMERIC", tableOID: 16_400, attributeNumber: 1)
     return [
       EntryPoint(name: "tables", statements: 1) { _ = try await introspector.tables(in: $0) },
-      EntryPoint(name: "allColumns", statements: 1) {
+      // A column row with a non-built-in type oid, so the type read runs too
+      EntryPoint(
+        name: "allColumns",
+        rows: [
+          [.string("public"), .string("t"), .string("c"), .string("integer")]
+            + [false, false, false, false].map { .bool($0) } + [.int(16_385)]
+        ], statements: 2
+      ) {
         _ = try await introspector.allColumns(in: $0)
       },
       EntryPoint(name: "views", statements: 1) { _ = try await introspector.views(in: $0) },
@@ -178,6 +186,9 @@ struct PostgresCatalogQualificationTests {
       // The schema row lets the names read run
       ManagerRead(name: "copy target names", rows: [[.string("public")]], statements: 2) {
         _ = try await $0.copyTargetNames()
+      },
+      ManagerRead(name: "import current schema", rows: [[.string("public")]], statements: 1) {
+        _ = try await $0.readImportCurrentSchema()
       },
       ManagerRead(name: "staged integer key", rows: [[.bool(false), .int(3)]], statements: 1) {
         _ = try await $0.executeInternal(try #require(lookup), maxRows: 1)

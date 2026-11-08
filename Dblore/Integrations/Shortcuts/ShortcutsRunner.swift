@@ -245,10 +245,13 @@ nonisolated struct ShortcutsRunner: Sendable {
         let found = try Self.table(table, in: try await manager.fetchTables())
         let structure = try await manager.fetchTableStructure(
           schema: found.schema, table: found.name)
+        let keyTypes = Dictionary(
+          structure.columns.compactMap { column in column.postgresType.map { (column.name, $0) } },
+          uniquingKeysWith: { first, _ in first })
         let target = EditTarget(
           qualifiedName: try dialect.qualified(schema: structure.schema, name: structure.name),
           tableID: structure.tableID, primaryKeyColumns: [],
-          connectionEpoch: await manager.connectionEpoch)
+          connectionEpoch: await manager.connectionEpoch, keyTypes: keyTypes)
         var set = RowChangeSet(target: target)
         let engine = config.databaseType
         set.stageInsert(

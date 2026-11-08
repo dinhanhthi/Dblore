@@ -82,6 +82,82 @@ struct ImportMatchPlannerTests {
     #expect(read.classified?.kind == .read)
   }
 
+  @Test("PostgreSQL keys of user and extension types cast and compare from the schema read")
+  func postgresKeyTypeData() throws {
+    // format_type text omits a schema on the search_path: the type data names the real type
+    let mood = PostgresColumnType(
+      oid: 16_500, operand: .qualified, castName: "s.mood", compareCast: nil,
+      operatorSchema: nil)
+    let quoted = PostgresColumnType(
+      oid: 16_501, operand: .qualified, castName: #""My Schema"."Mood""#, compareCast: nil,
+      operatorSchema: nil)
+    let citext = PostgresColumnType(
+      oid: 16_400, operand: .bare, castName: "public.citext", compareCast: nil,
+      operatorSchema: "public")
+    let domain = PostgresColumnType(
+      oid: 16_401, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+      operatorSchema: "public")
+    let names = ["id", "mood", "label", "name", "dom"]
+    let plan = try ImportMatchPlanner.plan(
+      schema: "s", table: "t", keyColumns: names, columns: names,
+      rows: [["1", "happy", "Sad", "Ada", "Bo"]],
+      structure: structure([
+        column("id", "integer"), column("mood", "mood", postgresType: mood),
+        column("label", #""Mood""#, postgresType: quoted),
+        column("name", "citext", postgresType: citext),
+        column("dom", "cit_dom", postgresType: domain),
+      ]),
+      dialect: .postgresql)
+
+    let read = try #require(plan.reads.first)
+    #expect(
+      read.sql
+        == #"SELECT v.pos, pg_catalog.count(*) FROM (VALUES "#
+        + #"(0, $1::integer, $2::s.mood, $3::"My Schema"."Mood", $4::public.citext, "#
+        + #"$5::public.cit_dom)) AS v(pos, k0, k1, k2, k3, k4) "#
+        + #"JOIN "s"."t" AS t ON t."id" OPERATOR(pg_catalog.=) v.k0 "#
+        + #"AND t."mood" OPERATOR(pg_catalog.=) v.k1 "#
+        + #"AND t."label" OPERATOR(pg_catalog.=) v.k2 "#
+        + #"AND t."name" OPERATOR(public.=) v.k3 "#
+        + #"AND t."dom"::public.citext OPERATOR(public.=) v.k4::public.citext GROUP BY v.pos"#)
+    let found = PostgresQualificationLint.violations(
+      read.sql, columnTypeData: ["name": citext, "dom": domain])
+    #expect(found.isEmpty, "\(found)")
+  }
+
+  @Test("A PostgreSQL key without type data casts only to a pg_catalog type, else is refused")
+  func postgresKeyWithoutTypeData() throws {
+    // A user or extension type's text omits its schema on the search_path: with no `castName`
+    // (no type row read) a bare `::mood` would resolve through the search_path
+    for type in ["mood", "citext", "s.mood", #""Mood""#, "mood[]", #""char"x"#, #""CHAR""#] {
+      #expect(
+        throws: ImportMatchPlanner.Error.unsupportedKey(
+          column: "k", reason: "its type's schema is not known.")
+      ) {
+        try ImportMatchPlanner.plan(
+          schema: "s", table: "t", keyColumns: ["k"], columns: ["k"], rows: [["a"]],
+          structure: structure([column("k", type)]), dialect: .postgresql)
+      }
+    }
+    // pg_catalog types keep today's casts, keyword names bound by the parser itself
+    let builtIns: [(String, String)] = [
+      ("integer", "integer"), ("character varying(20)", "character varying"),
+      ("timestamp with time zone", "timestamp with time zone"),
+      ("timestamp(3) with time zone", "timestamp with time zone"),
+      ("interval day to second(3)", "interval day to second"),
+      ("double precision", "double precision"), ("text[]", "pg_catalog.text[]"),
+      ("character varying(20)[]", "character varying[]"), ("bit(3)", "pg_catalog.varbit"),
+      (#""char""#, #"pg_catalog."char""#), ("BIGINT", "BIGINT"),
+      ("pg_catalog.text", "pg_catalog.text"),
+    ]
+    for (type, cast) in builtIns {
+      let plan = try ImportMatchPlanner.plan(
+        schema: "s", table: "t", keyColumns: ["k"], columns: ["k"], rows: [["a"]],
+        structure: structure([column("k", type)]), dialect: .postgresql)
+      #expect(plan.reads.first?.sql.contains("(0, $1::\(cast))") == true, "\(type)")
+    }
+  }
+
   @Test("SQLite and DuckDB read through VALUES with their own placeholders")
   func sqliteAndDuckDBShapes() throws {
     let rows: [[String?]] = [["a"], ["b"]]
@@ -210,11 +286,11 @@ struct ImportMatchPlannerTests {
 
   private func column(
     _ name: String, _ dataType: String, columnType: String? = nil, characterSet: String? = nil,
-    collation: String? = nil
+    collation: String? = nil, postgresType: PostgresColumnType? = nil
   ) -> TableStructure.Column {
     TableStructure.Column(
       ordinal: 1, name: name, dataType: dataType, isNullable: true, columnType: columnType,
-      characterSet: characterSet, collation: collation)
+      characterSet: characterSet, collation: collation, postgresType: postgresType)
   }
 
   private func structure(_ columns: [TableStructure.Column]) -> TableStructure {

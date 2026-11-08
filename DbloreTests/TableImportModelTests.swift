@@ -88,6 +88,90 @@ struct TableImportModelTests {
     #expect(plain.statements.map(\.sql).allSatisfy { $0.hasPrefix(#"INSERT INTO "public"."t" "#) })
   }
 
+  @Test("PostgreSQL import with an empty Schema names current_schema() in CREATE and every INSERT")
+  func postgresEmptySchemaTakesCurrentSchema() async throws {
+    let url = temporaryFile("id,name\n1,a\n2,b\n3,c\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    for schema in [nil, ""] as [String?] {
+      model.destination = .new(schema: schema, table: "qa_imp")
+      // A 1-byte cap puts each row in its own INSERT
+      let batch = try await model.prepareBatch(
+        dialect: .postgresql, connectionEpoch: 1, maxChunkBytes: 1,
+        readCurrentSchema: { "qa_trap" })
+      try #require(batch.statements.count == 4)
+      #expect(batch.statements[0].sql.hasPrefix(#"CREATE TABLE "qa_trap"."qa_imp" ("#))
+      #expect(
+        batch.statements.dropFirst().allSatisfy {
+          $0.sql.hasPrefix(#"INSERT INTO "qa_trap"."qa_imp" ("#)
+        })
+    }
+    // A typed schema and other engines read nothing
+    let unread: @Sendable () async throws -> String? = {
+      Issue.record("current_schema() was read")
+      return "qa_trap"
+    }
+    model.destination = .new(schema: "public", table: "qa_imp")
+    let typed = try await model.prepareBatch(
+      dialect: .postgresql, connectionEpoch: 1, readCurrentSchema: unread)
+    #expect(typed.statements[0].sql.hasPrefix(#"CREATE TABLE "public"."qa_imp" ("#))
+    model.destination = .new(schema: nil, table: "qa_imp")
+    let sqlite = try await model.prepareBatch(
+      dialect: .sqlite, connectionEpoch: 1, readCurrentSchema: unread)
+    #expect(sqlite.statements[0].sql.hasPrefix(#"CREATE TABLE "qa_imp" ("#))
+
+    // No schema on the search_path exists: refused before anything is built
+    #expect(
+      await model.prepareImport(
+        dialect: .postgresql, connectionEpoch: 1, readMatches: nil,
+        readCurrentSchema: { nil }) == false)
+    #expect(model.errorMessage == "No current schema: pick a schema for the new table.")
+  }
+
+  @Test("PostgreSQL SQL preview with an empty Schema names the current_schema() the import uses")
+  func postgresPreviewTakesCurrentSchema() async throws {
+    let url = temporaryFile("id,v\n1,a\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .new(schema: nil, table: "qa_imp")
+    // Never the bare name while the schema is read
+    #expect(model.createTablePreview(dialect: .postgresql) == nil)
+    await model.loadCurrentSchema(dialect: .postgresql) { "qa_trap" }
+    let preview = try #require(model.createTablePreview(dialect: .postgresql))
+    #expect(preview.hasPrefix(#"CREATE TABLE "qa_trap"."qa_imp" ("#))
+    let batch = try await model.prepareBatch(
+      dialect: .postgresql, connectionEpoch: 1, readCurrentSchema: { "qa_trap" })
+    #expect(preview == batch.statements[0].sql + ";")
+
+    // NULL: the import's refusal
+    let refused = TableImportModel()
+    await refused.loadFile(url)
+    refused.destination = .new(schema: nil, table: "qa_imp")
+    await refused.loadCurrentSchema(dialect: .postgresql) { nil }
+    #expect(
+      refused.createTablePreview(dialect: .postgresql)
+        == "No current schema: pick a schema for the new table.")
+
+    // A typed schema and other engines read nothing
+    let unread: @Sendable () async throws -> String? = {
+      Issue.record("current_schema() was read")
+      return "qa_trap"
+    }
+    let typed = TableImportModel()
+    await typed.loadFile(url)
+    typed.destination = .new(schema: "public", table: "qa_imp")
+    await typed.loadCurrentSchema(dialect: .postgresql, read: unread)
+    #expect(
+      typed.createTablePreview(dialect: .postgresql)?.hasPrefix(
+        #"CREATE TABLE "public"."qa_imp" ("#) == true)
+    typed.destination = .new(schema: nil, table: "qa_imp")
+    await typed.loadCurrentSchema(dialect: .sqlite, read: unread)
+    #expect(
+      typed.createTablePreview(dialect: .sqlite)?.hasPrefix(#"CREATE TABLE "qa_imp" ("#) == true)
+  }
+
   @Test("A column first seen after the preview cannot be silently omitted")
   func lateJSONColumn() async throws {
     let rows = (0..<100).map { "{\"id\":\($0)}" }.joined(separator: "\n")

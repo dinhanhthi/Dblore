@@ -5,7 +5,8 @@
 //  A statement the model proposed (propose_sql): its reason, the exact SQL or mongosh command,
 //  the kind the app reads from it, the MongoDB database it targets, and Copy / Insert / Run.
 //  Run only collects the typed name of a destructive statement and asks the workspace; nothing
-//  here runs by itself. Text with invisible format characters shows why it cannot run.
+//  here runs by itself. Text with hidden characters shows why it cannot run; an invisible
+//  character allowed inside a string literal shows as a `[U+XXXX]` marker.
 //
 
 import AppKit
@@ -78,13 +79,7 @@ struct AIProposalCardView: View {
           .buttonStyle(AICodeActionButtonStyle())
           .disabled(onInsert == nil)
           .help(onInsert == nil ? "No active tab" : "Insert into the active tab (does not run)")
-        Button("Run") { run(check) }
-          .buttonStyle(AICodeActionButtonStyle())
-          .disabled(!canRun(check))
-          .help(
-            onRun == nil
-              ? "Not connected"
-              : "Run in the active query tab, with the same checks as typed SQL")
+        runButton(check)
       }
       HStack(spacing: Spacing.xs) {
         badge(check.kind.label, color: color(check.kind))
@@ -98,13 +93,33 @@ struct AIProposalCardView: View {
     .background(Color.cardHeaderBackground)
   }
 
-  /// The exact text; a saved one longer than the cap shows its start only (it cannot run)
+  /// Run; red for a destructive statement, at the size of the header's other buttons
+  @ViewBuilder
+  private func runButton(_ check: AIProposalCheck) -> some View {
+    let button = Button("Run") { run(check) }
+      .disabled(!canRun(check))
+      .help(
+        onRun == nil
+          ? "Not connected"
+          : "Run in the active query tab, with the same checks as typed SQL")
+    if check.kind == .destructive {
+      button
+        .buttonStyle(DangerButtonStyle(hPadding: Spacing.sm))
+        .controlSize(.mini)
+    } else {
+      button.buttonStyle(AICodeActionButtonStyle())
+    }
+  }
+
+  /// The exact text, with the invisible characters it may run as markers
+  /// (`HiddenCharacterRule.markingInvisibles`); a saved one longer than the cap shows its start
+  /// only (it cannot run)
   private var code: some View {
     let text =
       proposal.sql.count > AITools.maxSQLCharacters
       ? String(proposal.sql.prefix(AITools.maxSQLCharacters)) + "…" : proposal.sql
     return ScrollView(.horizontal, showsIndicators: false) {
-      Text(verbatim: text)
+      Text(verbatim: HiddenCharacterRule.markingInvisibles(text))
         .font(.monoMedium)
         .foregroundColor(.foreground)
         .textSelection(.enabled)

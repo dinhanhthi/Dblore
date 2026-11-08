@@ -24,7 +24,7 @@ private let quoteCases: [(SQLDialect, String, String)] = [
 
 private let qualifiedCases: [(SQLDialect, String?, String, String)] = [
   (.postgresql, nil, "users", #""users""#),
-  (.postgresql, "public", "users", #""users""#),
+  (.postgresql, "public", "users", #""public"."users""#),
   (.postgresql, "main", "users", #""main"."users""#),
   (.postgresql, "app", "users", #""app"."users""#),
   (.postgresql, "a\"b", "c\"d", #""a""b"."c""d""#),
@@ -162,12 +162,11 @@ private let explainCases: [(SQLDialect, Bool, Bool, String?, String)] = [
 /// Security: a PostgreSQL statement on user data names `pg_catalog`'s operators, functions and
 /// built-in types, so nothing planted in a schema on the `search_path` runs. Each row is one
 /// dialect's output for the same calls; every non-PostgreSQL row is today's text.
-private func qualificationSample(_ dialect: SQLDialect, columnType: String?) -> [String] {
-  let operand = SQLOperandKind(columnType: columnType)
-  return [
-    dialect.comparison("c", .lessOrEqual, "$1", operand: operand),
-    dialect.inList("c", ["'a'", "'b'"], operand: operand),
-    dialect.inList("c", ["'a'", "'b'"], negated: true, operand: operand),
+private func qualificationSample(_ dialect: SQLDialect) -> [String] {
+  [
+    dialect.comparison("c", .lessOrEqual, "$1"),
+    dialect.inList("c", ["'a'", "'b'"]),
+    dialect.inList("c", ["'a'", "'b'"], negated: true),
     dialect.like(column: "c", pattern: "'a!%'", escape: "'!'"),
     dialect.like(column: "c", pattern: "'a'", caseInsensitive: true),
     dialect.like(column: "c", pattern: "'a'", escape: "'!'", negated: true, caseInsensitive: true),
@@ -225,6 +224,39 @@ private let unchangedDialectSamples: [(SQLDialect, [String])] = [
   ),
 ]
 
+/// PostgreSQL type data as the schema read reports it: a built-in, a citext column (extension in
+/// `public`), the same without the extension's schema, and a domain over citext
+private let builtInType = PostgresColumnType(
+  oid: 25, operand: .qualified, castName: nil, compareCast: nil, operatorSchema: nil)
+private let citextType = PostgresColumnType(
+  oid: 16_385, operand: .bare, castName: "public.citext", compareCast: nil,
+  operatorSchema: "public")
+private let citextNoSchemaType = PostgresColumnType(
+  oid: 16_385, operand: .bare, castName: "public.citext", compareCast: nil, operatorSchema: nil)
+private let citextDomainType = PostgresColumnType(
+  oid: 16_400, operand: .bare, castName: "public.cit_dom", compareCast: "public.citext",
+  operatorSchema: "public")
+
+/// Security: an operator is always schema-qualified, `pg_catalog`'s or the owning extension's, so
+/// one planted in another schema on the `search_path` is never chosen
+private let typedComparisonCases: [(PostgresColumnType?, SQLComparison, String)] = [
+  (nil, .equal, "c OPERATOR(pg_catalog.=) $1"),
+  (builtInType, .equal, "c OPERATOR(pg_catalog.=) $1"),
+  (citextType, .equal, "c OPERATOR(public.=) $1"),
+  (citextType, .notEqual, "c OPERATOR(public.<>) $1"),
+  (citextType, .less, "c OPERATOR(public.<) $1"),
+  (citextType, .greaterOrEqual, "c OPERATOR(public.>=) $1"),
+  (citextNoSchemaType, .equal, "c OPERATOR(pg_catalog.=) $1"),
+  (citextDomainType, .equal, "c::public.citext OPERATOR(public.=) $1::public.citext"),
+  (citextDomainType, .greater, "c::public.citext OPERATOR(public.>) $1::public.citext"),
+]
+
+private let typedSplitCases: [(PostgresColumnType?, String, String)] = [
+  (nil, "c OPERATOR(pg_catalog.>) ", ""),
+  (citextType, "c OPERATOR(public.>) ", ""),
+  (citextDomainType, "c::public.citext OPERATOR(public.>) ", "::public.citext"),
+]
+
 @Suite("SQL Dialect")
 struct SQLDialectTests {
   @Test(
@@ -258,7 +290,7 @@ struct SQLDialectTests {
   }
 
   @Test(
-    "The default schema is omitted; any other schema stays qualified",
+    "The default schema is omitted, except on PostgreSQL; any other schema stays qualified",
     arguments: qualifiedCases)
   func qualified(dialect: SQLDialect, schema: String?, name: String, expected: String) throws {
     #expect(try dialect.qualified(schema: schema, name: name) == expected)
@@ -339,34 +371,58 @@ struct SQLDialectTests {
       dialect.caseInsensitiveLike(column: #""weird""name""#, pattern: "'o''brien'") == expected)
   }
 
-  @Test(
-    "PostgreSQL names pg_catalog's operators and functions for any non-extension column type",
-    arguments: [nil, "integer", "int4[]", "my_enum", "public.my_domain", "some_unknown_type"]
-      as [String?])
-  func postgresQualified(columnType: String?) {
-    #expect(qualificationSample(.postgresql, columnType: columnType) == qualifiedPostgresSample)
+  @Test("PostgreSQL names pg_catalog's operators and functions")
+  func postgresQualified() {
+    #expect(qualificationSample(.postgresql) == qualifiedPostgresSample)
   }
 
   @Test("Other dialects write today's text", arguments: unchangedDialectSamples)
   func otherDialectsUnqualified(dialect: SQLDialect, expected: [String]) {
-    #expect(qualificationSample(dialect, columnType: nil) == expected)
+    #expect(qualificationSample(dialect) == expected)
   }
 
-  /// pg_catalog has no operator for these types: a qualified one would make a citext filter
-  /// case-sensitive or a PostGIS comparison fail
   @Test(
-    "A listed extension type keeps the bare operator",
-    arguments: [
-      "citext", "public.citext", #""ext"."citext""#, "citext[]", "geometry(Point,4326)",
-      "extensions.ltree[]", "isbn13",
-    ])
-  func extensionTypesStayBare(columnType: String) {
-    let operand = SQLOperandKind(columnType: columnType)
-    #expect(operand == .bare)
-    #expect(SQLDialect.postgresql.comparison("c", .equal, "$1", operand: operand) == "c = $1")
+    "A typed comparison names pg_catalog's or the extension's operator",
+    arguments: typedComparisonCases)
+  func typedComparison(type: PostgresColumnType?, op: SQLComparison, expected: String) {
+    #expect(SQLDialect.postgresql.comparison("c", op, "$1", type: type) == expected)
+  }
+
+  @Test("A typed IN chain qualifies every term, with the domain's compare cast")
+  func typedInList() {
     #expect(
-      SQLDialect.postgresql.inList("c", ["1", "2"], negated: true, operand: operand)
-        == "(c <> 1 AND c <> 2)")
+      SQLDialect.postgresql.inList("c", ["'a'", "'b'"], type: citextType)
+        == "(c OPERATOR(public.=) 'a' OR c OPERATOR(public.=) 'b')")
+    #expect(
+      SQLDialect.postgresql.inList("c", ["'a'", "'b'"], negated: true, type: citextDomainType)
+        == "(c::public.citext OPERATOR(public.<>) 'a'::public.citext"
+        + " AND c::public.citext OPERATOR(public.<>) 'b'::public.citext)")
+  }
+
+  @Test(
+    "The split typed comparison puts the value between lead and trail", arguments: typedSplitCases)
+  func typedSplit(type: PostgresColumnType?, lead: String, trail: String) {
+    let parts = SQLDialect.postgresql.comparisonParts("c", .greater, type: type)
+    #expect(parts.lead == lead)
+    #expect(parts.trail == trail)
+  }
+
+  @Test("An extension operand without its schema compares qualified")
+  func operandFromColumnType() {
+    #expect(SQLOperandKind(column: nil) == .qualified)
+    #expect(SQLOperandKind(column: citextNoSchemaType) == .qualified)
+    #expect(SQLOperandKind(column: citextType) == .bare)
+  }
+
+  @Test("Other dialects write today's text for a typed comparison")
+  func typedOtherDialects() {
+    let sqlite = SQLDialect.sqlite
+    #expect(sqlite.comparison("c", .equal, "?1", type: citextDomainType) == "c = ?1")
+    #expect(
+      sqlite.inList("c", ["'a'", "'b'"], negated: true, type: citextType) == "c NOT IN ('a', 'b')")
+    let parts = sqlite.comparisonParts("c", .less, type: citextDomainType)
+    #expect(parts.lead == "c < ")
+    #expect(parts.trail == "")
   }
 
   /// `::pg_catalog.integer` does not exist: the parser binds keyword type names itself
@@ -384,6 +440,10 @@ struct SQLDialectTests {
       ("timestamptz", "$1::pg_catalog.timestamptz"),
       (#""char""#, #"$1::pg_catalog."char""#),
       ("pg_catalog.jsonb", "$1::pg_catalog.jsonb"),
+      ("oidvector", "$1::pg_catalog.oidvector"),
+      ("int2vector", "$1::pg_catalog.int2vector"),
+      ("pg_node_tree", "$1::pg_catalog.pg_node_tree"),
+      ("aclitem[]", "$1::pg_catalog.aclitem[]"),
       ("my_enum", "$1::my_enum"),
       ("app.text", "$1::app.text"),
       ("citext", "$1::citext"),

@@ -92,6 +92,8 @@ nonisolated struct DatabaseColumn: Identifiable, Sendable {
   let isHidden: Bool
   /// Generated column (virtual or stored). PostgreSQL leaves this false.
   let isGenerated: Bool
+  /// PostgreSQL type data from the schema read. Nil for built-in types and on other engines.
+  let postgresType: PostgresColumnType?
 
   init(
     name: String,
@@ -101,7 +103,8 @@ nonisolated struct DatabaseColumn: Identifiable, Sendable {
     isIdentity: Bool = false,
     isUnique: Bool = false,
     isHidden: Bool = false,
-    isGenerated: Bool = false
+    isGenerated: Bool = false,
+    postgresType: PostgresColumnType? = nil
   ) {
     self.name = name
     self.type = type
@@ -111,6 +114,7 @@ nonisolated struct DatabaseColumn: Identifiable, Sendable {
     self.isUnique = isUnique
     self.isHidden = isHidden
     self.isGenerated = isGenerated
+    self.postgresType = postgresType
   }
 
   /// Returns the appropriate SF Symbol icon name for this column's data type

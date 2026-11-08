@@ -47,7 +47,8 @@ nonisolated extension PostgresSchemaIntrospector {
       comment: found.first.flatMap { $0.count > 1 ? CatalogValue.string($0[1]) : nil })
   }
 
-  /// attgenerated is PostgreSQL 12+; read through to_jsonb so older servers see no key.
+  /// attgenerated is PostgreSQL 12+; read through to_jsonb so older servers see no key. Each
+  /// column's type data comes from its type oid (cell 8) through `columnTypes`.
   private func structureColumns(
     _ bind: [SQLBindValue], in session: any DatabaseSession
   ) async throws -> [TableStructure.Column] {
@@ -56,7 +57,8 @@ nonisolated extension PostgresSchemaIntrospector {
         pg_catalog.format_type(a.atttypid, a.atttypmod), a.attnotnull,
         pg_catalog.pg_get_expr(d.adbin, d.adrelid), a.attidentity::pg_catalog.text,
         COALESCE(pg_catalog.to_jsonb(a) OPERATOR(pg_catalog.->>) 'attgenerated', ''),
-        CASE WHEN ds.description OPERATOR(pg_catalog.=) '' THEN NULL ELSE ds.description END
+        CASE WHEN ds.description OPERATOR(pg_catalog.=) '' THEN NULL ELSE ds.description END,
+        a.atttypid::pg_catalog.int8
       FROM pg_catalog.pg_attribute a
       LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid OPERATOR(pg_catalog.=) a.attrelid
         AND d.adnum OPERATOR(pg_catalog.=) a.attnum
@@ -68,6 +70,7 @@ nonisolated extension PostgresSchemaIntrospector {
       ORDER BY a.attnum
       """
     var columns: [TableStructure.Column] = []
+    var typeOIDs: [UInt32?] = []
     for row in try await rows(in: session, sql: query, binds: bind) {
       guard row.count >= 8, let ordinal = CatalogValue.int(row[0]),
         let name = CatalogValue.string(row[1])
@@ -89,6 +92,11 @@ nonisolated extension PostgresSchemaIntrospector {
           generated: generated.isEmpty
             ? nil : TableStructure.Generated(expression: expression, isStored: generated == "s"),
           comment: CatalogValue.string(row[7])))
+      typeOIDs.append(row.count > 8 ? CatalogValue.oid(row[8]) : nil)
+    }
+    let types = try await columnTypes(Set(typeOIDs.compactMap { $0 }), in: session)
+    for index in columns.indices {
+      columns[index].postgresType = typeOIDs[index].flatMap { types[$0] }
     }
     return columns
   }

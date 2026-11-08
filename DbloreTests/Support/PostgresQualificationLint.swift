@@ -22,16 +22,15 @@ enum PostgresQualificationLint {
   ]
   /// Symbols that are punctuation, not operators (`*` and `:` and `$` are checked apart)
   private static let punctuation: Set<String> = ["(", ")", ",", ".", "[", "]", ";"]
-  /// Symbols of the comparisons a column of a denylisted extension type keeps bare
-  private static let comparisonSymbols: Set<String> = ["=", "<", ">"]
 
   /// `allowsBoundNameLookup`: a bound name may resolve through search_path (`to_regclass($n)`,
-  /// `$n::pg_catalog.regclass`), see `boundNameLookups`. `extensionTypedColumns`: column name →
-  /// type text the builder was given; a bare comparison right after such a quoted column passes
-  /// only when that type keeps the bare operator (`SQLOperandKind(columnType:)`).
+  /// `$n::pg_catalog.regclass`), see `boundNameLookups`. `columnTypeData`: column name → type
+  /// data the builder was given; an `OPERATOR(<s>.<op>)` outside `pg_catalog` passes only as
+  /// `extensionOperatorAllowed` says. A bare operator is always a violation, except the `=` of a
+  /// SET clause's assignment.
   static func violations(
     _ sql: String, allowsBoundNameLookup: Bool = false,
-    extensionTypedColumns: [String: String] = [:]
+    columnTypeData: [String: PostgresColumnType] = [:]
   ) -> [String] {
     let tokens = SQLTokenizer.tokens(sql, dialect: .postgresql)
     // `SET [LOCAL] name = value, ...` names a setting and takes literal values: nothing in it
@@ -85,14 +84,7 @@ enum PostgresQualificationLint {
             end += 1
           }
           let run = tokens[i..<end]
-          let bareAllowed =
-            (assignments.contains(i) && run.count == 1)
-            || i > 0 && tokens[i - 1].kind == .quotedIdentifier
-              && run.allSatisfy { comparisonSymbols.contains($0.text) }
-              && extensionTypedColumns[tokens[i - 1].text].map {
-                SQLOperandKind(columnType: $0) == .bare
-              } == true
-          if !bareAllowed {
+          if !(assignments.contains(i) && run.count == 1) {
             let text = run.map(\.text).joined()
             found.append("operator \(text) outside OPERATOR(pg_catalog.…)")
           }
@@ -110,8 +102,10 @@ enum PostgresQualificationLint {
         var end = i + 2
         while end < tokens.count, !tokens[end].isSymbol(")") { end += 1 }
         let operatorSymbols = tokens[min(i + 4, end)..<end]
-        if word(i + 2) != "PG_CATALOG" || !symbol(i + 3, ".") || operatorSymbols.isEmpty
+        if !symbol(i + 3, ".") || operatorSymbols.isEmpty
           || operatorSymbols.contains(where: { $0.kind != .symbol })
+          || (word(i + 2) != "PG_CATALOG"
+            && !extensionOperatorAllowed(tokens, at: i, columnTypeData: columnTypeData))
         {
           found.append("OPERATOR(…) not in pg_catalog")
         }
@@ -125,6 +119,36 @@ enum PostgresQualificationLint {
       i += 1
     }
     return found
+  }
+
+  /// The `OPERATOR(<s>.<op>)` at `i` names its schema `<s>` only right after a quoted column, or
+  /// that column's `::<compareCast>` cast, whose type data has the extension operand
+  /// (`SQLOperandKind(column:)`) with `operatorSchema` `<s>`. A cast must be the type data's
+  /// `compareCast` exactly, and a type with one must be cast.
+  private static func extensionOperatorAllowed(
+    _ tokens: [SQLToken], at i: Int, columnTypeData: [String: PostgresColumnType]
+  ) -> Bool {
+    func same(_ found: ArraySlice<SQLToken>, _ text: String) -> Bool {
+      let expected = SQLTokenizer.tokens(text, dialect: .postgresql)
+      return found.count == expected.count
+        && zip(found, expected).allSatisfy { $0.kind == $1.kind && $0.text == $1.text }
+    }
+    guard i + 2 < tokens.count else { return false }
+    return columnTypeData.contains { column, type in
+      guard SQLOperandKind(column: type) == .bare, let schema = type.operatorSchema,
+        same(tokens[(i + 2)...(i + 2)], schema)
+      else { return false }
+      var at = i - 1
+      if let compareCast = type.compareCast {
+        let length = SQLTokenizer.tokens(compareCast, dialect: .postgresql).count
+        let start = i - length
+        guard start >= 3, same(tokens[start..<i], compareCast), tokens[start - 1].isSymbol(":"),
+          tokens[start - 2].isSymbol(":")
+        else { return false }
+        at = start - 3
+      }
+      return at >= 0 && tokens[at].kind == .quotedIdentifier && tokens[at].text == column
+    }
   }
 
   private static func wordViolations(

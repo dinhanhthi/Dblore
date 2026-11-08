@@ -496,6 +496,7 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
     guard let db = withState({ db }) else {
       throw SQLiteSessionError(extendedCode: SQLITE_MISUSE, message: "database is closed")
     }
+    try Self.refuseNUL(sql)
     var statement: OpaquePointer?
     attachDenial = nil
     let code = sql.withCString { pointer in
@@ -520,17 +521,28 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
         try check(sqlite3_bind_null(statement, index))
       case .text(let text):
         let code = text.withCString { pointer in
-          sqlite3_bind_text(statement, index, pointer, -1, sqliteTransientDestructor)
+          sqlite3_bind_text(
+            statement, index, pointer, Int32(text.utf8.count), sqliteTransientDestructor)
         }
         try check(code)
       }
     }
   }
 
+  /// SQLite reads statement text as a C string: everything after a U+0000 would be cut off,
+  /// so `DELETE FROM t<NUL> WHERE id = 1` would run as `DELETE FROM t`. Fail closed.
+  private static func refuseNUL(_ sql: String) throws {
+    guard sql.utf8.contains(0) else { return }
+    throw SQLiteSessionError(
+      extendedCode: SQLITE_MISUSE,
+      message: "This statement contains a NUL character, which the database would cut off.")
+  }
+
   private func exec(_ sql: String) throws {
     guard let db = withState({ db }) else {
       throw SQLiteSessionError(extendedCode: SQLITE_MISUSE, message: "database is closed")
     }
+    try Self.refuseNUL(sql)
     let code = sql.withCString { pointer in
       sqlite3_exec(db, pointer, nil, nil, nil)
     }
@@ -560,7 +572,9 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       return .real(sqlite3_column_double(statement, column))
     case SQLITE_TEXT:
       guard let pointer = sqlite3_column_text(statement, column) else { return .text("") }
-      return .text(String(cString: pointer))
+      let count = Int(sqlite3_column_bytes(statement, column))
+      return .text(
+        String(decoding: UnsafeBufferPointer(start: pointer, count: count), as: UTF8.self))
     case SQLITE_BLOB:
       return .blob(columnBlob(statement, column))
     default:
@@ -658,7 +672,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
 
   private func bindTransient(_ statement: OpaquePointer, _ index: Int32, _ text: String) -> Bool {
     let code = text.withCString { pointer in
-      sqlite3_bind_text(statement, index, pointer, -1, sqliteTransientDestructor)
+      sqlite3_bind_text(
+        statement, index, pointer, Int32(text.utf8.count), sqliteTransientDestructor)
     }
     return code == SQLITE_OK
   }

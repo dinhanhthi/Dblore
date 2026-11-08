@@ -12,11 +12,12 @@
 // wire), normalized per the column's value form, and bound through ImportSQLBuilder's chunked
 // INSERT. Source values never become SQL text, except SQLite target BLOBs: `X'..'` literals made
 // from the bytes. PostgreSQL source reads name pg_catalog for every function, operator and
-// built-in cast type, so nothing planted on the user's search_path runs; a key column of a
-// denylisted extension type (`SQLOperandKind`, from the source `TableStructure`) keeps its bare
-// comparison, so the keyset boundary follows the same order as the ORDER BY. A key column of any
-// other user type (a domain, an enum, an unlisted extension type) has no comparison known to
-// follow its order: that table is read by position.
+// built-in cast type, so nothing planted on the user's search_path runs; a key column of a listed
+// extension type (the schema read's type data, `TableStructure.Column.postgresType`) compares
+// with its extension's own operator (`OPERATOR(public.>)`), a domain over one cast to that type
+// on both sides, so the keyset boundary follows the same order as the ORDER BY. A key column of
+// any other user type (an enum, a look-alike, an unlisted extension type, a domain over one of
+// them) has no comparison known to follow its order: that table is read by position.
 //
 // PostgreSQL and SQLite targets: one streamed batch in one transaction. Prelude: SQLite's
 // PRAGMA defer_foreign_keys = ON (always first, whatever the edited DDL kept), then the CREATE
@@ -95,8 +96,9 @@ nonisolated struct CopyObjectsTableRead: Sendable {
   private let keys: [String]?
   /// Per key column: the exact number type its bind is cast to (MySQL integers and decimals)
   private let keyCasts: [String?]
-  /// Per key column: whether its comparisons name pg_catalog's operator (PostgreSQL)
-  private let keyOperands: [SQLOperandKind]
+  /// Per key column: the schema read's type data, which picks its comparisons' operator
+  /// (PostgreSQL)
+  private let keyTypes: [PostgresColumnType?]
   private let positionOrder: String?
   private let source: Engine
   private let target: SQLDialect
@@ -148,16 +150,16 @@ nonisolated struct CopyObjectsTableRead: Sendable {
         default: return nil
         }
       }
-      keyOperands = primaryKey.map { name in
-        guard case .postgresql = source else { return .qualified }
-        return SQLOperandKind(columnType: structure.columns.first { $0.name == name }?.dataType)
+      keyTypes = primaryKey.map { name in
+        guard case .postgresql = source else { return nil }
+        return structure.columns.first { $0.name == name }?.postgresType
       }
       list += quotedKey.map { Self.keyRead($0, source: source, dialect: dialect) }
       positionOrder = nil
     } else {
       keys = nil
       keyCasts = []
-      keyOperands = []
+      keyTypes = []
       if !quotedKey.isEmpty {
         positionOrder = quotedKey.joined(separator: ", ")
       } else {
@@ -200,24 +202,26 @@ nonisolated struct CopyObjectsTableRead: Sendable {
   }
 
   /// The rows after `markers` in ORDER BY's order: `k > m`, or the row comparison
-  /// `(k1, k2) > (m1, m2)`; PostgreSQL names pg_catalog's `>`. A PostgreSQL key with a column of a
-  /// denylisted extension type is the chain `((k1 > m1) OR (k1 = m1 AND k2 > m2))` instead, each
-  /// column with its own operator (a row comparison names one operator for every column).
+  /// `(k1, k2) > (m1, m2)`; PostgreSQL names pg_catalog's `>`, or the extension's for a column of
+  /// a listed extension type (`comparison(_:_:_:type:)`). A PostgreSQL key with such a column is
+  /// the chain `((k1 > m1) OR (k1 = m1 AND k2 > m2))` instead, each column with its own operator
+  /// (a row comparison names one operator for every column).
   private func keyset(_ keys: [String], after markers: [String]) -> String {
     let dialect = source.dialect
     guard keys.count > 1 else {
-      return dialect.comparison(keys[0], .greater, markers[0], operand: keyOperands[0])
+      return dialect.comparison(keys[0], .greater, markers[0], type: keyTypes[0])
     }
-    guard case .postgresql = source, keyOperands.contains(.bare) else {
+    guard case .postgresql = source,
+      keyTypes.contains(where: { SQLOperandKind(column: $0) == .bare })
+    else {
       return dialect.comparison(
         "(\(keys.joined(separator: ", ")))", .greater, "(\(markers.joined(separator: ", ")))")
     }
     let terms = keys.indices.map { last in
       let equal = (0..<last).map {
-        dialect.comparison(keys[$0], .equal, markers[$0], operand: keyOperands[$0])
+        dialect.comparison(keys[$0], .equal, markers[$0], type: keyTypes[$0])
       }
-      let greater = dialect.comparison(
-        keys[last], .greater, markers[last], operand: keyOperands[last])
+      let greater = dialect.comparison(keys[last], .greater, markers[last], type: keyTypes[last])
       return "(" + (equal + [greater]).joined(separator: " AND ") + ")"
     }
     return "(" + terms.joined(separator: " OR ") + ")"
@@ -312,11 +316,11 @@ nonisolated struct CopyObjectsTableRead: Sendable {
   }
 
   /// Keyset needs a primary key of text-comparable columns: no binary column; on PostgreSQL no
-  /// column of a user type other than a denylisted extension type (pg_catalog's `>` on a domain
-  /// over citext compares as text while ORDER BY sorts as citext, so pages would skip or repeat
-  /// rows); on SQLite no column without affinity or with BLOB affinity (a text bind would not
-  /// compare with its values) and no column that may hold NULL (SQLite allows NULL in most
-  /// primary keys)
+  /// column of a user type unless its type data names a listed extension type's operator, a
+  /// domain over one included (pg_catalog's `>` on citext compares as text while ORDER BY sorts
+  /// as citext, so pages would skip or repeat rows); on SQLite no column without affinity or
+  /// with BLOB affinity (a text bind would not compare with its values) and no column that may
+  /// hold NULL (SQLite allows NULL in most primary keys)
   private static func allowsKeyset(
     _ primaryKey: [String], planned: CopyObjectsPlan.Table, source: Engine
   ) -> Bool {
@@ -328,7 +332,7 @@ nonisolated struct CopyObjectsTableRead: Sendable {
       else { return false }
       if case .postgresql = source {
         return !CopyObjectsTypeMapping.family(of: structure, source: source).isUserType
-          || SQLOperandKind(columnType: structure.dataType) == .bare
+          || SQLOperandKind(column: structure.postgresType) == .bare
       }
       guard case .sqlite = source else { return true }
       let declared = SQLTokenizer.asciiUppercased(

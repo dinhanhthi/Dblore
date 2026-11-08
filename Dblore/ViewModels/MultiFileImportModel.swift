@@ -231,13 +231,15 @@ final class MultiFileImportModel {
     defer { RunningWorkRegistry.shared.end(runningWork) }
     return await prepareImport(
       dialect: dialect, connectionEpoch: epoch, maxChunkBytes: maxChunkBytes,
-      readMatches: { try await manager.readImportMatches($0) })
+      readMatches: { try await manager.readImportMatches($0) },
+      readCurrentSchema: { try await manager.readImportCurrentSchema() })
   }
 
   /// `prepareImport(for:)` with the tab's values. Every prepared run starts the review.
   func prepareImport(
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil,
-    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])?
+    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])?,
+    readCurrentSchema: (@Sendable () async throws -> String?)? = nil
   ) async -> Bool {
     endReview()
     guard !Task.isCancelled else {
@@ -247,7 +249,7 @@ final class MultiFileImportModel {
     do {
       let prepared = try await prepareBatch(
         dialect: dialect, connectionEpoch: connectionEpoch, maxChunkBytes: maxChunkBytes,
-        readMatches: readMatches)
+        readMatches: readMatches, readCurrentSchema: readCurrentSchema)
       try Task.checkCancellation()
       errorMessage = nil
       summary = prepared.summary
@@ -304,10 +306,12 @@ final class MultiFileImportModel {
 
   /// Prepares every included file in order (each parse and match read off the main actor) and
   /// joins their statements into one batch. The first failing file stops it, named in the error;
-  /// `cancel` stops it before the next file.
+  /// `cancel` stops it before the next file. `readCurrentSchema` names PostgreSQL's
+  /// current_schema() when `schema` is nil (`TableImportModel.prepareBatch`).
   func prepareBatch(
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil,
-    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])? = nil
+    readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])? = nil,
+    readCurrentSchema: (@Sendable () async throws -> String?)? = nil
   ) async throws -> MultiFileImportBatch {
     let included = includedEntries
     guard !included.isEmpty else { throw MultiFileImportError.noFiles }
@@ -329,7 +333,7 @@ final class MultiFileImportModel {
       do {
         batch = try await entry.model.prepareBatch(
           dialect: dialect, connectionEpoch: connectionEpoch, maxChunkBytes: maxChunkBytes,
-          readMatches: readMatches)
+          readMatches: readMatches, readCurrentSchema: readCurrentSchema)
       } catch is CancellationError {
         throw CancellationError()
       } catch {
