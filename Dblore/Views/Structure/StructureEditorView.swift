@@ -137,6 +137,34 @@ struct StructureEditorView: View {
         text: error, systemImage: "exclamationmark.triangle",
         color: model.applyPartiallyFailed ? .warning : .destructive)
     }
+    if model.changedOnServer {
+      changedOnServerBanner
+    }
+  }
+
+  /// A quiet re-read found an outside change while changes are staged
+  private var changedOnServerBanner: some View {
+    HStack(spacing: Spacing.md) {
+      Label(
+        "This table changed on the server since it was loaded. Reload drops your staged changes.",
+        systemImage: "arrow.triangle.2.circlepath"
+      )
+      .font(.small)
+      .foregroundColor(.warning)
+      .textSelection(.enabled)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      Button("Reload") {
+        Task { await model.reload() }
+      }
+      .buttonStyle(SecondaryButtonStyle())
+      .disabled(model.isApplying || model.loadState == .loading)
+    }
+    .padding(Spacing.md)
+    .background(Color.warning.opacity(0.1), in: RoundedRectangle(cornerRadius: CornerRadius.lg))
+    .overlay(
+      HairlineBorder(
+        shape: RoundedRectangle(cornerRadius: CornerRadius.lg), color: Color.warning.opacity(0.4))
+    )
   }
 
   @ViewBuilder

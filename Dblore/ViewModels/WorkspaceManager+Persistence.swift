@@ -428,6 +428,8 @@ extension WorkspaceManager {
         // Sync to tab ViewModels
         syncConnectionStateToTabs()
         reloadLoadedCatalogs()
+        // Open definitions resolve against the new lists: read them again
+        refreshDefinitionsAfterOutsideChange()
         // A connect cleared the diagram: an open visualizer lays out the new schema (above the
         // diagram's cap it shows the table picker, nothing to lay out)
         if isSchemaVisualizerActive, schemaGraph == nil, schemaDiagramTables == nil,

@@ -304,6 +304,8 @@ extension WorkspaceManager {
       }
       if endedTransaction {
         structureEditorTransactionEnded()
+        // Outside changes made while the catalog was paused show now
+        refreshDefinitionsAfterOutsideChange()
         userTypeEditorTransactionEnded()
         schemaDiagramEditorTransactionEnded()
       }
@@ -575,6 +577,9 @@ extension WorkspaceManager {
     heldImportRelations = []
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry
+    // A trailing outside-change re-read (the idle transition may have scheduled one) goes too
+    trailingDefinitionsRefresh?.cancel()
+    trailingDefinitionsRefresh = nil
     invalidateEditTargetsInTabs()
     aiAssistant.connectionDidChange()
 

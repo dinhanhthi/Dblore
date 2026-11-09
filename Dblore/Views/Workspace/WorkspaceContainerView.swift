@@ -544,6 +544,8 @@ struct WorkspaceContainerView: View {
         return
       }
       WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id)
+      // Back from another app or window: a definition may have changed outside
+      workspaceManager.refreshDefinitionsAfterOutsideChange()
     }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       guard workspaceManager.isActiveWorkspace(in: hostWindow),

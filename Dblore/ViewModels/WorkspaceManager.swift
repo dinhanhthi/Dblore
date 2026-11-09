@@ -469,6 +469,10 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var paletteCatalog: CommandPaletteCatalog?
   /// In-flight definition reads of object source tabs, cancelled when the tab closes
   @ObservationIgnored var objectSourceLoads: [UUID: Task<Void, Never>] = [:]
+  /// When the last re-read after an outside change started (`refreshDefinitionsAfterOutsideChange`)
+  @ObservationIgnored var lastDefinitionsRefresh: ContinuousClock.Instant?
+  /// The trailing re-read a trigger inside the throttle window scheduled; later triggers join it
+  @ObservationIgnored var trailingDefinitionsRefresh: Task<Void, Never>?
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
