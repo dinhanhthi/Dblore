@@ -61,4 +61,24 @@ struct CellResultCapNoticeTests {
     #expect(decoded.skippedStatements.isEmpty)
     #expect(decoded.capNotice == "Showing first 100 rows")
   }
+
+  @Test("A byte stop and cut cells carry onto the CellResult and into the notice")
+  func byteStopAndCutCellsNotice() {
+    var stopped = queryResult(rows: 120, truncated: true)
+    stopped.stoppedAtByteBudget = true
+    stopped.cutCells = [CellPosition(row: 0, column: 0), CellPosition(row: 3, column: 0)]
+    let cell = cellResult(stopped)
+    #expect(cell.stoppedAtByteBudget)
+    #expect(cell.cutCells == stopped.cutCells)
+    #expect(
+      cell.capNotice
+        == "Showing first 120 rows. Stopped at 256 MiB of values. 2 values were cut at 1 MiB.")
+  }
+
+  @Test("Cut cells alone: one notice, singular for one value")
+  func cutCellsAloneNotice() {
+    var whole = queryResult(rows: 3, truncated: false)
+    whole.cutCells = [CellPosition(row: 1, column: 0)]
+    #expect(cellResult(whole).capNotice == "1 value was cut at 1 MiB.")
+  }
 }

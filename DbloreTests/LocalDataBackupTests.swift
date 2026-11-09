@@ -7,7 +7,7 @@ import Testing
 @testable import Dblore
 
 @MainActor
-@Suite("Local data backup", .serialized)
+@Suite("Local data backup", .serialized, .timeLimit(.minutes(1)))
 struct LocalDataBackupTests {
   private let created = Date(timeIntervalSince1970: 1_700_000_000)
   private let createdStamp = "2023-11-14T22:13:20Z"
@@ -550,36 +550,71 @@ struct LocalDataBackupTests {
 }
 
 /// Keeps `localDataChanged` observers from seeing posts made by another suite.
+/// `owners` counts the callers that will call `release()`. A waiter still queued after 45 s
+/// records an issue naming the holder and joins the owners without the gate (noise beats a
+/// wedged run), so its own `release()` balances the count; the gate passes on at zero owners.
 final class LocalDataNotificationGate: @unchecked Sendable {
   static let shared = LocalDataNotificationGate()
-  private var held = false
-  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private struct Waiter {
+    var id: UUID
+    var name: String
+    /// Resumed with nil when the gate is handed over, or with the holder on time-out
+    var continuation: CheckedContinuation<String?, Never>
+  }
+  private var owners = 0
+  private var holder: String?
+  private var waiters: [Waiter] = []
   private let state = NSLock()
 
-  func acquire() async {
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+  func acquire(fileID: String = #fileID, function: String = #function) async {
+    let name = "\(fileID) \(Test.current?.name ?? function)"
+    let id = UUID()
+    let blocker = await withCheckedContinuation {
+      (continuation: CheckedContinuation<String?, Never>) in
       state.lock()
-      if !held {
-        held = true
+      if owners == 0 {
+        owners = 1
+        holder = name
         state.unlock()
-        continuation.resume()
+        continuation.resume(returning: nil)
       } else {
-        waiters.append(continuation)
+        waiters.append(Waiter(id: id, name: name, continuation: continuation))
         state.unlock()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 45) { self.timeOut(id) }
       }
+    }
+    if let blocker {
+      Issue.record("\(name) waited 45 s for the local-data gate held by \(blocker)")
     }
   }
 
   func release() {
     state.lock()
-    if waiters.isEmpty {
-      held = false
+    owners -= 1
+    guard owners == 0, !waiters.isEmpty else {
+      if owners == 0 { holder = nil }
       state.unlock()
-    } else {
-      let next = waiters.removeFirst()
-      state.unlock()
-      next.resume()
+      return
     }
+    let next = waiters.removeFirst()
+    owners = 1
+    holder = next.name
+    state.unlock()
+    next.continuation.resume(returning: nil)
+  }
+
+  /// Only a waiter still queued times out: one taken off the queue was already resumed
+  private func timeOut(_ id: UUID) {
+    state.lock()
+    guard let index = waiters.firstIndex(where: { $0.id == id }) else {
+      state.unlock()
+      return
+    }
+    let waiter = waiters.remove(at: index)
+    owners += 1
+    let blocker = holder ?? "nobody"
+    state.unlock()
+    waiter.continuation.resume(returning: blocker)
   }
 }
 

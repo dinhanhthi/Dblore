@@ -10,6 +10,8 @@ nonisolated enum DelimitedTextError: Error, LocalizedError, Equatable, Sendable 
   case rowLimitExceeded
   case fieldLimitExceeded
   case encodingChanged
+  case tooManyFields(row: Int)
+  case recordLimitExceeded(row: Int)
 
   var errorDescription: String? {
     switch self {
@@ -19,6 +21,10 @@ nonisolated enum DelimitedTextError: Error, LocalizedError, Equatable, Sendable 
     case .fieldLimitExceeded: "Import contains a field longer than the safety limit"
     case .encodingChanged:
       "The file is not valid UTF-8 after the preview. Save it as UTF-8 and import again."
+    case .tooManyFields(let row):
+      "Row \(row.formatted()) has more fields than the file has columns"
+    case .recordLimitExceeded(let row):
+      "Row \(row.formatted()) is longer than the 64 MiB safety limit"
     }
   }
 }
@@ -28,6 +34,9 @@ nonisolated enum DelimitedTextReader {
   /// Import limits shared by every import (SQL tables and MongoDB collections).
   static let maxImportFileBytes = 256 * 1_024 * 1_024
   static let maxImportRows = 100_000
+  /// UTF-8 bytes one streamed record (or NDJSON line) may hold, its quotes and CSV line end
+  /// included
+  static let maxRecordBytes = 64 * 1_024 * 1_024
 
   nonisolated struct Options: Sendable, Equatable {
     var delimiter: Character?
@@ -286,9 +295,135 @@ nonisolated enum DelimitedTextReader {
     return Table(delimiter: delimiter, columns: columns, rows: rows)
   }
 
-  private static func pad(_ row: [String], to width: Int) -> [String] {
+  static func pad(_ row: [String], to width: Int) -> [String] {
     guard row.count < width else { return row }
     return row + Array(repeating: "", count: width - row.count)
+  }
+
+  /// RFC 4180 records of a text fed in pieces, as `read` parses them (blank lines skipped).
+  /// The caller gives the delimiter and the column count (both from the preview): with
+  /// `pads`, every record comes back padded to `columns` with empty fields, the header record
+  /// included; a record with more fields is refused. "Row" in an error counts records from 1,
+  /// header included, blank lines not.
+  nonisolated struct RecordStream: Sendable {
+    let delimiter: Unicode.Scalar
+    let columns: Int
+    let maxFieldCharacters: Int
+    let maxRecordBytes: Int
+    let pads: Bool
+    private var row: [String] = []
+    private var field = ""
+    private var fieldCharacters = 0
+    private var recordBytes = 0
+    private var inQuotes = false
+    private var quoted = false
+    /// A quote that closed a quoted field, unless the next scalar is a second quote
+    private var quotePending = false
+    private var sawContent = false
+    private var recordsRead = 0
+
+    init(
+      delimiter: Character, columns: Int, maxFieldCharacters: Int = 8 * 1_024 * 1_024,
+      maxRecordBytes: Int = DelimitedTextReader.maxRecordBytes, pads: Bool = true
+    ) {
+      self.delimiter = delimiter.unicodeScalars[delimiter.unicodeScalars.startIndex]
+      self.columns = max(columns, 1)
+      self.maxFieldCharacters = max(maxFieldCharacters, 0)
+      self.maxRecordBytes = max(maxRecordBytes, 0)
+      self.pads = pads
+    }
+
+    /// The records `text` completes
+    mutating func feed(_ text: Substring) throws -> [[String]] {
+      var records: [[String]] = []
+      var scalarCount = 0
+      for scalar in text.unicodeScalars {
+        scalarCount += 1
+        if scalarCount.isMultiple(of: 4_096) { try Task.checkCancellation() }
+        recordBytes += UTF8.width(scalar)
+        guard recordBytes <= maxRecordBytes else {
+          throw DelimitedTextError.recordLimitExceeded(row: recordsRead + 1)
+        }
+        if quotePending {
+          quotePending = false
+          if scalar == "\"" {
+            try appendCharacter("\"")
+            continue
+          }
+          inQuotes = false
+        }
+        if inQuotes {
+          if scalar == "\"" {
+            quotePending = true
+          } else {
+            try appendCharacter(Character(scalar))
+          }
+          sawContent = true
+          continue
+        }
+        if scalar == "\"", field.isEmpty, !quoted {
+          inQuotes = true
+          quoted = true
+          sawContent = true
+          continue
+        }
+        if scalar == delimiter {
+          try appendField()
+          sawContent = true
+          continue
+        }
+        // A CR LF pair ends one record and leaves a blank one, which is skipped
+        if scalar == "\n" || scalar == "\r" {
+          if let record = try finishRecord() { records.append(record) }
+          continue
+        }
+        try appendCharacter(Character(scalar))
+        sawContent = true
+      }
+      return records
+    }
+
+    /// The last record, when the text does not end with a line end
+    mutating func finish() throws -> [[String]] {
+      if quotePending {
+        quotePending = false
+        inQuotes = false
+      }
+      if inQuotes { throw DelimitedTextError.unclosedQuote }
+      guard sawContent || !row.isEmpty, let record = try finishRecord() else { return [] }
+      return [record]
+    }
+
+    private mutating func appendField() throws {
+      guard row.count < columns else {
+        throw DelimitedTextError.tooManyFields(row: recordsRead + 1)
+      }
+      row.append(field)
+      field = ""
+      fieldCharacters = 0
+      quoted = false
+    }
+
+    private mutating func finishRecord() throws -> [String]? {
+      try appendField()
+      defer {
+        // A new array, so a record returned unpadded holds only its own fields' capacity
+        row = []
+        recordBytes = 0
+        sawContent = false
+      }
+      guard sawContent else { return nil }
+      recordsRead += 1
+      return pads ? DelimitedTextReader.pad(row, to: columns) : row
+    }
+
+    private mutating func appendCharacter(_ character: Character) throws {
+      guard fieldCharacters < maxFieldCharacters else {
+        throw DelimitedTextError.fieldLimitExceeded
+      }
+      field.append(character)
+      fieldCharacters += 1
+    }
   }
 
   /// `data` as text: UTF-8 (a leading BOM dropped), else Latin-1; `encoding` as in `Options`

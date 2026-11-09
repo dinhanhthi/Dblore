@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 
@@ -98,6 +99,11 @@ nonisolated enum TableImportError: Error, LocalizedError, Sendable {
   case nothingToWrite(skipped: Int, refused: Int)
   /// PostgreSQL with no Schema, and current_schema() is NULL
   case noCurrentSchema
+  /// A streamed import's file no longer holds the rows its first read checked
+  case fileChanged
+  /// A streamed import's block of file rows holds a value its column can't take
+  /// (`ImportSQLBuilder.Error`), found while the rows are sent
+  case valuesRefused(rows: ClosedRange<Int>, reason: String)
 
   var errorDescription: String? {
     switch self {
@@ -120,6 +126,10 @@ nonisolated enum TableImportError: Error, LocalizedError, Sendable {
       "No rows to write: \(skipped) skipped, \(refused) refused."
     case .noCurrentSchema:
       "No current schema: pick a schema for the new table."
+    case .fileChanged:
+      "The file changed after it was checked. The import stopped before the changed rows."
+    case .valuesRefused(let rows, let reason):
+      "Rows \(rows.lowerBound)–\(rows.upperBound): \(reason)"
     }
   }
 }
@@ -140,8 +150,11 @@ private nonisolated struct PreparedImport: Sendable {
 private nonisolated struct ParsedImportFile: Sendable {
   var columns: [String]
   var rows: [[String?]]
-  /// Delimited text only: the full import decodes with the preview's encoding
+  /// The full import decodes with the preview's encoding (JSON: the preview's only)
   var encoding: String.Encoding?
+  /// How a streamed import reads the file: CSV / TSV with the detected delimiter, NDJSON (a
+  /// preview whose first character is `{`); nil for a JSON array, which is read whole
+  var layout: ImportFileStream.Layout?
 }
 
 /// Owns the import sheet's preview and mapping. Full file parsing happens only at submit.
@@ -159,6 +172,14 @@ final class TableImportModel {
   var isLoading = false
   var isImporting = false
   var isExecutingBatch = false
+  /// Share of a streamed import's blocks sent while `isExecutingBatch`; nil for a staged batch,
+  /// which the database runs with no per-row progress
+  private(set) var sendProgress: Double?
+  /// A streamed import the tab took while Safe Mode asks: set until the tab ends the run
+  /// (`streamedCompletion`), with `isImporting`, so the sheet keeps its progress and Cancel
+  private(set) var awaitsRunEnd = false
+  /// Safe Mode still asks about that run: Cancel declines it
+  private(set) var awaitsConfirmation = false
   var errorMessage: String?
   /// Keys of an existing destination, primary key first. Empty until loaded and for a new table.
   var matchKeys: [TableImportMatchKey] = []
@@ -183,6 +204,8 @@ final class TableImportModel {
 
   @ObservationIgnored private let chooseFile: @MainActor () async -> URL?
   @ObservationIgnored private var parseTask: Task<ParsedImportFile, Error>?
+  /// A streamed import's first read of the whole file (`ImportFileSummary`)
+  @ObservationIgnored private var summaryTask: Task<ImportFileSummary, Error>?
   @ObservationIgnored private var batchTask: Task<PreparedImport, Error>?
   /// The batch `prepareImport` built, run once by `confirmImport`
   @ObservationIgnored private var preparedBatch: PendingStagedBatch?
@@ -191,6 +214,8 @@ final class TableImportModel {
     (destination: TableImportDestination, structure: TableStructure)?
   @ObservationIgnored private var operationID = UUID()
   @ObservationIgnored private var previewEncoding: String.Encoding?
+  /// Observed: `streamsImport` reads it
+  private var previewLayout: ImportFileStream.Layout?
   @ObservationIgnored private var matchKeysRequest = UUID()
   @ObservationIgnored private var currentSchemaRequest = UUID()
 
@@ -216,6 +241,7 @@ final class TableImportModel {
     previewRows = []
     mappings = []
     previewEncoding = nil
+    previewLayout = nil
     progress = 0.1
     isLoading = true
     let hasHeader = self.hasHeader
@@ -237,6 +263,7 @@ final class TableImportModel {
       guard self.operationID == operationID else { throw CancellationError() }
       previewRows = parsed.rows
       previewEncoding = parsed.encoding
+      previewLayout = parsed.layout
       let kinds = ImportTypeInference.infer(rows: parsed.rows, columnCount: parsed.columns.count)
       mappings = parsed.columns.enumerated().map { index, name in
         TableImportColumnMapping(sourceName: name, targetName: name, kind: kinds[index])
@@ -260,11 +287,21 @@ final class TableImportModel {
   func cancel() {
     operationID = UUID()
     parseTask?.cancel()
+    summaryTask?.cancel()
     batchTask?.cancel()
     isLoading = false
     isImporting = false
     isMatchingRows = false
+    awaitsRunEnd = false
+    awaitsConfirmation = false
     endMatchReview()
+  }
+
+  /// The one-file sheet streams this import (`prepareBatch(allowsStreaming:)`): a CSV, TSV or
+  /// NDJSON file into a new table, or into an existing one without a key, with no file, row or
+  /// cell cap
+  var streamsImport: Bool {
+    previewLayout != nil && (destination.createsTable || (matchKey == nil && mode == .insert))
   }
 
   /// Back from the summary: the prepared batch is dropped, nothing was written
@@ -478,10 +515,15 @@ final class TableImportModel {
   /// counts. A failed read throws before any statement is built.
   /// On PostgreSQL a destination with no Schema names the schema `readCurrentSchema` returns
   /// (the manager's current_schema() read, off the main actor) in every statement.
+  /// `allowsStreaming` (the one-file sheet): a CSV, TSV or NDJSON file into a new or existing
+  /// table without a key is read once to check it (`prepareStreamedBatch`) and comes back as a
+  /// streamed batch, with no file, row or cell cap. On MySQL its CREATE TABLE is sent alone
+  /// first (`PendingStagedBatch.separateCreate`).
   func prepareBatch(
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil,
     readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])? = nil,
-    readCurrentSchema: (@Sendable () async throws -> String?)? = nil
+    readCurrentSchema: (@Sendable () async throws -> String?)? = nil,
+    allowsStreaming: Bool = false
   ) async throws -> PendingStagedBatch {
     guard let fileURL else { throw TableImportError.noFile }
     guard !destination.table.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -495,10 +537,17 @@ final class TableImportModel {
     defer {
       if self.operationID == operationID {
         parseTask = nil
+        summaryTask = nil
         batchTask = nil
       }
     }
     progress = 0.1
+    if allowsStreaming, match == nil, let layout = previewLayout {
+      return try await prepareStreamedBatch(
+        url: fileURL, layout: layout, dialect: dialect, connectionEpoch: connectionEpoch,
+        maxChunkBytes: maxChunkBytes, readCurrentSchema: readCurrentSchema,
+        operationID: operationID)
+    }
     let format = self.format
     let hasHeader = self.hasHeader
     let encoding = previewEncoding
@@ -552,6 +601,65 @@ final class TableImportModel {
     return prepared.batch
   }
 
+  /// Pass 1 of a streamed import, off the main actor: the whole file read once against the
+  /// mappings (`ImportFileSummary`: row count, block digests, DuckDB decimal digits), then the
+  /// schema resolved as the staged path does, then the batch (`streamedBatch`) whose chunks
+  /// read the file again. Never reads the file whole.
+  private func prepareStreamedBatch(
+    url: URL, layout: ImportFileStream.Layout, dialect: SQLDialect, connectionEpoch: UInt64,
+    maxChunkBytes: Int?, readCurrentSchema: (@Sendable () async throws -> String?)?,
+    operationID: UUID
+  ) async throws -> PendingStagedBatch {
+    let mappings = self.mappings
+    let encoding = previewEncoding ?? .utf8
+    // The read's share done moves the bar from 0.1 to 0.6 (never back)
+    let report: @Sendable (Double) -> Void = { [weak self] share in
+      Task { @MainActor in
+        guard let self, self.operationID == operationID, self.summaryTask != nil else { return }
+        self.progress = max(self.progress, 0.1 + 0.5 * share)
+      }
+    }
+    let read = Task.detached(priority: .userInitiated) {
+      try ImportFileSummary(
+        url: url, layout: layout, encoding: encoding, mappings: mappings,
+        measuresDecimals: dialect == .duckdb, progress: report)
+    }
+    summaryTask = read
+    let summary = try await read.value
+    guard self.operationID == operationID else { throw CancellationError() }
+    summaryTask = nil
+    progress = 0.6
+    let tables = self.tables
+    let destination = try await Self.resolvingSchema(
+      self.destination, tables: tables, dialect: dialect, readCurrentSchema: readCurrentSchema)
+    guard self.operationID == operationID else { throw CancellationError() }
+    var batch = try Self.streamedBatch(
+      url: url, layout: layout, encoding: encoding, mappings: mappings, summary: summary,
+      destination: destination, tables: tables, dialect: dialect,
+      connectionEpoch: connectionEpoch, maxChunkBytes: maxChunkBytes)
+    let blocks = max(summary.digests.count, 1)
+    // Blocks sent move the bar; the first call (0) is the run starting, past Safe Mode
+    batch.streamedProgress = { [weak self] done in
+      Task { @MainActor in
+        guard let self, self.operationID == operationID, self.isImporting else { return }
+        self.sendProgress = max(self.sendProgress ?? 0, min(1, Double(done) / Double(blocks)))
+        self.isExecutingBatch = true
+        self.awaitsConfirmation = false
+      }
+    }
+    // The end of a run Safe Mode held: sent or declined (nil), or its failure for the sheet
+    batch.streamedCompletion = { [weak self] failure in
+      guard let self, self.operationID == operationID, self.awaitsRunEnd else { return }
+      self.awaitsRunEnd = false
+      self.awaitsConfirmation = false
+      self.isImporting = false
+      self.isExecutingBatch = false
+      self.errorMessage = failure
+    }
+    progress = 1
+    return batch
+  }
+
   /// What a keyed import needs from the model, read on the main actor: nil for a plain INSERT
   /// (a new table, or Insert without a key)
   private func matchRequest(
@@ -599,14 +707,15 @@ final class TableImportModel {
     return await prepareImport(
       dialect: dialect, connectionEpoch: epoch, maxChunkBytes: maxChunkBytes,
       readMatches: { try await manager.readImportMatches($0) },
-      readCurrentSchema: { try await manager.readImportCurrentSchema() })
+      readCurrentSchema: { try await manager.readImportCurrentSchema() }, allowsStreaming: true)
   }
 
   /// `prepareImport(for:)` with the tab's values. A keyed batch starts the summary review.
   func prepareImport(
     dialect: SQLDialect, connectionEpoch: UInt64, maxChunkBytes: Int? = nil,
     readMatches: (@Sendable (BoundStatement) async throws -> [[CellValue]])?,
-    readCurrentSchema: (@Sendable () async throws -> String?)? = nil
+    readCurrentSchema: (@Sendable () async throws -> String?)? = nil,
+    allowsStreaming: Bool = false
   ) async -> Bool {
     endMatchReview()
     guard !Task.isCancelled else {
@@ -618,7 +727,8 @@ final class TableImportModel {
     do {
       let batch = try await prepareBatch(
         dialect: dialect, connectionEpoch: connectionEpoch, maxChunkBytes: maxChunkBytes,
-        readMatches: readMatches, readCurrentSchema: readCurrentSchema)
+        readMatches: readMatches, readCurrentSchema: readCurrentSchema,
+        allowsStreaming: allowsStreaming)
       try Task.checkCancellation()
       errorMessage = nil
       if let summary = matchSummary {
@@ -654,15 +764,24 @@ final class TableImportModel {
     }
     isImporting = true
     isExecutingBatch = true
+    sendProgress = batch.streamed == nil ? nil : 0
     defer {
-      isImporting = false
-      isExecutingBatch = false
+      if !awaitsRunEnd {
+        isImporting = false
+        isExecutingBatch = false
+      }
     }
     if let reason = await viewModel.beginImportBatch(batch) {
       errorMessage = reason
       return false
     }
     errorMessage = nil
+    // Safe Mode holds a streamed import: it stays this model's until the tab ends it
+    if batch.streamed != nil, viewModel.pendingStagedBatch?.streamed != nil {
+      awaitsRunEnd = true
+      awaitsConfirmation = true
+      isExecutingBatch = false
+    }
     return true
   }
 
@@ -753,22 +872,25 @@ final class TableImportModel {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
     let maxBytes = 8 * 1_024 * 1_024
+    // Each row needs its own record end (a line end, or a JSON object's `}`), so no parse can
+    // reach `rowLimit` rows before enough have been read, nor gain a row without a new one
+    let neededEnds = format == .json ? rowLimit : rowLimit + (hasHeader ? 1 : 0)
+    var recordEnds = 0
+    var endsAtLastParse = 0
     var data = Data()
+    func preview(_ data: Data) throws -> ParsedImportFile {
+      var parsed = try parse(data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit)
+      if format == .json { (parsed.encoding, parsed.layout) = jsonLayout(data) }
+      return parsed
+    }
     while data.count < maxBytes {
       try Task.checkCancellation()
       let chunk = try handle.read(upToCount: min(64 * 1_024, maxBytes - data.count)) ?? Data()
-      if chunk.isEmpty {
-        return try parse(data: data, format: format, hasHeader: hasHeader, rowLimit: rowLimit)
-      }
+      if chunk.isEmpty { return try preview(data) }
       data.append(chunk)
-      // Without a new line end the delimited candidate is unchanged, so its parse would be too
-      if format != .json, !chunk.contains(where: { $0 == 10 || $0 == 13 }) { continue }
-      // A JSON record (array element or NDJSON line) can only complete at `}`, `]` or a new line
-      if format == .json,
-        !chunk.contains(where: { $0 == 0x7D || $0 == 0x5D || $0 == 10 || $0 == 13 })
-      {
-        continue
-      }
+      recordEnds += Self.recordEnds(in: chunk, format: format)
+      guard recordEnds >= neededEnds, recordEnds > endsAtLastParse else { continue }
+      endsAtLastParse = recordEnds
       let candidate: Data
       if format == .json {
         // A read may stop inside a UTF-8 codepoint. Parse a valid prefix so the reader
@@ -787,14 +909,43 @@ final class TableImportModel {
       } else {
         continue
       }
-      if let preview = try? parse(
-        data: candidate, format: format, hasHeader: hasHeader, rowLimit: rowLimit),
-        preview.rows.count >= rowLimit
-      {
+      if let preview = try? preview(candidate), preview.rows.count >= rowLimit {
         return preview
       }
     }
     throw TableImportError.previewLimit
+  }
+
+  /// A JSON preview's encoding, as `JSONRowsReader` decodes it (UTF-8, else Latin-1), and
+  /// NDJSON when its first character after a byte order mark and whitespace is `{`
+  private nonisolated static func jsonLayout(
+    _ data: Data
+  ) -> (String.Encoding, ImportFileStream.Layout?) {
+    let payload = data.starts(with: [0xEF, 0xBB, 0xBF]) ? data.dropFirst(3) : data[...]
+    let first = payload.first { ![0x20, 0x09, 0x0A, 0x0D].contains($0) }
+    return (
+      String(data: payload, encoding: .utf8) != nil ? .utf8 : .isoLatin1,
+      first == UInt8(ascii: "{") ? .ndjson : nil
+    )
+  }
+
+  /// Upper bound of the records `chunk` can end: line ends (CRLF once) for delimited text,
+  /// `}` bytes for JSON
+  private nonisolated static func recordEnds(in chunk: Data, format: TableImportFormat) -> Int {
+    chunk.withUnsafeBytes { bytes in
+      var count = 0
+      for index in bytes.indices {
+        switch bytes[index] {
+        case 0x7D where format == .json: count += 1
+        case 10 where format != .json: count += 1
+        // A CR followed by LF ends one line; a CR at the chunk's end counts on its own
+        case 13 where format != .json:
+          if index + 1 == bytes.endIndex || bytes[index + 1] != 10 { count += 1 }
+        default: break
+        }
+      }
+      return count
+    }
   }
 
   private nonisolated static func parse(
@@ -814,7 +965,7 @@ final class TableImportModel {
           delimiter: delimiter, hasHeader: hasHeader, rowLimit: rowLimit, encoding: encoding))
       return ParsedImportFile(
         columns: table.columns, rows: table.rows.map { $0.map(Optional.some) },
-        encoding: table.encoding)
+        encoding: table.encoding, layout: .delimited(table.delimiter, hasHeader: hasHeader))
     }
   }
 
@@ -968,6 +1119,60 @@ final class TableImportModel {
     return batch
   }
 
+  /// A streamed import's batch: no statements, the CREATE TABLE (DuckDB decimal digits from
+  /// pass 1) as the run's prelude, pass 1's row count in the Safe Mode and History text, and
+  /// the INSERT chunks made by `TableImportRun` as the run asks for them. On MySQL / MariaDB,
+  /// where CREATE TABLE commits implicitly, it is sent alone before the run instead
+  /// (`separateCreate`) and the text says the new table stays if the rows fail.
+  private nonisolated static func streamedBatch(
+    url: URL, layout: ImportFileStream.Layout, encoding: String.Encoding,
+    mappings: [TableImportColumnMapping], summary: ImportFileSummary,
+    destination: TableImportDestination, tables: [DatabaseTable], dialect: SQLDialect,
+    connectionEpoch: UInt64, maxChunkBytes: Int?
+  ) throws -> PendingStagedBatch {
+    let columns = importColumns(
+      mappings: mappings, destination: destination, tables: tables, dialect: dialect)
+    let create =
+      destination.createsTable
+      ? try ImportSQLBuilder.createTable(
+        schema: destination.schema, table: destination.table,
+        columns: dialect == .duckdb ? summary.withDecimalDigits(columns) : columns,
+        dialect: dialect)
+      : nil
+    let createsFirst = dialect == .mysql && create != nil
+    var preview = try ImportSQLBuilder.summaryText(
+      createTable: createsFirst ? nil : create, schema: destination.schema,
+      table: destination.table, columns: columns.map(\.name), rowCount: summary.rowCount,
+      dialect: dialect)
+    if createsFirst, let create {
+      preview = create.sql + ";\n" + separateCreateNote + "\n" + preview
+    }
+    let run = TableImportRun(
+      url: url, layout: layout, encoding: encoding, sourceColumns: mappings.map(\.sourceName),
+      included: mappings.indices.filter { mappings[$0].included }, columns: columns,
+      digests: summary.digests, destination: destination, dialect: dialect,
+      maxChunkBytes: maxChunkBytes)
+    var streamed = StreamedBatch(
+      relation: try ImportSQLBuilder.relation(
+        schema: destination.schema, table: destination.table, dialect: dialect),
+      nextChunk: { try await run.next() }, operation: "Importing rows",
+      rowsLabel: "imported rows")
+    streamed.prelude = createsFirst ? [] : create.map { [$0] } ?? []
+    streamed.isDataImport = true
+    streamed.rowRange = { await run.rowRange(ofStatement: $0) }
+    var batch = PendingStagedBatch(
+      statements: [], preview: preview, connectionEpoch: connectionEpoch,
+      historySource: .dataImport)
+    batch.streamed = streamed
+    batch.separateCreate = createsFirst ? create : nil
+    batch.runningWorkLabel = runningWorkLabel(destination)
+    return batch
+  }
+
+  /// The Safe Mode and History line of a MySQL / MariaDB import into a new table
+  nonisolated static let separateCreateNote =
+    "-- The new table is created first and stays, empty, if the rows fail"
+
   /// A keyed import: the match reads, then each row's outcome in `match.mode`, then INSERT
   /// chunks of the inserted rows (their range spans the chunk's first to last file row, so it
   /// can include rows another statement writes) and one UPDATE per updated row. A row whose
@@ -1100,5 +1305,128 @@ final class TableImportModel {
         continuation.resume(returning: response == .OK ? panel.url : nil)
       }
     }
+  }
+}
+
+/// Pass 2 of a streamed import: the file read again block by block as the streamed batch asks
+/// for its next chunk. Each block must be the one pass 1 digested at its index before any SQL
+/// is made from it, and the file must end after pass 1's last block; else
+/// `TableImportError.fileChanged`, so no changed or extra row is ever sent. The file and its
+/// security-scoped access open at the first chunk (a batch Safe Mode holds or declines opens
+/// nothing) and close at the end, at a failure, or when the run is released.
+private actor TableImportRun {
+  private let url: URL
+  private let layout: ImportFileStream.Layout
+  private let encoding: String.Encoding
+  /// Every mapping's source name: the columns the file must still have
+  private let sourceColumns: [String]
+  /// Indices into `sourceColumns` of the imported columns, in mapping order
+  private let included: [Int]
+  private let columns: [ImportSQLBuilder.Column]
+  private let digests: [SHA256Digest]
+  private let destination: TableImportDestination
+  private let dialect: SQLDialect
+  private let maxChunkBytes: Int?
+  private var access: SecurityScopedAccessToken?
+  private var stream: ImportFileStream?
+  private var blocks = 0
+  private var finished = false
+  /// Thrown again by every later `next()`
+  private var failure: (any Error)?
+  /// Row statements made before the last chunk, and the file rows of each of its statements
+  private var chunkStart = 0
+  private var chunkRanges: [ClosedRange<Int>] = []
+
+  init(
+    url: URL, layout: ImportFileStream.Layout, encoding: String.Encoding,
+    sourceColumns: [String], included: [Int], columns: [ImportSQLBuilder.Column],
+    digests: [SHA256Digest], destination: TableImportDestination, dialect: SQLDialect,
+    maxChunkBytes: Int?
+  ) {
+    self.url = url
+    self.layout = layout
+    self.encoding = encoding
+    self.sourceColumns = sourceColumns
+    self.included = included
+    self.columns = columns
+    self.digests = digests
+    self.destination = destination
+    self.dialect = dialect
+    self.maxChunkBytes = maxChunkBytes
+  }
+
+  /// The next block's INSERTs (one block may need several: bind limit, MySQL packet size);
+  /// nil after the last block pass 1 saw.
+  /// - Throws: `TableImportError.fileChanged`; `CancellationError`; the file's open or read
+  ///   error; `TableImportError.valuesRefused` naming the block's rows for a value its column
+  ///   cannot take (`ImportSQLBuilder.Error`)
+  func next() throws -> [BoundStatement]? {
+    if let failure { throw failure }
+    if finished { return nil }
+    do {
+      guard let block = try nextBlock() else {
+        guard blocks == digests.count else { throw TableImportError.fileChanged }
+        finished = true
+        close()
+        return nil
+      }
+      guard blocks < digests.count, block.digest == digests[blocks] else {
+        throw TableImportError.fileChanged
+      }
+      blocks += 1
+      let statements: [BoundStatement]
+      do {
+        statements = try ImportSQLBuilder.insertStatements(
+          schema: destination.schema, table: destination.table, columns: columns,
+          rows: block.rows.map { row in included.map { row[$0] } }, dialect: dialect,
+          maxChunkBytes: maxChunkBytes)
+      } catch let error as ImportSQLBuilder.Error {
+        throw TableImportError.valuesRefused(
+          rows: block.firstRow...(block.firstRow + block.rows.count - 1),
+          reason: error.localizedDescription)
+      }
+      chunkStart += chunkRanges.count
+      chunkRanges = []
+      var row = block.firstRow
+      for statement in statements {
+        let count = statement.expectedRows ?? 0
+        chunkRanges.append(row...(row + count - 1))
+        row += count
+      }
+      return statements
+    } catch {
+      // Pass 1 read the file cleanly: a parse or column error now means it changed
+      let thrown: any Error
+      switch error {
+      case TableImportError.valuesRefused: thrown = error
+      case is TableImportError, is DelimitedTextError, is JSONRowsError:
+        thrown = TableImportError.fileChanged
+      default: thrown = error
+      }
+      failure = thrown
+      close()
+      throw thrown
+    }
+  }
+
+  /// The file rows of row statement `index` (from 0), while it is one of the last chunk's
+  func rowRange(ofStatement index: Int) -> ClosedRange<Int>? {
+    let offset = index - chunkStart
+    return chunkRanges.indices.contains(offset) ? chunkRanges[offset] : nil
+  }
+
+  private func nextBlock() throws -> ImportFileStream.Block? {
+    if stream == nil {
+      access = SecurityScopedAccessToken(url: url)
+      stream = try ImportFileStream(
+        url: url, layout: layout, encoding: encoding, columns: sourceColumns)
+    }
+    return try stream?.nextBlock()
+  }
+
+  private func close() {
+    stream = nil
+    access?.release()
+    access = nil
   }
 }

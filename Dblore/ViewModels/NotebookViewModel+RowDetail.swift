@@ -48,6 +48,8 @@ extension NotebookViewModel {
     let table = databaseTables.first { $0.schema == target?.schema && $0.name == target?.name }
     // Cut values of a lazy page; a staged edit (a value other than the page's) replaced its cell
     let unloaded = stagedInsertIndex == nil ? unloadedCells(in: result)[originalRow] ?? [:] : [:]
+    // Cut by the capped read: never loaded, so never editable
+    let cut = stagedInsertIndex == nil ? cutCells(in: result)[originalRow] ?? [:] : [:]
     let fields = result.columns.enumerated().map { index, column in
       let info = table?.columns.first { $0.name == column.name }
       let isPrimaryKey = primaryKey.contains(column.name)
@@ -65,7 +67,7 @@ extension NotebookViewModel {
       }
       return RowDetailField(
         field: field, original: values[column.name] ?? .null, isReadOnly: isReadOnly,
-        unloadedLength: unloadedLength)
+        unloadedLength: unloadedLength, isCut: unloadedLength != nil && cut[index] != nil)
     }
 
     return RowDetailState(

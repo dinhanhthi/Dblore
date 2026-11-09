@@ -139,6 +139,8 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private var recorded: [String] = []
   /// SQL and binds of the open cursor, which `fetch` answers through `queryAnswer`
   private var cursorQuery: (sql: String, binds: [SQLBindValue])?
+  /// Rows of the open cursor already fetched: each `fetch` answers the next `maxRows`
+  private var cursorOffset = 0
   private var recordedBinds: [[SQLBindValue]] = []
   private var queriesRecorded: [String] = []
   private var typedRecorded: [MongoCommand] = []
@@ -408,18 +410,30 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   func openCursor(_ sql: String, binds: [SQLBindValue]) async throws -> SessionCursor {
     record(sql, binds: binds, query: false)
     noteOpenCursor()
-    lock.withLock { cursorQuery = (sql, binds) }
+    lock.withLock {
+      cursorQuery = (sql, binds)
+      cursorOffset = 0
+    }
     return SessionCursor(name: "fake_cap")
   }
 
+  /// The next `maxRows` rows of the open cursor, as a server's FETCH answers
   func fetch(_ cursor: SessionCursor, maxRows: Int) async throws -> SessionRowSource {
     record("FETCH \(maxRows)", query: false)
     noteFetch(maxRows)
+    var columns = self.columns
+    var rows = self.rows
     if let query = lock.withLock({ cursorQuery }), let answer = queryAnswer?(query.sql, query.binds)
     {
-      return Self.rowSource(columns: answer.columns, rows: answer.rows)
+      (columns, rows) = (answer.columns, answer.rows)
     }
-    return rowSource()
+    let start = lock.withLock {
+      let start = min(cursorOffset, rows.count)
+      cursorOffset = min(start + maxRows, rows.count)
+      return start
+    }
+    return Self.rowSource(
+      columns: columns, rows: Array(rows[start..<min(start + maxRows, rows.count)]))
   }
 
   func closeCursor(_ cursor: SessionCursor) async throws {

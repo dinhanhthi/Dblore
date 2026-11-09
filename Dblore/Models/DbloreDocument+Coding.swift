@@ -353,7 +353,7 @@ enum DocumentCoder {
     // `editTarget` is session-only), ctid rowIdentifiers, userLimitExceeded / userRequestedLimit
     // (LIMIT rewrite). `wasLimited` now means "truncated by the row cap".
 
-    return CellResult(
+    var result = CellResult(
       columns: columns,
       rows: rows,
       executionTime: executionTime,
@@ -364,6 +364,12 @@ enum DocumentCoder {
       sourceQuery: sourceQuery,
       affectedRows: affectedRows
     )
+    // Absent (files from older builds): nothing was cut. Each entry is `[row, column]`.
+    let cutPairs = dict["cutCells"] as? [[Int]] ?? []
+    result.cutCells = Set(
+      cutPairs.filter { $0.count == 2 }.map { CellPosition(row: $0[0], column: $0[1]) })
+    result.stoppedAtByteBudget = dict["stoppedAtByteBudget"] as? Bool ?? false
+    return result
   }
 
   private nonisolated static func encodeResult(
@@ -407,6 +413,15 @@ enum DocumentCoder {
     // Encode new fields added for inline editing and metadata
     if let sourceQuery = result.sourceQuery {
       dict["sourceQuery"] = sourceQuery
+    }
+
+    // Cut cells as `[row, column]` and the byte stop, only when set; older builds ignore them
+    if !result.cutCells.isEmpty {
+      dict["cutCells"] = result.cutCells.sorted { ($0.row, $0.column) < ($1.row, $1.column) }
+        .map { [$0.row, $0.column] }
+    }
+    if result.stoppedAtByteBudget {
+      dict["stoppedAtByteBudget"] = true
     }
 
     // tableName / primaryKeyColumns are not written: the inline-edit target is session-only

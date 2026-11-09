@@ -1,6 +1,7 @@
 // LazyCellLoader.swift
-// Full values of the large binary cells a lazy data-viewer page cut to
-// `DataViewerState.lazyPrefixBytes`. The page's result carries which ones
+// Full values of the large binary and text cells a lazy data-viewer page cut to
+// `DataViewerState.lazyPrefixBytes` bytes or `lazyPrefixCharacters` characters (lengths in
+// bytes, UTF-8 for text). The page's result carries which ones
 // (`CellResult.truncation`: full lengths by row key and column, the relation, the key columns
 // and the connection it was read on), so every copy of it knows its cut cells, whatever page
 // the tab shows now. A cut cell is read alone by its row's primary key:
@@ -9,7 +10,7 @@
 // locator its page read for it (`RowLocatorKind.terms`, the edit's own WHERE), checked by
 // `ReadOnlyQueryGuard` and sent through the tab's gated read path with named parameters (the one
 // a page read takes), pinned to the page's connection, so the value comes back as the same
-// binary `CellValue` a page read gives. No row (or more than one) is an error, never the cut
+// `CellValue` a plain read gives. No row (or more than one) is an error, never the cut
 // value; so is a value that is not the page's full length or does not start with the page's
 // prefix (a reused SQLite rowid, a VACUUM, another writer: the key now names other bytes). A
 // loaded value replaces the cell and its truncation entry (`replacingCells`), in the
@@ -19,6 +20,9 @@
 // and Cancel, up to `bulkLimitBytes` in all, and copy, export or stage nothing when a load
 // fails, is cancelled, is over that limit or a cut cell cannot be read. Edits only ever bind
 // the user's whole new value: SET lists the edited columns, WHERE the primary key (or locator).
+// Cells an editor or notebook read cut at the app's cell limit (`CellResult.cutCells`) count
+// as unloaded too, but are never loaded: a copy, export, pin or Duplicate Row that includes one
+// is refused (`cutCellsMessage`).
 
 import Foundation
 import Observation
@@ -57,17 +61,41 @@ nonisolated enum LazyCellLoadError: Error, Equatable, LocalizedError {
   }
 }
 
-/// What the page read of a cut value: its full byte length and its first bytes. A full value
-/// read later must match both, or it is another row's (or a changed) value.
+/// What the page read of a cut value: its full byte length (UTF-8 for text) and its first
+/// bytes or characters. A full value read later must match both, or it is another row's (or a
+/// changed) value.
 nonisolated struct LazyCellExpectation: Sendable {
-  let length: Int
-  let prefix: Data
+  /// The cut value the page read
+  enum Prefix: Sendable {
+    case bytes(Data)
+    case text(String)
+  }
 
-  /// The expectation of a cut cell whose page value is `cut`, nil when that is not bytes
+  let length: Int
+  let prefix: Prefix
+
+  /// The expectation of a cut cell whose page value is `cut`, nil when that is not bytes or text
   init?(length: Int, cut: CellValue) {
-    guard case .data(let prefix) = cut else { return nil }
+    switch cut {
+    case .data(let prefix): self.prefix = .bytes(prefix)
+    case .string(let prefix): self.prefix = .text(prefix)
+    default: return nil
+    }
     self.length = length
-    self.prefix = prefix
+  }
+
+  /// True when `value` is the full value: bytes of `length` bytes, or text (a JSON value by its
+  /// text) of `length` UTF-8 bytes, starting with the prefix. Text compares Unicode scalars,
+  /// never characters: a prefix may end inside a grapheme, and a canonically equivalent text
+  /// is another value.
+  func matches(_ value: CellValue) -> Bool {
+    switch (prefix, value) {
+    case (.bytes(let prefix), .data(let full)):
+      full.count == length && full.starts(with: prefix)
+    case (.text(let prefix), .string(let full)), (.text(let prefix), .json(let full)):
+      full.utf8.count == length && full.unicodeScalars.starts(with: prefix.unicodeScalars)
+    default: false
+    }
   }
 }
 
@@ -192,11 +220,7 @@ final class LazyCellLoader {
     let result = try await source.read(read.sql, read.parameters)
     guard let row = result.rows.first else { throw LazyCellLoadError.rowMissing }
     guard result.rows.count == 1, row.count == 1 else { throw LazyCellLoadError.notUnique }
-    if let expected {
-      guard case .data(let full) = row[0], full.count == expected.length,
-        full.starts(with: expected.prefix)
-      else { throw LazyCellLoadError.rowChanged }
-    }
+    if let expected, !expected.matches(row[0]) { throw LazyCellLoadError.rowChanged }
     return row[0]
   }
 
@@ -334,6 +358,8 @@ extension CellResult {
     replaced.dataRevision = dataRevision
     replaced.truncation = truncation
     replaced.typesPending = typesPending
+    replaced.cutCells = cutCells
+    replaced.stoppedAtByteBudget = stoppedAtByteBudget
     return replaced
   }
 }
@@ -382,12 +408,13 @@ extension NotebookViewModel {
   }
 
   /// The unloaded cells of `result` by row index (into `rows`) and column index, with their
-  /// full byte length; empty for a result with no cut value
+  /// full byte length (a cell the capped read cut, `cutCells(in:)`: its kept length); empty for
+  /// a result with no cut value
   func unloadedCells(in result: CellResult) -> [Int: [Int: Int]] {
-    guard let truncation = truncation(of: result) else { return [:] }
+    var cells = cutCells(in: result)
+    guard let truncation = truncation(of: result) else { return cells }
     let columnIndex = Dictionary(
       result.columns.enumerated().map { ($1.name, $0) }, uniquingKeysWith: { first, _ in first })
-    var cells: [Int: [Int: Int]] = [:]
     for index in result.rows.indices {
       guard let key = result.rowKey(at: index, in: truncation),
         let lengths = truncation.lengths[key]
@@ -399,20 +426,61 @@ extension NotebookViewModel {
     return cells
   }
 
-  /// True when `result` holds cut values
+  /// The cells of `result` the capped read cut (`CellResult.cutCells`) by row index and column
+  /// index, with the byte length they kept (UTF-8 for text); empty for an error. They are never
+  /// loaded: the read kept only their prefix.
+  func cutCells(in result: CellResult) -> [Int: [Int: Int]] {
+    guard result.error == nil else { return [:] }
+    var cells: [Int: [Int: Int]] = [:]
+    for position in result.cutCells
+    where result.rows.indices.contains(position.row)
+      && result.columns.indices.contains(position.column)
+      && result.rows[position.row].indices.contains(position.column)
+    {
+      let kept =
+        switch result.rows[position.row][position.column] {
+        case .string(let text), .json(let text), .decimal(let text): text.utf8.count
+        case .data(let data): data.count
+        case let value: value.fullString.utf8.count
+        }
+      cells[position.row, default: [:]][position.column] = kept
+    }
+    return cells
+  }
+
+  /// True when `result` holds cut values (of a lazy page or the capped read)
   func hasUnloadedCells(in result: CellResult) -> Bool {
-    truncation(of: result) != nil
+    truncation(of: result) != nil || !cutCells(in: result).isEmpty
+  }
+
+  /// Why a copy, export, pin or write of cells including `count` cells the capped read cut is
+  /// refused
+  nonisolated static func cutCellsMessage(count: Int) -> String {
+    let limit = "\(CappedReadLimits.app.maxCellCharacters / 1_048_576) MiB"
+    return count == 1
+      ? "1 value in this selection was cut at \(limit), so it cannot be copied whole."
+      : "\(count) values in this selection were cut at \(limit), so they cannot be copied whole."
   }
 
   /// Full values of the cells at `cells` (row index into `result.rows`, column index) that are
   /// cut, by row and column index: loaded first (progress and Cancel), then written into the
-  /// shown page when it is the same page. Nil, after a message naming `action`, when a load
-  /// fails, is cancelled, would load more than `LazyCellLoader.bulkLimitBytes` or reads a value
-  /// that is not the page's (`LazyCellLoadError.rowChanged`): the caller copies, exports or
-  /// stages nothing, and nothing is stored.
+  /// shown page when it is the same page. Nil, after a message naming `action`, when a cell
+  /// the capped read cut is among them (it cannot be loaded), a load fails, is cancelled, would
+  /// load more than `LazyCellLoader.bulkLimitBytes` or reads a value that is not the page's
+  /// (`LazyCellLoadError.rowChanged`): the caller copies, exports or stages nothing, and
+  /// nothing is stored.
   func loadUnloadedCells(
     _ cells: [(row: Int, column: Int)], of result: CellResult, action: String
   ) async -> [Int: [Int: CellValue]]? {
+    let cut = cutCells(in: result)
+    let cutCount = Set(
+      cells.lazy.filter { cut[$0.row]?[$0.column] != nil }
+        .map { CellPosition(row: $0.row, column: $0.column) }
+    ).count
+    guard cutCount == 0 else {
+      showToast("\(action) refused: \(Self.cutCellsMessage(count: cutCount))", type: .error)
+      return nil
+    }
     guard let truncation = truncation(of: result) else { return [:] }
     let unloaded = unloadedCells(in: result)
     var wanted: [(row: Int, column: Int, cell: LazyCell)] = []
@@ -424,7 +492,7 @@ extension NotebookViewModel {
       else { continue }
       bytes += length
       let cell = LazyCell(row: key, column: result.columns[column].name)
-      // A cut value that is not bytes cannot be checked: never loaded as whole
+      // A cut value that is not bytes or text cannot be checked: never loaded as whole
       guard let expectation = LazyCellExpectation(length: length, cut: result.rows[row][column])
       else {
         showToast("\(action) refused: \(Self.keylessRowChangedMessage).", type: .error)
@@ -601,6 +669,60 @@ extension NotebookViewModel {
     } catch {
       return error.localizedDescription
     }
+  }
+
+  // MARK: - Row Details
+
+  /// Loads the cut text values of the Row Details row (shown "Loading full value…", read-only)
+  /// one by one through the viewer's read (a newer request cancels it), each checked against
+  /// the page's prefix, and writes them into the shown page, which re-reads the panel
+  /// (`syncRowDetail`): its fields then hold the full values and can be edited; drafts typed
+  /// meanwhile stay. A cut binary value stays not loaded. Returns the failure message (the
+  /// fields stay read-only), nil when loaded, cancelled or nothing is cut.
+  func loadRowDetailCells() async -> String? {
+    guard case .rowDetail(nil) = rightSidebarContent, let state = rowDetail,
+      state.stagedInsertID == nil, let result = editorResult,
+      let truncation = truncation(of: result), result.rows.indices.contains(state.originalRow),
+      let key = result.rowKey(at: state.originalRow, in: truncation),
+      sidebarKey(of: state.rowData, in: truncation) == key
+    else { return nil }
+    let row = result.rows[state.originalRow]
+    var cells: [(cell: LazyCell, expected: LazyCellExpectation)] = []
+    for field in state.fields where field.unloadedLength != nil {
+      guard case .string = field.original, let length = truncation.lengths[key]?[field.name],
+        let column = result.columns.firstIndex(where: { $0.name == field.name }),
+        column < row.count, row[column] == field.original,
+        let expected = LazyCellExpectation(length: length, cut: row[column])
+      else { continue }
+      cells.append((LazyCell(row: key, column: field.name), expected))
+    }
+    guard !cells.isEmpty else { return nil }
+    let generation = lazyCells.generation
+    var values: [LazyCell: CellValue] = [:]
+    do {
+      let source = try lazyCellSource(for: truncation)
+      for (cell, expected) in cells {
+        values[cell] = try await lazyCells.value(for: cell, source: source, expected: expected)
+      }
+    } catch is CancellationError {
+      return nil
+    } catch {
+      return error.localizedDescription
+    }
+    let drafts = rowDetail?.fields.filter { !$0.isReadOnly && $0.isDirty } ?? []
+    storeLoadedValues(values, of: truncation, generation: generation)
+    // The re-read dropped the drafts: those of the same row and originals come back
+    guard var shown = rowDetail, shown.stagedInsertID == nil,
+      shown.originalRow == state.originalRow
+    else { return nil }
+    for draft in drafts {
+      guard let index = shown.fields.firstIndex(where: { $0.name == draft.name }),
+        !shown.fields[index].isReadOnly, shown.fields[index].original == draft.original
+      else { continue }
+      shown.fields[index].field = draft.field
+    }
+    rowDetail = shown
+    return nil
   }
 
   /// Row key of the sidebar's row in `truncation` (the shown page's or the viewer's). A keyless

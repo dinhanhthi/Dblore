@@ -55,7 +55,9 @@ actor DatabaseConnectionManager {
   /// Identity of the current connection: advanced on every disconnect and successful connect,
   /// so an inline edit target resolved on another connection is refused (`executeGatedUpdate`).
   private(set) var connectionEpoch: UInt64 = 0
-  /// What a capped read keeps per cell and in total (MCP managers); nil: whole rows
+  /// What a capped read keeps per cell and in total (MCP managers); nil: what the read itself
+  /// passes (`execute(userSQL:readLimits:)`, the app's editor and notebook results), else whole
+  /// rows
   let readLimits: CappedReadLimits?
   /// A capped read closes and reopens the session (`resetSessionIfCapped`); false for a
   /// single-use manager disconnected right after its read, which closes the session anyway

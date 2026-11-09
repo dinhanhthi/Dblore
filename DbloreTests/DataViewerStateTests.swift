@@ -265,6 +265,86 @@ struct DataViewerStateTests {
         databaseType: .postgresql, orderColumns: []) == nil)
   }
 
+  /// `docs` with a key, a long text, a JSON and a short text column (each engine's cached type
+  /// text), lazy with text rules and no mask rule
+  private func lazyText(
+    _ dialect: DatabaseType, schema: String, types: [String], masks: [ColumnMaskRule] = []
+  ) -> DataViewerState {
+    var viewer = state(schema: schema, name: "docs", orderColumns: ["id"])
+    viewer.databaseType = dialect
+    viewer.lazyColumns = DataViewerState.lazyColumns(
+      zip(["id", "body", "meta", "note"], types).map { ($0, $1, $0 == "id") },
+      databaseType: dialect, orderColumns: ["id"],
+      text: DataViewerState.TextPrefixRules(masks: ColumnMaskRuleSet(masks)))
+    return viewer
+  }
+
+  @Test("A lazy page cuts long text and JSON to characters with UTF-8 byte lengths")
+  func lazyTextSelectList() throws {
+    let postgres = lazyText(
+      .postgresql, schema: "public",
+      types: ["INTEGER", "TEXT", "JSONB", "CHARACTER VARYING(50)"])
+    #expect(
+      postgres.pageSQL
+        == #"SELECT "id", pg_catalog.left("body"::pg_catalog.text, 16384) AS "body", "#
+        + #"pg_catalog.left("meta"::pg_catalog.text, 16384) AS "meta", "note", "#
+        + #"pg_catalog.octet_length("body"::pg_catalog.text) AS "dblore_byte_length_1", "#
+        + #"pg_catalog.octet_length("meta"::pg_catalog.text) AS "dblore_byte_length_2" "#
+        + #"FROM "public"."docs" ORDER BY "id" LIMIT 100"#)
+    #expect(postgres.lazyColumns?.map(\.prefix) == [nil, .characters, .characters, nil])
+    let mysql = lazyText(
+      .mysql, schema: "shop", types: ["INT", "LONGTEXT", "JSON", "VARCHAR(50)"])
+    #expect(
+      mysql.pageSQL
+        == "SELECT `id`, LEFT(`body`, 16384) AS `body`, LEFT(CAST(`meta` AS CHAR), 16384) AS "
+        + "`meta`, `note`, LENGTH(CONVERT(`body` USING utf8mb4)) AS `dblore_byte_length_1`, "
+        + "LENGTH(CONVERT(CAST(`meta` AS CHAR) USING utf8mb4)) AS `dblore_byte_length_2` "
+        + "FROM `shop`.`docs` ORDER BY `id` LIMIT 100")
+    // SQLite ignores a declared length: every text column is cut by value
+    let sqlite = lazyText(
+      .sqlite, schema: "main", types: ["INTEGER", "TEXT", "JSON", "VARCHAR(50)"])
+    // Named through the table: a stale name fails instead of reading as a string literal
+    let names = ["body", "meta", "note"]
+    let cut = names.map { name in
+      let column = #""main"."docs"."\#(name)""#
+      return "CASE WHEN typeof(\(column)) = 'text' THEN substr(\(column), 1, 16384) "
+        + "WHEN typeof(\(column)) = 'blob' THEN substr(\(column), 1, 65536) "
+        + "ELSE \(column) END AS \"\(name)\""
+    }
+    let lengths = names.enumerated().map { index, name in
+      let column = #""main"."docs"."\#(name)""#
+      return "CASE WHEN typeof(\(column)) = 'text' THEN length(CAST(\(column) AS BLOB)) "
+        + "WHEN typeof(\(column)) = 'blob' THEN length(\(column)) "
+        + "END AS \"dblore_byte_length_\(index + 1)\""
+    }
+    #expect(
+      sqlite.pageSQL
+        == #"SELECT "id", "# + (cut + lengths).joined(separator: ", ")
+        + #" FROM "main"."docs" ORDER BY "id" LIMIT 100"#)
+    #expect(sqlite.lazyColumns?.map(\.prefix) == [nil, .characters, .characters, .characters])
+    // Never a masked column, a PostgreSQL extension or user type, a long varchar's array, or a
+    // MySQL varchar within the prefix
+    let masked = lazyText(
+      .postgresql, schema: "public", types: ["INTEGER", "TEXT", "JSONB", "TEXT[]"],
+      masks: [try ColumnMaskRule(pattern: "body", style: .lastFour)])
+    #expect(masked.lazyColumns?.map(\.prefix) == [nil, nil, .characters, nil])
+    let typed = DataViewerState.lazyColumns(
+      [("id", "INTEGER", true), ("body", "PUBLIC.CITEXT", false), ("note", "TEXT", false)],
+      databaseType: .postgresql, orderColumns: [],
+      text: DataViewerState.TextPrefixRules(
+        masks: ColumnMaskRuleSet([]),
+        columnTypeData: [
+          "note": PostgresColumnType(
+            oid: 1, operand: .bare, castName: nil, compareCast: nil, operatorSchema: nil)
+        ]))
+    #expect(typed == nil)
+    #expect(
+      DataViewerState.lazyColumns(
+        [("id", "INT", true), ("note", "VARCHAR(16384)", false)], databaseType: .mysql,
+        orderColumns: [], text: DataViewerState.TextPrefixRules(masks: ColumnMaskRuleSet([])))
+        == nil)
+  }
+
   @Test("loadKey does not change with the lazy columns")
   func lazyLoadKey() {
     var viewer = state(orderColumns: ["id"])

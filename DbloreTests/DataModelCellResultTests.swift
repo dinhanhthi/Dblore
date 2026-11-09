@@ -134,6 +134,93 @@ struct DataModelCellResultTests {
     #expect(decoded.rows == [[.int(1)], [.int(2)]])
   }
 
+  // MARK: - Cut cells
+
+  private static let cutCells: Set<CellPosition> = [
+    CellPosition(row: 0, column: 1), CellPosition(row: 1, column: 0),
+  ]
+
+  /// A result whose read cut two cells and stopped at the byte budget
+  private static func cutResult() -> CellResult {
+    var result = CellResult(
+      columns: [ColumnInfo(name: "a", type: "text"), ColumnInfo(name: "b", type: "text")],
+      rows: [[.string("x"), .string("cut")], [.string("cut"), .string("y")]], rowCount: 2,
+      timestamp: Date(timeIntervalSince1970: 1_700_000_000), wasLimited: true)
+    result.cutCells = cutCells
+    result.stoppedAtByteBudget = true
+    return result
+  }
+
+  @Test("CellResult codes cut cells and the byte stop, and absent keys decode as none")
+  func cellResultCodesCutCells() throws {
+    let decoded = try JSONDecoder().decode(
+      CellResult.self, from: JSONEncoder().encode(Self.cutResult()))
+    #expect(decoded.cutCells == Self.cutCells)
+    #expect(decoded.stoppedAtByteBudget)
+
+    // A result without them writes neither key, so older JSON (without them) decodes as none
+    let plain = try JSONEncoder().encode(CellResult(rows: [[.int(1)]], rowCount: 1))
+    let dict = try #require(try JSONSerialization.jsonObject(with: plain) as? [String: Any])
+    #expect(dict["cutCells"] == nil && dict["stoppedAtByteBudget"] == nil)
+    let old = try JSONDecoder().decode(CellResult.self, from: plain)
+    #expect(old.cutCells.isEmpty)
+    #expect(!old.stoppedAtByteBudget)
+  }
+
+  @Test("A notebook file keeps the cut cells of a result, a statement result and a pin")
+  func notebookFileKeepsCutCells() throws {
+    let result = Self.cutResult()
+    let cell = NotebookCell(
+      content: "SELECT a, b FROM t", result: result,
+      statementResults: [
+        StatementResult(queryText: "SELECT a, b FROM t", result: result, statementIndex: 0)
+      ],
+      pinnedResult: PinnedResult(
+        result: result, pinnedAt: Date(timeIntervalSince1970: 1_700_000_000), sourceQuery: nil))
+    let notebook = DbloreNotebook(
+      id: UUID(), cells: [cell],
+      metadata: NotebookMetadata(createdAt: Date(), modifiedAt: Date(), title: "Cut"),
+      connectionConfig: nil, settings: NotebookSettings())
+    let data = try DocumentCoder.encode(notebook, includeResultsOnSave: true)
+    let decoded = try #require(try DocumentCoder.decode(from: data).cells.first)
+    let results = [
+      decoded.result, decoded.statementResults.first?.result, decoded.pinnedResult?.result,
+    ]
+    for result in results {
+      #expect(result?.cutCells == Self.cutCells)
+      #expect(result?.stoppedAtByteBudget == true)
+    }
+  }
+
+  @Test("A notebook file without the cut-cell keys opens with none")
+  func oldNotebookHasNoCutCells() throws {
+    let saved: [String: Any] = [
+      "columns": [["name": "a", "type": "text"]], "rows": [[["type": "string", "value": "x"]]],
+      "rowCount": 1, "wasLimited": false,
+    ]
+    let json: [String: Any] = [
+      "id": UUID().uuidString,
+      "cells": [
+        [
+          "id": UUID().uuidString, "cellType": "sql", "content": "SELECT a FROM t",
+          "result": saved,
+          "statementResults": [
+            ["queryText": "SELECT a FROM t", "statementIndex": 0, "result": saved]
+          ],
+          "pinnedResult": ["result": saved, "pinnedAt": "2023-11-14T22:13:20Z"],
+        ]
+      ],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: json)
+    let cell = try #require(try DocumentCoder.decode(from: data).cells.first)
+    let results = [cell.result, cell.statementResults.first?.result, cell.pinnedResult?.result]
+    for result in results {
+      let result = try #require(result)
+      #expect(result.cutCells.isEmpty)
+      #expect(!result.stoppedAtByteBudget)
+    }
+  }
+
   // MARK: - Decimal order
 
   @Test("Decimals order by exact value, beside ints and doubles, NULL last")

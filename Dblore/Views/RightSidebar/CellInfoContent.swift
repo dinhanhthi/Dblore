@@ -76,6 +76,8 @@ struct CellInfoContent: View {
     // A cell a lazy data-viewer page cut: its full value loads first, the prefix is never shown,
     // decoded, edited or copied
     let unloaded = viewModel.unloadedSidebarCell
+    // A cell the capped read cut: only a prefix, never edited or copied as the value
+    let cut = viewModel.sidebarCellIsCut
     let ready = unloaded == nil && loaded?.source == source ? loaded : nil
     let preview = ready?.preview
     VStack(alignment: .leading, spacing: 0) {
@@ -115,7 +117,7 @@ struct CellInfoContent: View {
 
           Spacer()
 
-          if canSetNull {
+          if canSetNull && !cut {
             Button("Set NULL", action: setNull)
               .buttonStyle(SecondaryButtonStyle())
           }
@@ -156,8 +158,9 @@ struct CellInfoContent: View {
           } else {
             // Word Wrap, Beautify, Edit and Copy buttons (for non-boolean types)
 
-            // Word Wrap button (only for string type, not under a geometry or vector viewer)
-            if isStringValue && preview == nil {
+            // Word Wrap button (only for string type, not under a geometry or vector viewer, nor
+            // for a cut text, whose full value is loading)
+            if isStringValue && preview == nil && unloaded == nil && !cut {
               FloatingPanelToggleButton(
                 icon: "text.alignleft",
                 helpText: "Word Wrap",
@@ -166,7 +169,8 @@ struct CellInfoContent: View {
               )
             }
 
-            // Beautify button (only for string type, not under a geometry or vector viewer)
+            // Beautify button (only for string type, not under a geometry or vector viewer, never
+            // on a cut text's prefix)
             if isStringValue && preview == nil && formatTask != nil {
               ProgressView()
                 .controlSize(.small)
@@ -177,7 +181,7 @@ struct CellInfoContent: View {
                 useSymbolEffect: false,
                 action: cancelFormat
               )
-            } else if isStringValue && preview == nil {
+            } else if isStringValue && preview == nil && unloaded == nil && !cut {
               FloatingPanelToggleButton(
                 icon: "curlybraces",
                 helpText: isBeautified
@@ -209,19 +213,20 @@ struct CellInfoContent: View {
             } else if !isReadOnly && unloaded == nil {
               FloatingPanelButton(
                 icon: "pencil",
-                helpText: "Edit Value",
+                helpText: cut ? NotebookViewModel.cutValueMessage : "Edit Value",
                 useSymbolEffect: false,
                 action: startEdit
               )
+              .disabled(cut)
             }
 
             FloatingPanelButton(
               icon: isCopied ? "checkmark" : "doc.on.doc",
-              helpText: "Copy Value",
+              helpText: cut ? NotebookViewModel.cutValueMessage : "Copy Value",
               useSymbolEffect: true,
               action: copyToClipboard
             )
-            .disabled(unloaded != nil)
+            .disabled(unloaded != nil || cut)
           }
         }
       }
@@ -281,7 +286,9 @@ struct CellInfoContent: View {
         // Read-only view for non-boolean types. An explicit Display As format comes before a
         // geometry found by its header.
         if let unloaded {
-          UnloadedValueCard(length: unloaded.length, error: lazyLoadError)
+          UnloadedValueCard(length: unloaded.length, isText: isStringValue, error: lazyLoadError)
+        } else if cut {
+          CutValueCard()
         } else if editTask != nil {
           CellValueLoadingCard()
         } else if let tree = ready?.tree {
@@ -614,7 +621,7 @@ struct CellInfoContent: View {
   /// the main actor (base64 of a large blob, JSON parse) behind a loading card
   private func startEdit() {
     cancelFormat()
-    guard editTask == nil else { return }
+    guard editTask == nil, !refusesCutValue() else { return }
     let bytes = fullTextBytes
     guard bytes <= Self.maxEditableBytes else {
       viewModel.showToast(
@@ -710,6 +717,7 @@ struct CellInfoContent: View {
   }
 
   private func copyToClipboard() {
+    guard !refusesCutValue() else { return }
     let value = value
     copyTask?.cancel()
     copyTask = Task {
@@ -728,6 +736,13 @@ struct CellInfoContent: View {
         isCopied = false
       }
     }
+  }
+
+  /// True, after the refusal, when the shown cell holds only the prefix the capped read kept
+  private func refusesCutValue() -> Bool {
+    guard viewModel.sidebarCellIsCut else { return false }
+    viewModel.showToast(NotebookViewModel.cutValueMessage, type: .error)
+    return true
   }
 
   // MARK: - Validation
@@ -865,16 +880,18 @@ struct CellInfoContent: View {
   }
 }
 
-/// Same shape as `CellValueLoadingCard`: the full size of a cut binary value while it loads
-/// (spinner after ~150 ms), or why it could not be loaded
+/// Same shape as `CellValueLoadingCard`: the full size of a cut binary value, or "Loading full
+/// value…" for a cut text, while it loads (spinner after ~150 ms), or why it could not be loaded
 private struct UnloadedValueCard: View {
   let length: Int
+  /// A cut text: "Loading full value…" instead of its size
+  let isText: Bool
   let error: String?
   @State private var showsSpinner = false
 
   var body: some View {
     VStack(spacing: Spacing.sm) {
-      Text("<\(length) bytes>")
+      Text(isText && error == nil ? "Loading full value…" : "<\(length) bytes>")
         .font(.mono)
         .foregroundColor(.foregroundMuted)
       if let error {
@@ -900,6 +917,21 @@ private struct UnloadedValueCard: View {
       try? await Task.sleep(for: .milliseconds(150))
       showsSpinner = true
     }
+  }
+}
+
+/// Same shape as `CellValueLoadingCard`: why a value the capped read cut is not shown, edited or
+/// copied
+private struct CutValueCard: View {
+  var body: some View {
+    Text(NotebookViewModel.cutValueMessage)
+      .font(.caption)
+      .foregroundColor(.foregroundMuted)
+      .multilineTextAlignment(.center)
+      .padding(Spacing.md)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.tableHeaderBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 }
 

@@ -271,7 +271,7 @@ struct SQLDumpSheet: View {
             ? "Not included: macros, secrets, comments, temporary objects, attached databases "
               + "and user types other than ENUM. "
             : "Not included: functions, procedures, extensions, roles, ownership and grants. ")
-            + "Restore it with File > Restore SQL Dump (up to 64 MiB)."
+            + "Restore it with File > Restore SQL Dump."
         )
         .font(.small)
         .foregroundColor(.foregroundMuted)

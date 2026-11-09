@@ -15,12 +15,14 @@ extension NotebookViewModel {
   /// write landing meanwhile marks it again). A keyless table's page shown without its locator
   /// columns (`dataViewerAwaitsRowLocators`) is read once more with them.
   func loadDataViewerPage() async {
+    let textMasks = await dataViewerTextMasks()
     while let current = dataViewer, let connectionManager, !isEditorQueryRunning {
       let rowLocator = dataViewerRowLocator(current)
       if current.rowLocator != rowLocator { dataViewer?.rowLocator = rowLocator }
-      let lazyColumns = dataViewerLazyColumns(current, rowLocator: rowLocator)
-      if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
       let columnTypeData = dataViewerColumnTypeData(current)
+      let lazyColumns = dataViewerLazyColumns(
+        current, rowLocator: rowLocator, textMasks: textMasks, columnTypeData: columnTypeData)
+      if current.lazyColumns != lazyColumns { dataViewer?.lazyColumns = lazyColumns }
       if current.columnTypeData != columnTypeData {
         dataViewer?.columnTypeData = columnTypeData
         // The filter's operators changed with the types: count the total again
@@ -90,29 +92,47 @@ extension NotebookViewModel {
     return result.truncation?.rowLocator != kind
   }
 
+  /// The mask rules text prefixes are picked by (`DataViewerState.TextPrefixRules.masks`), nil
+  /// when the open session's text lengths are not UTF-8 (no text is cut) or for MongoDB
+  private func dataViewerTextMasks() async -> ColumnMaskRuleSet? {
+    guard let connectionManager, dataViewer != nil, !isMongoDataViewer,
+      await connectionManager.textLengthsAreUTF8()
+    else { return nil }
+    return ColumnMaskRuleSet(await connectionManager.currentMaskRules())
+  }
+
   /// The lazy columns of the viewed table from what is cached, never a catalog read: the
   /// sidebar's columns of the table, else the shown page's columns and edit target. Nil
   /// (`SELECT *`) for MongoDB, a view, a table without a primary key that the page does not
   /// locate (`rowLocator`, the locator columns the same page reads: its cut cells are read by
   /// them), nothing cached, or a shown page without an edit target (an error, or a table that
   /// cannot be edited). A page shown before its table definition keeps the lazy columns it was
-  /// read with.
+  /// read with. Text is cut only with `textMasks`; on PostgreSQL only from the cached columns
+  /// (their catalog type text and `columnTypeData`), never from the shown page's columns.
   private func dataViewerLazyColumns(
-    _ state: DataViewerState, rowLocator: RowLocatorKind?
+    _ state: DataViewerState, rowLocator: RowLocatorKind?, textMasks: ColumnMaskRuleSet?,
+    columnTypeData: [String: PostgresColumnType]
   ) -> [DataViewerState.LazyColumn]? {
     if editorResult?.typesPending == true { return state.lazyColumns }
     guard !isMongoDataViewer, editorResult.map({ $0.editTarget != nil }) ?? true else {
       return nil
     }
     var binaryValueColumns = Set<String>()
+    var textValueColumns = Set<String>()
     if let result = editorResult {
-      for (index, column) in result.columns.enumerated()
-      where result.rows.contains(where: { row in
-        guard index < row.count, case .data = row[index] else { return false }
-        return true
-      }) {
-        binaryValueColumns.insert(column.name)
+      for (index, column) in result.columns.enumerated() {
+        for row in result.rows where index < row.count {
+          switch row[index] {
+          case .data: binaryValueColumns.insert(column.name)
+          case .string, .json: textValueColumns.insert(column.name)
+          default: continue
+          }
+        }
       }
+    }
+    let text = textMasks.map {
+      DataViewerState.TextPrefixRules(
+        masks: $0, columnTypeData: columnTypeData, textValueColumns: textValueColumns)
     }
     // `SELECT *` leaves out the hidden columns of a SQLite virtual table
     let cached =
@@ -125,14 +145,16 @@ extension NotebookViewModel {
       return DataViewerState.lazyColumns(
         cached.map { ($0.name, $0.type, $0.isPrimaryKey) },
         databaseType: state.databaseType, orderColumns: state.orderColumns,
-        binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
+        binaryValueColumns: binaryValueColumns, located: rowLocator != nil, text: text)
     }
     guard let result = editorResult, let target = result.editTarget else { return nil }
     let key = Set(target.primaryKeyColumns)
+    // A PostgreSQL result type has no length and no type data: its text is cut from the cache
     return DataViewerState.lazyColumns(
       result.columns.map { ($0.name, $0.type, key.contains($0.name)) },
       databaseType: state.databaseType, orderColumns: state.orderColumns,
-      binaryValueColumns: binaryValueColumns, located: rowLocator != nil)
+      binaryValueColumns: binaryValueColumns, located: rowLocator != nil,
+      text: state.databaseType == .postgresql ? nil : text)
   }
 
   /// Column name → type data of the viewed table or view from the schema cache

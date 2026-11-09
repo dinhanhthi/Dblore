@@ -61,12 +61,30 @@ nonisolated enum ImportTypeInference {
   /// The widest integer and fraction digits of plain-notation decimals (`0.5` counts its `0`,
   /// so it needs DECIMAL(2,1)). Nil when a value is not plain notation, or all are blank.
   static func decimalDigits(_ values: [String?]) -> PrecisionScale? {
-    var integer = 0
-    var fraction = 0
-    var found = false
-    for raw in values {
-      guard let value = normalizedValue(raw)?.trimmingCharacters(in: .whitespacesAndNewlines)
-      else { continue }
+    var accumulator = Accumulator()
+    for value in values {
+      accumulator.add(value)
+      guard accumulator.isPlain else { return nil }
+    }
+    return accumulator.digits
+  }
+
+  /// `decimalDigits` one value at a time, so a file read in blocks gets the digits of every row
+  struct Accumulator: Sendable, Equatable {
+    private var integer = 0
+    private var fraction = 0
+    private var found = false
+    /// False once a value is not plain notation: the column has no digits, whatever follows
+    private(set) var isPlain = true
+
+    var digits: PrecisionScale? {
+      isPlain && found ? PrecisionScale(precision: integer + fraction, scale: fraction) : nil
+    }
+
+    mutating func add(_ raw: String?) {
+      guard isPlain,
+        let value = normalizedValue(raw)?.trimmingCharacters(in: .whitespacesAndNewlines)
+      else { return }
       let unsigned =
         value.utf8.first == UInt8(ascii: "-") ? value.utf8.dropFirst() : value.utf8[...]
       let parts = unsigned.split(separator: UInt8(ascii: "."), omittingEmptySubsequences: false)
@@ -74,12 +92,14 @@ nonisolated enum ImportTypeInference {
         parts.allSatisfy({
           !$0.isEmpty && $0.allSatisfy { (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0) }
         })
-      else { return nil }
+      else {
+        isPlain = false
+        return
+      }
       integer = max(integer, parts[0].count)
       fraction = max(fraction, parts.count == 2 ? parts[1].count : 0)
       found = true
     }
-    return found ? PrecisionScale(precision: integer + fraction, scale: fraction) : nil
   }
 
   static func normalizedValue(_ value: String?) -> String? {

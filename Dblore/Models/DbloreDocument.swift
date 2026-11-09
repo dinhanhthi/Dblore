@@ -49,7 +49,7 @@ final class DbloreDocument: NSObject, ReferenceFileDocument, NSFilePresenter,
   private var ownRewriteDate: Date?
 
   /// Debounce timer for rapid file changes
-  private var changeDebounceTask: Task<Void, Never>?
+  private(set) var changeDebounceTask: Task<Void, Never>?
 
   /// Flag to ignore changes triggered by our own save operation
   private var isIgnoringChanges = false

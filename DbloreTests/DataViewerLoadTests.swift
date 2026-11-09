@@ -1,8 +1,10 @@
 // DataViewerLoadTests.swift
 // Data viewer paging actions on the tab view model: page/size/refresh update the state and
-// reload; without a connection nothing runs (no DB needed).
+// reload; without a connection nothing runs (no DB needed). Lazy pages on SQLite files and a
+// fake PostgreSQL session: text is cut only where its byte lengths are UTF-8.
 
 import Foundation
+import SQLite3
 import Testing
 
 @testable import Dblore
@@ -75,6 +77,39 @@ struct DataViewerLoadTests {
     let viewModel = makeViewModel(totalRows: 250)
     await viewModel.refreshDataViewer()
     #expect(viewModel.dataViewer?.totalRows == nil)
+  }
+
+  @Test("The all-rows export SQL keeps the filter and order, without paging or cut columns")
+  func exportSQLReadsWholeColumnsWithoutPaging() {
+    var viewer = DataViewerState(
+      schema: "public", name: "docs", orderColumns: ["id"], page: 3, pageSize: 50,
+      databaseType: .postgresql)
+    viewer.filter = TableFilter(conditions: [
+      FilterCondition(column: "body", op: .equals, value: "o'brien")
+    ])
+    #expect(
+      viewer.exportSQL
+        == #"SELECT * FROM "public"."docs" WHERE "body" OPERATOR(pg_catalog.=) 'o''brien' ORDER BY "id""#
+    )
+    viewer.lazyColumns = [
+      .init(name: "id", type: "integer", isPrimaryKey: true, prefix: nil),
+      .init(name: "body", type: "text", isPrimaryKey: false, prefix: .characters),
+      .init(name: "payload", type: "bytea", isPrimaryKey: false, prefix: .bytes),
+    ]
+    viewer.rowLocator = .pgLocator
+    #expect(viewer.pageSQL.contains("dblore_byte_length_1"))
+    #expect(
+      viewer.exportSQL
+        == #"SELECT "id", "body", "payload" FROM "public"."docs" WHERE "body" OPERATOR(pg_catalog.=) 'o''brien' ORDER BY "id""#
+    )
+    // SQLite names each column through its table: a stale name fails, never reads a literal
+    viewer.databaseType = .sqlite
+    viewer.filter = TableFilter(conditions: [])
+    viewer.rowLocator = nil
+    #expect(
+      viewer.exportSQL
+        == #"SELECT "public"."docs"."id", "public"."docs"."body", "public"."docs"."payload" FROM "public"."docs" ORDER BY "id""#
+    )
   }
 
   // MARK: - Lazy binary columns (SQLite file, no server)
@@ -211,5 +246,122 @@ struct DataViewerLoadTests {
           RowChangeSet.RowKey(values: [.int(2)]): ["payload": 80_000],
         ])
     }
+  }
+
+  // MARK: - Text encodings
+
+  /// `main.docs(id, body TEXT, payload BLOB)` in a new SQLite file created with `PRAGMA
+  /// encoding = <encoding>` (before its first table: the encoding is fixed then), row 1 a
+  /// 20,000-character body and a 70,000-byte blob; a data viewer on it with its columns cached.
+  /// The file is closed and deleted afterwards.
+  private func withEncodedDocs(
+    _ encoding: String,
+    _ body: (_ viewModel: NotebookViewModel, _ manager: DatabaseConnectionManager) async throws
+      -> Void
+  ) async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-encoding-\(UUID().uuidString).sqlite")
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    var handle: OpaquePointer?
+    #expect(sqlite3_open(url.path, &handle) == SQLITE_OK)
+    let script =
+      "PRAGMA encoding = '\(encoding)';"
+      + "CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT, payload BLOB);"
+      + "INSERT INTO docs VALUES (1, replace(hex(zeroblob(20000)), '00', 'é'), zeroblob(70000)),"
+      + " (2, 'short', x'01');"
+    #expect(sqlite3_exec(handle, script, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(handle)
+
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    let read = try await manager.executeInternal("PRAGMA encoding")
+    #expect(read.rows == [[.string(encoding)]])
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.viewMode = .editor
+    viewModel.connectionManager = manager
+    var state = DataViewerState(schema: "main", name: "docs", orderColumns: ["id"])
+    state.databaseType = .sqlite
+    viewModel.dataViewer = state
+    viewModel.databaseTables = [
+      DatabaseTable(
+        schema: "main", name: "docs",
+        columns: [
+          DatabaseColumn(name: "id", type: "INTEGER", isPrimaryKey: true),
+          DatabaseColumn(name: "body", type: "TEXT"),
+          DatabaseColumn(name: "payload", type: "BLOB"),
+        ])
+    ]
+    do {
+      try await body(viewModel, manager)
+    } catch {
+      await manager.disconnect()
+      throw error
+    }
+    await manager.disconnect()
+  }
+
+  @Test(
+    "A SQLite file whose encoding is not UTF-8 reads its text whole; a UTF-8 one cuts it",
+    arguments: ["UTF-16le", "UTF-8"])
+  func sqliteEncodingDecidesTextPrefix(encoding: String) async throws {
+    try await withEncodedDocs(encoding) { viewModel, manager in
+      let utf8 = encoding == "UTF-8"
+      #expect(await manager.textLengthsAreUTF8() == utf8)
+      await viewModel.loadDataViewerPage()
+      await viewModel.awaitResultTargets()
+      #expect(
+        viewModel.dataViewer?.lazyColumns?.map(\.prefix) == [nil, utf8 ? .characters : nil, .bytes])
+      let page = try #require(viewModel.editorResult)
+      let body = String(repeating: "é", count: utf8 ? DataViewerState.lazyPrefixCharacters : 20_000)
+      #expect(page.rows[0][1] == .string(body))
+      #expect(
+        page.truncation?.lengths[RowChangeSet.RowKey(values: [.int(1)])]
+          == (utf8 ? ["body": 40_000, "payload": 70_000] : ["payload": 70_000]))
+    }
+  }
+
+  @Test("A PostgreSQL session whose server_encoding is not known as UTF8 reads its text whole")
+  func postgresWithoutUTF8EncodingReadsTextWhole() async throws {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+    let config = ConnectionConfig(
+      databaseType: .postgresql, host: "fake", port: 5432, database: "db", username: "u",
+      sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager(sessionFactory: factory)
+    try await manager.connect(config: config)
+    #expect(await manager.textLengthsAreUTF8() == false)
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.viewMode = .editor
+    viewModel.connectionManager = manager
+    viewModel.toastPresenter = { _, _ in }
+    viewModel.dataViewer = DataViewerState(
+      schema: "public", name: "docs", orderColumns: ["id"], databaseType: .postgresql)
+    viewModel.databaseTables = [
+      DatabaseTable(
+        schema: "public", name: "docs",
+        columns: [
+          DatabaseColumn(name: "id", type: "integer", isPrimaryKey: true),
+          DatabaseColumn(name: "body", type: "text"),
+          DatabaseColumn(name: "meta", type: "jsonb"),
+          DatabaseColumn(name: "payload", type: "bytea"),
+        ])
+    ]
+    // The first page only: the fake's catalog gives no edit target to read a later one by
+    await viewModel.loadDataViewerPage()
+    #expect(viewModel.dataViewer?.lazyColumns?.map(\.prefix) == [nil, nil, nil, .bytes])
+    let pages = factory.sessions.flatMap(\.queries).filter { $0.contains(#"FROM "public"."docs""#) }
+    #expect(pages.contains { $0.contains(#"substring("payload" from 1 for 65536)"#) })
+    #expect(!pages.contains { $0.contains("pg_catalog.left(") })
+    await manager.disconnect()
   }
 }

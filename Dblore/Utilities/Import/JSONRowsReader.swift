@@ -10,6 +10,7 @@ nonisolated enum JSONRowsError: Error, LocalizedError, Equatable, Sendable {
   case cellLimitExceeded
   case rowLimitExceeded
   case fieldLimitExceeded
+  case lineLimitExceeded
 
   var errorDescription: String? {
     switch self {
@@ -18,6 +19,7 @@ nonisolated enum JSONRowsError: Error, LocalizedError, Equatable, Sendable {
     case .cellLimitExceeded: "Import exceeds the 1,000,000-cell safety limit"
     case .rowLimitExceeded: "Import exceeds the 100,000-row safety limit"
     case .fieldLimitExceeded: "Import contains too many fields in one object"
+    case .lineLimitExceeded: "Import contains a line longer than the 64 MiB safety limit"
     }
   }
 }
@@ -83,14 +85,10 @@ nonisolated enum JSONRowsReader {
     var scalarCount = 0
 
     func takeLine(upTo end: String.Index) throws {
-      let line = String(scalars[lineStart..<end]).trimmingCharacters(in: .whitespaces)
-      guard !line.isEmpty else { return }
-      var scanner = Scanner(line, maxFieldsPerObject: options.maxFieldsPerObject)
-      try scanner.skipWhitespace()
-      guard scanner.peek() == "{" else { throw JSONRowsError.expectedObject }
-      try builder.append(scanner.parseObject())
-      try scanner.skipWhitespace()
-      guard scanner.isAtEnd else { throw JSONRowsError.invalidJSON }
+      let line = String(scalars[lineStart..<end])
+      if let object = try parseLine(line, maxFieldsPerObject: options.maxFieldsPerObject) {
+        try builder.append(object)
+      }
     }
 
     while index < scalars.endIndex {
@@ -113,6 +111,70 @@ nonisolated enum JSONRowsReader {
     return builder.table()
   }
 
+  /// The object on one NDJSON line, nil for a blank line
+  private static func parseLine(_ text: String, maxFieldsPerObject: Int) throws -> [Field]? {
+    let line = text.trimmingCharacters(in: .whitespaces)
+    guard !line.isEmpty else { return nil }
+    var scanner = Scanner(line, maxFieldsPerObject: maxFieldsPerObject)
+    try scanner.skipWhitespace()
+    guard scanner.peek() == "{" else { throw JSONRowsError.expectedObject }
+    let object = try scanner.parseObject()
+    try scanner.skipWhitespace()
+    guard scanner.isAtEnd else { throw JSONRowsError.invalidJSON }
+    return object
+  }
+
+  /// NDJSON objects of a text fed in pieces, one per line as `read` parses them (blank
+  /// lines skipped). A line cut by the end of a piece waits for its line end or `finish()`;
+  /// a line over `maxRecordBytes` UTF-8 bytes is refused, also while it waits.
+  nonisolated struct LineStream: Sendable {
+    let maxFieldsPerObject: Int
+    let maxRecordBytes: Int
+    private var pending = ""
+
+    init(
+      maxFieldsPerObject: Int = 10_000,
+      maxRecordBytes: Int = DelimitedTextReader.maxRecordBytes
+    ) {
+      self.maxFieldsPerObject = max(maxFieldsPerObject, 0)
+      self.maxRecordBytes = max(maxRecordBytes, 0)
+    }
+
+    /// The objects of the lines `text` completes
+    mutating func feed(_ text: Substring) throws -> [[Field]] {
+      var objects: [[Field]] = []
+      let scalars = text.unicodeScalars
+      var lineStart = scalars.startIndex
+      var index = scalars.startIndex
+      var scalarCount = 0
+      while index < scalars.endIndex {
+        scalarCount += 1
+        if scalarCount.isMultiple(of: 4_096) { try Task.checkCancellation() }
+        let scalar = scalars[index]
+        index = scalars.index(after: index)
+        // A CR LF pair ends one line and leaves a blank one, which is skipped
+        guard scalar == "\n" || scalar == "\r" else { continue }
+        pending.unicodeScalars.append(contentsOf: scalars[lineStart..<scalars.index(before: index)])
+        if let object = try takePending() { objects.append(object) }
+        lineStart = index
+      }
+      pending.unicodeScalars.append(contentsOf: scalars[lineStart...])
+      guard pending.utf8.count <= maxRecordBytes else { throw JSONRowsError.lineLimitExceeded }
+      return objects
+    }
+
+    /// The object of the last line, when the text does not end with a line end
+    mutating func finish() throws -> [[Field]] {
+      try takePending().map { [$0] } ?? []
+    }
+
+    private mutating func takePending() throws -> [Field]? {
+      defer { pending = "" }
+      guard pending.utf8.count <= maxRecordBytes else { throw JSONRowsError.lineLimitExceeded }
+      return try JSONRowsReader.parseLine(pending, maxFieldsPerObject: maxFieldsPerObject)
+    }
+  }
+
   private static func decodedText(_ data: Data) -> String {
     let payload: Data
     if data.starts(with: [0xEF, 0xBB, 0xBF]) {
@@ -124,7 +186,7 @@ nonisolated enum JSONRowsReader {
     return String(data: payload, encoding: .isoLatin1) ?? ""
   }
 
-  private nonisolated struct Field {
+  nonisolated struct Field: Sendable, Equatable {
     var key: String
     var value: String?
   }

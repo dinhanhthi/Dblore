@@ -7,10 +7,13 @@
 //   (`resetSessionIfCapped`), the remaining statements of the script are not run;
 // - a plain SELECT / VALUES / TABLE / WITH read calling no function and locking no rows, inside
 //   the app transaction or the user's own BEGIN: sent as a server-side cursor
-//   (`executeCursorRead`: DECLARE, FETCH cap + 1, CLOSE), so the server stops at the cap and the
-//   transaction survives. The planner prefers a fast-start plan for a cursor: an index matching
-//   ORDER BY skips the sort. Without one the server still sorts every row first, and only
-//   statement_timeout stops it;
+//   (`executeCursorRead`: DECLARE, FETCH cap + 1, CLOSE; one round trip, the FETCH streamed and
+//   each row cut as it leaves PostgresNIO's buffer; that buffer is counted in rows, 256 growing
+//   to 16,384 and never past cap + 1, so raw rows ahead of the cut are bounded by rows, not
+//   bytes, as on the plain `.read` path), so the
+//   server stops at the cap and the transaction survives. The planner prefers a fast-start plan
+//   for a cursor: an index matching ORDER BY skips the sort. Without one the server still sorts
+//   every row first, and only statement_timeout stops it;
 // - any other read (SHOW, EXPLAIN, calling a function, a row lock such as FOR UPDATE / FOR
 //   SHARE that a cursor would apply to fetched rows only, another tab's statement in flight
 //   with no transaction open): the loop breaks and PostgresNIO drains the rest (bounded by
@@ -61,49 +64,69 @@ struct CollectedRows: Sendable {
   var total = 0
   /// The stream had more rows than the cap
   var truncated = false
+  /// Cells the read limits cut (`CappedReadLimits.marksCutCells`), by kept row
+  var cutCells: Set<CellPosition> = []
+  /// The kept cells passed `CappedReadLimits.maxResultBytes`
+  var stoppedAtByteBudget = false
 }
 
-/// Bounds on what a capped read keeps, applied to each row as it arrives (MCP managers): text
-/// (decimal text too) longer than `maxCellCharacters` keeps `maxCellCharacters + 1` characters
-/// and binary longer than its base64 would be keeps `maxCellCharacters / 4 * 3 + 1` bytes (one
-/// past, so the reader can still tell it was cut), and the read stops, truncated, once the kept
-/// cells would pass `maxResultBytes`. A row is held whole only while it is cut.
+/// Bounds on what a capped read keeps, applied to each row as it arrives, and the read stops,
+/// truncated, once the kept cells would pass `maxResultBytes`. A row is held whole only while it
+/// is cut. MCP managers: text (decimal text too) longer than `maxCellCharacters` keeps
+/// `maxCellCharacters + 1` characters and binary longer than its base64 would be keeps
+/// `maxCellCharacters / 4 * 3 + 1` bytes (one past, so the reader can still tell it was cut).
+/// With `marksCutCells` (the app): text keeps exactly `maxCellCharacters` characters, binary as
+/// many bytes, and the read records each cut cell (`CollectedRows.cutCells`).
 nonisolated struct CappedReadLimits: Sendable, Equatable {
   let maxCellCharacters: Int
   let maxResultBytes: Int
+  var marksCutCells = false
 
-  /// `row` with long cells cut, and the bytes it keeps (UTF-8 text, binary, 8 per scalar).
-  func cut(_ row: [CellValue]) -> (row: [CellValue], bytes: Int) {
+  /// The app's editor and notebook results: 1 MiB of characters (binary: bytes) per cell,
+  /// 256 MiB per result, cut cells marked
+  static let app = CappedReadLimits(
+    maxCellCharacters: 1_048_576, maxResultBytes: 256 * 1_048_576, marksCutCells: true)
+
+  /// `row` with long cells cut, the bytes it keeps (UTF-8 text, binary, 8 per scalar) and the
+  /// indexes of the cells that were cut.
+  func cut(_ row: [CellValue]) -> (row: [CellValue], bytes: Int, cutColumns: [Int]) {
     var bytes = 0
-    let cells = row.map { cell -> CellValue in
-      let kept: CellValue =
+    var cutColumns: [Int] = []
+    let cells = row.enumerated().map { index, cell -> CellValue in
+      let kept: CellValue? =
         switch cell {
-        case .string(let text): .string(cutText(text))
-        case .json(let text): .json(cutText(text))
-        case .decimal(let text): .decimal(cutText(text))
-        case .data(let data):
-          .data(data.count > maxBinaryBytes ? Data(Array(data.prefix(maxBinaryBytes))) : data)
-        default: cell
+        case .string(let text): cutText(text).map(CellValue.string)
+        case .json(let text): cutText(text).map(CellValue.json)
+        case .decimal(let text): cutText(text).map(CellValue.decimal)
+        case .data(let data) where data.count > maxBinaryBytes:
+          .data(Data(Array(data.prefix(maxBinaryBytes))))
+        default: nil
         }
-      switch kept {
+      if kept != nil { cutColumns.append(index) }
+      let value = kept ?? cell
+      switch value {
       case .string(let text), .json(let text), .decimal(let text): bytes += text.utf8.count
       case .data(let data): bytes += data.count
       default: bytes += 8
       }
-      return kept
+      return value
     }
-    return (cells, bytes)
+    return (cells, bytes, cutColumns)
   }
 
-  private var maxBinaryBytes: Int { maxCellCharacters / 4 * 3 + 1 }
+  private var maxBinaryBytes: Int {
+    marksCutCells ? maxCellCharacters : maxCellCharacters / 4 * 3 + 1
+  }
 
-  /// `text` cut to `maxCellCharacters + 1` characters, without counting the rest.
-  private func cutText(_ text: String) -> String {
+  /// Characters a cut text keeps: one past the limit unless cut cells are marked
+  private var keptCharacters: Int { marksCutCells ? maxCellCharacters : maxCellCharacters + 1 }
+
+  /// `text` cut to `keptCharacters` characters, without counting the rest; nil when it fits.
+  private func cutText(_ text: String) -> String? {
     guard
-      let end = text.index(
-        text.startIndex, offsetBy: maxCellCharacters + 1, limitedBy: text.endIndex),
+      let end = text.index(text.startIndex, offsetBy: keptCharacters, limitedBy: text.endIndex),
       end < text.endIndex
-    else { return text }
+    else { return nil }
     return String(text[..<end])
   }
 }
@@ -117,12 +140,15 @@ extension DatabaseConnectionManager {
   /// reads its headers), so the result keeps its column origins; so does MongoDB (the session
   /// buffers the documents first), so an empty find keeps its `_id` column. With `readLimits`,
   /// rows are cut as they arrive and a row past the byte budget ends the read like a row past
-  /// the cap.
+  /// the cap (`stoppedAtByteBudget`). With `marksCutCells`, each cut cell of a kept row is
+  /// recorded in `cutCells`. The limits are the manager's (`readLimits`, MCP), else `limits`
+  /// (the read's own, `execute(userSQL:readLimits:)`).
   func readCapped(
-    _ source: SessionRowSource, maxRows: Int, readToEnd: Bool
+    _ source: SessionRowSource, maxRows: Int, readToEnd: Bool, limits: CappedReadLimits? = nil
   ) async throws -> CollectedRows {
     var collected = CollectedRows()
     var keptBytes = 0
+    let readLimits = self.readLimits ?? limits
     if config?.databaseType == .mysql || config?.databaseType.capabilities.queryLanguage == .mongosh
     {
       collected.columns = source.columns
@@ -130,11 +156,16 @@ extension DatabaseConnectionManager {
     for try await row in source.rows {
       collected.total += 1
       var kept = row
-      if !collected.truncated, let readLimits {
+      var cutColumns: [Int] = []
+      if !collected.truncated, collected.rows.count < maxRows, let readLimits {
         let cut = readLimits.cut(row)
         keptBytes += cut.bytes
-        if keptBytes > readLimits.maxResultBytes { collected.truncated = true }
+        if keptBytes > readLimits.maxResultBytes {
+          collected.truncated = true
+          collected.stoppedAtByteBudget = true
+        }
         kept = cut.row
+        if readLimits.marksCutCells { cutColumns = cut.cutColumns }
       }
       if collected.truncated || collected.rows.count >= maxRows {
         collected.truncated = true
@@ -143,6 +174,9 @@ extension DatabaseConnectionManager {
       }
       if collected.total == 1 {
         collected.columns = source.columns
+      }
+      for column in cutColumns {
+        collected.cutCells.insert(CellPosition(row: collected.rows.count, column: column))
       }
       collected.rows.append(kept)
     }
@@ -203,9 +237,16 @@ extension DatabaseConnectionManager {
 
   /// Inside a transaction, read `query` through a server-side cursor: DECLARE, FETCH cap + 1,
   /// CLOSE. The server stops at the cap instead of draining. Errors point at the text sent
-  /// (the server position is relative to it).
+  /// (the server position is relative to it). The FETCH is one round trip, streamed:
+  /// `readCapped` cuts each row as it arrives (`readLimits`, the read's own) and stops at the
+  /// cap or the byte budget mid-FETCH. Raw rows not yet cut sit in PostgresNIO's row buffer,
+  /// counted in rows (256 growing to 16,384, never past cap + 1), the same bound as `.read`.
+  /// After a byte-budget stop the rest of the FETCH is discarded unread, so a runtime error in
+  /// those rows aborts the transaction silently and surfaces as the CLOSE's "current transaction
+  /// is aborted"; a cancel during that discard finds only the CLOSE in flight and resets.
   func executeCursorRead(
-    _ query: String, maxRows: Int, startTime: Date, binds: [SQLBindValue] = []
+    _ query: String, maxRows: Int, startTime: Date, binds: [SQLBindValue] = [],
+    readLimits perRead: CappedReadLimits? = nil
   ) async throws -> QueryResult {
     let cursor: SessionCursor
     do {
@@ -219,9 +260,17 @@ extension DatabaseConnectionManager {
     let fetchSQL = PostgresSession.fetchSQL(name: cursor.name, maxRows: fetchCount)
     let collected: CollectedRows
     do {
+      // The source lives only inside this closure: once `readCapped` stops (cap or byte budget
+      // mid-FETCH), its iterator and the source are released here, before the CLOSE below is
+      // sent. Releasing the session's row stream ends the FETCH (`RowPull` deinit ends the
+      // statement, and PostgresNIO cancels the row stream and discards its remaining rows), as
+      // a drained `.read` does. PostgresNIO runs one statement at a time, so the CLOSE starts
+      // once those rows are discarded. A source kept past this point would leave a FETCH nobody
+      // reads in front of the CLOSE, which would then wait forever.
       collected = try await withSession { session in
         let source = try await session.fetch(cursor, maxRows: fetchCount)
-        return try await self.readCapped(source, maxRows: maxRows, readToEnd: false)
+        return try await self.readCapped(
+          source, maxRows: maxRows, readToEnd: false, limits: perRead)
       }
     } catch {
       throw unwrapFailure(error, fallbackSQL: fetchSQL, startTime: startTime)
@@ -244,6 +293,8 @@ extension DatabaseConnectionManager {
       columns: enrichedColumns, rows: collected.rows, rowCount: collected.rows.count,
       executionTime: executionTime, wasLimited: collected.truncated, affectedRows: 0)
     result.truncated = collected.truncated
+    result.cutCells = collected.cutCells
+    result.stoppedAtByteBudget = collected.stoppedAtByteBudget
     cursorReadCount += 1
     return result
   }

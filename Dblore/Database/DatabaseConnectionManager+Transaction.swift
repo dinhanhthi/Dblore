@@ -34,7 +34,7 @@ extension DatabaseConnectionManager {
   /// (`resetSessionIfCapped`) and ends the script: the rest is listed in `skippedStatements`.
   /// `binds` lines up with `statements` (a missing slot is sent unbound). When `originalTexts`
   /// is set, `queryText` and skipped-statement text come from it; the text sent stays
-  /// `statement.text`. `deferEnrichment`: see `execute(userSQL:)`.
+  /// `statement.text`. `deferEnrichment`, `readLimits`: see `execute(userSQL:)`.
   /// - Throws: `DatabaseError.queryCancelled` once the user cancelled (the session was closed);
   ///   `DatabaseError.sessionChanged` when the connection changed between two statements, or
   ///   is not `expectedEpoch` (a Run All batch's connection) on entry (nothing sent);
@@ -45,7 +45,7 @@ extension DatabaseConnectionManager {
   func runUserStatements(
     _ statements: [ClassifiedStatement], protectedMode: Bool, maxRows: Int, caller: UUID?,
     expectedEpoch: UInt64? = nil, binds: [[SQLBindValue]] = [], originalTexts: [String]? = nil,
-    deferEnrichment: Bool = false
+    deferEnrichment: Bool = false, readLimits: CappedReadLimits? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     guard session != nil else { throw DatabaseError.notConnected }
     guard !statements.isEmpty else { throw DatabaseError.emptyQuery }
@@ -155,7 +155,7 @@ extension DatabaseConnectionManager {
           result = try await Self.$userStatementAdmission.withValue(admission) {
             try await executeSingleStatement(
               statement.text, maxRows: maxRows, inTransaction: inTransaction,
-              binds: statementBinds, deferEnrichment: deferEnrichment)
+              binds: statementBinds, deferEnrichment: deferEnrichment, readLimits: readLimits)
           }
         }
       } catch {

@@ -35,11 +35,12 @@ extension PostgresSession {
     return SessionCursor(name: name)
   }
 
+  /// The FETCH's rows, streamed as `query` streams them (PostgresNIO buffers rows ahead of the
+  /// reader, counted in rows, not bytes), in flight
+  /// until its rows are read, fail or the source is dropped (PostgresNIO then discards the
+  /// rest before the next statement runs, such as the CLOSE).
   func fetch(_ cursor: SessionCursor, maxRows: Int) async throws -> SessionRowSource {
-    let collected = try await readQuery(
-      Self.fetchSQL(name: cursor.name, maxRows: maxRows), binds: [], maxRows: maxRows,
-      readToEnd: false)
-    return Self.rowSource(collected)
+    try await query(Self.fetchSQL(name: cursor.name, maxRows: maxRows), binds: [])
   }
 
   func closeCursor(_ cursor: SessionCursor) async throws {

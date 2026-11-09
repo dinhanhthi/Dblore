@@ -123,3 +123,41 @@ struct JSONRowsReaderTests {
     }
   }
 }
+
+@Suite("JSON rows line stream")
+struct JSONRowsLineStreamTests {
+  @Test("NDJSON objects fed at every chunk size equal the whole read")
+  func matchesWholeRead() throws {
+    let json =
+      "{\"name\":\"caf\u{00e9} \u{1F600}\",\"n\":1}\r\n\r\n{\"n\":2,\"tags\":[\"\u{65E5}\u{672C}\"]}\n"
+      + "{\"name\":null,\"x\":{\"y\":\"\u{00fc}\"}}"
+    let table = try JSONRowsReader.read(Data(json.utf8))
+    for size in 1...64 {
+      var stream = JSONRowsReader.LineStream()
+      var objects: [[JSONRowsReader.Field]] = []
+      for chunk in DelimitedTextRecordStreamTests.chunks(json, size: size) {
+        objects += try stream.feed(chunk)
+      }
+      objects += try stream.finish()
+      var columns: [String] = []
+      for field in objects.joined() where !columns.contains(field.key) {
+        columns.append(field.key)
+      }
+      let rows = objects.map { object in
+        let values = Dictionary(object.map { ($0.key, $0.value) }) { _, last in last }
+        return columns.map { values[$0] ?? nil }
+      }
+      #expect(JSONRowsReader.Table(columns: columns, rows: rows) == table, "chunk size \(size)")
+    }
+  }
+
+  @Test("A line without a line end is refused once it passes the byte cap")
+  func boundedLine() throws {
+    var stream = JSONRowsReader.LineStream(maxRecordBytes: 16)
+    #expect(try stream.feed("{\"a\":1}\n").count == 1)
+    _ = try stream.feed("{\"a\":\"")
+    #expect(throws: JSONRowsError.lineLimitExceeded) {
+      for _ in 0..<4 { _ = try stream.feed("xxxxx") }
+    }
+  }
+}

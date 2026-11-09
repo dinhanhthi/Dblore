@@ -130,29 +130,19 @@ extension DatabaseConnectionManager {
 
     let totalExecutionTime = Date().timeIntervalSince(overallStartTime)
 
-    // Return the last result with updated execution time
+    // Return the last result with updated execution time, and the affected rows accumulated
     if let finalResult = lastResult {
-      // If we accumulated affected rows, update the result
-      if totalAffectedRows > 0 {
-        return QueryResult(
-          columns: finalResult.columns,
-          rows: finalResult.rows,
-          rowCount: finalResult.rowCount,
-          executionTime: totalExecutionTime,
-          wasLimited: finalResult.wasLimited,
-          affectedRows: totalAffectedRows
-        )
-      }
-
-      // Otherwise just update execution time
-      return QueryResult(
+      var result = QueryResult(
         columns: finalResult.columns,
         rows: finalResult.rows,
         rowCount: finalResult.rowCount,
         executionTime: totalExecutionTime,
         wasLimited: finalResult.wasLimited,
-        affectedRows: finalResult.affectedRows
+        affectedRows: totalAffectedRows > 0 ? totalAffectedRows : finalResult.affectedRows
       )
+      result.cutCells = finalResult.cutCells
+      result.stoppedAtByteBudget = finalResult.stoppedAtByteBudget
+      return result
     }
 
     // Fallback: return empty result (shouldn't happen)
@@ -167,9 +157,10 @@ extension DatabaseConnectionManager {
   ///   - binds: Values for the statement's placeholders. Never interpolated into `query`.
   ///   - deferEnrichment: outside a transaction, PostgreSQL types stay the driver's, marked
   ///     `typesDeferred` for the caller's background read (`execute(userSQL:deferEnrichment:)`)
+  ///   - readLimits: what the read keeps (`execute(userSQL:readLimits:)`); nil: whole values
   func executeSingleStatement(
     _ query: String, maxRows: Int, inTransaction: Bool = false, binds: [SQLBindValue] = [],
-    deferEnrichment: Bool = false
+    deferEnrichment: Bool = false, readLimits perRead: CappedReadLimits? = nil
   ) async throws -> QueryResult {
     guard session != nil else {
       throw DatabaseError.notConnected
@@ -195,16 +186,18 @@ extension DatabaseConnectionManager {
       return try await executeCommand(query, startTime: startTime, binds: binds)
     case .returningRows:
       return try await executeUnwrapped(
-        query, countRows: true, maxRows: maxRows, startTime: startTime, binds: binds)
+        query, countRows: true, maxRows: maxRows, startTime: startTime, binds: binds,
+        readLimits: perRead)
     case .unwrappedRows:
       return try await executeUnwrapped(
-        query, countRows: false, maxRows: maxRows, startTime: startTime, binds: binds)
+        query, countRows: false, maxRows: maxRows, startTime: startTime, binds: binds,
+        readLimits: perRead)
     case .read:
       if inTransaction, let statement, Self.usesCursor(statement, dialect: dialect),
         session?.capabilities.supportsServerCursor == true
       {
         return try await executeCursorRead(
-          query, maxRows: maxRows, startTime: startTime, binds: binds)
+          query, maxRows: maxRows, startTime: startTime, binds: binds, readLimits: perRead)
       }
     }
 
@@ -219,7 +212,8 @@ extension DatabaseConnectionManager {
         ? try MongoCommandRewriter.withLimit(text: query, maxRows: maxRows) : query
       let collected = try await withSession { current in
         let source = try await current.query(sent, binds: binds)
-        return try await self.readCapped(source, maxRows: maxRows, readToEnd: readToEnd)
+        return try await self.readCapped(
+          source, maxRows: maxRows, readToEnd: readToEnd, limits: perRead)
       }
       let executionTime = Date().timeIntervalSince(startTime)
       // Try to enrich column type information with modifiers. Not after a truncated read: the
@@ -240,6 +234,8 @@ extension DatabaseConnectionManager {
         executionTime: executionTime, wasLimited: collected.truncated,
         affectedRows: 0)  // SELECT queries always have 0 affected rows
       result.truncated = collected.truncated
+      result.cutCells = collected.cutCells
+      result.stoppedAtByteBudget = collected.stoppedAtByteBudget
       result.typesDeferred = typesDeferred
       return result
     } catch {

@@ -35,7 +35,7 @@ nonisolated private final class UnreadablePasswordStore: SafeModePasswordStore {
 struct LockPasswordVaultTests {
   private let clock = TestClock()
 
-  private func lockVault(
+  nonisolated private func lockVault(
     store: InMemoryPasswordStore = InMemoryPasswordStore()
   )
     -> UnlockPasswordVault
@@ -123,8 +123,9 @@ struct LockPasswordVaultTests {
     }
   }
 
+  // About 23 Lock-strength PBKDF2 runs: off the main actor, so other main-actor tests never wait
   @Test("Wrong entries throttle after 5 with a doubling, capped delay; success resets it")
-  func throttle() {
+  nonisolated func throttle() {
     let vault = lockVault()
     #expect(vault.setPassword("correct password"))
 

@@ -72,9 +72,13 @@ struct TableImportSheet: View {
               }
             }
             if model.isLoading || model.isImporting {
-              // Indeterminate while the database runs the batch: there is no per-row progress
-              ProgressView(value: model.isExecutingBatch ? nil : model.progress)
-                .accessibilityLabel("Import progress")
+              // While the batch runs: blocks sent for a streamed import; indeterminate for a
+              // staged one, which has no per-row progress
+              ProgressView(
+                value: model.isExecutingBatch || model.awaitsConfirmation
+                  ? model.sendProgress : model.progress
+              )
+              .accessibilityLabel("Import progress")
             }
             if let error = model.errorMessage {
               Text(error)
@@ -163,6 +167,16 @@ struct TableImportSheet: View {
     .onChange(of: isPresented) { _, presented in
       if !presented && !didSubmit && editedModel == nil { model.cancel() }
     }
+    // A streamed import Safe Mode held ended: sent or declined closes, a failure stays
+    .onChange(of: model.awaitsRunEnd) { _, awaits in
+      guard !awaits, isBusy else { return }
+      isBusy = false
+      if model.errorMessage == nil {
+        isPresented = false
+      } else {
+        didSubmit = false
+      }
+    }
   }
 
   private var fileSection: some View {
@@ -193,13 +207,19 @@ struct TableImportSheet: View {
             .font(.small)
             .foregroundColor(.warning)
           }
-          Text("Maximum import file size: 256 MB. Split larger files before importing.")
-            .font(.small)
-            .foregroundColor(.foregroundMuted)
-          Text(
-            "Up to \(limits.maxRows.formatted()) rows and \(limits.maxCells.formatted()) cells. "
-              + "Column types are inferred from the first 100 rows."
-          )
+          Group {
+            if editedModel == nil && model.streamsImport {
+              Text(
+                "No file size or row limit for CSV, TSV and NDJSON into a new or existing "
+                  + "table. Column types are inferred from the first 100 rows.")
+            } else {
+              Text(
+                "\(editedModel == nil ? "Keyed and JSON array imports: up" : "Up") to 256 MB, "
+                  + "\(limits.maxRows.formatted()) rows and \(limits.maxCells.formatted()) "
+                  + "cells. Split larger files before importing. Column types are inferred "
+                  + "from the first 100 rows.")
+            }
+          }
           .font(.small)
           .foregroundColor(.foregroundMuted)
         }
@@ -244,9 +264,10 @@ struct TableImportSheet: View {
         ScrollView([.horizontal, .vertical]) {
           VStack(alignment: .leading, spacing: 0) {
             previewRow(model.mappings.map(\.sourceName), header: true)
-            ForEach(model.previewRows.indices, id: \.self) { index in
-              previewRow(
-                model.previewRows[index].map { previewText($0) }, header: false)
+            // Rows by value, not by index: another file's rows replace these at once, and an
+            // index from the old file must never read the new array
+            ForEach(Array(model.previewRows.enumerated()), id: \.offset) { _, row in
+              previewRow(row.map { previewText($0) }, header: false)
             }
           }
           .onGeometryChange(for: CGFloat.self) {
@@ -280,8 +301,8 @@ struct TableImportSheet: View {
 
   private func previewRow(_ values: [String], header: Bool) -> some View {
     HStack(spacing: 0) {
-      ForEach(values.indices, id: \.self) { index in
-        Text(values[index])
+      ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+        Text(value)
           .font(.monoSmall)
           .foregroundColor(header ? .foreground : .foregroundMuted)
           .lineLimit(1)
@@ -299,13 +320,15 @@ struct TableImportSheet: View {
   private var mappingSection: some View {
     SettingsGroupCard(title: "Columns") {
       VStack(alignment: .leading, spacing: Spacing.sm) {
-        ForEach(model.mappings.indices, id: \.self) { index in
+        // Rows by value and bindings that check their index: another file's columns replace
+        // these at once, and an index from the old file must never read the new array
+        ForEach(Array(model.mappings.enumerated()), id: \.offset) { index, mapping in
           HStack(spacing: Spacing.sm) {
             Toggle("", isOn: mappingIncluded(index))
               .labelsHidden()
               .toggleStyle(.checkbox)
               .help("Include this column")
-            Text(model.mappings[index].sourceName)
+            Text(mapping.sourceName)
               .font(.small)
               .foregroundColor(.foregroundMuted)
               .lineLimit(1)
@@ -316,7 +339,7 @@ struct TableImportSheet: View {
             TextField("Destination column", text: mappingName(index))
               .textFieldStyle(.plain)
               .inputCapsuleStyle()
-              .disabled(!model.mappings[index].included)
+              .disabled(!mapping.included)
             CapsulePickerMenu(
               title: kinds.indices.contains(mappingKind(index).wrappedValue)
                 ? kindLabel(kinds[mappingKind(index).wrappedValue]) : "", width: 160
@@ -330,10 +353,10 @@ struct TableImportSheet: View {
               .labelsHidden()
             }
             .accessibilityLabel("Type")
-            .disabled(!model.mappings[index].included)
+            .disabled(!mapping.included)
           }
           if missingColumns.contains(index) {
-            Text("Column \"\(model.mappings[index].targetName)\" does not exist in the table")
+            Text("Column \"\(mapping.targetName)\" does not exist in the table")
               .font(.small)
               .foregroundColor(.destructive)
           }
@@ -575,21 +598,24 @@ struct TableImportSheet: View {
 
   private func mappingIncluded(_ index: Int) -> Binding<Bool> {
     Binding(
-      get: { model.mappings[index].included },
-      set: { model.mappings[index].included = $0 })
+      get: { model.mappings.indices.contains(index) && model.mappings[index].included },
+      set: { if model.mappings.indices.contains(index) { model.mappings[index].included = $0 } })
   }
 
   private func mappingName(_ index: Int) -> Binding<String> {
     Binding(
-      get: { model.mappings[index].targetName },
-      set: { model.mappings[index].targetName = $0 })
+      get: { model.mappings.indices.contains(index) ? model.mappings[index].targetName : "" },
+      set: { if model.mappings.indices.contains(index) { model.mappings[index].targetName = $0 } })
   }
 
   private func mappingKind(_ index: Int) -> Binding<Int> {
     // An unknown kind shows Text, the last one
     Binding(
-      get: { kinds.firstIndex(of: model.mappings[index].kind) ?? kinds.count - 1 },
-      set: { model.mappings[index].kind = kinds[$0] })
+      get: {
+        guard model.mappings.indices.contains(index) else { return kinds.count - 1 }
+        return kinds.firstIndex(of: model.mappings[index].kind) ?? kinds.count - 1
+      },
+      set: { if model.mappings.indices.contains(index) { model.mappings[index].kind = kinds[$0] } })
   }
 
   private var schemaName: Binding<String> {
@@ -662,10 +688,13 @@ struct TableImportSheet: View {
     }
   }
 
-  /// The one Safe Mode decision and the batch. The sheet closes once the tab takes the batch.
+  /// The one Safe Mode decision and the batch. The sheet closes once the tab takes the batch;
+  /// a streamed import Safe Mode holds keeps it, with its progress and Cancel, until the run
+  /// ends (`awaitsRunEnd`).
   private func runPreparedImport() async {
     if await model.confirmImport(to: viewModel) {
       didSubmit = true
+      if model.awaitsRunEnd { return }
       isBusy = false
       isPresented = false
     } else {
@@ -686,6 +715,8 @@ struct TableImportSheet: View {
         isCancelling = false
       }
     } else {
+      // Waiting on Safe Mode: declined
+      if model.awaitsConfirmation { viewModel.cancelPendingQuery() }
       importTask?.cancel()
       close()
     }

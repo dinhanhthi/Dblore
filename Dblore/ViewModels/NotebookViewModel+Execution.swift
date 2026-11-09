@@ -137,6 +137,14 @@ extension NotebookViewModel {
     return error.localizedDescription
   }
 
+  /// What a notebook cell or editor result read keeps per cell and in total (`appReadLimits`).
+  /// Nil on MongoDB: its documents feed the document editor and tree view, which could write a
+  /// cut value back.
+  var resultReadLimits: CappedReadLimits? {
+    notebook.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
+      ? nil : appReadLimits
+  }
+
   /// Run a specific cell by adding it to the execution queue
   func runCell(id: UUID) async {
     guard let index = notebook.cells.firstIndex(where: { $0.id == id }) else { return }
@@ -317,13 +325,14 @@ extension NotebookViewModel {
     // reconnect, `cancelRunningStatement`) stops the server work, and the server
     // `statement_timeout` (applied on connect) is the time limit.
     let maxRows = effectiveRowCap
+    let readLimits = resultReadLimits
     do {
       // Check if this is a multi-statement query
       if connectionManager.hasMultipleStatements(task.query, dialect: sqlDialect) {
         let detailed = try await Task {
           try await connectionManager.executeDetailed(
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
-            caller: caller, expectedEpoch: runEpoch)
+            caller: caller, expectedEpoch: runEpoch, readLimits: readLimits)
         }.value
         let statementResults = detailed.results
         let totalTime = detailed.totalTime
@@ -371,7 +380,8 @@ extension NotebookViewModel {
         let queryResult = try await Task {
           try await connectionManager.execute(
             userSQL: task.query, parameters: parameters, policy: policy, maxRows: maxRows,
-            caller: caller, expectedEpoch: runEpoch, deferEnrichment: true)
+            caller: caller, expectedEpoch: runEpoch, deferEnrichment: true,
+            readLimits: readLimits)
         }.value
         ranStatements = [task.query]
 

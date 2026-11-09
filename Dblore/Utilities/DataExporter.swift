@@ -18,52 +18,59 @@ enum DataExporter {
   nonisolated static func toCSV(
     result: CellResult, includeHeader: Bool = true, quote: ExportQuote = .ifNeeded
   ) -> String {
-    var csv = ""
-
-    if includeHeader {
-      let headers = result.columns.map { escapeCSV($0.name, quote: quote) }
-      csv += headers.joined(separator: ",") + "\n"
-    }
-
+    var csv = includeHeader ? csvHeader(result.columns, quote: quote) : ""
     for row in result.rows {
-      let values = row.enumerated().map { index, value in
-        escapeCSV(
-          value.outputString(wallClock: isWallClock(result.columns, index)), quote: quote)
-      }
-      csv += values.joined(separator: ",") + "\n"
+      csv += csvLine(row, columns: result.columns, quote: quote)
     }
-
     return csv
+  }
+
+  /// The CSV column-name line, line break included (`toCSV` and `StreamedResultWriter`)
+  nonisolated static func csvHeader(_ columns: [ColumnInfo], quote: ExportQuote) -> String {
+    columns.map { escapeCSV($0.name, quote: quote) }.joined(separator: ",") + "\n"
+  }
+
+  /// One row's CSV line, line break included (`toCSV` and `StreamedResultWriter`)
+  nonisolated static func csvLine(
+    _ row: [CellValue], columns: [ColumnInfo], quote: ExportQuote
+  ) -> String {
+    let values = row.enumerated().map { index, value in
+      escapeCSV(value.outputString(wallClock: isWallClock(columns, index)), quote: quote)
+    }
+    return values.joined(separator: ",") + "\n"
   }
 
   /// Export result to TSV format (tab-separated, Excel-compatible). `neutralizesFormulas`
   /// prefixes formula-like text cells and headers as in CSV; other cell types stay raw.
   /// Headers are escaped like cells either way.
-  static func toTSV(result: CellResult, neutralizesFormulas: Bool) -> String {
-    var tsv = ""
-
-    // Header row
-    let headers = result.columns.map {
-      tsvField(.string($0.name), neutralizesFormulas: neutralizesFormulas)
-    }
-    tsv += headers.joined(separator: "\t") + "\n"
-
-    // Data rows
+  nonisolated static func toTSV(result: CellResult, neutralizesFormulas: Bool) -> String {
+    var tsv = tsvHeader(result.columns, neutralizesFormulas: neutralizesFormulas)
     for row in result.rows {
-      let values = row.enumerated().map { index, value in
-        tsvField(
-          value, wallClock: isWallClock(result.columns, index),
-          neutralizesFormulas: neutralizesFormulas)
-      }
-      tsv += values.joined(separator: "\t") + "\n"
+      tsv += tsvLine(row, columns: result.columns, neutralizesFormulas: neutralizesFormulas)
     }
-
     return tsv
+  }
+
+  /// The TSV column-name line, line break included (`toTSV` and `StreamedResultWriter`)
+  nonisolated static func tsvHeader(_ columns: [ColumnInfo], neutralizesFormulas: Bool) -> String {
+    columns.map { tsvField(.string($0.name), neutralizesFormulas: neutralizesFormulas) }
+      .joined(separator: "\t") + "\n"
+  }
+
+  /// One row's TSV line, line break included (`toTSV` and `StreamedResultWriter`)
+  nonisolated static func tsvLine(
+    _ row: [CellValue], columns: [ColumnInfo], neutralizesFormulas: Bool
+  ) -> String {
+    let values = row.enumerated().map { index, value in
+      tsvField(
+        value, wallClock: isWallClock(columns, index), neutralizesFormulas: neutralizesFormulas)
+    }
+    return values.joined(separator: "\t") + "\n"
   }
 
   /// TSV value escape shared with the grid selection copy: a value with a tab, LF, CR or quote
   /// (checked per unicode scalar, so CRLF counts) is quoted with inner quotes doubled, as in CSV
-  static func escapeTSV(_ value: String) -> String {
+  nonisolated static func escapeTSV(_ value: String) -> String {
     guard value.unicodeScalars.contains(where: { "\t\n\r\"".unicodeScalars.contains($0) }) else {
       return value
     }
@@ -74,7 +81,7 @@ enum DataExporter {
   /// the quoting keeps every line in this field) is added before escaping, so it lands inside
   /// the quotes. A JSON cell copies raw, so a jsonb scalar `-5` stays `-5`. A date is written as
   /// its column's text output (`wallClock`, the column's `ColumnInfo.wallClock`).
-  static func tsvField(
+  nonisolated static func tsvField(
     _ value: CellValue, wallClock: Bool = false, neutralizesFormulas: Bool
   ) -> String {
     if neutralizesFormulas, let text = formulaCheckedText(value) {
@@ -84,7 +91,7 @@ enum DataExporter {
   }
 
   /// The text the copy formats check for a formula: a text or decimal cell's
-  private static func formulaCheckedText(_ value: CellValue) -> String? {
+  nonisolated private static func formulaCheckedText(_ value: CellValue) -> String? {
     switch value {
     case .string(let text), .decimal(let text): text
     default: nil
@@ -384,30 +391,46 @@ enum DataExporter {
   /// Export result to JSON format: one object per row, keys in column order. A repeated column
   /// name gets a suffix (`id`, `id_2`, `id_3`, skipping a name another column already has), so
   /// no value is lost. Written by hand because a dictionary would drop the order.
-  static func toJSON(
+  nonisolated static func toJSON(
     result: CellResult, pretty: Bool = true, includeNull: Bool = true, valuesAsString: Bool = false
   ) -> String {
-    let keys = jsonKeys(result.columns.map(\.name)).map(jsonString)
+    let keys = jsonObjectKeys(result.columns)
     let objects = result.rows.map { row in
-      let members = keys.indices.compactMap { index -> (String, String)? in
-        let value = index < row.count ? row[index] : .null
-        if !includeNull && value.isNull { return nil }
-        let wallClock = isWallClock(result.columns, index)
-        let json =
-          valuesAsString
-          ? jsonString(value.outputString(wallClock: wallClock))
-          : jsonValue(value, wallClock: wallClock, pretty: pretty)
-        return (keys[index], json)
-      }
-      return jsonContainer(
-        members.map { pretty ? "\($0.0) : \($0.1)" : "\($0.0):\($0.1)" }, open: "{",
-        close: "}", pretty: pretty)
+      jsonObject(
+        row, keys: keys, columns: result.columns, pretty: pretty, includeNull: includeNull,
+        valuesAsString: valuesAsString)
     }
     return jsonContainer(objects, open: "[", close: "]", pretty: pretty)
   }
 
+  /// The JSON keys of `columns`, unique and quoted (`toJSON` and `StreamedResultWriter`)
+  nonisolated static func jsonObjectKeys(_ columns: [ColumnInfo]) -> [String] {
+    jsonKeys(columns.map(\.name)).map(jsonString)
+  }
+
+  /// One row as a JSON object under `keys` (`jsonObjectKeys`): a missing cell is null, a null
+  /// is left out unless `includeNull` (`toJSON` and `StreamedResultWriter`)
+  nonisolated static func jsonObject(
+    _ row: [CellValue], keys: [String], columns: [ColumnInfo], pretty: Bool, includeNull: Bool,
+    valuesAsString: Bool
+  ) -> String {
+    let members = keys.indices.compactMap { index -> (String, String)? in
+      let value = index < row.count ? row[index] : .null
+      if !includeNull && value.isNull { return nil }
+      let wallClock = isWallClock(columns, index)
+      let json =
+        valuesAsString
+        ? jsonString(value.outputString(wallClock: wallClock))
+        : jsonValue(value, wallClock: wallClock, pretty: pretty)
+      return (keys[index], json)
+    }
+    return jsonContainer(
+      members.map { pretty ? "\($0.0) : \($0.1)" : "\($0.0):\($0.1)" }, open: "{",
+      close: "}", pretty: pretty)
+  }
+
   /// Column names made unique: a repeat gets the first free `name_2`, `name_3`, ...
-  private static func jsonKeys(_ names: [String]) -> [String] {
+  nonisolated private static func jsonKeys(_ names: [String]) -> [String] {
     var used = Set(names)
     var seen = Set<String>()
     return names.map { name in
@@ -424,7 +447,9 @@ enum DataExporter {
   /// One cell as JSON text. Only a finite double (its number format) and a parsed `.json` value
   /// go through `JSONSerialization`; the rest is written here as it would write it. A date is
   /// its column's text output (`wallClock`).
-  private static func jsonValue(_ value: CellValue, wallClock: Bool, pretty: Bool) -> String {
+  nonisolated private static func jsonValue(
+    _ value: CellValue, wallClock: Bool, pretty: Bool
+  ) -> String {
     switch value {
     case .date:
       return jsonString(value.outputString(wallClock: wallClock))
@@ -453,7 +478,7 @@ enum DataExporter {
 
   /// Plain decimal text as a JSON number literal: its exact digits, scale zeros kept, without
   /// the leading zeros JSON does not allow (`-007.50` is `-7.50`)
-  private static func jsonNumber(_ text: String) -> String {
+  nonisolated private static func jsonNumber(_ text: String) -> String {
     let negative = text.hasPrefix("-")
     let unsigned = text.drop { $0 == "-" }.drop { $0 == "0" }
     let digits = unsigned.isEmpty || unsigned.hasPrefix(".") ? "0" + unsigned : String(unsigned)
@@ -461,7 +486,7 @@ enum DataExporter {
   }
 
   /// `object` (a valid JSON value) as `JSONSerialization` writes it
-  private static func serializedJSON(_ object: Any, pretty: Bool) -> String? {
+  nonisolated private static func serializedJSON(_ object: Any, pretty: Bool) -> String? {
     let options: JSONSerialization.WritingOptions =
       pretty ? [.fragmentsAllowed, .prettyPrinted] : [.fragmentsAllowed]
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: options) else {
@@ -473,7 +498,7 @@ enum DataExporter {
   /// `text` as a JSON string, byte for byte as `JSONSerialization` writes it: `"`, `\` and `/`
   /// get a backslash, a control character its short form (`\b`, `\t`, `\n`, `\f`, `\r`) or
   /// `\u00xx` (lowercase hex), and every other character stays as it is
-  private static func jsonString(_ text: String) -> String {
+  nonisolated private static func jsonString(_ text: String) -> String {
     guard text.utf8.contains(where: { $0 < 0x20 || $0 == 0x22 || $0 == 0x5C || $0 == 0x2F })
     else { return "\"" + text + "\"" }
     var result = String.UnicodeScalarView()
@@ -500,14 +525,35 @@ enum DataExporter {
   }
 
   /// `items` in `open`/`close`, one per line indented two spaces when `pretty` (a nested value
-  /// keeps its own lines one level deeper: JSON text has no raw line break inside a string)
-  private static func jsonContainer(
+  /// keeps its own lines one level deeper: JSON text has no raw line break inside a string).
+  /// Built from the pieces `StreamedResultWriter` writes one at a time.
+  nonisolated private static func jsonContainer(
     _ items: [String], open: String, close: String, pretty: Bool
   ) -> String {
     guard !items.isEmpty else { return open + close }
-    guard pretty else { return open + items.joined(separator: ",") + close }
-    let body = items.map { "  " + $0.replacingOccurrences(of: "\n", with: "\n  ") }
-    return open + "\n" + body.joined(separator: ",\n") + "\n" + close
+    return jsonOpen(open, pretty: pretty)
+      + items.map { jsonItem($0, pretty: pretty) }.joined(separator: jsonSeparator(pretty: pretty))
+      + jsonClose(close, pretty: pretty)
+  }
+
+  /// A non-empty JSON container's opening, before its first item
+  nonisolated static func jsonOpen(_ open: String, pretty: Bool) -> String {
+    pretty ? open + "\n" : open
+  }
+
+  /// One item of a JSON container, indented one level when `pretty`
+  nonisolated static func jsonItem(_ item: String, pretty: Bool) -> String {
+    pretty ? "  " + item.replacingOccurrences(of: "\n", with: "\n  ") : item
+  }
+
+  /// Between two items of a JSON container
+  nonisolated static func jsonSeparator(pretty: Bool) -> String {
+    pretty ? ",\n" : ","
+  }
+
+  /// A non-empty JSON container's closing, after its last item
+  nonisolated static func jsonClose(_ close: String, pretty: Bool) -> String {
+    pretty ? "\n" + close : close
   }
 
   /// Export result to Markdown table format
@@ -538,14 +584,18 @@ enum DataExporter {
   /// INSERT script. `rows` nil exports every row; otherwise only in-range indexes, in that order.
   /// `schema` and `name` are the unquoted table (`insertTable(dataViewer:editTarget:)`); nil
   /// `name` writes the placeholder. `result.tableName` is never used: it is already quoted.
-  static func sqlInsert(
+  nonisolated static func sqlInsert(
     result: CellResult, rows: [Int]? = nil, schema: String? = nil, name: String? = nil,
     dialect: SQLDialect, includeColumns: Bool = true
   ) -> String {
     SQLInsertRenderer.insertScript(
       result: queryResult(from: result, rowIndexes: rows), schema: schema, name: name,
-      dialect: dialect, includeColumns: includeColumns)
+      dialect: dialect, batchSize: insertBatchSize, includeColumns: includeColumns)
   }
+
+  /// Rows per INSERT statement of an export (`sqlInsert` and `StreamedResultWriter`); the
+  /// statements are joined by a line break
+  nonisolated static let insertBatchSize = 500
 
   /// Parenthesized IN list for `values`.
   static func sqlINList(values: [CellValue], dialect: SQLDialect) -> String {
@@ -629,12 +679,13 @@ enum DataExporter {
     }
   }
 
-  /// The save panel of a Parquet download; nil when cancelled.
-  static func chooseParquetDestination(queryIndex: Int?) async -> URL? {
+  /// The save panel of a download the export sheet writes itself (Parquet, all rows) as a
+  /// `fileExtension` file; nil when cancelled.
+  static func chooseDestination(fileExtension: String, queryIndex: Int?) async -> URL? {
     let savePanel = NSSavePanel()
     savePanel.nameFieldStringValue = generateFilename(
-      extension: "parquet", queryIndex: queryIndex)
-    savePanel.allowedContentTypes = UTType(filenameExtension: "parquet").map { [$0] } ?? []
+      extension: fileExtension, queryIndex: queryIndex)
+    savePanel.allowedContentTypes = UTType(filenameExtension: fileExtension).map { [$0] } ?? []
     savePanel.canCreateDirectories = true
     let response = await withCheckedContinuation { continuation in
       savePanel.begin { continuation.resume(returning: $0) }
@@ -732,8 +783,9 @@ enum DataExporter {
   // MARK: - Private Helpers
 
   /// `CellResult` as a `QueryResult`. `rowIndexes` nil keeps every row; out-of-range indexes drop.
-  private static func queryResult(from result: CellResult, rowIndexes: [Int]? = nil) -> QueryResult
-  {
+  nonisolated private static func queryResult(
+    from result: CellResult, rowIndexes: [Int]? = nil
+  ) -> QueryResult {
     let selectedRows: [[CellValue]]
     if let rowIndexes {
       selectedRows = rowIndexes.compactMap { index in
@@ -816,7 +868,7 @@ enum DataExporter {
 
   /// Plain decimal text of at most 15 significant digits: a JSON number and a spreadsheet number
   /// cell hold it exactly. NaN and ±Infinity are text.
-  private static func isSpreadsheetExact(_ decimal: String) -> Bool {
+  nonisolated private static func isSpreadsheetExact(_ decimal: String) -> Bool {
     guard DecimalText.isPlain(decimal), let finite = DecimalText.Finite(decimal) else {
       return false
     }
@@ -904,7 +956,7 @@ enum DataExporter {
     return result
   }
 
-  private static func cellValueToJSON(_ value: CellValue) -> Any {
+  nonisolated private static func cellValueToJSON(_ value: CellValue) -> Any {
     switch value {
     case .string(let str), .decimal(let str):
       return str

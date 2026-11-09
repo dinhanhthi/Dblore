@@ -7,7 +7,7 @@ import Testing
 
 @testable import Dblore
 
-@Suite("Workspace history", .serialized)
+@Suite("Workspace history", .serialized, .timeLimit(.minutes(1)))
 @MainActor
 struct WorkspaceHistoryTests {
   @Test("Scope uses the active connection and workspace, and a missing key searches all")

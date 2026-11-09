@@ -119,6 +119,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// `pg_backend_pid()` and its `backend_start::text`, read with the version (nil on failure)
   private var backendPIDStorage: Int32?
   private var backendStartTextStorage: String?
+  /// `server_encoding`, read with the version (nil on failure)
+  private var serverEncodingStorage: String?
   /// Statements sent and not finished, oldest first (`statementsInFlight`)
   private var inFlightStorage: [(token: UInt64, sql: String)] = []
   private var nextStatementToken: UInt64 = 0
@@ -241,14 +243,25 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       let identity = try await runTracked(sql) { connection in
         let rows = try await connection.query(
           PostgresQuery(unsafeSQL: sql), logger: Logger(label: "dblore.session"))
-        var identity: (version: Int, pid: Int32, start: String?)?
-        for try await row in rows.decode((Int, Int32, String?).self) { identity = row }
+        // Column by column, not a tuple decode: a tuple of the wrong width traps the process,
+        // and a server that leaves out the encoding column only turns text prefixes off
+        var identity: (version: Int, pid: Int32, start: String?, encoding: String?)?
+        for try await row in rows {
+          let cells = row.makeRandomAccess()
+          guard cells.count >= 3 else { continue }
+          identity = (
+            try cells[0].decode(Int.self), try cells[1].decode(Int32.self),
+            try cells[2].decode(String?.self),
+            cells.count > 3 ? try cells[3].decode(String?.self) : nil
+          )
+        }
         return identity
       }
       lock.withLock {
         serverVersionNumStorage = identity?.version
         backendPIDStorage = identity?.pid
         backendStartTextStorage = identity?.start
+        serverEncodingStorage = identity?.encoding
       }
     } catch {
       await AppLogger.shared.warning(
@@ -257,20 +270,27 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     }
   }
 
-  /// Read once at open on the raw connection (`loadServerVersionNum`): the version, the pid and
-  /// its `backend_start::text`. The start time is a subquery, so a missing pg_stat_activity row
-  /// never drops the version or the pid. It runs with the user's search_path, so every function,
-  /// relation, operator and cast type names pg_catalog.
+  /// Read once at open on the raw connection (`loadServerVersionNum`): the version, the pid, its
+  /// `backend_start::text` and the database's `server_encoding`. The start time is a subquery,
+  /// so a missing pg_stat_activity row never drops the version or the pid. It runs with the
+  /// user's search_path, so every function, relation, operator and cast type names pg_catalog.
   static let sessionIdentitySQL =
     "SELECT pg_catalog.current_setting('server_version_num')::pg_catalog.int4, "
     + "pg_catalog.pg_backend_pid(), "
     + "(SELECT a.backend_start::pg_catalog.text FROM pg_catalog.pg_stat_activity a "
-    + "WHERE a.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid())"
+    + "WHERE a.pid OPERATOR(pg_catalog.=) pg_catalog.pg_backend_pid()), "
+    + "pg_catalog.current_setting('server_encoding')"
 
   /// `server_version_num` of this connection (120000 for 12.0), read once at open; nil when
   /// that read failed. A new connection is a new session, so it never outlives its server.
   var serverVersionNum: Int? {
     lock.withLock { serverVersionNumStorage }
+  }
+
+  /// The database's `server_encoding` (`UTF8`), read once at open; nil when that read failed.
+  /// It is fixed when the database is created.
+  var serverEncoding: String? {
+    lock.withLock { serverEncodingStorage }
   }
 
   /// This connection's server process (`pg_backend_pid()`), read once at open; nil when that
@@ -950,19 +970,6 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   private static func postgresQuery(_ sql: String, binds: [SQLBindValue]) -> PostgresQuery {
     if binds.isEmpty { return PostgresQuery(unsafeSQL: sql) }
     return PostgresQuery(unsafeSQL: sql, binds: untypedTextBindings(binds))
-  }
-
-  // MARK: - Rows
-
-  static func rowSource(_ collected: CollectedRows) -> SessionRowSource {
-    let rows = collected.rows
-    let stream = AsyncThrowingStream<[CellValue], Error> { continuation in
-      for row in rows {
-        continuation.yield(row)
-      }
-      continuation.finish()
-    }
-    return SessionRowSource(columns: collected.columns, rows: stream)
   }
 
   // MARK: - Close state

@@ -838,7 +838,8 @@ struct LockedWorkspaceIOTests {
     defer { defaults.removePersistentDomain(forName: suiteName) }
     let (manager, files) = try await plainWorkspace(LockRegistry(), defaults: defaults)
     let (store, _) = keyStore(defaults)
-    // Each tab presents its file, dated a minute ago so any rewrite now is newer
+    // Each tab presents its file, dated a minute ago so any rewrite now is newer. The system's
+    // own change notices can come after the debounce: unregistered, only the test sends them.
     var documents: [any FileConflictPresenting] = []
     for tab in manager.tabs {
       let url = try #require(tab.fileURL)
@@ -846,29 +847,48 @@ struct LockedWorkspaceIOTests {
         [.modificationDate: Date().addingTimeInterval(-60)], ofItemAtPath: url.path)
       if let document = manager.notebookDocument(for: tab.id) {
         document.setFileURL(url)
+        SQLiteFileAccess.removeFilePresenter(document)
         documents.append(document)
       } else if let document = manager.editorDocument(for: tab.id) {
         document.setFileURL(url)
+        SQLiteFileAccess.removeFilePresenter(document)
         documents.append(document)
       }
     }
     #expect(documents.count == files.count - 1)
     #expect(SQLiteFileAccess.onPresenterQueue {})
-    /// Each document told its file changed, as the file coordinator does after a write
-    func reportChanges() async throws {
-      for document in documents { (document as? any NSFilePresenter)?.presentedItemDidChange?() }
-      // No signal ends the 500 ms debounce: wait 4x
-      try await Task.sleep(for: .seconds(2))
+    /// The document's last debounced check of its file (nil: none started)
+    func check(of document: any FileConflictPresenting) -> Task<Void, Never>? {
+      (document as? DbloreDocument)?.changeDebounceTask
+        ?? (document as? SQLEditorDocument)?.changeDebounceTask
+    }
+    for document in documents {
+      if let pending = check(of: document) {
+        await boundedWait("Earlier check") { await pending.value }
+      }
+    }
+    /// Each document told its file changed, as the file coordinator does after a write; returns
+    /// once every debounced check ran, so none runs during the next rewrite
+    func reportChanges(_ step: String) async throws {
+      var checks: [Task<Void, Never>] = []
+      for document in documents {
+        (document as? any NSFilePresenter)?.presentedItemDidChange?()
+        checks.append(try #require(check(of: document)))
+      }
+      await boundedWait("\(step) checks") { [checks] in
+        for task in checks { await task.value }
+      }
+      #expect(zip(documents, checks).allSatisfy { check(of: $0) == $1 }, "\(step) check replaced")
     }
 
     _ = try await manager.lockWorkspace(
       password: Self.lockPassword, keyStore: store, iterations: 100_000)
-    try await reportChanges()
+    try await reportChanges("Lock Workspace")
     #expect(documents.allSatisfy { !$0.fileConflictState.showDialog })
 
     let confirmation = try await ownerConfirmation(manager)
     #expect(await manager.removeLock(authorization: confirmation, keyStore: store).isEmpty)
-    try await reportChanges()
+    try await reportChanges("Remove Lock")
     #expect(documents.allSatisfy { !$0.fileConflictState.showDialog })
 
     // Another writer's change still asks
@@ -877,7 +897,7 @@ struct LockedWorkspaceIOTests {
     try Data("db.other.find()".utf8).write(to: scriptURL)
     try FileManager.default.setAttributes(
       [.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: scriptURL.path)
-    try await reportChanges()
+    try await reportChanges("Another writer")
     #expect(manager.editorDocument(for: script.id)?.fileConflictState.showDialog == true)
     manager.releaseFileAccess()
   }

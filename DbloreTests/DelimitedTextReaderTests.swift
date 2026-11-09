@@ -126,3 +126,63 @@ struct DelimitedTextReaderTests {
     }
   }
 }
+
+@Suite("Delimited text record stream")
+struct DelimitedTextRecordStreamTests {
+  /// `text` cut into pieces of `size` Unicode scalars, so a CR LF pair can fall across two pieces
+  static func chunks(_ text: String, size: Int) -> [Substring] {
+    let scalars = text.unicodeScalars
+    var pieces: [Substring] = []
+    var start = scalars.startIndex
+    while start < scalars.endIndex {
+      let end =
+        scalars.index(start, offsetBy: size, limitedBy: scalars.endIndex) ?? scalars.endIndex
+      pieces.append(Substring(scalars[start..<end]))
+      start = end
+    }
+    return pieces
+  }
+
+  @Test(
+    "Records fed at every chunk size equal the whole read",
+    arguments: [
+      "name,note\r\n\"doe, jane\",\"say \"\"hi\"\"\r\nstill\"\r\n bob ,x\r\n",
+      "name;amount\nalice;1,23\n\n;\n\"\";\"x\"",
+      "a\tb\r\n\t\r\nc\t\"d\"\"\"\r\n",
+      "h1,h2,h3\n1\n\"x\ny\",,\"\"\nlast,row,caf\u{00e9}",
+    ])
+  func matchesWholeRead(csv: String) throws {
+    let table = try DelimitedTextReader.read(Data(csv.utf8))
+    let expected = [table.columns] + table.rows
+    for size in 1...64 {
+      var stream = DelimitedTextReader.RecordStream(
+        delimiter: table.delimiter, columns: table.columns.count)
+      var records: [[String]] = []
+      for chunk in Self.chunks(csv, size: size) {
+        records += try stream.feed(chunk)
+      }
+      records += try stream.finish()
+      #expect(records == expected, "chunk size \(size)")
+    }
+  }
+
+  @Test("A record over the byte cap or wider than the header is refused")
+  func boundedRecords() throws {
+    var unclosed = DelimitedTextReader.RecordStream(
+      delimiter: ",", columns: 2, maxRecordBytes: 16)
+    _ = try unclosed.feed("a,b\n\"never")
+    #expect(throws: DelimitedTextError.recordLimitExceeded(row: 2)) {
+      for _ in 0..<4 { _ = try unclosed.feed(" closed") }
+    }
+
+    var wide = DelimitedTextReader.RecordStream(delimiter: ",", columns: 2)
+    #expect(try wide.feed("a,b\n1,2\n") == [["a", "b"], ["1", "2"]])
+    #expect(throws: DelimitedTextError.tooManyFields(row: 3)) {
+      _ = try wide.feed("3,4,5\n")
+    }
+
+    var damaged = DelimitedTextReader.RecordStream(delimiter: ",", columns: 1)
+    _ = try damaged.feed("\"open")
+    #expect(throws: DelimitedTextError.unclosedQuote) { _ = try damaged.finish() }
+  }
+}

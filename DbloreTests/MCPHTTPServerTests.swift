@@ -42,7 +42,7 @@ private final class GatedTokenStore: MCPTokenStore, @unchecked Sendable {
 }
 
 @MainActor
-@Suite("MCP HTTP server", .serialized)
+@Suite("MCP HTTP server", .serialized, .timeLimit(.minutes(3)))
 struct MCPHTTPServerTests {
   private let suiteName = "MCPHTTPServerTests.\(UUID().uuidString)"
 

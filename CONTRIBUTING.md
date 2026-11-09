@@ -45,6 +45,33 @@ Thanks for your interest — contributions are welcome!
      instead of hanging the suite. A loop that already gives up after N tries records an `Issue`.
   3. Keep pull requests focused, and describe what changed and why.
 
+## Full test runs
+
+Run the whole unit suite under a no-output watchdog, with a result bundle, and sample the test
+host when it goes quiet:
+
+```bash
+SKIP_INTEGRATION_TESTS=true xcodebuild test -scheme Dblore \
+  -destination 'platform=macOS,arch=arm64' -enableCodeCoverage NO \
+  -resultBundlePath /tmp/run1.xcresult > run1.txt 2>&1 &
+# no new result line in run1.txt for 20 s: sample the test host once per stall
+sample "$(pgrep -f 'DerivedData/.*/Dblore.app/Contents/MacOS/Dblore' | head -1)" 10 -file stall-1.txt
+# no output at all for 10 min: sample once more and kill the run (a hang, not a slow test)
+xcrun xcresulttool get test-results tests --path /tmp/run1.xcresult   # per-test durations
+```
+
+A stall shows as many tests of unrelated suites finishing within the same second after 30 s or
+more. The cause found so far: one `@MainActor` test kept the main thread busy, so every other
+main-actor test waited, and cooperative pool threads parked behind it (a NotificationCenter post
+from off the main thread to a `queue: .main` observer waits until the main thread runs it, and
+a `DispatchSemaphore.wait` in a test gate blocks its pool thread). So keep heavy CPU work in
+tests `nonisolated`, never block a pool thread on the main thread or a semaphore, and post to
+main-queue observers asynchronously (`LocalDataNotifications.post` hops to the main queue).
+Durations of 30–35 s in a parallel run that finishes in 80–90 s are queue time, not a stall.
+Wall-clock assertions (`MCPJSONRPCTests`, `MongoshSplitterTests`) can fail above a load average
+of about 40; rerun them alone. `LocalDataNotificationGate` records an issue naming its holder
+and waiter after 45 s instead of wedging the run.
+
 ## mysql-nio fork
 
 The MySQL driver comes from the [dinhanhthi/mysql-nio](https://github.com/dinhanhthi/mysql-nio)
@@ -125,7 +152,7 @@ number only with at most 15 significant digits, else its exact text; the tool pr
   Team ID, the hardened runtime and a timestamp. Check a local build with
   `codesign -dv --verbose=4 <app>/Contents/Helpers/dblore`.
 
-## Result values and keyless rows
+## Result values, cut cells and keyless rows
 
 Producers set `ColumnInfo.wallClock` once on naive timestamp columns (PostgreSQL `timestamp`,
 MySQL `DATETIME`, DuckDB `TIMESTAMP`), and every rebuild of a `ColumnInfo` keeps it; a missing
@@ -139,6 +166,36 @@ A PostgreSQL or SQLite table without a primary key is edited by `RowLocatorKind`
 `IS`. The data viewer reads them under `dblore_*` aliases, strips them before the grid and
 indexes them by page row, never by values; an UPDATE or DELETE that matches no row is a conflict.
 MySQL/MariaDB introspection returns no locator, so those tables still need a primary key.
+
+Reads are whole unless a caller opts in. `execute` / `executeDetailed` take
+`readLimits: CappedReadLimits? = nil`; only `NotebookViewModel.resultReadLimits` passes
+`CappedReadLimits.app` (1,048,576 characters per cell, binary the same bytes, 256 MiB per
+result, `marksCutCells`), from notebook cell runs (`runTask`) and `executeEditorQuery` when it
+has no `pageState` and the tab no `dataViewer`, and never for mongosh (the document editor could
+write a cut value back). Every other read stays nil and whole: data viewer pages (they read
+text as a 16,384-character prefix plus its UTF-8 byte length, and `LazyCellLoader` loads the
+full value), full-value loads, Data Rewind capture, foreign-key lookups, import and Generate
+Rows reads, catalog reads, the SQL dump and the all-rows export. MCP read managers keep their
+own `readLimits`. A cut cell is kept at exactly the limit and listed in `cutCells`, which every
+place that builds or copies a `QueryResult` / `CellResult` carries with `stoppedAtByteBudget`
+(grep `truncated =` when you add one) and notebook files persist as optional keys; a cut cell
+under a partial mask style gets the full mask, and copy, export, pin and edit refuse it through
+the `LazyCellLoader` helpers. A byte-budget stop sets `truncated`, so outside a transaction
+`resetSessionIfCapped` resets the session as for a row-cap stop (session settings, temporary
+tables and advisory locks are lost; MySQL gets KILL QUERY) and skips the rest of the script.
+
+**All rows export.** `ResultExportRunner` runs the result's one read (`ReadOnlyQueryGuard`, no
+`:name` parameters) again in `withDumpSnapshot(purpose: .resultExport)` on its own manager
+(DuckDB: the tab's manager, refused with a transaction open), masks each row with the grid's
+`maskPlan(for:)` (fail closed) and streams it through `StreamedResultWriter` to a 0600
+temporary file. It carries the tab session's PostgreSQL `search_path`, `TimeZone` and `DateStyle`
+(`set_config(..., true)` after BEGIN) and MySQL/MariaDB database, `time_zone`, `sql_mode`,
+`group_concat_max_len` and `div_precision_increment`. It refuses open or staged changes,
+temporary tables (PostgreSQL, MySQL, SQLite), a PostgreSQL `SET ROLE`, MySQL `@name` variables,
+an `ANSI_QUOTES` / `NO_BACKSLASH_ESCAPES` sql_mode, unreadable state and other column names.
+Not carried or refused: `SET SESSION AUTHORIZATION`, custom settings read by row-level
+security, other PostgreSQL output settings, MySQL `character_set_results` and SQLite attached
+files; a Vault connection connects without the tab's lease, as the SQL dump does.
 
 ## SQL text and PostgreSQL qualification
 
@@ -177,7 +234,7 @@ PostgreSQL restore pins `search_path = pg_catalog, pg_temp` around the dump
 (`SQLRestoreSearchPathPinTests`). `PostgresSearchPathIntegrationTests` (`.requiresPostgres`)
 checks planted objects against a real server.
 
-## SQL dump format
+## SQL dump format and restore
 
 A dump starts with `-- Dblore SQL dump 1 engine=<engine> created=<date>`. A dump that writes a
 DROP is version 2 (`-- Dblore SQL dump 2 ...`), so older builds refuse it at the header and never
@@ -187,6 +244,38 @@ meet the DROP; a dump without one stays version 1, byte for byte. Restore
 same script creates, and never CASCADE; on SQLite it first refuses when a table outside the dump
 cascades from a dropped one. A new statement kind that older builds must not run needs a new
 version. `SQLDumpWriterTests`, `SQLRestoreGateTests` and `SQLDumpRoundTripTests` pin both sides.
+
+A restore reads the file twice and never holds it whole. Pass 1 (`SQLRestorePlan(file:)`)
+reads it through `SQLStatementStream` (1 MiB chunks, incremental UTF-8,
+`SQLTokenizer.splitStatements(scalars:isFinal:state:)`, which must give the whole-text split
+for any chunk boundary) into `SQLRestorePlanner`, and keeps per statement only its SHA-256
+digest, kind and gate classification, plus the Safe Mode confirmation rows of non-data
+statements (up to `maxConfirmationBytes`, 16 MiB). There is no file cap; a statement over
+`maxStatementBytes` (64 MiB) is refused. Pass 2 (`RestoreStatementSource`) reads the file
+again and yields statement N only when its digest, kind and classification equal pass 1's; a
+changed, missing or appended statement throws `fileChanged(index:)` before it is sent
+(PostgreSQL, SQLite and DuckDB roll back; MySQL has run the statements before it). The
+security-scoped access stays open across both passes. Under Protected mode the pending list
+gets one line per statement kind (operation `RESTORE`, text "N data statements"), not one per
+statement.
+`SQLStatementStreamTests`, `SQLRestoreStreamTests` and `SQLRestoreFilePlanTests` pin it.
+
+## Streamed import
+
+The one-file import sheet streams CSV, TSV and NDJSON (a `.json` file whose first
+non-whitespace character after a BOM is `{`) into a new or existing table; keyed imports, JSON
+arrays and multi-file imports (`MultiFileImportModel` never passes `allowsStreaming`) keep the
+in-memory path and its 256 MiB / 100,000-row limits. `ImportFileStream` reads 1 MiB chunks in
+the preview's encoding into `DelimitedTextReader.RecordStream` or
+`JSONRowsReader.LineStream`, which bound a record by the header's column count and
+`maxRecordBytes` (64 MiB). Pass 1 checks the header (NDJSON: the union of keys over the whole
+file, else `columnsChanged`), counts rows, applies the field limit, takes the DuckDB decimal
+digits over every row and keeps one SHA-256 per block of 1,000 rows. Pass 2 is a
+`StreamedBatch`: `nextChunk` reads the next block, compares its digest before building any SQL
+(`fileChanged`, nothing of it is sent) and returns its INSERTs. CREATE TABLE is the prelude on
+PostgreSQL, SQLite and DuckDB; MySQL/MariaDB send it first on its own (it commits), so the
+empty table stays if the rows fail. `TableImportStreamTests` and `ImportFileStreamTests` pin
+it.
 
 ## Connection scripts
 

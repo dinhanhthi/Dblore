@@ -64,10 +64,15 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   cascade, nulls or leaves pointing at it. Set a value, NULL, DEFAULT or a fresh UUID on several
   cells in one change, choose what Cmd+C copies (TSV, CSV, JSON or Markdown, with formulas
   neutralized for spreadsheets), and see invisible characters as marks. Paste rows from the
-  clipboard as staged inserts, and a Reload banner shows when another tab changed the table
-- **Binary values**: show a binary column as hex, UUID, MessagePack or Protobuf with Display
-  As. Table tabs read binary cells up to 64 KB; a longer value shows as "not loaded" and is
-  loaded by its key or row location when you open or copy it, and never written back unloaded
+  clipboard as staged inserts, and a Reload banner shows when another tab changed the table.
+  Editor and notebook results cut a value at 1 MiB and stop at 256 MiB of values; a cut value
+  shows with "…", stays marked in saved notebooks and cannot be copied, exported or edited
+  whole: open the table in the data viewer, or export all rows
+- **Long and binary values**: show a binary column as hex, UUID, MessagePack or Protobuf with
+  Display As. Table tabs read binary cells up to 64 KB and long text, JSON and XML values as
+  their first 16,384 characters (PostgreSQL, MySQL/MariaDB, SQLite); a longer text value shows
+  cut with "…" and a binary one as "not loaded". Either is loaded whole by its key or row
+  location when you open, edit, copy or duplicate it, and never written back cut
 - **Data Rewind**: edits made in the data viewer on a table with a primary key (or an editable
   PostgreSQL view) keep the rows before and after, so you can preview and run the SQL that puts
   them back (PostgreSQL, MySQL, SQLite). The copies stay on this Mac and are never backed up
@@ -77,19 +82,27 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   pgvector values, in Cell Value
 - **Import and export**: import CSV, TSV and JSON as Insert, Update, Insert or Update or
   Insert skipping existing rows (matched by a primary or unique key), and several files or a
-  folder in one transaction; export to Excel, CSV, JSON, Markdown, PDF, TSV, SQL `INSERT` and
-  Parquet (with the DuckDB plugin). DuckDB takes imports too, except in Protected mode or with a
-  transaction open (it has no savepoint)
+  folder in one transaction. A CSV, TSV or NDJSON file into a new or existing table streams with
+  no file size or row limit: it is read twice (checked, then imported) and a file changed in
+  between is refused; keyed, JSON-array and multi-file imports take up to 256 MB and 100,000
+  rows. Into a new MySQL/MariaDB table the table is created first and stays, empty, if the rows
+  fail. Export to Excel, CSV, JSON, Markdown, PDF, TSV, SQL `INSERT` and Parquet (with the DuckDB
+  plugin). All rows writes a result past the row cap as CSV, JSON or SQL `INSERT`: it runs the
+  query again read-only on a separate connection (DuckDB: the tab's session), only for a
+  single read statement without `:name` parameters, and masked columns stay masked. DuckDB
+  takes imports too, except in Protected mode or with a transaction open (it has no savepoint)
 - **Generate Rows**: fill a PostgreSQL, MySQL/MariaDB or SQLite table with up to 1,000,000
   rows of seeded sample data that follow its types, foreign keys and unique keys, in one
   transaction you can cancel
 - **SQL dump and restore**: dump a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB database to a
-  `.sql` file, choosing Structure, Data and Drop per table, and restore it. Every statement is
-  checked before anything runs; a PostgreSQL restore runs the dump's DDL with a fixed
-  `search_path` and puts yours back. MySQL/MariaDB connections also restore mysqldump and
-  mariadb-dump files; a line it does not restore (GTID, triggers, routines, views, `USE`, a
-  non-utf8 character set) is refused before anything runs, naming the dump option to use. The
-  file must be valid UTF-8, so binary columns written as raw bytes cannot be read
+  `.sql` file, choosing Structure, Data and Drop per table, and restore it. The file has no size
+  limit: it is read twice, every statement (up to 64 MiB each) is checked before anything runs,
+  and a statement changed between the two reads is never sent. A PostgreSQL restore runs the
+  dump's DDL with a fixed `search_path` and puts yours back. MySQL/MariaDB connections also
+  restore mysqldump and mariadb-dump files; a line it does not restore (GTID, triggers,
+  routines, views, `USE`, a non-utf8 character set) is refused before anything runs, naming the
+  dump option to use. The file must be valid UTF-8, so binary columns written as raw bytes
+  cannot be read
 - **Running work**: Quit, closing a window and Disconnect first list the running queries,
   imports, restores, dumps, copies, exports and schema compares, and stop them only when you
   choose Stop (a Parquet export is listed at Quit only). A

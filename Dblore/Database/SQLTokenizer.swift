@@ -46,28 +46,62 @@ nonisolated struct SQLTokenizer: Sendable {
   /// `splitStatements` of text already held as Unicode scalars (a restore builds them once and
   /// frees its text)
   func splitStatements(scalars: [Unicode.Scalar]) -> [String] {
+    var state = SplitState()
+    return splitStatements(scalars: scalars, isFinal: true, state: &state).statements
+  }
+
+  /// Where an incremental split stands between calls
+  struct SplitState: Sendable, Equatable {
+    /// MySQL: the active delimiter (a `DELIMITER` line changes it)
+    var delimiter: [Unicode.Scalar] = [";"]
+    /// Offset in the next buffer of the first lexeme not scanned yet (the lexemes before it,
+    /// in the open statement, are settled and not scanned again)
+    var resume = 0
+    /// MySQL: the open statement has a token before `resume`
+    var hasContent = false
+    /// SQLite: the `sqlite3_complete` state at `resume`
+    var sqlite = SQLiteCompleteState.invalid
+  }
+
+  /// Incremental `splitStatements(scalars:)` for text read in chunks. `scalars` starts at a
+  /// statement boundary: the previous call's buffer without its first `consumed` scalars, with
+  /// the next chunk appended, and the `state` that call returned. Returns the complete
+  /// statements and the scalars they used; the rest (an open statement, string, dollar quote
+  /// or comment, a `DELIMITER` line without its line end, an open trigger body) waits for the
+  /// next call. `isFinal` splits the rest as the whole split does, so any chunking gives the
+  /// statements of `splitStatements(scalars:)`.
+  /// A non-final call stops at the first lexeme that more text could still change, and the
+  /// next call resumes there, so a long statement is scanned about once. Only that last lexeme
+  /// is lexed again, whole, on each call: one literal or comment open over k chunks costs about
+  /// k²/2 chunks of scanning (about 2 Gi scalars for a 64 MiB literal in 1 MiB chunks), and a
+  /// quoted string also rebuilds its content each time; dollar bodies and comments only scan.
+  /// MongoDB is split only at `isFinal`.
+  func splitStatements(
+    scalars: [Unicode.Scalar], isFinal: Bool, state: inout SplitState
+  ) -> (statements: [String], consumed: Int) {
     if dialect == .mongodb {
-      return MongoshSplitter.split(Self.text(scalars, scalars.indices))
+      guard isFinal else { return ([], 0) }
+      return (MongoshSplitter.split(Self.text(scalars, scalars.indices)), scalars.count)
     }
     if dialect == .mysql {
-      return mysqlSplitStatements(scalars)
+      return mysqlSplitStatements(scalars, isFinal: isFinal, state: &state)
     }
     if dialect == .sqlite {
-      return sqliteSplitStatements(scalars)
+      return sqliteSplitStatements(scalars, isFinal: isFinal, state: &state)
     }
     var statements: [String] = []
     var start = 0
-    var i = 0
+    var i = state.resume
     while i < scalars.count {
       let lexeme = self.lexeme(in: scalars, at: i)
+      if !isFinal, mayGrow(lexeme, in: scalars) { break }
       if case .symbol = lexeme.kind, scalars[i] == ";" {
         Self.appendTrimmed(scalars, start..<i, to: &statements)
         start = lexeme.range.upperBound
       }
       i = lexeme.range.upperBound
     }
-    Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
-    return statements
+    return Self.endSplit(scalars, start: start, at: i, isFinal: isFinal, statements, &state)
   }
 
   /// `splitStatements` using `dialect`. Callers that have no dialect keep PostgreSQL.
@@ -78,14 +112,21 @@ nonisolated struct SQLTokenizer: Sendable {
   /// MySQL split: at the active delimiter (`;` until a `DELIMITER` line changes it), found
   /// at any scalar of a word, number or symbol, as the `mysql` client does (so `END$$` ends at
   /// `$$`). A `DELIMITER x` line at the start of a statement sets it and is not emitted.
-  private func mysqlSplitStatements(_ scalars: [Unicode.Scalar]) -> [String] {
+  private func mysqlSplitStatements(
+    _ scalars: [Unicode.Scalar], isFinal: Bool, state: inout SplitState
+  ) -> (statements: [String], consumed: Int) {
     var statements: [String] = []
-    var delimiter: [Unicode.Scalar] = [";"]
+    var delimiter = state.delimiter
     var start = 0
-    var hasContent = false
-    var i = 0
+    var hasContent = state.hasContent
+    var i = state.resume
     scan: while i < scalars.count {
       let lexeme = self.lexeme(in: scalars, at: i)
+      if !isFinal,
+        mysqlMayGrow(lexeme, in: scalars, delimiter: delimiter, hasContent: hasContent)
+      {
+        break
+      }
       switch lexeme.kind {
       case .whitespace, .comment:
         i = lexeme.range.upperBound
@@ -121,20 +162,24 @@ nonisolated struct SQLTokenizer: Sendable {
       hasContent = true
       i = lexeme.range.upperBound
     }
-    Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
-    return statements
+    state.delimiter = delimiter
+    state.hasContent = hasContent
+    return Self.endSplit(scalars, start: start, at: i, isFinal: isFinal, statements, &state)
   }
 
   /// SQLite split: cuts exactly where SQLite's `sqlite3_complete` reports a complete statement,
   /// so `;` inside a `CREATE [TEMP | TEMPORARY] TRIGGER … BEGIN … END` body does not split: in a
   /// trigger only `;` `END` `;` (whitespace and comments between) ends it, never `CASE … END;`.
-  private func sqliteSplitStatements(_ scalars: [Unicode.Scalar]) -> [String] {
+  private func sqliteSplitStatements(
+    _ scalars: [Unicode.Scalar], isFinal: Bool, state split: inout SplitState
+  ) -> (statements: [String], consumed: Int) {
     var statements: [String] = []
-    var state = SQLiteCompleteState.invalid
+    var state = split.sqlite
     var start = 0
-    var i = 0
+    var i = split.resume
     while i < scalars.count {
       let lexeme = self.lexeme(in: scalars, at: i)
+      if !isFinal, mayGrow(lexeme, in: scalars) { break }
       let token = SQLiteCompleteState.token(of: lexeme, in: scalars)
       state = state.next(token)
       if token == .semicolon, state == .start {
@@ -143,8 +188,61 @@ nonisolated struct SQLTokenizer: Sendable {
       }
       i = lexeme.range.upperBound
     }
-    Self.appendTrimmed(scalars, start..<scalars.count, to: &statements)
-    return statements
+    split.sqlite = state
+    return Self.endSplit(scalars, start: start, at: i, isFinal: isFinal, statements, &split)
+  }
+
+  /// Non-final calls: whether more text could change `lexeme`. One that reaches the end may
+  /// grow (an open string, comment or dollar quote, `-` before `-`, `E` before `'`, `/` before
+  /// `*`), and on PostgreSQL and DuckDB a `$` before a word that reaches the end may open a
+  /// dollar quote (`$tag$`).
+  private func mayGrow(_ lexeme: SQLLexeme, in scalars: [Unicode.Scalar]) -> Bool {
+    let end = lexeme.range.upperBound
+    if end == scalars.count { return true }
+    guard dialect == .postgresql || dialect == .duckdb, case .symbol = lexeme.kind,
+      scalars[lexeme.range.lowerBound] == "$"
+    else { return false }
+    let next = self.lexeme(in: scalars, at: end)
+    guard case .word = next.kind else { return false }
+    return next.range.upperBound == scalars.count
+  }
+
+  /// MySQL non-final calls: `mayGrow`, or a cut that more text could change: a delimiter
+  /// that could start in the lexeme and run past the end, or a word that could end in a
+  /// `DELIMITER` directive whose line has no line end yet.
+  private func mysqlMayGrow(
+    _ lexeme: SQLLexeme, in scalars: [Unicode.Scalar], delimiter: [Unicode.Scalar],
+    hasContent: Bool
+  ) -> Bool {
+    if mayGrow(lexeme, in: scalars) { return true }
+    let range = lexeme.range
+    switch lexeme.kind {
+    case .word, .number, .symbol: break
+    default: return false
+    }
+    if range.upperBound - 1 + delimiter.count > scalars.count { return true }
+    // A cut inside a longer word can leave `DELIMITER` at the start of a statement
+    guard case .word = lexeme.kind, range.count >= 9, !hasContent || range.count > 9,
+      Self.asciiUppercased(Self.text(scalars, (range.upperBound - 9)..<range.upperBound))
+        == "DELIMITER"
+    else { return false }
+    return !scalars[range.upperBound...].contains("\n")
+  }
+
+  /// The end of an incremental split: at `isFinal` the rest is the last statement; otherwise
+  /// it waits from `start` and the next call resumes at `i`.
+  private static func endSplit(
+    _ scalars: [Unicode.Scalar], start: Int, at i: Int, isFinal: Bool,
+    _ statements: [String], _ state: inout SplitState
+  ) -> (statements: [String], consumed: Int) {
+    guard !isFinal else {
+      var statements = statements
+      appendTrimmed(scalars, start..<scalars.count, to: &statements)
+      state = SplitState(delimiter: state.delimiter)
+      return (statements, scalars.count)
+    }
+    state.resume = i - start
+    return (statements, start)
   }
 
   /// If the word at `range` is `DELIMITER` (any case) followed by spaces and a delimiter,

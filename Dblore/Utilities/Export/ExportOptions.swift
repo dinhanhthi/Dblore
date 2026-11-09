@@ -241,7 +241,7 @@ nonisolated struct ExportOptions: Equatable, Sendable {
   }
 }
 
-extension DataExporter {
+nonisolated extension DataExporter {
   /// Sensitive columns (the masked ones always), then nulls, then line breaks and formula
   /// prefixes when that format offers them.
   /// Column names are text, so they get the same formula prefix as text cells.

@@ -2,6 +2,10 @@
 // Download options. The format picker opens on the menu item the user chose.
 // Export writes a file. Nothing here is sent to the database. SQL INSERT and Parquet are offered
 // for SQL only. Parquet stays in the sheet after its save panel: progress and Cancel show here.
+// A result the grid holds only part of offers "All rows" (`AllRowsExportOffer`): its read runs
+// again on a separate connection and writes every row (CSV, JSON or SQL INSERT), with rows
+// written and Cancel here too. "Shown rows" of a result whose cut cells are not loaded loads them
+// first (`loadShownRows`), and exports nothing when they cannot be loaded.
 
 import SwiftUI
 
@@ -9,26 +13,53 @@ struct ResultExportSheet: View {
   let result: CellResult
   /// Formats the picker offers (`exportFormats(for:)`).
   let formats: [ExportFormat]
-  /// Default file name of a Parquet download.
+  /// Default file name of a Parquet or all-rows download.
   let queryIndex: Int?
-  var onExport: (ExportOptions) -> Void
+  /// "All rows" beside the shown rows; nil: the shown rows are every row (no rows picker)
+  let allRows: AllRowsExportChoice?
+  /// Loads the shown rows' cut cells before a "Shown rows" export (nil when they are whole);
+  /// nil back when they could not be loaded (the view model told the user)
+  let loadShownRows: (() async -> CellResult?)?
+  /// Saves the shown rows (cut cells loaded) with the options. Parquet is written here instead.
+  var onExport: (ExportOptions, CellResult) -> Void
   var onCancel: () -> Void
+
+  /// Which rows the sheet exports
+  enum RowScope: Hashable {
+    case shown
+    case all
+  }
+
+  /// Formats of an all-rows export: the ones written row by row (`StreamedResultWriter`)
+  static let allRowsFormats: [ExportFormat] = [.csv, .json, .sqlInsert]
 
   @State private var options: ExportOptions
   @State private var estimate: ExportSizeEstimate
   @State private var confirmLarge = false
   @State private var parquet = ParquetExportRun()
+  @State private var allRowsRun = AllRowsExportRun()
+  @State private var scope = RowScope.shown
+  /// The shown rows as exported: `result` until `loadShownRows` gave them whole
+  @State private var shown: CellResult
+  @State private var shownLoad: Task<Void, Never>?
+  @State private var shownError: String?
+  /// `loadShownRows` gave the shown rows whole
+  @State private var isShownLoaded = false
 
   init(
     result: CellResult, format: ExportFormat, queryLanguage: DatabaseCapabilities.QueryLanguage,
-    queryIndex: Int? = nil, onExport: @escaping (ExportOptions) -> Void,
-    onCancel: @escaping () -> Void
+    queryIndex: Int? = nil, allRows: AllRowsExportChoice? = nil,
+    loadShownRows: (() async -> CellResult?)? = nil,
+    onExport: @escaping (ExportOptions, CellResult) -> Void, onCancel: @escaping () -> Void
   ) {
     self.result = result
     self.formats = Self.exportFormats(for: queryLanguage)
     self.queryIndex = queryIndex
+    self.allRows = allRows
+    self.loadShownRows = loadShownRows
     self.onExport = onExport
     self.onCancel = onCancel
+    _shown = State(initialValue: result)
     let initial = ExportOptions(format: formats.contains(format) ? format : .csv)
       .redactingMasked(result.columns)
     _options = State(initialValue: initial)
@@ -51,17 +82,27 @@ struct ResultExportSheet: View {
       ScrollView {
         VStack(alignment: .leading, spacing: Spacing.md) {
           sectionGroup {
+            if allRows != nil {
+              rowScopePicker
+            }
             formatPicker
             Text(options.format.blurb)
               .font(.small)
               .foregroundColor(.foregroundMuted)
               .fixedSize(horizontal: false, vertical: true)
-            rowBadge
-            sizeSummary
-            if options.format.requiresDuckDBPlugin && !isDuckDBPluginReady {
-              missingPluginRow
+            if scope == .all {
+              Text("Runs the query again on a separate connection and writes every row.")
+                .font(.small)
+                .foregroundColor(.foregroundSubtle)
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+              rowBadge
+              sizeSummary
+              if options.format.requiresDuckDBPlugin && !isDuckDBPluginReady {
+                missingPluginRow
+              }
             }
-            if let message = parquet.errorMessage {
+            if let message = errorMessage {
               Text(message)
                 .font(.small)
                 .foregroundColor(.destructive)
@@ -85,12 +126,18 @@ struct ResultExportSheet: View {
     }
     .frame(width: 440, height: 560)
     .background(Color.appBackground)
-    .interactiveDismissDisabled(parquet.isRunning)
-    // Closing the tab or window also stops a running Parquet export and removes its temp folder.
-    .onDisappear { parquet.cancel() }
+    .interactiveDismissDisabled(isBusy)
+    // Closing the tab or window also stops a running export and removes its temporary file.
+    .onDisappear { cancelWork() }
     .onChange(of: options) { _, updated in
-      estimate = ExportSize.estimate(result: result, options: updated)
-      parquet.clearError()
+      estimate = ExportSize.estimate(result: shown, options: updated)
+      clearErrors()
+    }
+    .onChange(of: scope) { _, updated in
+      if updated == .all && !Self.allRowsFormats.contains(options.format) {
+        options.format = .csv
+      }
+      clearErrors()
     }
     .alert("Large export", isPresented: $confirmLarge) {
       Button("Cancel", role: .cancel) {}
@@ -113,7 +160,7 @@ struct ResultExportSheet: View {
       .buttonStyle(GhostButtonStyle(iconOnly: true))
       .help("Close")
       // The save panel stays open on its own after the sheet closes.
-      .disabled(isChoosingParquetFile)
+      .disabled(isChoosingFile)
     }
     .modalBarPadding(vertical: Spacing.sm)
   }
@@ -143,13 +190,48 @@ struct ResultExportSheet: View {
       HairlineBorder(shape: RoundedRectangle(cornerRadius: CornerRadius.md, style: .continuous)))
   }
 
+  /// "Shown rows (N)" / "All rows". Without an all-rows source the picker stays on the shown
+  /// rows and the reason shows under it (macOS shows no help on a disabled control).
+  private var rowScopePicker: some View {
+    VStack(alignment: .leading, spacing: Spacing.xs) {
+      HStack(spacing: Spacing.sm) {
+        sectionTitle("Rows")
+        Spacer(minLength: Spacing.sm)
+        CapsuleTabPicker(selection: $scope, tabs: [.shown, .all], height: 28) { tab in
+          CapsuleTabLabel(text: scopeTitle(tab), isSelected: scope == tab)
+        }
+        .fitsContent()
+        .disabled(allRows?.offer.source == nil || isBusy)
+        .accessibilityLabel("Rows")
+      }
+      if allRows?.offer.source == nil, let reason = allRows?.offer.reason {
+        Text(reason)
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private func scopeTitle(_ scope: RowScope) -> String {
+    switch scope {
+    case .shown: "Shown rows (\(result.rows.count.formatted()))"
+    case .all: "All rows"
+    }
+  }
+
+  /// The formats of the chosen rows
+  private var scopeFormats: [ExportFormat] {
+    scope == .all ? formats.filter(Self.allRowsFormats.contains) : formats
+  }
+
   private var formatPicker: some View {
     HStack(spacing: Spacing.sm) {
       sectionTitle("Format")
       Spacer(minLength: Spacing.sm)
       CapsulePickerMenu(title: options.format.title) {
         Picker("Format", selection: $options.format) {
-          ForEach(formats) { format in
+          ForEach(scopeFormats) { format in
             Text(format.title).tag(format)
           }
         }
@@ -157,7 +239,7 @@ struct ResultExportSheet: View {
         .labelsHidden()
       }
       .accessibilityLabel("Format")
-      .disabled(parquet.isRunning)
+      .disabled(isBusy)
     }
   }
 
@@ -310,7 +392,19 @@ struct ResultExportSheet: View {
 
   private var footer: some View {
     HStack {
-      if let written = parquet.rowsWritten {
+      if let written = allRowsRun.rowsWritten {
+        ProgressView()
+          .controlSize(.small)
+        Text("\(written.formatted()) \(written == 1 ? "row" : "rows") written")
+          .font(.small)
+          .foregroundColor(.foregroundMuted)
+          .monospacedDigit()
+          .fixedSize()
+        Spacer()
+        Button("Cancel") { allRowsRun.cancel() }
+          .buttonStyle(GhostButtonStyle())
+          .keyboardShortcut(.cancelAction)
+      } else if let written = parquet.rowsWritten {
         ProgressView(value: Double(written), total: Double(max(result.rows.count, 1)))
         Text("\(written.formatted()) of \(result.rows.count.formatted()) rows")
           .font(.small)
@@ -325,11 +419,17 @@ struct ResultExportSheet: View {
           options = ExportOptions(format: options.format).redactingMasked(result.columns)
         }
         .buttonStyle(GhostButtonStyle())
-        .disabled(parquet.isRunning)
+        .disabled(isBusy)
         Spacer()
+        if shownLoad != nil {
+          Text("Loading the full values…")
+            .font(.small)
+            .foregroundColor(.foregroundMuted)
+            .fixedSize()
+        }
         Button("Cancel", action: close)
           .buttonStyle(GhostButtonStyle())
-          .disabled(isChoosingParquetFile)
+          .disabled(isChoosingFile)
         Button("Export", action: export)
           .buttonStyle(PrimaryButtonStyle())
           .disabled(!canExport)
@@ -343,13 +443,37 @@ struct ResultExportSheet: View {
     PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending ?? false
   }
 
-  /// The Parquet save panel is open: no rows written yet.
-  private var isChoosingParquetFile: Bool {
-    parquet.isRunning && parquet.rowsWritten == nil
+  /// A Parquet or all-rows save panel is open: no rows written yet.
+  private var isChoosingFile: Bool {
+    (parquet.isRunning && parquet.rowsWritten == nil)
+      || (allRowsRun.isRunning && allRowsRun.rowsWritten == nil)
+  }
+
+  /// An export runs, or the shown rows' cut cells load
+  private var isBusy: Bool {
+    parquet.isRunning || allRowsRun.isRunning || shownLoad != nil
   }
 
   private var canExport: Bool {
-    !parquet.isRunning && (!options.format.requiresDuckDBPlugin || isDuckDBPluginReady)
+    !isBusy
+      && (scope == .all || !options.format.requiresDuckDBPlugin || isDuckDBPluginReady)
+  }
+
+  private var errorMessage: String? {
+    scope == .all ? allRowsRun.errorMessage : shownError ?? parquet.errorMessage
+  }
+
+  private func clearErrors() {
+    parquet.clearError()
+    allRowsRun.clearError()
+    shownError = nil
+  }
+
+  /// Stops a running export (it cleans up after itself) and the shown rows' load
+  private func cancelWork() {
+    parquet.cancel()
+    allRowsRun.cancel()
+    shownLoad?.cancel()
   }
 
   private var missingPluginRow: some View {
@@ -369,9 +493,9 @@ struct ResultExportSheet: View {
     .font(.small)
   }
 
-  /// Closes the sheet; a running Parquet export is cancelled and cleans up after itself.
+  /// Closes the sheet; a running export is cancelled and cleans up after itself.
   private func close() {
-    parquet.cancel()
+    cancelWork()
     onCancel()
   }
 
@@ -390,29 +514,82 @@ struct ResultExportSheet: View {
   }
 
   private func export() {
-    if estimate.isLarge {
+    if scope == .all {
+      exportAllRows()
+    } else if let loadShownRows, !isShownLoaded {
+      loadThenExport(loadShownRows)
+    } else if estimate.isLarge {
       confirmLarge = true
     } else {
       runExport()
     }
   }
 
+  /// Loads the shown rows' cut cells, then exports them; a refused load exports nothing
+  private func loadThenExport(_ load: @escaping () async -> CellResult?) {
+    clearErrors()
+    shownLoad = Task {
+      let loaded = await load()
+      shownLoad = nil
+      guard !Task.isCancelled else { return }
+      guard let loaded else {
+        shownError =
+          "The shown rows cannot be exported whole. All rows writes every full value."
+        return
+      }
+      shown = loaded
+      isShownLoaded = true
+      estimate = ExportSize.estimate(result: loaded, options: options)
+      if estimate.isLarge {
+        confirmLarge = true
+      } else {
+        runExport()
+      }
+    }
+  }
+
   private func runExport() {
     guard options.format == .parquet else {
-      onExport(options)
+      onExport(options, shown)
       return
     }
     parquet.start(
-      result: DataExporter.applying(options, to: result), queryIndex: queryIndex
+      result: DataExporter.applying(options, to: shown), queryIndex: queryIndex
     ) { url in
-      onCancel()
-      // The sheet is still dismissing. Presenting now stacks the two modals.
-      DispatchQueue.main.async { DataExporter.presentSavedFile(url) }
+      finishSaved(url)
+    }
+  }
+
+  private func exportAllRows() {
+    guard let allRows, let source = allRows.offer.source else { return }
+    let options = options
+    allRowsRun.start(
+      fileExtension: Self.fileExtension(options.format), queryIndex: queryIndex,
+      workspaceID: allRows.workspaceID,
+      write: { url, progress in try await allRows.write(source, options, url, progress) }
+    ) { url in
+      finishSaved(url)
+    }
+  }
+
+  /// Closes the sheet, then offers to open the saved file
+  private func finishSaved(_ url: URL) {
+    onCancel()
+    // The sheet is still dismissing. Presenting now stacks the two modals.
+    DispatchQueue.main.async { DataExporter.presentSavedFile(url) }
+  }
+
+  /// File extension of an all-rows export
+  private static func fileExtension(_ format: ExportFormat) -> String {
+    switch format {
+    case .json: "json"
+    case .sqlInsert: "sql"
+    default: "csv"
     }
   }
 
   private var rowBadge: some View {
-    let count = result.rows.count
+    let count = shown.rows.count
     let tint = rowTint(ExportRowScale.level(for: count))
     return HStack(spacing: Spacing.xs) {
       Text(count.formatted())
@@ -481,7 +658,9 @@ final class ParquetExportRun {
         rowsWritten = nil
       }
       // The sheet may have closed while the panel was open.
-      guard let url = await DataExporter.chooseParquetDestination(queryIndex: queryIndex),
+      guard
+        let url = await DataExporter.chooseDestination(
+          fileExtension: "parquet", queryIndex: queryIndex),
         !Task.isCancelled
       else { return }
       // No workspace is known here: the export is listed at Quit only
@@ -496,6 +675,80 @@ final class ParquetExportRun {
           progress: { rows in
             Task { @MainActor in self.report(rows) }
           })
+        onSaved(url)
+      } catch is CancellationError {
+      } catch {
+        errorMessage = "Export failed: \(error.localizedDescription)"
+      }
+    }
+  }
+
+  func cancel() {
+    task?.cancel()
+  }
+
+  func clearError() {
+    errorMessage = nil
+  }
+
+  /// Late reports (after the export ended) are dropped.
+  private func report(_ rows: Int) {
+    guard task != nil, let written = rowsWritten else { return }
+    rowsWritten = max(written, rows)
+  }
+}
+
+/// The sheet's "All rows" choice: what is offered, and what writes it
+struct AllRowsExportChoice {
+  let offer: AllRowsExportOffer
+  /// Runs the source again and writes every row with the options to the URL (replaced once
+  /// whole), reporting the rows written; returns them
+  let write:
+    (AllRowsExportSource, ExportOptions, URL, @escaping @Sendable (Int) -> Void) async throws
+      -> Int
+  /// The workspace the export is listed under while it runs
+  let workspaceID: UUID?
+}
+
+/// One all-rows download from the sheet: save panel, then the read again on a separate
+/// connection with its rows written, Cancel, and the error to show when it fails.
+@Observable
+final class AllRowsExportRun {
+  /// Rows written so far; nil while no export is writing.
+  private(set) var rowsWritten: Int?
+  private(set) var errorMessage: String?
+  private var task: Task<Void, Never>?
+
+  var isRunning: Bool { task != nil }
+
+  func start(
+    fileExtension: String, queryIndex: Int?, workspaceID: UUID?,
+    write: @escaping (URL, @escaping @Sendable (Int) -> Void) async throws -> Int,
+    onSaved: @escaping (URL) -> Void
+  ) {
+    guard task == nil else { return }
+    errorMessage = nil
+    task = Task {
+      defer {
+        task = nil
+        rowsWritten = nil
+      }
+      // The sheet may have closed while the panel was open.
+      guard
+        let url = await DataExporter.chooseDestination(
+          fileExtension: fileExtension, queryIndex: queryIndex),
+        !Task.isCancelled
+      else { return }
+      let runningWork = RunningWorkRegistry.shared.begin(
+        workspaceID: workspaceID, label: "Export of all rows to \(url.lastPathComponent)",
+        kind: .dataExport
+      ) { self.cancel() }
+      defer { RunningWorkRegistry.shared.end(runningWork) }
+      rowsWritten = 0
+      do {
+        _ = try await write(url) { rows in
+          Task { @MainActor in self.report(rows) }
+        }
         onSaved(url)
       } catch is CancellationError {
       } catch {

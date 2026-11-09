@@ -373,7 +373,9 @@ struct AIAssistantViewModelTests {
         .appendingPathComponent("AIConversationStoreTests-\(UUID().uuidString).json"))
   }
 
-  @Test("a local data change reloads saved chats and leaves a memory-only list")
+  @Test(
+    "a local data change reloads saved chats and leaves a memory-only list", .timeLimit(.minutes(1))
+  )
   func localDataChangeReloadsConversations() async {
     await LocalDataNotificationGate.shared.acquire()
     defer { LocalDataNotificationGate.shared.release() }

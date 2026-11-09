@@ -56,8 +56,9 @@ struct DataViewerState: Equatable {
   /// MongoDB: the editor's field edit armed a Safe Mode dialog, shown once the sheet has
   /// dismissed (`NotebookViewModel.documentEditorDismissed`)
   var confirmationAwaitsEditorDismissal = false
-  /// Every column of the table in order when the page reads large binary values lazily
-  /// (`lazyColumns(_:databaseType:orderColumns:binaryValueColumns:)`), nil for `SELECT *`.
+  /// Every column of the table in order when the page reads large binary or text values lazily
+  /// (`lazyColumns(_:databaseType:orderColumns:binaryValueColumns:located:text:)`), nil for
+  /// `SELECT *`.
   /// Set from what is cached before each page read, never from a catalog query.
   var lazyColumns: [LazyColumn]? = nil
   /// How the rows of a keyless table are named (`EditTarget.rowLocator`): the page appends them
@@ -123,15 +124,18 @@ struct DataViewerState: Equatable {
       .map { " WHERE " + $0 } ?? ""
   }
 
+  /// ` ORDER BY <orderColumns>`, empty for heap order
+  private var orderBySQL: String {
+    orderColumns.isEmpty
+      ? "" : " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
+  }
+
   /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1).
   /// A lazy page lists `lazyColumns` instead of `*`, then its `lengthColumns`; a keyless page
   /// appends its `locatorColumns`.
   var pageSQL: String {
     assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
-    var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)"
-    if !orderColumns.isEmpty {
-      sql += " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
-    }
+    var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)\(orderBySQL)"
     if page > 1 {
       let offset = (page - 1) * pageSize
       sql += " " + databaseType.dialect.limitOffset(limit: pageSize, offset: offset)
@@ -147,6 +151,18 @@ struct DataViewerState: Equatable {
     var shown = self
     shown.rowLocator = nil
     return shown.pageSQL
+  }
+
+  /// The read of every row the page's filter and order give, for the all-rows export:
+  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...]` without LIMIT / OFFSET. A lazy page lists
+  /// `lazyColumns` whole, in order (the page's result columns), without its length or locator
+  /// columns. SQLite names them through the table: a double-quoted name that matches no column
+  /// (a stale cache's) would be read as a string literal, so it fails instead.
+  var exportSQL: String {
+    assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
+    let table = databaseType == .sqlite ? relation + "." : ""
+    let list = lazyColumns.map { $0.map { table + quotedIdentifier($0.name) } } ?? ["*"]
+    return "SELECT \(list.joined(separator: ", ")) FROM \(relation)\(whereSQL)\(orderBySQL)"
   }
 
   var countSQL: String {
@@ -189,24 +205,66 @@ struct DataViewerState: Equatable {
   }
 }
 
-// MARK: - Lazy binary columns
+// MARK: - Lazy binary and text columns
 
 extension DataViewerState {
   /// Bytes a lazy page reads of each prefixed binary value
   static let lazyPrefixBytes = 65536
+  /// Characters a lazy page reads of each prefixed text value
+  static let lazyPrefixCharacters = 16384
 
   /// A column of a lazy page
   struct LazyColumn: Equatable {
+    /// How a lazy page cuts a column
+    enum Prefix: Equatable {
+      /// Binary: its first `lazyPrefixBytes` bytes
+      case bytes
+      /// Text: its first `lazyPrefixCharacters` characters, with the value's UTF-8 byte length
+      /// (a SQLite column also cuts its blob values as `bytes` does)
+      case characters
+    }
+
     let name: String
-    /// Cached type, given back to a prefixed column whose result has no type (SQLite)
+    /// Cached (catalog) type: given back to a prefixed column, whose result type is the
+    /// expression's (none on SQLite, text for a cut PostgreSQL `jsonb`)
     let type: String
     let isPrimaryKey: Bool
-    /// Read as its first `lazyPrefixBytes` bytes, with its byte length in a length column
-    let isPrefixed: Bool
+    /// How it is cut, with its byte length in a length column; nil: read whole
+    let prefix: Prefix?
+
+    init(name: String, type: String, isPrimaryKey: Bool, prefix: Prefix?) {
+      self.name = name
+      self.type = type
+      self.isPrimaryKey = isPrimaryKey
+      self.prefix = prefix
+    }
+
+    /// A binary column (`bytes`) when `isPrefixed`
+    init(name: String, type: String, isPrimaryKey: Bool, isPrefixed: Bool) {
+      self.init(
+        name: name, type: type, isPrimaryKey: isPrimaryKey, prefix: isPrefixed ? .bytes : nil)
+    }
+
+    /// Read cut, with its byte length in a length column
+    var isPrefixed: Bool { prefix != nil }
   }
 
-  /// Binary values a lazy page cut to `lazyPrefixBytes`, carried by its result
-  /// (`CellResult.truncation`) with what reads their full values
+  /// What picks the text columns a lazy page cuts (`lazyColumns`). Given only when the text
+  /// byte lengths are UTF-8: PostgreSQL `server_encoding` `UTF8`, SQLite `PRAGMA encoding`
+  /// `UTF-8`, always on MySQL (its lengths convert to utf8mb4).
+  struct TextPrefixRules {
+    /// The connection's mask rules: a column one matches by name (any style) is read whole, as
+    /// a partial style on a prefix would show part of it as the value's end
+    var masks: ColumnMaskRuleSet
+    /// PostgreSQL type data of the relation (`columnTypeData`): a column that has some is an
+    /// extension or user type, read whole
+    var columnTypeData: [String: PostgresColumnType] = [:]
+    /// SQLite columns whose loaded values were text (SQLite columns have no fixed type)
+    var textValueColumns: Set<String> = []
+  }
+
+  /// Values a lazy page cut (binary to `lazyPrefixBytes`, text to `lazyPrefixCharacters`),
+  /// carried by its result (`CellResult.truncation`) with what reads their full values
   nonisolated struct Truncation: Equatable, Sendable {
     /// Primary key columns whose values, in this order, make a row key
     var keyColumns: [String] = []
@@ -245,27 +303,37 @@ extension DataViewerState {
 
   /// The lazy columns of a table with `columns` (in order), or nil for `SELECT *`: an engine
   /// other than PostgreSQL, MySQL and SQLite, no primary key (unless `located`: the page reads
-  /// the row locators its cut cells are read by), or no binary column. Binary:
-  /// PostgreSQL `bytea`, a MySQL or SQLite type naming BLOB or BINARY, and a SQLite column in
-  /// `binaryValueColumns` (its loaded values were blobs: SQLite columns have no fixed type).
+  /// the row locators its cut cells are read by), or no binary or long text column. Binary
+  /// (`bytes`): PostgreSQL `bytea`, a MySQL or SQLite type naming BLOB or BINARY, and a SQLite
+  /// column in `binaryValueColumns` (its loaded values were blobs: SQLite columns have no fixed
+  /// type). Text (`characters`), only with `text` rules (`isLongText`).
   /// Primary key and ORDER BY columns are never prefixed: the alias would shadow them.
   static func lazyColumns(
     _ columns: [(name: String, type: String, isPrimaryKey: Bool)], databaseType: DatabaseType,
-    orderColumns: [String], binaryValueColumns: Set<String> = [], located: Bool = false
+    orderColumns: [String], binaryValueColumns: Set<String> = [], located: Bool = false,
+    text: TextPrefixRules? = nil
   ) -> [LazyColumn]? {
     guard [.postgresql, .mysql, .sqlite].contains(databaseType),
       located || columns.contains(where: \.isPrimaryKey)
     else { return nil }
-    let lazy = columns.map { column in
+    let kinds = columns.map { column -> (binary: Bool, text: Bool) in
+      guard !column.isPrimaryKey, !orderColumns.contains(column.name) else { return (false, false) }
       let type = column.type.lowercased()
       let isBinary =
         databaseType == .postgresql
         ? type == "bytea"
         : type.contains("blob") || type.contains("binary")
           || (databaseType == .sqlite && binaryValueColumns.contains(column.name))
-      return LazyColumn(
+      let isText = text.map { isLongText(column.name, type: column.type, databaseType, rules: $0) }
+      return (isBinary, isText ?? false)
+    }
+    // A cut column is an expression, which names no table: with every column cut, the page
+    // would have no column origin and no edit target, so its text is read whole
+    let cutsText = kinds.contains { !$0.binary && !$0.text }
+    let lazy = zip(columns, kinds).map { column, kind in
+      LazyColumn(
         name: column.name, type: column.type, isPrimaryKey: column.isPrimaryKey,
-        isPrefixed: isBinary && !column.isPrimaryKey && !orderColumns.contains(column.name))
+        prefix: kind.text && cutsText ? .characters : kind.binary ? .bytes : nil)
     }
     // A table column named like a length alias would make the names ambiguous (MySQL and
     // SQLite names ignore case)
@@ -276,18 +344,67 @@ extension DataViewerState {
     return lazy
   }
 
+  /// A text column a lazy page cuts, never one a mask rule of `rules` matches by name (the
+  /// broadest match). PostgreSQL: built-in `text`, `json`, `jsonb`, `xml`, and `character
+  /// varying` without a length or with one above `lazyPrefixCharacters` (the schema cache's
+  /// type text; a column with type data is an extension or user type). MySQL: `TINYTEXT` to
+  /// `LONGTEXT`, `JSON`, and `VARCHAR(n)` above the prefix. SQLite: a declared type with TEXT
+  /// affinity (SQLite ignores a length), a declared JSON, or loaded text values; the page cuts
+  /// only its text (and blob) values.
+  private static func isLongText(
+    _ name: String, type: String, _ databaseType: DatabaseType, rules: TextPrefixRules
+  ) -> Bool {
+    guard rules.masks.matchingRule(column: name, origin: nil) == nil else { return false }
+    let type = type.trimmingCharacters(in: .whitespaces).lowercased()
+    if databaseType == .sqlite {
+      // TEXT affinity (INT first, then CHAR, CLOB or TEXT; never a length) or a declared JSON
+      return rules.textValueColumns.contains(name) || type == "json"
+        || (!type.contains("int") && ["char", "clob", "text"].contains(where: type.contains))
+    }
+    // `name` or `name(n)` and nothing after: an array or any other form is read whole
+    let parts = type.split(separator: "(", maxSplits: 1, omittingEmptySubsequences: false)
+    let base = parts[0].trimmingCharacters(in: .whitespaces)
+    var isLong = true
+    if parts.count == 2 {
+      guard parts[1].hasSuffix(")"), let length = Int(parts[1].dropLast()) else { return false }
+      isLong = length > lazyPrefixCharacters
+    }
+    switch databaseType {
+    case .postgresql:
+      guard rules.columnTypeData[name] == nil else { return false }
+      if ["text", "json", "jsonb", "xml"].contains(base) { return parts.count == 1 }
+      return ["character varying", "varchar"].contains(base) && isLong
+    case .mysql:
+      if ["tinytext", "text", "mediumtext", "longtext", "json"].contains(base) {
+        return parts.count == 1
+      }
+      return base == "varchar" && parts.count == 2 && isLong
+    default: return false
+    }
+  }
+
   /// `*`, or the lazy columns in order (prefixed ones aliased to their name) then the length
   /// columns; then the locator columns of `rowLocator`, whichever of the two it is
   private var selectList: String {
     var list = ["*"]
     if let lazyColumns {
-      let prefixed = lazyColumns.filter(\.isPrefixed).map { quotedIdentifier($0.name) }
+      // SQLite reads a double-quoted name that matches no column (a stale cache's) as a string
+      // literal: a cut text column is named through its table, so it fails instead
+      func source(_ column: LazyColumn) -> String {
+        let name = quotedIdentifier(column.name)
+        return databaseType == .sqlite && column.prefix == .characters
+          ? "\(relation).\(name)" : name
+      }
       let columns = lazyColumns.map { column in
         let name = quotedIdentifier(column.name)
-        return column.isPrefixed ? "\(prefixExpression(name)) AS \(name)" : name
+        guard let prefix = column.prefix else { return name }
+        return "\(prefixExpression(source(column), prefix, type: column.type)) AS \(name)"
       }
-      let lengths = zip(prefixed, lengthColumns).map { name, alias in
-        "\(lengthExpression(name)) AS \(quotedIdentifier(alias))"
+      let prefixed = lazyColumns.compactMap { column in
+        column.prefix.map { (source(column), $0, column.type) }
+      }
+      let lengths = zip(prefixed, lengthColumns).map { column, alias in
+        "\(lengthExpression(column.0, column.1, type: column.2)) AS \(quotedIdentifier(alias))"
       }
       list = columns + lengths
     }
@@ -317,29 +434,62 @@ extension DataViewerState {
     return zip(sources, locatorColumns).map { "\($0) AS \(quotedIdentifier($1))" }
   }
 
-  /// The first `lazyPrefixBytes` bytes of `column`, still a binary value: PostgreSQL
+  /// `bytes`: the first `lazyPrefixBytes` bytes of `column`, still a binary value: PostgreSQL
   /// `substring(bytea ...)` is bytea, MySQL `LEFT` of a binary string is a binary string, and
   /// SQLite `substr` of a blob counts bytes and is a blob. SQLite stores any type in any
   /// column, so only its blobs are cut; other values are read whole.
-  private func prefixExpression(_ column: String) -> String {
+  /// `characters`: the first `lazyPrefixCharacters` characters, as text (PostgreSQL through
+  /// `pg_catalog.text`, a MySQL `JSON` as `CHAR`); SQLite cuts text values so and blob values
+  /// as `bytes` does, other values are read whole.
+  private func prefixExpression(
+    _ column: String, _ prefix: LazyColumn.Prefix, type: String
+  ) -> String {
     let bytes = Self.lazyPrefixBytes
-    switch databaseType {
-    case .mysql: return "LEFT(\(column), \(bytes))"
-    case .sqlite:
+    let characters = Self.lazyPrefixCharacters
+    let dialect = databaseType.dialect
+    switch (databaseType, prefix) {
+    case (.mysql, .bytes): return "LEFT(\(column), \(bytes))"
+    case (.mysql, .characters): return "LEFT(\(mysqlText(column, type: type)), \(characters))"
+    case (.sqlite, .bytes):
       return "CASE WHEN typeof(\(column)) = 'blob' THEN substr(\(column), 1, \(bytes))"
         + " ELSE \(column) END"
+    case (.sqlite, .characters):
+      return "CASE WHEN typeof(\(column)) = 'text' THEN substr(\(column), 1, \(characters))"
+        + " WHEN typeof(\(column)) = 'blob' THEN substr(\(column), 1, \(bytes))"
+        + " ELSE \(column) END"
+    case (_, .characters):
+      return dialect.function("left", dialect.cast(column, to: "text"), String(characters))
     default: return "substring(\(column) from 1 for \(bytes))"
     }
   }
 
-  /// Byte length of `column`, NULL for NULL (and for a SQLite value that is not a blob)
-  private func lengthExpression(_ column: String) -> String {
-    switch databaseType {
-    case .mysql: return "LENGTH(\(column))"
-    case .sqlite: return "CASE WHEN typeof(\(column)) = 'blob' THEN length(\(column)) END"
-    case .postgresql: return databaseType.dialect.function("octet_length", column)
+  /// Byte length of `column`, NULL for NULL (and for a SQLite value that is not a blob, or not
+  /// text for `characters`). Text counts its UTF-8 bytes: PostgreSQL `octet_length` of a UTF8
+  /// database's text, MySQL `LENGTH` of its utf8mb4 conversion, SQLite `length` of the text as
+  /// a blob in a UTF-8 database (`length` of the text itself stops at the first NUL).
+  private func lengthExpression(
+    _ column: String, _ prefix: LazyColumn.Prefix, type: String
+  ) -> String {
+    let dialect = databaseType.dialect
+    switch (databaseType, prefix) {
+    case (.mysql, .bytes): return "LENGTH(\(column))"
+    case (.mysql, .characters):
+      return "LENGTH(CONVERT(\(mysqlText(column, type: type)) USING utf8mb4))"
+    case (.sqlite, .bytes): return "CASE WHEN typeof(\(column)) = 'blob' THEN length(\(column)) END"
+    case (.sqlite, .characters):
+      return "CASE WHEN typeof(\(column)) = 'text' THEN length(CAST(\(column) AS BLOB))"
+        + " WHEN typeof(\(column)) = 'blob' THEN length(\(column)) END"
+    case (.postgresql, .characters):
+      return dialect.function("octet_length", dialect.cast(column, to: "text"))
+    case (.postgresql, .bytes): return dialect.function("octet_length", column)
     default: return "octet_length(\(column))"
     }
+  }
+
+  /// A MySQL text `column`, its `JSON` as `CHAR`
+  private func mysqlText(_ column: String, type: String) -> String {
+    type.trimmingCharacters(in: .whitespaces).lowercased() == "json"
+      ? databaseType.dialect.cast(column, to: "CHAR") : column
   }
 }
 
