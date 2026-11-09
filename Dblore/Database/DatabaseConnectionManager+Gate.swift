@@ -20,8 +20,9 @@ nonisolated enum GateDecision: Sendable, Equatable {
   case blocked(statementIndex: Int, kind: StatementKind, reason: String)
 }
 
-/// The INSERTs of a Generate Rows or Copy Objects run, made one chunk at a time inside the run's
-/// transaction (`executeGatedBatch(streamed:)`), so the whole run is never in memory.
+/// The INSERTs of a Generate Rows, Copy Objects or streamed import run, made one chunk at a time
+/// inside the run's transaction (`executeGatedBatch(streamed:)`), so the whole run is never in
+/// memory.
 nonisolated struct StreamedBatch: Sendable {
   /// The quoted table the rows go into: the run's one pending summary names it
   let relation: String
@@ -31,6 +32,14 @@ nonisolated struct StreamedBatch: Sendable {
   var operation = "Generating rows"
   /// The rows, as the pending summary names them ("INSERT INTO <relation>: N <rowsLabel>")
   var rowsLabel = "generated rows"
+  /// Sent before the first chunk, ahead of the caller's `prelude` (an import's CREATE TABLE)
+  var prelude: [BoundStatement] = []
+  /// A table import: the engine's data-import rule applies instead of the row-edit one (DuckDB
+  /// imports outside Protected mode and any open transaction)
+  var isDataImport = false
+  /// The file rows of the run's row statement N (from 0, the prelude not counted), which its
+  /// failure names; nil when unknown
+  var rowRange: (@Sendable (Int) async -> ClosedRange<Int>?)? = nil
 }
 
 extension DatabaseConnectionManager {
@@ -367,7 +376,9 @@ extension DatabaseConnectionManager {
   /// MySQL / MariaDB a schema change or other implicit-commit statement there is refused: it
   /// would commit the run halfway. `progress` gets the number of chunks done after each one. A
   /// cancel, a chunk the source fails to make, a statement the server refuses, or a relock rolls
-  /// back the whole run, prelude and postlude included.
+  /// back the whole run, prelude and postlude included. `source.prelude` runs first;
+  /// `source.isDataImport` takes the staged import's engine rules (DuckDB refused in Protected
+  /// mode or with a transaction open), and a failed row statement names `source.rowRange`.
   /// - Returns: the rows inserted.
   func executeGatedBatch(
     streamed source: StreamedBatch, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
@@ -378,7 +389,8 @@ extension DatabaseConnectionManager {
     guard epoch == connectionEpoch else {
       throw DatabaseError.notEditable("the connection changed; run the query again to edit")
     }
-    try refuseIfRowEditsUnsupported()
+    try refuseIfRowEditsUnsupported(isDataImport: source.isDataImport)
+    let prelude = source.prelude + prelude
     let effective = effectivePolicy(for: policy)
     if effective.protectionLevel == .readOnly {
       throw DatabaseError.blockedByProtection(
@@ -389,15 +401,37 @@ extension DatabaseConnectionManager {
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     try refuseIfAborted()
+    if source.isDataImport, let reason = duckDBImportRefusalReason(policy: policy) {
+      throw DatabaseError.sequentialBatchRefused(reason)
+    }
     guard session != nil else { throw DatabaseError.notConnected }
     try refuseIfConnectionClosed()
     // Counted before the first suspension, so a Commit / Rollback arriving meanwhile is refused
     commitGuard.inFlight += 1
     defer { commitGuard.inFlight -= 1 }
     let cancellationGeneration = batchCancellationGeneration
-    return try await runStreamedBatch(
-      source, caller: caller, policy: effective, cancellationGeneration: cancellationGeneration,
-      prelude: prelude, postlude: postlude, progress: progress)
+    do {
+      return try await runStreamedBatch(
+        source, caller: caller, policy: effective, cancellationGeneration: cancellationGeneration,
+        prelude: prelude, postlude: postlude, progress: progress)
+    } catch {
+      throw await Self.namingRows(error, source: source, preludeCount: prelude.count)
+    }
+  }
+
+  /// A failed row statement of `source` with the file rows it sent ("Rows 3–7: ..."), as a
+  /// staged import names them; any other error as is
+  private nonisolated static func namingRows(
+    _ error: any Error, source: StreamedBatch, preludeCount: Int
+  ) async -> any Error {
+    guard let rowRange = source.rowRange,
+      case DatabaseError.batchStatementFailed(let index, let sql, let reason, let rolledBack) =
+        error,
+      index >= preludeCount, let range = await rowRange(index - preludeCount)
+    else { return error }
+    return DatabaseError.batchStatementFailed(
+      index: index, sqlPrefix: sql,
+      reason: "Rows \(range.lowerBound)–\(range.upperBound): \(reason)", rolledBack: rolledBack)
   }
 
   /// The streamed batch's prelude and postlude: one statement each that `policy` allows and,

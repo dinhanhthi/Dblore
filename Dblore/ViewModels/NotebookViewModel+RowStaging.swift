@@ -39,9 +39,14 @@ struct PendingStagedBatch: Sendable {
   /// Data Rewind reads for a staged commit (`historySource` `.dataViewerEdit` only; an import
   /// never sends one)
   var rewindPlan: RewindPlan? = nil
-  /// Generate Rows: the INSERTs, made chunk by chunk while they are sent through
-  /// `executeGatedBatch(streamed:)`; `statements` is then empty and `preview` the run's summary
+  /// Generate Rows, a streamed import: the INSERTs, made chunk by chunk while they are sent
+  /// through `executeGatedBatch(streamed:)`; `statements` is then empty and `preview` the run's
+  /// summary
   var streamed: StreamedBatch? = nil
+  /// A streamed import into a new MySQL / MariaDB table: its CREATE TABLE, sent alone before
+  /// `streamed` (`executeGatedSequentialBatch`), as it commits implicitly and so can't be the
+  /// run's prelude. The new table stays, empty, if the rows then fail.
+  var separateCreate: BoundStatement? = nil
   /// Chunks of `streamed` done so far: 0 as the tab starts sending it, then after each one
   var streamedProgress: (@Sendable (Int) -> Void)? = nil
   /// The end of a `streamed` run Safe Mode held: its failure, or nil once it is sent or declined
@@ -445,15 +450,24 @@ extension NotebookViewModel {
     var failure: String?
     // The batch runs whole or not at all: the tables it wrote once it ran
     var ranStatements: [String] = []
+    // A separate CREATE TABLE committed: the new table stays whatever the rows do
+    var createdTable = false
     do {
       let rowCount: Int
       if let streamed = batch.streamed {
         batch.streamedProgress?(0)
+        if let create = batch.separateCreate {
+          _ = try await connectionManager.executeGatedSequentialBatch(
+            [create.sql], policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
+            caller: id, expectedRows: nil)
+          createdTable = true
+          ranStatements = [create.sql]
+        }
         rowCount = try await connectionManager.executeGatedBatch(
           streamed: streamed, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
           caller: id, progress: batch.streamedProgress)
         // Its INSERTs are made chunk by chunk; they all go into this one table
-        ranStatements = ["INSERT INTO \(streamed.relation)"]
+        ranStatements.append("INSERT INTO \(streamed.relation)")
       } else {
         rowCount = try await connectionManager.executeGatedBatch(
           batch.statements, policy: protectionPolicy, connectionEpoch: batch.connectionEpoch,
@@ -491,12 +505,21 @@ extension NotebookViewModel {
           index: index, sqlPrefix: sql, reason: Self.keylessRowChangedMessage,
           rolledBack: rolledBack)
       }
-      let message = Self.batchFailureMessage(shown, batch: batch)
+      // A streamed import's failed statement: its file rows for the toast and History summary
+      // (its message already names them)
+      let named = await Self.namingStreamedRows(error, batch: batch)
+      let kept = { (text: String) in
+        guard createdTable else { return text }
+        return text + (text.hasSuffix(".") ? " " : ". ") + Self.keptNewTableNote
+      }
+      let message = kept(Self.batchFailureMessage(shown, batch: batch))
       recordFailure(
         error, sql: batch.preview, duration: Date().timeIntervalSince(started),
-        source: batch.historySource, errorMessage: Self.batchFailureMessage(error, batch: batch),
-        importSummary: Self.batchFailureMessage(error, batch: batch, detail: "Import failed"))
-      showToast(Self.batchToastMessage(shown, batch: batch, fullMessage: message), type: .error)
+        source: batch.historySource,
+        errorMessage: kept(Self.batchFailureMessage(error, batch: batch)),
+        importSummary: Self.batchFailureMessage(error, batch: named, detail: "Import failed"))
+      showToast(
+        kept(Self.batchToastMessage(shown, batch: named, fullMessage: message)), type: .error)
       failure = message
     }
     if !ranStatements.isEmpty {
@@ -508,7 +531,9 @@ extension NotebookViewModel {
 
   /// Gate pre-check and Safe Mode confirmation for an import in this tab's transaction.
   /// A DuckDB refusal (Protected mode, a transaction open) is returned before Safe Mode asks,
-  /// so the sheet shows it.
+  /// so the sheet shows it. A streamed import (`batch.streamed`) is checked through its summary
+  /// `preview` (its CREATE TABLE and INSERT), as a Generate Rows run is, and keeps its sheet
+  /// open while Safe Mode asks: the run's end comes back through `streamedCompletion`.
   func beginImportBatch(_ batch: PendingStagedBatch) async -> String? {
     if let reason = importUnsupportedReason { return reason }
     if notebook.connectionConfig?.databaseType == .duckdb, let manager = connectionManager,
@@ -519,16 +544,22 @@ extension NotebookViewModel {
     guard !hasPendingStagedChanges else {
       return "Commit or discard staged changes before importing"
     }
-    if case .blocked(_, _, let reason) = DatabaseConnectionManager.evaluateBatch(
+    if batch.streamed != nil {
+      if let message = protectionBlockMessage(for: batch.preview) { return message }
+    } else if case .blocked(_, _, let reason) = DatabaseConnectionManager.evaluateBatch(
       batch.statements, policy: protectionPolicy, dialect: sqlDialect)
     {
       return reason
     }
-    if presentConfirmationIfNeeded(for: batch.preview, cellId: nil) {
+    if presentConfirmationIfNeeded(
+      for: batch.preview, cellId: nil,
+      alsoAffected: batch.separateCreate == nil ? [] : [Self.separateCreateSafeModeNote])
+    {
       pendingExplainSQL = nil
-      // The sheet closes now, so a later failure is reported by the toast and History
       var confirmed = batch
-      confirmed.reportsToImportSheet = false
+      // A staged import's sheet closes now, so a later failure is reported by the toast and
+      // History; a streamed one's stays open for it
+      if batch.streamed == nil { confirmed.reportsToImportSheet = false }
       pendingStagedBatch = confirmed
       return nil
     }
@@ -550,6 +581,30 @@ extension NotebookViewModel {
       return nil
     }
     return await runConfirmedStagedBatch(batch)
+  }
+
+  /// Added to a failure once a separate CREATE TABLE committed (`separateCreate`)
+  static let keptNewTableNote = "The new table was created first and stays, empty."
+
+  /// Safe Mode's line under the statements of a MySQL / MariaDB import into a new table: its
+  /// statement list keeps one short line per statement, so the note has a line of its own
+  static let separateCreateSafeModeNote =
+    "The new table is created first and stays, empty, if the rows fail."
+
+  /// `batch` with the file rows of a streamed import's failed row statement in `rowRanges`
+  /// (`StreamedBatch.rowRange`), so `batchFailureMessage` names them as a staged import's;
+  /// any other batch or error as is
+  private static func namingStreamedRows(
+    _ error: Error, batch: PendingStagedBatch
+  ) async -> PendingStagedBatch {
+    guard let streamed = batch.streamed, let rowRange = streamed.rowRange,
+      case DatabaseError.batchStatementFailed(let index, _, _, _) = error,
+      index >= streamed.prelude.count,
+      let range = await rowRange(index - streamed.prelude.count)
+    else { return batch }
+    var named = batch
+    named.rowRanges = Array(repeating: nil, count: index) + [range]
+    return named
   }
 
   /// `detail` after the failed statement's file and rows: "c.csv rows 3–7: ", "c.csv: " for

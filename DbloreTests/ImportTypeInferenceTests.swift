@@ -79,6 +79,41 @@ struct ImportTypeInferenceTests {
     #expect(ImportTypeInference.Kind.localTimestamp.sqlType(dialect: .postgresql) == "timestamp")
   }
 
+  /// Pass 1 of a streamed import feeds the accumulator row by row: its digits must be the
+  /// whole-file `withDecimalDigits`, also when the widest value comes late or a value is not
+  /// plain notation after plain ones
+  @Test("Decimal digits accumulated row by row equal the whole-file digits")
+  func accumulatorEqualsWholeFile() {
+    var late: [[String?]] = (1...1_500).map { ["\($0 % 10).5"] }
+    late[1_400] = ["-123.4567"]
+    let cases: [[[String?]]] = [
+      [
+        ["1", "1.5", "true", "2026-10-03", "hello", nil],
+        ["2", "3", "false", "2026-10-04", "42", "  "],
+        [" ", nil, "", nil, "world", ""],
+      ],
+      [["1", "1.2x", "-9223372036854775809"], ["2", "3.4", "0"]],
+      [["00501", "0"], ["02134", "-12"], ["007", "34"]],
+      [["0.5"], ["1.5"], ["1e5"], ["22.25"]],
+      late,
+    ]
+    for rows in cases {
+      let columns = (0..<(rows.first?.count ?? 0)).map {
+        ImportSQLBuilder.Column(name: "c\($0)", kind: .decimal)
+      }
+      var accumulators = columns.map { _ in ImportTypeInference.Accumulator() }
+      for row in rows {
+        for index in accumulators.indices { accumulators[index].add(row[index]) }
+      }
+      #expect(
+        accumulators.map(\.digits)
+          == TableImportModel.withDecimalDigits(columns, rows: rows).map(\.precisionScale))
+    }
+    var accumulator = ImportTypeInference.Accumulator()
+    for row in late { accumulator.add(row[0]) }
+    #expect(accumulator.digits == .init(precision: 7, scale: 4))
+  }
+
   /// Decimals keep every digit: never a binary float type (SQLite has no exact decimal type).
   /// DuckDB decimals are text unless the builder has their digits (`ImportSQLBuilderTests`).
   @Test("Database types match the inferred kind")

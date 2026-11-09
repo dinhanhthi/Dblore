@@ -939,6 +939,245 @@ struct TableImportModelTests {
       isPartial: isPartial, predicate: isPartial ? "a > 0" : nil)
   }
 
+  @Test("The sheet streams a CSV: CREATE as prelude, pass 1's count, checked 1,000-row chunks")
+  func streamedCSV() async throws {
+    let lines = (1...2_500).map { "p\($0),\($0)" }
+    let url = temporaryFile("name,n\n" + lines.joined(separator: "\n") + "\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .new(schema: nil, table: "people")
+    let batch = try await model.prepareBatch(
+      dialect: .sqlite, connectionEpoch: 3, allowsStreaming: true)
+    let streamed = try #require(batch.streamed)
+    #expect(batch.statements.isEmpty)
+    #expect(batch.historySource == .dataImport)
+    #expect(streamed.relation == #""people""#)
+    #expect(streamed.operation == "Importing rows")
+    #expect(streamed.rowsLabel == "imported rows")
+    #expect(streamed.isDataImport)
+    #expect(streamed.prelude.map(\.sql) == [#"CREATE TABLE "people" ("name" TEXT, "n" INTEGER)"#])
+    #expect(batch.preview.hasSuffix(#"INSERT INTO "people" ("name", "n") -- 2500 rows from file"#))
+    // SQLite's 999 binds split each block, never merge two: rows keep their file numbers
+    let first = try #require(try await streamed.nextChunk())
+    #expect(first.map(\.expectedRows) == [499, 499, 2])
+    #expect(first[0].values.prefix(2) == ["p1", "1"])
+    #expect(await streamed.rowRange?(2) == 999...1_000)
+    #expect(try await streamed.nextChunk()?.map(\.expectedRows) == [499, 499, 2])
+    #expect(await streamed.rowRange?(3) == 1_001...1_499)
+    #expect(await streamed.rowRange?(0) == nil)
+    #expect(try await streamed.nextChunk()?.map(\.expectedRows) == [499, 1])
+    #expect(try await streamed.nextChunk() == nil)
+
+    // Without the sheet's flag (multi-file, settings) the file is read whole as before
+    let staged = try await model.prepareBatch(dialect: .sqlite, connectionEpoch: 3)
+    #expect(staged.streamed == nil)
+    #expect(staged.statements.count == 7)
+  }
+
+  @Test("A block changed after pass 1 throws fileChanged before its INSERT is made")
+  func streamedFileChanged() async throws {
+    let rows = (1...2_000).map { "\($0)" }
+    let url = temporaryFile("id\n" + rows.joined(separator: "\n") + "\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: nil, table: "t")
+    let streamed = try #require(
+      try await model.prepareBatch(dialect: .sqlite, connectionEpoch: 1, allowsStreaming: true)
+        .streamed)
+    var changed = rows
+    changed[1_500] = "x"
+    try Data(("id\n" + changed.joined(separator: "\n") + "\n").utf8).write(to: url)
+    #expect(try await streamed.nextChunk()?.count == 2)
+    await expectFileChanged { _ = try await streamed.nextChunk() }
+    // The run stays failed: it never reports the end, which would commit
+    await expectFileChanged { _ = try await streamed.nextChunk() }
+
+    // A block past pass 1's last, or a file that ends before it, is never sent
+    for rewritten in [rows + ["2001"], Array(rows.prefix(1_000))] {
+      try Data(("id\n" + rows.joined(separator: "\n") + "\n").utf8).write(to: url)
+      let run = try #require(
+        try await model.prepareBatch(dialect: .sqlite, connectionEpoch: 1, allowsStreaming: true)
+          .streamed)
+      try Data(("id\n" + rewritten.joined(separator: "\n") + "\n").utf8).write(to: url)
+      #expect(try await run.nextChunk() != nil)
+      if rewritten.count > rows.count { #expect(try await run.nextChunk() != nil) }
+      await expectFileChanged { _ = try await run.nextChunk() }
+    }
+  }
+
+  @Test("NDJSON streams; a JSON array stays in memory; MySQL sends CREATE TABLE on its own")
+  func streamedEligibility() async throws {
+    let ndjson = temporaryFile("\u{FEFF} {\"id\": 1}\n{\"id\": 2}\n", extension: "json")
+    let array = temporaryFile("[{\"id\": 1}, {\"id\": 2}]", extension: "json")
+    defer {
+      try? FileManager.default.removeItem(at: ndjson)
+      try? FileManager.default.removeItem(at: array)
+    }
+    let lines = TableImportModel()
+    await lines.loadFile(ndjson)
+    lines.destination = .existing(schema: "public", table: "t")
+    let streamed = try #require(
+      try await lines.prepareBatch(dialect: .postgresql, connectionEpoch: 1, allowsStreaming: true)
+        .streamed)
+    #expect(try await streamed.nextChunk()?.first?.values == ["1", "2"])
+    #expect(try await streamed.nextChunk() == nil)
+
+    let whole = TableImportModel()
+    await whole.loadFile(array)
+    whole.destination = .existing(schema: "public", table: "t")
+    let staged = try await whole.prepareBatch(
+      dialect: .postgresql, connectionEpoch: 1, allowsStreaming: true)
+    #expect(staged.streamed == nil)
+    #expect(staged.statements.count == 1)
+
+    lines.destination = .new(schema: nil, table: "t")
+    let mysql = try await lines.prepareBatch(
+      dialect: .mysql, connectionEpoch: 1, allowsStreaming: true)
+    let rows = try #require(mysql.streamed)
+    #expect(mysql.statements.isEmpty)
+    #expect(rows.prelude.isEmpty)
+    #expect(mysql.separateCreate?.sql.hasPrefix("CREATE TABLE `t`") == true)
+    #expect(mysql.preview.contains(TableImportModel.separateCreateNote))
+    #expect(try await rows.nextChunk()?.first?.values == ["1", "2"])
+  }
+
+  @Test("Schema-only protection refuses a streamed CREATE before Safe Mode asks")
+  func streamedSchemaProtection() async throws {
+    let url = temporaryFile("v\na\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    var notebook = DbloreNotebook.newDocument()
+    var config = ConnectionConfig(
+      databaseType: .sqlite, database: "/tmp/unused.sqlite", username: "",
+      protectionLevel: .schemaOnly, protectedMode: false)
+    config.applyCommitStyle(.confirm)
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .new(schema: nil, table: "t")
+    let batch = try await model.prepareBatch(
+      dialect: .sqlite, connectionEpoch: 0, allowsStreaming: true)
+    #expect(batch.streamed != nil)
+    let reason = await viewModel.beginImportBatch(batch)
+    #expect(reason?.contains("Schema change") == true)
+    #expect(viewModel.pendingStagedBatch == nil)
+    #expect(!viewModel.queryConfirmationState.showDialog)
+  }
+
+  @Test("A streamed import Safe Mode holds keeps the sheet's run, then its failure with rows")
+  func streamedSafeModeRun() async throws {
+    let database = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-import-stream-\(UUID().uuidString).sqlite")
+    let ids = (1...1_200).map { $0 == 1_100 ? "5" : "\($0)" }
+    let url = temporaryFile("id\n" + ids.joined(separator: "\n") + "\n", extension: "csv")
+    defer {
+      try? FileManager.default.removeItem(at: database)
+      try? FileManager.default.removeItem(at: url)
+    }
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: database.path, username: "", protectionLevel: .none,
+      safeMode: .alertAll, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer { Task { await manager.disconnect() } }
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.connectionManager = manager
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+
+    // Declined: nothing sent, the run ends with no error (the sheet closes)
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .new(schema: nil, table: "t")
+    #expect(await model.prepareImport(for: viewModel))
+    #expect(await model.confirmImport(to: viewModel))
+    #expect(model.awaitsRunEnd && model.awaitsConfirmation && model.isImporting)
+    #expect(viewModel.pendingStagedBatch?.reportsToImportSheet == true)
+    viewModel.cancelPendingQuery()
+    #expect(!model.awaitsRunEnd && !model.isImporting && model.errorMessage == nil)
+
+    // Confirmed: the duplicate key in the second block fails the run, rolled back
+    model.mappings[0].kind = .integer
+    _ = try await manager.executeInternal("CREATE TABLE u (id INTEGER PRIMARY KEY)")
+    model.destination = .existing(schema: nil, table: "u")
+    #expect(await model.prepareImport(for: viewModel))
+    #expect(await model.confirmImport(to: viewModel))
+    await viewModel.executePendingQuery()
+    #expect(!model.awaitsRunEnd && !model.isImporting)
+    let error = try #require(model.errorMessage)
+    #expect(error.contains("Rows 1001–1200"), "\(error)")
+    #expect(error.contains("UNIQUE"))
+    let toast = try #require(toasts.last)
+    #expect(toast.contains("Rows 1001–1200"), "\(toast)")
+    #expect(toast.contains("import sheet"))
+    #expect(!toast.contains("UNIQUE"))
+    #expect(try await manager.executeInternal("SELECT count(*) FROM u").rows == [[.int(0)]])
+  }
+
+  @Test("A value its column can't take fails the streamed run naming the block's rows")
+  func streamedValueRefused() async throws {
+    let flags = (1...1_010).map { $0 == 1_005 ? "maybe" : "true" }
+    let url = temporaryFile("flag\n" + flags.joined(separator: "\n") + "\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.mappings[0].kind = .boolean
+    model.destination = .existing(schema: nil, table: "t")
+    let streamed = try #require(
+      try await model.prepareBatch(dialect: .sqlite, connectionEpoch: 1, allowsStreaming: true)
+        .streamed)
+    #expect(try await streamed.nextChunk() != nil)
+    do {
+      _ = try await streamed.nextChunk()
+      Issue.record("Expected valuesRefused")
+    } catch TableImportError.valuesRefused(let rows, _) {
+      #expect(rows == 1_001...1_010)
+    }
+  }
+
+  @Test("A keyed import keeps the in-memory path even where the sheet allows streaming")
+  func keyedImportNotStreamed() async throws {
+    let url = temporaryFile("id,name\n1,a\n2,b\n", extension: "csv")
+    defer { try? FileManager.default.removeItem(at: url) }
+    let model = TableImportModel()
+    await model.loadFile(url)
+    model.destination = .existing(schema: "main", table: "t")
+    #expect(model.streamsImport)
+    let structure = keyStructure(
+      columns: [column("id", "INTEGER"), column("name", "TEXT")], indexes: [],
+      constraints: [.init(name: nil, kind: .primaryKey, columns: ["id"])])
+    await model.loadMatchKeys { _, _ in structure }
+    model.matchKey = model.matchKeys.first
+    #expect(model.matchKey != nil)
+    #expect(!model.streamsImport)
+    for mode in [ImportMode.insert, .insertOrUpdate] {
+      model.mode = mode
+      let batch = try await model.prepareBatch(
+        dialect: .sqlite, connectionEpoch: 1,
+        readMatches: MatchReads(existing: ["1": 1]).read, allowsStreaming: true)
+      #expect(batch.streamed == nil, "\(mode)")
+      #expect(!batch.statements.isEmpty, "\(mode)")
+      #expect(model.matchSummary != nil, "\(mode)")
+    }
+  }
+
+  /// `body` throws `TableImportError.fileChanged`
+  private func expectFileChanged(
+    sourceLocation: SourceLocation = #_sourceLocation, _ body: () async throws -> Void
+  ) async {
+    do {
+      try await body()
+      Issue.record("Expected fileChanged, nothing was thrown", sourceLocation: sourceLocation)
+    } catch TableImportError.fileChanged {
+    } catch {
+      Issue.record("Expected fileChanged, got \(error)", sourceLocation: sourceLocation)
+    }
+  }
+
   private func temporaryFile(_ contents: String, extension fileExtension: String) -> URL {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("dblore-import-\(UUID().uuidString).\(fileExtension)")
