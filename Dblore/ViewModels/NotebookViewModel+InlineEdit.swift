@@ -517,6 +517,8 @@ extension NotebookViewModel {
       rowCount: result.rowCount, executionTime: result.executionTime,
       wasLimited: result.wasLimited, affectedRows: result.affectedRows)
     stripped.truncated = result.truncated
+    stripped.cutCells = result.cutCells.filter { $0.column < lazy.count }
+    stripped.stoppedAtByteBudget = result.stoppedAtByteBudget
     stripped.sessionReset = result.sessionReset
     stripped.skippedStatements = result.skippedStatements
     stripped.typesDeferred = result.typesDeferred
@@ -594,6 +596,8 @@ extension NotebookViewModel {
       rowCount: result.rowCount, executionTime: result.executionTime,
       wasLimited: result.wasLimited, affectedRows: result.affectedRows)
     stripped.truncated = result.truncated
+    stripped.cutCells = result.cutCells.filter { $0.column < kept }
+    stripped.stoppedAtByteBudget = result.stoppedAtByteBudget
     stripped.sessionReset = result.sessionReset
     stripped.skippedStatements = result.skippedStatements
     stripped.typesDeferred = result.typesDeferred

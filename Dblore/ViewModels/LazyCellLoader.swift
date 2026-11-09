@@ -20,6 +20,9 @@
 // and Cancel, up to `bulkLimitBytes` in all, and copy, export or stage nothing when a load
 // fails, is cancelled, is over that limit or a cut cell cannot be read. Edits only ever bind
 // the user's whole new value: SET lists the edited columns, WHERE the primary key (or locator).
+// Cells an editor or notebook read cut at the app's cell limit (`CellResult.cutCells`) count
+// as unloaded too, but are never loaded: a copy, export, pin or Duplicate Row that includes one
+// is refused (`cutCellsMessage`).
 
 import Foundation
 import Observation
@@ -355,6 +358,8 @@ extension CellResult {
     replaced.dataRevision = dataRevision
     replaced.truncation = truncation
     replaced.typesPending = typesPending
+    replaced.cutCells = cutCells
+    replaced.stoppedAtByteBudget = stoppedAtByteBudget
     return replaced
   }
 }
@@ -403,12 +408,13 @@ extension NotebookViewModel {
   }
 
   /// The unloaded cells of `result` by row index (into `rows`) and column index, with their
-  /// full byte length; empty for a result with no cut value
+  /// full byte length (a cell the capped read cut, `cutCells(in:)`: its kept length); empty for
+  /// a result with no cut value
   func unloadedCells(in result: CellResult) -> [Int: [Int: Int]] {
-    guard let truncation = truncation(of: result) else { return [:] }
+    var cells = cutCells(in: result)
+    guard let truncation = truncation(of: result) else { return cells }
     let columnIndex = Dictionary(
       result.columns.enumerated().map { ($1.name, $0) }, uniquingKeysWith: { first, _ in first })
-    var cells: [Int: [Int: Int]] = [:]
     for index in result.rows.indices {
       guard let key = result.rowKey(at: index, in: truncation),
         let lengths = truncation.lengths[key]
@@ -420,20 +426,61 @@ extension NotebookViewModel {
     return cells
   }
 
-  /// True when `result` holds cut values
+  /// The cells of `result` the capped read cut (`CellResult.cutCells`) by row index and column
+  /// index, with the byte length they kept (UTF-8 for text); empty for an error. They are never
+  /// loaded: the read kept only their prefix.
+  func cutCells(in result: CellResult) -> [Int: [Int: Int]] {
+    guard result.error == nil else { return [:] }
+    var cells: [Int: [Int: Int]] = [:]
+    for position in result.cutCells
+    where result.rows.indices.contains(position.row)
+      && result.columns.indices.contains(position.column)
+      && result.rows[position.row].indices.contains(position.column)
+    {
+      let kept =
+        switch result.rows[position.row][position.column] {
+        case .string(let text), .json(let text), .decimal(let text): text.utf8.count
+        case .data(let data): data.count
+        case let value: value.fullString.utf8.count
+        }
+      cells[position.row, default: [:]][position.column] = kept
+    }
+    return cells
+  }
+
+  /// True when `result` holds cut values (of a lazy page or the capped read)
   func hasUnloadedCells(in result: CellResult) -> Bool {
-    truncation(of: result) != nil
+    truncation(of: result) != nil || !cutCells(in: result).isEmpty
+  }
+
+  /// Why a copy, export, pin or write of cells including `count` cells the capped read cut is
+  /// refused
+  nonisolated static func cutCellsMessage(count: Int) -> String {
+    let limit = "\(CappedReadLimits.app.maxCellCharacters / 1_048_576) MiB"
+    return count == 1
+      ? "1 value in this selection was cut at \(limit), so it cannot be copied whole."
+      : "\(count) values in this selection were cut at \(limit), so they cannot be copied whole."
   }
 
   /// Full values of the cells at `cells` (row index into `result.rows`, column index) that are
   /// cut, by row and column index: loaded first (progress and Cancel), then written into the
-  /// shown page when it is the same page. Nil, after a message naming `action`, when a load
-  /// fails, is cancelled, would load more than `LazyCellLoader.bulkLimitBytes` or reads a value
-  /// that is not the page's (`LazyCellLoadError.rowChanged`): the caller copies, exports or
-  /// stages nothing, and nothing is stored.
+  /// shown page when it is the same page. Nil, after a message naming `action`, when a cell
+  /// the capped read cut is among them (it cannot be loaded), a load fails, is cancelled, would
+  /// load more than `LazyCellLoader.bulkLimitBytes` or reads a value that is not the page's
+  /// (`LazyCellLoadError.rowChanged`): the caller copies, exports or stages nothing, and
+  /// nothing is stored.
   func loadUnloadedCells(
     _ cells: [(row: Int, column: Int)], of result: CellResult, action: String
   ) async -> [Int: [Int: CellValue]]? {
+    let cut = cutCells(in: result)
+    let cutCount = Set(
+      cells.lazy.filter { cut[$0.row]?[$0.column] != nil }
+        .map { CellPosition(row: $0.row, column: $0.column) }
+    ).count
+    guard cutCount == 0 else {
+      showToast("\(action) refused: \(Self.cutCellsMessage(count: cutCount))", type: .error)
+      return nil
+    }
     guard let truncation = truncation(of: result) else { return [:] }
     let unloaded = unloadedCells(in: result)
     var wanted: [(row: Int, column: Int, cell: LazyCell)] = []

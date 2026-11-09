@@ -16,6 +16,12 @@ import PostgresNIO
 
 // MARK: - Supporting Types
 
+/// A cell of a result by its row and column index
+nonisolated struct CellPosition: Codable, Hashable, Sendable {
+  let row: Int
+  let column: Int
+}
+
 /// Result of a query execution
 struct QueryResult: Sendable {
   nonisolated let columns: [ColumnInfo]
@@ -37,6 +43,10 @@ struct QueryResult: Sendable {
   /// (`freshColumnTypes`): the app shows the rows first, with the cached types
   /// (`cachedColumnTypes`, `deferEnrichment`)
   nonisolated var typesDeferred = false
+  /// Cells a capped read with `CappedReadLimits.marksCutCells` cut: they hold only a prefix
+  nonisolated var cutCells: Set<CellPosition> = []
+  /// The read stopped because its kept cells passed `CappedReadLimits.maxResultBytes`
+  nonisolated var stoppedAtByteBudget = false
 
   nonisolated init(
     columns: [ColumnInfo], rows: [[CellValue]], rowCount: Int, executionTime: TimeInterval,

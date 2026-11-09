@@ -130,29 +130,19 @@ extension DatabaseConnectionManager {
 
     let totalExecutionTime = Date().timeIntervalSince(overallStartTime)
 
-    // Return the last result with updated execution time
+    // Return the last result with updated execution time, and the affected rows accumulated
     if let finalResult = lastResult {
-      // If we accumulated affected rows, update the result
-      if totalAffectedRows > 0 {
-        return QueryResult(
-          columns: finalResult.columns,
-          rows: finalResult.rows,
-          rowCount: finalResult.rowCount,
-          executionTime: totalExecutionTime,
-          wasLimited: finalResult.wasLimited,
-          affectedRows: totalAffectedRows
-        )
-      }
-
-      // Otherwise just update execution time
-      return QueryResult(
+      var result = QueryResult(
         columns: finalResult.columns,
         rows: finalResult.rows,
         rowCount: finalResult.rowCount,
         executionTime: totalExecutionTime,
         wasLimited: finalResult.wasLimited,
-        affectedRows: finalResult.affectedRows
+        affectedRows: totalAffectedRows > 0 ? totalAffectedRows : finalResult.affectedRows
       )
+      result.cutCells = finalResult.cutCells
+      result.stoppedAtByteBudget = finalResult.stoppedAtByteBudget
+      return result
     }
 
     // Fallback: return empty result (shouldn't happen)
@@ -240,6 +230,8 @@ extension DatabaseConnectionManager {
         executionTime: executionTime, wasLimited: collected.truncated,
         affectedRows: 0)  // SELECT queries always have 0 affected rows
       result.truncated = collected.truncated
+      result.cutCells = collected.cutCells
+      result.stoppedAtByteBudget = collected.stoppedAtByteBudget
       result.typesDeferred = typesDeferred
       return result
     } catch {

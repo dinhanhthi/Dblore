@@ -206,10 +206,53 @@ struct CellResult: Codable, Sendable {
   /// Session-only: the rows are shown and the catalog is still read in the background for the
   /// enriched column types and the validated edit target. Not editable until it lands.
   var typesPending = false
+  /// Cells the capped read cut (`QueryResult.cutCells`): they hold only a prefix, so they are
+  /// never copied, exported or edited as whole values. Coded only when non-empty.
+  var cutCells: Set<CellPosition> = []
+  /// The read stopped at the byte budget (`QueryResult.stoppedAtByteBudget`). Coded only when
+  /// true.
+  var stoppedAtByteBudget = false
 
   private enum CodingKeys: String, CodingKey {
     case columns, rows, executionTime, rowCount, timestamp, error, wasLimited, sourceQuery
-    case tableName, primaryKeyColumns, affectedRows
+    case tableName, primaryKeyColumns, affectedRows, cutCells, stoppedAtByteBudget
+  }
+
+  nonisolated init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    columns = try container.decode([ColumnInfo].self, forKey: .columns)
+    rows = try container.decode([[CellValue]].self, forKey: .rows)
+    executionTime = try container.decode(TimeInterval.self, forKey: .executionTime)
+    rowCount = try container.decode(Int.self, forKey: .rowCount)
+    timestamp = try container.decode(Date.self, forKey: .timestamp)
+    error = try container.decodeIfPresent(String.self, forKey: .error)
+    wasLimited = try container.decode(Bool.self, forKey: .wasLimited)
+    sourceQuery = try container.decodeIfPresent(String.self, forKey: .sourceQuery)
+    tableName = try container.decodeIfPresent(String.self, forKey: .tableName)
+    primaryKeyColumns = try container.decode([String].self, forKey: .primaryKeyColumns)
+    affectedRows = try container.decodeIfPresent(Int.self, forKey: .affectedRows)
+    // Absent (files from older builds): nothing was cut
+    cutCells =
+      try container.decodeIfPresent(Set<CellPosition>.self, forKey: .cutCells) ?? []
+    stoppedAtByteBudget =
+      try container.decodeIfPresent(Bool.self, forKey: .stoppedAtByteBudget) ?? false
+  }
+
+  nonisolated func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(columns, forKey: .columns)
+    try container.encode(rows, forKey: .rows)
+    try container.encode(executionTime, forKey: .executionTime)
+    try container.encode(rowCount, forKey: .rowCount)
+    try container.encode(timestamp, forKey: .timestamp)
+    try container.encodeIfPresent(error, forKey: .error)
+    try container.encode(wasLimited, forKey: .wasLimited)
+    try container.encodeIfPresent(sourceQuery, forKey: .sourceQuery)
+    try container.encodeIfPresent(tableName, forKey: .tableName)
+    try container.encode(primaryKeyColumns, forKey: .primaryKeyColumns)
+    try container.encodeIfPresent(affectedRows, forKey: .affectedRows)
+    if !cutCells.isEmpty { try container.encode(cutCells, forKey: .cutCells) }
+    if stoppedAtByteBudget { try container.encode(true, forKey: .stoppedAtByteBudget) }
   }
 
   nonisolated init(

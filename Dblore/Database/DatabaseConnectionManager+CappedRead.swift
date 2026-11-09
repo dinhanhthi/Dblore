@@ -61,49 +61,69 @@ struct CollectedRows: Sendable {
   var total = 0
   /// The stream had more rows than the cap
   var truncated = false
+  /// Cells the read limits cut (`CappedReadLimits.marksCutCells`), by kept row
+  var cutCells: Set<CellPosition> = []
+  /// The kept cells passed `CappedReadLimits.maxResultBytes`
+  var stoppedAtByteBudget = false
 }
 
-/// Bounds on what a capped read keeps, applied to each row as it arrives (MCP managers): text
-/// (decimal text too) longer than `maxCellCharacters` keeps `maxCellCharacters + 1` characters
-/// and binary longer than its base64 would be keeps `maxCellCharacters / 4 * 3 + 1` bytes (one
-/// past, so the reader can still tell it was cut), and the read stops, truncated, once the kept
-/// cells would pass `maxResultBytes`. A row is held whole only while it is cut.
+/// Bounds on what a capped read keeps, applied to each row as it arrives, and the read stops,
+/// truncated, once the kept cells would pass `maxResultBytes`. A row is held whole only while it
+/// is cut. MCP managers: text (decimal text too) longer than `maxCellCharacters` keeps
+/// `maxCellCharacters + 1` characters and binary longer than its base64 would be keeps
+/// `maxCellCharacters / 4 * 3 + 1` bytes (one past, so the reader can still tell it was cut).
+/// With `marksCutCells` (the app): text keeps exactly `maxCellCharacters` characters, binary as
+/// many bytes, and the read records each cut cell (`CollectedRows.cutCells`).
 nonisolated struct CappedReadLimits: Sendable, Equatable {
   let maxCellCharacters: Int
   let maxResultBytes: Int
+  var marksCutCells = false
 
-  /// `row` with long cells cut, and the bytes it keeps (UTF-8 text, binary, 8 per scalar).
-  func cut(_ row: [CellValue]) -> (row: [CellValue], bytes: Int) {
+  /// The app's editor and notebook results: 1 MiB of characters (binary: bytes) per cell,
+  /// 256 MiB per result, cut cells marked
+  static let app = CappedReadLimits(
+    maxCellCharacters: 1_048_576, maxResultBytes: 256 * 1_048_576, marksCutCells: true)
+
+  /// `row` with long cells cut, the bytes it keeps (UTF-8 text, binary, 8 per scalar) and the
+  /// indexes of the cells that were cut.
+  func cut(_ row: [CellValue]) -> (row: [CellValue], bytes: Int, cutColumns: [Int]) {
     var bytes = 0
-    let cells = row.map { cell -> CellValue in
-      let kept: CellValue =
+    var cutColumns: [Int] = []
+    let cells = row.enumerated().map { index, cell -> CellValue in
+      let kept: CellValue? =
         switch cell {
-        case .string(let text): .string(cutText(text))
-        case .json(let text): .json(cutText(text))
-        case .decimal(let text): .decimal(cutText(text))
-        case .data(let data):
-          .data(data.count > maxBinaryBytes ? Data(Array(data.prefix(maxBinaryBytes))) : data)
-        default: cell
+        case .string(let text): cutText(text).map(CellValue.string)
+        case .json(let text): cutText(text).map(CellValue.json)
+        case .decimal(let text): cutText(text).map(CellValue.decimal)
+        case .data(let data) where data.count > maxBinaryBytes:
+          .data(Data(Array(data.prefix(maxBinaryBytes))))
+        default: nil
         }
-      switch kept {
+      if kept != nil { cutColumns.append(index) }
+      let value = kept ?? cell
+      switch value {
       case .string(let text), .json(let text), .decimal(let text): bytes += text.utf8.count
       case .data(let data): bytes += data.count
       default: bytes += 8
       }
-      return kept
+      return value
     }
-    return (cells, bytes)
+    return (cells, bytes, cutColumns)
   }
 
-  private var maxBinaryBytes: Int { maxCellCharacters / 4 * 3 + 1 }
+  private var maxBinaryBytes: Int {
+    marksCutCells ? maxCellCharacters : maxCellCharacters / 4 * 3 + 1
+  }
 
-  /// `text` cut to `maxCellCharacters + 1` characters, without counting the rest.
-  private func cutText(_ text: String) -> String {
+  /// Characters a cut text keeps: one past the limit unless cut cells are marked
+  private var keptCharacters: Int { marksCutCells ? maxCellCharacters : maxCellCharacters + 1 }
+
+  /// `text` cut to `keptCharacters` characters, without counting the rest; nil when it fits.
+  private func cutText(_ text: String) -> String? {
     guard
-      let end = text.index(
-        text.startIndex, offsetBy: maxCellCharacters + 1, limitedBy: text.endIndex),
+      let end = text.index(text.startIndex, offsetBy: keptCharacters, limitedBy: text.endIndex),
       end < text.endIndex
-    else { return text }
+    else { return nil }
     return String(text[..<end])
   }
 }
@@ -117,7 +137,8 @@ extension DatabaseConnectionManager {
   /// reads its headers), so the result keeps its column origins; so does MongoDB (the session
   /// buffers the documents first), so an empty find keeps its `_id` column. With `readLimits`,
   /// rows are cut as they arrive and a row past the byte budget ends the read like a row past
-  /// the cap.
+  /// the cap (`stoppedAtByteBudget`). With `marksCutCells`, each cut cell of a kept row is
+  /// recorded in `cutCells`.
   func readCapped(
     _ source: SessionRowSource, maxRows: Int, readToEnd: Bool
   ) async throws -> CollectedRows {
@@ -130,11 +151,16 @@ extension DatabaseConnectionManager {
     for try await row in source.rows {
       collected.total += 1
       var kept = row
-      if !collected.truncated, let readLimits {
+      var cutColumns: [Int] = []
+      if !collected.truncated, collected.rows.count < maxRows, let readLimits {
         let cut = readLimits.cut(row)
         keptBytes += cut.bytes
-        if keptBytes > readLimits.maxResultBytes { collected.truncated = true }
+        if keptBytes > readLimits.maxResultBytes {
+          collected.truncated = true
+          collected.stoppedAtByteBudget = true
+        }
         kept = cut.row
+        if readLimits.marksCutCells { cutColumns = cut.cutColumns }
       }
       if collected.truncated || collected.rows.count >= maxRows {
         collected.truncated = true
@@ -143,6 +169,9 @@ extension DatabaseConnectionManager {
       }
       if collected.total == 1 {
         collected.columns = source.columns
+      }
+      for column in cutColumns {
+        collected.cutCells.insert(CellPosition(row: collected.rows.count, column: column))
       }
       collected.rows.append(kept)
     }
@@ -244,6 +273,8 @@ extension DatabaseConnectionManager {
       columns: enrichedColumns, rows: collected.rows, rowCount: collected.rows.count,
       executionTime: executionTime, wasLimited: collected.truncated, affectedRows: 0)
     result.truncated = collected.truncated
+    result.cutCells = collected.cutCells
+    result.stoppedAtByteBudget = collected.stoppedAtByteBudget
     cursorReadCount += 1
     return result
   }

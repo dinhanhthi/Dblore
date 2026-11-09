@@ -103,6 +103,8 @@ extension DatabaseConnectionManager {
         executionTime: Date().timeIntervalSince(startTime), wasLimited: collected.truncated,
         affectedRows: countRows ? collected.total : nil)
       result.truncated = collected.truncated
+      result.cutCells = collected.cutCells
+      result.stoppedAtByteBudget = collected.stoppedAtByteBudget
       return result
     } catch {
       throw queryFailure(error, query: query, startTime: startTime)

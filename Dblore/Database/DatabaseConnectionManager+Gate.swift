@@ -160,7 +160,8 @@ extension DatabaseConnectionManager {
   }
 
   /// `result` with each column that has a rule in `matches` (same order) marked `masked` and
-  /// its cells masked. `cutAfter`: the capped read's cell limit (MCP managers).
+  /// its cells masked. `cutAfter`: the capped read's cell limit (MCP managers); a cell in
+  /// `result.cutCells` is cut too. A masked cell shows only mask text, so it leaves `cutCells`.
   private nonisolated static func masking(
     _ result: QueryResult, with matches: [ColumnMaskRule?], cutAfter limit: Int?
   ) -> QueryResult {
@@ -175,10 +176,11 @@ extension DatabaseConnectionManager {
           sourceName: column.sourceName, wallClock: column.wallClock, masked: true)
         : column
     }
-    let rows = result.rows.map { row in
+    let rows = result.rows.enumerated().map { rowIndex, row in
       var row = row
       for (index, style) in styles where row.indices.contains(index) {
-        row[index] = maskedCell(row[index], style: style, cutAfter: limit)
+        let isCut = result.cutCells.contains(CellPosition(row: rowIndex, column: index))
+        row[index] = maskedCell(row[index], style: style, cutAfter: limit, isCut: isCut)
       }
       return row
     }
@@ -190,15 +192,21 @@ extension DatabaseConnectionManager {
     masked.sessionReset = result.sessionReset
     masked.skippedStatements = result.skippedStatements
     masked.typesDeferred = result.typesDeferred
+    let maskedColumns = Set(styles.map(\.index))
+    masked.cutCells = result.cutCells.filter { !maskedColumns.contains($0.column) }
+    masked.stoppedAtByteBudget = result.stoppedAtByteBudget
     return masked
   }
 
-  /// `cell` as `style` shows it. Text a capped read cut (longer than `limit`: it keeps one
-  /// character past) shows the full mask: a partial style would show part of a prefix.
+  /// `cell` as `style` shows it. A cell a capped read cut (`isCut`, or text longer than `limit`:
+  /// it keeps one character past) shows the full mask: a partial style would show part of a
+  /// prefix.
   private nonisolated static func maskedCell(
-    _ cell: CellValue, style: ColumnMaskRule.Style, cutAfter limit: Int?
+    _ cell: CellValue, style: ColumnMaskRule.Style, cutAfter limit: Int?, isCut: Bool
   ) -> CellValue {
-    guard let limit, style == .lastFour || style == .email else { return style.masked(cell) }
+    guard style == .lastFour || style == .email else { return style.masked(cell) }
+    if isCut { return ColumnMaskRule.Style.full.masked(cell) }
+    guard let limit else { return style.masked(cell) }
     let text: String
     switch cell {
     case .string(let value), .json(let value), .decimal(let value): text = value
@@ -512,6 +520,8 @@ extension DatabaseConnectionManager {
       wasLimited: last.wasLimited, affectedRows: total > 0 ? total : last.affectedRows)
     // The rows shown are the last statement's; a session reset always ends the script
     combined.truncated = last.truncated
+    combined.cutCells = last.cutCells
+    combined.stoppedAtByteBudget = last.stoppedAtByteBudget
     combined.sessionReset = last.sessionReset
     combined.skippedStatements = last.skippedStatements
     return combined
