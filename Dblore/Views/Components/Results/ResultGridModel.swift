@@ -11,6 +11,8 @@
 //  Protobuf decoded off the main actor (the cell shows its size until the text lands).
 //  A cell a lazy data-viewer page cut (`unloadedCells`) shows "<N bytes, not loaded>" and is
 //  never decoded from its prefix; copies fill it with its full value first (`fillLoaded`).
+//  A cell the capped read cut (`CellResult.cutCells`) shows its kept text marked "…" and counts
+//  as unloaded too, so every copy that reads it asks the loader, which refuses it.
 //
 
 import Foundation
@@ -66,6 +68,9 @@ struct ResultGridModel {
   private var cachedLocatorRows: [RowChangeSet.RowKey: [Int]]?
   /// Full byte length of each cut cell by index into `CellResult.rows`, then result column
   private var unloaded: [Int: [Int: Int]]
+  /// Cells the capped read cut (`CellResult.cutCells`), also in `unloaded` with their kept
+  /// length: they hold only a prefix, which is never loaded whole
+  private let cut: Set<CellPosition>
 
   /// A cell of the loaded result: index into `CellResult.rows` and result column
   struct CellRef: Hashable {
@@ -79,7 +84,18 @@ struct ResultGridModel {
     binaryFormats: [String: BinaryDisplayFormat] = [:], unloadedCells: [Int: [Int: Int]] = [:]
   ) {
     columns = result.columns
-    unloaded = unloadedCells
+    cut = result.cutCells
+    // A grid given no unloaded cells still never copies a cut cell as whole
+    var unloaded = unloadedCells
+    for position in result.cutCells
+    where unloaded[position.row]?[position.column] == nil
+      && result.rows.indices.contains(position.row)
+      && result.rows[position.row].indices.contains(position.column)
+    {
+      unloaded[position.row, default: [:]][position.column] = Self.keptLength(
+        result.rows[position.row][position.column])
+    }
+    self.unloaded = unloaded
     self.marksInvisibleCharacters = marksInvisibleCharacters
     var indexByName: [String: Int] = [:]
     for (index, column) in result.columns.enumerated() where indexByName[column.name] == nil {
@@ -272,6 +288,7 @@ struct ResultGridModel {
   /// The text a cell shows, for "Copy as Displayed". A MessagePack or Protobuf cell whose text
   /// has not landed yet is decoded off the main actor, so the copy is never the size placeholder.
   func displayTextForCopy(row: Int, column: Int) async -> String {
+    if isCut(row: row, column: column) { return cutDisplay(row: row, column: column).text }
     if let length = unloadedLength(row: row, column: column) {
       return Self.notLoadedText(length: length)
     }
@@ -303,6 +320,35 @@ struct ResultGridModel {
     guard row < loadedRows.count, !unloaded.isEmpty, !isCellEdited(row: row, column: column)
     else { return nil }
     return unloaded[originalRows[row]]?[column]
+  }
+
+  /// The capped read cut the value at displayed row `row` and result column `column` (not a
+  /// staged insert or edit, which replaced it)
+  func isCut(row: Int, column: Int) -> Bool {
+    guard row < loadedRows.count, !cut.isEmpty, !isCellEdited(row: row, column: column) else {
+      return false
+    }
+    return cut.contains(CellPosition(row: originalRows[row], column: column))
+  }
+
+  /// UTF-8 length of a kept text, byte count of kept bytes
+  private static func keptLength(_ value: CellValue) -> Int {
+    switch value {
+    case .string(let text), .json(let text), .decimal(let text): text.utf8.count
+    case .data(let data): data.count
+    case let value: value.fullString.utf8.count
+    }
+  }
+
+  /// A cell the capped read cut: its kept text on one line marked "…"; kept bytes show their
+  /// size marked "…", never decoded from a prefix
+  private func cutDisplay(row: Int, column: Int) -> CellDisplay {
+    let text =
+      switch value(row: row, column: column) {
+      case .string(let kept), .json(let kept), .decimal(let kept): kept
+      case let kept: kept.displayString
+      }
+    return Self.cellDisplay(Self.flattened(text, isCut: true), marks: marksInvisibleCharacters)
   }
 
   /// Cut cells of the displayed `rows` in `columns`, as shown (a staged edit replaced its cell)
@@ -390,6 +436,7 @@ struct ResultGridModel {
   }
 
   private func display(row: Int, column: Int, requestsDecode: Bool = false) -> CellDisplay {
+    if isCut(row: row, column: column) { return cutDisplay(row: row, column: column) }
     // Never decoded from its prefix: a cut text shows its prefix marked "…", a cut binary its
     // size
     if let length = unloadedLength(row: row, column: column) {

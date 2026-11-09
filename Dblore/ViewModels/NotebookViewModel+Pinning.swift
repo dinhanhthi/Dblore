@@ -30,10 +30,15 @@ nonisolated struct SubjectComparison: Sendable, Equatable {
 extension NotebookViewModel {
   // MARK: - Cells
 
-  /// Pin the cell's current result. False when the cell has no successful result.
+  /// Pin the cell's current result. False when the cell has no successful result, or one with
+  /// cells the capped read cut (a pin keeps its rows: a prefix would compare as if whole).
   @discardableResult
   func pinResult(cellID: UUID) -> Bool {
-    guard let index = notebook.cells.firstIndex(where: { $0.id == cellID }),
+    guard let index = notebook.cells.firstIndex(where: { $0.id == cellID }) else { return false }
+    if let result = notebook.cells[index].result, refusesCutCells(of: [result], action: "Pin") {
+      return false
+    }
+    guard
       let pin = Self.pin(
         notebook.cells[index].result,
         query: notebook.cells[index].result?.sourceQuery ?? notebook.cells[index].content)
@@ -82,13 +87,19 @@ extension NotebookViewModel {
 
   /// Recompute `cellComparisons[cellID]` off the main actor. The view calls this when the
   /// cell's result changes (e.g. `.task(id: result?.timestamp)`). The state is read now, so
-  /// a refresh started later always wins.
+  /// a refresh started later always wins. A pin or result with cells the capped read cut is
+  /// never compared: the cell leaves compare mode.
   @discardableResult
   func refreshComparison(cellID: UUID) -> Task<Void, Never> {
     let generation = (comparisonGenerations[cellID] ?? 0) + 1
     comparisonGenerations[cellID] = generation
     let cell = notebook.cells.first(where: { $0.id == cellID })
-    guard comparingCellIds.contains(cellID), let cell, cell.pinnedResult != nil else {
+    guard comparingCellIds.contains(cellID), let cell, let pin = cell.pinnedResult else {
+      cellComparisons[cellID] = nil
+      return Task {}
+    }
+    if refusesCutCells(of: [pin.result] + [cell.result].compactMap { $0 }, action: "Compare") {
+      comparingCellIds.remove(cellID)
       cellComparisons[cellID] = nil
       return Task {}
     }
@@ -97,7 +108,6 @@ extension NotebookViewModel {
     if cellComparisons[cellID]?.subject != subject {
       cellComparisons[cellID] = nil
     }
-    let pin = cell.pinnedResult
     let current = cell.result
     return Task { [weak self] in
       let comparison = await Self.compare(pin: pin, current: current)
@@ -120,7 +130,8 @@ extension NotebookViewModel {
   /// Pin the editor result (session only, the document is not changed)
   @discardableResult
   func pinEditorResult() -> Bool {
-    // A pin keeps its rows: a cut binary value would compare as if whole
+    // A pin keeps its rows: a cut value would compare as if whole
+    if let result = editorResult, refusesCutCells(of: [result], action: "Pin") { return false }
     if let result = editorResult, hasUnloadedCells(in: result) {
       showToast(
         "Pin refused: some binary values on this page are only partly loaded.",
@@ -181,6 +192,14 @@ extension NotebookViewModel {
   }
 
   // MARK: - Helpers
+
+  /// True, after the refusal naming `action`, when `results` hold cells the capped read cut
+  private func refusesCutCells(of results: [CellResult], action: String) -> Bool {
+    let count = results.reduce(0) { $0 + cutCells(in: $1).values.reduce(0) { $0 + $1.count } }
+    guard count > 0 else { return false }
+    showToast("\(action) refused: \(Self.cutCellsMessage(count: count))", type: .error)
+    return true
+  }
 
   private static func subject(of cell: NotebookCell) -> CompareSubject {
     CompareSubject(

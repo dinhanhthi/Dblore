@@ -820,6 +820,16 @@ extension NotebookViewModel {
       showToast(Self.notEditableMessage, type: .error)
       return false
     }
+    // A cell the capped read cut holds only a prefix: never written over as if whole
+    if let live = liveResult(of: target, cellId: cellId) {
+      let count = cutCellCount(
+        in: live, columns: assignments.map(\.column), rowData: rowData, target: target,
+        pageRow: pageRow)
+      if count > 0 {
+        showToast("Edit refused: \(Self.cutCellsMessage(count: count))", type: .error)
+        return false
+      }
+    }
     // A target shown before the background catalog read is only the cached one
     if liveResult(of: target, cellId: cellId)?.typesPending == true {
       showToast(Self.readingTableDefinition, type: .warning)
@@ -907,6 +917,41 @@ extension NotebookViewModel {
       await self?.sendInlineEdit(edit, target: target)
     }
     return true
+  }
+
+  /// Cells the capped read cut (`CellResult.cutCells`) of `result` that an edit of `columns` in
+  /// the row of `rowData` writes: the rows whose primary key values are `rowData`'s, a keyless
+  /// row by `pageRow`. A row it cannot name counts every cut row (fails closed).
+  private func cutCellCount(
+    in result: CellResult, columns: [String], rowData: [String: CellValue], target: EditTarget,
+    pageRow: Int?
+  ) -> Int {
+    let cut = cutCells(in: result)
+    guard !cut.isEmpty else { return 0 }
+    let edited = Set(result.columns.indices.filter { columns.contains(result.columns[$0].name) })
+    let keys = target.primaryKeyColumns.map { name in
+      (value: rowData[name], index: result.columns.firstIndex { $0.name == name })
+    }
+    let rows: [Int]
+    if target.rowLocator == nil, !keys.isEmpty,
+      keys.allSatisfy({ $0.value != nil && $0.index != nil })
+    {
+      rows = cut.keys.filter { row in
+        keys.allSatisfy { key in
+          guard let index = key.index, result.rows[row].indices.contains(index) else {
+            return true
+          }
+          return result.rows[row][index] == key.value
+        }
+      }
+    } else if target.rowLocator != nil, let pageRow {
+      rows = [pageRow]
+    } else {
+      rows = Array(cut.keys)
+    }
+    return rows.reduce(0) { count, row in
+      count + (cut[row]?.keys.filter(edited.contains).count ?? 0)
+    }
   }
 
   /// Commit style of this notebook's connection, or the app default when it has none.

@@ -213,7 +213,10 @@ extension NotebookViewModel {
     let column = result.columns[index]
     let value = index < row.count ? row[index] : .null
     // The JSON viewer formats and highlights on the main actor: a large JSON shows raw in Cell Value
-    if case .json(let json) = value, json.utf8.count <= CellInfoContent.maxHighlightedBytes {
+    // (a cut JSON too: Cell Value refuses its Edit and Copy)
+    if case .json(let json) = value, json.utf8.count <= CellInfoContent.maxHighlightedBytes,
+      !result.cutCells.contains(CellPosition(row: originalRow, column: index))
+    {
       showJSONInSidebar(json: json, path: "Row \(originalRow + 1), Column '\(column.name)'")
     } else {
       showCellDetail(
@@ -284,6 +287,39 @@ extension NotebookViewModel {
       primaryKeyColumns: result.primaryKeyColumns,
       cellId: cellId
     )
+  }
+
+  /// The Cell Value sidebar shows a cell the capped read cut (`CellResult.cutCells`) of a
+  /// result shown for its cell (nil: the editor): its row (`cellDetailRow`), else any cut cell
+  /// of its column holding the same value. Its Edit and Copy are refused.
+  var sidebarCellIsCut: Bool {
+    guard case .cellInfo(let column, _, let value, _, _, _, let cellId) = rightSidebarContent
+    else { return false }
+    let results: [CellResult]
+    if let cellId {
+      guard let cell = notebook.cells.first(where: { $0.id == cellId }) else { return false }
+      results = [cell.result].compactMap { $0 } + cell.statementResults.map(\.result)
+    } else {
+      results = [editorResult].compactMap { $0 } + editorStatementResults.map(\.result)
+    }
+    return results.contains { result in
+      guard !result.cutCells.isEmpty,
+        let index = result.columns.firstIndex(where: { $0.name == column })
+      else { return false }
+      let cut = cutCells(in: result)
+      if let row = cellDetailRow, cut[row]?[index] != nil, result.rows[row][index] == value {
+        return true
+      }
+      return cut.contains { row, columns in
+        columns[index] != nil && result.rows[row][index] == value
+      }
+    }
+  }
+
+  /// The Cell Value sidebar and Row Details of a cell the capped read cut
+  nonisolated static var cutValueMessage: String {
+    "This value was cut at \(CappedReadLimits.app.maxCellCharacters / 1_048_576) MiB. Open the"
+      + " table in the data viewer to read it whole, or export all rows."
   }
 
   // MARK: - Cell Value Editing

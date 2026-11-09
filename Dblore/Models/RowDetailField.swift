@@ -17,6 +17,8 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
   /// Full byte length of a value a lazy data-viewer page cut: shown as "<N bytes, not loaded>"
   /// and read-only, so its prefix is never edited or applied. Nil for a whole value.
   let unloadedLength: Int?
+  /// A value the capped read cut (`CellResult.cutCells`): read-only for good, never loaded
+  let isCut: Bool
 
   var id: String { field.name }
   var name: String { field.name }
@@ -31,11 +33,15 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
     set { field.isNull = newValue }
   }
 
-  init(field: NewRowField, original: CellValue, isReadOnly: Bool, unloadedLength: Int? = nil) {
+  init(
+    field: NewRowField, original: CellValue, isReadOnly: Bool, unloadedLength: Int? = nil,
+    isCut: Bool = false
+  ) {
     self.field = field
     self.original = original
-    self.isReadOnly = isReadOnly || unloadedLength != nil
+    self.isReadOnly = isReadOnly || unloadedLength != nil || isCut
     self.unloadedLength = unloadedLength
+    self.isCut = isCut
     revert()
   }
 
@@ -56,6 +62,15 @@ struct RowDetailField: Identifiable, Equatable, Sendable {
   /// (midnight UTC), another date as the grid shows it in its column (`NewRowField.wallClock`),
   /// anything else as its full string (a decoded DATE is already that text)
   private var originalText: String {
+    // A cut value shows the start of its kept text, as the grid does
+    if isCut {
+      let kept =
+        switch original {
+        case .string(let text), .json(let text), .decimal(let text): text
+        case let value: value.displayString
+        }
+      return String(kept.prefix(ResultGridModel.maxDisplayLength)) + "…"
+    }
     if let unloadedLength { return ResultGridModel.notLoadedText(length: unloadedLength) }
     if case .date(let date) = original {
       if field.kind == .date { return Self.plainDateFormatter.string(from: date) }

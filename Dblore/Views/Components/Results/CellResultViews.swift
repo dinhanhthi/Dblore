@@ -695,6 +695,12 @@ struct NotebookResultGridView: View {
       hideColumnTypes: AppSettings.shared.hideColumnTypes,
       binaryFormats: viewModel.binaryFormats,
       onBinaryFormatChange: { viewModel.setBinaryFormat($1, column: $0) },
+      // Cells the capped read cut: a copy that includes one is refused
+      unloadedCells: viewModel.unloadedCells(in: result),
+      onLoadCells: { cells in
+        await viewModel.loadUnloadedCells(
+          cells.map { (row: $0.row, column: $0.column) }, of: result, action: "Copy")
+      },
       relationSchema: relation?.schema,
       relationTable: relation?.table,
       baseColumnNames: relation?.baseColumns,

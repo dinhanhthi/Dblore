@@ -76,6 +76,8 @@ struct CellInfoContent: View {
     // A cell a lazy data-viewer page cut: its full value loads first, the prefix is never shown,
     // decoded, edited or copied
     let unloaded = viewModel.unloadedSidebarCell
+    // A cell the capped read cut: only a prefix, never edited or copied as the value
+    let cut = viewModel.sidebarCellIsCut
     let ready = unloaded == nil && loaded?.source == source ? loaded : nil
     let preview = ready?.preview
     VStack(alignment: .leading, spacing: 0) {
@@ -115,7 +117,7 @@ struct CellInfoContent: View {
 
           Spacer()
 
-          if canSetNull {
+          if canSetNull && !cut {
             Button("Set NULL", action: setNull)
               .buttonStyle(SecondaryButtonStyle())
           }
@@ -158,7 +160,7 @@ struct CellInfoContent: View {
 
             // Word Wrap button (only for string type, not under a geometry or vector viewer, nor
             // for a cut text, whose full value is loading)
-            if isStringValue && preview == nil && unloaded == nil {
+            if isStringValue && preview == nil && unloaded == nil && !cut {
               FloatingPanelToggleButton(
                 icon: "text.alignleft",
                 helpText: "Word Wrap",
@@ -179,7 +181,7 @@ struct CellInfoContent: View {
                 useSymbolEffect: false,
                 action: cancelFormat
               )
-            } else if isStringValue && preview == nil && unloaded == nil {
+            } else if isStringValue && preview == nil && unloaded == nil && !cut {
               FloatingPanelToggleButton(
                 icon: "curlybraces",
                 helpText: isBeautified
@@ -211,19 +213,20 @@ struct CellInfoContent: View {
             } else if !isReadOnly && unloaded == nil {
               FloatingPanelButton(
                 icon: "pencil",
-                helpText: "Edit Value",
+                helpText: cut ? NotebookViewModel.cutValueMessage : "Edit Value",
                 useSymbolEffect: false,
                 action: startEdit
               )
+              .disabled(cut)
             }
 
             FloatingPanelButton(
               icon: isCopied ? "checkmark" : "doc.on.doc",
-              helpText: "Copy Value",
+              helpText: cut ? NotebookViewModel.cutValueMessage : "Copy Value",
               useSymbolEffect: true,
               action: copyToClipboard
             )
-            .disabled(unloaded != nil)
+            .disabled(unloaded != nil || cut)
           }
         }
       }
@@ -284,6 +287,8 @@ struct CellInfoContent: View {
         // geometry found by its header.
         if let unloaded {
           UnloadedValueCard(length: unloaded.length, isText: isStringValue, error: lazyLoadError)
+        } else if cut {
+          CutValueCard()
         } else if editTask != nil {
           CellValueLoadingCard()
         } else if let tree = ready?.tree {
@@ -616,7 +621,7 @@ struct CellInfoContent: View {
   /// the main actor (base64 of a large blob, JSON parse) behind a loading card
   private func startEdit() {
     cancelFormat()
-    guard editTask == nil else { return }
+    guard editTask == nil, !refusesCutValue() else { return }
     let bytes = fullTextBytes
     guard bytes <= Self.maxEditableBytes else {
       viewModel.showToast(
@@ -712,6 +717,7 @@ struct CellInfoContent: View {
   }
 
   private func copyToClipboard() {
+    guard !refusesCutValue() else { return }
     let value = value
     copyTask?.cancel()
     copyTask = Task {
@@ -730,6 +736,13 @@ struct CellInfoContent: View {
         isCopied = false
       }
     }
+  }
+
+  /// True, after the refusal, when the shown cell holds only the prefix the capped read kept
+  private func refusesCutValue() -> Bool {
+    guard viewModel.sidebarCellIsCut else { return false }
+    viewModel.showToast(NotebookViewModel.cutValueMessage, type: .error)
+    return true
   }
 
   // MARK: - Validation
@@ -904,6 +917,21 @@ private struct UnloadedValueCard: View {
       try? await Task.sleep(for: .milliseconds(150))
       showsSpinner = true
     }
+  }
+}
+
+/// Same shape as `CellValueLoadingCard`: why a value the capped read cut is not shown, edited or
+/// copied
+private struct CutValueCard: View {
+  var body: some View {
+    Text(NotebookViewModel.cutValueMessage)
+      .font(.caption)
+      .foregroundColor(.foregroundMuted)
+      .multilineTextAlignment(.center)
+      .padding(Spacing.md)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Color.tableHeaderBackground)
+      .clipShape(RoundedRectangle(cornerRadius: CornerRadius.md))
   }
 }
 

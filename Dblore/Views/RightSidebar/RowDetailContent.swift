@@ -32,7 +32,7 @@ struct RowDetailContent: View {
 
         ForEach(fields) { $field in
           // A cut text loads first: its prefix is never shown as the value or edited
-          if Self.isCutText(field), lazyLoadError == nil {
+          if Self.showsLoading(field, lazyLoadError: lazyLoadError) {
             NewRowFieldEditor(
               field: .constant(Self.loading(field.field)), error: nil, allowsDefault: false,
               isReadOnly: true
@@ -44,9 +44,7 @@ struct RowDetailContent: View {
           } else {
             NewRowFieldEditor(
               field: $field.field,
-              error: Self.isCutText(field)
-                ? lazyLoadError.map { "The full value could not be loaded: \($0)" }
-                : field.validationError,
+              error: Self.error(of: field, lazyLoadError: lazyLoadError),
               allowsDefault: false, isReadOnly: field.isReadOnly,
               isDirty: field.isDirty && !field.isReadOnly)
           }
@@ -78,9 +76,25 @@ struct RowDetailContent: View {
     let generation: Int
   }
 
-  /// A text value a lazy page cut (a cut binary value stays not loaded)
+  /// `field` shows "Loading full value…" while its full value loads
+  static func showsLoading(_ field: RowDetailField, lazyLoadError: String?) -> Bool {
+    isCutText(field) && lazyLoadError == nil
+  }
+
+  /// The message under `field`: why it holds only a prefix the capped read kept, why its full
+  /// value did not load, else its validation error
+  static func error(of field: RowDetailField, lazyLoadError: String?) -> String? {
+    if field.isCut { return NotebookViewModel.cutValueMessage }
+    return isCutText(field)
+      ? lazyLoadError.map { "The full value could not be loaded: \($0)" } : field.validationError
+  }
+
+  /// A text value a lazy page cut (a cut binary value stays not loaded, and a value the capped
+  /// read cut is never loaded)
   private static func isCutText(_ field: RowDetailField) -> Bool {
-    guard field.unloadedLength != nil, case .string = field.original else { return false }
+    guard !field.isCut, field.unloadedLength != nil, case .string = field.original else {
+      return false
+    }
     return true
   }
 

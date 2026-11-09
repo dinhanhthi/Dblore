@@ -543,6 +543,70 @@ struct ResultGridCoordinatorTests {
     return event
   }
 
+  // MARK: - Cut cells
+
+  /// The editor grid passes the view model's unloaded cells; a grid given none (the notebook
+  /// grid before it passed them) still reads the cut cells from the result
+  @Test(
+    "A cut cell shows its kept text with \"…\" and every grid copy that includes it is refused",
+    arguments: [true, false])
+  func cutCellShowsKeptTextAndCopiesAreRefused(passesUnloadedCells: Bool) async throws {
+    var cut = CellResult(
+      columns: [
+        ColumnInfo(name: "id", type: "int4"), ColumnInfo(name: "body", type: "text"),
+        ColumnInfo(name: "meta", type: "jsonb"), ColumnInfo(name: "payload", type: "bytea"),
+      ],
+      rows: [
+        [.int(1), .string("abc\ndef"), .json(#"{"a":"#), .data(Data([1, 2, 3]))],
+        [.int(2), .string("whole"), .json("{}"), .null],
+      ],
+      rowCount: 2)
+    cut.cutCells = [
+      CellPosition(row: 0, column: 1), CellPosition(row: 0, column: 2),
+      CellPosition(row: 0, column: 3),
+    ]
+    let viewModel = NotebookViewModel()
+    var toasts: [String] = []
+    viewModel.toastPresenter = { message, _ in toasts.append(message) }
+    let coordinator = ResultGridCoordinator()
+    let tableView = NSTableView()
+    coordinator.update(
+      tableView, result: cut, sortColumn: nil, ascending: true,
+      unloadedCells: passesUnloadedCells ? viewModel.unloadedCells(in: cut) : [:])
+    let model = try #require(coordinator.model)
+
+    #expect(model.displayText(row: 0, column: 1) == "abc def…")
+    #expect(model.displayText(row: 0, column: 2) == #"{"a":…"#)
+    #expect(model.displayText(row: 0, column: 3, requestsDecode: true) == "<3 bytes>…")
+    #expect(model.displayText(row: 1, column: 1) == "whole")
+    // Checked before any copy runs: a copy of a cut cell must never reach the pasteboard
+    try #require(
+      model.unloadedCells(rows: IndexSet([0, 1]), columns: [0, 1, 2, 3])
+        == [.init(row: 0, column: 1), .init(row: 0, column: 2), .init(row: 0, column: 3)])
+
+    var requested: [[ResultGridModel.CellRef]] = []
+    coordinator.onLoadCells = { cells in
+      requested.append(cells)
+      return await viewModel.loadUnloadedCells(
+        cells.map { (row: $0.row, column: $0.column) }, of: cut, action: "Copy")
+    }
+    tableView.selectRowIndexes(IndexSet([0]), byExtendingSelection: false)
+    let menu = coordinator.contextMenu(row: 0, column: 1)
+    for title in ["Copy Value", "Copy as Markdown", "Copy as INSERT", "Copy as IN list"] {
+      invoke(menu?.items.first { $0.title == title })
+    }
+    // Cmd+C, in any "Copy rows as" format (TSV, CSV, JSON, Markdown)
+    coordinator.copySelection(tableView)
+    for _ in 0..<200 where toasts.count < 5 {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(requested.count == 5)
+    let one = "Copy refused: " + NotebookViewModel.cutCellsMessage(count: 1)
+    let three = "Copy refused: " + NotebookViewModel.cutCellsMessage(count: 3)
+    #expect(toasts.sorted() == [one, one, three, three, three])
+  }
+
   private func invoke(_ item: NSMenuItem?) {
     guard let item, let action = item.action else {
       Issue.record("missing menu item")
