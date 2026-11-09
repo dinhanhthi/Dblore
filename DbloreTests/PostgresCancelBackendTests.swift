@@ -190,6 +190,21 @@ struct PostgresCancelBackendTests {
     }
   }
 
+  /// The identity row is read column by column: a server that sends no `server_encoding` keeps
+  /// the version and the pid (text prefixes stay off), one that sends it gives the encoding
+  @Test(
+    "The identity read at open takes server_encoding when sent and keeps the rest without it",
+    .timeLimit(.minutes(1)), arguments: [nil, "UTF8"] as [String?])
+  func identityReadsOptionalEncoding(encoding: String?) async throws {
+    let server = FakePostgresServer(
+      pid: 4242, backendStart: Self.start, answer: .cancelled, encoding: encoding)
+    try await withOpenSession(on: server) { session in
+      #expect(session.serverVersionNum == 160_000)
+      #expect(session.backendPID == 4242)
+      #expect(session.serverEncoding == encoding)
+    }
+  }
+
   private static let sleep = "SELECT pg_sleep(30)"
 
   /// Polls until `server` received `sql` (exactly)
@@ -615,9 +630,9 @@ private actor CancelPause {
 
 /// A PostgreSQL v3 stand-in on loopback (no TLS, trust auth). Every client completes startup;
 /// each extended-protocol batch (Parse … Sync) is answered by its SQL: the identity read at open
-/// returns `pid` and `backendStart` (an error when `pid` is nil), the cancel statement answers as
-/// `answer` says and is recorded with its text binds, a statement `fails` names answers an
-/// error, anything else returns no rows.
+/// returns `pid`, `backendStart` and, when set, `encoding` as a 4th column (an error when `pid`
+/// is nil), the cancel statement answers as `answer` says and is recorded with its text binds, a
+/// statement `fails` names answers an error, anything else returns no rows.
 final class FakePostgresServer: @unchecked Sendable {
   enum Answer: Sendable, CustomTestStringConvertible {
     /// One row, true
@@ -643,6 +658,8 @@ final class FakePostgresServer: @unchecked Sendable {
 
   private let pid: Int32?
   private let backendStart: String
+  /// `server_encoding`, the identity row's 4th column; nil sends 3 columns
+  private let encoding: String?
   private let answer: Answer
   /// Statements answered only once `releaseHeld` (or `stop`) runs: still running on the server
   private let holds: @Sendable (String) -> Bool
@@ -660,12 +677,13 @@ final class FakePostgresServer: @unchecked Sendable {
   private var cancels: [CancelRequest] = []
 
   init(
-    pid: Int32?, backendStart: String, answer: Answer,
+    pid: Int32?, backendStart: String, answer: Answer, encoding: String? = nil,
     holds: @escaping @Sendable (String) -> Bool = { _ in false },
     fails: @escaping @Sendable (String) -> Bool = { _ in false }
   ) {
     self.pid = pid
     self.backendStart = backendStart
+    self.encoding = encoding
     self.answer = answer
     self.holds = holds
     self.fails = fails
@@ -814,13 +832,19 @@ final class FakePostgresServer: @unchecked Sendable {
     if sql.contains("server_version_num") {
       guard let pid else { return Self.error("42501", "permission denied") }
       let start = Array(backendStart.utf8)
-      let row =
+      var columns = [
+        ("current_setting", UInt32(23)), ("pg_backend_pid", 23), ("backend_start", 25),
+      ]
+      var row =
         Self.int16(3) + Self.int32(4) + Self.int32(160_000) + Self.int32(4)
         + Self.int32(UInt32(bitPattern: pid)) + Self.int32(UInt32(start.count)) + start
+      if let encoding {
+        let text = Array(encoding.utf8)
+        columns.append(("current_setting", 25))
+        row = Self.int16(4) + row.dropFirst(2) + Self.int32(UInt32(text.count)) + text
+      }
       return Self.rows(
-        params: [],
-        columns: [("current_setting", 23), ("pg_backend_pid", 23), ("backend_start", 25)],
-        rows: [Self.message("D", row)], tag: "SELECT 1")
+        params: [], columns: columns, rows: [Self.message("D", row)], tag: "SELECT 1")
     }
     return Self.message("1", []) + Self.message("t", Self.int16(0)) + Self.message("n", [])
       + Self.message("2", []) + Self.message("C", Array("SELECT 0".utf8) + [0])
