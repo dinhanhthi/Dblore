@@ -349,7 +349,7 @@ extension NotebookViewModel {
         failedScript: query, error: scriptError, dialect: sqlDialect)
     }
     if let runEpoch, !ranStatements.isEmpty {
-      await onRelationsWritten?(ranStatements, id, runEpoch)
+      await onRelationsWritten?(ranStatements, id, runEpoch, false)
     }
     await onStatementsExecuted?()
   }

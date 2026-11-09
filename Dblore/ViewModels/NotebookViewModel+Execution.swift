@@ -473,7 +473,7 @@ extension NotebookViewModel {
       ranStatements = await WrittenRelations.statementsMaybeRun(
         failedScript: task.query, error: scriptError, dialect: sqlDialect)
     }
-    if !ranStatements.isEmpty { await onRelationsWritten?(ranStatements, id, runEpoch) }
+    if !ranStatements.isEmpty { await onRelationsWritten?(ranStatements, id, runEpoch, false) }
     await onStatementsExecuted?()
 
     // Notify document changed to trigger save

@@ -1147,7 +1147,9 @@ extension NotebookViewModel {
       }
       showToast("Failed to update '\(columnList)': \(reason)", type: .error)
     }
-    if updated { await onRelationsWritten?([edit.statement.sql], id, target.connectionEpoch) }
+    if updated {
+      await onRelationsWritten?([edit.statement.sql], id, target.connectionEpoch, false)
+    }
     await onStatementsExecuted?()
   }
 

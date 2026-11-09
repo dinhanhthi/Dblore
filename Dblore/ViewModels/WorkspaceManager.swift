@@ -328,6 +328,8 @@ class WorkspaceManager: Identifiable {
   /// the tab that wrote it last (its page already shows the write): their other data viewer tabs
   /// are marked stale on Commit; dropped on Rollback and with the connection
   @ObservationIgnored var heldWrittenRelations: [WrittenRelations.Relation: UUID] = [:]
+  /// The held tables whose last writer was a data import; cleared with `heldWrittenRelations`
+  @ObservationIgnored var heldImportRelations: Set<WrittenRelations.Relation> = []
 
   // MARK: - Types Editor
 
@@ -930,6 +932,7 @@ class WorkspaceManager: Identifiable {
     }
     // Their transaction ends with the previous connection
     heldWrittenRelations = [:]
+    heldImportRelations = []
 
     // Picked DuckDB files stay readable only when reconnecting the same database
     let keepsDuckDBFiles = keepsDuckDBFileAccess(for: config)

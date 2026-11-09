@@ -1551,6 +1551,8 @@ struct WorkspaceTitleBarTabsView: View {
         .scrollContentBackground(.hidden)
         .onChange(of: workspaceManager.activeTabId) { _, newTabId in
           if let newTabId {
+            // A tab an import marked while hidden reads its page again
+            workspaceManager.reloadIfMarked(tabId: newTabId)
             withAnimation(.easeInOut(duration: 0.2)) {
               proxy.scrollTo(newTabId, anchor: .center)
             }

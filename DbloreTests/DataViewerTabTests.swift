@@ -4,7 +4,9 @@
 // are persisted. Disconnected manager: page loads return early.
 // Staleness (SQLite file): a write in another tab marks the other data viewers of that table
 // stale (never the writer), Reload keeps the staged edits, and a write inside a Protected mode
-// or user transaction marks them only once it is committed.
+// or user transaction marks them only once it is committed. An import reads the page again in
+// the clean tabs instead (the active one at once, a hidden one when shown); a tab with staged
+// changes or a page read in flight still shows Reload.
 
 import Foundation
 import Testing
@@ -405,6 +407,199 @@ struct DataViewerTabTests {
     #expect(fixture.workspace.heldWrittenRelations.isEmpty)
     #expect(fixture.second.dataViewer?.isStale == false)
     try? FileManager.default.removeItem(at: fixture.url)
+  }
+
+  // MARK: - Refresh after import
+
+  /// The tab of `viewer` in the fixture's workspace
+  private static func tabId(_ viewer: NotebookViewModel, in fixture: StaleFixture) throws -> UUID {
+    try #require(fixture.workspace.viewModels.first { $0.value === viewer }?.key)
+  }
+
+  /// Imports one row labelled `label` into `items` from the SQL tab, as the import sheet does
+  private static func importRow(_ label: String, in fixture: StaleFixture) async throws {
+    let manager = try #require(fixture.sql.connectionManager)
+    let reason = await fixture.sql.beginImportBatch(
+      PendingStagedBatch(
+        statements: [
+          BoundStatement(sql: "INSERT INTO items (label) VALUES (?1)", values: [label])
+        ],
+        preview: "INSERT INTO items (label) -- 1 rows from file",
+        connectionEpoch: await manager.connectionEpoch, historySource: .dataImport,
+        rowRanges: [1...1]))
+    #expect(reason == nil)
+  }
+
+  /// Waits until `viewer` shows `label` with `rows` counted, never reading the page itself: only
+  /// a read the app started gets there
+  private static func reloaded(_ viewer: NotebookViewModel, showing label: String, rows: Int) async
+  {
+    let deadline = ContinuousClock.now + .seconds(5)
+    while ContinuousClock.now < deadline {
+      if !viewer.isEditorQueryRunning, viewer.dataViewer?.totalRows == rows, shows(viewer, label) {
+        await viewer.awaitResultTargets()
+        return
+      }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("The page was not read again: '\(label)' is not shown")
+  }
+
+  /// Gives a page read the app may have started the time to land
+  private static func settle() async {
+    try? await Task.sleep(for: .milliseconds(200))
+  }
+
+  private static func grouped(_ viewModel: NotebookViewModel, _ action: () -> Void) {
+    viewModel.undoManager.beginUndoGrouping()
+    action()
+    viewModel.undoManager.endUndoGrouping()
+  }
+
+  @Test("An import reloads the active clean data tab of its table, also one showing Reload")
+  func importReloadsActiveCleanTab() async throws {
+    let fixture = try await Self.staleFixture(protectedMode: false)
+    let viewer = fixture.first
+    fixture.workspace.selectTab(id: try Self.tabId(viewer, in: fixture))
+
+    try await Self.importRow("imported", in: fixture)
+    #expect(viewer.dataViewer?.isStale == false)
+    await Self.reloaded(viewer, showing: "imported", rows: 3)
+    #expect(viewer.dataViewer?.reloadsWhenShown == false)
+
+    // An earlier write already showed the Reload banner
+    await fixture.sql.executeEditorQuery("UPDATE items SET label = 'x' WHERE id = 1")
+    #expect(viewer.dataViewer?.isStale == true)
+    try await Self.importRow("again", in: fixture)
+    #expect(viewer.dataViewer?.isStale == false)
+    await Self.reloaded(viewer, showing: "again", rows: 4)
+    #expect(viewer.dataViewer?.isStale == false)
+    await fixture.close()
+  }
+
+  @Test("An import marks a hidden clean data tab to reload when shown, with no Reload banner")
+  func importMarksHiddenCleanTab() async throws {
+    let fixture = try await Self.staleFixture(protectedMode: false)
+    let viewer = fixture.second
+
+    try await Self.importRow("imported", in: fixture)
+    #expect(viewer.dataViewer?.isStale == false)
+    #expect(viewer.dataViewer?.reloadsWhenShown == true)
+    #expect(fixture.otherTable.dataViewer?.reloadsWhenShown == false)
+    await Self.settle()
+    #expect(viewer.dataViewer?.totalRows == 2)
+    #expect(!Self.shows(viewer, "imported"))
+
+    let id = try Self.tabId(viewer, in: fixture)
+    fixture.workspace.selectTab(id: id)
+    fixture.workspace.reloadIfMarked(tabId: id)
+    #expect(viewer.dataViewer?.reloadsWhenShown == false)
+    await Self.reloaded(viewer, showing: "imported", rows: 3)
+    #expect(viewer.dataViewer?.isStale == false)
+
+    // A tab that is not marked reads nothing when shown
+    do {
+      let handle = try SQLiteHandle(url: fixture.url)
+      try handle.execute("INSERT INTO other (v) VALUES ('outside')")
+    }
+    let otherId = try Self.tabId(fixture.otherTable, in: fixture)
+    fixture.workspace.selectTab(id: otherId)
+    fixture.workspace.reloadIfMarked(tabId: otherId)
+    await Self.settle()
+    #expect(fixture.otherTable.dataViewer?.totalRows == 0)
+    await fixture.close()
+  }
+
+  @Test("An import marks a data tab with staged changes stale and keeps them")
+  func importKeepsStagedTabStale() async throws {
+    let fixture = try await Self.staleFixture(protectedMode: false)
+    let viewer = fixture.first
+    fixture.workspace.selectTab(id: try Self.tabId(viewer, in: fixture))
+    Self.grouped(viewer) {
+      #expect(viewer.stageEdit(row: 1, column: "label", value: .string("draft")) == nil)
+    }
+    let staged = viewer.dataViewer?.changeSet
+
+    try await Self.importRow("imported", in: fixture)
+    #expect(viewer.dataViewer?.isStale == true)
+    #expect(viewer.dataViewer?.reloadsWhenShown == false)
+    #expect(viewer.dataViewer?.changeSet == staged)
+    #expect(viewer.hasPendingStagedChanges)
+    await Self.settle()
+    #expect(viewer.dataViewer?.totalRows == 2)
+    #expect(!Self.shows(viewer, "imported"))
+    await fixture.close()
+  }
+
+  @Test("An import marks a clean data tab whose page read is in flight stale, not reloaded")
+  func importMarksLoadingTabStale() async throws {
+    let fixture = try await Self.staleFixture(protectedMode: false)
+    let viewer = fixture.first
+    fixture.workspace.selectTab(id: try Self.tabId(viewer, in: fixture))
+    viewer.isEditorQueryRunning = true
+
+    try await Self.importRow("imported", in: fixture)
+    #expect(viewer.dataViewer?.isStale == true)
+    #expect(viewer.dataViewer?.reloadsWhenShown == false)
+    viewer.isEditorQueryRunning = false
+    #expect(!Self.shows(viewer, "imported"))
+    await fixture.close()
+  }
+
+  @Test("A write that is not an import only shows Reload, also on the active tab")
+  func nonImportWriteOnlyMarksStale() async throws {
+    let fixture = try await Self.staleFixture(protectedMode: false)
+    let viewer = fixture.second
+    fixture.workspace.selectTab(id: try Self.tabId(viewer, in: fixture))
+
+    // A data tab's staged commit, then an SQL tab's UPDATE
+    Self.grouped(fixture.first) {
+      #expect(fixture.first.stageEdit(row: 0, column: "label", value: .string("z")) == nil)
+    }
+    await fixture.first.commitStaged()
+    #expect(!fixture.first.hasPendingStagedChanges)
+    #expect(viewer.dataViewer?.isStale == true)
+    await fixture.sql.executeEditorQuery("UPDATE items SET label = 'x' WHERE id = 2")
+    #expect(viewer.dataViewer?.reloadsWhenShown == false)
+    #expect(fixture.first.dataViewer?.isStale == true)
+    #expect(fixture.first.dataViewer?.reloadsWhenShown == false)
+    await Self.settle()
+    #expect(viewer.dataViewer?.isStale == true)
+    #expect(!Self.shows(viewer, "z"))
+    #expect(!Self.shows(viewer, "x"))
+    await fixture.close()
+  }
+
+  @Test("A held import follows the import rule at Commit and changes nothing at Rollback")
+  func heldImportAtCommitAndRollback() async throws {
+    let fixture = try await Self.staleFixture(protectedMode: true)
+    let viewer = fixture.first
+    fixture.workspace.selectTab(id: try Self.tabId(viewer, in: fixture))
+
+    try await Self.importRow("dropped", in: fixture)
+    #expect(!fixture.workspace.heldWrittenRelations.isEmpty)
+    #expect(await fixture.workspace.rollback())
+    #expect(fixture.workspace.heldWrittenRelations.isEmpty)
+    for tab in [viewer, fixture.second] {
+      #expect(tab.dataViewer?.isStale == false)
+      #expect(tab.dataViewer?.reloadsWhenShown == false)
+    }
+    // The Rollback's own page reads
+    try await Self.loaded(viewer)
+    try await Self.loaded(fixture.second)
+
+    try await Self.importRow("imported", in: fixture)
+    #expect(!fixture.workspace.heldWrittenRelations.isEmpty)
+    #expect(viewer.dataViewer?.isStale == false)
+    #expect(fixture.second.dataViewer?.reloadsWhenShown == false)
+    fixture.workspace.requestCommit()
+    #expect(await fixture.workspace.confirmCommit(defaultCommitStyle: .immediate))
+    #expect(fixture.workspace.heldWrittenRelations.isEmpty)
+    #expect(viewer.dataViewer?.isStale == false)
+    await Self.reloaded(viewer, showing: "imported", rows: 3)
+    #expect(fixture.second.dataViewer?.isStale == false)
+    #expect(fixture.second.dataViewer?.reloadsWhenShown == true)
+    await fixture.close()
   }
 
   private static func decode(_ data: Data) throws -> Workspace {

@@ -523,7 +523,8 @@ extension NotebookViewModel {
       failure = message
     }
     if !ranStatements.isEmpty {
-      await onRelationsWritten?(ranStatements, id, batch.connectionEpoch)
+      await onRelationsWritten?(
+        ranStatements, id, batch.connectionEpoch, batch.historySource == .dataImport)
     }
     await onStatementsExecuted?()
     return failure
