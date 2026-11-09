@@ -73,6 +73,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
   private var servesMCP = false
   /// Why the authorizer refused the ATTACH being prepared; the error of that prepare
   private var attachDenial: String?
+  /// `PRAGMA encoding` read at open (behind `stateLock`; nil when not read)
+  private var encodingStorage: String?
 
   /// Virtual-machine instructions between progress-handler checks. Small enough that a one-second
   /// statement timeout fires while a recursive query is still inside one `sqlite3_step`.
@@ -121,6 +123,12 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
 
   func open() async throws {
     try await run { try self.openOnQueue() }
+  }
+
+  /// The main database's text encoding (`UTF-8`, `UTF-16le`, ...), read once at open; nil when
+  /// that read failed. Attached databases must share it.
+  var textEncoding: String? {
+    withState { encodingStorage }
   }
 
   /// One warning per configured attachment the last open left out (locked, missing, unreadable)
@@ -278,6 +286,8 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       closeOnQueue()
       throw error
     }
+    let encoding = readEncoding()
+    withState { encodingStorage = encoding }
     let skipped = attachConfigured()
     withState { skippedAttachments = skipped }
     let installed = sqlite3_set_authorizer(
@@ -293,6 +303,15 @@ nonisolated final class SQLiteSession: DatabaseSession, @unchecked Sendable {
       closeOnQueue()
       throw error
     }
+  }
+
+  /// `PRAGMA encoding`, best effort: nil when it cannot be read
+  private func readEncoding() -> String? {
+    guard let statement = try? prepare("PRAGMA encoding") else { return nil }
+    defer { sqlite3_finalize(statement) }
+    guard sqlite3_step(statement) == SQLITE_ROW, let text = sqlite3_column_text(statement, 0)
+    else { return nil }
+    return String(cString: text)
   }
 
   /// Attaches the configured databases (`validatedAttachedDatabases`), with `ATTACH ? AS "name"`

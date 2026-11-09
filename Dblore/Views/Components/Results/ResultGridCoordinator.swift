@@ -1203,14 +1203,17 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   }
 
   /// Starts editing the cell at a table row and model column with its full value, or shows a
-  /// value `editsInSidebar` in the right sidebar through `onShowCellDetails`.
+  /// value `editsInSidebar` or cut by a lazy page (its prefix is never edited: the Cell Value
+  /// editor opens once the full value loaded) in the right sidebar through `onShowCellDetails`.
   /// Returns false when the grid is not editable.
   @discardableResult
   func beginEditing(_ tableView: NSTableView, row: Int, column: Int) -> Bool {
     guard isEditable, !readOnlyColumns.contains(column), let model, row >= 0,
       row < model.rowCount
     else { return false }
-    if Self.editsInSidebar(model.value(row: row, column: column)) {
+    if model.unloadedLength(row: row, column: column) != nil
+      || Self.editsInSidebar(model.value(row: row, column: column))
+    {
       showCellDetails(row: row, column: column)
       return true
     }

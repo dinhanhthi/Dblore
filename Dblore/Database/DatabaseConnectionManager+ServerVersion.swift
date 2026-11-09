@@ -11,4 +11,17 @@ extension DatabaseConnectionManager {
   func serverVersionNum() -> Int? {
     (session as? PostgresSession)?.serverVersionNum
   }
+
+  /// The open session's text byte lengths are UTF-8, so a data viewer page may cut text values
+  /// (`DataViewerState.TextPrefixRules`): PostgreSQL `server_encoding` `UTF8` and SQLite
+  /// `PRAGMA encoding` `UTF-8`, both read once at open; always on MySQL, whose lengths convert
+  /// to utf8mb4. False on other engines, with no session, or when the read at open failed.
+  func textLengthsAreUTF8() -> Bool {
+    switch session {
+    case let postgres as PostgresSession: postgres.serverEncoding == "UTF8"
+    case let sqlite as SQLiteSession: sqlite.textEncoding == "UTF-8"
+    case is MySQLSession: true
+    default: false
+    }
+  }
 }

@@ -404,18 +404,20 @@ extension NotebookViewModel {
 
   /// A data-viewer page read with `state.pageSQL` made a plain single-table result again,
   /// before anything reads it: the length columns are moved into the truncation (full lengths
-  /// over `lazyPrefixBytes` by row key and column: a keyless page's by the locator key of each
-  /// page row, never by values), and each prefixed column, an expression
-  /// on every engine, gets the origin a plain read gives (table identity and ordinal from
-  /// `EditTable.attributeNames`, MySQL source names) and its cached type when it has none.
+  /// over `lazyPrefixBytes`, and of text values whose UTF-8 byte length is not their prefix's,
+  /// by row key and column: a keyless page's by the locator key of each page row, never by
+  /// values; a whole text value decodes as a plain read would), and each prefixed column, an
+  /// expression on every engine, gets the origin a plain read gives (table identity and ordinal
+  /// from `EditTable.attributeNames`, MySQL source names) and its cached type when it has none
+  /// (a cut text column always: its expression's type is text).
   /// The cached edit table is used when there is one (the background read validates the
   /// target); only a table read for the first time waits for the catalog here.
   /// A keyless page's locator columns (`state.locatorColumns`, last) are moved first into the
   /// truncation's page-row-indexed `locators`, for `SELECT *` pages too.
   /// A `SELECT *` page without them is returned as read. A lazy page that does not have the lazy
-  /// columns, a row of another width, or a length that is not a number throws
-  /// (`LazyPageError.unexpectedShape`): its prefixes must never show as whole values; so does a
-  /// keyless page without its locator columns.
+  /// columns, a row of another width, a length that is not a number, or a cut text value
+  /// without a length throws (`LazyPageError.unexpectedShape`): its prefixes must never show as
+  /// whole values; so does a keyless page without its locator columns.
   /// `epoch` is the connection the page was read on; full values are read only there.
   func strippedDataViewerPage(
     _ result: QueryResult, state: DataViewerState, epoch: UInt64,
@@ -452,6 +454,13 @@ extension NotebookViewModel {
           }, wallClock: read.wallClock, masked: read.masked)
       }
     }
+    // A cut text column keeps its catalog type: its expression reads as text
+    for (index, column) in lazy.enumerated() where column.prefix == .characters {
+      let read = columns[index]
+      columns[index] = ColumnInfo(
+        name: read.name, type: column.type, origin: read.origin, sourceName: read.sourceName,
+        wallClock: read.wallClock, masked: read.masked)
+    }
     // The edit target's key order; the cached key when the table did not resolve
     var truncation = DataViewerState.Truncation(
       connectionEpoch: epoch, relation: state.relation, dialect: state.databaseType.dialect,
@@ -466,6 +475,7 @@ extension NotebookViewModel {
     if truncation.rowLocator != nil, truncation.locators.count != result.rows.count {
       throw LazyPageError.unexpectedShape
     }
+    var rows = result.rows
     for (rowIndex, row) in result.rows.enumerated() {
       var lengths: [String: Int] = [:]
       for (offset, index) in prefixed.enumerated() {
@@ -477,7 +487,17 @@ extension NotebookViewModel {
         case .string(let value): length = Int(value) ?? Double(value).flatMap { Int(exactly: $0) }
         default: throw LazyPageError.unexpectedShape
         }
-        if let length, length > DataViewerState.lazyPrefixBytes {
+        if lazy[index].prefix == .characters, case .string(let text) = row[index] {
+          // Cut when the server's prefix is not the whole value (`substr` may stop early)
+          // A text value without a usable length may be cut: never shown as whole
+          guard let length else { throw LazyPageError.unexpectedShape }
+          if length != text.utf8.count {
+            lengths[lazy[index].name] = length
+          } else {
+            rows[rowIndex][index] = Self.wholeText(
+              text, type: lazy[index].type, state.databaseType.dialect)
+          }
+        } else if let length, length > DataViewerState.lazyPrefixBytes {
           lengths[lazy[index].name] = length
         } else if length == nil, case .data(let data) = row[index],
           data.count >= DataViewerState.lazyPrefixBytes
@@ -493,7 +513,7 @@ extension NotebookViewModel {
       truncation.lengths[key, default: [:]].merge(lengths) { $1 }
     }
     var stripped = QueryResult(
-      columns: columns, rows: result.rows.map { Array($0.prefix(lazy.count)) },
+      columns: columns, rows: rows.map { Array($0.prefix(lazy.count)) },
       rowCount: result.rowCount, executionTime: result.executionTime,
       wasLimited: result.wasLimited, affectedRows: result.affectedRows)
     stripped.truncated = result.truncated
@@ -501,6 +521,19 @@ extension NotebookViewModel {
     stripped.skippedStatements = result.skippedStatements
     stripped.typesDeferred = result.typesDeferred
     return (stripped, truncation)
+  }
+
+  /// A whole (not cut) value of a cut text column as a plain read decodes it: the text prefix
+  /// expression reads every value as text, so a PostgreSQL `json` / `jsonb` or MySQL `JSON`
+  /// value is JSON again, and a SQLite value of a column declared JSON is when it parses
+  private static func wholeText(_ text: String, type: String, _ dialect: SQLDialect) -> CellValue {
+    let type = type.trimmingCharacters(in: .whitespaces).lowercased()
+    switch dialect {
+    case .postgresql: return ["json", "jsonb"].contains(type) ? .json(text) : .string(text)
+    case .mysql: return type == "json" ? .json(text) : .string(text)
+    case .sqlite: return SQLiteValueMapping.cell(storage: .text(text), declaredType: type)
+    default: return .string(text)
+    }
   }
 
   /// `result` without the locator columns of `state` (last), and a truncation with the locator
@@ -523,6 +556,15 @@ extension NotebookViewModel {
     if case .sqliteRowid = state.rowLocator { keepsValues = true }
     let cut = Set(state.lazyColumns?.filter(\.isPrefixed).map(\.name) ?? [])
       .union(state.lengthColumns)
+    // A cut text column's whole values (UTF-8 byte length that of the text read) still name the
+    // row: the index of its length column
+    var textLengths: [String: Int] = [:]
+    if let lazy = state.lazyColumns {
+      for (offset, column) in lazy.filter(\.isPrefixed).enumerated()
+      where column.prefix == .characters {
+        textLengths[column.name] = lazy.count + offset
+      }
+    }
     var locators: [RowChangeSet.RowKey] = []
     locators.reserveCapacity(result.rows.count)
     for row in result.rows {
@@ -535,8 +577,13 @@ extension NotebookViewModel {
       }
       var values: [String: CellValue] = [:]
       if keepsValues {
-        for (index, column) in columns.enumerated()
-        where !cut.contains(column.name) && values[column.name] == nil {
+        for (index, column) in columns.enumerated() where values[column.name] == nil {
+          if cut.contains(column.name) {
+            guard let lengthIndex = textLengths[column.name], lengthIndex < row.count,
+              case .string(let text) = row[index], case .int(let length) = row[lengthIndex],
+              length == text.utf8.count
+            else { continue }
+          }
           values[column.name] = row[index]
         }
       }

@@ -486,7 +486,8 @@ struct LazyBinaryCellTests {
     try await withItems { viewModel, manager, _ in
       let state = try #require(viewModel.dataViewer)
       #expect(state.lazyColumns != nil)
-      #expect(state.lengthColumns == ["dblore_byte_length_1"])
+      // `label TEXT` is cut as text too: its length column comes second
+      #expect(state.lengthColumns == ["dblore_byte_length_1", "dblore_byte_length_2"])
       let prefix = CellValue.data(Data(count: DataViewerState.lazyPrefixBytes))
       let lazyNames = ["id", "payload", "label"]
       func page(_ names: [String], _ rows: [[CellValue]]) -> QueryResult {
@@ -511,19 +512,22 @@ struct LazyBinaryCellTests {
       // A prefix-sized value without a usable length
       await #expect(throws: NotebookViewModel.LazyPageError.unexpectedShape) {
         try await strip(
-          page(lazyNames + state.lengthColumns, [[.int(1), prefix, .string("a"), .null]]))
+          page(lazyNames + state.lengthColumns, [[.int(1), prefix, .string("a"), .null, .int(1)]]))
       }
       await #expect(throws: NotebookViewModel.LazyPageError.unexpectedShape) {
         try await strip(
           page(
             lazyNames + state.lengthColumns,
-            [[.int(1), prefix, .string("a"), .string("many")]]))
+            [[.int(1), prefix, .string("a"), .string("many"), .int(1)]]))
       }
       // A decimal length is a length
       let truncation = try await strip(
         page(
           lazyNames + state.lengthColumns,
-          [[.int(1), prefix, .string("a"), .double(70_000)], [.int(2), .null, .null, .null]]))
+          [
+            [.int(1), prefix, .string("a"), .double(70_000), .int(1)],
+            [.int(2), .null, .null, .null, .null],
+          ]))
       #expect(truncation?.lengths == [RowChangeSet.RowKey(values: [.int(1)]): ["payload": 70_000]])
       #expect(truncation?.connectionEpoch == 7)
       #expect(truncation?.relation == #""main"."items""#)

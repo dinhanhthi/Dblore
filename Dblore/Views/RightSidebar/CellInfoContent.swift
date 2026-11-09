@@ -156,8 +156,9 @@ struct CellInfoContent: View {
           } else {
             // Word Wrap, Beautify, Edit and Copy buttons (for non-boolean types)
 
-            // Word Wrap button (only for string type, not under a geometry or vector viewer)
-            if isStringValue && preview == nil {
+            // Word Wrap button (only for string type, not under a geometry or vector viewer, nor
+            // for a cut text, whose full value is loading)
+            if isStringValue && preview == nil && unloaded == nil {
               FloatingPanelToggleButton(
                 icon: "text.alignleft",
                 helpText: "Word Wrap",
@@ -166,7 +167,8 @@ struct CellInfoContent: View {
               )
             }
 
-            // Beautify button (only for string type, not under a geometry or vector viewer)
+            // Beautify button (only for string type, not under a geometry or vector viewer, never
+            // on a cut text's prefix)
             if isStringValue && preview == nil && formatTask != nil {
               ProgressView()
                 .controlSize(.small)
@@ -177,7 +179,7 @@ struct CellInfoContent: View {
                 useSymbolEffect: false,
                 action: cancelFormat
               )
-            } else if isStringValue && preview == nil {
+            } else if isStringValue && preview == nil && unloaded == nil {
               FloatingPanelToggleButton(
                 icon: "curlybraces",
                 helpText: isBeautified
@@ -281,7 +283,7 @@ struct CellInfoContent: View {
         // Read-only view for non-boolean types. An explicit Display As format comes before a
         // geometry found by its header.
         if let unloaded {
-          UnloadedValueCard(length: unloaded.length, error: lazyLoadError)
+          UnloadedValueCard(length: unloaded.length, isText: isStringValue, error: lazyLoadError)
         } else if editTask != nil {
           CellValueLoadingCard()
         } else if let tree = ready?.tree {
@@ -865,16 +867,18 @@ struct CellInfoContent: View {
   }
 }
 
-/// Same shape as `CellValueLoadingCard`: the full size of a cut binary value while it loads
-/// (spinner after ~150 ms), or why it could not be loaded
+/// Same shape as `CellValueLoadingCard`: the full size of a cut binary value, or "Loading full
+/// value…" for a cut text, while it loads (spinner after ~150 ms), or why it could not be loaded
 private struct UnloadedValueCard: View {
   let length: Int
+  /// A cut text: "Loading full value…" instead of its size
+  let isText: Bool
   let error: String?
   @State private var showsSpinner = false
 
   var body: some View {
     VStack(spacing: Spacing.sm) {
-      Text("<\(length) bytes>")
+      Text(isText && error == nil ? "Loading full value…" : "<\(length) bytes>")
         .font(.mono)
         .foregroundColor(.foregroundMuted)
       if let error {

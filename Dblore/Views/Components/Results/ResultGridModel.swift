@@ -291,7 +291,8 @@ struct ResultGridModel {
 
   // MARK: - Unloaded cells
 
-  /// "<N bytes, not loaded>": a cut cell's text, whatever its column's "Display As"
+  /// "<N bytes, not loaded>": a cut cell's text, whatever its column's "Display As" (the grid
+  /// shows a cut text's prefix instead)
   static func notLoadedText(length: Int) -> String {
     "<\(length) bytes, not loaded>"
   }
@@ -389,9 +390,13 @@ struct ResultGridModel {
   }
 
   private func display(row: Int, column: Int, requestsDecode: Bool = false) -> CellDisplay {
-    // Never decoded from its prefix
+    // Never decoded from its prefix: a cut text shows its prefix marked "…", a cut binary its
+    // size
     if let length = unloadedLength(row: row, column: column) {
-      return CellDisplay(text: Self.notLoadedText(length: length), tooltip: nil)
+      guard case .string(let prefix) = value(row: row, column: column) else {
+        return CellDisplay(text: Self.notLoadedText(length: length), tooltip: nil)
+      }
+      return Self.cellDisplay(Self.flattened(prefix, isCut: true), marks: marksInvisibleCharacters)
     }
     // Staged text must not land in the shared cache: a copy of this model keeps the loaded rows.
     // A staged MessagePack or Protobuf value shows its size (it has no cache to decode into).
@@ -452,12 +457,13 @@ struct ResultGridModel {
     return Self.flattened(value.displayString(wallClock: wallClock))
   }
 
-  /// `text` on one line, at most `maxDisplayLength` characters plus "…"
-  private static func flattened(_ text: String) -> String {
+  /// `text` on one line, at most `maxDisplayLength` characters plus "…" (always "…" when
+  /// `isCut`: the text is a cut value's prefix)
+  private static func flattened(_ text: String, isCut: Bool = false) -> String {
     let prefix = text.prefix(Self.maxDisplayLength)
     let flat = prefix.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline)
       .joined(separator: " ")
-    return prefix.endIndex < text.endIndex ? flat + "…" : flat
+    return isCut || prefix.endIndex < text.endIndex ? flat + "…" : flat
   }
 
   /// Indexes into `CellResult.rows` for the selected displayed rows, in ascending
