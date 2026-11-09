@@ -79,6 +79,39 @@ struct DataViewerLoadTests {
     #expect(viewModel.dataViewer?.totalRows == nil)
   }
 
+  @Test("The all-rows export SQL keeps the filter and order, without paging or cut columns")
+  func exportSQLReadsWholeColumnsWithoutPaging() {
+    var viewer = DataViewerState(
+      schema: "public", name: "docs", orderColumns: ["id"], page: 3, pageSize: 50,
+      databaseType: .postgresql)
+    viewer.filter = TableFilter(conditions: [
+      FilterCondition(column: "body", op: .equals, value: "o'brien")
+    ])
+    #expect(
+      viewer.exportSQL
+        == #"SELECT * FROM "public"."docs" WHERE "body" OPERATOR(pg_catalog.=) 'o''brien' ORDER BY "id""#
+    )
+    viewer.lazyColumns = [
+      .init(name: "id", type: "integer", isPrimaryKey: true, prefix: nil),
+      .init(name: "body", type: "text", isPrimaryKey: false, prefix: .characters),
+      .init(name: "payload", type: "bytea", isPrimaryKey: false, prefix: .bytes),
+    ]
+    viewer.rowLocator = .pgLocator
+    #expect(viewer.pageSQL.contains("dblore_byte_length_1"))
+    #expect(
+      viewer.exportSQL
+        == #"SELECT "id", "body", "payload" FROM "public"."docs" WHERE "body" OPERATOR(pg_catalog.=) 'o''brien' ORDER BY "id""#
+    )
+    // SQLite names each column through its table: a stale name fails, never reads a literal
+    viewer.databaseType = .sqlite
+    viewer.filter = TableFilter(conditions: [])
+    viewer.rowLocator = nil
+    #expect(
+      viewer.exportSQL
+        == #"SELECT "public"."docs"."id", "public"."docs"."body", "public"."docs"."payload" FROM "public"."docs" ORDER BY "id""#
+    )
+  }
+
   // MARK: - Lazy binary columns (SQLite file, no server)
 
   /// `main.items` with a 70,000-byte blob (row 1), a short one (row 2) and a text column,

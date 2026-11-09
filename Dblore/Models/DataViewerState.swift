@@ -124,15 +124,18 @@ struct DataViewerState: Equatable {
       .map { " WHERE " + $0 } ?? ""
   }
 
+  /// ` ORDER BY <orderColumns>`, empty for heap order
+  private var orderBySQL: String {
+    orderColumns.isEmpty
+      ? "" : " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
+  }
+
   /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1).
   /// A lazy page lists `lazyColumns` instead of `*`, then its `lengthColumns`; a keyless page
   /// appends its `locatorColumns`.
   var pageSQL: String {
     assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
-    var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)"
-    if !orderColumns.isEmpty {
-      sql += " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
-    }
+    var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)\(orderBySQL)"
     if page > 1 {
       let offset = (page - 1) * pageSize
       sql += " " + databaseType.dialect.limitOffset(limit: pageSize, offset: offset)
@@ -148,6 +151,18 @@ struct DataViewerState: Equatable {
     var shown = self
     shown.rowLocator = nil
     return shown.pageSQL
+  }
+
+  /// The read of every row the page's filter and order give, for the all-rows export:
+  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...]` without LIMIT / OFFSET. A lazy page lists
+  /// `lazyColumns` whole, in order (the page's result columns), without its length or locator
+  /// columns. SQLite names them through the table: a double-quoted name that matches no column
+  /// (a stale cache's) would be read as a string literal, so it fails instead.
+  var exportSQL: String {
+    assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
+    let table = databaseType == .sqlite ? relation + "." : ""
+    let list = lazyColumns.map { $0.map { table + quotedIdentifier($0.name) } } ?? ["*"]
+    return "SELECT \(list.joined(separator: ", ")) FROM \(relation)\(whereSQL)\(orderBySQL)"
   }
 
   var countSQL: String {

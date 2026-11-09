@@ -331,18 +331,88 @@ nonisolated struct SQLDumpSessionFactory: DatabaseSessionFactory {
   }
 }
 
+/// The connection and file steps a snapshot export shares (the SQL dump, `ResultExportRunner`):
+/// a manager of its own connected from the tab's in-memory config with the tab's unremembered
+/// certificate and SSH secret (SQLite opened read-only), or the tab's own manager for DuckDB
+/// (never connected or disconnected here), and a private temporary file moved over the
+/// destination only once it is whole.
+nonisolated struct SnapshotExportConnection: Sendable {
+  /// The tab's in-memory config (with its password)
+  let config: ConnectionConfig
+  let material: ClientCertificateStoreFactory.ConnectionMaterial?
+  let sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
+  let manager: DatabaseConnectionManager
+  /// `manager` is the tab's (DuckDB)
+  let usesTabSession: Bool
+
+  /// A manager of the export's own with the app's sessions (`SQLDumpSessionFactory`).
+  /// `sshHostKeyPrompt`: the prompt the tab's manager was built with.
+  static func ownManager(sshHostKeyPrompt: any SSHHostKeyPrompt) -> DatabaseConnectionManager {
+    let factory = SQLDumpSessionFactory(
+      inner: AppDatabaseSessionFactory(
+        hostKeyValidator: SSHHostKeyPolicy(prompt: sshHostKeyPrompt)))
+    return DatabaseConnectionManager(sessionFactory: factory, sshHostKeyPrompt: sshHostKeyPrompt)
+  }
+
+  /// A relock (the manager's `lockSource`) stops a long export before its next batch
+  func refuseIfRelocked() throws {
+    if let refusal = manager.lockSource.refusal(for: config) { throw refusal }
+  }
+
+  /// Creates `temporary` (mode 0600), connects, runs `body` with the open file, then closes the
+  /// file and disconnects on every path. Afterwards `destination` is replaced with the file,
+  /// unless the task was cancelled, the destination became the database or the identity was
+  /// relocked meanwhile.
+  /// - Throws: what `body` and the connect throw, `SQLDumpError.destinationIsDatabase`,
+  ///   `DatabaseError.connectionLocked`, `CancellationError` when the task is cancelled. The
+  ///   temporary file is deleted then and `destination` is untouched.
+  func write<T: Sendable>(
+    to destination: URL, through temporary: URL, _ body: (FileHandle) async throws -> T
+  ) async throws -> T {
+    let file = FileHandle(
+      fileDescriptor: try SQLDumpWriter.createPrivateFile(at: temporary), closeOnDealloc: true)
+    // Nil once closed
+    var output: FileHandle? = file
+    var connectConfig = config
+    if config.databaseType == .sqlite { connectConfig.readOnlyFile = true }
+    do {
+      if !usesTabSession {
+        try await manager.reconnectWithActiveCertificate(
+          config: connectConfig, material: material, sshCredential: sshCredential)
+      }
+      let result = try await body(file)
+      output = nil
+      try file.close()
+      if !usesTabSession { await manager.disconnect() }
+      try Task.checkCancellation()
+      // The path may have become a link to the database while the export ran
+      if SQLDumpWriter.isConnectedDatabaseFile(destination, config: config) {
+        throw SQLDumpError.destinationIsDatabase
+      }
+      try refuseIfRelocked()
+      try SQLDumpWriter.replaceItem(at: destination, withItemAt: temporary)
+      return result
+    } catch {
+      try? output?.close()
+      if !usesTabSession { await manager.disconnect() }
+      try? FileManager.default.removeItem(at: temporary)
+      if Task.isCancelled { throw CancellationError() }
+      throw error
+    }
+  }
+}
+
 actor SQLDumpWriter {
   /// Rows per INSERT statement
   static let maxBatchRows = 500
   /// SQL bytes per INSERT statement (MariaDB's default `max_allowed_packet` is 16 MiB)
   static let maxBatchBytes = 4 * 1024 * 1024
 
-  private let config: ConnectionConfig
-  private let material: ClientCertificateStoreFactory.ConnectionMaterial?
-  private let sshCredential: SSHCredentialStoreFactory.ConnectionCredential?
-  private let manager: DatabaseConnectionManager
-  /// `manager` is the tab's (DuckDB): never reconnected or disconnected here
-  private let usesTabSession: Bool
+  /// Its manager is the tab's for DuckDB: never reconnected or disconnected here
+  private let connection: SnapshotExportConnection
+  private var config: ConnectionConfig { connection.config }
+  private var manager: DatabaseConnectionManager { connection.manager }
+  private var usesTabSession: Bool { connection.usesTabSession }
   private let temporaryDirectory: URL
   private var output: FileHandle?
 
@@ -354,13 +424,9 @@ actor SQLDumpWriter {
     sshCredential: SSHCredentialStoreFactory.ConnectionCredential?,
     sshHostKeyPrompt: any SSHHostKeyPrompt
   ) {
-    let factory = SQLDumpSessionFactory(
-      inner: AppDatabaseSessionFactory(
-        hostKeyValidator: SSHHostKeyPolicy(prompt: sshHostKeyPrompt)))
     self.init(
       config: config, material: material, sshCredential: sshCredential,
-      manager: DatabaseConnectionManager(
-        sessionFactory: factory, sshHostKeyPrompt: sshHostKeyPrompt),
+      manager: SnapshotExportConnection.ownManager(sshHostKeyPrompt: sshHostKeyPrompt),
       temporaryDirectory: FileManager.default.temporaryDirectory)
   }
 
@@ -393,11 +459,9 @@ actor SQLDumpWriter {
     sshCredential: SSHCredentialStoreFactory.ConnectionCredential?,
     manager: DatabaseConnectionManager, usesTabSession: Bool = false, temporaryDirectory: URL
   ) {
-    self.config = config
-    self.material = material
-    self.sshCredential = sshCredential
-    self.manager = manager
-    self.usesTabSession = usesTabSession
+    connection = SnapshotExportConnection(
+      config: config, material: material, sshCredential: sshCredential, manager: manager,
+      usesTabSession: usesTabSession)
     self.temporaryDirectory = temporaryDirectory
   }
 
@@ -498,46 +562,18 @@ actor SQLDumpWriter {
     }
     let temporary = temporaryDirectory.appendingPathComponent(
       "Dblore-dump-\(UUID().uuidString).sql")
-    output = FileHandle(
-      fileDescriptor: try Self.createPrivateFile(at: temporary), closeOnDealloc: true)
-    var dumpConfig = config
-    if engine == .sqlite { dumpConfig.readOnlyFile = true }
-    do {
-      if !usesTabSession {
-        try await manager.reconnectWithActiveCertificate(
-          config: dumpConfig, material: material, sshCredential: sshCredential)
-      }
-      let result = try await manager.withDumpSnapshot { reader in
+    return try await connection.write(to: destination, through: temporary) { handle in
+      output = handle
+      defer { output = nil }
+      return try await manager.withDumpSnapshot { reader in
         try await self.dump(reader, engine: engine, options: options, progress: progress)
       }
-      try closeOutput()
-      if !usesTabSession { await manager.disconnect() }
-      try Task.checkCancellation()
-      // The path may have become a link to the database while the dump ran
-      if Self.isConnectedDatabaseFile(destination, config: config) {
-        throw SQLDumpError.destinationIsDatabase
-      }
-      try refuseIfRelocked()
-      try Self.replaceItem(at: destination, withItemAt: temporary)
-      return result
-    } catch {
-      try? closeOutput()
-      if !usesTabSession { await manager.disconnect() }
-      try? FileManager.default.removeItem(at: temporary)
-      if Task.isCancelled { throw CancellationError() }
-      throw error
     }
-  }
-
-  private func closeOutput() throws {
-    let handle = output
-    output = nil
-    try handle?.close()
   }
 
   /// A relock (the manager's `lockSource`) stops a long dump before its next table or batch
   private func refuseIfRelocked() throws {
-    if let refusal = manager.lockSource.refusal(for: config) { throw refusal }
+    try connection.refuseIfRelocked()
   }
 
   private func emit(_ text: String) throws {

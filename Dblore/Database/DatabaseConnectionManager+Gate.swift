@@ -141,52 +141,68 @@ extension DatabaseConnectionManager {
     return masked
   }
 
-  /// `result` with `rules` applied, matched once per column. Without an origin a rule matches
-  /// the most columns, so only the columns that match then need theirs (`maskOrigins`), and only
-  /// when a rule that names a table or schema names one of them. A PostgreSQL read cut by the
-  /// row cap and not reset is still draining: no catalog read, its origins are nil (fail closed),
-  /// or the memo's while metadata is paused (`maskOrigins`).
+  /// The mask rules results get now (`currentMaskRules`) resolved for `columns` as a result's
+  /// are (`applying`): same origin reads, nil origins fail closed. For a streamed read of the
+  /// same columns, such as the all-rows export: the origins are read now (the export refuses a
+  /// tab that is not idle, so no read is draining). No config (disconnected): no rules, an empty
+  /// plan, as `runUserSQL` applies none then.
+  func maskPlan(for columns: [ColumnInfo]) async -> ColumnMaskPlan {
+    guard let config else { return ColumnMaskPlan(matches: columns.map { _ in nil }) }
+    return await maskPlan(
+      ColumnMaskRuleSet(currentMaskRules()), for: columns, databaseType: config.databaseType,
+      mayRead: true)
+  }
+
+  /// `rules` matched once per column. Without an origin a rule matches the most columns, so
+  /// only the columns that match then need theirs (`maskOrigins`), and only when a rule that
+  /// names a table or schema names one of them. `mayRead` false: no catalog read, the origins
+  /// are nil (fail closed), or the memo's while metadata is paused (`maskOrigins`).
+  private func maskPlan(
+    _ rules: ColumnMaskRuleSet, for columns: [ColumnInfo], databaseType: DatabaseType,
+    mayRead: Bool
+  ) async -> ColumnMaskPlan {
+    var matches = columns.map { rules.matchingRule(column: $0.name, origin: nil) }
+    let candidates = matches.indices.filter { matches[$0] != nil }
+    if !candidates.isEmpty, rules.needsOrigin(forColumns: candidates.map { columns[$0].name }) {
+      let origins = await maskOrigins(
+        candidates.map { columns[$0] }, databaseType: databaseType, mayRead: mayRead)
+      for (index, origin) in zip(candidates, origins) {
+        matches[index] = rules.matchingRule(column: columns[index].name, origin: origin)
+      }
+    }
+    return ColumnMaskPlan(matches: matches)
+  }
+
+  /// `result` with `rules` applied (`maskPlan`). A PostgreSQL read cut by the row cap and not
+  /// reset is still draining: no catalog read for its origins (`mayRead` false).
   private func applying(
     _ rules: ColumnMaskRuleSet, to result: QueryResult, databaseType: DatabaseType
   ) async -> QueryResult {
-    var matches = result.columns.map { rules.matchingRule(column: $0.name, origin: nil) }
-    let candidates = matches.indices.filter { matches[$0] != nil }
-    guard !candidates.isEmpty else { return result }
-    if rules.needsOrigin(forColumns: candidates.map { result.columns[$0].name }) {
-      let mayRead = databaseType != .postgresql || !result.truncated || result.sessionReset
-      let origins = await maskOrigins(
-        candidates.map { result.columns[$0] }, databaseType: databaseType, mayRead: mayRead)
-      for (index, origin) in zip(candidates, origins) {
-        matches[index] = rules.matchingRule(column: result.columns[index].name, origin: origin)
-      }
-    }
-    return Self.masking(result, with: matches, cutAfter: readLimits?.maxCellCharacters)
+    let mayRead = databaseType != .postgresql || !result.truncated || result.sessionReset
+    let plan = await maskPlan(
+      rules, for: result.columns, databaseType: databaseType, mayRead: mayRead)
+    return Self.masking(result, with: plan, cutAfter: readLimits?.maxCellCharacters)
   }
 
-  /// `result` with each column that has a rule in `matches` (same order) marked `masked` and
-  /// its cells masked. `cutAfter`: the capped read's cell limit (MCP managers); a cell in
-  /// `result.cutCells` is cut too. A masked cell shows only mask text, so it leaves `cutCells`.
+  /// `result` with each column of `plan.maskedColumns` marked `masked` and its cells masked.
+  /// `cutAfter`: the capped read's cell limit (MCP managers); a cell in `result.cutCells` is
+  /// cut too. A masked cell shows only mask text, so it leaves `cutCells`.
   private nonisolated static func masking(
-    _ result: QueryResult, with matches: [ColumnMaskRule?], cutAfter limit: Int?
+    _ result: QueryResult, with plan: ColumnMaskPlan, cutAfter limit: Int?
   ) -> QueryResult {
-    let styles = matches.enumerated().compactMap { index, rule in
-      rule.map { (index: index, style: $0.style) }
-    }
-    guard !styles.isEmpty else { return result }
+    let maskedColumns = Set(plan.maskedColumns)
+    guard !maskedColumns.isEmpty else { return result }
     let columns = result.columns.enumerated().map { index, column in
-      matches.indices.contains(index) && matches[index] != nil
+      maskedColumns.contains(index)
         ? ColumnInfo(
           name: column.name, type: column.type, origin: column.origin,
           sourceName: column.sourceName, wallClock: column.wallClock, masked: true)
         : column
     }
     let rows = result.rows.enumerated().map { rowIndex, row in
-      var row = row
-      for (index, style) in styles where row.indices.contains(index) {
-        let isCut = result.cutCells.contains(CellPosition(row: rowIndex, column: index))
-        row[index] = maskedCell(row[index], style: style, cutAfter: limit, isCut: isCut)
+      plan.mask(row, cutAfter: limit) {
+        result.cutCells.contains(CellPosition(row: rowIndex, column: $0))
       }
-      return row
     }
     var masked = QueryResult(
       columns: columns, rows: rows, rowCount: result.rowCount,
@@ -196,27 +212,9 @@ extension DatabaseConnectionManager {
     masked.sessionReset = result.sessionReset
     masked.skippedStatements = result.skippedStatements
     masked.typesDeferred = result.typesDeferred
-    let maskedColumns = Set(styles.map(\.index))
     masked.cutCells = result.cutCells.filter { !maskedColumns.contains($0.column) }
     masked.stoppedAtByteBudget = result.stoppedAtByteBudget
     return masked
-  }
-
-  /// `cell` as `style` shows it. A cell a capped read cut (`isCut`, or text longer than `limit`:
-  /// it keeps one character past) shows the full mask: a partial style would show part of a
-  /// prefix.
-  private nonisolated static func maskedCell(
-    _ cell: CellValue, style: ColumnMaskRule.Style, cutAfter limit: Int?, isCut: Bool
-  ) -> CellValue {
-    guard style == .lastFour || style == .email else { return style.masked(cell) }
-    if isCut { return ColumnMaskRule.Style.full.masked(cell) }
-    guard let limit else { return style.masked(cell) }
-    let text: String
-    switch cell {
-    case .string(let value), .json(let value), .decimal(let value): text = value
-    default: return style.masked(cell)
-    }
-    return text.count > limit ? ColumnMaskRule.Style.full.masked(cell) : style.masked(cell)
   }
 
   private func planNamedParameters(
@@ -709,5 +707,50 @@ extension DatabaseConnectionManager {
       inner == .unknown ? "EXPLAIN of an unrecognized statement" : "EXPLAIN (plan only)"
     case .unknown: "Unrecognized statement"
     }
+  }
+}
+
+/// The mask rules of one result's columns, resolved once (`maskPlan(for:)`): the grid's results
+/// (`applying`) and a streamed export of the same columns mask each row with it, so they agree.
+nonisolated struct ColumnMaskPlan: Sendable {
+  /// Per column, in order: the rule that masks it, nil when none does
+  let matches: [ColumnMaskRule?]
+
+  /// The columns a rule masks: the result's `ColumnInfo.masked` ones, which an export redacts
+  /// (`ExportOptions.redactingMasked`)
+  var maskedColumns: [Int] { matches.indices.filter { matches[$0] != nil } }
+
+  /// `row` with its masked columns' cells masked. For whole values: nothing is cut.
+  func mask(_ row: [CellValue]) -> [CellValue] {
+    mask(row, cutAfter: nil) { _ in false }
+  }
+
+  /// `row` with its masked columns' cells masked; `isCut(column)`: a capped read cut that cell,
+  /// `cutAfter` its cell limit (MCP managers)
+  func mask(_ row: [CellValue], cutAfter limit: Int?, isCut: (Int) -> Bool) -> [CellValue] {
+    var row = row
+    for (index, rule) in matches.enumerated() where row.indices.contains(index) {
+      guard let rule else { continue }
+      row[index] = Self.maskedCell(
+        row[index], style: rule.style, cutAfter: limit, isCut: isCut(index))
+    }
+    return row
+  }
+
+  /// `cell` as `style` shows it. A cell a capped read cut (`isCut`, or text longer than `limit`:
+  /// it keeps one character past) shows the full mask: a partial style would show part of a
+  /// prefix.
+  private static func maskedCell(
+    _ cell: CellValue, style: ColumnMaskRule.Style, cutAfter limit: Int?, isCut: Bool
+  ) -> CellValue {
+    guard style == .lastFour || style == .email else { return style.masked(cell) }
+    if isCut { return ColumnMaskRule.Style.full.masked(cell) }
+    guard let limit else { return style.masked(cell) }
+    let text: String
+    switch cell {
+    case .string(let value), .json(let value), .decimal(let value): text = value
+    default: return style.masked(cell)
+    }
+    return text.count > limit ? ColumnMaskRule.Style.full.masked(cell) : style.masked(cell)
   }
 }
