@@ -15,6 +15,8 @@ struct EditorModeView: View {
   @Bindable private var appSettings = AppSettings.shared
   @Environment(\.colorScheme) private var colorScheme
   @State private var textViewRef: SQLTextView?
+  /// Table view of the result grid while one is shown; nil with no grid (Query > Focus Results)
+  @State private var gridTableViewRef: ResultGridTableView?
   @State private var isFocused: Bool = false
   /// View > Zoom acts on the pane that last took the keyboard focus: the editor or the grid
   @State private var zoomTarget: ZoomTarget = .editor
@@ -104,6 +106,25 @@ struct EditorModeView: View {
 
   // MARK: - Computed Properties
 
+  /// Query > Focus SQL Editor: the caret and selection stay as they were
+  private var focusSQLEditorAction: (() -> Void)? {
+    guard textViewRef != nil else { return nil }
+    return { [weak textViewRef] in
+      guard let textView = textViewRef, textView.window?.makeFirstResponder(textView) == true
+      else { return }
+      zoomTarget = .editor
+    }
+  }
+
+  /// Query > Focus Results: nil while no result grid is shown
+  private var focusResultGridAction: (() -> Void)? {
+    guard gridTableViewRef != nil else { return nil }
+    return { [weak gridTableViewRef] in
+      guard let table = gridTableViewRef, table.takeFocusKeepingSelection() else { return }
+      zoomTarget = .grid
+    }
+  }
+
   // MARK: - Body
 
   var body: some View {
@@ -115,6 +136,8 @@ struct EditorModeView: View {
       }
     }
     .bridgedFocusedSceneValue(\.zoomTarget, zoomTarget)
+    .bridgedFocusedSceneValue(\.focusSQLEditorAction, focusSQLEditorAction)
+    .bridgedFocusedSceneValue(\.focusResultGridAction, focusResultGridAction)
     // Switching tabs can reuse this view and its text view: the new tab's model takes it
     .onChange(of: viewModel.id, initial: true) {
       viewModel.editorTextView = textViewRef
@@ -334,7 +357,18 @@ struct EditorModeView: View {
       result: result, viewModel: viewModel, chartSpec: editorChartSpecBinding(for: result),
       displayMode: displayMode, showsDisplayPicker: false,
       explainMode: explainDisplayModeBinding(for: result), showsExplainPicker: false,
-      onGridFocus: { zoomTarget = .grid }
+      onGridFocus: { zoomTarget = .grid },
+      onGridTableView: { table, isShown in
+        // A new result may make the new grid before the old one is dismantled: the old one
+        // clears the ref only while it still holds it
+        DispatchQueue.main.async {
+          if isShown {
+            gridTableViewRef = table
+          } else if gridTableViewRef === table {
+            gridTableViewRef = nil
+          }
+        }
+      }
     )
     .frame(maxWidth: .infinity, maxHeight: .infinity)  // Fill the panel; the grid scrolls
     .id(result.timestamp)  // New result: reset sort and search match
