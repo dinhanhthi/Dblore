@@ -135,6 +135,9 @@ extension NotebookViewModel {
     if boundParameters == nil, refuseMissingParameters(query, cellId: nil) != nil { return }
     let parameters = boundParameters ?? boundParameterValues(for: query, cellId: nil)
     let maxRows = maxRows ?? effectiveRowCap
+    // Data viewer pages keep whole values (their own prefixes bound them; a MongoDB page comes
+    // without `pageState`). An edit's re-run (`.internal`, no page) is cut like the user's run.
+    let readLimits = pageState == nil && dataViewer == nil ? resultReadLimits : nil
     let multipleStatements = connectionManager.hasMultipleStatements(query, dialect: sqlDialect)
     // Connection identity before the query: edit targets must resolve on the same one. Shown as
     // running first; a user run after a DuckDB connect then waits for its loads. Never an
@@ -185,7 +188,8 @@ extension NotebookViewModel {
           try await connectionManager
           .executeDetailed(
             userSQL: query, parameters: parameters, policy: protectionPolicy,
-            maxRows: maxRows, caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true)
+            maxRows: maxRows, caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true,
+            readLimits: readLimits)
         ranStatements = statementResults.map(\.queryText)
 
         totalExecutionTime = totalTime
@@ -251,7 +255,8 @@ extension NotebookViewModel {
         runEpoch = epoch
         var result = try await connectionManager.execute(
           userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
-          caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true)
+          caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true,
+          readLimits: readLimits)
         ranStatements = [query]
         var truncation: DataViewerState.Truncation?
         if let pageState {

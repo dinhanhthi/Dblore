@@ -56,14 +56,17 @@ extension DatabaseConnectionManager {
   /// `deferEnrichment` (the app's grid only): PostgreSQL column types are returned as the driver
   /// reported them, outside any transaction, marked `typesDeferred` for the caller to enrich
   /// after showing the rows. The default awaits the enrichment (MCP, CLI, internal reads).
+  /// `readLimits`: what each read keeps per cell and in total (`CappedReadLimits.app` for the
+  /// app's editor and notebook results); nil keeps whole values. A manager with limits of its
+  /// own (MCP) keeps them.
   func execute(
     userSQL: String, parameters: [String: SQLBindValue]? = nil, policy: ProtectionPolicy,
     maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil,
-    deferEnrichment: Bool = false
+    deferEnrichment: Bool = false, readLimits: CappedReadLimits? = nil
   ) async throws -> QueryResult {
     let run = try await runUserSQL(
       userSQL, parameters: parameters, policy: policy, maxRows: maxRows, caller: caller,
-      expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
+      expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment, readLimits: readLimits)
     return Self.combined(run.results.map(\.result), totalTime: run.totalTime)
   }
 
@@ -72,15 +75,15 @@ extension DatabaseConnectionManager {
   /// violates `policy`. Under Protected mode, writes run in the app transaction (same `caller`
   /// rule as `execute`, same `expectedEpoch` check). `parameters` nil sends `userSQL`
   /// unchanged; a dictionary rewrites `:name` the same way `execute` does. Same
-  /// `deferEnrichment` as `execute`.
+  /// `deferEnrichment` and `readLimits` as `execute`.
   func executeDetailed(
     userSQL: String, parameters: [String: SQLBindValue]? = nil, policy: ProtectionPolicy,
     maxRows: Int = defaultMaxFetchRows, caller: UUID? = nil, expectedEpoch: UInt64? = nil,
-    deferEnrichment: Bool = false
+    deferEnrichment: Bool = false, readLimits: CappedReadLimits? = nil
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     try await runUserSQL(
       userSQL, parameters: parameters, policy: policy, maxRows: maxRows, caller: caller,
-      expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
+      expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment, readLimits: readLimits)
   }
 
   /// `parameters` nil keeps the authorize path. A dictionary rewrites first, then uses the
@@ -88,7 +91,8 @@ extension DatabaseConnectionManager {
   /// The results leave with the connection's mask rules applied (`applyingMaskRules`).
   private func runUserSQL(
     _ userSQL: String, parameters: [String: SQLBindValue]?, policy: ProtectionPolicy,
-    maxRows: Int, caller: UUID?, expectedEpoch: UInt64?, deferEnrichment: Bool
+    maxRows: Int, caller: UUID?, expectedEpoch: UInt64?, deferEnrichment: Bool,
+    readLimits: CappedReadLimits?
   ) async throws -> (results: [(queryText: String, result: QueryResult)], totalTime: TimeInterval) {
     try refuseIfRelocked(config)
     // The config the statements run with: a disconnect meanwhile never drops its rules
@@ -99,12 +103,12 @@ extension DatabaseConnectionManager {
       run = try await runUserStatements(
         plan.statements, protectedMode: plan.protectedMode, maxRows: maxRows, caller: caller,
         expectedEpoch: expectedEpoch, binds: plan.binds, originalTexts: plan.originalTexts,
-        deferEnrichment: deferEnrichment)
+        deferEnrichment: deferEnrichment, readLimits: readLimits)
     } else {
       let (statements, protectedMode) = try authorize(userSQL, policy: policy)
       run = try await runUserStatements(
         statements, protectedMode: protectedMode, maxRows: maxRows, caller: caller,
-        expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment)
+        expectedEpoch: expectedEpoch, deferEnrichment: deferEnrichment, readLimits: readLimits)
     }
     guard let ruleConfig else { return run }
     return (await applyingMaskRules(run.results, config: ruleConfig), run.totalTime)

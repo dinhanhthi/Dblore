@@ -354,7 +354,10 @@ struct ResultMetadataView: View {
       }
       // Same gap as the result box's own padding, so top and bottom insets match
       .padding(.top, Spacing.sm)
-      if result.sessionReset, let notice = result.capNotice {  // the row cap reset the session
+      // The row cap reset the session, values were cut, or the byte budget stopped the read
+      if result.sessionReset || !result.cutCells.isEmpty || result.stoppedAtByteBudget,
+        let notice = result.capNotice
+      {
         Label(notice, systemImage: "exclamationmark.triangle.fill")
           .font(.labelText).foregroundColor(.warning)
           .padding(.horizontal, Spacing.sm).padding(.vertical, 2)

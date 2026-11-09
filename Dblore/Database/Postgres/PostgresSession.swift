@@ -972,19 +972,6 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     return PostgresQuery(unsafeSQL: sql, binds: untypedTextBindings(binds))
   }
 
-  // MARK: - Rows
-
-  static func rowSource(_ collected: CollectedRows) -> SessionRowSource {
-    let rows = collected.rows
-    let stream = AsyncThrowingStream<[CellValue], Error> { continuation in
-      for row in rows {
-        continuation.yield(row)
-      }
-      continuation.finish()
-    }
-    return SessionRowSource(columns: collected.columns, rows: stream)
-  }
-
   // MARK: - Close state
 
   private func emit(_ reason: SessionCloseReason) {

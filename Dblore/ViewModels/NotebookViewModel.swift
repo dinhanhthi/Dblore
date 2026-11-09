@@ -111,6 +111,9 @@ class NotebookViewModel {
   @ObservationIgnored var keyLookupCheckpointForTesting: (@MainActor () async -> Void)?
   /// Global result row cap source (tests pin a value without touching the shared settings)
   @ObservationIgnored var globalRowCap: @MainActor () -> Int = { AppSettings.shared.resultRowCap }
+  /// What an editor or notebook result read keeps per cell and in total
+  /// (`resultReadLimits`); tests inject small limits
+  @ObservationIgnored var appReadLimits = CappedReadLimits.app
   /// Current Run All batch and the connection epoch its first cell started on (see
   /// `NotebookViewModel+QueueReset.swift`)
   @ObservationIgnored var runAllBatch: (id: UUID, epoch: UInt64)?

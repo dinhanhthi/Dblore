@@ -190,6 +190,30 @@ struct PostgresCancelBackendTests {
     }
   }
 
+  /// A FETCH is streamed: in flight until its rows are read or dropped. 40,000 rows (about
+  /// 4.5 MB) pass what the client buffers and the loopback socket holds, so a CLOSE after an
+  /// early break is answered only once the dropped FETCH was drained
+  @Test(
+    "A cursor FETCH streams its rows, and a CLOSE after an early break succeeds",
+    .timeLimit(.minutes(1)))
+  func cursorFetchStreamsAndClosesAfterBreak() async throws {
+    let server = FakePostgresServer(
+      pid: 9, backendStart: Self.start, answer: .cancelled, fetchRows: 40_000)
+    try await withOpenSession(on: server) { session in
+      let cursor = try await session.openCursor(Self.cursorRead, binds: [])
+      let fetchSQL = PostgresSession.fetchSQL(name: cursor.name, maxRows: 40_001)
+      do {
+        let source = try await session.fetch(cursor, maxRows: 40_001)
+        #expect(session.statementsInFlight == [fetchSQL])
+        var iterator = source.rows.makeAsyncIterator()
+        #expect(try await iterator.next() == [.string(String(repeating: "x", count: 100))])
+      }
+      try await session.closeCursor(cursor)
+      #expect(server.receivedStatements.last == PostgresSession.closeSQL(name: cursor.name))
+      #expect(session.statementsInFlight.isEmpty)
+    }
+  }
+
   /// The identity row is read column by column: a server that sends no `server_encoding` keeps
   /// the version and the pid (text prefixes stay off), one that sends it gives the encoding
   @Test(
@@ -632,7 +656,8 @@ private actor CancelPause {
 /// each extended-protocol batch (Parse … Sync) is answered by its SQL: the identity read at open
 /// returns `pid`, `backendStart` and, when set, `encoding` as a 4th column (an error when `pid`
 /// is nil), the cancel statement answers as `answer` says and is recorded with its text binds, a
-/// statement `fails` names answers an error, anything else returns no rows.
+/// statement `fails` names answers an error, a FETCH answers `fetchRows` text rows, anything else
+/// returns no rows.
 final class FakePostgresServer: @unchecked Sendable {
   enum Answer: Sendable, CustomTestStringConvertible {
     /// One row, true
@@ -665,6 +690,8 @@ final class FakePostgresServer: @unchecked Sendable {
   private let holds: @Sendable (String) -> Bool
   /// Statements answered with an error
   private let fails: @Sendable (String) -> Bool
+  /// Rows of one text column `a` a FETCH answers (0: no rows)
+  private let fetchRows: Int
   private let lock = NSLock()
   private let held = NSCondition()
   private var released = false
@@ -679,8 +706,9 @@ final class FakePostgresServer: @unchecked Sendable {
   init(
     pid: Int32?, backendStart: String, answer: Answer, encoding: String? = nil,
     holds: @escaping @Sendable (String) -> Bool = { _ in false },
-    fails: @escaping @Sendable (String) -> Bool = { _ in false }
+    fails: @escaping @Sendable (String) -> Bool = { _ in false }, fetchRows: Int = 0
   ) {
+    self.fetchRows = fetchRows
     self.pid = pid
     self.backendStart = backendStart
     self.encoding = encoding
@@ -829,6 +857,13 @@ final class FakePostgresServer: @unchecked Sendable {
       }
     }
     if fails(sql) { return Self.error("42883", "function does not exist") }
+    if sql.hasPrefix("FETCH"), fetchRows > 0 {
+      let text = Array(String(repeating: "x", count: 100).utf8)
+      let row = Self.message("D", Self.int16(1) + Self.int32(UInt32(text.count)) + text)
+      return Self.rows(
+        params: [], columns: [("a", 25)], rows: Array(repeating: row, count: fetchRows),
+        tag: "FETCH \(fetchRows)")
+    }
     if sql.contains("server_version_num") {
       guard let pid else { return Self.error("42501", "permission denied") }
       let start = Array(backendStart.utf8)

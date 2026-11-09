@@ -7,10 +7,13 @@
 //   (`resetSessionIfCapped`), the remaining statements of the script are not run;
 // - a plain SELECT / VALUES / TABLE / WITH read calling no function and locking no rows, inside
 //   the app transaction or the user's own BEGIN: sent as a server-side cursor
-//   (`executeCursorRead`: DECLARE, FETCH cap + 1, CLOSE), so the server stops at the cap and the
-//   transaction survives. The planner prefers a fast-start plan for a cursor: an index matching
-//   ORDER BY skips the sort. Without one the server still sorts every row first, and only
-//   statement_timeout stops it;
+//   (`executeCursorRead`: DECLARE, FETCH cap + 1, CLOSE; one round trip, the FETCH streamed and
+//   each row cut as it leaves PostgresNIO's buffer; that buffer is counted in rows, 256 growing
+//   to 16,384 and never past cap + 1, so raw rows ahead of the cut are bounded by rows, not
+//   bytes, as on the plain `.read` path), so the
+//   server stops at the cap and the transaction survives. The planner prefers a fast-start plan
+//   for a cursor: an index matching ORDER BY skips the sort. Without one the server still sorts
+//   every row first, and only statement_timeout stops it;
 // - any other read (SHOW, EXPLAIN, calling a function, a row lock such as FOR UPDATE / FOR
 //   SHARE that a cursor would apply to fetched rows only, another tab's statement in flight
 //   with no transaction open): the loop breaks and PostgresNIO drains the rest (bounded by
@@ -138,12 +141,14 @@ extension DatabaseConnectionManager {
   /// buffers the documents first), so an empty find keeps its `_id` column. With `readLimits`,
   /// rows are cut as they arrive and a row past the byte budget ends the read like a row past
   /// the cap (`stoppedAtByteBudget`). With `marksCutCells`, each cut cell of a kept row is
-  /// recorded in `cutCells`.
+  /// recorded in `cutCells`. The limits are the manager's (`readLimits`, MCP), else `limits`
+  /// (the read's own, `execute(userSQL:readLimits:)`).
   func readCapped(
-    _ source: SessionRowSource, maxRows: Int, readToEnd: Bool
+    _ source: SessionRowSource, maxRows: Int, readToEnd: Bool, limits: CappedReadLimits? = nil
   ) async throws -> CollectedRows {
     var collected = CollectedRows()
     var keptBytes = 0
+    let readLimits = self.readLimits ?? limits
     if config?.databaseType == .mysql || config?.databaseType.capabilities.queryLanguage == .mongosh
     {
       collected.columns = source.columns
@@ -232,9 +237,16 @@ extension DatabaseConnectionManager {
 
   /// Inside a transaction, read `query` through a server-side cursor: DECLARE, FETCH cap + 1,
   /// CLOSE. The server stops at the cap instead of draining. Errors point at the text sent
-  /// (the server position is relative to it).
+  /// (the server position is relative to it). The FETCH is one round trip, streamed:
+  /// `readCapped` cuts each row as it arrives (`readLimits`, the read's own) and stops at the
+  /// cap or the byte budget mid-FETCH. Raw rows not yet cut sit in PostgresNIO's row buffer,
+  /// counted in rows (256 growing to 16,384, never past cap + 1), the same bound as `.read`.
+  /// After a byte-budget stop the rest of the FETCH is discarded unread, so a runtime error in
+  /// those rows aborts the transaction silently and surfaces as the CLOSE's "current transaction
+  /// is aborted"; a cancel during that discard finds only the CLOSE in flight and resets.
   func executeCursorRead(
-    _ query: String, maxRows: Int, startTime: Date, binds: [SQLBindValue] = []
+    _ query: String, maxRows: Int, startTime: Date, binds: [SQLBindValue] = [],
+    readLimits perRead: CappedReadLimits? = nil
   ) async throws -> QueryResult {
     let cursor: SessionCursor
     do {
@@ -248,9 +260,17 @@ extension DatabaseConnectionManager {
     let fetchSQL = PostgresSession.fetchSQL(name: cursor.name, maxRows: fetchCount)
     let collected: CollectedRows
     do {
+      // The source lives only inside this closure: once `readCapped` stops (cap or byte budget
+      // mid-FETCH), its iterator and the source are released here, before the CLOSE below is
+      // sent. Releasing the session's row stream ends the FETCH (`RowPull` deinit ends the
+      // statement, and PostgresNIO cancels the row stream and discards its remaining rows), as
+      // a drained `.read` does. PostgresNIO runs one statement at a time, so the CLOSE starts
+      // once those rows are discarded. A source kept past this point would leave a FETCH nobody
+      // reads in front of the CLOSE, which would then wait forever.
       collected = try await withSession { session in
         let source = try await session.fetch(cursor, maxRows: fetchCount)
-        return try await self.readCapped(source, maxRows: maxRows, readToEnd: false)
+        return try await self.readCapped(
+          source, maxRows: maxRows, readToEnd: false, limits: perRead)
       }
     } catch {
       throw unwrapFailure(error, fallbackSQL: fetchSQL, startTime: startTime)

@@ -157,9 +157,10 @@ extension DatabaseConnectionManager {
   ///   - binds: Values for the statement's placeholders. Never interpolated into `query`.
   ///   - deferEnrichment: outside a transaction, PostgreSQL types stay the driver's, marked
   ///     `typesDeferred` for the caller's background read (`execute(userSQL:deferEnrichment:)`)
+  ///   - readLimits: what the read keeps (`execute(userSQL:readLimits:)`); nil: whole values
   func executeSingleStatement(
     _ query: String, maxRows: Int, inTransaction: Bool = false, binds: [SQLBindValue] = [],
-    deferEnrichment: Bool = false
+    deferEnrichment: Bool = false, readLimits perRead: CappedReadLimits? = nil
   ) async throws -> QueryResult {
     guard session != nil else {
       throw DatabaseError.notConnected
@@ -185,16 +186,18 @@ extension DatabaseConnectionManager {
       return try await executeCommand(query, startTime: startTime, binds: binds)
     case .returningRows:
       return try await executeUnwrapped(
-        query, countRows: true, maxRows: maxRows, startTime: startTime, binds: binds)
+        query, countRows: true, maxRows: maxRows, startTime: startTime, binds: binds,
+        readLimits: perRead)
     case .unwrappedRows:
       return try await executeUnwrapped(
-        query, countRows: false, maxRows: maxRows, startTime: startTime, binds: binds)
+        query, countRows: false, maxRows: maxRows, startTime: startTime, binds: binds,
+        readLimits: perRead)
     case .read:
       if inTransaction, let statement, Self.usesCursor(statement, dialect: dialect),
         session?.capabilities.supportsServerCursor == true
       {
         return try await executeCursorRead(
-          query, maxRows: maxRows, startTime: startTime, binds: binds)
+          query, maxRows: maxRows, startTime: startTime, binds: binds, readLimits: perRead)
       }
     }
 
@@ -209,7 +212,8 @@ extension DatabaseConnectionManager {
         ? try MongoCommandRewriter.withLimit(text: query, maxRows: maxRows) : query
       let collected = try await withSession { current in
         let source = try await current.query(sent, binds: binds)
-        return try await self.readCapped(source, maxRows: maxRows, readToEnd: readToEnd)
+        return try await self.readCapped(
+          source, maxRows: maxRows, readToEnd: readToEnd, limits: perRead)
       }
       let executionTime = Date().timeIntervalSince(startTime)
       // Try to enrich column type information with modifiers. Not after a truncated read: the

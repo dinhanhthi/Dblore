@@ -89,14 +89,16 @@ extension DatabaseConnectionManager {
 
   /// Send `query` unchanged and read it to the end, keeping at most `maxRows` rows (it may
   /// write: the session is never closed mid-stream). With `countRows`, every row returned is
-  /// an affected row (DML with RETURNING).
+  /// an affected row (DML with RETURNING). `readLimits`: see `execute(userSQL:readLimits:)`.
   func executeUnwrapped(
-    _ query: String, countRows: Bool, maxRows: Int, startTime: Date, binds: [SQLBindValue] = []
+    _ query: String, countRows: Bool, maxRows: Int, startTime: Date, binds: [SQLBindValue] = [],
+    readLimits perRead: CappedReadLimits? = nil
   ) async throws -> QueryResult {
     do {
       let collected = try await withSession { session in
         let source = try await session.query(query, binds: binds)
-        return try await self.readCapped(source, maxRows: maxRows, readToEnd: true)
+        return try await self.readCapped(
+          source, maxRows: maxRows, readToEnd: true, limits: perRead)
       }
       var result = QueryResult(
         columns: collected.columns, rows: collected.rows, rowCount: collected.rows.count,
