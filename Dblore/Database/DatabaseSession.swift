@@ -116,6 +116,10 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
   /// User-facing text for a driver error.
   func formatError(_ error: Error) -> String
 
+  /// PostgreSQL: the table origin of each output column of a view body. A requirement so a
+  /// session's own answer is used through `any DatabaseSession`; the default is below.
+  func columnOrigins(ofViewBody body: String) async throws -> [ColumnOrigin?]
+
   /// The flavor that gates the session brakes: Redshift only when the server itself reported
   /// it at open, so a crafted flavor never drops a brake. Default nil (every brake sent).
   var brakeFlavor: DatabaseFlavor? { get }

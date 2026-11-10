@@ -1,6 +1,7 @@
 // IntegrationTrait.swift
 // Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, On-device AI
-// plugin, MySQL, MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike, large catalog).
+// plugin, engine plugin, MySQL, MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike, SQL Server,
+// ClickHouse, large catalog).
 // SKIP_INTEGRATION_TESTS or TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them
 // all off.
 
@@ -78,6 +79,17 @@ nonisolated enum LocalAIPluginGate {
   }
 }
 
+nonisolated enum EnginePluginGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["ENGINE_PLUGIN_TESTS"] ?? env["TEST_RUNNER_ENGINE_PLUGIN_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 nonisolated enum MySQLIntegrationGate {
   static func isEnabled(env: [String: String]) -> Bool {
     guard IntegrationGate.isEnabled(env: env),
@@ -115,6 +127,28 @@ nonisolated enum MongoTLSIntegrationGate {
   static func isEnabled(env: [String: String]) -> Bool {
     guard IntegrationGate.isEnabled(env: env),
       let value = env["MONGO_TLS_TESTS"] ?? env["TEST_RUNNER_MONGO_TLS_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
+nonisolated enum SQLServerIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["SQLSERVER_TESTS"] ?? env["TEST_RUNNER_SQLSERVER_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
+nonisolated enum ClickHouseIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["CLICKHOUSE_TESTS"] ?? env["TEST_RUNNER_CLICKHOUSE_TESTS"]
     else {
       return false
     }
@@ -188,6 +222,14 @@ extension Trait where Self == ConditionTrait {
     )
   }
 
+  /// The dev engine plugin bundles in .plugin-dev/<engine>/ are opt-in.
+  static var requiresEnginePlugin: Self {
+    .enabled(
+      if: EnginePluginGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_ENGINE_PLUGIN_TESTS=1 and run scripts/release-plugin.sh --plugin <engine> --install-dev"
+    )
+  }
+
   /// The MySQL and MariaDB containers are opt-in.
   static var requiresMySQL: Self {
     .enabled(
@@ -225,6 +267,22 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: MongoSpikeIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_MONGO_TESTS=1 and TEST_RUNNER_MONGO_SPIKE_TESTS=1 and start docker/mongodb/docker-compose.test.yml to run"
+    )
+  }
+
+  /// The SQL Server test server is opt-in.
+  static var requiresSQLServer: Self {
+    .enabled(
+      if: SQLServerIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_SQLSERVER_TESTS=1 and start a SQL Server test server to run"
+    )
+  }
+
+  /// The ClickHouse test server is opt-in.
+  static var requiresClickHouse: Self {
+    .enabled(
+      if: ClickHouseIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_CLICKHOUSE_TESTS=1 and start a ClickHouse test server to run"
     )
   }
 
