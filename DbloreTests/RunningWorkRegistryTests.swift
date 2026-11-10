@@ -208,6 +208,76 @@ struct RunningWorkRegistryTests {
     #expect(registry.items.map(\.label) == ["Import"])
   }
 
+  /// What the cancels ran, in order
+  private final class Events {
+    var list: [String] = []
+  }
+
+  @Test("A restore's cancel answered Keep running cancels the stop: no other work is cancelled")
+  func confirmingCancelKeptRunning() async {
+    let registry = RunningWorkRegistry()
+    let events = Events()
+    registry.begin(
+      workspaceID: first, label: "Restore", kind: .restore(.postgresql),
+      confirmingCancel: {
+        events.list.append("restore confirm")
+        return Task { true }
+      }
+    ) { events.list.append("restore cancel") }
+    registry.begin(workspaceID: first, label: "Copy", kind: .copyObjects) {
+      events.list.append("copy cancel")
+    }
+
+    let stopped = await registry.stop(
+      .close(workspaceID: first),
+      stopQueries: {
+        events.list.append("queries")
+        return []
+      },
+      queriesRunning: { false }, limit: .milliseconds(200))
+    #expect(!stopped)
+    #expect(events.list == ["queries", "restore confirm"])
+    #expect(registry.items.map(\.label) == ["Restore", "Copy"])
+    #expect(!registry.stopsWithoutAsking(workspaceID: first))
+  }
+
+  @Test(
+    "A restore's cancel that goes ahead lets the stop wait and end; its plain cancel never runs")
+  func confirmingCancelWentAhead() async {
+    let registry = RunningWorkRegistry()
+    let events = Events()
+    registry.begin(
+      workspaceID: first, label: "Restore", kind: .restore(.postgresql),
+      confirmingCancel: {
+        events.list.append("restore confirm")
+        return Task { false }
+      }
+    ) { events.list.append("restore cancel") }
+    // A plain entry is cancelled as before (and here ends at once)
+    var copy: RunningWorkRegistry.Token?
+    copy = registry.begin(workspaceID: first, label: "Copy", kind: .copyObjects) {
+      events.list.append("copy cancel")
+      copy.map(registry.end)
+    }
+
+    // The restore never ends: the stop waits up to its limit, then goes on
+    let clock = ContinuousClock()
+    var stopped = false
+    let waited = await clock.measure {
+      stopped = await registry.stop(
+        .close(workspaceID: first),
+        stopQueries: {
+          events.list.append("queries")
+          return []
+        },
+        queriesRunning: { false }, limit: .milliseconds(200))
+    }
+    #expect(stopped)
+    #expect(waited >= .milliseconds(200))
+    #expect(events.list == ["queries", "restore confirm", "copy cancel"])
+    #expect(registry.items.map(\.label) == ["Restore"])
+  }
+
   @Test("A label is shown on one line: breaks, control and bidi characters become spaces")
   func labelOnOneLine() {
     let registry = RunningWorkRegistry()

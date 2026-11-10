@@ -1330,6 +1330,8 @@ struct EditorCommands: Commands {
   @BridgedFocusedValue(\.toggleLineBookmarkAction) private var toggleLineBookmarkAction
   @BridgedFocusedValue(\.nextLineBookmarkAction) private var nextLineBookmarkAction
   @BridgedFocusedValue(\.previousLineBookmarkAction) private var previousLineBookmarkAction
+  @BridgedFocusedValue(\.focusSQLEditorAction) private var focusSQLEditorAction
+  @BridgedFocusedValue(\.focusResultGridAction) private var focusResultGridAction
 
   /// The F2 key (a function key has no character of its own: AppKit's private-use scalar)
   private static let f2Key = KeyEquivalent(Character(Unicode.Scalar(UInt32(NSF2FunctionKey))!))
@@ -1352,6 +1354,20 @@ struct EditorCommands: Commands {
         Divider()
 
         ExplainCommandButtons()
+
+        Divider()
+
+        Button("Focus SQL Editor") {
+          focusSQLEditorAction?()
+        }
+        .keyboardShortcut("1", modifiers: [.command, .option])
+        .disabled(focusSQLEditorAction == nil)
+
+        Button("Focus Results") {
+          focusResultGridAction?()
+        }
+        .keyboardShortcut("2", modifiers: [.command, .option])
+        .disabled(focusResultGridAction == nil)
       }
 
       // Edit commands - use focused actions for tab-specific behavior

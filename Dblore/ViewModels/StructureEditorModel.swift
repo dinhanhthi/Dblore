@@ -191,6 +191,8 @@ final class StructureEditorModel {
   private(set) var pendingConfirmation: [StatementConfirmation]?
   private(set) var confirmationRequiresPassword = false
   private(set) var isApplying = false
+  /// A quiet re-read found the table changed outside while changes are staged (Reload takes it)
+  private(set) var changedOnServer = false
   private(set) var resultMessage: String?
   private(set) var applyError: String?
   /// `applyError` reports a MySQL change that stopped part way (some statements committed)
@@ -220,6 +222,8 @@ final class StructureEditorModel {
 
   @ObservationIgnored private let context: StructureEditorContext
   @ObservationIgnored private var connection = StructureEditorConnectionState()
+  /// Bumped by every load and Apply: a quiet re-read that started before is dropped
+  @ObservationIgnored private var loadGeneration: UInt64 = 0
   @ObservationIgnored private var confirmedStatements: [String]?
   /// The user confirmed the staged CONVERT TO; any edit or cancel takes it back
   @ObservationIgnored private var convertConfirmed = false
@@ -315,6 +319,8 @@ final class StructureEditorModel {
   }
 
   func load() async {
+    loadGeneration += 1
+    changedOnServer = false
     // What Safe Mode showed was built on the structure being replaced
     cancelConfirmation()
     loadState = .loading
@@ -346,6 +352,59 @@ final class StructureEditorModel {
       loadState = .failed(error.localizedDescription)
     }
     rebuildPreview()
+  }
+
+  /// Reads the table again without the loading state, after a change made outside the editor
+  /// may have altered it. A different table replaces the loaded one when nothing is staged, and
+  /// sets `changedOnServer` otherwise; a table equal to the loaded one takes the flag back.
+  /// Skipped while not loaded, paused or dropped, applying or confirming; a failed read is
+  /// ignored (the next trigger tries again). MySQL's next AUTO_INCREMENT moves with every INSERT,
+  /// so it is not compared and the loaded value stays.
+  func refreshIfChangedOutside() async {
+    guard canRefresh else { return }
+    let generation = loadGeneration
+    let database = context.database
+    let state: StructureEditorConnectionState
+    let read: TableStructure
+    do {
+      state = await database.structureEditorState()
+      read = try await database.fetchTableStructure(schema: schema, table: table)
+    } catch {
+      return
+    }
+    guard generation == loadGeneration, canRefresh, let current = structure else { return }
+    var loadedShape = current
+    loadedShape.tableOptions?.autoIncrement = nil
+    var readShape = read
+    readShape.tableOptions?.autoIncrement = nil
+    guard readShape != loadedShape else {
+      // The server matches the loaded table again: nothing changed since it was loaded
+      changedOnServer = false
+      return
+    }
+    guard changes.isEmpty else {
+      changedOnServer = true
+      return
+    }
+    var replaced = read
+    replaced.tableOptions?.autoIncrement = current.tableOptions?.autoIncrement
+    connection = state
+    // Never the paused or dropped message: `canRefresh` excludes them, and only load and Apply
+    // set or clear them
+    disabledReason = Self.disabledReason(
+      databaseType: context.databaseType, policy: context.policy, state: state)
+    changedOnServer = false
+    structure = replaced
+    rebuildPreview()
+  }
+
+  /// Loaded, not paused by a pending change or dropped (those reload through `load()`), and no
+  /// Apply or confirmation step that a swapped structure would invalidate. A view-only editor
+  /// (protected connection, DuckDB, MySQL refusals) re-reads too.
+  private var canRefresh: Bool {
+    loadState == .loaded && disabledReason != Self.pausedMessage
+      && disabledReason != Self.droppedMessage && !isApplying && pendingConfirmation == nil
+      && !isConfirmingDrop && !isConfirmingConvert
   }
 
   /// Why `databaseType` under `policy` and `state` cannot change the structure, or nil
@@ -789,6 +848,8 @@ final class StructureEditorModel {
   }
 
   private func send(_ statements: [String], dropping: Bool) async {
+    loadGeneration += 1
+    changedOnServer = false
     isApplying = true
     resultMessage = nil
     applyError = nil

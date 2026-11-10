@@ -667,6 +667,8 @@ struct SettingsModalKeyboardShortcutsSection: View {
         ("Toggle Bookmark", "Cmd+F2"),
         ("Next Bookmark", "F2"),
         ("Previous Bookmark", "Shift+F2"),
+        ("Focus SQL Editor", "Cmd+Option+1"),
+        ("Focus Results", "Cmd+Option+2"),
         ("Close Search", "Esc"),
         ("Accept Autocomplete", "Tab / Enter"),
         ("Dismiss Autocomplete", "Esc"),

@@ -326,6 +326,8 @@ struct EditorResultGridView: View {
   var showsExplainPicker = true
   /// Called when the grid takes the keyboard focus (`ResultGridView.onFocus`)
   var onGridFocus: (() -> Void)? = nil
+  /// `ResultGridView.onTableView`: the grid's table view as it is made and dismantled
+  var onGridTableView: ((ResultGridTableView, _ isShown: Bool) -> Void)? = nil
   /// Category keys hidden per column. The loaded result and its LIMIT stay unchanged.
   @State private var valueFilter = ColumnValueFilter()
   /// Current search match when it is in the result data or column names
@@ -598,7 +600,8 @@ struct EditorResultGridView: View {
       onLookupReferencedRow: referencedRow.lookup,
       onJumpToReferencedRow: referencedRow.jump,
       onSelectionSummaryChange: { viewModel.editorSelectionSummary = $0 },
-      onFocus: onGridFocus
+      onFocus: onGridFocus,
+      onTableView: onGridTableView
     )
   }
 }

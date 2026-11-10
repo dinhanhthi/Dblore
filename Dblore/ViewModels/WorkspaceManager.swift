@@ -328,6 +328,8 @@ class WorkspaceManager: Identifiable {
   /// the tab that wrote it last (its page already shows the write): their other data viewer tabs
   /// are marked stale on Commit; dropped on Rollback and with the connection
   @ObservationIgnored var heldWrittenRelations: [WrittenRelations.Relation: UUID] = [:]
+  /// The held tables whose last writer was a data import; cleared with `heldWrittenRelations`
+  @ObservationIgnored var heldImportRelations: Set<WrittenRelations.Relation> = []
 
   // MARK: - Types Editor
 
@@ -467,6 +469,10 @@ class WorkspaceManager: Identifiable {
   @ObservationIgnored var paletteCatalog: CommandPaletteCatalog?
   /// In-flight definition reads of object source tabs, cancelled when the tab closes
   @ObservationIgnored var objectSourceLoads: [UUID: Task<Void, Never>] = [:]
+  /// When the last re-read after an outside change started (`refreshDefinitionsAfterOutsideChange`)
+  @ObservationIgnored var lastDefinitionsRefresh: ContinuousClock.Instant?
+  /// The trailing re-read a trigger inside the throttle window scheduled; later triggers join it
+  @ObservationIgnored var trailingDefinitionsRefresh: Task<Void, Never>?
   var databaseUsers: [DatabaseUser] = []
   var databaseRoles: [DatabaseRole] = []
   var databaseForeignKeys: [ForeignKey] = []
@@ -930,6 +936,7 @@ class WorkspaceManager: Identifiable {
     }
     // Their transaction ends with the previous connection
     heldWrittenRelations = [:]
+    heldImportRelations = []
 
     // Picked DuckDB files stay readable only when reconnecting the same database
     let keepsDuckDBFiles = keepsDuckDBFileAccess(for: config)

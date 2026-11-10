@@ -178,4 +178,117 @@ struct ResultGridEditTests {
     #expect(value == .string("neo"))
     #expect(rowData?["id"] == .int(1))
   }
+
+  // MARK: - Column source labels
+
+  @Test("A join's columns are labelled from their tables; an expression or a view has none")
+  func columnSourceLabels() async {
+    let users = TableRef.postgresql(oid: 100)
+    let orders = TableRef.postgresql(oid: 200)
+    let joined = [
+      ColumnInfo(name: "id", type: "int4", origin: ColumnOrigin(tableID: users, columnOrdinal: 1)),
+      ColumnInfo(
+        name: "total", type: "numeric", origin: ColumnOrigin(tableID: orders, columnOrdinal: 3)),
+      ColumnInfo(
+        name: "n", type: "int8",
+        origin: ColumnOrigin(tableID: .postgresql(oid: 0), columnOrdinal: 0)
+      ),
+    ]
+    let names: [UInt32: ColumnMaskRule.Origin] = [
+      100: ColumnMaskRule.Origin(schema: "public", table: "users"),
+      200: ColumnMaskRule.Origin(schema: "sales", table: "orders"),
+    ]
+    let tables: [String: EditTable] = [
+      "users": EditTable(
+        oid: 100, attributeNames: [1: "id", 2: "name"], primaryKeyColumns: ["id"],
+        schema: "public", name: "users"),
+      "orders": EditTable(
+        oid: 200, attributeNames: [1: "id", 3: "total"], primaryKeyColumns: ["id"],
+        schema: "sales", name: "orders"),
+    ]
+    let postgres = await NotebookViewModel.columnSourceLabels(
+      joined, databaseType: .postgresql, cachedTable: { _ in nil },
+      origins: { columns in
+        columns.map { $0.tableOrigin?.tableID.postgresOID.flatMap { names[$0] } }
+      },
+      fetchTable: { _, origin in tables[origin.table] })
+    #expect(postgres == [0: "public.users.id", 1: "sales.orders.total"])
+
+    // MySQL: only the sources the BASE TABLE check confirms; a view's columns stay unlabelled
+    let mysql = [
+      ColumnInfo(
+        name: "email", type: "varchar",
+        sourceName: ColumnSourceName(schema: "shop", table: "customers", column: "email")),
+      ColumnInfo(
+        name: "total", type: "decimal",
+        sourceName: ColumnSourceName(schema: "shop", table: "order_totals", column: "total")),
+      ColumnInfo(name: "n", type: "bigint"),
+    ]
+    let confirmed = await NotebookViewModel.columnSourceLabels(
+      mysql, databaseType: .mysql, cachedTable: { _ in nil },
+      origins: { columns in
+        columns.map { column in
+          column.sourceName.flatMap {
+            $0.table == "customers"
+              ? ColumnMaskRule.Origin(schema: $0.schema, table: $0.table) : nil
+          }
+        }
+      },
+      fetchTable: nil)
+    #expect(confirmed == [0: "shop.customers.email"])
+  }
+
+  /// Set once the awaited label task returned
+  @MainActor private final class Flag {
+    var isSet = false
+  }
+
+  @Test("An editor join run labels both tables' columns after it is shown, not the expression")
+  func editorRunLabelsJoinColumns() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-source-labels-\(UUID().uuidString).sqlite")
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    for statement in [
+      "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)",
+      "CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER, total REAL)",
+      "INSERT INTO users VALUES (1, 'a')",
+      "INSERT INTO orders VALUES (10, 1, 2.5)",
+    ] {
+      _ = try await manager.executeInternal(statement)
+    }
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.viewMode = .editor
+    viewModel.connectionManager = manager
+
+    await viewModel.executeEditorQuery(
+      "SELECT u.name, o.total, o.total * 2 AS doubled FROM users u JOIN orders o ON o.user_id = u.id"
+    )
+    // Bounded: a label task that never ends fails here instead of hanging the suite
+    let done = Flag()
+    let waiter = Task { @MainActor in
+      await viewModel.awaitColumnSourceLabels()
+      done.isSet = true
+    }
+    let deadline = ContinuousClock.now + .seconds(45)
+    while !done.isSet, ContinuousClock.now < deadline {
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(done.isSet, "the label task did not finish")
+    let shown = try #require(viewModel.editorResult)
+    #expect(shown.rows.count == 1)
+    #expect(shown.columnSourceLabels == [0: "main.users.name", 1: "main.orders.total"])
+    waiter.cancel()
+    await manager.disconnect()
+  }
 }

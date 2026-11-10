@@ -1,6 +1,7 @@
 // WorkspaceStructureEditorTests.swift
 // The sidebar entry point: opening the structure editor builds it on the active tab (a new one
-// when none is open) and loads the table; Apply reloads the sidebar schema; close hides it.
+// when none is open) and loads the table; Apply reloads the sidebar schema; close hides it. An
+// outside change reaches the open editor through the workspace's re-read trigger.
 
 import Foundation
 import Testing
@@ -201,6 +202,26 @@ struct WorkspaceStructureEditorTests {
     let tables = try await workspace.connectionManager.executeInternal(
       "SELECT name FROM sqlite_master WHERE type = 'table'")
     #expect(tables.rows.isEmpty)
+  }
+
+  @Test("An outside ALTER shows in the open structure editor after the re-read trigger")
+  func outsideAlterIsReread() async throws {
+    let url = try Self.makeDatabase()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let workspace = try await Self.connectedWorkspace(Self.config(url: url))
+    defer { Task { await workspace.connectionManager.disconnect() } }
+    workspace.openStructureEditor(schema: "main", table: "items")
+    let model = try #require(workspace.structureEditor)
+    try #require(await waitUntil { model.loadState == .loaded })
+
+    let outside = try SQLiteHandle(url: url)
+    try outside.execute("ALTER TABLE items ADD COLUMN price REAL")
+    // Inside the 5 s window of the schema load's trigger it runs as the trailing re-read
+    workspace.refreshDefinitionsAfterOutsideChange()
+
+    #expect(await waitUntil { model.workingColumns.map(\.column.name) == ["id", "price"] })
+    #expect(model.loadState == .loaded)
+    #expect(!model.changedOnServer)
   }
 
   private static func makeDatabase() throws -> URL {

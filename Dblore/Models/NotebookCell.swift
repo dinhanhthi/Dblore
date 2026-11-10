@@ -206,6 +206,9 @@ struct CellResult: Codable, Sendable {
   /// Session-only: the rows are shown and the catalog is still read in the background for the
   /// enriched column types and the validated edit target. Not editable until it lands.
   var typesPending = false
+  /// Session-only: `schema.table.column` of each column index read from a table column, set in
+  /// the background after the result is shown (`startColumnSourceLabels`). Not coded.
+  var columnSourceLabels: [Int: String] = [:]
   /// Cells the capped read cut (`QueryResult.cutCells`): they hold only a prefix, so they are
   /// never copied, exported or edited as whole values. Coded only when non-empty.
   var cutCells: Set<CellPosition> = []

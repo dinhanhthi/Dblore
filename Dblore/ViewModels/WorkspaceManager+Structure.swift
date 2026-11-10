@@ -11,7 +11,9 @@
 // and, once its change went pending, with the transaction (Commit or Rollback). The ER diagram's
 // `SchemaDiagramEditModel` uses the active tab (again at each Apply), the same reload and table
 // renames, and toasts to the window; a table rename (from either editor) also moves the
-// table's saved diagram position and its place among the picked diagram tables.
+// table's saved diagram position and its place among the picked diagram tables. When the window
+// becomes key, the schema reloads or an app transaction ends, the open editor and the object
+// source tabs read their definitions again (at most once per 5 s, with one trailing re-read).
 
 import Foundation
 
@@ -215,6 +217,36 @@ extension WorkspaceManager {
       model.disabledReason == paused || model.loadState == .failed(paused)
     else { return }
     Task { await model.transactionEnded() }
+  }
+
+  /// At most one re-read after an outside change starts per window
+  static let definitionsRefreshInterval: Duration = .seconds(5)
+
+  /// The window became key, the schema reloaded or an app transaction ended: the open structure
+  /// editor and the loaded object source tabs read their definitions again, in the background.
+  /// At most one re-read starts per `definitionsRefreshInterval`; a trigger inside that window
+  /// schedules one trailing re-read at its end, and later triggers join it. Skipped while
+  /// disconnected or while an app transaction pauses the catalog (checked again when the
+  /// trailing one fires). A transaction the user opened does not pause the reads.
+  func refreshDefinitionsAfterOutsideChange() {
+    guard connectionState == .connected, !isSchemaPaused, trailingDefinitionsRefresh == nil
+    else { return }
+    let now = ContinuousClock.now
+    if let last = lastDefinitionsRefresh, now < last + Self.definitionsRefreshInterval {
+      let deadline = last + Self.definitionsRefreshInterval
+      trailingDefinitionsRefresh = Task { [weak self] in
+        try? await Task.sleep(until: deadline, clock: .continuous)
+        guard let self, !Task.isCancelled else { return }
+        self.trailingDefinitionsRefresh = nil
+        self.refreshDefinitionsAfterOutsideChange()
+      }
+      return
+    }
+    lastDefinitionsRefresh = now
+    if let editor = structureEditor {
+      Task { await editor.refreshIfChangedOutside() }
+    }
+    Task { [weak self] in await self?.refreshObjectSourcesIfChanged() }
   }
 
   /// The app transaction ended: on Commit the pending renames and drops reach the open tabs, on

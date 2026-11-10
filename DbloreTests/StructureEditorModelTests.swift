@@ -2,7 +2,8 @@
 // StructureEditorModel: loads the table off the main actor, explains up front why a table cannot
 // be edited, stages changes into an exact DDL preview, asks Safe Mode before sending, applies
 // through the gate and reports applied / pending / inside-transaction / partial outcomes. MySQL
-// table options stage once, and a staged CONVERT TO is sent only once confirmed.
+// table options stage once, and a staged CONVERT TO is sent only once confirmed. An outside
+// change is re-read quietly: swapped in place when nothing is staged, flagged when drafted.
 
 import Foundation
 import Testing
@@ -781,6 +782,194 @@ struct StructureEditorModelTests {
     #expect(await database.loads == 1)
     #expect(applied == 0)
   }
+
+  // MARK: - Re-read after an outside change
+
+  /// `items` after an outside ALTER added the nullable text column `name`
+  private static func itemsAdding(_ name: String) -> TableStructure {
+    var structure = items
+    structure.columns.append(column(structure.columns.count + 1, name, "text"))
+    return structure
+  }
+
+  @Test("A clean editor takes an outside change in place, without the loading state")
+  func refreshSwapsCleanEditorInPlace() async throws {
+    let database = FakeStructureDatabase(structure: Self.items)
+    let model = makeModel(database)
+    await model.load()
+    let changed = Self.itemsAdding("price")
+    await database.setStructure(changed)
+    await database.holdLoad()
+
+    let refresh = Task { await model.refreshIfChangedOutside() }
+    try #require(await database.awaitHeldLoad())
+    // The read is in flight: the loaded table stays on screen
+    #expect(model.loadState == .loaded)
+    #expect(model.structure == Self.items)
+    await database.releaseLoad()
+    await refresh.value
+
+    #expect(model.loadState == .loaded)
+    #expect(model.structure == changed)
+    #expect(model.workingColumns.map(\.column.name) == ["id", "name", "price"])
+    #expect(!model.changedOnServer)
+    #expect(await database.loads == 2)
+  }
+
+  @Test("An equal re-read, or a MySQL one off only in the next AUTO_INCREMENT, changes nothing")
+  func refreshIgnoresUnchangedTable() async throws {
+    for drafted in [false, true] {
+      let database = FakeStructureDatabase(structure: Self.items)
+      let model = makeModel(database)
+      await model.load()
+      if drafted { model.addColumn(Self.newColumn("note", "text")) }
+      let staged = model.changes
+      #expect(staged.isEmpty == !drafted)
+      await model.refreshIfChangedOutside()
+      #expect(await database.loads == 2, "drafted: \(drafted)")
+      #expect(model.structure == Self.items, "drafted: \(drafted)")
+      #expect(model.changes == staged, "drafted: \(drafted)")
+      #expect(!model.changedOnServer, "drafted: \(drafted)")
+      #expect(model.loadState == .loaded, "drafted: \(drafted)")
+
+      // An INSERT elsewhere moves the next value, or the re-read does not carry it
+      for next in [9, nil] as [UInt64?] {
+        let mysqlDatabase = Self.mysqlOptionsDatabase()
+        let mysql = makeModel(mysqlDatabase, type: .mysql)
+        await mysql.load()
+        let loaded = try #require(mysql.structure)
+        #expect(loaded.tableOptions?.autoIncrement == 5)
+        if drafted { mysql.addColumn(Self.newColumn("note", "text")) }
+        let mysqlStaged = mysql.changes
+        #expect(mysqlStaged.isEmpty == !drafted)
+        var moved = loaded
+        moved.tableOptions?.autoIncrement = next
+        await mysqlDatabase.setStructure(moved)
+
+        await mysql.refreshIfChangedOutside()
+        #expect(mysql.structure == loaded, "drafted: \(drafted), next: \(String(describing: next))")
+        #expect(mysql.changes == mysqlStaged, "drafted: \(drafted)")
+        #expect(!mysql.changedOnServer, "drafted: \(drafted), next: \(String(describing: next))")
+      }
+    }
+  }
+
+  @Test("A drafted editor keeps its changes and flags the outside change; Reload takes it")
+  func refreshFlagsDraftedEditor() async throws {
+    let database = FakeStructureDatabase(structure: Self.items)
+    let model = makeModel(database)
+    await model.load()
+    model.addColumn(Self.newColumn("note", "text"))
+    let staged = model.changes
+    let preview = model.previewStatements
+    let changed = Self.itemsAdding("price")
+    await database.setStructure(changed)
+
+    await model.refreshIfChangedOutside()
+    #expect(model.changedOnServer)
+    #expect(model.changes == staged)
+    #expect(model.previewStatements == preview)
+    #expect(model.structure == Self.items)
+    #expect(model.loadState == .loaded)
+
+    // Discarded: the next re-read swaps the table in and takes the banner back
+    model.discardChanges()
+    await model.refreshIfChangedOutside()
+    #expect(!model.changedOnServer)
+    #expect(model.structure == changed)
+
+    await model.reload()
+    #expect(!model.changedOnServer)
+    #expect(model.changes.isEmpty)
+    #expect(model.structure == changed)
+  }
+
+  @Test("A paused or failed read, a loading editor and an Apply in flight change nothing")
+  func refreshSkipsWhenBusyOrFailing() async throws {
+    // The read fails: the loaded table stays and no error shows
+    for error in [DatabaseError.metadataPausedDuringTransaction, .queryFailed("boom", 0)] {
+      let database = FakeStructureDatabase(structure: Self.items)
+      let model = makeModel(database)
+      await model.load()
+      await database.setStructure(Self.itemsAdding("price"))
+      await database.setLoadError(error)
+      await model.refreshIfChangedOutside()
+      #expect(model.loadState == .loaded, "\(error)")
+      #expect(model.structure == Self.items, "\(error)")
+      #expect(model.applyError == nil, "\(error)")
+      #expect(model.resultMessage == nil, "\(error)")
+      #expect(model.disabledReason == nil, "\(error)")
+      #expect(!model.changedOnServer, "\(error)")
+    }
+
+    // Still loading: no second read
+    let loadingDatabase = FakeStructureDatabase(structure: Self.items)
+    await loadingDatabase.holdLoad()
+    let loading = makeModel(loadingDatabase)
+    let load = Task { await loading.load() }
+    try #require(await loadingDatabase.awaitHeldLoad())
+    #expect(loading.loadState == .loading)
+    await loading.refreshIfChangedOutside()
+    #expect(await loadingDatabase.loads == 1)
+    #expect(loading.loadState == .loading)
+    await loadingDatabase.releaseLoad()
+    await load.value
+    #expect(loading.loadState == .loaded)
+
+    // An Apply in flight: no read until it is done
+    let applyingDatabase = FakeStructureDatabase(structure: Self.items)
+    await applyingDatabase.holdApply()
+    let applying = makeModel(applyingDatabase)
+    await applying.load()
+    applying.addColumn(Self.newColumn("note", "text"))
+    let apply = Task { await applying.apply() }
+    await boundedWait("the apply starting", timeout: .seconds(45)) { @MainActor in
+      while !Task.isCancelled, !applying.isApplying { await Task.yield() }
+    }
+    await applyingDatabase.setStructure(Self.itemsAdding("price"))
+    await applying.refreshIfChangedOutside()
+    #expect(await applyingDatabase.loads == 1)
+    #expect(!applying.changedOnServer)
+    await applyingDatabase.releaseApply()
+    await apply.value
+    #expect(applying.resultMessage == StructureEditorModel.appliedMessage)
+  }
+
+  @Test("A re-read returning after a Reload or Apply started meanwhile is dropped")
+  func staleRefreshIsDropped() async throws {
+    for viaApply in [false, true] {
+      let database = FakeStructureDatabase(structure: Self.items)
+      let model = makeModel(database)
+      await model.load()
+      // The re-read sees one outside change, held until a newer read has finished
+      await database.setStructure(Self.itemsAdding("price"))
+      await database.holdLoad()
+      let refresh = Task { await model.refreshIfChangedOutside() }
+      // Without a read in flight the Reload below would take the hold and wait forever
+      guard await database.awaitHeldLoad() else {
+        await database.releaseLoad()
+        return
+      }
+
+      let newer = Self.itemsAdding("note")
+      await database.setStructure(newer)
+      if viaApply {
+        model.addColumn(Self.newColumn("note", "text"))
+        await model.apply()
+        #expect(model.resultMessage == StructureEditorModel.appliedMessage)
+      } else {
+        await model.reload()
+      }
+      #expect(model.structure == newer, "via apply: \(viaApply)")
+
+      await database.releaseLoad()
+      await refresh.value
+      #expect(model.structure == newer, "via apply: \(viaApply)")
+      #expect(!model.changedOnServer, "via apply: \(viaApply)")
+      #expect(model.changes.isEmpty, "via apply: \(viaApply)")
+      #expect(model.loadState == .loaded, "via apply: \(viaApply)")
+    }
+  }
 }
 
 // MARK: - Test doubles
@@ -792,7 +981,7 @@ private final class HistoryLog {
 }
 
 private actor FakeStructureDatabase: StructureEditorDatabase {
-  private let structure: TableStructure
+  private var structure: TableStructure
   private let state: StructureEditorConnectionState
   private var loadError: Error?
   private var applyError: Error?
@@ -800,6 +989,9 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   private var holdsApply = false
   private var applyGate: CheckedContinuation<Void, Never>?
   private let applyHeld = FiredFlag()
+  private var holdsLoad = false
+  private var loadGate: CheckedContinuation<Void, Never>?
+  private var loadHeld = FiredFlag()
   private var insideUserTransaction = false
   private(set) var loads = 0
   private(set) var loadedTables: [String] = []
@@ -826,6 +1018,27 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   }
 
   func setLoadError(_ error: Error) { loadError = error }
+  /// What the next reads return (a change made outside the editor)
+  func setStructure(_ structure: TableStructure) { self.structure = structure }
+  /// The next structure read waits for `releaseLoad()`; it returns what was set when it began
+  func holdLoad() {
+    holdsLoad = true
+    loadHeld = FiredFlag()
+  }
+  /// True once the held read reached the database; false (an Issue) when it never came
+  func awaitHeldLoad(sourceLocation: SourceLocation = #_sourceLocation) async -> Bool {
+    let held = loadHeld
+    return await boundedWait(
+      "the held read reaching the database", timeout: .seconds(45),
+      sourceLocation: sourceLocation
+    ) { await held.wait() } != nil
+  }
+  /// Lets the held read return; a hold no read took is dropped (later reads do not wait)
+  func releaseLoad() {
+    holdsLoad = false
+    loadGate?.resume()
+    loadGate = nil
+  }
   func setApplyError(_ error: Error) { applyError = error }
   /// The next apply waits for `releaseApply()`
   func holdApply() { holdsApply = true }
@@ -847,8 +1060,16 @@ private actor FakeStructureDatabase: StructureEditorDatabase {
   func fetchTableStructure(schema: String, table: String) async throws -> TableStructure {
     loads += 1
     loadedTables.append(table)
+    let read = structure
+    if holdsLoad {
+      holdsLoad = false
+      await withCheckedContinuation {
+        loadGate = $0
+        loadHeld.set()
+      }
+    }
     if let loadError { throw loadError }
-    return structure
+    return read
   }
 
   func structureEditorState() async -> StructureEditorConnectionState { state }

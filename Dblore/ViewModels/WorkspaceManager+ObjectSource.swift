@@ -2,6 +2,7 @@
 // Read-only routine, trigger, sequence and user type source tabs: one tab per object (keyed by
 // `ObjectSourceRef.key`), opened at once in a loading state while the definition is read off
 // the main actor. The result is dropped if the tab closed (or was reloaded) in the meantime.
+// After an outside change a loaded source is read again quietly and swapped in place.
 
 import Foundation
 
@@ -201,6 +202,34 @@ extension WorkspaceManager {
       self.objectSourceLoads[tabId] = nil
       self.applyObjectSource(result, ref: ref, to: viewModel)
     }
+  }
+
+  /// Reads every loaded object source tab again after an outside change, one task per tab, and
+  /// waits for them. A changed source replaces the text in place (no loading text); an equal one
+  /// is not written again. A missing object, no source or a failed read leaves the tab as it is.
+  /// A tab already loading is skipped; a read is dropped when the tab closed, left `.loaded`, or
+  /// a newer load started meanwhile (it cancels this one, as for `startObjectSourceLoad`).
+  func refreshObjectSourcesIfChanged() async {
+    var reads: [Task<Void, Never>] = []
+    for tab in tabs {
+      let tabId = tab.id
+      guard let ref = tab.objectSource, let viewModel = viewModels[tabId],
+        viewModel.objectSourceLoad == .loaded, objectSourceLoads[tabId] == nil,
+        let object = schemaObjectRef(for: ref)
+      else { continue }
+      let read = Task { [weak self] in
+        let source = try? await self?.loadDefinition(of: object)
+        guard let self, !Task.isCancelled, self.viewModels[tabId] === viewModel else { return }
+        self.objectSourceLoads[tabId] = nil
+        guard viewModel.objectSourceLoad == .loaded, let source,
+          source != viewModel.editorContent
+        else { return }
+        viewModel.editorContent = source
+      }
+      objectSourceLoads[tabId] = read
+      reads.append(read)
+    }
+    for read in reads { await read.value }
   }
 
   private func applyObjectSource(

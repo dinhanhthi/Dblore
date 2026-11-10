@@ -234,6 +234,47 @@ extension WorkspaceManager {
     }
   }
 
+  /// An import wrote these tables: their clean data viewer tabs (not the writer) read the page
+  /// again, also one showing Reload. The active one reads it at once, a hidden one when shown
+  /// (`reloadIfMarked(tabId:)`). A tab with staged changes or a page read in flight (it may
+  /// predate the import) shows Reload instead.
+  func refreshDataViewerTabsAfterImport(_ written: [WrittenRelations.Relation: UUID]) {
+    guard !written.isEmpty, let databaseType = workspace.connectionConfig?.databaseType else {
+      return
+    }
+    for (tabId, viewModel) in viewModels {
+      guard let state = viewModel.dataViewer,
+        written.contains(where: { relation, writer in
+          writer != viewModel.id
+            && relation.matches(
+              schema: state.schema, name: state.name, dialect: databaseType.dialect)
+        })
+      else { continue }
+      guard !viewModel.hasPendingStagedChanges, state.changeSet == nil,
+        !viewModel.isEditorQueryRunning
+      else {
+        viewModel.dataViewer?.isStale = true
+        continue
+      }
+      viewModel.dataViewer?.isStale = false
+      if tabId == activeTabId {
+        viewModel.dataViewer?.totalRows = nil
+        Task { await viewModel.loadDataViewerPage() }
+      } else {
+        viewModel.dataViewer?.reloadsWhenShown = true
+      }
+    }
+  }
+
+  /// The tab just became active: a page an import marked while it was hidden is read again
+  func reloadIfMarked(tabId: UUID) {
+    guard let viewModel = viewModels[tabId], viewModel.dataViewer?.reloadsWhenShown == true
+    else { return }
+    viewModel.dataViewer?.reloadsWhenShown = false
+    viewModel.dataViewer?.totalRows = nil
+    Task { await viewModel.loadDataViewerPage() }
+  }
+
   private func dataViewerTabIds(schema: String, name: String) -> [UUID] {
     tabs.map(\.id).filter { id in
       guard let state = viewModels[id]?.dataViewer else { return false }

@@ -51,3 +51,29 @@ extension FocusedValues {
     set { self[ZoomTargetKey.self] = newValue }
   }
 }
+
+// MARK: - Focus Pane Action Keys
+
+/// Query > Focus SQL Editor: makes the tab's SQL editor first responder, its caret and
+/// selection unchanged. Nil outside a SQL editor tab.
+struct FocusSQLEditorActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+/// Query > Focus Results: makes the result grid first responder. Nil while the editor result
+/// panel shows no grid (no result, an error, a message-only result, a chart or a plan).
+struct FocusResultGridActionKey: FocusedValueKey {
+  typealias Value = () -> Void
+}
+
+extension FocusedValues {
+  var focusSQLEditorAction: FocusSQLEditorActionKey.Value? {
+    get { self[FocusSQLEditorActionKey.self] }
+    set { self[FocusSQLEditorActionKey.self] = newValue }
+  }
+
+  var focusResultGridAction: FocusResultGridActionKey.Value? {
+    get { self[FocusResultGridActionKey.self] }
+    set { self[FocusResultGridActionKey.self] = newValue }
+  }
+}

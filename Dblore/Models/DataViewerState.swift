@@ -69,6 +69,9 @@ struct DataViewerState: Equatable {
   /// Another tab wrote to the relation since the shown page was read: the viewer offers Reload
   /// (never reloads on its own, so staged changes stay). Cleared by the next page load.
   var isStale = false
+  /// An import wrote to the relation while this clean tab was hidden: its page is read again
+  /// when it is shown (`WorkspaceManager.reloadIfMarked(tabId:)`). Session-only.
+  var reloadsWhenShown = false
 
   /// What a page load depends on; loads are coalesced while it is unchanged
   struct LoadKey: Hashable {

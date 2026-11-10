@@ -131,6 +131,7 @@ final class RunningWorkRegistry {
 
   private struct Entry {
     let item: Item
+    let confirmingCancel: (@MainActor () -> Task<Bool, Never>)?
     let cancel: @MainActor () -> Void
   }
 
@@ -153,14 +154,19 @@ final class RunningWorkRegistry {
 
   /// Joins the list; `cancel` is the work's own Cancel (it must not wait). `label` is shown on
   /// one line: a name's line breaks, control and format (bidi) characters become spaces.
+  /// - Parameter confirmingCancel: the Cancel `stop` runs instead of `cancel` when the work's
+  ///   cancel may ask first; its task is true when the user answered "Keep running"
   @discardableResult
   func begin(
-    workspaceID: UUID?, label: String, kind: Kind, cancel: @escaping @MainActor () -> Void
+    workspaceID: UUID?, label: String, kind: Kind,
+    confirmingCancel: (@MainActor () -> Task<Bool, Never>)? = nil,
+    cancel: @escaping @MainActor () -> Void
   ) -> Token {
     let id = UUID()
     let shown = AISchemaContext.oneLine(label).trimmingCharacters(in: .whitespaces)
     entries[id] = Entry(
-      item: Item(workspaceID: workspaceID, label: shown, kind: kind), cancel: cancel)
+      item: Item(workspaceID: workspaceID, label: shown, kind: kind),
+      confirmingCancel: confirmingCancel, cancel: cancel)
     order.append(id)
     return Token(id: id)
   }
@@ -173,8 +179,15 @@ final class RunningWorkRegistry {
 
   /// Runs the cancel of every entry in `scope`. Entries stay until their work ends.
   func cancelAll(in scope: Scope) {
+    cancelAll(in: scope, skipping: [])
+  }
+
+  /// `cancelAll`, leaving out the entries `skipping` names (already cancelled)
+  private func cancelAll(in scope: Scope, skipping: Set<UUID>) {
     let cancels = order.compactMap { id -> (@MainActor () -> Void)? in
-      guard let entry = entries[id], Self.belongs(entry.item.workspaceID, to: scope) else {
+      guard !skipping.contains(id), let entry = entries[id],
+        Self.belongs(entry.item.workspaceID, to: scope)
+      else {
         return nil
       }
       return entry.cancel
@@ -201,14 +214,15 @@ final class RunningWorkRegistry {
 
   /// Stops the work in `scope` after the prompt's Stop: `stopQueries` first, waiting for every
   /// cancel it started (a cancel warning waits for the user's answer, whatever the limit), then
-  /// every entry's cancel. Waits until the entries left and `queriesRunning` is false, at most
-  /// `limit` (`stopLimit` when nil): a cancel that hangs never holds the quit or close longer.
+  /// each entry's confirming cancel (awaited the same way), then every other entry's cancel.
+  /// Waits until the entries left and `queriesRunning` is false, at most `limit` (`stopLimit`
+  /// when nil): a cancel that hangs never holds the quit or close longer.
   /// Meanwhile a cancel of a running statement in scope does not ask again while its
   /// transaction is the one `queries` (the prompt's lines) named (`stopConsent`).
   /// - Parameter stopQueries: the running statements' cancels; each task is true when its
   ///   warning was answered "Keep running"
-  /// - Returns: false when one was: the user keeps it running, so nothing else is stopped and
-  ///   the quit, close or disconnect is cancelled
+  /// - Returns: false when one was, or an entry's confirming cancel was: the user keeps it
+  ///   running, so nothing else is stopped and the quit, close or disconnect is cancelled
   @discardableResult
   func stop(
     _ scope: Scope, queries: [RunningQuery] = [],
@@ -225,10 +239,18 @@ final class RunningWorkRegistry {
     var keptRunning = false
     for cancel in stopQueries() where await cancel.value { keptRunning = true }
     guard !keptRunning else { return false }
-    cancelAll(in: scope)
-    // Lets the cancels the entries started (a restore's cancels its statement) read
-    // `stopConsent` before the scope clears (with nothing left to wait for, the loop below
-    // would end without suspending)
+    // Entries whose cancel may ask, one at a time: "Keep running" leaves every other entry be
+    var confirmed: Set<UUID> = []
+    for id in order {
+      guard let work = entries[id], let confirm = work.confirmingCancel,
+        Self.belongs(work.item.workspaceID, to: scope)
+      else { continue }
+      confirmed.insert(id)
+      if await confirm().value { return false }
+    }
+    cancelAll(in: scope, skipping: confirmed)
+    // Lets the cancels the entries started read `stopConsent` before the scope clears (with
+    // nothing left to wait for, the loop below would end without suspending)
     await Task.yield()
     let clock = ContinuousClock()
     let deadline = clock.now + (limit ?? stopLimit)

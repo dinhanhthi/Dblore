@@ -358,6 +358,7 @@ extension CellResult {
     replaced.dataRevision = dataRevision
     replaced.truncation = truncation
     replaced.typesPending = typesPending
+    replaced.columnSourceLabels = columnSourceLabels
     replaced.cutCells = cutCells
     replaced.stoppedAtByteBudget = stoppedAtByteBudget
     return replaced

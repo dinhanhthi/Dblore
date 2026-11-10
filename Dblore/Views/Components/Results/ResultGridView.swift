@@ -137,6 +137,9 @@ struct ResultGridView: NSViewRepresentable {
   var onSelectionSummaryChange: ((ResultSelectionSummary?) -> Void)? = nil
   /// Called when the grid takes the keyboard focus (a click or Tab): View > Zoom acts on it
   var onFocus: (() -> Void)? = nil
+  /// Called with the grid's table view when the grid is made (true) and dismantled (false), so
+  /// a parent can give it the keyboard focus (Query > Focus Results)
+  var onTableView: ((ResultGridTableView, _ isShown: Bool) -> Void)? = nil
 
   /// Row height at the default result font size. Larger and smaller faces scale from this
   /// so an untouched setting keeps the 26pt rows the notebook height math expects.
@@ -214,6 +217,7 @@ struct ResultGridView: NSViewRepresentable {
     scrollView.forwardsToParent = forwardsScrollToParent
     scrollView.onHorizontalScrollerChange = onHorizontalScrollerChange
     configure(context.coordinator, tableView)
+    onTableView?(tableView, true)
     return scrollView
   }
 
@@ -227,6 +231,9 @@ struct ResultGridView: NSViewRepresentable {
   static func dismantleNSView(_ scrollView: NSScrollView, coordinator: ResultGridCoordinator) {
     coordinator.selectionSummaryGridDidDisappear()
     coordinator.model?.cancelBinaryDecodes()
+    if let tableView = scrollView.documentView as? ResultGridTableView {
+      tableView.onTableView?(tableView, false)
+    }
   }
 
   private func configure(_ coordinator: ResultGridCoordinator, _ tableView: NSTableView) {
@@ -268,6 +275,7 @@ struct ResultGridView: NSViewRepresentable {
     coordinator.onBinaryFormatChange = onBinaryFormatChange
     coordinator.onLoadCells = onLoadCells
     (tableView as? ResultGridTableView)?.onFocus = onFocus
+    (tableView as? ResultGridTableView)?.onTableView = onTableView
     coordinator.update(
       tableView, result: result, sortColumn: sortColumn, ascending: ascending,
       searchQuery: searchQuery, caseSensitive: caseSensitive, wholeWord: wholeWord,
@@ -654,6 +662,8 @@ final class ResultGridTableView: NSTableView {
   weak var coordinator: ResultGridCoordinator?
   /// `ResultGridView.onFocus`
   var onFocus: (() -> Void)?
+  /// `ResultGridView.onTableView`, kept here for `dismantleNSView`
+  var onTableView: ((ResultGridTableView, _ isShown: Bool) -> Void)?
   private var lastClickedColumn = 0
   /// The other table of a grid with frozen columns (the pane for the grid, the grid for the
   /// pane): the hovered row is the same in both
@@ -759,6 +769,27 @@ final class ResultGridTableView: NSTableView {
     let result = super.becomeFirstResponder()
     if result { onFocus?() }
     return result
+  }
+
+  /// Query > Focus Results: takes the keyboard focus and keeps the selection. With nothing
+  /// selected, selects the first row in the first visible column and scrolls it into view.
+  /// False when the window refused the focus.
+  @discardableResult
+  func takeFocusKeepingSelection() -> Bool {
+    guard let window, window.makeFirstResponder(self) else { return false }
+    guard selectedRowIndexes.isEmpty, selectedColumnIndexes.isEmpty, numberOfRows > 0 else {
+      return true
+    }
+    selectRowIndexes([0], byExtendingSelection: false)
+    scrollRowToVisible(0)
+    if let column = tableColumns.indices.first(where: {
+      !tableColumns[$0].isHidden && !isGutterColumn($0)
+    }) {
+      lastClickedColumn = column
+      coordinator?.noteClickedColumn(tableColumn: column, in: self)
+      scrollColumnToVisible(column)
+    }
+    return true
   }
 
   override func mouseDown(with event: NSEvent) {

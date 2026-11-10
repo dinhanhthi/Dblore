@@ -36,8 +36,9 @@ extension WorkspaceManager {
       await self?.resolveHeldWrittenRelationsIfTransactionClosed()
       await self?.refreshSchemaAfterStatements()
     }
-    viewModel.onRelationsWritten = { [weak self] statements, writer, epoch in
-      await self?.relationsWritten(statements: statements, writer: writer, epoch: epoch)
+    viewModel.onRelationsWritten = { [weak self] statements, writer, epoch, isDataImport in
+      await self?.relationsWritten(
+        statements: statements, writer: writer, epoch: epoch, isDataImport: isDataImport)
     }
   }
 
@@ -45,8 +46,11 @@ extension WorkspaceManager {
   /// run): the other data viewer tabs of the tables they wrote are marked stale once those
   /// writes are committed. Writes inside the open Protected mode or user transaction wait in
   /// `heldWrittenRelations` (see `WrittenRelations.outcome`); a COMMIT or ROLLBACK among the
-  /// statements resolves the ones held before. MongoDB writes no SQL relation.
-  func relationsWritten(statements: [String], writer: UUID, epoch: UInt64) async {
+  /// statements resolves the ones held before. `isDataImport`: a data import wrote them (kept
+  /// per held table until it resolves). MongoDB writes no SQL relation.
+  func relationsWritten(
+    statements: [String], writer: UUID, epoch: UInt64, isDataImport: Bool
+  ) async {
     guard let config = workspace.connectionConfig, config.databaseType != .mongodb else {
       return
     }
@@ -69,22 +73,38 @@ extension WorkspaceManager {
     guard status.epoch == epoch else {
       let outcome = WrittenRelations.outcome(
         of: steps, transactionOpenBefore: transactionOpenBefore, transactionOpenAfter: false)
-      markDataViewerTabsStale(
-        Dictionary(uniqueKeysWithValues: outcome.committed.map { ($0, writer) }))
+      relationsCommitted(
+        Dictionary(uniqueKeysWithValues: outcome.committed.map { ($0, writer) }),
+        imported: isDataImport ? Set(outcome.committed) : [])
       return
     }
     let outcome = WrittenRelations.outcome(
       of: steps, transactionOpenBefore: transactionOpenBefore,
       transactionOpenAfter: !status.state.isIdle || status.userTxOpen)
     var committed: [WrittenRelations.Relation: UUID] = [:]
+    var imported: Set<WrittenRelations.Relation> = []
     if outcome.earlier != .pending {
-      if outcome.earlier == .committed { committed = heldWrittenRelations }
+      if outcome.earlier == .committed {
+        committed = heldWrittenRelations
+        imported = heldImportRelations
+      }
       heldWrittenRelations = [:]
+      heldImportRelations = []
     }
     // This tab wrote them last
-    for relation in outcome.committed { committed[relation] = writer }
-    for relation in outcome.pending { heldWrittenRelations[relation] = writer }
-    markDataViewerTabsStale(committed)
+    for relation in outcome.committed {
+      committed[relation] = writer
+      if isDataImport { imported.insert(relation) } else { imported.remove(relation) }
+    }
+    for relation in outcome.pending {
+      heldWrittenRelations[relation] = writer
+      if isDataImport {
+        heldImportRelations.insert(relation)
+      } else {
+        heldImportRelations.remove(relation)
+      }
+    }
+    relationsCommitted(committed, imported: imported)
   }
 
   /// After every run: held tables whose transaction ended with no step to say how (a failed
@@ -102,8 +122,20 @@ extension WorkspaceManager {
   /// other end drops them
   func resolveHeldWrittenRelations(committed: Bool) {
     let held = heldWrittenRelations
+    let imported = heldImportRelations
     heldWrittenRelations = [:]
-    if committed { markDataViewerTabsStale(held) }
+    heldImportRelations = []
+    if committed { relationsCommitted(held, imported: imported) }
+  }
+
+  /// Committed writes reach the other data viewer tabs of their tables, synchronously (settled
+  /// when the run or Commit returns). `imported`: the tables whose last writer was a data import;
+  /// their clean tabs read the page again (after the others' banners, so a reload wins).
+  private func relationsCommitted(
+    _ written: [WrittenRelations.Relation: UUID], imported: Set<WrittenRelations.Relation>
+  ) {
+    markDataViewerTabsStale(written.filter { !imported.contains($0.key) })
+    refreshDataViewerTabsAfterImport(written.filter { imported.contains($0.key) })
   }
 
   /// Reload the Public sidebar after a committed schema command (CREATE, ALTER, DROP, …).
@@ -272,6 +304,8 @@ extension WorkspaceManager {
       }
       if endedTransaction {
         structureEditorTransactionEnded()
+        // Outside changes made while the catalog was paused show now
+        refreshDefinitionsAfterOutsideChange()
         userTypeEditorTransactionEnded()
         schemaDiagramEditorTransactionEnded()
       }
@@ -540,8 +574,12 @@ extension WorkspaceManager {
     // A rename or drop queued before the transaction mirror caught up never commits now
     pendingTableChanges = []
     heldWrittenRelations = [:]
+    heldImportRelations = []
     connectionState = .disconnected
     cancelSchemaLoad()  // the idle transition above may have started a retry
+    // A trailing outside-change re-read (the idle transition may have scheduled one) goes too
+    trailingDefinitionsRefresh?.cancel()
+    trailingDefinitionsRefresh = nil
     invalidateEditTargetsInTabs()
     aiAssistant.connectionDidChange()
 

@@ -48,7 +48,9 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   comment and drop tables, with a preview of the exact SQL that runs. Rename tables and edit
   columns and foreign keys on the schema canvas too (drag a column onto another table for a
   foreign key), create or change PostgreSQL enums, domains and composite types, and set a
-  MySQL/MariaDB table's character set, collation and AUTO_INCREMENT
+  MySQL/MariaDB table's character set, collation and AUTO_INCREMENT. The editor re-reads the
+  definition when you come back to the window or the schema refreshes, and keeps your staged
+  changes behind a Reload prompt
 - **Copy Objects**: copy tables and their rows from a PostgreSQL, MySQL/MariaDB, SQLite or DuckDB
   connection to another saved PostgreSQL, MySQL/MariaDB or SQLite connection, with type warnings
   and an editable DDL preview. A failed or cancelled copy leaves nothing behind on PostgreSQL
@@ -56,7 +58,7 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
 - **Results grid**: several result sets show as tabs; sort, search, filter, freeze leading
   columns (table tabs), edit values inline (also cells of auto-updatable PostgreSQL views, never
   their rows), add rows from a form, follow foreign keys, inspect cells as JSON, pin a result to
-  compare re-runs, see Count, Sum and Avg of a selection, and highlight cells or rows with
+  compare re-runs, hover a column header for its source column, see Count, Sum and Avg of a selection, and highlight cells or rows with
   several rules at once. NUMERIC and DECIMAL values stay exact, a timestamp without a time zone
   shows its stored wall clock and a zoned one Mac local time with its offset, both with
   fractions. PostgreSQL and SQLite table tabs edit tables without a primary key by row location
@@ -64,7 +66,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   cascade, nulls or leaves pointing at it. Set a value, NULL, DEFAULT or a fresh UUID on several
   cells in one change, choose what Cmd+C copies (TSV, CSV, JSON or Markdown, with formulas
   neutralized for spreadsheets), and see invisible characters as marks. Paste rows from the
-  clipboard as staged inserts, and a Reload banner shows when another tab changed the table.
+  clipboard as staged inserts. A table tab re-reads itself after an import into its table (or shows a
+  Reload banner when it has staged changes or another write changed it).
   Editor and notebook results cut a value at 1 MiB and stop at 256 MiB of values; a cut value
   shows with "…", stays marked in saved notebooks and cannot be copied, exported or edited
   whole: open the table in the data viewer, or export all rows
@@ -155,7 +158,8 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   `host:port@user`, group them on the welcome screen in up to three levels (`Prod / EU / Web`),
   and star favorites, which show first and are never trimmed from the history
 - **Keyboard-first**: run cells and queries without leaving the keys, find and replace in
-  editors, and find any command with `Cmd+K`
+  editors, jump between the editor and its results with `Cmd+Option+1` and `Cmd+Option+2`, and find
+  any command with `Cmd+K`
 
 [All features](https://dblore.dinhanhthi.com/features.html)
 

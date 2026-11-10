@@ -197,6 +197,7 @@ extension NotebookViewModel {
         // Convert to StatementResult array with primary key columns
         var results: [StatementResult] = []
         var pendingReads: [ResultTargetsRead] = []
+        var labelReads: [SourceLabelRead] = []
         for (index, tuple) in statementResults.enumerated() {
           // Session-only inline edit target (nil = not editable): what is cached at once, the
           // catalog in the background
@@ -226,12 +227,18 @@ extension NotebookViewModel {
               ResultTargetsRead(
                 query: tuple.queryText, result: tuple.result, timestamp: result.timestamp))
           }
+          labelReads.append(
+            SourceLabelRead(
+              result: tuple.result, shown: result,
+              databaseType: notebook.connectionConfig?.databaseType))
           results.append(
             StatementResult(queryText: tuple.queryText, result: result, statementIndex: index))
         }
         editorStatementResults = results
         patchResultTargets(
           pendingReads, cellId: nil, epoch: epoch, connectionManager: connectionManager)
+        startColumnSourceLabels(
+          labelReads, cellId: nil, epoch: epoch, connectionManager: connectionManager)
 
         // Select the last statement by default (psql behavior)
         selectedStatementIndex = editorStatementResults.count - 1
@@ -253,10 +260,16 @@ extension NotebookViewModel {
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         runEpoch = epoch
-        var result = try await connectionManager.execute(
-          userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
-          caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true,
-          readLimits: readLimits)
+        // A page keeps its columns without a row: an empty table shows them, and a lazy page
+        // has the shape its SQL asked for
+        var result = try await DatabaseConnectionManager.$keepsEmptyResultColumns.withValue(
+          pageState != nil
+        ) {
+          try await connectionManager.execute(
+            userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
+            caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true,
+            readLimits: readLimits)
+        }
         ranStatements = [query]
         var truncation: DataViewerState.Truncation?
         if let pageState {
@@ -299,7 +312,10 @@ extension NotebookViewModel {
         ).withCapInfo(from: result)
         cellResult.truncation = truncation
         cellResult.typesPending = pending
-        if pageState != nil { resetLazyCells() }
+        if let pageState {
+          cellResult.columnSourceLabels = dataViewerSourceLabels(pageState, columns: columns)
+          resetLazyCells()
+        }
         editorResult = cellResult
         if pending {
           patchResultTargets(
@@ -307,6 +323,16 @@ extension NotebookViewModel {
               ResultTargetsRead(
                 query: query, result: result, timestamp: cellResult.timestamp,
                 sourceQuery: cellResult.sourceQuery)
+            ],
+            cellId: nil, epoch: epoch, connectionManager: connectionManager)
+        }
+        // A data viewer page is labelled with its own relation above
+        if pageState == nil {
+          startColumnSourceLabels(
+            [
+              SourceLabelRead(
+                result: result, shown: cellResult,
+                databaseType: notebook.connectionConfig?.databaseType)
             ],
             cellId: nil, epoch: epoch, connectionManager: connectionManager)
         }
@@ -349,7 +375,7 @@ extension NotebookViewModel {
         failedScript: query, error: scriptError, dialect: sqlDialect)
     }
     if let runEpoch, !ranStatements.isEmpty {
-      await onRelationsWritten?(ranStatements, id, runEpoch)
+      await onRelationsWritten?(ranStatements, id, runEpoch, false)
     }
     await onStatementsExecuted?()
   }

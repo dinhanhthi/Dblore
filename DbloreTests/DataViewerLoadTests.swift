@@ -245,7 +245,73 @@ struct DataViewerLoadTests {
           RowChangeSet.RowKey(values: [.int(1)]): ["payload": 70_000],
           RowChangeSet.RowKey(values: [.int(2)]): ["payload": 80_000],
         ])
+
+      // The last rows deleted: the refreshed page is empty, with its columns
+      _ = try await manager.executeInternal("DELETE FROM items")
+      await viewModel.refreshDataViewerRows(
+        target: target, connectionManager: manager, done: "Done")
+      #expect(viewModel.editorResult?.rows.isEmpty == true)
+      #expect(viewModel.editorResult?.columns.map(\.name) == ["id", "payload", "label"])
     }
+  }
+
+  @Test(
+    "An empty table opens to its empty grid with its columns: cached or not, keyless or not",
+    arguments: [(cached: true, keyed: true), (false, true), (false, false)])
+  func emptyTableOpens(cached: Bool, keyed: Bool) async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("dblore-empty-\(UUID().uuidString).sqlite")
+    defer {
+      for suffix in ["", "-journal", "-wal", "-shm"] {
+        try? FileManager.default.removeItem(atPath: url.path + suffix)
+      }
+    }
+    var handle: OpaquePointer?
+    #expect(sqlite3_open(url.path, &handle) == SQLITE_OK)
+    let ddl = "CREATE TABLE t (id INTEGER\(keyed ? " PRIMARY KEY" : ""), v TEXT)"
+    #expect(sqlite3_exec(handle, ddl, nil, nil, nil) == SQLITE_OK)
+    sqlite3_close(handle)
+    let config = ConnectionConfig(
+      databaseType: .sqlite, database: url.path, username: "", protectionLevel: .none,
+      safeMode: .silent, protectedMode: false)
+    let manager = DatabaseConnectionManager()
+    try await manager.connect(config: config)
+    var notebook = DbloreNotebook.newDocument()
+    notebook.connectionConfig = config
+    let viewModel = NotebookViewModel(notebook: notebook)
+    viewModel.viewMode = .editor
+    viewModel.connectionManager = manager
+    var state = DataViewerState(schema: "main", name: "t", orderColumns: keyed ? ["id"] : [])
+    state.databaseType = .sqlite
+    viewModel.dataViewer = state
+    if cached {
+      viewModel.databaseTables = [
+        DatabaseTable(
+          schema: "main", name: "t",
+          columns: [
+            DatabaseColumn(name: "id", type: "INTEGER", isPrimaryKey: keyed),
+            DatabaseColumn(name: "v", type: "TEXT"),
+          ])
+      ]
+    }
+    await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
+    let first = viewModel.editorResult
+    // Read again with what the first page told (its edit target: lazy columns or locators)
+    await viewModel.loadDataViewerPage()
+    await viewModel.awaitResultTargets()
+    let page = viewModel.editorResult
+    await manager.disconnect()
+    #expect(first?.error == nil)
+    #expect(first?.columns.map(\.name) == ["id", "v"])
+    // The second read is the lazy page (uncached, the first was SELECT *), located when keyless
+    #expect(page?.sourceQuery?.contains("substr(") == true)
+    #expect((page?.truncation?.rowLocator != nil) == !keyed)
+    #expect(page?.error == nil)
+    #expect(page?.columns.map(\.name) == ["id", "v"])
+    #expect(page?.rows.isEmpty == true)
+    // Rows can be added to it
+    #expect(page?.editTarget != nil)
   }
 
   // MARK: - Text encodings

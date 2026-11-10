@@ -325,6 +325,8 @@ struct WorkspaceContainerView: View {
               windowWidth: geometry.size.width) : 0)
       )
     }
+    // Here, not in the body's chain (too long to type-check with it): no Cmd+K while covered
+    .bridgedFocusedSceneValue(\.openCommandPaletteAction, commandPaletteAction)
   }
 
   var body: some View {
@@ -384,9 +386,6 @@ struct WorkspaceContainerView: View {
     }
     .bridgedFocusedSceneValue(\.toggleAIAssistantAction) { [workspaceManager] in
       workspaceManager.toggleAIAssistant()
-    }
-    .bridgedFocusedSceneValue(\.openCommandPaletteAction) { [workspaceManager] in
-      workspaceManager.openCommandPalette()
     }
     .bridgedFocusedSceneValue(\.openTableImportAction, importAction)
     .bridgedFocusedSceneValue(\.openSQLDumpAction, backupAction(.dump))
@@ -544,6 +543,8 @@ struct WorkspaceContainerView: View {
         return
       }
       WorkspaceWindowManager.shared.setActiveWorkspace(workspaceManager.id)
+      // Back from another app or window: a definition may have changed outside
+      workspaceManager.refreshDefinitionsAfterOutsideChange()
     }
     .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { notification in
       guard workspaceManager.isActiveWorkspace(in: hostWindow),
@@ -664,6 +665,16 @@ struct WorkspaceContainerView: View {
       guard backupSheet == nil else { return }
       backupTabID = workspaceManager.activeTabId ?? workspaceManager.newSQLFile()
       backupSheet = sheet
+    }
+  }
+
+  /// Cmd+K: none while the Settings modal or the connection form is open (the menu item is
+  /// disabled), and a key press while a sheet is on the window is ignored
+  private var commandPaletteAction: (() -> Void)? {
+    guard workspaceManager.canOpenCommandPalette else { return nil }
+    return { [workspaceManager, hostWindow] in
+      guard hostWindow.window?.attachedSheet == nil else { return }
+      workspaceManager.openCommandPalette()
     }
   }
 
@@ -1551,6 +1562,8 @@ struct WorkspaceTitleBarTabsView: View {
         .scrollContentBackground(.hidden)
         .onChange(of: workspaceManager.activeTabId) { _, newTabId in
           if let newTabId {
+            // A tab an import marked while hidden reads its page again
+            workspaceManager.reloadIfMarked(tabId: newTabId)
             withAnimation(.easeInOut(duration: 0.2)) {
               proxy.scrollTo(newTabId, anchor: .center)
             }

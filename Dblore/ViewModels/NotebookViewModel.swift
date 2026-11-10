@@ -103,9 +103,13 @@ class NotebookViewModel {
   /// Workspace mode: awaited after the SQL paths ran statements (cell and editor runs, staged
   /// commit, inline edit) with the statements that ran, this tab's `id` as the writer and the
   /// `connectionEpoch` read before the run, so the workspace marks the other data viewer tabs
-  /// of the tables they wrote stale. Set by `WorkspaceManager`.
+  /// of the tables they wrote stale. `isDataImport` is true for a data import's staged batch.
+  /// Set by `WorkspaceManager`.
   @ObservationIgnored var onRelationsWritten:
-    (@MainActor (_ statements: [String], _ writer: UUID, _ epoch: UInt64) async -> Void)?
+    (
+      @MainActor (_ statements: [String], _ writer: UUID, _ epoch: UInt64, _ isDataImport: Bool)
+        async -> Void
+    )?
   /// Test hook: awaited where the commit's integer key lookup suspends, so a test can change the
   /// page at that exact point. Nil in production.
   @ObservationIgnored var keyLookupCheckpointForTesting: (@MainActor () async -> Void)?
@@ -121,6 +125,9 @@ class NotebookViewModel {
   /// editor): the latest per result slot, removed once it finished
   @ObservationIgnored var resultTargetPatches: [UUID?: (token: UUID, task: Task<Void, Never>)] =
     [:]
+  /// Background reads of the shown results' column source labels (`startColumnSourceLabels`),
+  /// by cell (nil: the editor): the latest per result slot
+  @ObservationIgnored var columnSourceLabelTasks: [UUID?: Task<Void, Never>] = [:]
   /// Last `notebook.connectionConfig` seen by `connectionConfigDidChange`
   @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
   @ObservationIgnored private var isApplyingWorkspaceConfig = false
