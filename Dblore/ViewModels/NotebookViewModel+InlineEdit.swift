@@ -299,6 +299,189 @@ extension NotebookViewModel {
     await resultTargetPatches[cellId]?.task.value
   }
 
+  // MARK: - Column source labels
+
+  /// Most distinct origin tables one result's labels resolve
+  nonisolated static let maxSourceLabelTables = 8
+
+  /// `schema.table.column` labels (unquoted catalog names) of the `columns` read from a table
+  /// column, by column index, off the main actor. MySQL / MariaDB: from `sourceName`, only for
+  /// the sources `origins` confirms (`maskOrigins`: BASE TABLE). PostgreSQL / SQLite: from the
+  /// edit table of each origin, `cachedTable` first; for the first `maxSourceLabelTables`
+  /// distinct tables it misses, one `origins` call names them (PostgreSQL OIDs; SQLite carries
+  /// its names) and `fetchTable` reads them (nil: cache / memo only). A table that resolves to
+  /// another identity, a view, an unnamed relation or a failed read gives no label; nor does an
+  /// expression. DuckDB / MongoDB: none.
+  @concurrent nonisolated static func columnSourceLabels(
+    _ columns: [ColumnInfo], databaseType: DatabaseType,
+    cachedTable: @Sendable (TableRef) async -> EditTable?,
+    origins: @Sendable ([ColumnInfo]) async -> [ColumnMaskRule.Origin?],
+    fetchTable: (@Sendable (TableRef, ColumnMaskRule.Origin) async -> EditTable?)?
+  ) async -> [Int: String] {
+    func label(_ parts: String?...) -> String {
+      parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ".")
+    }
+    switch databaseType {
+    case .duckdb, .mongodb:
+      return [:]
+    case .mysql:
+      guard columns.contains(where: { $0.sourceName != nil }) else { return [:] }
+      let confirmed = await origins(columns)
+      var labels: [Int: String] = [:]
+      for (index, column) in columns.enumerated() {
+        guard confirmed.indices.contains(index), confirmed[index] != nil,
+          let source = column.sourceName
+        else { continue }
+        labels[index] = label(source.schema, source.table, source.column)
+      }
+      return labels
+    case .postgresql, .sqlite:
+      var tableIDs: [TableRef] = []
+      for column in columns {
+        if let tableID = column.tableOrigin?.tableID, !tableIDs.contains(tableID) {
+          tableIDs.append(tableID)
+        }
+      }
+      tableIDs = Array(tableIDs.prefix(maxSourceLabelTables))
+      func usable(_ table: EditTable?, _ tableID: TableRef) -> EditTable? {
+        guard let table, table.viewBase == nil, table.resolvedTableRef == tableID else {
+          return nil
+        }
+        return table
+      }
+      var tables: [TableRef: EditTable] = [:]
+      for tableID in tableIDs {
+        tables[tableID] = usable(await cachedTable(tableID), tableID)
+      }
+      // One column per table the cache missed: one `origins` read names them all
+      let probes = tableIDs.filter { tables[$0] == nil }.compactMap { tableID in
+        columns.first { $0.tableOrigin?.tableID == tableID }
+      }
+      if !probes.isEmpty, let fetchTable {
+        let named = await origins(probes)
+        for (probe, origin) in zip(probes, named) {
+          guard let origin, let tableID = probe.tableOrigin?.tableID else { continue }
+          tables[tableID] = usable(await fetchTable(tableID, origin), tableID)
+        }
+      }
+      var labels: [Int: String] = [:]
+      for (index, column) in columns.enumerated() {
+        guard let origin = column.tableOrigin, let table = tables[origin.tableID],
+          let ordinal = Int16(exactly: origin.columnOrdinal),
+          let name = table.attributeNames[ordinal]
+        else { continue }
+        labels[index] = label(table.schema, table.name, name)
+      }
+      return labels
+    }
+  }
+
+  /// One shown result whose column source labels are read in the background
+  struct SourceLabelRead {
+    let columns: [ColumnInfo]
+    let timestamp: Date
+    let sourceQuery: String?
+    /// The mask pass's rule (`applying`): false for a PostgreSQL read the row cap cut that still
+    /// drains, so only the cache and the memo answer
+    let mayRead: Bool
+
+    init(result: QueryResult, shown: CellResult, databaseType: DatabaseType?) {
+      columns = result.columns
+      timestamp = shown.timestamp
+      sourceQuery = shown.sourceQuery
+      mayRead = databaseType != .postgresql || !result.truncated || result.sessionReset
+    }
+  }
+
+  /// Reads the column source labels of `reads` (results just shown for `cellId`, nil: the editor)
+  /// in the background, after the slot's pending catalog read (`patchResultTargets`) so its
+  /// cached edit table answers. Each result still shown with the same timestamp and query takes
+  /// its labels; one the slot replaced meanwhile, or read on another connection, is left as shown.
+  /// No `fetchEditTable` while metadata is paused or `mayRead` is false.
+  func startColumnSourceLabels(
+    _ reads: [SourceLabelRead], cellId: UUID?, epoch: UInt64,
+    connectionManager: DatabaseConnectionManager
+  ) {
+    guard let databaseType = notebook.connectionConfig?.databaseType, !reads.isEmpty,
+      reads.contains(where: { !$0.columns.isEmpty })
+    else { return }
+    switch databaseType {
+    case .postgresql, .mysql, .sqlite: break
+    case .duckdb, .mongodb: return
+    }
+    let pendingTargets = resultTargetPatches[cellId]?.task
+    columnSourceLabelTasks[cellId] = Task { [weak self] in
+      await pendingTargets?.value
+      for read in reads where !read.columns.isEmpty {
+        let mayRead = read.mayRead
+        let fetchTable: (@Sendable (TableRef, ColumnMaskRule.Origin) async -> EditTable?)? =
+          mayRead
+          ? { @Sendable tableID, origin in
+            guard !(await connectionManager.isMetadataPaused) else { return nil }
+            let name = [origin.schema, origin.table].compactMap { $0 }.map {
+              CellUpdateStatement.quoteIdentifier($0, dialect: .postgresql)
+            }.joined(separator: ".")
+            return try? await connectionManager.fetchEditTable(
+              tableName: name, tableID: tableID, probesViews: false)
+          } : nil
+        let labels = await Self.columnSourceLabels(
+          read.columns, databaseType: databaseType,
+          cachedTable: { await connectionManager.cachedEditTable(id: $0) },
+          origins: {
+            await connectionManager.maskOrigins($0, databaseType: databaseType, mayRead: mayRead)
+          },
+          fetchTable: fetchTable)
+        guard !labels.isEmpty, await connectionManager.connectionEpoch == epoch else { continue }
+        self?.applyColumnSourceLabels(labels, to: read, cellId: cellId)
+      }
+    }
+  }
+
+  /// Sets `labels` on the results of `read` still shown for `cellId` (session-only: the
+  /// document is not edited)
+  private func applyColumnSourceLabels(
+    _ labels: [Int: String], to read: SourceLabelRead, cellId: UUID?
+  ) {
+    func labeled(_ result: CellResult?) -> CellResult? {
+      guard var result, result.timestamp == read.timestamp,
+        result.sourceQuery == read.sourceQuery, result.columns.count == read.columns.count,
+        result.columnSourceLabels != labels
+      else { return nil }
+      result.columnSourceLabels = labels
+      return result
+    }
+    /// Nil when no statement result is `read`'s
+    func labeled(_ statements: [StatementResult]) -> [StatementResult]? {
+      var changed = false
+      let labeled = statements.map { statement in
+        guard let result = labeled(statement.result) else { return statement }
+        changed = true
+        return StatementResult(
+          id: statement.id, queryText: statement.queryText, result: result,
+          statementIndex: statement.statementIndex)
+      }
+      return changed ? labeled : nil
+    }
+    if let cellId {
+      guard let index = notebook.cells.firstIndex(where: { $0.id == cellId }) else { return }
+      if let result = labeled(notebook.cells[index].result) {
+        notebook.cells[index].result = result
+      }
+      if let statements = labeled(notebook.cells[index].statementResults) {
+        notebook.cells[index].statementResults = statements
+      }
+    } else {
+      if let result = labeled(editorResult) { editorResult = result }
+      if let statements = labeled(editorStatementResults) { editorStatementResults = statements }
+    }
+  }
+
+  /// Waits until the source labels of the results last shown for `cellId` (nil: the editor)
+  /// are applied
+  func awaitColumnSourceLabels(cellId: UUID? = nil) async {
+    await columnSourceLabelTasks[cellId]?.value
+  }
+
   /// The collection of a result read by exactly one `find`, keyed by `_id`, or nil. Nil for
   /// other reads (`aggregate`, `distinct`, `countDocuments`, `listCollections`: their `_id` need
   /// not name a document of one collection), a find on a view (`databaseViews`, the cached
@@ -1241,6 +1424,7 @@ extension NotebookViewModel {
     // Same run, new rows: the timestamp stays (display mode, filters), the revision moves
     updated.dataRevision = result.dataRevision + 1
     updated.truncation = truncation
+    updated.columnSourceLabels = result.columnSourceLabels
     if !isMongoDataViewer { resetLazyCells() }
     // A target the re-read masked moves to the Cell Value sidebar too
     carryCellDetailEditTarget(from: result, to: updated)

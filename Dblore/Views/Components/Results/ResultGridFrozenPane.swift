@@ -169,8 +169,8 @@ final class ResultGridFrozenPane: NSScrollView {
     if let scrollView = superview as? NSScrollView { layout(over: scrollView) }
   }
 
-  /// True when the column set changed. Titles, header content, widths and sort keys follow the
-  /// grid's columns on every call (the header redraws only when one of them changed).
+  /// True when the column set changed. Titles, header content and tooltips, widths and sort keys
+  /// follow the grid's columns on every call (the header redraws only when one of them changed).
   private func syncColumns(_ band: ResultGridFrozenBand, from grid: NSTableView) -> Bool {
     let source = band.identifiers.compactMap { grid.tableColumn(withIdentifier: $0) }
     var columnsChanged = false
@@ -194,6 +194,10 @@ final class ResultGridFrozenPane: NSScrollView {
         if copy.resizingMask != column.resizingMask { copy.resizingMask = column.resizingMask }
         if copy.sortDescriptorPrototype != column.sortDescriptorPrototype {
           copy.sortDescriptorPrototype = column.sortDescriptorPrototype
+        }
+        if copy.headerToolTip != column.headerToolTip {
+          copy.headerToolTip = column.headerToolTip
+          headerChanged = true
         }
         if copy.width != column.width {
           copy.width = column.width

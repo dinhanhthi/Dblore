@@ -223,6 +223,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
   private(set) var frozenPane: ResultGridFrozenPane?
   /// Band the pane shows, nil when nothing is frozen
   private(set) var frozenBand: ResultGridFrozenBand?
+  /// Source labels the header tooltips show (`CellResult.columnSourceLabels`). They land after
+  /// the result is shown and stay out of `Key`, so their arrival only resets the tooltips.
+  private var appliedSourceLabels: [Int: String] = [:]
   /// Called with the column name of "Freeze Up to This Column", or nil by "Unfreeze". Nil leaves
   /// both out of the header menu (grids without a frozen pane).
   var onFreezeChange: ((String?) -> Void)?
@@ -336,6 +339,9 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     let nextChangeSet = Self.normalizedChangeSet(changeSet)
     if newKey == key {
       defer { syncFrozenPane(tableView, reload: false) }
+      if result.columnSourceLabels != appliedSourceLabels {
+        applyHeaderToolTips(tableView, labels: result.columnSourceLabels)
+      }
       let reformatted = applyBinaryFormats(binaryFormats)
       guard nextChangeSet != stagedChangeSet else { return reformatted }
       applyStagedChangeSet(nextChangeSet, to: tableView)
@@ -1661,8 +1667,8 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
       // The pin stays: `markFrozenThrough` widens a column only when the pin moves to it
       content.isFrozenThrough = cell.content.isFrozenThrough
       cell.content = content
-      tableColumn.headerToolTip = content.isMasked ? "Masked by a connection rule" : nil
     }
+    applyHeaderToolTips(tableView, labels: result.columnSourceLabels)
     guard let headerView = tableView.headerView else { return }
     let height = ResultGridView.headerHeight(hideColumnTypes: hideColumnTypes)
     if headerView.frame.height != height {
@@ -1671,6 +1677,28 @@ final class ResultGridCoordinator: NSObject, NSTableViewDataSource, NSTableViewD
     }
     headerView.needsDisplay = true
     headerView.window?.invalidateCursorRects(for: headerView)
+  }
+
+  /// Each result column's header tooltip: its source label (`schema.table.column`), then
+  /// "Masked by a connection rule" on a second line when masked; nil when neither. Sets only
+  /// the tooltips (no reload, no header rebuild); the frozen pane copies them on its next sync.
+  private func applyHeaderToolTips(_ tableView: NSTableView, labels: [Int: String]) {
+    appliedSourceLabels = labels
+    var changed = false
+    for tableColumn in tableView.tableColumns {
+      guard let index = Int(tableColumn.identifier.rawValue) else { continue }
+      let masked = (tableColumn.headerCell as? ResultGridHeaderCell)?.content.isMasked == true
+      let lines = [labels[index], masked ? "Masked by a connection rule" : nil].compactMap { $0 }
+      let toolTip = lines.isEmpty ? nil : lines.joined(separator: "\n")
+      if tableColumn.headerToolTip != toolTip {
+        tableColumn.headerToolTip = toolTip
+        changed = true
+      }
+    }
+    // The header's tooltip areas are rebuilt with its cursor rects
+    if changed, let headerView = tableView.headerView {
+      headerView.window?.invalidateCursorRects(for: headerView)
+    }
   }
 
   /// The match the grid highlights. A table-data match on a filtered-out row is replaced by

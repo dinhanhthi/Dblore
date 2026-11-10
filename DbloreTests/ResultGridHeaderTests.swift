@@ -95,4 +95,42 @@ struct ResultGridHeaderTests {
     }
     #expect(cell.content.title == "user_name")
   }
+
+  /// Counts full reloads
+  private final class CountingTableView: NSTableView {
+    var reloads = 0
+    override func reloadData() {
+      reloads += 1
+      super.reloadData()
+    }
+  }
+
+  @Test("Source labels that land after the result show as header tooltips without a reload")
+  func sourceLabelTooltipsWithoutReload() {
+    var shown = CellResult(
+      columns: [
+        ColumnInfo(name: "id", type: "int4"),
+        ColumnInfo(name: "email", type: "text", masked: true),
+        ColumnInfo(name: "n", type: "int8"),
+      ],
+      rows: [[.int(1), .string("***"), .int(2)]], rowCount: 1)
+    let coordinator = ResultGridCoordinator()
+    let tableView = CountingTableView()
+    coordinator.update(tableView, result: shown, sortColumn: nil, ascending: true)
+    func tooltip(_ column: Int) -> String? {
+      tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(String(column)))?
+        .headerToolTip
+    }
+    #expect(tooltip(0) == nil)
+    #expect(tooltip(1) == "Masked by a connection rule")
+    let reloads = tableView.reloads
+
+    shown.columnSourceLabels = [0: "public.users.id", 1: "public.users.email"]
+    let reloaded = coordinator.update(tableView, result: shown, sortColumn: nil, ascending: true)
+    #expect(tooltip(0) == "public.users.id")
+    #expect(tooltip(1) == "public.users.email\nMasked by a connection rule")
+    #expect(tooltip(2) == nil)
+    #expect(!reloaded)
+    #expect(tableView.reloads == reloads)
+  }
 }

@@ -363,6 +363,13 @@ extension NotebookViewModel {
 
         // Store all statement results
         notebook.cells[index].statementResults = convertedStatements
+        startColumnSourceLabels(
+          zip(statementResults, convertedStatements).map { tuple, statement in
+            SourceLabelRead(
+              result: tuple.result, shown: statement.result,
+              databaseType: notebook.connectionConfig?.databaseType)
+          },
+          cellId: task.cellId, epoch: runEpoch, connectionManager: connectionManager)
         notebook.cells[index].totalExecutionTime = totalTime
         // Select the last statement by default
         notebook.cells[index].selectedStatementIndex = convertedStatements.count - 1
@@ -417,6 +424,15 @@ extension NotebookViewModel {
           patchResultTargets(
             [
               ResultTargetsRead(query: task.query, result: queryResult, timestamp: result.timestamp)
+            ],
+            cellId: task.cellId, epoch: epoch, connectionManager: connectionManager)
+        }
+        if let result {
+          startColumnSourceLabels(
+            [
+              SourceLabelRead(
+                result: queryResult, shown: result,
+                databaseType: notebook.connectionConfig?.databaseType)
             ],
             cellId: task.cellId, epoch: epoch, connectionManager: connectionManager)
         }

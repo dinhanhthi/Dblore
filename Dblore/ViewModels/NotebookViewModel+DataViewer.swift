@@ -282,14 +282,31 @@ extension NotebookViewModel {
     }
   }
 
+  /// Source labels of a data viewer page (`CellResult.columnSourceLabels`): every column is a
+  /// column of the viewed relation, so each is `schema.name.column` with no catalog read (an
+  /// empty schema is left out). DuckDB and MongoDB pages have none.
+  func dataViewerSourceLabels(_ state: DataViewerState, columns: [ColumnInfo]) -> [Int: String] {
+    switch state.databaseType {
+    case .postgresql, .mysql, .sqlite: break
+    case .duckdb, .mongodb: return [:]
+    }
+    let relation = [state.schema, state.name].filter { !$0.isEmpty }
+    var labels: [Int: String] = [:]
+    for (index, column) in columns.enumerated() {
+      labels[index] = (relation + [column.name]).joined(separator: ".")
+    }
+    return labels
+  }
+
   /// A page past the user limit: no rows, nothing sent. The columns and edit target stay, so
   /// the grid keeps its shape.
   private func showEmptyDataViewerPage() {
     editorStatementResults = []
     selectedStatementIndex = 0
-    let empty = CellResult(
+    var empty = CellResult(
       columns: editorResult?.columns ?? [], editTarget: editorResult?.editTarget,
       lookupRelation: editorResult?.lookupRelation)
+    empty.columnSourceLabels = editorResult?.columnSourceLabels ?? [:]
     editorResult = empty
     syncRowDetail(cellId: nil, result: empty)
   }

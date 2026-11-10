@@ -511,7 +511,10 @@ final class DatabaseBackupModel {
     }
     let id = begin(.restoring)
     let runningWork = beginRunningWork(
-      "Restore of \(restoreFileName ?? "a SQL file")", kind: .restore(plan.engine))
+      "Restore of \(restoreFileName ?? "a SQL file")", kind: .restore(plan.engine)
+    ) { [weak self] in
+      self?.confirmingRestoreCancel() ?? Task { false }
+    }
     defer { RunningWorkRegistry.shared.end(runningWork) }
     restoreProgress = SQLRestoreProgress(
       statementsDone: 0, statementCount: plan.summary.statementCount)
@@ -622,6 +625,18 @@ final class DatabaseBackupModel {
     }
   }
 
+  /// The restore's Cancel for the running-work prompt's Stop, with `cancel()`'s guards: its
+  /// task is true when the restore statement's warning was answered "Keep running"
+  private func confirmingRestoreCancel() -> Task<Bool, Never> {
+    guard activity == .restoring else { return Task { false } }
+    if checkingRestore {
+      stopRestoreCheck()
+      return Task { false }
+    }
+    guard restoreBatchInFlight else { return Task { false } }
+    return Task { await viewModel.stopRunningStatement(cancelQueue: false) == .keptRunning }
+  }
+
   private func stopReading() {
     cancelWork?()
     cancelWork = nil
@@ -652,12 +667,14 @@ final class DatabaseBackupModel {
   }
 
   /// Lists the running dump, copy or restore in the tab's workspace (Quit and close ask first);
-  /// Stop there is this model's Cancel
+  /// Stop there is this model's Cancel, or `confirmingCancel` when given (awaited by the Stop)
   private func beginRunningWork(
-    _ label: String, kind: RunningWorkRegistry.Kind
+    _ label: String, kind: RunningWorkRegistry.Kind,
+    confirmingCancel: (@MainActor () -> Task<Bool, Never>)? = nil
   ) -> RunningWorkRegistry.Token {
     RunningWorkRegistry.shared.begin(
-      workspaceID: viewModel.historyWorkspace()?.id, label: label, kind: kind
+      workspaceID: viewModel.historyWorkspace()?.id, label: label, kind: kind,
+      confirmingCancel: confirmingCancel
     ) { [weak self] in
       Task { await self?.cancel() }
     }

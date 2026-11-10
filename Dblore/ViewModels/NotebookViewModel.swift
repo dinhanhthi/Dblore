@@ -125,6 +125,9 @@ class NotebookViewModel {
   /// editor): the latest per result slot, removed once it finished
   @ObservationIgnored var resultTargetPatches: [UUID?: (token: UUID, task: Task<Void, Never>)] =
     [:]
+  /// Background reads of the shown results' column source labels (`startColumnSourceLabels`),
+  /// by cell (nil: the editor): the latest per result slot
+  @ObservationIgnored var columnSourceLabelTasks: [UUID?: Task<Void, Never>] = [:]
   /// Last `notebook.connectionConfig` seen by `connectionConfigDidChange`
   @ObservationIgnored private var observedConnectionConfig: ConnectionConfig?
   @ObservationIgnored private var isApplyingWorkspaceConfig = false
