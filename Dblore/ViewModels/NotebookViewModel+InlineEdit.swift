@@ -1390,9 +1390,12 @@ extension NotebookViewModel {
       } else {
         page = state.pageSQL
       }
-      stored = try await connectionManager.execute(
-        userSQL: page, policy: protectionPolicy,
-        maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)
+      // A page left without a row (its last row deleted) keeps its columns
+      stored = try await DatabaseConnectionManager.$keepsEmptyResultColumns.withValue(true) {
+        try await connectionManager.execute(
+          userSQL: page, policy: protectionPolicy,
+          maxRows: max(state.pageSize, SessionBrakeLimits.rowCapRange.lowerBound), caller: id)
+      }
       if !isMongoDataViewer {
         (stored, truncation) = try await strippedDataViewerPage(
           stored, state: state, epoch: epoch, connectionManager: connectionManager)

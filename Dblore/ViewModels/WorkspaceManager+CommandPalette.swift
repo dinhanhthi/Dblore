@@ -85,9 +85,17 @@ extension WorkspaceManager {
     )
   }
 
+  /// False while the Settings modal or the connection form is open: Cmd+K is ignored and its
+  /// menu item disabled, so the palette never opens over them
+  var canOpenCommandPalette: Bool {
+    !isSettingsModalVisible && !isConnectionFormModalVisible
+  }
+
   /// Opens the palette on `paletteSources()`, or closes it when the search field is not focused.
-  /// Cmd+K while that field is editing does nothing. Escape still dismisses it.
+  /// Cmd+K while that field is editing does nothing, nor while `canOpenCommandPalette` is false.
+  /// Escape still dismisses it.
   func openCommandPalette() {
+    guard canOpenCommandPalette else { return }
     if commandPalette != nil {
       guard !commandPaletteFieldFocused else { return }
       commandPalette = nil

@@ -200,6 +200,21 @@ struct CommandPaletteModelTests {
     #expect(manager.activeViewModel?.isRightSidebarVisible == true)
   }
 
+  @Test("Cmd+K does not open the palette over Settings or the connection form")
+  func paletteStaysClosedOverModals() {
+    let manager = makeWorkspace()
+    manager.isSettingsModalVisible = true
+    manager.openCommandPalette()
+    #expect(manager.commandPalette == nil)
+    manager.isSettingsModalVisible = false
+    manager.isConnectionFormModalVisible = true
+    manager.openCommandPalette()
+    #expect(manager.commandPalette == nil)
+    manager.isConnectionFormModalVisible = false
+    manager.openCommandPalette()
+    #expect(manager.commandPalette != nil)
+  }
+
   private func makeWorkspace() -> WorkspaceManager {
     WorkspaceManager(workspace: Workspace(), restoreTabs: false)
   }

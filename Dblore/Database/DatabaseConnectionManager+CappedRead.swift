@@ -132,13 +132,19 @@ nonisolated struct CappedReadLimits: Sendable, Equatable {
 }
 
 extension DatabaseConnectionManager {
+  /// Set around a data-viewer page read (`executeEditorQuery` with a page state): its result
+  /// keeps the column list of an empty page on every engine, so an empty table shows its
+  /// columns and its lazy page keeps the shape its SQL asked for
+  @TaskLocal static var keepsEmptyResultColumns = false
+
   /// Read at most `maxRows` rows of `source`, taking column names / types from the first row
   /// that is kept. One row past the cap is looked at to know whether the result was truncated.
   /// Then the loop breaks (the session stops reading and PostgresNIO drains the rest on the
   /// next query, unless the session is closed), or, with `readToEnd`, keeps counting rows
   /// without keeping them. MySQL keeps the column list of a zero-row result too (the session
   /// reads its headers), so the result keeps its column origins; so does MongoDB (the session
-  /// buffers the documents first), so an empty find keeps its `_id` column. With `readLimits`,
+  /// buffers the documents first), so an empty find keeps its `_id` column; and so does a
+  /// data-viewer page on any engine (`keepsEmptyResultColumns`). With `readLimits`,
   /// rows are cut as they arrive and a row past the byte budget ends the read like a row past
   /// the cap (`stoppedAtByteBudget`). With `marksCutCells`, each cut cell of a kept row is
   /// recorded in `cutCells`. The limits are the manager's (`readLimits`, MCP), else `limits`
@@ -149,7 +155,8 @@ extension DatabaseConnectionManager {
     var collected = CollectedRows()
     var keptBytes = 0
     let readLimits = self.readLimits ?? limits
-    if config?.databaseType == .mysql || config?.databaseType.capabilities.queryLanguage == .mongosh
+    if Self.keepsEmptyResultColumns || config?.databaseType == .mysql
+      || config?.databaseType.capabilities.queryLanguage == .mongosh
     {
       collected.columns = source.columns
     }

@@ -576,29 +576,44 @@ extension WorkspaceManager {
     markDirtyAndScheduleAutoSave()
   }
 
-  /// Toggle expand/collapse all entities
+  /// Entities whose expansion "Expand all" / "Collapse all" still animates: past this, rows
+  /// switch at once (animating thousands of rows growing blocked the sidebar for seconds)
+  static let animatedExpansionLimit = 200
+
+  /// Toggle expand/collapse all entities. Animated only when at most
+  /// `animatedExpansionLimit` entities change.
   func toggleExpandCollapseAll() {
-    withAnimation(.snappy(duration: 0.25)) {
-      areAllEntitiesExpanded.toggle()
+    let expanded = !areAllEntitiesExpanded
+    let changed =
+      databaseTables.count(where: { $0.isExpanded != expanded })
+      + databaseViews.count(where: { $0.isExpanded != expanded })
+      + databaseFunctions.count(where: { $0.isExpanded != expanded })
+      + databaseProcedures.count(where: { $0.isExpanded != expanded })
+      + databaseUsers.count(where: { $0.isExpanded != expanded })
+      + databaseRoles.count(where: { $0.isExpanded != expanded })
+    let animation: Animation? =
+      changed <= Self.animatedExpansionLimit ? .snappy(duration: 0.25) : nil
+    withAnimation(animation) {
+      areAllEntitiesExpanded = expanded
 
       // Update all entities
       for i in databaseTables.indices {
-        databaseTables[i].isExpanded = areAllEntitiesExpanded
+        databaseTables[i].isExpanded = expanded
       }
       for i in databaseViews.indices {
-        databaseViews[i].isExpanded = areAllEntitiesExpanded
+        databaseViews[i].isExpanded = expanded
       }
       for i in databaseFunctions.indices {
-        databaseFunctions[i].isExpanded = areAllEntitiesExpanded
+        databaseFunctions[i].isExpanded = expanded
       }
       for i in databaseProcedures.indices {
-        databaseProcedures[i].isExpanded = areAllEntitiesExpanded
+        databaseProcedures[i].isExpanded = expanded
       }
       for i in databaseUsers.indices {
-        databaseUsers[i].isExpanded = areAllEntitiesExpanded
+        databaseUsers[i].isExpanded = expanded
       }
       for i in databaseRoles.indices {
-        databaseRoles[i].isExpanded = areAllEntitiesExpanded
+        databaseRoles[i].isExpanded = expanded
       }
     }
   }

@@ -260,10 +260,16 @@ extension NotebookViewModel {
         await AppLogger.shared.debug(
           "Editor mode executing query with maxRows: \(maxRows)", category: "Query")
         runEpoch = epoch
-        var result = try await connectionManager.execute(
-          userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
-          caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true,
-          readLimits: readLimits)
+        // A page keeps its columns without a row: an empty table shows them, and a lazy page
+        // has the shape its SQL asked for
+        var result = try await DatabaseConnectionManager.$keepsEmptyResultColumns.withValue(
+          pageState != nil
+        ) {
+          try await connectionManager.execute(
+            userSQL: query, parameters: parameters, policy: protectionPolicy, maxRows: maxRows,
+            caller: id, expectedEpoch: expectedEpoch, deferEnrichment: true,
+            readLimits: readLimits)
+        }
         ranStatements = [query]
         var truncation: DataViewerState.Truncation?
         if let pageState {
