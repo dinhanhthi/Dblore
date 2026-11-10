@@ -18,7 +18,13 @@ struct Workspace: Codable, Identifiable, Sendable {
   // MARK: - Connection
 
   /// Connection configuration (password NOT stored, use keychainKey)
-  var connectionConfig: ConnectionConfig?
+  var connectionConfig: ConnectionConfig? {
+    didSet { if connectionConfig != nil { unsupportedConnection = nil } }
+  }
+
+  /// Connection of an engine this build does not know (added by a newer build), kept as read so
+  /// a save writes it back unchanged. A new `connectionConfig` replaces it.
+  private(set) var unsupportedConnection: JSONValue?
 
   /// Keychain key written on connect, kept for older workspace files. Never read: `keychainKey`
   /// derives the key from `connectionConfig`
@@ -63,6 +69,10 @@ struct Workspace: Codable, Identifiable, Sendable {
     case lastOpenedAt
   }
 
+  private enum EngineKey: String, CodingKey {
+    case databaseType
+  }
+
   init(
     id: UUID = UUID(),
     name: String = "Untitled",
@@ -104,8 +114,18 @@ struct Workspace: Codable, Identifiable, Sendable {
 
     id = try container.decode(UUID.self, forKey: .id)
     name = try container.decode(String.self, forKey: .name)
-    connectionConfig = try container.decodeIfPresent(
-      ConnectionConfig.self, forKey: .connectionConfig)
+    // An engine name this build does not know keeps the connection as read, without a config;
+    // anything else (a known engine, a missing or malformed name) decodes strictly
+    let engine = try? container.nestedContainer(keyedBy: EngineKey.self, forKey: .connectionConfig)
+    if let name = try? engine?.decode(String.self, forKey: .databaseType),
+      DatabaseType(rawValue: name) == nil
+    {
+      connectionConfig = nil
+      unsupportedConnection = try container.decode(JSONValue.self, forKey: .connectionConfig)
+    } else {
+      connectionConfig = try container.decodeIfPresent(
+        ConnectionConfig.self, forKey: .connectionConfig)
+    }
     // Locks come from the saved rows: a file's flag never reaches the first save of its row
     connectionConfig?.isLocked = false
     connectionKeychainKey = try container.decodeIfPresent(
@@ -133,6 +153,8 @@ struct Workspace: Codable, Identifiable, Sendable {
     if var config = connectionConfig {
       config.password = ""  // Never store password
       try container.encode(config, forKey: .connectionConfig)
+    } else if let unsupportedConnection {
+      try container.encode(unsupportedConnection, forKey: .connectionConfig)
     }
 
     try container.encodeIfPresent(connectionKeychainKey, forKey: .connectionKeychainKey)

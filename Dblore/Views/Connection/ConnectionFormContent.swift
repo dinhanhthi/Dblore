@@ -1008,7 +1008,7 @@ struct ConnectionFormContent: View {
           let action = ConnectionErrorAction.action(forMessage: message)
         {
           Spacer(minLength: Spacing.sm)
-          Button(action.title, action: onOpenPluginSettings)
+          Button(action.title(for: connectionConfig.databaseType), action: onOpenPluginSettings)
             .buttonStyle(FilledSecondaryButtonStyle())
             .controlSize(.small)
             .linkPointer()

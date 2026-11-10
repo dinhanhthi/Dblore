@@ -440,7 +440,7 @@ struct ResultExportSheet: View {
 
   /// The DuckDB plugin is installed, or its launch check is still hashing an installed file.
   private var isDuckDBPluginReady: Bool {
-    PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending ?? false
+    PluginRegistry.shared.manager(for: .duckdb)?.isInstalledOrPending ?? false
   }
 
   /// A Parquet or all-rows save panel is open: no rows written yet.

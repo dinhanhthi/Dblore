@@ -86,6 +86,14 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     self == .duckdb || self == .postgresql
   }
 
+  /// Catalog id of the plugin that ships this engine; nil for engines built into the app.
+  nonisolated var pluginID: String? {
+    switch self {
+    case .duckdb: "duckdb"
+    case .postgresql, .sqlite, .mysql, .mongodb: nil
+    }
+  }
+
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the

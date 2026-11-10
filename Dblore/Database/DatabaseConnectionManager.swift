@@ -1139,7 +1139,7 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
   /// What a SQLite session's authorizer checks a typed ATTACH against
   var lockSource: LockRegistry = .shared
   var duckDBLibraryLoader: DuckDBLibraryLoader = { @MainActor in
-    guard let manager = PluginRegistry.shared.manager(id: "duckdb"),
+    guard let manager = PluginRegistry.shared.manager(for: .duckdb),
       await manager.isInstalledAfterLaunchCheck()
     else { return nil }
     return { try manager.loadDuckDBLibrary() }

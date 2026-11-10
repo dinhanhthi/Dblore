@@ -34,7 +34,7 @@ struct ConnectionFormModal: View {
       ) {
         databaseTypeMenu
       }
-      if connectionConfig.databaseType.capabilities.requiresPlugin && !isDuckDBInstalled {
+      if connectionConfig.databaseType.capabilities.requiresPlugin && !isEngineInstalled {
         missingPluginRow
       }
       ConnectionFormContent(
@@ -60,11 +60,11 @@ struct ConnectionFormModal: View {
 
   /// Engine picker, sitting on the right of the title and before the close button.
   private var databaseTypeMenu: some View {
-    let installed = isDuckDBInstalled
+    let registry = PluginRegistry.shared
     let types = Self.pickerTypes(
       showExperimental: AppSettings.shared.showExperimentalEngines,
       current: connectionConfig.databaseType,
-      isPluginInstalled: { $0 == .duckdb ? installed : true })
+      isPluginInstalled: { registry.isEngineInstalledOrPending($0) })
     // A capsule like the form's dropdowns, so it is white on the header in light
     return Menu {
       Picker("Database", selection: $connectionConfig.databaseType) {
@@ -84,15 +84,15 @@ struct ConnectionFormModal: View {
 
   /// Read in `body`, so the picker and the missing-plugin row follow install and remove. While
   /// the launch check hashes the file, a present file counts as installed.
-  private var isDuckDBInstalled: Bool {
-    PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true
+  private var isEngineInstalled: Bool {
+    PluginRegistry.shared.isEngineInstalledOrPending(connectionConfig.databaseType)
   }
 
   private var missingPluginRow: some View {
     HStack(spacing: Spacing.sm) {
       Image(systemName: "exclamationmark.triangle.fill")
         .foregroundColor(.warning)
-      Text("DuckDB plugin not installed")
+      Text(Self.missingPluginText(connectionConfig.databaseType))
         .foregroundColor(.warning)
       Spacer(minLength: Spacing.sm)
       Button("Install…", action: onOpenPluginSettings)
@@ -107,6 +107,11 @@ struct ConnectionFormModal: View {
     )
     .padding(.horizontal, Spacing.md)
     .padding(.top, Spacing.sm)
+  }
+
+  /// "<plugin> plugin not installed", for the connection form and the workspace info.
+  nonisolated static func missingPluginText(_ type: DatabaseType) -> String {
+    "\(PluginDisplayInfo.forType(type).name) plugin not installed"
   }
 
   /// Picker engines. The engine of the connection being edited stays listed even when its
@@ -129,9 +134,10 @@ nonisolated enum ConnectionErrorAction: Equatable, Sendable {
   /// The engine's plugin is not installed: open Settings > Plugins.
   case openPluginSettings
 
-  var title: String {
+  /// The button title for a connection to `type`.
+  func title(for type: DatabaseType) -> String {
     switch self {
-    case .openPluginSettings: "Install DuckDB Plugin"
+    case .openPluginSettings: "Install \(PluginDisplayInfo.forType(type).name) Plugin"
     }
   }
 

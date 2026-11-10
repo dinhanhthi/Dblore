@@ -6,13 +6,13 @@
 import Foundation
 
 /// Entry for recent workspaces list
-struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
+nonisolated struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   let id: UUID
   let fileURL: URL
   let name: String
   let connectionDisplayString: String?
-  /// Engine of the workspace connection, badged on the welcome row (nil in older entries)
-  let databaseType: DatabaseType?
+  /// Engine name as stored, kept when this build does not know it so a save writes it back
+  private var databaseTypeName: String?
   let lastOpenedAt: Date
   let tabCount: Int
   /// App-scope security-scoped bookmark of the .sqlws file (nil in entries saved before bookmarks)
@@ -25,7 +25,8 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   var isLocked = false
 
   private enum CodingKeys: String, CodingKey {
-    case id, fileURL, name, connectionDisplayString, databaseType, lastOpenedAt, tabCount
+    case id, fileURL, name, connectionDisplayString, lastOpenedAt, tabCount
+    case databaseTypeName = "databaseType"
     case bookmark, folderBookmark, iconColorName, isLocked
   }
 
@@ -43,7 +44,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     self.fileURL = fileURL
     self.name = name
     self.connectionDisplayString = connectionDisplayString
-    self.databaseType = databaseType
+    self.databaseTypeName = databaseType?.rawValue
     self.lastOpenedAt = lastOpenedAt
     self.tabCount = tabCount
     self.bookmark = bookmark
@@ -56,7 +57,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
     name = try container.decode(String.self, forKey: .name)
     connectionDisplayString = try container.decodeIfPresent(
       String.self, forKey: .connectionDisplayString)
-    databaseType = try container.decodeIfPresent(DatabaseType.self, forKey: .databaseType)
+    databaseTypeName = try container.decodeIfPresent(String.self, forKey: .databaseTypeName)
     lastOpenedAt = try container.decode(Date.self, forKey: .lastOpenedAt)
     tabCount = try container.decode(Int.self, forKey: .tabCount)
     bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
@@ -68,10 +69,16 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
   static func == (lhs: WorkspaceHistoryEntry, rhs: WorkspaceHistoryEntry) -> Bool {
     lhs.id == rhs.id && lhs.fileURL == rhs.fileURL && lhs.name == rhs.name
       && lhs.connectionDisplayString == rhs.connectionDisplayString
-      && lhs.databaseType == rhs.databaseType
+      && lhs.databaseTypeName == rhs.databaseTypeName
       && lhs.lastOpenedAt == rhs.lastOpenedAt && lhs.tabCount == rhs.tabCount
       && lhs.iconColorName == rhs.iconColorName
       && lhs.isLocked == rhs.isLocked
+  }
+
+  /// Engine of the workspace connection, badged on the welcome row (nil in older entries and
+  /// for an engine this build does not know)
+  var databaseType: DatabaseType? {
+    databaseTypeName.flatMap(DatabaseType.init(rawValue:))
   }
 
   /// Color picked for the folder icon; an unknown stored name reads as none
@@ -106,6 +113,7 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       tabCount: tabCount,
       bookmark: bookmark
     )
+    edited.databaseTypeName = databaseTypeName
     edited.folderBookmark = folderBookmark
     edited.iconColorName = iconColorName
     edited.isLocked = isLocked
@@ -132,5 +140,56 @@ struct WorkspaceHistoryEntry: Codable, Identifiable, Equatable, Sendable {
       tabCount: workspace.tabs.count,
       bookmark: bookmark
     )
+  }
+
+  /// Reads a stored list entry by entry: `entries` are those this build reads, `unreadable` the
+  /// others as stored, so one bad entry never empties the list
+  static func decodeList(
+    _ data: Data?
+  ) -> (entries: [WorkspaceHistoryEntry], unreadable: [JSONValue]) {
+    guard let data, let stored = try? JSONDecoder().decode([StoredEntry].self, from: data) else {
+      return ([], [])
+    }
+    var entries: [WorkspaceHistoryEntry] = []
+    var unreadable: [JSONValue] = []
+    for item in stored {
+      switch item {
+      case .entry(let entry): entries.append(entry)
+      case .unreadable(let value): unreadable.append(value)
+      }
+    }
+    return (entries, unreadable)
+  }
+
+  /// `entries` followed by the entries of `stored` this build cannot read, so a save never
+  /// drops them
+  static func encodeList(
+    _ entries: [WorkspaceHistoryEntry], keepingUnreadableOf stored: Data?
+  ) -> Data? {
+    let kept = decodeList(stored).unreadable.map(StoredEntry.unreadable)
+    return try? JSONEncoder().encode(entries.map(StoredEntry.entry) + kept)
+  }
+
+  /// One element of a stored list: an entry, or the JSON of one this build cannot read
+  private nonisolated enum StoredEntry: Codable {
+    case entry(WorkspaceHistoryEntry)
+    case unreadable(JSONValue)
+
+    init(from decoder: Decoder) throws {
+      let container = try decoder.singleValueContainer()
+      if let entry = try? container.decode(WorkspaceHistoryEntry.self) {
+        self = .entry(entry)
+      } else {
+        self = .unreadable(try container.decode(JSONValue.self))
+      }
+    }
+
+    func encode(to encoder: Encoder) throws {
+      var container = encoder.singleValueContainer()
+      switch self {
+      case .entry(let entry): try container.encode(entry)
+      case .unreadable(let value): try container.encode(value)
+      }
+    }
   }
 }

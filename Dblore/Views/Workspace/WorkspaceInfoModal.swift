@@ -217,8 +217,8 @@ struct WorkspaceInfoModal: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
-      if isPluginMissing {
-        missingPluginRow
+      if let type = pluginMissingEngine {
+        missingPluginRow(type)
       }
     }
     .padding(Spacing.md)
@@ -230,22 +230,22 @@ struct WorkspaceInfoModal: View {
         .strokeBorder(Color.border, lineWidth: pixelLength))
   }
 
-  /// The workspace's engine needs a plugin that is not installed (DuckDB). Read in `body`, so
+  /// The workspace's engine when it needs a plugin that is not installed. Read in `body`, so
   /// the row goes away once Settings > Plugins installs it.
-  private var isPluginMissing: Bool {
-    guard let type = workspace.connectionConfig?.databaseType, type == .duckdb,
-      type.capabilities.requiresPlugin
-    else { return false }
-    return PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending != true
+  private var pluginMissingEngine: DatabaseType? {
+    guard let type = workspace.connectionConfig?.databaseType, type.capabilities.requiresPlugin,
+      !PluginRegistry.shared.isEngineInstalledOrPending(type)
+    else { return nil }
+    return type
   }
 
   /// Same Install action as the connection form's missing-plugin row: opens Settings > Plugins,
   /// which sits above this modal.
-  private var missingPluginRow: some View {
+  private func missingPluginRow(_ type: DatabaseType) -> some View {
     HStack(spacing: Spacing.sm) {
       Image(systemName: "exclamationmark.triangle.fill")
         .foregroundColor(.warning)
-      Text("DuckDB plugin not installed")
+      Text(ConnectionFormModal.missingPluginText(type))
         .foregroundColor(.warning)
       Spacer(minLength: Spacing.sm)
       Button("Install…", action: ConnectionErrorAction.postOpenPluginSettings)

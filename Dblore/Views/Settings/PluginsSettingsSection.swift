@@ -28,7 +28,7 @@ struct PluginsSettingsSection: View {
 }
 
 /// App-side text for a plugin id; the catalog carries none. Unknown ids show their id only.
-private struct PluginDisplayInfo {
+nonisolated struct PluginDisplayInfo {
   let name: String
   var summary: String?
   var license: (title: String, url: URL)?
@@ -62,6 +62,11 @@ private struct PluginDisplayInfo {
     default:
       PluginDisplayInfo(name: id, removeMessage: "Deletes the downloaded \(id) library.")
     }
+  }
+
+  /// Text for the plugin that ships `type`.
+  static func forType(_ type: DatabaseType) -> PluginDisplayInfo {
+    forID(type.pluginID ?? type.rawValue)
   }
 }
 

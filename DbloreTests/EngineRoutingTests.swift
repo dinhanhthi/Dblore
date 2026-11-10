@@ -100,34 +100,45 @@ struct EngineRoutingTests {
       sslMode: .disable, timeoutSeconds: 5)
   }
 
-  /// The app factory with the DuckDB plugin not installed.
-  private func managerWithoutDuckDBPlugin() -> DatabaseConnectionManager {
+  /// The app factory with no plugin installed.
+  private func managerWithoutPlugins() -> DatabaseConnectionManager {
     DatabaseConnectionManager(
       sessionFactory: AppDatabaseSessionFactory(duckDBLibraryLoader: { nil }))
   }
 
-  @Test("Connecting to DuckDB without its plugin fails with engineUnavailable")
-  func duckdbConnectRefused() async throws {
-    let manager = managerWithoutDuckDBPlugin()
-    let config = ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/x.duckdb")
+  /// Engines shipped by a plugin; none has an installed plugin in these tests.
+  static let pluginEngines = DatabaseType.allCases.filter(\.capabilities.requiresPlugin)
+
+  @Test(
+    "Connecting to a plugin engine without its plugin fails with engineUnavailable",
+    arguments: pluginEngines)
+  func pluginEngineConnectRefused(type: DatabaseType) async throws {
+    let manager = managerWithoutPlugins()
+    let config = ConnectionConfig(databaseType: type, host: "", database: "/tmp/x.\(type.rawValue)")
     do {
       try await manager.connect(config: config)
-      Issue.record("DuckDB connect should fail")
-    } catch DatabaseError.engineUnavailable(let type) {
-      #expect(type == .duckdb)
+      Issue.record("\(type.rawValue) connect should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == type)
+      // The form offers its Install button for every plugin engine
+      #expect(
+        ConnectionErrorAction.action(for: DatabaseError.engineUnavailable(refused))
+          == .openPluginSettings)
     }
     #expect(await manager.session == nil)
   }
 
-  @Test("Testing a DuckDB connection without its plugin fails with engineUnavailable")
-  func duckdbTestConnectionRefused() async throws {
-    let manager = managerWithoutDuckDBPlugin()
-    let config = ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/x.duckdb")
+  @Test(
+    "Testing a plugin engine connection without its plugin fails with engineUnavailable",
+    arguments: pluginEngines)
+  func pluginEngineTestConnectionRefused(type: DatabaseType) async throws {
+    let manager = managerWithoutPlugins()
+    let config = ConnectionConfig(databaseType: type, host: "", database: "/tmp/x.\(type.rawValue)")
     do {
       _ = try await manager.testConnection(config: config)
-      Issue.record("DuckDB test connection should fail")
-    } catch DatabaseError.engineUnavailable(let type) {
-      #expect(type == .duckdb)
+      Issue.record("\(type.rawValue) test connection should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == type)
     }
   }
 }

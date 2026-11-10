@@ -743,6 +743,10 @@ class WorkspaceManager: Identifiable {
       // Auto-connect in the background: the window opens at once, showing "connecting"
       manager.connectionState = .connecting
       manager.autoConnectTask = Task { await manager.autoConnectIfNeeded() }
+    } else if workspace.unsupportedConnection != nil {
+      WorkspaceWindowManager.shared.showToast(
+        "This workspace uses a database engine this version of Dblore does not support. "
+          + "Update Dblore to connect.", type: .warning)
     }
 
     return manager
@@ -1208,7 +1212,7 @@ class WorkspaceManager: Identifiable {
         to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil,
         registry: lockCenter.registry
       ).config, defaults: defaults)
-    guard PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true else {
+    guard PluginRegistry.shared.isEngineInstalledOrPending(.duckdb) else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
     }
