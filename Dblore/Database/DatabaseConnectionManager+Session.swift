@@ -6,7 +6,9 @@ import Foundation
 
 extension DatabaseConnectionManager {
   /// The SQL sent after every connect. Only clamped integers are interpolated.
-  nonisolated static func brakeStatements(for config: ConnectionConfig) -> [String] {
-    PostgresSession.brakeStatements(for: config)
+  nonisolated static func brakeStatements(
+    for config: ConnectionConfig, brakeFlavor: DatabaseFlavor? = nil
+  ) -> [String] {
+    PostgresSession.brakeStatements(for: config, brakeFlavor: brakeFlavor)
   }
 }

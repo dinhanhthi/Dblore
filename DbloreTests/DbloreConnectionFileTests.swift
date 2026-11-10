@@ -169,6 +169,37 @@ struct DbloreConnectionFileTests {
     #expect(older.config.groupName == "Prod")
   }
 
+  @Test("A flavor round-trips; one of another engine or unknown imports as the base engine")
+  func flavorRoundTrip() throws {
+    var config = Self.fullConfig()
+    config.flavor = .cockroachdb
+    let file = DbloreConnectionFile(
+      connections: [try #require(DbloreConnectionFile.Connection(config: config))])
+    let data = try file.encoded()
+    let text = try Self.json(data)
+    #expect(text.contains("\"flavor\" : \"cockroachdb\""))
+    #expect(text.contains("\"version\" : 1"))
+    let imported = try #require(DbloreConnectionFile.decode(data).contents().connections.first)
+    #expect(imported.config.databaseType == .postgresql)
+    #expect(imported.config.flavor == .cockroachdb)
+    #expect(imported.config.engineDisplayName == "CockroachDB")
+
+    // A flavor of another engine, or one this version does not know, is ignored silently
+    for value in ["tidb", "neodb"] {
+      let other = text.replacingOccurrences(of: "\"cockroachdb\"", with: "\"\(value)\"")
+      let contents = try DbloreConnectionFile.decode(Data(other.utf8)).contents()
+      #expect(contents.warnings.isEmpty, "the entry is not skipped")
+      let row = try #require(contents.connections.first)
+      #expect(row.config.databaseType == .postgresql)
+      #expect(row.config.flavor == nil)
+    }
+
+    // A connection without a flavor writes no key
+    let plain = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    #expect(
+      !(try Self.json(DbloreConnectionFile(connections: [plain]).encoded())).contains("flavor"))
+  }
+
   /// A MongoDB row at mongo.example.com:27017 carrying `uri`.
   private static func mongoEntry(
     uri: String, sslMode: SSLMode

@@ -130,6 +130,7 @@ nonisolated final class MCPReadOnlySession: DatabaseSession, @unchecked Sendable
   }
 
   var capabilities: DatabaseCapabilities { inner.capabilities }
+  var brakeFlavor: DatabaseFlavor? { inner.brakeFlavor }
 
   func open() async throws {
     try await inner.open()

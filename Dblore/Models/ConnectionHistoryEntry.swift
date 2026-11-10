@@ -57,7 +57,8 @@ struct ConnectionHistoryEntry: nonisolated Codable, Equatable, Identifiable, Sen
   /// True when this is the row a save of `config` overwrites as the same connection: same key,
   /// engine, host, port, home database and username. PostgreSQL, SQLite and DuckDB share the
   /// unscoped key space, and the unscoped key joins the fields with colons, so another engine or
-  /// other fields can make the same key.
+  /// other fields can make the same key. The flavor is an attribute of the row, not part of its
+  /// identity (the Keychain key ignores it too): a save with another flavor updates the row.
   nonisolated func isSavedRow(of config: ConnectionConfig) -> Bool {
     keychainKey == ConnectionKeychainKey.password(for: config)
       && self.config.databaseType == config.databaseType && self.config.host == config.host

@@ -619,11 +619,14 @@ extension DatabaseConnectionManager {
     _ = try await sendTransactionControl(sql)
   }
 
-  /// The statement that suspends the idle-in-transaction timeout, or nil when the engine has
-  /// none. MySQL's `wait_timeout` is session-level and never ends a transaction on its own.
+  /// The statement that suspends the idle-in-transaction timeout, or nil when the engine or its
+  /// session's verified flavor has none (Redshift: never set at open). MySQL's `wait_timeout` is
+  /// session-level and never ends a transaction on its own.
   private var suspendIdleTimeoutSQLForEngine: String? {
     switch config?.databaseType {
-    case .postgresql, nil: Self.suspendIdleTimeoutSQL
+    case .postgresql, nil:
+      session?.brakeFlavor?.supportsIdleInTransactionTimeout == false
+        ? nil : Self.suspendIdleTimeoutSQL
     case .sqlite, .duckdb, .mysql, .mongodb: nil
     }
   }

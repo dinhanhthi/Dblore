@@ -101,6 +101,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   /// The effective connect config: a Vault connection's carries the lease's username and
   /// password (the manager's overlay), so a side connection to this backend can log in.
   let config: ConnectionConfig
+  var brakeFlavor: DatabaseFlavor? { lock.withLock { brakeFlavorStorage } }
   let closeEvents: AsyncStream<SessionCloseReason>
   /// Builds the SSH tunnel when `config.sshTunnel` is set.
   let tunnelFactory: any SSHTunnelFactory
@@ -121,6 +122,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
   private var backendStartTextStorage: String?
   /// `server_encoding`, read with the version (nil on failure)
   private var serverEncodingStorage: String?
+  /// `brakeFlavor`: never Redshift until `verifyBrakeFlavor` reads it from the server
+  private var brakeFlavorStorage: DatabaseFlavor?
   /// Statements sent and not finished, oldest first (`statementsInFlight`)
   private var inFlightStorage: [(token: UInt64, sql: String)] = []
   private var nextStatementToken: UInt64 = 0
@@ -139,7 +142,11 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     self.config = config
     self.tunnelFactory = tunnelFactory
     self.hostKeyValidator = hostKeyValidator
-    capabilities = config.databaseType.capabilities
+    var capabilities = config.databaseType.capabilities
+    // CockroachDB's pg_stat_activity is empty, so pg_cancel_backend cannot find this session.
+    if config.flavor == .cockroachdb { capabilities.cancelStrategy = .reconnect }
+    self.capabilities = capabilities
+    brakeFlavorStorage = Self.brakeFlavor(configured: config.flavor, serverVersion: nil)
     (closeEvents, closeContinuation) = AsyncStream.makeStream(
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
@@ -168,6 +175,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
       try await openThroughTunnel()
       await loadExtensionTypes()
       await loadServerVersionNum()
+      await verifyBrakeFlavor()
       return
     }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
@@ -208,6 +216,7 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     }
     await loadExtensionTypes()
     await loadServerVersionNum()
+    await verifyBrakeFlavor()
   }
 
   /// Best effort: without it, extension columns keep the generic USER-DEFINED type.
@@ -268,6 +277,41 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
         "server_version_num and backend pid not read: " + String(describing: error),
         category: "Database")
     }
+  }
+
+  /// At open, before the brakes, for a Redshift flavor only: the brakes Redshift refuses are
+  /// left out only when the server reports Redshift. A failed read keeps every brake.
+  private func verifyBrakeFlavor() async {
+    guard config.flavor == .redshift else { return }
+    let sql = "SELECT pg_catalog.version()"
+    let version: String?
+    do {
+      version = try await runTracked(sql) { connection in
+        let rows = try await connection.query(
+          PostgresQuery(unsafeSQL: sql), logger: Logger(label: "dblore.session"))
+        var version: String?
+        for try await row in rows {
+          let cells = row.makeRandomAccess()
+          guard cells.count >= 1 else { continue }
+          version = try cells[0].decode(String?.self)
+        }
+        return version
+      }
+    } catch {
+      await AppLogger.shared.warning(
+        "Server version not read, every session brake is sent: " + String(describing: error),
+        category: "Database")
+      version = nil
+    }
+    let verified = Self.brakeFlavor(configured: config.flavor, serverVersion: version)
+    lock.withLock { brakeFlavorStorage = verified }
+  }
+
+  /// The flavor the brakes follow: Redshift only when `serverVersion` (`version()`) says so,
+  /// else nil (every brake). Other flavors keep all brakes, so they pass through unchanged.
+  static func brakeFlavor(configured: DatabaseFlavor?, serverVersion: String?) -> DatabaseFlavor? {
+    guard configured == .redshift else { return configured }
+    return serverVersion?.contains("Redshift") == true ? .redshift : nil
   }
 
   /// Read once at open on the raw connection (`loadServerVersionNum`): the version, the pid, its
@@ -718,7 +762,8 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
     statementTimeoutSeconds: Int, lockTimeoutSeconds: Int, idleTimeoutSeconds: Int
   ) async throws {
     let statements = Self.brakeStatements(
-      statement: statementTimeoutSeconds, lock: lockTimeoutSeconds, idle: idleTimeoutSeconds)
+      statement: statementTimeoutSeconds, lock: lockTimeoutSeconds, idle: idleTimeoutSeconds,
+      flavor: brakeFlavor)
     for sql in statements {
       do {
         _ = try await runTracked(sql) { connection in
@@ -772,24 +817,33 @@ nonisolated final class PostgresSession: DatabaseSession, @unchecked Sendable {
 
   // MARK: - Brake SQL
 
-  /// The SQL sent after every connect. Values are clamped with `SessionBrakeLimits`.
-  static func brakeStatements(for config: ConnectionConfig) -> [String] {
+  /// The SQL sent after every connect. Values are clamped with `SessionBrakeLimits`;
+  /// `brakeFlavor` is the session's verified one (`brakeFlavor(configured:serverVersion:)`).
+  static func brakeStatements(
+    for config: ConnectionConfig, brakeFlavor: DatabaseFlavor? = nil
+  ) -> [String] {
     brakeStatements(
       statement: config.statementTimeoutSeconds ?? SessionBrakeLimits.defaultStatementTimeout,
       lock: config.lockTimeoutSeconds ?? SessionBrakeLimits.defaultLockTimeout,
-      idle: config.idleInTransactionTimeoutSeconds ?? SessionBrakeLimits.defaultIdleTimeout)
+      idle: config.idleInTransactionTimeoutSeconds ?? SessionBrakeLimits.defaultIdleTimeout,
+      flavor: brakeFlavor)
   }
 
-  static func brakeStatements(statement: Int, lock: Int, idle: Int) -> [String] {
+  /// Only the settings `flavor` supports: an unknown one would fail the open.
+  static func brakeStatements(
+    statement: Int, lock: Int, idle: Int, flavor: DatabaseFlavor?
+  ) -> [String] {
     let statement = SessionBrakeLimits.clampStatementTimeout(statement)
     let lock = SessionBrakeLimits.clampLockTimeout(lock)
     let idle = SessionBrakeLimits.clampIdleTimeout(idle)
-    return [
-      "SET statement_timeout = '\(statement)s'",
-      "SET lock_timeout = '\(lock)s'",
-      "SET idle_in_transaction_session_timeout = '\(idle)s'",
-      "SET application_name = 'Dblore'",
-    ]
+    var statements = ["SET statement_timeout = '\(statement)s'"]
+    if flavor?.supportsLockTimeout != false {
+      statements.append("SET lock_timeout = '\(lock)s'")
+    }
+    if flavor?.supportsIdleInTransactionTimeout != false {
+      statements.append("SET idle_in_transaction_session_timeout = '\(idle)s'")
+    }
+    return statements + ["SET application_name = 'Dblore'"]
   }
 
   static let disconnectCheckSQL = "SET client_connection_check_interval = '1s'"

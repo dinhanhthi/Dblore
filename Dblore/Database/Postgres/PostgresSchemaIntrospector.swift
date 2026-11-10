@@ -14,6 +14,9 @@ import Foundation
 /// `OPERATOR(…)` has the precedence of "any other operator" (above comparison, `IS`, `NOT`,
 /// `AND`, `OR`), so mixed expressions keep explicit parentheses. `search_path` is never pinned.
 nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
+  /// Wire-compatible server, nil for PostgreSQL itself
+  var flavor: DatabaseFlavor? = nil
+
   /// Relation-level visibility, equivalent to what information_schema applies to tables and views
   private static let relationPrivilegeFilter = """
     (pg_catalog.pg_has_role(c.relowner, 'USAGE')
@@ -46,21 +49,56 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     """
   }
 
+  /// CockroachDB's system schemas: `notSystemSchema` plus its own `crdb_internal` (hundreds of
+  /// virtual relations) and `pg_extension`
+  private static let notCockroachSystemSchema = """
+    n.nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'information_schema', \
+    'crdb_internal', 'pg_extension']::pg_catalog.name[])
+    """
+
+  /// The system schema filter of a listing, CockroachDB's own schemas left out too
+  private var notSystemSchemaFilter: String {
+    flavor == .cockroachdb ? Self.notCockroachSystemSchema : Self.notSystemSchema
+  }
+
+  /// `notSystemOrToastSchema`, CockroachDB's own schemas left out too
+  private func notSystemOrToastSchemaFilter(_ alias: String) -> String {
+    guard flavor == .cockroachdb else { return Self.notSystemOrToastSchema(alias) }
+    return """
+      \(alias).nspname OPERATOR(pg_catalog.<>) ALL (ARRAY['pg_catalog', 'information_schema', \
+      'pg_toast', 'crdb_internal', 'pg_extension']::pg_catalog.name[])
+      """
+  }
+
+  /// CockroachDB refuses a privilege check on a `crdb_internal` relation, and may run it before
+  /// the schema filter, so there the check runs only for a row outside its system schemas
+  private func privilegeFilter(_ filter: String) -> String {
+    guard flavor == .cockroachdb else { return filter }
+    return "CASE WHEN \(Self.notCockroachSystemSchema) THEN \(filter) ELSE false END"
+  }
+
   /// The session's own temp tables (pg_temp_N) are flagged; `pg_my_temp_schema()` is 0 until
   /// the session creates one. A partition (`relispartition`: its `pg_inherits` parent is a
   /// partitioned table, relkind 'p', which needs no PostgreSQL 10 column) names its parent.
   func tables(in session: any DatabaseSession) async throws -> [DatabaseTable] {
     // Never analyzed (reltuples -1 on PG 14+, 0/0 before): fall back to the stats counter,
-    // 0 there stays unknown (empty table, track_counts off or stats reset)
+    // 0 there stays unknown (empty table, track_counts off or stats reset). CockroachDB has no
+    // stats counter: its reltuples, NULL when it has none, is the estimate.
+    let rowEstimate =
+      flavor == .cockroachdb
+      ? "CASE WHEN c.reltuples OPERATOR(pg_catalog.>) 0 THEN c.reltuples::pg_catalog.int8 END"
+      : """
+      CASE WHEN c.reltuples OPERATOR(pg_catalog.<) 0
+            OR (c.reltuples OPERATOR(pg_catalog.=) 0 AND c.relpages OPERATOR(pg_catalog.=) 0)
+          THEN CASE WHEN pg_catalog.pg_stat_get_live_tuples(c.oid) OPERATOR(pg_catalog.=) 0
+            THEN NULL ELSE pg_catalog.pg_stat_get_live_tuples(c.oid) END
+          ELSE c.reltuples::pg_catalog.int8 END
+      """
     let query = """
       SELECT
         n.nspname::pg_catalog.text,
         c.relname::pg_catalog.text,
-        CASE WHEN c.reltuples OPERATOR(pg_catalog.<) 0
-            OR (c.reltuples OPERATOR(pg_catalog.=) 0 AND c.relpages OPERATOR(pg_catalog.=) 0)
-          THEN CASE WHEN pg_catalog.pg_stat_get_live_tuples(c.oid) OPERATOR(pg_catalog.=) 0
-            THEN NULL ELSE pg_catalog.pg_stat_get_live_tuples(c.oid) END
-          ELSE c.reltuples::pg_catalog.int8 END AS row_estimate,
+        \(rowEstimate) AS row_estimate,
         n.oid OPERATOR(pg_catalog.=) pg_catalog.pg_my_temp_schema() AS is_temporary,
         pn.nspname::pg_catalog.text AS parent_schema,
         pc.relname::pg_catalog.text AS parent_name
@@ -72,9 +110,9 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
           JOIN pg_catalog.pg_namespace pn ON pn.oid OPERATOR(pg_catalog.=) pc.relnamespace)
         ON i.inhrelid OPERATOR(pg_catalog.=) c.oid
       WHERE c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p']::pg_catalog."char"[])
-        AND \(Self.notSystemOrToastSchema("n"))
+        AND \(notSystemOrToastSchemaFilter("n"))
         AND \(Self.hideOtherTempSchemas)
-        AND \(Self.relationPrivilegeFilter)
+        AND \(privilegeFilter(Self.relationPrivilegeFilter))
       ORDER BY n.nspname, c.relname
       """
     var tables: [DatabaseTable] = []
@@ -126,9 +164,9 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
       WHERE c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'p', 'v']::pg_catalog."char"[])
         AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
-        AND \(Self.notSystemOrToastSchema("n"))
+        AND \(notSystemOrToastSchemaFilter("n"))
         AND \(Self.hideOtherTempSchemas)
-        AND \(Self.columnPrivilegeFilter)
+        AND \(privilegeFilter(Self.columnPrivilegeFilter))
       ORDER BY n.nspname, c.relname, a.attnum
       """
     var columnRows: [SchemaCatalog.ColumnRow] = []
@@ -163,9 +201,9 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       FROM pg_catalog.pg_class c
       JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
       WHERE c.relkind OPERATOR(pg_catalog.=) 'v'
-        AND \(Self.notSystemSchema)
+        AND \(notSystemSchemaFilter)
         AND \(Self.hideOtherTempSchemas)
-        AND \(Self.relationPrivilegeFilter)
+        AND \(privilegeFilter(Self.relationPrivilegeFilter))
       ORDER BY n.nspname, c.relname
       """
     var views: [DatabaseView] = []
@@ -180,6 +218,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   }
 
   func functions(in session: any DatabaseSession) async throws -> [DatabaseFunction] {
+    guard flavor?.hasPostgresRoutineAndTypeCatalog != false else { return [] }
     let query = """
       SELECT
         n.nspname AS schema,
@@ -210,7 +249,13 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
     return functions
   }
 
+  /// Redshift's catalogs predate prokind / conparentid (PG11); verified flavor, never configured
+  private static func skipsPG11Catalog(_ session: any DatabaseSession) -> Bool {
+    session.brakeFlavor == .redshift
+  }
+
   func procedures(in session: any DatabaseSession) async throws -> [DatabaseProcedure] {
+    guard !Self.skipsPG11Catalog(session) else { return [] }
     let query = """
       SELECT
         n.nspname AS schema,
@@ -219,7 +264,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
         p.oid::pg_catalog.int8
       FROM pg_catalog.pg_proc p
       JOIN pg_catalog.pg_namespace n ON p.pronamespace OPERATOR(pg_catalog.=) n.oid
-      WHERE \(Self.notSystemSchema)
+      WHERE \(notSystemSchemaFilter)
         AND p.prokind OPERATOR(pg_catalog.=) 'p'
         AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, p.proname
@@ -253,7 +298,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_catalog.pg_class c ON c.oid OPERATOR(pg_catalog.=) t.tgrelid
       JOIN pg_catalog.pg_namespace n ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
       WHERE NOT t.tgisinternal
-        AND \(Self.notSystemSchema)
+        AND \(notSystemSchemaFilter)
         AND \(Self.hideOtherTempSchemas)
       ORDER BY n.nspname, c.relname, t.tgname
       """
@@ -415,6 +460,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   /// Sequences of the user schemas, not owned by an extension. The owning column comes from the
   /// sequence's auto ('a', serial and `OWNED BY`) or internal ('i', identity) dependency.
   func sequences(in session: any DatabaseSession) async throws -> [DatabaseSequence] {
+    guard flavor?.hasPostgresRoutineAndTypeCatalog != false else { return [] }
     let query = """
       SELECT n.nspname::pg_catalog.text, c.relname::pg_catalog.text,
         pg_catalog.format_type(s.seqtypid, NULL), s.seqstart, s.seqincrement, s.seqmin, s.seqmax,
@@ -472,6 +518,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   /// is left out) of the user schemas, not owned by an extension. One query: the kind is
   /// `typtype` and each kind's details travel as JSON text.
   func userTypes(in session: any DatabaseSession) async throws -> [DatabaseUserType] {
+    guard flavor?.hasPostgresRoutineAndTypeCatalog != false else { return [] }
     let query = """
       SELECT n.nspname::pg_catalog.text, t.typname::pg_catalog.text, t.typtype::pg_catalog.text,
         (SELECT COALESCE(pg_catalog.json_agg(e.enumlabel::pg_catalog.text
@@ -537,6 +584,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   }
 
   func foreignKeys(in session: any DatabaseSession) async throws -> [ForeignKey] {
+    guard !Self.skipsPG11Catalog(session) else { return [] }
     // Column lists are text, not name[]. Binary name[] decodes as bytes, so the names
     // would not match a result column and the referenced-row menu would never appear.
     // conparentid = 0 drops the per-partition copies of a key (PG11+, like prokind above).
@@ -570,7 +618,7 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       JOIN pg_catalog.pg_namespace nst ON clt.relnamespace OPERATOR(pg_catalog.=) nst.oid
       WHERE c.contype OPERATOR(pg_catalog.=) 'f'
         AND c.conparentid OPERATOR(pg_catalog.=) 0
-        AND \(Self.notSystemOrToastSchema("ns"))
+        AND \(notSystemOrToastSchemaFilter("ns"))
       ORDER BY ns.nspname, cl.relname, c.conname
       """
     var foreignKeys: [ForeignKey] = []
@@ -744,6 +792,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   func viewEditCandidate(
     named name: String, in session: any DatabaseSession
   ) async throws -> ViewEditCandidate? {
+    // CockroachDB views are read-only (and its pg_rewrite has no xmin)
+    guard flavor != .cockroachdb else { return nil }
     var header: [CellValue]?
     var columns: [Int16: String] = [:]
     var updatable: Set<String> = []
@@ -834,11 +884,12 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       guard let oid = origin.tableID.postgresOID else { continue }
       attributeNumbers[oid, default: []].insert(origin.columnOrdinal)
     }
+    let columnTypeSQL = Self.columnTypeSQL(privilege: privilegeFilter(Self.columnPrivilegeFilter))
     var typeMap: [ColumnOrigin: String] = [:]
     for (oid, numbers) in attributeNumbers.sorted(by: { $0.key < $1.key }) {
       let list = numbers.sorted().map(String.init).joined(separator: ",")
       let binds: [SQLBindValue] = [.text(String(oid)), .text("{\(list)}")]
-      for row in try await rows(in: session, sql: Self.columnTypeSQL, binds: binds) {
+      for row in try await rows(in: session, sql: columnTypeSQL, binds: binds) {
         guard row.count >= 8,
           let ordinal = CatalogValue.int(row[0]),
           let dataType = CatalogValue.string(row[1])
@@ -873,7 +924,8 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
   /// 1083/1114/1184/1266 time and timestamp with and without zone, 1186 interval); and the rows
   /// are the ones the view lists (relkind r/v/f/p, column privilege, no other session's temp
   /// schema). interval_type is NULL: `detailedType` never reads it.
-  private static let columnTypeSQL = """
+  private static func columnTypeSQL(privilege: String) -> String {
+    """
     SELECT a.attnum::pg_catalog.int4,
       CASE WHEN u.typelem OPERATOR(pg_catalog.<>) 0::pg_catalog.oid
           AND u.typlen OPERATOR(pg_catalog.=) '-1'::pg_catalog.int2 THEN 'ARRAY'
@@ -928,8 +980,9 @@ nonisolated struct PostgresSchemaIntrospector: SchemaIntrospector {
       AND a.attnum OPERATOR(pg_catalog.=) ANY ($2::pg_catalog.int4[])
       AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped
       AND c.relkind OPERATOR(pg_catalog.=) ANY (ARRAY['r', 'v', 'f', 'p']::pg_catalog."char"[])
-      AND \(hideOtherTempSchemas) AND \(columnPrivilegeFilter)
+      AND \(hideOtherTempSchemas) AND \(privilege)
     """
+  }
 
   /// Exact row count. The actor turns a query failure into 0.
   func rowCount(
@@ -1117,4 +1170,10 @@ nonisolated enum CatalogValue {
     }
     return result
   }
+}
+
+/// Redshift and CockroachDB lack or break the catalogs read for sequences, user types and
+/// functions (`pg_sequence`, `pg_type` details, `pg_proc` columns), so those lists stay empty.
+nonisolated extension DatabaseFlavor {
+  var hasPostgresRoutineAndTypeCatalog: Bool { self != .redshift && self != .cockroachdb }
 }

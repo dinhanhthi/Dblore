@@ -115,9 +115,14 @@ nonisolated protocol DatabaseSession: AnyObject, Sendable {
 
   /// User-facing text for a driver error.
   func formatError(_ error: Error) -> String
+
+  /// The flavor that gates the session brakes: Redshift only when the server itself reported
+  /// it at open, so a crafted flavor never drops a brake. Default nil (every brake sent).
+  var brakeFlavor: DatabaseFlavor? { get }
 }
 
 nonisolated extension DatabaseSession {
+  var brakeFlavor: DatabaseFlavor? { nil }
   func transactionOpenAfterInterrupt() async -> Bool? { nil }
   func prepareCancelBackend() -> CancelBackendTarget? { nil }
   func runningStatementToken() -> UInt64? { nil }
@@ -133,8 +138,8 @@ nonisolated extension DatabaseSession {
   /// on an error. `LIMIT 0` returns no row and a view body cannot hold a data-modifying CTE, so
   /// no table row is written. The planner may still evaluate IMMUTABLE functions of the body,
   /// and READ ONLY does not stop a function from taking an advisory lock or sending a NOTIFY:
-  /// the timeouts bound how long it runs. Only for a single-use side session the app opened for
-  /// it, never the user's session.
+  /// the timeouts bound how long it runs (no `lock_timeout` on a flavor without it). Only for a
+  /// single-use side session the app opened for it, never the user's session.
   func columnOrigins(ofViewBody body: String) async throws -> [ColumnOrigin?] {
     var trimmed = Substring(body)
     while trimmed.last?.isWhitespace == true { trimmed = trimmed.dropLast() }
@@ -144,7 +149,9 @@ nonisolated extension DatabaseSession {
     do {
       _ = try await command("BEGIN READ ONLY", binds: [])
       _ = try await command("SET LOCAL statement_timeout = '5s'", binds: [])
-      _ = try await command("SET LOCAL lock_timeout = '5s'", binds: [])
+      if brakeFlavor?.supportsLockTimeout != false {
+        _ = try await command("SET LOCAL lock_timeout = '5s'", binds: [])
+      }
       let source = try await query("SELECT * FROM (\n\(trimmed)\n) AS v LIMIT 0", binds: [])
       for try await _ in source.rows {}
       result = .success(source.columns.map(\.tableOrigin))
@@ -154,6 +161,14 @@ nonisolated extension DatabaseSession {
     _ = try? await command("ROLLBACK", binds: [])
     return try result.get()
   }
+}
+
+/// The PostgreSQL session brakes a flavor accepts besides `statement_timeout`: Redshift
+/// refuses `lock_timeout` and `idle_in_transaction_session_timeout` as unknown settings, so
+/// they are never sent there. The MySQL flavors answer true; their brakes are MySQL's own.
+nonisolated extension DatabaseFlavor {
+  var supportsLockTimeout: Bool { self != .redshift }
+  var supportsIdleInTransactionTimeout: Bool { self != .redshift }
 }
 
 /// What PostgreSQL's server cancel matches (`DatabaseSession.prepareCancelBackend`)

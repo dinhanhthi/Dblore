@@ -153,6 +153,8 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private var cancelPID: Int32? = 1
   private var cancelResult: @Sendable () async -> Bool = { true }
   private var cancelTargetsSeen: [CancelBackendTarget] = []
+  /// `brakeFlavor`: nil (every brake) unless a test marks the server as verified Redshift
+  private var brakeFlavorStorage: DatabaseFlavor?
   /// `query` / `command` calls that have not answered yet, oldest first
   private var inFlight: [(token: UInt64, sql: String)] = []
   private var nextToken: UInt64 = 0
@@ -492,6 +494,11 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
       cancelPID = pid
       cancelResult = result
     }
+  }
+
+  var brakeFlavor: DatabaseFlavor? {
+    get { lock.withLock { brakeFlavorStorage } }
+    set { lock.withLock { brakeFlavorStorage = newValue } }
   }
 
   /// Ends the slow reads, unless `holdSlowReadsOnInterrupt` keeps them waiting

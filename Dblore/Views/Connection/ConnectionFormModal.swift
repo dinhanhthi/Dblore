@@ -67,19 +67,45 @@ struct ConnectionFormModal: View {
       isPluginInstalled: { registry.isEngineInstalledOrPending($0) })
     // A capsule like the form's dropdowns, so it is white on the header in light
     return Menu {
-      Picker("Database", selection: $connectionConfig.databaseType) {
-        ForEach(types, id: \.self) { type in
-          Text(type.displayName).tag(type)
+      Picker("Database", selection: engineChoice) {
+        ForEach(EnginePickerChoice.choices(for: types), id: \.self) { choice in
+          Text(choice.displayName).tag(choice)
         }
       }
       .pickerStyle(.inline)
       .labelsHidden()
     } label: {
-      HeaderDropdownLabel(title: connectionConfig.databaseType.displayName)
+      HeaderDropdownLabel(title: connectionConfig.engineDisplayName)
     }
     .buttonStyle(.plain)
     .linkPointer()
     .fixedSize()
+  }
+
+  /// Sets engine, flavor and port in one change (`applying`). Another engine resets the form
+  /// (`ConnectionFormContent`), keeping the preset.
+  private var engineChoice: Binding<EnginePickerChoice> {
+    Binding(
+      get: { EnginePickerChoice(connectionConfig) },
+      set: { choice in
+        guard choice != EnginePickerChoice(connectionConfig) else { return }
+        connectionConfig = Self.applying(choice, to: connectionConfig)
+      })
+  }
+
+  /// `config` on `choice`. On the same engine a port of the user's own stays (the same endpoint
+  /// is the same saved row); only the previous choice's default port moves to the new one's.
+  nonisolated static func applying(
+    _ choice: EnginePickerChoice, to config: ConnectionConfig
+  ) -> ConnectionConfig {
+    let previous = EnginePickerChoice(config)
+    var config = config
+    if choice.databaseType != previous.databaseType || config.port == previous.defaultPort {
+      config.port = choice.defaultPort
+    }
+    config.databaseType = choice.databaseType
+    config.flavor = choice.flavor
+    return config
   }
 
   /// Read in `body`, so the picker and the missing-plugin row follow install and remove. While
@@ -232,7 +258,7 @@ extension View {
       onConnect: { config, aiFieldsEdited, maskRulesEdited in
         try await workspaceManager.connect(
           config: config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
-          fromForm: true)
+          fromForm: true, picksEngine: true)
       },
       unrememberedCertificate: { workspaceManager.activeUnrememberedCertificate },
       unrememberedSSHCredential: { workspaceManager.activeUnrememberedSSHCredential },

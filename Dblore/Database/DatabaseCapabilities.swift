@@ -29,7 +29,7 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   let supportsFunctions: Bool
   let supportsServerCursor: Bool
   let supportsSessionBrakes: Bool
-  let cancelStrategy: CancelStrategy
+  var cancelStrategy: CancelStrategy
   let cappedReadResetsSession: Bool
   let supportsExplainJSON: Bool
   /// Explain Analyze is offered. The plan may be text (DuckDB) rather than JSON.

@@ -19,7 +19,7 @@ actor DatabaseConnectionManager {
   var introspector: any SchemaIntrospector {
     switch config?.databaseType {
     case .postgresql, nil:
-      PostgresSchemaIntrospector()
+      PostgresSchemaIntrospector(flavor: config?.flavor)
     case .sqlite:
       SQLiteSchemaIntrospector()
     case .duckdb:

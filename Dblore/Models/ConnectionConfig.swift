@@ -266,6 +266,85 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   }
 }
 
+/// A wire-compatible engine reached through its base engine's driver. Saved as an optional key
+/// next to `databaseType`, which stays the base engine: a build without the key connects as
+/// PostgreSQL or MySQL.
+nonisolated enum DatabaseFlavor: String, Codable, CaseIterable, Sendable {
+  case cockroachdb
+  case redshift
+  case yugabytedb
+  case tidb
+  case singlestore
+
+  var baseType: DatabaseType {
+    switch self {
+    case .cockroachdb, .redshift, .yugabytedb: .postgresql
+    case .tidb, .singlestore: .mysql
+    }
+  }
+
+  var displayName: String {
+    switch self {
+    case .cockroachdb: "CockroachDB"
+    case .redshift: "Redshift"
+    case .yugabytedb: "YugabyteDB"
+    case .tidb: "TiDB"
+    case .singlestore: "SingleStore"
+    }
+  }
+
+  var defaultPort: Int {
+    switch self {
+    case .cockroachdb: 26257
+    case .redshift: 5439
+    case .yugabytedb: 5433
+    case .tidb: 4000
+    case .singlestore: 3306
+    }
+  }
+}
+
+/// An entry of the connection form's engine picker: an engine, or a preset of one.
+nonisolated enum EnginePickerChoice: Hashable, Sendable {
+  case engine(DatabaseType)
+  case preset(DatabaseFlavor)
+
+  /// A flavor of another engine shows the engine itself.
+  init(_ config: ConnectionConfig) {
+    if let flavor = config.flavor, flavor.baseType == config.databaseType {
+      self = .preset(flavor)
+    } else {
+      self = .engine(config.databaseType)
+    }
+  }
+
+  var databaseType: DatabaseType {
+    switch self {
+    case .engine(let type): type
+    case .preset(let flavor): flavor.baseType
+    }
+  }
+
+  var flavor: DatabaseFlavor? {
+    if case .preset(let flavor) = self { flavor } else { nil }
+  }
+
+  var defaultPort: Int {
+    flavor?.defaultPort ?? databaseType.defaultPort
+  }
+
+  @MainActor var displayName: String {
+    flavor?.displayName ?? databaseType.displayName
+  }
+
+  /// `types` with each engine's presets right after it.
+  static func choices(for types: [DatabaseType]) -> [EnginePickerChoice] {
+    types.flatMap { type in
+      [.engine(type)] + DatabaseFlavor.allCases.filter { $0.baseType == type }.map(Self.preset)
+    }
+  }
+}
+
 /// Protection level for database connections
 /// Combines the previous readOnly and blockSchemaChanges into a single setting
 enum ConnectionProtectionLevel: String, Codable, CaseIterable, Sendable {
@@ -383,6 +462,9 @@ nonisolated struct AttachedDatabase: Codable, Equatable, Sendable {
 
 struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var databaseType: DatabaseType
+  /// Wire-compatible engine on `databaseType` (nil: the base engine itself). An attribute of the
+  /// saved row, not part of its identity nor of the Keychain key.
+  var flavor: DatabaseFlavor?
   var host: String
   var port: Int
   var database: String
@@ -575,9 +657,16 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     databaseType == .mongodb ? mongoHomeDatabase ?? database : database
   }
 
+  /// The flavor's name, else the engine's.
+  var engineDisplayName: String {
+    flavor?.displayName ?? databaseType.displayName
+  }
+
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode, clientCertificate
+    // Absent unless set
+    case flavor
     // Absent on connections saved before SSH tunnels
     case sshTunnel
     // Absent on connections saved before Vault sources
@@ -621,6 +710,11 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   nonisolated init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     databaseType = try container.decode(DatabaseType.self, forKey: .databaseType)
+    // An unknown flavor (e.g. from a newer version), one of another engine or a value of the
+    // wrong type connects as the base engine
+    let rawFlavor = (try? container.decodeIfPresent(String.self, forKey: .flavor)) ?? nil
+    let decodedFlavor = rawFlavor.flatMap(DatabaseFlavor.init(rawValue:))
+    flavor = decodedFlavor?.baseType == databaseType ? decodedFlavor : nil
     host = try container.decode(String.self, forKey: .host)
     port = try container.decode(Int.self, forKey: .port)
     database = try container.decode(String.self, forKey: .database)
@@ -731,6 +825,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   nonisolated func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(databaseType, forKey: .databaseType)
+    try container.encodeIfPresent(flavor?.rawValue, forKey: .flavor)
     try container.encode(host, forKey: .host)
     try container.encode(port, forKey: .port)
     try container.encode(database, forKey: .database)

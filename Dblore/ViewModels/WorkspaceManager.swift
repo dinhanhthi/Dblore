@@ -129,6 +129,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningMaskRulesEdited = false
   /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
   var pendingWeakeningFromForm = false
+  /// The held connect's `picksEngine` (see `connectWithoutUnlockCheck(config:…, picksEngine:)`)
+  var pendingWeakeningPicksEngine = false
   /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
   /// plugin, see `presentConnectErrorIfActionable`), shown inline in the form.
   /// Cleared by the next connect attempt and when the form goes away.
@@ -898,13 +900,17 @@ class WorkspaceManager: Identifiable {
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
   /// unless `aiFieldsEdited`, its mask rules (added to the config's) unless `maskRulesEdited`,
-  /// its color and group unless `fromForm`, and its hidden schemas.
+  /// its color and group unless `fromForm`, and its hidden schemas. Its engine preset changes only
+  /// with `picksEngine` (the connection form's engine picker); every other connect opens with the
+  /// saved row's (`adoptingSavedFlavor`).
   /// A save onto the Keychain key of another saved connection throws
   /// `SessionManagerError.keychainKeyInUse` before anything changes.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
-    aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false
+    aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false,
+    picksEngine: Bool = false
   ) async throws {
+    let config = picksEngine ? config : Self.adoptingSavedFlavor(config, defaults: defaults)
     if savesConnection, config.rememberConnection, config.mongoHomeDatabase == nil,
       SessionManager.keyUsedByAnotherIdentity(config, defaults: defaults)
     {

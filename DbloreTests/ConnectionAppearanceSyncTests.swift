@@ -106,6 +106,63 @@ struct ConnectionAppearanceSyncTests {
     }
   }
 
+  @Test("A save from outside the form keeps the saved row's engine preset")
+  func keepsSavedFlavor() throws {
+    try Self.withDefaults { defaults in
+      var saved = Self.config()
+      saved.flavor = .cockroachdb
+      #expect(
+        SessionManager.saveConnection(saved, defaults: defaults, passwords: NoPasswordStore()))
+
+      // A plain config of the same endpoint (an older file) takes the row's preset
+      var plain = saved
+      plain.flavor = nil
+      #expect(
+        WorkspaceManager.keepingSavedAppearance(plain, defaults: defaults).flavor == .cockroachdb)
+
+      // No saved row: unchanged
+      let other = Self.config()
+      #expect(WorkspaceManager.keepingSavedAppearance(other, defaults: defaults) == other)
+    }
+  }
+
+  @Test("Only the engine picker changes a saved row's preset; other connects open with the row's")
+  func savedFlavorWinsOutsideThePicker() async throws {
+    try await Self.withDefaultsAsync { defaults in
+      let passwords = RecordingConnectionPasswordStore()
+      let plain = Self.config()
+      let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.postgresql.capabilities)
+      let manager = WorkspaceManager(
+        workspace: Workspace(connectionConfig: plain), restoreTabs: false,
+        connectionManager: DatabaseConnectionManager(sessionFactory: factory),
+        defaults: defaults, passwords: passwords)
+      // The window opened plain; the preset is then saved for its endpoint (Welcome's picker)
+      var cockroach = plain
+      cockroach.flavor = .cockroachdb
+      #expect(SessionManager.saveConnection(cockroach, defaults: defaults, passwords: passwords))
+
+      // A rename takes the row's preset into the workspace info form too
+      manager.renameConnection(to: "Renamed", defaults: defaults, passwords: passwords)
+      #expect(manager.editingConnectionConfig.flavor == .cockroachdb)
+
+      // A reconnect, then workspace info's Save & Reconnect (no picker) of a plain draft
+      for fromForm in [false, true] {
+        try await manager.connect(
+          config: plain, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+          fromForm: fromForm)
+        #expect(factory.configs.last?.flavor == .cockroachdb)
+        #expect(Self.savedEntry(plain, defaults: defaults)?.config.flavor == .cockroachdb)
+      }
+
+      // PostgreSQL picked in the engine picker clears it
+      try await manager.connect(
+        config: plain, defaultCommitStyle: .immediate, hasPassword: false, hasTouchID: false,
+        fromForm: true, picksEngine: true)
+      #expect(factory.configs.last?.flavor == nil)
+      #expect(Self.savedEntry(plain, defaults: defaults)?.config.flavor == nil)
+    }
+  }
+
   @Test("An opened file, an older copy or a fresh form draft never clears the saved lock")
   func savedLockIsKept() throws {
     try Self.withDefaults { defaults in

@@ -333,7 +333,8 @@ struct ConnectionFormContent: View {
         if draftReplaced { adoptReplacedDraft() }
         guard
           let replacement = Self.formAfterEngineChange(
-            fieldsEngine: fieldsEngine, newType: newType, draftReplaced: draftReplaced)
+            fieldsEngine: fieldsEngine, newType: newType, flavor: connectionConfig.flavor,
+            draftReplaced: draftReplaced)
         else { return }
         fieldsEngine = newType
         selectedHistoryId = nil
@@ -462,12 +463,13 @@ struct ConnectionFormContent: View {
 
   /// Nil when the field values already belong to `newType` (a history row just loaded, or a
   /// new draft from the owner). Otherwise a blank config, so the previous engine's database
-  /// name is dropped.
+  /// name is dropped. A `flavor` of `newType` (a preset picked in the header) is kept.
   static func formAfterEngineChange(
-    fieldsEngine: DatabaseType?, newType: DatabaseType, draftReplaced: Bool = false
+    fieldsEngine: DatabaseType?, newType: DatabaseType, flavor: DatabaseFlavor? = nil,
+    draftReplaced: Bool = false
   ) -> ConnectionConfig? {
     guard !draftReplaced, fieldsEngine != newType else { return nil }
-    return newFormDraft(databaseType: newType)
+    return newFormDraft(databaseType: newType, flavor: flavor)
   }
 
   /// The Connection String tab parses and builds `postgresql://` and `mongodb://` URIs.
@@ -502,8 +504,15 @@ struct ConnectionFormContent: View {
 
   /// Blank connection form. Stores the Default commit style explicitly.
   /// `ConnectionConfig()` stays the unstyled default tests use.
-  static func newFormDraft(databaseType: DatabaseType = .postgresql) -> ConnectionConfig {
+  /// A `flavor` of another engine is ignored.
+  static func newFormDraft(
+    databaseType: DatabaseType = .postgresql, flavor: DatabaseFlavor? = nil
+  ) -> ConnectionConfig {
     var config = ConnectionConfig(databaseType: databaseType, port: databaseType.defaultPort)
+    if let flavor, flavor.baseType == databaseType {
+      config.flavor = flavor
+      config.port = flavor.defaultPort
+    }
     if databaseType == .mongodb { config.sslMode = MongoConnectionDraft.defaultSSLMode }
     config.applyCommitStyle(AppSettings.shared.commitStyle)
     return config

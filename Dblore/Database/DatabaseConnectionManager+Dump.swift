@@ -95,6 +95,7 @@ nonisolated final class DumpSnapshotReader: DatabaseSession {
   }
 
   var capabilities: DatabaseCapabilities { session.capabilities }
+  var brakeFlavor: DatabaseFlavor? { session.brakeFlavor }
 
   /// The manager observes the session's own close events; the reader has none.
   var closeEvents: AsyncStream<SessionCloseReason> { AsyncStream { $0.finish() } }
@@ -141,17 +142,20 @@ extension DatabaseConnectionManager {
   /// (sent after BEGIN, reverted by the ROLLBACK); MySQL's are `SET SESSION` (sent before
   /// START TRANSACTION; the dump session is closed afterwards). SQLite has none: the dump calls
   /// `applySessionSettings` with 0 instead. DuckDB has none either: its only brake is the
-  /// session's own statement timeout (`withDumpSnapshot`).
+  /// session's own statement timeout (`withDumpSnapshot`). A brake `flavor` does not support
+  /// was never set, so it is not lifted either.
   /// - Throws: `SQLDumpError.unknownMySQLServer` for MySQL without `serverInfo`.
   nonisolated static func dumpBrakeLiftStatements(
-    databaseType: DatabaseType, serverInfo: MySQLServerInfo?
+    databaseType: DatabaseType, serverInfo: MySQLServerInfo?, flavor: DatabaseFlavor? = nil
   ) throws -> [String] {
     switch databaseType {
     case .postgresql:
-      return [
-        "SET LOCAL statement_timeout = 0", "SET LOCAL lock_timeout = 0",
-        "SET LOCAL idle_in_transaction_session_timeout = 0",
-      ]
+      var lift = ["SET LOCAL statement_timeout = 0"]
+      if flavor?.supportsLockTimeout != false { lift.append("SET LOCAL lock_timeout = 0") }
+      if flavor?.supportsIdleInTransactionTimeout != false {
+        lift.append("SET LOCAL idle_in_transaction_session_timeout = 0")
+      }
+      return lift
     case .mysql:
       guard let serverInfo else { throw SQLDumpError.unknownMySQLServer }
       return [
@@ -179,12 +183,13 @@ extension DatabaseConnectionManager {
   ///   plain time zone and sql_mode, and both integer settings).
   nonisolated static func dumpSnapshotStatements(
     databaseType: DatabaseType, serverInfo: MySQLServerInfo?,
-    purpose: DumpSnapshotPurpose = .dump
+    purpose: DumpSnapshotPurpose = .dump, flavor: DatabaseFlavor? = nil
   ) throws -> [(sql: String, binds: [SQLBindValue])] {
     func plain(_ statements: [String]) -> [(sql: String, binds: [SQLBindValue])] {
       statements.map { ($0, []) }
     }
-    let lift = try dumpBrakeLiftStatements(databaseType: databaseType, serverInfo: serverInfo)
+    let lift = try dumpBrakeLiftStatements(
+      databaseType: databaseType, serverInfo: serverInfo, flavor: flavor)
     switch (databaseType, purpose) {
     case (.postgresql, .dump):
       return plain(
@@ -305,6 +310,7 @@ extension DatabaseConnectionManager {
   }
 
   /// `withDumpSnapshot` on `session`, without the actor (tests drive it with a fake session).
+  /// The lift follows the session's verified `brakeFlavor`.
   nonisolated static func runDumpSnapshot<T: Sendable>(
     on session: any DatabaseSession, databaseType: DatabaseType, serverInfo: MySQLServerInfo?,
     purpose: DumpSnapshotPurpose = .dump,
@@ -313,7 +319,8 @@ extension DatabaseConnectionManager {
     let result: Result<T, Error>
     do {
       let statements = try dumpSnapshotStatements(
-        databaseType: databaseType, serverInfo: serverInfo, purpose: purpose)
+        databaseType: databaseType, serverInfo: serverInfo, purpose: purpose,
+        flavor: session.brakeFlavor)
       if databaseType == .sqlite {
         try await session.applySessionSettings(
           statementTimeoutSeconds: 0, lockTimeoutSeconds: 0, idleTimeoutSeconds: 0)
