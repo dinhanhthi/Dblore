@@ -279,7 +279,7 @@ extension DatabaseConnectionManager {
         report.notes += one.notes.filter { !report.notes.contains($0) }
       }
       return report
-    case .sqlite, .duckdb, .mongodb:
+    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver:
       return TableHealthReport()
     }
   }

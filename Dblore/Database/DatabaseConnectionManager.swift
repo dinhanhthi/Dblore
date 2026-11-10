@@ -28,6 +28,8 @@ actor DatabaseConnectionManager {
       MySQLSchemaIntrospector(database: config?.database ?? "")
     case .mongodb:
       MongoSchemaIntrospector()
+    case .clickhouse, .sqlserver:
+      EnginePluginIntrospector()
     }
   }
   private(set) var config: ConnectionConfig?
@@ -655,6 +657,33 @@ actor DatabaseConnectionManager {
       return try await MySQLSession(config: config, hostKeyValidator: sshHostKeyPolicy).probe()
     case .mongodb:
       return try await MongoSession.probe(config: config, hostKeyValidator: sshHostKeyPolicy)
+    case .clickhouse, .sqlserver:
+      return try await probeEnginePlugin(config)
+    }
+  }
+
+  /// `SELECT 1` on an engine plugin session of its own from this manager's factory (the app's
+  /// builds an `EnginePluginSession` with `sshHostKeyPolicy` after its plugin check), closed
+  /// after, also on failure.
+  /// - Throws: `DatabaseError.engineUnavailable` when the plugin is not installed.
+  private func probeEnginePlugin(_ config: ConnectionConfig) async throws -> Bool {
+    let session = try await sessionFactory.makeSession(config: config)
+    do {
+      try await session.open()
+      let source = try await session.query("SELECT 1", binds: [])
+      var count = 0
+      for try await _ in source.rows { count += 1 }
+      await session.close()
+      guard count == 1 else {
+        throw DatabaseError.connectionFailed("Test query returned unexpected results")
+      }
+      return true
+    } catch {
+      await session.close()
+      switch error {
+      case is DatabaseError, is SSHTunnelError, is SSHPrivateKeyError: throw error
+      default: throw DatabaseError.connectionFailed(session.formatError(error))
+      }
     }
   }
 
@@ -1128,7 +1157,8 @@ private struct PreparedSQLiteOpen: Sendable {
 
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` and DuckDB `DuckDBSession`
 /// after the caller has resolved sandbox access. MySQL / MariaDB is `MySQLSession`, MongoDB
-/// `MongoSession`.
+/// `MongoSession`. ClickHouse and SQL Server are `EnginePluginSession` once their plugin is
+/// installed.
 nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
   /// The DuckDB plugin's loader, or nil when the plugin is not installed. Read on the main actor
   /// before each DuckDB session, after the launch check: a removed plugin stays loaded (and
@@ -1143,6 +1173,12 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       await manager.isInstalledAfterLaunchCheck()
     else { return nil }
     return { try manager.loadDuckDBLibrary() }
+  }
+  /// Whether the catalog plugin that ships an engine (ClickHouse, SQL Server) is installed, once
+  /// its launch check is done. Read on the main actor before each session of that engine.
+  var enginePluginInstalled: @Sendable (DatabaseType) async -> Bool = { @MainActor type in
+    guard let manager = PluginRegistry.shared.manager(for: type) else { return false }
+    return await manager.isInstalledAfterLaunchCheck()
   }
 
   func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession {
@@ -1167,6 +1203,14 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       return MySQLSession(config: config, hostKeyValidator: hostKeyValidator)
     case .mongodb:
       return MongoSession(config: config, hostKeyValidator: hostKeyValidator)
+    case .clickhouse, .sqlserver:
+      let type = config.databaseType
+      guard let pluginID = type.pluginID, await enginePluginInstalled(type) else {
+        throw DatabaseError.engineUnavailable(type)
+      }
+      // `open()` loads the plugin bundle (signature check, dlopen) before it connects.
+      return EnginePluginSession(
+        pluginID: pluginID, config: config, hostKeyValidator: hostKeyValidator)
     }
   }
 }

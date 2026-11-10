@@ -91,7 +91,9 @@ nonisolated enum SQLStatementClassifier {
   /// Fails closed (`.unknown`) when the text may be lexed differently by the server:
   /// a `;` token (the splitter and the tokenizer disagree on a statement boundary), a
   /// plain string containing a backslash (escape under `standard_conforming_strings = off`),
-  /// or a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content).
+  /// a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content),
+  /// or a SQL Server number that runs straight into a word (`SELECT 0xTRUNCATE TABLE t`) or a
+  /// non-ASCII space or zero-width scalar outside quotes and comments (`SELECT a\u{A0}DELETE ...`).
   /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing.
   /// `standardConformingStrings` (PostgreSQL, SQL dump restore only): read a plain string with a
   /// backslash as `standard_conforming_strings = on` does, once the session reported it on.
@@ -104,9 +106,13 @@ nonisolated enum SQLStatementClassifier {
     ).tokens(text)
     guard !tokens.isEmpty else { return nil }
     let analysis = analyze(tokens[...], dialect: dialect)
-    let ambiguous = tokens.contains {
-      $0.isSymbol(";") || $0.kind == .backslashString || $0.kind == .executableComment
-    }
+    let ambiguous =
+      tokens.contains {
+        $0.isSymbol(";") || $0.kind == .backslashString || $0.kind == .executableComment
+      }
+      || (dialect == .sqlserver
+        && (SQLTokenizer(dialect: dialect).numberRunsIntoWord(text)
+          || SQLTokenizer(dialect: dialect).hasUnicodeSpace(text)))
     let kind = ambiguous ? .unknown : analysis.kind
     // MySQL: an unrecognized statement may commit implicitly (see `mysqlAdjusted`)
     let mysqlUnknown = dialect == .mysql && kind == .unknown
@@ -255,7 +261,10 @@ nonisolated enum SQLStatementClassifier {
     let topWords = body.filter { $0.kind == .word && $0.depth == base }.map { $0.keyword ?? "" }
 
     if first.isWord("EXPLAIN") {
-      return dialectAdjusted(explain(body, dialect: dialect), body: body, dialect: dialect)
+      // T-SQL has no EXPLAIN: a leading name runs a procedure
+      let explained =
+        dialect == .sqlserver ? Analysis(kind: .unknown) : explain(body, dialect: dialect)
+      return dialectAdjusted(explained, body: body, dialect: dialect)
     }
     let kind = kind(
       of: body, keyword: first.keyword ?? "", topWords: topWords, dialect: dialect)
@@ -286,6 +295,9 @@ nonisolated enum SQLStatementClassifier {
     if dialect == .mysql, let mysql = mysqlKind(of: body, keyword: keyword, topWords: topWords) {
       return mysql
     }
+    if dialect == .sqlserver, let sqlserver = sqlserverKind(of: body, keyword: keyword) {
+      return sqlserver
+    }
     return switch keyword {
     case "SELECT", "VALUES", "TABLE": selectKind(body)
     case "WITH": hasDataModifyingPart(body) || body.contains { $0.isWord("INTO") } ? .dml : .read
@@ -308,6 +320,25 @@ nonisolated enum SQLStatementClassifier {
     case "PRAGMA": pragmaKind(body)
     case _ where sqliteDmlKeywords.contains(keyword): .dml
     case _ where sqliteUtilityKeywords.contains(keyword): .utility
+    default: nil
+    }
+  }
+
+  /// SQL Server statements that PostgreSQL classifies differently. Nil leaves the shared rules.
+  /// `SAVE TRAN[SACTION] name` sets a savepoint (TCL). A `BEGIN` that starts no transaction
+  /// (not `BEGIN TRAN[SACTION]` / `BEGIN DISTRIBUTED`) opens a block and a lone `END` closes
+  /// one: neither is transaction control, so both fail closed, as do the shared rules' leading
+  /// words T-SQL has no statement for (`sqlserverNonStatementKeywords`: a procedure call).
+  private static func sqlserverKind(
+    of body: ArraySlice<SQLToken>, keyword: String
+  ) -> StatementKind? {
+    switch keyword {
+    case "BEGIN":
+      ["TRAN", "TRANSACTION", "DISTRIBUTED"].contains(body.dropFirst().first?.keyword ?? "")
+        ? nil : .unknown
+    case "END": .unknown
+    case _ where sqlserverNonStatementKeywords.contains(keyword): .unknown
+    case _ where sqlserverTclKeywords.contains(keyword): .tcl
     default: nil
     }
   }
@@ -429,12 +460,17 @@ nonisolated enum SQLStatementClassifier {
   /// statement's depth after a `)` that is neither `,` (the next CTE) nor `AS` (after a column
   /// list). Nil when there is none or it is not a word.
   private static func mainStatementKeyword(afterWith body: ArraySlice<SQLToken>) -> String? {
+    mainStatementIndex(afterWith: body).flatMap { body[$0].keyword }
+  }
+
+  /// The index in `body` of the token `mainStatementKeyword(afterWith:)` reads.
+  private static func mainStatementIndex(afterWith body: ArraySlice<SQLToken>) -> Int? {
     let depth = body.first?.depth ?? 0
-    let top = body.filter { $0.depth == depth }
+    let top = body.indices.filter { body[$0].depth == depth }
     let main = zip(top, top.dropFirst()).first { close, next in
-      close.isSymbol(")") && !next.isSymbol(",") && !next.isWord("AS")
+      body[close].isSymbol(")") && !body[next].isSymbol(",") && !body[next].isWord("AS")
     }
-    return main?.1.keyword
+    return main?.1
   }
 
   /// `INTO OUTFILE` or `INTO DUMPFILE` anywhere in the statement.
@@ -499,6 +535,7 @@ nonisolated enum SQLStatementClassifier {
     case .sqlite: sqliteAdjusted(analysis, body: body)
     case .duckdb: duckdbAdjusted(analysis, body: body)
     case .mysql: mysqlAdjusted(analysis, body: body)
+    case .sqlserver: sqlserverAdjusted(analysis, body: body)
     // Unreachable: `classifyStatement` hands MongoDB text to `MongoCommandClassifier`.
     case .mongodb: analysis
     default: analysis
@@ -575,6 +612,79 @@ nonisolated enum SQLStatementClassifier {
     // Last, so the checks above still see the statement's own kind.
     if callsSideEffect || locksRows { analysis.kind = .utility }
     return analysis
+  }
+
+  /// SQL Server runs a batch with no `;` between its statements, so one split statement may
+  /// hold several (`SELECT 1 DELETE FROM t`, `SET NOCOUNT ON DROP TABLE t`). A read, transaction
+  /// control, session SET or data change with a `sqlserverStatementVerbs` word after its own
+  /// verb, at any depth, fails closed as `.unknown` (`strayStatementVerb`), and so does
+  /// transaction control or a session SET with a SELECT at its own depth or an INTO at any depth
+  /// after its verb (`SET NOCOUNT ON SELECT * INTO t2 FROM t`; a subquery such as
+  /// `SET @x = (SELECT ...)` keeps its kind). DDL and utilities keep their kind: a procedure or
+  /// trigger body holds statements, and both are refused or confirmed already.
+  /// `SET IMPLICIT_TRANSACTIONS` / `SET ANSI_DEFAULTS` is a utility that cannot run in a
+  /// transaction: once on, every statement opens a transaction the app does not track, and the
+  /// app's own `BEGIN TRAN` nests, so its COMMIT would not commit.
+  private static func sqlserverAdjusted(
+    _ analysis: Analysis, body: ArraySlice<SQLToken>
+  ) -> Analysis {
+    var analysis = analysis
+    let depth = body.first?.depth ?? 0
+    let topWords = body.filter { $0.depth == depth }.compactMap(\.keyword)
+    if topWords.first == "SET",
+      topWords.contains(where: sqlserverImplicitTransactionOptions.contains)
+    {
+      analysis.kind = .utility
+      analysis.nonTransactional = true
+    }
+    switch analysis.kind {
+    case .read, .dml:
+      if strayStatementVerb(body) { analysis.kind = .unknown }
+    case .tcl, .sessionSet:
+      let query = body.dropFirst().contains {
+        ($0.isWord("SELECT") && $0.depth == depth) || $0.isWord("INTO")
+      }
+      if query || strayStatementVerb(body) { analysis.kind = .unknown }
+    default: break
+    }
+    return analysis
+  }
+
+  /// A `sqlserverStatementVerbs` word, at any depth, after the statement's own verb (the data
+  /// change after a WITH list, else the first word) that is not part of that statement:
+  /// the first `SET` of an UPDATE, the `THEN UPDATE` / `INSERT` / `DELETE` arms of a MERGE and
+  /// the `SET` of its `UPDATE`, `MERGE JOIN` / `MERGE UNION`, `USE HINT` / `USE PLAN` query
+  /// hints inside parentheses (`OPTION (...)`), and `FETCH` after `OFFSET n ROW[S]`. Fails closed: an unquoted column named like a
+  /// verb counts (T-SQL reserves most of them; `[name]` is a quoted identifier, not a word).
+  /// A `sqlserverConversationVerbs` word counts only before CONVERSATION (`END CONVERSATION`;
+  /// a CASE alias named `conversation` fails closed too).
+  private static func strayStatementVerb(_ body: ArraySlice<SQLToken>) -> Bool {
+    guard let start = body.indices.first else { return false }
+    // A WITH list leads to a SELECT or a data change; anything else after it counts
+    let main = body[start].isWord("WITH") ? mainStatementIndex(afterWith: body) : nil
+    let own = main.flatMap { dmlKeywords.contains(body[$0].keyword ?? "") ? $0 : nil } ?? start
+    let verb = body[own].keyword ?? ""
+    let updateSet =
+      verb == "UPDATE"
+      ? body[(own + 1)...].firstIndex { $0.isWord("SET") && $0.depth == body[own].depth } : nil
+    return body.indices.contains { index in
+      guard index != start, index != own, index != updateSet, let word = body[index].keyword
+      else { return false }
+      let next = index + 1 < body.endIndex ? body[index + 1].keyword ?? "" : ""
+      if sqlserverConversationVerbs.contains(word) { return next == "CONVERSATION" }
+      guard sqlserverStatementVerbs.contains(word) else { return false }
+      let previous = body[index - 1].keyword ?? ""
+      switch word {
+      case "MERGE": return next != "JOIN" && next != "UNION"
+      // A query hint only inside `OPTION (...)`; at the statement's depth `USE` runs
+      case "USE":
+        return !(["HINT", "PLAN"].contains(next) && body[index].depth > body[start].depth)
+      case "FETCH": return previous != "ROW" && previous != "ROWS"
+      case "UPDATE", "INSERT", "DELETE": return !(verb == "MERGE" && previous == "THEN")
+      case "SET": return !(verb == "MERGE" && previous == "UPDATE")
+      default: return true
+      }
+    }
   }
 
   private static func isSessionSet(_ kind: StatementKind) -> Bool {

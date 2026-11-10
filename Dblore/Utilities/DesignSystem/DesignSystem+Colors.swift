@@ -370,6 +370,7 @@ extension DatabaseType {
     case .mongodb: .brandMongoDB
     case .sqlite: .brandSQLite
     case .duckdb: .brandDuckDB
+    case .clickhouse, .sqlserver: .secondary
     }
   }
 }

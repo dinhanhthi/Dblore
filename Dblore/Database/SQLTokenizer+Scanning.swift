@@ -9,9 +9,10 @@ nonisolated struct SQLLexeme {
     case whitespace
     case comment
     /// Keyword or identifier: starts with an ASCII letter, `_` or non-ASCII scalar, and
-    /// continues with those, ASCII digits and `$`
+    /// continues with those, ASCII digits and `$` (on SQL Server, no other currency sign)
     case word
-    /// Run of ASCII digits. A following `$` starts a new token, as in PostgreSQL.
+    /// Run of ASCII digits. A following `$` starts a new token, as in PostgreSQL. SQL Server
+    /// reads a whole T-SQL number (`0x1F`, `1.5`, `.5`, `1E-5`).
     case number
     /// `'...'`, `E'...'` or `"..."` with its content (doubled quotes collapsed)
     case quoted(SQLToken.Kind, content: String)
@@ -34,6 +35,9 @@ nonisolated struct SQLLexeme {
 /// DuckDB uses the PostgreSQL scanner, except that a plain `'...'` string has no backslash
 /// escapes (only `''`), so it is `.string`, never `.backslashString`.
 /// MySQL has its own scanner (`mysqlLexeme`), so its rules never reach PostgreSQL.
+/// SQL Server (`sqlserverLexeme`) adds `[…]` identifiers and T-SQL numbers and drops dollar
+/// quotes, `E'…'` and backslash escapes, so a keyword the server runs is never hidden in a
+/// PostgreSQL-only quote.
 nonisolated extension SQLTokenizer {
 
   /// The lexeme starting at scalar offset `i` (which must be a token boundary).
@@ -46,6 +50,9 @@ nonisolated extension SQLTokenizer {
     }
     if dialect == .mysql {
       return mysqlLexeme(in: s, at: i)
+    }
+    if dialect == .sqlserver {
+      return sqlserverLexeme(in: s, at: i)
     }
     return SQLTokenizer.lexeme(in: s, at: i, markBackslash: !standardConformingStrings)
   }
@@ -332,6 +339,140 @@ nonisolated extension SQLTokenizer {
       j += 1
     }
     return s.count
+  }
+
+  /// SQL Server lexeme. Strings are `'…'` (`N'…'` is the word `N` and a string) with doubled
+  /// quotes only: no `E'…'` or backslash escapes. A currency sign (`$`, `£`, `€`, ...: the server
+  /// reads one as a money prefix, `£1.50`) is a symbol, never a quote, and ends a word, except
+  /// that `$` may continue one as in a T-SQL identifier (`a$b`). Identifiers use `"…"` and `[…]`
+  /// (`]]` is one `]`). Numbers are T-SQL numbers (`sqlserverNumberEnd`). Whitespace, `--`
+  /// comments (ended by CR or LF), nested `/* */` comments and symbols follow the PostgreSQL
+  /// scanner.
+  private func sqlserverLexeme(in s: [Unicode.Scalar], at i: Int) -> SQLLexeme {
+    let char = s[i]
+    if char == "[" {
+      return Self.sqlserverBracketIdentifier(s, start: i)
+    }
+    if char == "'" {
+      return Self.quoted(
+        s, start: i, quoteAt: i, escape: false, kind: .string, markBackslash: false)
+    }
+    if Self.isCurrencySymbol(char) {
+      return SQLLexeme(kind: .symbol, range: i..<(i + 1))
+    }
+    if Self.isIdentifierStart(char) {
+      let end = Self.scan(s, from: i + 1) {
+        Self.isIdentifierCharacter($0) && ($0 == "$" || !Self.isCurrencySymbol($0))
+      }
+      return SQLLexeme(kind: .word, range: i..<end)
+    }
+    if let end = Self.sqlserverNumberEnd(in: s, at: i) {
+      return SQLLexeme(kind: .number, range: i..<end)
+    }
+    return Self.lexeme(in: s, at: i, markBackslash: false)
+  }
+
+  /// If a T-SQL number starts at `i`, returns the offset after it: `0x` and its hex digits (a
+  /// binary constant; `0x` alone is one), else `digits[.digits]`, `digits.` or `.digits`, with
+  /// an exponent only as `E`, an optional sign and at least one digit. Letters right after it
+  /// start the next lexeme, as on the server (`SELECT 1abc` is `1 AS abc`).
+  private static func sqlserverNumberEnd(in s: [Unicode.Scalar], at i: Int) -> Int? {
+    let next: Unicode.Scalar? = i + 1 < s.count ? s[i + 1] : nil
+    if s[i] == "0", next == "x" || next == "X" {
+      return scan(s, from: i + 2, while: isHexDigit)
+    }
+    guard isDigit(s[i]) || (s[i] == "." && next.map(isDigit) == true) else { return nil }
+    var j = scan(s, from: i, while: isDigit)
+    if j < s.count, s[j] == "." {
+      j = scan(s, from: j + 1, while: isDigit)
+    }
+    if j < s.count, s[j] == "E" || s[j] == "e" {
+      var k = j + 1
+      if k < s.count, s[k] == "+" || s[k] == "-" { k += 1 }
+      if k < s.count, isDigit(s[k]) { j = scan(s, from: k, while: isDigit) }
+    }
+    return j
+  }
+
+  private static func isHexDigit(_ scalar: Unicode.Scalar) -> Bool {
+    isDigit(scalar) || ("a"..."f").contains(scalar) || ("A"..."F").contains(scalar)
+  }
+
+  /// Unicode general category Sc (`$`, `¢`, `£`, `€`, `¥`, `₩`, `₹`, ...)
+  private static func isCurrencySymbol(_ scalar: Unicode.Scalar) -> Bool {
+    scalar.properties.generalCategory == .currencySymbol
+  }
+
+  /// Whether a number lexeme in `sql` runs straight into a word (`0xTRUNCATE`, `1eKILL`). A
+  /// scanner that splits the two differently from the server (an empty exponent, a binary
+  /// constant) could hide a verb in that word, so the SQL Server classifier fails closed on it.
+  func numberRunsIntoWord(_ sql: String) -> Bool {
+    let scalars = Array(sql.unicodeScalars)
+    var afterNumber = false
+    var i = 0
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      if afterNumber, case .word = lexeme.kind { return true }
+      if case .number = lexeme.kind { afterNumber = true } else { afterNumber = false }
+      i = lexeme.range.upperBound
+    }
+    return false
+  }
+
+  /// Whether `sql` holds a non-ASCII space or format scalar (NBSP, U+0085, U+1680,
+  /// U+2000–U+200D, U+2028, U+2029, U+202F, U+205F, U+2060, U+3000, U+FEFF) outside strings,
+  /// quoted identifiers and comments, or a Unicode line break (U+0085, U+2028, U+2029) inside a
+  /// comment. The scanner reads one as part of a word or comment, and the server may read it as
+  /// a space or a line end, so the SQL Server classifier fails closed on it.
+  func hasUnicodeSpace(_ sql: String) -> Bool {
+    let scalars = Array(sql.unicodeScalars)
+    var i = 0
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      switch lexeme.kind {
+      case .quoted: break
+      // The server may end a `--` comment at a Unicode line break: fail closed
+      case .comment:
+        if scalars[lexeme.range].contains(where: { [0x0085, 0x2028, 0x2029].contains($0.value) }) {
+          return true
+        }
+      default: if scalars[lexeme.range].contains(where: Self.isUnicodeSpace) { return true }
+      }
+      i = lexeme.range.upperBound
+    }
+    return false
+  }
+
+  private static func isUnicodeSpace(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x00A0, 0x0085, 0x1680, 0x2000...0x200D, 0x2028, 0x2029, 0x202F, 0x205F, 0x2060,
+      0x3000, 0xFEFF:
+      true
+    default: false
+    }
+  }
+
+  /// SQL Server `[…]` identifier: `]]` is one `]`. Unterminated runs to the end of the input.
+  private static func sqlserverBracketIdentifier(
+    _ s: [Unicode.Scalar], start: Int
+  ) -> SQLLexeme {
+    var content = String.UnicodeScalarView()
+    var j = start + 1
+    while j < s.count {
+      if s[j] == "]" {
+        guard j + 1 < s.count, s[j + 1] == "]" else {
+          j += 1
+          break
+        }
+        content.append("]")
+        j += 2
+        continue
+      }
+      content.append(s[j])
+      j += 1
+    }
+    return SQLLexeme(
+      kind: .quoted(.quotedIdentifier, content: String(content)), range: start..<j)
   }
 
   /// MySQL lexeme. `'…'` and `"…"` are strings with backslash and doubled-quote escapes;

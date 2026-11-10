@@ -44,7 +44,8 @@ nonisolated enum SQLDumpDataRenderer {
   /// One column read as text: PostgreSQL `'v' OPERATOR(pg_catalog.||) col::pg_catalog.text`,
   /// MySQL `HEX(col)` for `mysqlHexTypes` and `CAST(col AS CHAR)` otherwise, SQLite
   /// `quote(col)`, DuckDB `hex(col)` for BLOB and `CAST(col AS VARCHAR)` otherwise.
-  /// `quotedName` is already quoted. MongoDB has no text form and reads as SQLite. Shared with
+  /// `quotedName` is already quoted. MongoDB, ClickHouse and SQL Server have no text form here
+  /// and read as SQLite (their dump and Data Rewind are refused first). Shared with
   /// the Data Rewind capture (`RewindCaptureSQL`, which refuses DuckDB and MongoDB).
   static func textExpression(
     _ quotedName: String, typeName: String, engine: DatabaseType
@@ -58,7 +59,7 @@ nonisolated enum SQLDumpDataRenderer {
       isMySQLHexType(typeName) ? "HEX(\(quotedName))" : "CAST(\(quotedName) AS CHAR)"
     case .duckdb:
       isDuckDBBlob(typeName) ? "hex(\(quotedName))" : "CAST(\(quotedName) AS VARCHAR)"
-    case .sqlite, .mongodb: "quote(\(quotedName))"
+    case .sqlite, .mongodb, .clickhouse, .sqlserver: "quote(\(quotedName))"
     }
   }
 

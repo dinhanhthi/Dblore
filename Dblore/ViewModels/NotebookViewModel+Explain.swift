@@ -6,6 +6,7 @@
 //  execution, and history recording as a normal run. EXPLAIN ANALYZE runs the inner
 //  statement, so it is never sent through executeInternal. MongoDB explains one find or
 //  aggregate as its mongosh `.explain("executionStats")` text and has no Explain Analyze.
+//  SQL Server has no Explain.
 //
 
 import Foundation
@@ -14,6 +15,10 @@ extension NotebookViewModel {
   /// Explain the statement the Run action would run: the editor selection (or the current
   /// line / file), or the selected notebook cell.
   func explainSelectedStatement(analyze: Bool) async {
+    if let reason = explainUnavailableReason {
+      showToast(reason, type: .error)
+      return
+    }
     if analyze, refuseMongoExplainAnalyze() { return }
     if analyze, !canExplainAnalyze {
       if let reason = explainAnalyzeUnavailableReason { showToast(reason, type: .error) }
@@ -79,6 +84,12 @@ extension NotebookViewModel {
       return
     }
     await runExplained(sql, cellId: targetCell)
+  }
+
+  /// Why Explain is not offered: SQL Server has no `EXPLAIN` statement and its plans are not
+  /// read. Nil elsewhere.
+  var explainUnavailableReason: String? {
+    sqlDialect == .sqlserver ? "Explain is not available for SQL Server connections" : nil
   }
 
   private var isMongoConnection: Bool {

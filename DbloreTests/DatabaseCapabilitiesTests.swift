@@ -1,7 +1,7 @@
 // DatabaseCapabilitiesTests.swift
 // DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta;
 // DuckDB is a file engine offered only when its plugin is installed. MongoDB is listed after
-// MySQL.
+// MySQL. ClickHouse and SQL Server are plugin engines, hidden with every feature off.
 
 import Foundation
 import Testing
@@ -15,6 +15,11 @@ struct DatabaseCapabilitiesTests {
   func everyEngineHasExplicitCapabilities(type: DatabaseType) throws {
     let expected = try #require(Self.expected[type], "No expected capabilities for \(type)")
     #expect(type.capabilities == expected)
+  }
+
+  @Test("An engine requires a plugin exactly when it names one", arguments: DatabaseType.allCases)
+  func requiresPluginMatchesPluginID(type: DatabaseType) {
+    #expect(type.capabilities.requiresPlugin == (type.pluginID != nil))
   }
 
   @Test("The picker hides DuckDB while its plugin is not installed")
@@ -48,6 +53,7 @@ struct DatabaseCapabilitiesTests {
 
   private static let expected: [DatabaseType: DatabaseCapabilities] = [
     .postgresql: postgresql, .sqlite: sqlite, .duckdb: duckdb, .mysql: mysql, .mongodb: mongodb,
+    .clickhouse: clickhouse, .sqlserver: sqlserver,
   ]
 
   private static let postgresql = DatabaseCapabilities(
@@ -179,6 +185,60 @@ struct DatabaseCapabilitiesTests {
     requiresPlugin: false,
     isAvailable: true,
     queryLanguage: .mongosh,
+    supportsTransactions: false,
+    supportsStructure: false,
+    supportsSQLDump: false,
+    supportsUserTypes: false
+  )
+
+  private static let clickhouse = DatabaseCapabilities(
+    usesNetwork: false,
+    usesPassword: false,
+    supportsSSL: false,
+    supportsSchemas: false,
+    supportsRolesAndUsers: false,
+    supportsFunctions: false,
+    supportsServerCursor: false,
+    supportsSessionBrakes: false,
+    cancelStrategy: .reconnect,
+    cappedReadResetsSession: false,
+    supportsExplainJSON: false,
+    supportsExplainAnalyze: false,
+    supportsUpdateOnly: false,
+    supportsDefaultInUpdate: false,
+    supportsRowStaging: false,
+    supportsDataImport: false,
+    supportsForeignKeyLookup: false,
+    requiresPlugin: true,
+    isAvailable: false,
+    queryLanguage: .sql,
+    supportsTransactions: false,
+    supportsStructure: false,
+    supportsSQLDump: false,
+    supportsUserTypes: false
+  )
+
+  private static let sqlserver = DatabaseCapabilities(
+    usesNetwork: false,
+    usesPassword: false,
+    supportsSSL: false,
+    supportsSchemas: false,
+    supportsRolesAndUsers: false,
+    supportsFunctions: false,
+    supportsServerCursor: false,
+    supportsSessionBrakes: false,
+    cancelStrategy: .reconnect,
+    cappedReadResetsSession: false,
+    supportsExplainJSON: false,
+    supportsExplainAnalyze: false,
+    supportsUpdateOnly: false,
+    supportsDefaultInUpdate: false,
+    supportsRowStaging: false,
+    supportsDataImport: false,
+    supportsForeignKeyLookup: false,
+    requiresPlugin: true,
+    isAvailable: false,
+    queryLanguage: .sql,
     supportsTransactions: false,
     supportsStructure: false,
     supportsSQLDump: false,

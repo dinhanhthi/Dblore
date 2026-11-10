@@ -78,6 +78,8 @@ extension EditorModeView {
       Button("Explain") {
         Task { await viewModel.explainSelectedStatement(analyze: false) }
       }
+      .disabled(viewModel.explainUnavailableReason != nil)
+      .help(viewModel.explainUnavailableReason ?? "")
       Button("Explain Analyze (runs the statement)") {
         Task { await viewModel.explainSelectedStatement(analyze: true) }
       }

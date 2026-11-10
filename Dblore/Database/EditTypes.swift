@@ -281,7 +281,8 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// A NUL cannot be quoted by the dialect, so it keeps the historical quote-and-double-quotes
   /// text; MySQL keeps backticks (a double-quoted MySQL name is a string literal). The server
   /// then refuses the name. MongoDB (`notSQL`) gets the PostgreSQL text: its callers (row
-  /// staging, FK lookup, data-viewer SQL) are gated off for MongoDB.
+  /// staging, FK lookup, data-viewer SQL) are gated off for MongoDB. ClickHouse reads backslash
+  /// escapes inside a quoted name, so its backslashes are doubled too.
   static func quoteIdentifier(_ name: String, dialect: SQLDialect = .postgresql) -> String {
     do {
       return try dialect.quoteIdentifier(name)
@@ -293,8 +294,9 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
       default: quote = "\""
       }
       let quoteText = String(quote)
-      return quoteText + SQLDialect.escapingScalars(name, [quote: quoteText + quoteText])
-        + quoteText
+      var escapes: [Unicode.Scalar: String] = [quote: quoteText + quoteText]
+      if dialect == .clickhouse { escapes["\\"] = "\\\\" }
+      return quoteText + SQLDialect.escapingScalars(name, escapes) + quoteText
     }
   }
 

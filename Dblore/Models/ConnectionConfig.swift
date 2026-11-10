@@ -12,6 +12,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case duckdb = "DuckDB"
   case mysql = "MySQL"
   case mongodb = "MongoDB"
+  case clickhouse = "ClickHouse"
+  case sqlserver = "SQL Server"
 
   var displayName: String {
     switch self {
@@ -20,6 +22,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .duckdb: rawValue
     case .mysql: "MySQL / MariaDB"
     case .mongodb: rawValue
+    case .clickhouse: rawValue
+    case .sqlserver: rawValue
     }
   }
 
@@ -36,6 +40,10 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "mysql"
     case .mongodb:
       return "mongodb"
+    case .clickhouse:
+      return "clickhouse"
+    case .sqlserver:
+      return "sqlserver"
     }
   }
 
@@ -44,6 +52,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     switch self {
     case .mysql: 3306
     case .mongodb: 27017
+    case .clickhouse: 8443
+    case .sqlserver: 1433
     case .postgresql, .sqlite, .duckdb: 5432
     }
   }
@@ -56,6 +66,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .duckdb: .duckdb
     case .mysql: .mysql
     case .mongodb: .mongodb
+    case .clickhouse: .clickhouse
+    case .sqlserver: .sqlserver
     }
   }
 
@@ -64,7 +76,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var keychainScope: String? {
     switch self {
     case .postgresql, .sqlite, .duckdb: nil
-    case .mysql, .mongodb: rawValue
+    case .mysql, .mongodb, .clickhouse, .sqlserver: rawValue
     }
   }
 
@@ -75,7 +87,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var interruptKeepsTransaction: Bool {
     switch self {
     case .mysql, .mongodb: true
-    case .postgresql, .sqlite, .duckdb: false
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: false
     }
   }
 
@@ -90,6 +102,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var pluginID: String? {
     switch self {
     case .duckdb: "duckdb"
+    case .clickhouse: "clickhouse"
+    case .sqlserver: "sqlserver"
     case .postgresql, .sqlite, .mysql, .mongodb: nil
     }
   }
@@ -99,7 +113,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
   /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
   /// without transactions, structure editing or SQL dump. Only PostgreSQL lists sequences and
-  /// user-defined types.
+  /// user-defined types. ClickHouse and SQL Server are plugin engines, hidden with every
+  /// feature off until their plugins ship.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -237,6 +252,33 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsSQLDump: false,
         supportsUserTypes: false
       )
+    case .clickhouse, .sqlserver:
+      DatabaseCapabilities(
+        usesNetwork: false,
+        usesPassword: false,
+        supportsSSL: false,
+        supportsSchemas: false,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: false,
+        cancelStrategy: .reconnect,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
+        supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
+        supportsRowStaging: false,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: false,
+        requiresPlugin: true,
+        isAvailable: false,
+        queryLanguage: .sql,
+        supportsTransactions: false,
+        supportsStructure: false,
+        supportsSQLDump: false,
+        supportsUserTypes: false
+      )
     }
   }
 
@@ -246,7 +288,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var namesSchema: Bool {
     switch self {
     case .postgresql, .sqlite, .duckdb: true
-    case .mysql, .mongodb: false
+    case .mysql, .mongodb, .clickhouse, .sqlserver: false
     }
   }
 

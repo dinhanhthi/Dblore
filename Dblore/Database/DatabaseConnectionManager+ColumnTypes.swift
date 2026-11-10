@@ -23,7 +23,7 @@ extension DatabaseConnectionManager {
     switch databaseType {
     case .postgresql: break
     case .mysql: return await resolveMySQLOrigins(columns)
-    case .sqlite, .duckdb, .mongodb, nil: return columns
+    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver, nil: return columns
     }
     guard !columns.isEmpty, Self.enrichesColumnTypes(query) else { return columns }
     return await freshColumnTypes(columns, query: query) ?? columns
@@ -196,7 +196,7 @@ extension DatabaseConnectionManager {
           ColumnMaskRule.Origin(schema: $0.schema, table: $0.table)
         }
       }
-    case .duckdb, .mongodb:
+    case .duckdb, .mongodb, .clickhouse, .sqlserver:
       return columns.map { _ in nil }
     }
   }

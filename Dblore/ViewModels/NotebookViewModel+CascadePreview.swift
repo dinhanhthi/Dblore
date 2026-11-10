@@ -11,8 +11,9 @@
 //  hold up the commit's batch. The connection is closed when the check ends, times out or is
 //  cancelled. Only SQLite's `PRAGMA foreign_keys` is read on the tab's session (the setting is
 //  per connection). Nothing is counted while a transaction is open on the tab (another
-//  connection cannot see its uncommitted changes) or on DuckDB (no second connection to the
-//  file). All of it shares one 5 s budget and stops with the caller's task (the preview sheet
+//  connection cannot see its uncommitted changes), on DuckDB (no second connection to the
+//  file), or on ClickHouse and SQL Server (the counts are written for the other engines). All
+//  of it shares one 5 s budget and stops with the caller's task (the preview sheet
 //  closing). A blocker with rows holds the commit until the user picks Commit Anyway (rows a
 //  cascade of the same delete deletes are not counted); rows that only may block (the delete
 //  order, the batch's other edits and inserts, or a cascade the check did not follow decides),
@@ -152,6 +153,9 @@ extension NotebookViewModel {
     let dialect = stagingDialect
     guard dialect != .duckdb else {
       return .notComputed("Related rows are not counted on DuckDB.")
+    }
+    guard dialect != .clickhouse, dialect != .sqlserver else {
+      return .notComputed("Related rows are not counted on ClickHouse or SQL Server.")
     }
     guard !Self.isTemporarySchema(target.schema, dialect: dialect) else {
       return .notComputed("Related rows are not counted for temporary tables.")

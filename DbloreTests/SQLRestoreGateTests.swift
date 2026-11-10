@@ -1084,7 +1084,7 @@ struct SQLRestoreGateTests {
 
   @Test(
     "A DROP in a version 1 dump is refused as before",
-    arguments: DatabaseType.allCases.filter { $0 != .mongodb })
+    arguments: DatabaseType.allCases.filter(\.capabilities.supportsSQLDump))
   func dropInVersion1Refused(engine: DatabaseType) {
     let create =
       switch engine {

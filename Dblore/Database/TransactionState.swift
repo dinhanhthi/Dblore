@@ -178,15 +178,21 @@ nonisolated enum ProtectedTransactionRules {
     return first == "COMMIT" || first == "END"
   }
 
-  /// A user `ROLLBACK` / `ABORT` that ends the transaction (not `ROLLBACK TO SAVEPOINT`), with
-  /// or without `AND CHAIN`.
+  /// A user `ROLLBACK` / `ABORT` that ends the transaction (not `ROLLBACK TO SAVEPOINT`, nor a
+  /// SQL Server `ROLLBACK TRAN <name>`), with or without `AND CHAIN`.
   static func rolledBackUserTransaction(
     _ statement: ClassifiedStatement, dialect: SQLDialect = .postgresql
   ) -> Bool {
     guard statement.kind == .tcl else { return false }
     let words = SQLTokenizer(dialect: dialect).tokens(statement.text).map { $0.keyword ?? "" }
     guard let first = words.first, first == "ROLLBACK" || first == "ABORT" else { return false }
-    return !words.contains("TO")
+    return !words.contains("TO") && !rollsBackToNamedPoint(words, dialect: dialect)
+  }
+
+  /// SQL Server `ROLLBACK TRAN[SACTION] <name>`: the name may be a savepoint (`SAVE TRAN`), which
+  /// keeps the transaction open, and the text alone cannot tell, so it is read as one.
+  private static func rollsBackToNamedPoint(_ words: [String], dialect: SQLDialect) -> Bool {
+    dialect == .sqlserver && words.count > 2 && ["TRAN", "TRANSACTION"].contains(words[1])
   }
 
   /// MySQL: a `BEGIN` / `START TRANSACTION` commits the open transaction before it starts the
@@ -211,7 +217,8 @@ nonisolated enum ProtectedTransactionRules {
   }
 
   /// Tracks a transaction the user opened while Protected mode is off: BEGIN / START open it;
-  /// COMMIT / END / ROLLBACK / ABORT / PREPARE TRANSACTION close it (ROLLBACK TO keeps it).
+  /// COMMIT / END / ROLLBACK / ABORT / PREPARE TRANSACTION close it (ROLLBACK TO and a SQL Server
+  /// `ROLLBACK TRAN <name>` keep it; SQL Server `SAVE TRAN` is a savepoint, which keeps it too).
   /// `... AND CHAIN` (not `AND NO CHAIN`) starts a new transaction right away: still open.
   /// A failed statement changes nothing, except a failed COMMIT / END, which ends the
   /// transaction on the server (the chained transaction is not started).
@@ -230,8 +237,10 @@ nonisolated enum ProtectedTransactionRules {
     case "BEGIN", "START": return true
     case "COMMIT", "END", "ABORT": return chains
     case "PREPARE": return false
-    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] name
-    case "ROLLBACK": return words.contains("TO") ? current : chains
+    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] name; SQL Server ROLLBACK TRAN name
+    case "ROLLBACK":
+      return words.contains("TO") || rollsBackToNamedPoint(words, dialect: dialect)
+        ? current : chains
     default: return current
     }
   }

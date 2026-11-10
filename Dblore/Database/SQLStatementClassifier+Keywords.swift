@@ -19,6 +19,42 @@ nonisolated extension SQLStatementClassifier {
     "BEGIN", "START", "COMMIT", "END", "ROLLBACK", "ABORT", "SAVEPOINT", "RELEASE",
   ]
 
+  /// SQL Server transaction control that starts with no PostgreSQL TCL verb:
+  /// `SAVE TRAN[SACTION] name` sets a savepoint.
+  static let sqlserverTclKeywords: Set<String> = ["SAVE"]
+
+  /// Leading words the shared rules read as a query, transaction control or session SET that
+  /// start no T-SQL statement. SQL Server runs a leading name as a procedure call, so they fail
+  /// closed (`EXPLAIN` too, in `analyze`).
+  static let sqlserverNonStatementKeywords: Set<String> = [
+    "SHOW", "VALUES", "TABLE", "START", "ABORT", "SAVEPOINT", "RELEASE", "RESET", "PREPARE",
+  ]
+
+  /// T-SQL words that start a statement. A batch needs no `;` between statements, so one of
+  /// these after a statement's own verb starts another (`sqlserverAdjusted`). The reserved
+  /// statement verbs (`ADD [COUNTER] SIGNATURE` too), plus the unreserved ones that change data
+  /// or schema (ENABLE / DISABLE TRIGGER, Service Broker RECEIVE / SEND). THROW is left out: the
+  /// server requires a `;` before it. Service Broker `END` / `MOVE` / `GET CONVERSATION` are
+  /// left out: END also closes a CASE and MOVE / GET are unreserved names, so
+  /// `strayStatementVerb` counts them only before CONVERSATION (`sqlserverConversationVerbs`).
+  static let sqlserverStatementVerbs: Set<String> = [
+    "ADD", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "DROP", "ALTER", "TRUNCATE", "BEGIN",
+    "COMMIT", "ROLLBACK", "SAVE", "GRANT", "REVOKE", "DENY", "EXEC", "EXECUTE", "DECLARE", "SET",
+    "PRINT", "RAISERROR", "WAITFOR", "USE", "BACKUP", "RESTORE", "DBCC", "KILL", "BULK",
+    "CHECKPOINT", "RECONFIGURE", "SHUTDOWN", "OPEN", "CLOSE", "FETCH", "DEALLOCATE", "IF",
+    "WHILE", "GOTO", "RETURN", "REVERT", "SETUSER", "UPDATETEXT", "WRITETEXT", "ENABLE",
+    "DISABLE", "RECEIVE", "SEND",
+  ]
+
+  /// Service Broker statements that start with a word T-SQL also uses elsewhere:
+  /// `END CONVERSATION`, `MOVE CONVERSATION`, `GET CONVERSATION GROUP`.
+  static let sqlserverConversationVerbs: Set<String> = ["END", "MOVE", "GET"]
+
+  /// SQL Server `SET` options that turn implicit transactions on (`ANSI_DEFAULTS ON` does too).
+  static let sqlserverImplicitTransactionOptions: Set<String> = [
+    "IMPLICIT_TRANSACTIONS", "ANSI_DEFAULTS",
+  ]
+
   static let utilityKeywords: Set<String> = [
     "COPY", "DO", "CALL", "VACUUM", "ANALYZE", "ANALYSE", "REINDEX", "CLUSTER", "LOCK",
     "GRANT", "REVOKE", "NOTIFY", "LISTEN", "UNLISTEN", "DISCARD", "CHECKPOINT", "REFRESH",

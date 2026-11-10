@@ -2,7 +2,8 @@
 // SQLite skips Keychain save/load/delete. PostgreSQL still uses host:port:database:username.
 // Staged and inline row edits and foreign key lookup follow the engine's capability flags:
 // DuckDB refuses them with a clear message, PostgreSQL keeps them. Table import is open on both.
-// The structure menu and the SQL INSERT export format are hidden for MongoDB.
+// The structure menu and the SQL INSERT export format are hidden for MongoDB. Find a Value in
+// Every Table, Table Health and Generate Rows are off for ClickHouse and SQL Server.
 
 import Foundation
 import Testing
@@ -169,11 +170,22 @@ struct CapabilityGatingTests {
     }
   }
 
+  // MARK: - Permanently excluded features
+
+  @Test("ClickHouse and SQL Server never search every table, check table health or generate rows")
+  func permanentGatesExcludeEnginePlugins() {
+    for type in [DatabaseType.clickhouse, .sqlserver] {
+      #expect(!WorkspaceManager.searchesEveryTable(type), "\(type.rawValue)")
+      #expect(!WorkspaceManager.checksTableHealth(type), "\(type.rawValue)")
+      #expect(!WorkspaceManager.generatesRows(type), "\(type.rawValue)")
+    }
+  }
+
   // MARK: - Helpers
 
   private func config(_ type: DatabaseType) -> ConnectionConfig {
     switch type {
-    case .postgresql, .mysql, .mongodb:
+    case .postgresql, .mysql, .mongodb, .clickhouse, .sqlserver:
       ConnectionConfig(
         databaseType: type, host: "localhost", port: type.defaultPort,
         database: "app", username: "ana", password: "x",

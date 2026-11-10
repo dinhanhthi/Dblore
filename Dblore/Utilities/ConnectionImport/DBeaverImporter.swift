@@ -198,6 +198,11 @@ nonisolated enum DBeaverImporter {
     switch engine {
     case .mysql: defaultPort = engine.defaultPort
     case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
+    case .clickhouse, .sqlserver:
+      return .failure(
+        Skipped(
+          message:
+            "Skipped \(label): unsupported driver \(sanitized(provider))/\(sanitized(driver))."))
     }
     guard let port = port(configuration["port"], default: defaultPort) else {
       return .failure(Skipped(message: "Skipped \(label): invalid port."))
@@ -216,6 +221,11 @@ nonisolated enum DBeaverImporter {
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
     case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
+    case .clickhouse, .sqlserver:
+      return .failure(
+        Skipped(
+          message:
+            "Skipped \(label): unsupported driver \(sanitized(provider))/\(sanitized(driver))."))
     }
     if let authModel = string(configuration["auth-model"]), !authModel.isEmpty,
       authModel != "native"
@@ -233,6 +243,11 @@ nonisolated enum DBeaverImporter {
         handlers: handlers, isMariaDB: driver.lowercased() == "mariadb", warnings: &warnings)
     case .postgresql, .sqlite, .duckdb, .mongodb:
       sslMode = self.sslMode(handlers: handlers, warnings: &warnings)
+    case .clickhouse, .sqlserver:
+      return .failure(
+        Skipped(
+          message:
+            "Skipped \(label): unsupported driver \(sanitized(provider))/\(sanitized(driver))."))
     }
 
     var sshTunnel: SSHTunnelConfig?

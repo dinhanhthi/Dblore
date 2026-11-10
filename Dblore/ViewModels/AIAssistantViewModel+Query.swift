@@ -99,7 +99,7 @@ extension AIAssistantViewModel {
     } catch {
       return  // Stopped while the catalog was read
     }
-    let runsQueries = context.runsQueries && review == nil
+    let runsQueries = context.runsQueries && review == nil && Self.runsReadQueries(context.dialect)
     let dataTools =
       allowed && review == nil && context.offersTools
       ? AITools.specs(runsQueries: runsQueries, isMongo: context.dialect == .mongodb) : []
@@ -170,6 +170,13 @@ extension AIAssistantViewModel {
       let sql = AIMessageParser.runQuery(in: reply, dialect: context.dialect)
     else { return }
     await runQuery(sql, context: context, token: token)
+  }
+
+  /// The read-only query path (`MCPReadOnlySessionFactory`; DuckDB reads on the tab's connection)
+  /// refuses ClickHouse and SQL Server, so the assistant never offers `run_read_query` or a run
+  /// block there
+  nonisolated static func runsReadQueries(_ dialect: SQLDialect) -> Bool {
+    dialect != .clickhouse && dialect != .sqlserver
   }
 
   /// Rows and database errors can hold row values, so they never go to the model: a result entry

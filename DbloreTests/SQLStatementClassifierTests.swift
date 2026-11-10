@@ -350,4 +350,39 @@ struct SQLStatementClassifierTests {
   func containsPasswordLiteral(_ sql: String, _ expected: Bool) {
     #expect(SQLStatementClassifier.containsPasswordLiteral(sql) == expected)
   }
+
+  // MARK: - SQL Server SET
+
+  /// Refused by read-only, schema-only and Protected mode; Safe Mode confirms a utility.
+  @Test(
+    "SQL Server: SET IMPLICIT_TRANSACTIONS / ANSI_DEFAULTS is a non-transactional utility",
+    arguments: [
+      "SET IMPLICIT_TRANSACTIONS ON", "set implicit_transactions off", "SET ANSI_DEFAULTS ON",
+    ])
+  func sqlserverImplicitTransactions(_ sql: String) {
+    let statements = SQLStatementClassifier.classify(sql, dialect: .sqlserver)
+    #expect(statements.map(\.kind) == [.utility])
+    #expect(statements.map(\.nonTransactional) == [true])
+    let policies = [
+      ProtectionPolicy(protectionLevel: .readOnly), ProtectionPolicy(protectionLevel: .schemaOnly),
+      ProtectionPolicy(protectionLevel: .none, protectedMode: true),
+    ]
+    for policy in policies {
+      #expect(
+        DatabaseConnectionManager.evaluate(statements, policy: policy, dialect: .sqlserver)
+          != .allowed)
+    }
+  }
+
+  @Test("SQL Server: other SET options stay session settings; PostgreSQL keeps its rules")
+  func sqlserverOtherSetOptions() {
+    #expect(
+      SQLStatementClassifier.classify("SET NOCOUNT ON", dialect: .sqlserver).map(\.kind) == [
+        .sessionSet(touchesBrake: false)
+      ])
+    #expect(
+      SQLStatementClassifier.classify("SET implicit_transactions = on").map(\.kind) == [
+        .sessionSet(touchesBrake: false)
+      ])
+  }
 }

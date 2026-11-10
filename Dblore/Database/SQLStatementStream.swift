@@ -53,14 +53,16 @@ nonisolated struct SQLStatementStream {
   private var finished = false
   private var line: String?
 
-  /// - Throws: `SQLRestoreError.unsupportedEngine` for MongoDB; the file's open error
+  /// - Throws: `SQLRestoreError.unsupportedEngine` for MongoDB, ClickHouse and SQL Server; the
+  ///   file's open error
   init(
     url: URL, engine: DatabaseType, chunkSize: Int = 1_048_576,
     maxStatementBytes: Int = SQLRestorePlan.maxStatementBytes
   ) throws {
     switch engine {
     case .postgresql, .mysql, .sqlite, .duckdb: break
-    case .mongodb: throw SQLRestoreError.unsupportedEngine(engine.rawValue)
+    case .mongodb, .clickhouse, .sqlserver:
+      throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
     handle = try FileHandle(forReadingFrom: url)
     byteCount = Int(clamping: try handle.seekToEnd())

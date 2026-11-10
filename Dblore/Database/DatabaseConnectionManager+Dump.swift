@@ -165,7 +165,7 @@ extension DatabaseConnectionManager {
       ]
     case .sqlite, .duckdb:
       return []
-    case .mongodb:
+    case .mongodb, .clickhouse, .sqlserver:
       throw SQLDumpError.unsupportedEngine(databaseType)
     }
   }
@@ -229,7 +229,7 @@ extension DatabaseConnectionManager {
       return plain(lift + ["BEGIN"])
     case (.duckdb, _):
       return plain(lift + ["BEGIN TRANSACTION READ ONLY"])
-    case (.mongodb, _):
+    case (.mongodb, _), (.clickhouse, _), (.sqlserver, _):
       throw SQLDumpError.unsupportedEngine(databaseType)
     }
   }
@@ -441,7 +441,7 @@ extension DatabaseConnectionManager {
     case .duckdb:
       // DuckDB exports on this session
       return ResultExportSessionState()
-    case .mongodb:
+    case .mongodb, .clickhouse, .sqlserver:
       throw ResultExportError.unsupportedEngine(databaseType)
     }
   }

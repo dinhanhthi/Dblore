@@ -93,11 +93,20 @@ class WorkspaceManager: Identifiable {
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
   }
 
-  /// Generate Rows (table context menu): connected, and the engine stages rows
-  /// (`supportsRowStaging`: PostgreSQL, SQLite, MySQL/MariaDB).
+  /// Generate Rows (table context menu): connected, and the engine generates rows
+  /// (`generatesRows`).
   var canGenerateRows: Bool {
     connectionState.isConnected
-      && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsRowStaging
+      && Self.generatesRows(workspace.connectionConfig?.databaseType ?? .postgresql)
+  }
+
+  /// The engines Generate Rows runs on: those that stage rows (`supportsRowStaging`: PostgreSQL,
+  /// SQLite, MySQL/MariaDB). ClickHouse and SQL Server never get it, even with row staging.
+  nonisolated static func generatesRows(_ type: DatabaseType) -> Bool {
+    switch type {
+    case .postgresql, .sqlite, .duckdb, .mysql, .mongodb: type.capabilities.supportsRowStaging
+    case .clickhouse, .sqlserver: false
+    }
   }
 
   /// Import Documents (File menu, collection row) on MongoDB: connected, not read-only, and a

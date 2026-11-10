@@ -227,6 +227,7 @@ struct WorkspaceLeftSidebarContent: View {
     case .mysql: fallback = workspaceManager.workspace.connectionConfig?.database ?? ""
     case .postgresql, .sqlite, .duckdb, .mongodb:
       fallback = connectionDatabaseType.dialect.defaultSchema
+    case .clickhouse, .sqlserver: fallback = ""
     }
     var schemas = publicSchemas.listed
     // The default schema stays pickable but goes last, so "+" on a flat list targets its schema
@@ -1241,7 +1242,7 @@ struct WorkspaceLeftSidebarContent: View {
         ? { onImportTable(table.source) } : nil,
       onImportFiles: connectionDatabaseType.capabilities.supportsDataImport
         ? { onImportFiles(table.source.schema, table.source) } : nil,
-      onGenerateRows: connectionDatabaseType.capabilities.supportsRowStaging && readsStructure
+      onGenerateRows: WorkspaceManager.generatesRows(connectionDatabaseType) && readsStructure
         ? { onGenerateRows(table.source) } : nil,
       structureMenuTitle: readsStructure
         ? SidebarSectionModel.structureMenuTitle(for: connectionDatabaseType) : nil,

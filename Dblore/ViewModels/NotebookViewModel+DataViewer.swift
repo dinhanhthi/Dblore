@@ -284,11 +284,11 @@ extension NotebookViewModel {
 
   /// Source labels of a data viewer page (`CellResult.columnSourceLabels`): every column is a
   /// column of the viewed relation, so each is `schema.name.column` with no catalog read (an
-  /// empty schema is left out). DuckDB and MongoDB pages have none.
+  /// empty schema is left out). DuckDB, MongoDB, ClickHouse and SQL Server pages have none.
   func dataViewerSourceLabels(_ state: DataViewerState, columns: [ColumnInfo]) -> [Int: String] {
     switch state.databaseType {
     case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb: return [:]
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: return [:]
     }
     let relation = [state.schema, state.name].filter { !$0.isEmpty }
     var labels: [Int: String] = [:]

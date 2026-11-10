@@ -130,7 +130,7 @@ extension DatabaseType {
   nonisolated var supportsDataRewind: Bool {
     switch self {
     case .postgresql, .mysql, .sqlite: true
-    case .duckdb, .mongodb: false
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: false
     }
   }
 }
@@ -151,7 +151,7 @@ nonisolated enum RewindPlanner {
     case .postgresql: dialect = .postgresql
     case .mysql: dialect = .mysql
     case .sqlite: dialect = .sqlite
-    case .duckdb, .mongodb:
+    case .duckdb, .mongodb, .clickhouse, .sqlserver:
       throw RewindPlannerError.refused(
         entryID: entries.first?.entry.id ?? 0, table: entries.first?.entry.table ?? "",
         reason: "\(engine.rawValue) has no Data Rewind")
@@ -420,7 +420,7 @@ private nonisolated struct EntryPlanner {
         ? "HEX(\(name)) <=>" : "CAST(CAST(\(name) AS CHAR) AS BINARY) <=>"
     case .sqlite:
       return "quote(\(name)) IS"
-    case .postgresql, .duckdb, .mongodb:
+    case .postgresql, .duckdb, .mongodb, .clickhouse, .sqlserver:
       throw RewindCaptureError.unsupportedEngine(engine)
     }
   }

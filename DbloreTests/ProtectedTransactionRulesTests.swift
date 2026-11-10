@@ -168,6 +168,65 @@ struct ProtectedTransactionRulesTests {
     }
   }
 
+  // MARK: SQL Server transaction control
+
+  @Test("SQL Server: SAVE TRAN and BEGIN TRAN are transaction control; blocks and END are not")
+  func sqlserverTransactionKinds() {
+    for tcl in [
+      "SAVE TRAN s1", "SAVE TRANSACTION s1", "BEGIN TRAN", "BEGIN TRANSACTION t1",
+      "BEGIN DISTRIBUTED TRANSACTION", "ROLLBACK TRAN s1", "COMMIT TRAN",
+    ] {
+      let classified = SQLStatementClassifier.classify(tcl, dialect: .sqlserver)
+      #expect(classified.map(\.kind) == [.tcl], "\(tcl)")
+      guard
+        case .blocked(0, .tcl, _) = DatabaseConnectionManager.evaluate(
+          classified, policy: protected, dialect: .sqlserver)
+      else {
+        Issue.record("\(tcl) should be blocked under Protected mode")
+        continue
+      }
+    }
+    for notTCL in [
+      "BEGIN TRY SELECT 1 END TRY BEGIN CATCH SELECT 2 END CATCH", "BEGIN SELECT 1 END", "END",
+    ] {
+      let classified = SQLStatementClassifier.classify(notTCL, dialect: .sqlserver)
+      #expect(classified.map(\.kind) == [.unknown], "\(notTCL)")
+      let opens = classified.first.map {
+        ProtectedTransactionRules.userTxOpen(
+          after: $0, current: false, succeeded: true, dialect: .sqlserver)
+      }
+      #expect(opens == false, "\(notTCL)")
+    }
+  }
+
+  @Test("SQL Server: a bare ROLLBACK TRAN closes; ROLLBACK TRAN name and SAVE TRAN keep it open")
+  func sqlserverUserTransactionTracking() throws {
+    func openAfter(_ sql: String, current: Bool) throws -> Bool {
+      let classified = try #require(SQLStatementClassifier.classify(sql, dialect: .sqlserver).first)
+      return ProtectedTransactionRules.userTxOpen(
+        after: classified, current: current, succeeded: true, dialect: .sqlserver)
+    }
+    func rolledBack(_ sql: String) throws -> Bool {
+      let classified = try #require(SQLStatementClassifier.classify(sql, dialect: .sqlserver).first)
+      return ProtectedTransactionRules.rolledBackUserTransaction(classified, dialect: .sqlserver)
+    }
+    #expect(try openAfter("BEGIN TRAN", current: false))
+    for close in ["COMMIT", "COMMIT TRAN", "ROLLBACK", "ROLLBACK TRAN", "ROLLBACK TRANSACTION"] {
+      #expect(try !openAfter(close, current: true), "\(close)")
+    }
+    #expect(try rolledBack("ROLLBACK TRAN"))
+    #expect(try rolledBack("ROLLBACK"))
+    for keep in [
+      "ROLLBACK TRAN s1", "ROLLBACK TRANSACTION [save point]", "SAVE TRAN s1",
+      "SAVE TRANSACTION s1",
+    ] {
+      #expect(try openAfter(keep, current: true), "\(keep)")
+      #expect(try !openAfter(keep, current: false), "\(keep)")
+    }
+    #expect(try !rolledBack("ROLLBACK TRAN s1"))
+    #expect(try !rolledBack("ROLLBACK TRANSACTION [save point]"))
+  }
+
   @Test("A failed statement changes nothing, except a failed COMMIT which ends the transaction")
   func failedStatementTracking() {
     let rules = ProtectedTransactionRules.self

@@ -152,7 +152,7 @@ nonisolated enum RewindCaptureSQL {
     case .sqlite:
       guard let text else { return RewindBind(form: .plain, value: .null) }
       return try sqliteBind(text, column: column.name)
-    case .duckdb, .mongodb:
+    case .duckdb, .mongodb, .clickhouse, .sqlserver:
       throw RewindCaptureError.unsupportedEngine(engine)
     }
   }
@@ -163,7 +163,8 @@ nonisolated enum RewindCaptureSQL {
     case .postgresql: (.postgresql, true)
     case .mysql: (.mysql, true)
     case .sqlite: (.sqlite, false)
-    case .duckdb, .mongodb: throw RewindCaptureError.unsupportedEngine(engine)
+    case .duckdb, .mongodb, .clickhouse, .sqlserver:
+      throw RewindCaptureError.unsupportedEngine(engine)
     }
   }
 

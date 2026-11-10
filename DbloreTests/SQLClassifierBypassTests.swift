@@ -370,4 +370,217 @@ struct SQLClassifierBypassTests {
     #expect(kinds("SET \"Statement_Timeout\" = 0") == [.sessionSet(touchesBrake: true)])
     #expect(kinds("RESET \"LOCK_TIMEOUT\"") == [.sessionSet(touchesBrake: true)])
   }
+
+  // MARK: - 13. SQL Server batches without `;`
+
+  private func sqlserver(_ sql: String) -> [StatementKind] {
+    SQLStatementClassifier.classify(sql, dialect: .sqlserver).map(\.kind)
+  }
+
+  /// T-SQL runs every statement of these; the splitter sees one statement in each.
+  nonisolated static let sqlserverBatches: [String] = [
+    "SELECT 1 DELETE FROM t",
+    "SELECT 1 DROP TABLE x",
+    "WITH a AS (SELECT 1 AS x) SELECT * FROM a DROP TABLE x",
+    "WITH a AS (SELECT 1 AS x) DROP TABLE x",
+    "WITH a AS (SELECT 1 AS x) EXEC ('DROP TABLE x')",
+    "SELECT * FROM t WHERE id = 1 UPDATE t SET a = 2",
+    "SELECT 1 INSERT INTO t VALUES (1)",
+    "SELECT 1 TRUNCATE TABLE t",
+    "SELECT 1 EXEC sp_configure 'show advanced options', 1",
+    "SELECT 1 EXECUTE ('DROP TABLE x')",
+    "SELECT 1 DBCC FREEPROCCACHE",
+    "SELECT 1 USE master",
+    "SELECT * FROM OPENROWSET(BULK 'C:\\data.csv', SINGLE_CLOB) AS r",
+    "SELECT * FROM (SELECT 1 AS x) s GRANT CONTROL TO u",
+    "SELECT a FROM t WHERE 1 = 1 DISABLE TRIGGER tr ON t",
+    "SET NOCOUNT ON DELETE FROM t",
+    "BEGIN TRAN DROP TABLE x",
+    "COMMIT DELETE FROM t",
+    "UPDATE t SET a = 1 WHERE id = 1 DROP TABLE x",
+    "UPDATE t SET a = 1 WHERE id = 1 SET NOCOUNT ON",
+    "INSERT INTO t EXEC ('DROP TABLE x')",
+    "DELETE FROM t WHERE id = 1 ALTER TABLE t DROP COLUMN a",
+    // Quotes the PostgreSQL scanner has and SQL Server does not, or lexes differently
+    "SELECT [a'b] FROM t DROP TABLE x --'",
+    "SELECT [a]]'] FROM t DROP TABLE x --'",
+    "SELECT [a/*] FROM t DROP TABLE x /*]*/",
+    "SELECT [a;b] FROM t DROP TABLE x",
+    "SELECT E'\\' FROM t DROP TABLE x --'",
+    "SELECT $$ FROM t DROP TABLE x --$$",
+    // A number the server ends before the next word: `0x` is a binary constant
+    "SELECT 0xTRUNCATE TABLE t",
+    "SELECT 0xINSERT t VALUES (1)",
+    "SELECT 0xKILL 53",
+    "SELECT 0xSHUTDOWN",
+    "SELECT 0xGRANT CONTROL TO u",
+    "SELECT 0xWAITFOR DELAY '00:00:10'",
+    "SELECT 0xPRINT 'x'",
+    "SELECT 0xUSE master",
+    "SELECT 1Ex DROP TABLE t",
+    "SELECT 1eTRUNCATE TABLE t",
+    // A currency sign is a money prefix (`£1`, a bare `£` too) and ends a word
+    "SELECT £1TRUNCATE TABLE t",
+    "SELECT ALL£1TRUNCATE TABLE t",
+    "SELECT DISTINCT£1KILL 53",
+    "SELECT x=£1TRUNCATE TABLE t",
+    "SELECT €1KILL 53",
+    "SELECT ₹1SHUTDOWN",
+    "SELECT x=£TRUNCATE TABLE t",
+    // A lone CR ends a `--` comment
+    "SELECT 1 --x\r DROP TABLE t",
+    // `USE HINT` / `USE PLAN` are query hints only inside `OPTION (...)`
+    "SELECT 1 USE HINT",
+    "SELECT 1 USE PLAN",
+    // SELECT INTO creates a table: after a SET or transaction control it is a second statement
+    "SET NOCOUNT ON SELECT * INTO dbo.t2 FROM dbo.t",
+    "COMMIT SELECT * INTO dbo.t2 FROM dbo.t",
+    "BEGIN TRAN SELECT * INTO dbo.t2 FROM dbo.t",
+    "SAVE TRAN x SELECT * INTO dbo.t2 FROM dbo.t",
+    "SET NOCOUNT ON SELECT 1",
+    // ADD is reserved; END / MOVE / GET start a statement before CONVERSATION
+    "SELECT 1 ADD SIGNATURE TO dbo.p BY CERTIFICATE c",
+    "SELECT 1 ADD COUNTER SIGNATURE TO dbo.p BY CERTIFICATE c",
+    "SELECT 1 END CONVERSATION @h",
+    "SELECT 1 MOVE CONVERSATION @h TO @g",
+    "SELECT 1 GET CONVERSATION GROUP @g FROM q",
+    "ADD SIGNATURE TO dbo.p BY CERTIFICATE c",
+    "END CONVERSATION @h",
+    "MOVE CONVERSATION @h TO @g",
+    "GET CONVERSATION GROUP @g FROM q",
+    // A non-ASCII space or zero-width scalar outside quotes: the server may split a word there
+    "SELECT a\u{00A0}DELETE FROM t",
+    "SELECT a\u{200B}DELETE FROM t",
+    "SELECT a\u{FEFF}DROP TABLE t",
+    "SELECT a\u{2028}DROP TABLE t",
+    "SELECT 1 --x\u{2028}DROP TABLE t",
+  ]
+
+  @Test(
+    "SQL Server: a second statement with no `;` before it fails closed",
+    arguments: sqlserverBatches)
+  func sqlserverBatchFailsClosed(_ sql: String) {
+    let statements = SQLStatementClassifier.classify(sql, dialect: .sqlserver)
+    #expect(statements.map(\.kind) == [.unknown])
+    for level in [ConnectionProtectionLevel.readOnly, .schemaOnly] {
+      #expect(
+        DatabaseConnectionManager.evaluate(
+          statements, policy: ProtectionPolicy(protectionLevel: level), dialect: .sqlserver)
+          != .allowed)
+    }
+  }
+
+  @Test(
+    "SQL Server: verbs in strings, quoted names, comments and query hints keep a read",
+    arguments: [
+      "SELECT * FROM t WHERE name = 'DROP TABLE x'",
+      "SELECT N'DELETE FROM t' AS s",
+      "SELECT [delete], [drop table], [a]]b], \"update\" FROM [exec]",
+      "SELECT 1 -- DROP TABLE x",
+      "SELECT 1 /* DELETE /* nested */ FROM t */",
+      "SELECT path FROM t WHERE path = 'C:\\dir\\'",
+      "SELECT a FROM t INNER MERGE JOIN s ON t.id = s.id",
+      "SELECT a FROM t OPTION (USE HINT ('FORCE_LEGACY_CARDINALITY_ESTIMATION'), HASH JOIN)",
+      "SELECT a FROM t ORDER BY a OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY",
+      "SELECT 1 UNION ALL SELECT 2",
+      "WITH a AS (SELECT 1 AS x) SELECT x FROM a",
+      "SELECT * FROM t WITH (NOLOCK) WHERE CASE WHEN a = 1 THEN 1 END = 1",
+      "SELECT a FROM t OPTION (USE PLAN N'<ShowPlanXML/>')",
+      "SELECT 0x1F FROM t",
+      "SELECT 0x, 0Xff, 1E5, 1e-5, 2.5E+3, 1.5, 1., .5, $1.00",
+      "SELECT £1.50, €2 FROM t",
+      "SELECT ¥3, ₩4, ₹5, ¢6, a$b, -$1 FROM t",
+      "SELECT [a£1TRUNCATE TABLE t], \"b€1KILL 53\" FROM [c¥1DROP]",
+      "SELECT 'x£1TRUNCATE TABLE t' AS s",
+      "SELECT CASE WHEN a = 1 THEN 2 END FROM t",
+      "SELECT move, get FROM t WHERE move = 1",
+      "SELECT 'a\u{00A0}DELETE\u{200B}' AS s, [b\u{00A0}c], \"d\u{FEFF}e\" FROM t",
+      "SELECT 1 -- a\u{00A0}b\u{200B}",
+    ])
+  func sqlserverReadStaysRead(_ sql: String) {
+    #expect(sqlserver(sql) == [.read])
+  }
+
+  @Test(
+    "SQL Server: a data change keeps its own SET, MERGE arms and main statement after WITH",
+    arguments: [
+      "UPDATE t SET a = 1 WHERE id = 1",
+      "UPDATE TOP (5) t WITH (ROWLOCK) SET a = (SELECT MAX(b) FROM s) WHERE id = 1",
+      "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN UPDATE SET a = s.a "
+        + "WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id) "
+        + "WHEN NOT MATCHED BY SOURCE THEN DELETE",
+      "WITH a AS (SELECT id FROM s) DELETE FROM t WHERE id IN (SELECT id FROM a)",
+      "WITH a AS (SELECT id FROM s) UPDATE t SET b = 1 WHERE id IN (SELECT id FROM a)",
+      "INSERT INTO t (a) SELECT a FROM s",
+      "DELETE FROM t OUTPUT deleted.id WHERE id = 1",
+    ])
+  func sqlserverWriteKeepsKind(_ sql: String) {
+    #expect(sqlserver(sql) == [.dml])
+  }
+
+  @Test("SQL Server batch rules stay off on PostgreSQL")
+  func sqlserverRulesAreDialectOnly() {
+    // `update` is an unreserved column name on PostgreSQL; T-SQL reserves it
+    #expect(kinds("SELECT update FROM t") == [.read])
+    #expect(sqlserver("SELECT update FROM t") == [.unknown])
+  }
+
+  @Test("SQL Server lexes T-SQL numbers; PostgreSQL keeps digit runs")
+  func sqlserverNumbers() {
+    let sql = "SELECT 0x1F, 1.5, .5, 1E-5, 1eX, 0xTRUNCATE"
+    #expect(
+      SQLTokenizer.tokens(sql, dialect: .sqlserver).map(\.text) == [
+        "SELECT", "0X1F", ",", "1.5", ",", ".5", ",", "1E-5", ",", "1", "EX", ",", "0X",
+        "TRUNCATE",
+      ])
+    #expect(
+      SQLTokenizer.tokens(sql, dialect: .postgresql).map(\.text) == [
+        "SELECT", "0", "X1F", ",", "1", ".", "5", ",", ".", "5", ",", "1", "E", "-", "5", ",",
+        "1", "EX", ",", "0", "XTRUNCATE",
+      ])
+    #expect(kinds("SELECT 0xTRUNCATE TABLE t") == [.read])
+  }
+
+  @Test("SQL Server: a currency sign is a symbol that ends a word, outside quotes only")
+  func sqlserverCurrencySigns() {
+    let sql = "SELECT ALL£1, x€y, a$b, [p£q], \"r€s\""
+    #expect(
+      SQLTokenizer.tokens(sql, dialect: .sqlserver).map(\.text) == [
+        "SELECT", "ALL", "£", "1", ",", "X", "€", "Y", ",", "A$B", ",", "p£q", ",", "r€s",
+      ])
+    #expect(
+      SQLTokenizer.tokens(sql, dialect: .postgresql).map(\.text) == [
+        "SELECT", "ALL£1", ",", "X€Y", ",", "A$B", ",", "[", "P£Q", "]", ",", "r€s",
+      ])
+  }
+
+  @Test(
+    "SQL Server: a leading word T-SQL has no statement for fails closed",
+    arguments: [
+      "SHOW TABLES", "VALUES (1)", "TABLE t", "START TRANSACTION", "ABORT", "SAVEPOINT s1",
+      "RELEASE SAVEPOINT s1", "RESET ALL", "PREPARE TRANSACTION 'x'",
+    ])
+  func sqlserverNonStatementWord(_ sql: String) {
+    #expect(sqlserver(sql) == [.unknown])
+    #expect(kinds(sql) != [.unknown])
+  }
+
+  @Test("SQL Server: T-SQL statements keep their kind")
+  func sqlserverStatementWordsKeepKind() {
+    for tcl in ["BEGIN TRAN", "COMMIT", "ROLLBACK", "SAVE TRAN s1"] {
+      #expect(sqlserver(tcl) == [.tcl], "\(tcl)")
+    }
+    #expect(sqlserver("SET NOCOUNT ON") == [.sessionSet(touchesBrake: false)])
+    #expect(sqlserver("SET @x = (SELECT COUNT(*) FROM t)") == [.sessionSet(touchesBrake: false)])
+    #expect(sqlserver("SELECT 1 SELECT * INTO t2 FROM t") == [.dml])
+    #expect(sqlserver("SELECT 1") == [.read])
+    #expect(sqlserver("WITH a AS (SELECT 1 AS x) SELECT x FROM a") == [.read])
+  }
+
+  @Test("SQL Server has no EXPLAIN: a leading EXPLAIN fails closed")
+  func sqlserverExplainIsUnknown() {
+    #expect(sqlserver("EXPLAIN SELECT 1") == [.unknown])
+    #expect(sqlserver("EXPLAIN ANALYZE DELETE FROM t") == [.unknown])
+    #expect(kinds("EXPLAIN SELECT 1") == [.explain(inner: .read, analyze: false)])
+  }
 }

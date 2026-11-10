@@ -38,13 +38,19 @@ enum MongoConnectionDraft {
   static let defaultSSLMode: SSLMode = .disable
 
   /// MongoKitten always verifies chain and host name, so MongoDB TLS is two-valued (2.6 Q4).
+  /// ClickHouse over HTTPS is two-valued too; SQL Server takes every mode.
   static func sslModes(for type: DatabaseType) -> [SSLMode] {
-    type == .mongodb ? [.disable, .verifyFull] : SSLMode.allCases
+    switch type {
+    case .mongodb, .clickhouse: [.disable, .verifyFull]
+    case .postgresql, .sqlite, .duckdb, .mysql, .sqlserver: SSLMode.allCases
+    }
   }
 
-  /// The MongoDB mode a stored `sslMode` means: anything but Disable is Verify Full.
-  static func normalizedSSLMode(_ mode: SSLMode) -> SSLMode {
-    mode == .disable ? .disable : .verifyFull
+  /// The mode a stored `sslMode` means on `type`: one `sslModes(for:)` does not offer is Verify
+  /// Full. Every engine offers Disable, so a mode that is mapped encrypts, and it only moves up
+  /// (MongoDB and ClickHouse: anything but Disable is Verify Full).
+  static func normalizedSSLMode(_ mode: SSLMode, for type: DatabaseType) -> SSLMode {
+    sslModes(for: type).contains(mode) ? mode : .verifyFull
   }
 
   /// Without transactions (MongoDB) there is nothing to review, so Review is not offered.
@@ -98,14 +104,15 @@ enum MongoConnectionDraft {
   /// `config` with `mongoURI` rebuilt from the fields (and `authSource` when given, "" = none).
   /// Other engines get no URI. When the fields do not form a valid URI, the last valid one is
   /// kept (with the new auth source) and `fieldError` reports why: `mongoURI` is always nil or
-  /// parseable, and `prepared` refuses to save the mismatch.
+  /// parseable, and `prepared` refuses to save the mismatch. Every engine's `sslMode` is
+  /// normalized (`normalizedSSLMode`).
   static func rebuilt(_ config: ConnectionConfig, authSource: String? = nil) -> ConnectionConfig {
     var config = config
+    config.sslMode = normalizedSSLMode(config.sslMode, for: config.databaseType)
     guard config.databaseType == .mongodb else {
       config.mongoURI = nil
       return config
     }
-    config.sslMode = normalizedSSLMode(config.sslMode)
     var base = storedURI(of: config) ?? defaultURI
     if let authSource { base.authSource = authSource.isEmpty ? nil : authSource }
     config.mongoURI = ((try? reparsed(applyingFields(of: config, to: base))) ?? base).storedURI
@@ -134,7 +141,8 @@ enum MongoConnectionDraft {
 
   /// TLS is off and the connection leaves this Mac (or names a `+srv` cluster).
   static func tlsWarning(for config: ConnectionConfig) -> String? {
-    guard config.databaseType == .mongodb, normalizedSSLMode(config.sslMode) == .disable,
+    guard config.databaseType == .mongodb,
+      normalizedSSLMode(config.sslMode, for: .mongodb) == .disable,
       !config.host.isEmpty
     else { return nil }
     let uri = storedURI(of: config)

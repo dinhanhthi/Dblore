@@ -96,6 +96,9 @@ nonisolated enum TablePlusImporter {
     switch engine {
     case .mysql: defaultPort = engine.defaultPort
     case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
+    case .clickhouse, .sqlserver:
+      return .failure(
+        Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }
     guard let port = port(entry["DatabasePort"], default: defaultPort) else {
       return .failure(Skipped(message: "Skipped \(label): invalid port."))
@@ -113,6 +116,9 @@ nonisolated enum TablePlusImporter {
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
     case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
+    case .clickhouse, .sqlserver:
+      return .failure(
+        Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }
     let sslMode = sslMode(entry["tLSMode"], warnings: &warnings)
 

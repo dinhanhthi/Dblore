@@ -201,19 +201,22 @@ extension ConnectionFormContent {
   }
 
   /// The certificate pickers a TLS mode offers. MongoDB takes a custom CA only: `MongoSession`
-  /// refuses client certificates.
+  /// refuses client certificates. ClickHouse and SQL Server take a custom CA only too (no client
+  /// certificates).
   enum CertificateFields: Equatable {
     case none
     case customCA
     case clientCertificateAndCA
   }
 
+  /// Follows the mode the engine connects with (`MongoConnectionDraft.normalizedSSLMode`).
   static func certificateFields(for type: DatabaseType, sslMode: SSLMode) -> CertificateFields {
-    if type == .mongodb {
-      return MongoConnectionDraft.normalizedSSLMode(sslMode) == .disable ? .none : .customCA
+    let mode = MongoConnectionDraft.normalizedSSLMode(sslMode, for: type)
+    guard mode == .require || mode == .verifyCa || mode == .verifyFull else { return .none }
+    switch type {
+    case .mongodb, .clickhouse, .sqlserver: return .customCA
+    case .postgresql, .sqlite, .duckdb, .mysql: return .clientCertificateAndCA
     }
-    return sslMode == .require || sslMode == .verifyCa || sslMode == .verifyFull
-      ? .clientCertificateAndCA : .none
   }
 
   @ViewBuilder
@@ -325,10 +328,9 @@ extension ConnectionFormContent {
   private func sslModeMenu(
     selection: Binding<SSLMode>, onSelect: ((SSLMode) -> Void)? = nil
   ) -> some View {
-    // MongoDB shows a stored Prefer/Require as the Verify Full it connects with.
-    let shown =
-      isMongoDB
-      ? MongoConnectionDraft.normalizedSSLMode(selection.wrappedValue) : selection.wrappedValue
+    // MongoDB and ClickHouse show a stored Prefer/Require as the Verify Full they connect with.
+    let shown = MongoConnectionDraft.normalizedSSLMode(
+      selection.wrappedValue, for: connectionConfig.databaseType)
     return FormField(label: "SSL Mode") {
       Menu {
         ForEach(MongoConnectionDraft.sslModes(for: connectionConfig.databaseType), id: \.self) {
@@ -655,8 +657,11 @@ extension ConnectionFormContent {
 
   func preparedCertificateConfig() throws -> ConnectionConfig {
     var config = connectionConfig
+    // The mode the engine connects with, as the SSL picker and `certificateFields` show it
+    let connectMode = MongoConnectionDraft.normalizedSSLMode(
+      config.sslMode, for: config.databaseType)
 
-    if config.clientCertificate != nil && !usesClientCertificate(config.sslMode) {
+    if config.clientCertificate != nil && !usesClientCertificate(connectMode) {
       throw CertificateFormError.tlsMode
     }
 
@@ -679,7 +684,7 @@ extension ConnectionFormContent {
       return config
     }
 
-    guard usesClientCertificate(config.sslMode) else {
+    guard usesClientCertificate(connectMode) else {
       throw CertificateFormError.tlsMode
     }
     config.clientCertificate = try Self.certificateInfo(for: material, sslMode: config.sslMode)
