@@ -59,6 +59,8 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
   private var connectionID: Int?
   /// The plugin answered `open` with `opened`
   private var isOpen = false
+  /// `opened.serverVersion`, plain text from the plugin
+  private var openedServerVersion: String?
   private var inFlight: Set<String> = []
   private var tunnelStorage: (any SSHTunneling)?
   private var forwarderStorage: SSHLoopbackForwarder?
@@ -99,6 +101,9 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
       of: SessionCloseReason.self, bufferingPolicy: .bufferingNewest(1))
   }
 
+  /// The plugin's `opened.serverVersion`; nil before a successful open
+  var serverVersion: String? { lock.withLock { openedServerVersion } }
+
   deinit {
     let finished = lock.withLock { emitted != nil }
     if !finished { closeContinuation.finish() }
@@ -132,24 +137,29 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
       tlsServerName: tlsServerNameOverride ?? config.host, database: config.database,
       username: config.username, password: config.password, tls: tls,
       timeoutSeconds: config.timeoutSeconds, readOnly: config.readOnlyFile, options: openOptions)
+    let version: String
     if let forwarder {
       // The plugin dials the forwarder during `open`; never once it has stopped.
-      let opened: Void? = try await forwarder.whileListening {
+      let opened: String? = try await forwarder.whileListening {
         try await sendOpen(request, router: router, connection: connection)
       }
-      guard opened != nil else {
+      guard let opened else {
         throw DatabaseError.connectionFailed("The SSH tunnel closed while connecting.")
       }
       lock.withLock { tunnelStorage }?.whenClosed { [weak self] in self?.emit(.connectionLost) }
+      version = opened
     } else {
-      try await sendOpen(request, router: router, connection: connection)
+      version = try await sendOpen(request, router: router, connection: connection)
     }
-    lock.withLock { isOpen = true }
+    lock.withLock {
+      isOpen = true
+      openedServerVersion = version
+    }
   }
 
   private func sendOpen(
     _ request: EngineRequest.Open, router: EnginePluginRouter, connection: Int
-  ) async throws {
+  ) async throws -> String {
     let seconds = max(1, config.timeoutSeconds) + Self.openTimeoutMargin
     let sent = try router.send(.open(request), connection: connection, timeout: .seconds(seconds))
     var last: EngineEvent.Kind?
@@ -164,7 +174,7 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
       throw DatabaseError.connectionFailed(formatError(error))
     }
     switch last {
-    case .opened: return
+    case .opened(let serverVersion): return serverVersion
     case .error(let failure): throw DatabaseError.connectionFailed(redacting(failure.message))
     case nil:
       // The caller's task was cancelled before the answer

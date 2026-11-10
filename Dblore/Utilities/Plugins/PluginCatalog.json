@@ -20,6 +20,17 @@
       "bundleName": "DbloreLocalAI.bundle",
       "bundleIdentifier": "ace.thi.Dblore.LocalAI",
       "cdhash": "524427c3a8b9ef1743adc3d7df13238b2657fd6c"
+    },
+    {
+      "id": "sqlserver",
+      "kind": "bundle",
+      "version": "1.0.0",
+      "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-sqlserver-v1.0.0/DbloreSQLServer.zip",
+      "sha256": "260264066c407e283ee6c8b193b881cb461611f2810fd150c14d13895ec103fb",
+      "maxSize": 4678150,
+      "bundleName": "DbloreSQLServer.bundle",
+      "bundleIdentifier": "ace.thi.Dblore.SQLServer",
+      "cdhash": "8d1e3d5e7c5de5d37f1fbd3c0b79c1e0a7efd305"
     }
   ]
 }

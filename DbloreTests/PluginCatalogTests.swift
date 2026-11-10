@@ -55,7 +55,7 @@ import Testing
   @Test func bundledCatalogPinsEveryPlugin() throws {
     let catalog = try PluginCatalog.bundled()
     #expect(catalog.schemaVersion == 3)
-    #expect(catalog.plugins.map(\.id) == ["duckdb", "local-ai"])
+    #expect(catalog.plugins.map(\.id) == ["duckdb", "local-ai", "sqlserver"])
     let duckdb = try #require(catalog.entry(id: "duckdb"))
     #expect(duckdb.version == "1.5.6")
     #expect(duckdb.url.absoluteString == Self.validURL)
@@ -72,6 +72,20 @@ import Testing
         == .bundle(
           name: "DbloreLocalAI.bundle", identifier: "ace.thi.Dblore.LocalAI",
           cdhash: "524427c3a8b9ef1743adc3d7df13238b2657fd6c"))
+    // Engine plugins: stable fields only. sha256, maxSize and cdhash change with every rebuild
+    // (re-pinned by scripts/release-plugin.sh runs), so they are not pinned here.
+    let sqlServer = try #require(catalog.entry(id: "sqlserver"))
+    #expect(sqlServer.version == "1.0.0")
+    #expect(
+      sqlServer.url.absoluteString
+        == "https://github.com/dinhanhthi/Dblore/releases/download/plugin-sqlserver-v1.0.0/DbloreSQLServer.zip"
+    )
+    guard case .bundle(let name, let identifier, _) = sqlServer.kind else {
+      Issue.record("sqlserver is not a bundle: \(sqlServer.kind)")
+      return
+    }
+    #expect(name == "DbloreSQLServer.bundle")
+    #expect(identifier == "ace.thi.Dblore.SQLServer")
   }
 
   @Test func validCatalogDecodesEveryEntry() throws {

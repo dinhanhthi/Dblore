@@ -75,7 +75,9 @@ struct EnginePluginSessionTests {
     fake.batches = (0..<6).map { batch in (0..<2).map { [.int(batch * 2 + $0)] } }
     fake.batches[0][1] = [.date("2026-01-02T03:04:05.123456Z")]
     let session = session(fake)
+    #expect(session.serverVersion == nil)
     try await session.open()
+    #expect(session.serverVersion == "fake 1")
     let source = try await session.query("SELECT n FROM t", binds: [])
     var rows = source.rows.makeAsyncIterator()
     func more() -> Int { fake.count { if case .more = $0 { true } else { false } } }
