@@ -122,6 +122,9 @@ struct DestructiveStatementRuleTests {
     Case("REPLACE TABLE t (a UInt8) ENGINE = Memory", .clickhouse, .confirm("t")),
     Case("OPTIMIZE TABLE t FINAL DEDUPLICATE", .clickhouse, .confirm("t")),
     Case("ALTER TABLE t UPDATE c = 1 WHERE 1", .clickhouse, .none),
+    Case("ALTER TABLE t (DELETE WHERE id < 3)", .clickhouse, .confirm("t")),
+    Case("ALTER TABLE t (DROP COLUMN c)", .clickhouse, .confirm("t")),
+    Case("ALTER TABLE t (CLEAR COLUMN c IN PARTITION p)", .clickhouse, .confirm("t")),
     Case("DETACH TABLE t", .clickhouse, .none),
     Case("ALTER TABLE t DELETE WHERE 1", .none),
     // A PARALLEL WITH chain, or a TRUNCATE of every table, names no single object
@@ -130,6 +133,7 @@ struct DestructiveStatementRuleTests {
     Case("(DROP TABLE scratch) PARALLEL WITH DROP TABLE orders", .clickhouse, .unnamed),
     Case("TRUNCATE TEMPORARY TABLE t", .clickhouse, .confirm("t")),
     Case("TRUNCATE ALL TABLES FROM db", .clickhouse, .unnamed),
+    Case("TRUNCATE TABLES FROM db LIKE 'tmp%'", .clickhouse, .unnamed),
     Case("TRUNCATE DATABASE db", .clickhouse, .unnamed),
     Case("TRUNCATE TABLE t", .clickhouse, .confirm("t")),
     Case("TRUNCATE database", .confirm("database")),

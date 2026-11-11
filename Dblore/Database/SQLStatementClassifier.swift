@@ -359,12 +359,13 @@ nonisolated enum SQLStatementClassifier {
   /// `DESCRIBE` / `DESC` / `EXISTS` only read the catalog. `RENAME`, `EXCHANGE`, `ATTACH`,
   /// `DETACH`, `UNDROP` and `REPLACE TABLE` change the schema; `OPTIMIZE`, `SYSTEM`, `KILL`,
   /// `CHECK`, `BACKUP`, `RESTORE`, `MOVE` and `USE` are utilities. A `SET` touches a brake when it
-  /// names one (`clickhouseBrakeSettings`); `SET DEFAULT ROLE` changes an account, a utility.
+  /// names one (`clickhouseBrakeSettings`); `SET ROLE` and `SET DEFAULT ROLE` change privileges
+  /// (and a role may carry settings), utilities (see `setsClickHouseRole`).
   private static func clickhouseKind(
     of body: ArraySlice<SQLToken>, keyword: String, topWords: [String]
   ) -> StatementKind? {
     switch keyword {
-    case "SET" where setsDefaultRole(topWords): .utility
+    case "SET" where setsClickHouseRole(topWords): .utility
     case "SET": .sessionSet(touchesBrake: namesClickHouseBrake(body))
     case "DESCRIBE", "DESC", "EXISTS": .read
     case _ where clickhouseDdlKeywords.contains(keyword): .ddl
@@ -384,12 +385,20 @@ nonisolated enum SQLStatementClassifier {
     }
   }
 
+  /// `SET ROLE …` or `SET DEFAULT ROLE …`
+  private static func setsClickHouseRole(_ topWords: [String]) -> Bool {
+    topWords.starts(with: ["SET", "ROLE"]) || setsDefaultRole(topWords)
+  }
+
   /// ClickHouse statements that remove data for good are `isDestructive`: DROP, TRUNCATE,
-  /// `REPLACE TABLE`, `OPTIMIZE ... DEDUPLICATE`, and an ALTER with a top-level DELETE, DROP,
-  /// CLEAR or REPLACE (`ALTER TABLE t DELETE WHERE ...`, `DROP PARTITION`, `CLEAR COLUMN`,
-  /// `REPLACE PARTITION`). Fails closed: a column named `drop` in an ALTER counts. DETACH is not
+  /// `REPLACE TABLE`, `OPTIMIZE ... DEDUPLICATE`, and an ALTER with a DELETE, DROP, CLEAR or
+  /// REPLACE word at any depth (`ALTER TABLE t DELETE WHERE ...`, `DROP PARTITION`,
+  /// `CLEAR COLUMN`, `REPLACE PARTITION`, and parenthesized commands such as
+  /// `ALTER TABLE t (DELETE WHERE ...)`). Fails closed: a column named `drop` or a `replace(`
+  /// call in an `UPDATE` expression counts, which only asks for more confirmation. DETACH is not
   /// destructive (ATTACH brings the data back). A statement with a query-level `SETTINGS`
-  /// clause that names a brake (`SELECT ... SETTINGS max_execution_time = 0`) lifts it.
+  /// clause that names a brake (`SELECT ... SETTINGS max_execution_time = 0`) lifts it, and
+  /// `SET [DEFAULT] ROLE` changes privileges and may lift brakes (a role may carry settings).
   /// `PARALLEL WITH` (at any depth) chains statements the server runs together,
   /// whatever the first verb (a failing read still lets a chained CREATE run): fails closed as
   /// `.unknown` and destructive (`runsInParallel`).
@@ -403,9 +412,12 @@ nonisolated enum SQLStatementClassifier {
     case "DROP", "TRUNCATE", "REPLACE": analysis.isDestructive = true
     case "OPTIMIZE": analysis.isDestructive = topWords.contains("DEDUPLICATE")
     case "ALTER":
-      analysis.isDestructive = topWords.dropFirst().contains {
-        ["DELETE", "DROP", "CLEAR", "REPLACE"].contains($0)
+      analysis.isDestructive = body.dropFirst().contains {
+        ["DELETE", "DROP", "CLEAR", "REPLACE"].contains($0.keyword ?? "")
       }
+    case "SET" where setsClickHouseRole(topWords):
+      analysis.changesPrivileges = true
+      analysis.resetsSessionBrakes = true
     default: break
     }
     if body.contains(where: { $0.isWord("SETTINGS") }), namesClickHouseBrake(body) {

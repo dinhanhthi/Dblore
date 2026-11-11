@@ -68,9 +68,13 @@ nonisolated extension SQLStatementClassifier {
     "OPTIMIZE", "SYSTEM", "KILL", "CHECK", "BACKUP", "RESTORE", "MOVE", "USE",
   ]
 
-  /// ClickHouse settings (lowercase) the engine plugin sends as safety brakes: the statement
-  /// timeout and the read-only level.
-  static let clickhouseBrakeSettings: Set<String> = ["max_execution_time", "readonly"]
+  /// ClickHouse settings (lowercase) that can lift a safety brake the engine plugin sends: the
+  /// read-only level, the statement timeout and the limits that decide when it applies, and a
+  /// settings profile (it may set any of them).
+  static let clickhouseBrakeSettings: Set<String> = [
+    "readonly", "max_execution_time", "max_execution_time_leaf",
+    "timeout_before_checking_execution_speed", "max_estimated_execution_time", "profile",
+  ]
 
   static let utilityKeywords: Set<String> = [
     "COPY", "DO", "CALL", "VACUUM", "ANALYZE", "ANALYSE", "REINDEX", "CLUSTER", "LOCK",

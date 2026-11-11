@@ -35,7 +35,8 @@ nonisolated enum DestructiveStatementRule {
   ///   table when it starts `ALTER | REPLACE | OPTIMIZE [TEMPORARY] TABLE name` (see `tableTarget`);
   /// - MongoDB `drop()`, `dropIndex`, `dropDatabase()` and `deleteMany({})`;
   /// - on ClickHouse, unnamed: a `PARALLEL WITH` chain (every statement in it runs) and
-  ///   `TRUNCATE ALL TABLES` / `TRUNCATE DATABASE` (see `namesNoSingleTarget`).
+  ///   `TRUNCATE ALL TABLES`, `TRUNCATE TABLES FROM db` and `TRUNCATE DATABASE` (see
+  ///   `namesNoSingleTarget`).
   ///
   /// Any other statement, an unrecognized one included, is `.none`: the caller's own rules
   /// apply to it.
@@ -118,7 +119,7 @@ nonisolated enum DestructiveStatementRule {
   }
 
   /// ClickHouse statements that are destructive with no single target: `PARALLEL WITH` at any
-  /// depth (as the classifier reads it), or `TRUNCATE [TEMPORARY] [TABLE] ALL | DATABASE`
+  /// depth (as the classifier reads it), or `TRUNCATE [TEMPORARY] [TABLE] ALL | TABLES | DATABASE`
   private static func namesNoSingleTarget(_ pieces: [Piece]) -> Bool {
     let parallel = pieces.indices.dropLast().contains { index in
       pieces[index].keyword == "PARALLEL" && pieces[index + 1].keyword == "WITH"
@@ -127,7 +128,8 @@ nonisolated enum DestructiveStatementRule {
     guard pieces.first?.keyword == "TRUNCATE" else { return false }
     var index = 1
     skip(["TEMPORARY", "TABLE"], in: pieces, at: &index)
-    return index < pieces.count && ["ALL", "DATABASE"].contains(pieces[index].keyword ?? "")
+    return index < pieces.count
+      && ["ALL", "TABLES", "DATABASE"].contains(pieces[index].keyword ?? "")
   }
 
   /// `CREATE OR REPLACE [TEMP | TEMPORARY]` of an object that holds data: nil for any other

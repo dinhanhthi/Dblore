@@ -107,6 +107,8 @@ struct ClickHouseDialectTests {
     "((EXISTS TABLE t)) PARALLEL WITH CREATE TABLE x (a UInt8) ENGINE = Memory",
     // A query-level setting that lifts the statement timeout
     "SELECT 1 SETTINGS max_execution_time = 0",
+    // A settings profile may change any brake
+    "SELECT 1 SETTINGS profile = 'x'",
   ]
 
   @Test("A write or lifted brake is never read-only safe", arguments: hiddenWrites)
@@ -139,6 +141,11 @@ struct ClickHouseDialectTests {
       "ALTER TABLE t DELETE WHERE 1", "ALTER TABLE db.t ON CLUSTER c DROP PARTITION 202401",
       "ALTER TABLE t CLEAR COLUMN c", "TRUNCATE TABLE t", "DROP TABLE t",
       "REPLACE TABLE t (a UInt8) ENGINE = Memory", "OPTIMIZE TABLE t FINAL DEDUPLICATE",
+      // Parenthesized ALTER commands run as written
+      "ALTER TABLE t (DELETE WHERE id < 3)", "ALTER TABLE t (DROP COLUMN c)",
+      "ALTER TABLE t (CLEAR COLUMN c IN PARTITION p)",
+      // Fails closed: a `replace(` call in an UPDATE only asks for more confirmation
+      "ALTER TABLE t UPDATE x = replace(x, 'a', 'b') WHERE 1",
     ]
     for sql in destructive {
       #expect(Self.classify(sql).first?.isDestructive == true, "\(sql)")
@@ -149,6 +156,25 @@ struct ClickHouseDialectTests {
     ]
     for sql in kept {
       #expect(Self.classify(sql).first?.isDestructive == false, "\(sql)")
+    }
+  }
+
+  @Test("A profile or role change lifts brakes; a role change is blocked schema-protected")
+  func profileAndRoleLiftBrakes() throws {
+    for sql in ["SET profile = 'x'", "SET max_execution_time_leaf = 0"] {
+      let statement = try #require(Self.classify(sql).first)
+      #expect(statement.resetsSessionBrakes, "\(sql)")
+    }
+    for sql in ["SET ROLE r", "SET DEFAULT ROLE r TO u"] {
+      let statements = Self.classify(sql)
+      let statement = try #require(statements.first)
+      #expect(statement.changesPrivileges, "\(sql)")
+      #expect(statement.resetsSessionBrakes, "\(sql)")
+      for level in [ConnectionProtectionLevel.readOnly, .schemaOnly] {
+        let decision = DatabaseConnectionManager.evaluate(
+          statements, policy: ProtectionPolicy(protectionLevel: level), dialect: Self.dialect)
+        #expect(decision != .allowed, "\(sql) \(level)")
+      }
     }
   }
 
