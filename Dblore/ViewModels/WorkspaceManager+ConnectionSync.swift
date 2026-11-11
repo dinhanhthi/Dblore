@@ -234,10 +234,11 @@ extension WorkspaceManager {
     Task { await connectionManager.updateConnectedMaskRules(rules, of: current) }
   }
 
-  /// `config` with the color, group, favorite star, hidden schemas, scripts, attached databases
-  /// and lock of the saved row a save of `config` overwrites, for saves that do not come from
-  /// the connection form (an opened file, a rename), so they never erase what the form or the
-  /// sidebar set, and for an opened file's config, so the form opens on the saved values.
+  /// `config` with the engine preset, color, group, favorite star, hidden schemas, scripts,
+  /// attached databases and lock of the saved row a save of `config` overwrites, for saves that
+  /// do not come from the connection form (an opened file, a rename), so they never erase what
+  /// the form or the sidebar set, and for an opened file's config, so the form opens on the
+  /// saved values. Only the form (its engine picker) changes a row's preset.
   /// Unchanged without that row, and with Remember off.
   static func keepingSavedAppearance(
     _ config: ConnectionConfig, defaults: UserDefaults = .standard
@@ -246,12 +247,27 @@ extension WorkspaceManager {
     let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
     guard let saved = exactSavedEntry(for: config, in: history)?.config else { return config }
     var config = config
+    config.flavor = saved.flavor
     config.colorTag = saved.colorTag
     config.groupName = saved.groupName
     config.isFavoriteConnection = saved.isFavoriteConnection
     config.hiddenSchemas = saved.hiddenSchemas
     config.isLocked = saved.isLocked
     return config.withScripts(of: saved)
+  }
+
+  /// `config` with the engine preset of the saved row a save of `config` overwrites, for every
+  /// connect but the engine picker's, so the session opens with the row's preset and the save
+  /// writes it unchanged. Unchanged without that row, and with Remember off.
+  static func adoptingSavedFlavor(
+    _ config: ConnectionConfig, defaults: UserDefaults = .standard
+  ) -> ConnectionConfig {
+    guard config.rememberConnection else { return config }
+    let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
+    guard let saved = exactSavedEntry(for: config, in: history)?.config else { return config }
+    var config = config
+    config.flavor = saved.flavor
+    return config
   }
 
   /// An opened file's `config` with the scripts and attached databases of its saved row
@@ -442,6 +458,7 @@ extension WorkspaceManager {
     current.name = trimmed
     workspace.connectionConfig = current
     editingConnectionConfig.name = trimmed
+    adoptSavedFlavorInForm(of: current)
     markDirtyAndScheduleAutoSave()
     syncConnectionStateToTabs()
     // A switched MongoDB connection renames its saved entry, which keeps the home database
@@ -469,6 +486,7 @@ extension WorkspaceManager {
     current.hiddenSchemas = normalized
     workspace.connectionConfig = current
     editingConnectionConfig.hiddenSchemas = normalized
+    adoptSavedFlavorInForm(of: current)
     markDirtyAndScheduleAutoSave()
     let history = SessionManager.loadHistory(defaults: defaults, passwords: NoPasswordStore())
     guard Self.exactSavedEntry(for: current, in: history) != nil else { return }
@@ -476,6 +494,13 @@ extension WorkspaceManager {
       current.mongoHomeDatabase == nil
         ? current : Self.switchedMongoConfig(current, to: current.identityDatabase),
       defaults: defaults, passwords: passwords)
+  }
+
+  /// The form's draft takes the preset `current` adopted while it is still that saved row
+  private func adoptSavedFlavorInForm(of current: ConnectionConfig) {
+    if ConnectionHistoryEntry(config: current).isSavedRow(of: editingConnectionConfig) {
+      editingConnectionConfig.flavor = current.flavor
+    }
   }
 
   // MARK: - Connect (weakening needs the Safe Mode unlock)
@@ -599,6 +624,8 @@ extension WorkspaceManager {
   ///   (`keepingSavedMaskRules`).
   /// - Parameter fromForm: true when `config` comes from the connection form: the save writes its
   ///   color and group (nil clears them); otherwise the saved row's are kept.
+  /// - Parameter picksEngine: true only from the form with the engine picker: the connect then
+  ///   opens and saves `config`'s engine preset; otherwise the saved row's.
   /// - Parameter passwordPromptAnchor: where an ask-on-connect connection asks for its password
   ///   (nil: this workspace's window). Every connect asks after the lock step when the config
   ///   holds no typed password (`ConnectionPasswordPromptCoordinator.asks`), auto-connect too;
@@ -610,7 +637,7 @@ extension WorkspaceManager {
     hasPassword: Bool = AppSettings.shared.hasCustomPasswordSet,
     hasTouchID: Bool = AppSettings.shared.isBiometricEnabled,
     aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false,
-    passwordPromptAnchor: NSWindow? = nil
+    picksEngine: Bool = false, passwordPromptAnchor: NSWindow? = nil
   ) async throws {
     lastUnlockConnectError = nil
     // The pin of a switched MongoDB connection holds on its own server only (Reconnect,
@@ -650,7 +677,7 @@ extension WorkspaceManager {
       {
         holdWeakeningConnect(
           config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
-          fromForm: fromForm)
+          fromForm: fromForm, picksEngine: picksEngine)
         throw WorkspaceConnectError.unlockRequired
       }
     } catch {
@@ -667,9 +694,10 @@ extension WorkspaceManager {
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningMaskRulesEdited = false
     pendingWeakeningFromForm = false
+    pendingWeakeningPicksEngine = false
     try await connectWithoutUnlockCheck(
       config: config, isAutoConnect: isAutoConnect, aiFieldsEdited: aiFieldsEdited,
-      maskRulesEdited: maskRulesEdited, fromForm: fromForm)
+      maskRulesEdited: maskRulesEdited, fromForm: fromForm, picksEngine: picksEngine)
     await showAttachWarnings()
   }
 
@@ -700,13 +728,14 @@ extension WorkspaceManager {
       try await connect(
         config: config, defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword,
         hasTouchID: hasTouchID, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
-        fromForm: true, passwordPromptAnchor: passwordPromptAnchor)
+        fromForm: true, picksEngine: true, passwordPromptAnchor: passwordPromptAnchor)
       return
     }
     await unlockAttachedFiles(of: config)
     let config = try await askingPassword(config, for: .connect, anchor: passwordPromptAnchor)
     holdWeakeningConnect(
-      config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited, fromForm: true)
+      config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited, fromForm: true,
+      picksEngine: true)
     try await completePendingWeakeningConnect()
   }
 
@@ -738,7 +767,8 @@ extension WorkspaceManager {
   /// Holds `config` for `completePendingWeakeningConnect()`, with the client certificate, SSH
   /// secret and Vault secret of the running operation (the form's), which end with it.
   private func holdWeakeningConnect(
-    _ config: ConnectionConfig, aiFieldsEdited: Bool, maskRulesEdited: Bool, fromForm: Bool
+    _ config: ConnectionConfig, aiFieldsEdited: Bool, maskRulesEdited: Bool, fromForm: Bool,
+    picksEngine: Bool
   ) {
     pendingWeakeningConnect = config
     pendingWeakeningCertificate = ClientCertificateStoreFactory.operationMaterial?.material
@@ -748,6 +778,7 @@ extension WorkspaceManager {
     pendingWeakeningAIFieldsEdited = aiFieldsEdited
     pendingWeakeningMaskRulesEdited = maskRulesEdited
     pendingWeakeningFromForm = fromForm
+    pendingWeakeningPicksEngine = picksEngine
   }
 
   /// Asks, on this workspace's window, to unlock each locked file `config` attaches. A cancel
@@ -845,12 +876,14 @@ extension WorkspaceManager {
     let aiFieldsEdited = pendingWeakeningAIFieldsEdited
     let maskRulesEdited = pendingWeakeningMaskRulesEdited
     let fromForm = pendingWeakeningFromForm
+    let picksEngine = pendingWeakeningPicksEngine
     pendingWeakeningCertificate = nil
     pendingWeakeningSSHCredential = nil
     pendingWeakeningVaultSecret = nil
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningMaskRulesEdited = false
     pendingWeakeningFromForm = false
+    pendingWeakeningPicksEngine = false
     defer {
       scopedMaterial?.clear()
       scopedSSH?.clear()
@@ -862,7 +895,7 @@ extension WorkspaceManager {
           try await VaultCredentialStore.$operationSecret.withValue(scopedVault) {
             try await connectWithoutUnlockCheck(
               config: config, aiFieldsEdited: aiFieldsEdited, maskRulesEdited: maskRulesEdited,
-              fromForm: fromForm)
+              fromForm: fromForm, picksEngine: picksEngine)
           }
         }
       }
@@ -893,6 +926,7 @@ extension WorkspaceManager {
         sshCredential: pendingWeakeningSSHCredential, vaultSecret: pendingWeakeningVaultSecret,
         aiFieldsEdited: pendingWeakeningAIFieldsEdited,
         maskRulesEdited: pendingWeakeningMaskRulesEdited, fromForm: pendingWeakeningFromForm,
+        picksEngine: pendingWeakeningPicksEngine,
         defaultCommitStyle: defaultCommitStyle, hasPassword: hasPassword, hasTouchID: hasTouchID)
     }
     do {
@@ -916,6 +950,7 @@ extension WorkspaceManager {
     let aiFieldsEdited: Bool
     let maskRulesEdited: Bool
     let fromForm: Bool
+    let picksEngine: Bool
     let defaultCommitStyle: CommitStyle
     let hasPassword: Bool
     let hasTouchID: Bool
@@ -947,7 +982,7 @@ extension WorkspaceManager {
               config: config, defaultCommitStyle: held.defaultCommitStyle,
               hasPassword: held.hasPassword, hasTouchID: held.hasTouchID,
               aiFieldsEdited: held.aiFieldsEdited, maskRulesEdited: held.maskRulesEdited,
-              fromForm: held.fromForm)
+              fromForm: held.fromForm, picksEngine: held.picksEngine)
           }
         }
       }
@@ -969,6 +1004,7 @@ extension WorkspaceManager {
     pendingWeakeningAIFieldsEdited = false
     pendingWeakeningMaskRulesEdited = false
     pendingWeakeningFromForm = false
+    pendingWeakeningPicksEngine = false
   }
 
   /// Connect/disconnect: results shown in every tab came from the previous connection, so none

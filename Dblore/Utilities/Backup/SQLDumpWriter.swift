@@ -474,7 +474,7 @@ actor SQLDumpWriter {
     case .sqlite: sidecars = SQLiteFileAccess.sidecarSuffixes
     case .duckdb where config.database != DuckDBSession.inMemoryPath:
       sidecars = SQLiteFileAccess.duckDBSidecarSuffixes
-    case .duckdb, .postgresql, .mysql, .mongodb: return false
+    case .duckdb, .postgresql, .mysql, .mongodb, .clickhouse, .sqlserver: return false
     }
     guard !config.database.isEmpty else { return false }
     let database = resolvedPath(URL(fileURLWithPath: config.database)).lowercased()
@@ -554,7 +554,7 @@ actor SQLDumpWriter {
     case .duckdb:
       // Never through a second instance (see the file header)
       guard usesTabSession else { throw SQLDumpError.unsupportedEngine(engine) }
-    case .mongodb:
+    case .mongodb, .clickhouse, .sqlserver:
       throw SQLDumpError.unsupportedEngine(engine)
     }
     if Self.isConnectedDatabaseFile(destination, config: config) {
@@ -604,7 +604,7 @@ actor SQLDumpWriter {
       let input = try await SQLDumpCatalog.duckdbInput(reader)
       script = try SQLDumpDDL.duckdb(
         chosen.map { SQLDumpSelection.duckdb(input, keeping: $0) } ?? input, options: options)
-    case .mongodb:
+    case .mongodb, .clickhouse, .sqlserver:
       throw SQLDumpError.unsupportedEngine(engine)
     }
     var assembler = SQLDumpAssembler(engine: engine)

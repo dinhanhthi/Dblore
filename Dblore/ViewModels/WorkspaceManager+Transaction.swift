@@ -59,9 +59,15 @@ extension WorkspaceManager {
     // before the run
     let transactionOpenBefore = !heldWrittenRelations.isEmpty || !pendingTransaction.isIdle
     // Off the main actor; a page read (the data viewers' own) needs no transaction state
+    // MySQL and ClickHouse resolve a bare name in the connection's database
+    let defaultSchema =
+      switch config.databaseType {
+      case .mysql: config.database
+      case .clickhouse where !config.database.isEmpty: config.database
+      default: dialect.defaultSchema
+      }
     let steps = await WrittenRelations.steps(
-      of: statements, dialect: dialect,
-      defaultSchema: config.databaseType == .mysql ? config.database : dialect.defaultSchema)
+      of: statements, dialect: dialect, defaultSchema: defaultSchema)
     guard !steps.isEmpty else { return }
     // One actor turn: a Commit, Rollback or reconnect landing between separate reads would mix
     // two states

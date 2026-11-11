@@ -656,8 +656,8 @@ private actor CancelPause {
 /// each extended-protocol batch (Parse … Sync) is answered by its SQL: the identity read at open
 /// returns `pid`, `backendStart` and, when set, `encoding` as a 4th column (an error when `pid`
 /// is nil), the cancel statement answers as `answer` says and is recorded with its text binds, a
-/// statement `fails` names answers an error, a FETCH answers `fetchRows` text rows, anything else
-/// returns no rows.
+/// statement `fails` names answers an error, a FETCH answers `fetchRows` text rows, `version()`
+/// answers `version` when set, anything else returns no rows.
 final class FakePostgresServer: @unchecked Sendable {
   enum Answer: Sendable, CustomTestStringConvertible {
     /// One row, true
@@ -692,6 +692,8 @@ final class FakePostgresServer: @unchecked Sendable {
   private let fails: @Sendable (String) -> Bool
   /// Rows of one text column `a` a FETCH answers (0: no rows)
   private let fetchRows: Int
+  /// The `pg_catalog.version()` text (nil: no rows)
+  private let version: String?
   private let lock = NSLock()
   private let held = NSCondition()
   private var released = false
@@ -706,9 +708,11 @@ final class FakePostgresServer: @unchecked Sendable {
   init(
     pid: Int32?, backendStart: String, answer: Answer, encoding: String? = nil,
     holds: @escaping @Sendable (String) -> Bool = { _ in false },
-    fails: @escaping @Sendable (String) -> Bool = { _ in false }, fetchRows: Int = 0
+    fails: @escaping @Sendable (String) -> Bool = { _ in false }, fetchRows: Int = 0,
+    version: String? = nil
   ) {
     self.fetchRows = fetchRows
+    self.version = version
     self.pid = pid
     self.backendStart = backendStart
     self.encoding = encoding
@@ -863,6 +867,11 @@ final class FakePostgresServer: @unchecked Sendable {
       return Self.rows(
         params: [], columns: [("a", 25)], rows: Array(repeating: row, count: fetchRows),
         tag: "FETCH \(fetchRows)")
+    }
+    if sql.contains("pg_catalog.version()"), let version {
+      let text = Array(version.utf8)
+      let row = Self.message("D", Self.int16(1) + Self.int32(UInt32(text.count)) + text)
+      return Self.rows(params: [], columns: [("version", 25)], rows: [row], tag: "SELECT 1")
     }
     if sql.contains("server_version_num") {
       guard let pid else { return Self.error("42501", "permission denied") }

@@ -21,8 +21,7 @@ nonisolated struct LockedWorkspaceList: @unchecked Sendable {
 
   /// Oldest first, each marked locked
   var entries: [WorkspaceHistoryEntry] {
-    guard let data = defaults.data(forKey: Self.key) else { return [] }
-    return (try? JSONDecoder().decode([WorkspaceHistoryEntry].self, from: data)) ?? []
+    WorkspaceHistoryEntry.decodeList(defaults.data(forKey: Self.key)).entries
   }
 
   /// Adds `entry` (marked locked), or refreshes the one with its id and file (name, bookmarks)
@@ -101,7 +100,10 @@ nonisolated struct LockedWorkspaceList: @unchecked Sendable {
   }
 
   private func save(_ list: [WorkspaceHistoryEntry]) {
-    guard let data = try? JSONEncoder().encode(list) else { return }
+    let stored = defaults.data(forKey: Self.key)
+    guard let data = WorkspaceHistoryEntry.encodeList(list, keepingUnreadableOf: stored) else {
+      return
+    }
     defaults.set(data, forKey: Self.key)
   }
 }

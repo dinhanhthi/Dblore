@@ -13,7 +13,7 @@ extension WorkspaceManager {
   var supportsSchemaCompare: Bool {
     switch workspace.connectionConfig?.databaseType {
     case .postgresql, .mysql, .sqlite: true
-    case .duckdb, .mongodb, nil: false
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, nil: false
     }
   }
 

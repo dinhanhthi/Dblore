@@ -12,6 +12,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case duckdb = "DuckDB"
   case mysql = "MySQL"
   case mongodb = "MongoDB"
+  case clickhouse = "ClickHouse"
+  case sqlserver = "SQL Server"
 
   var displayName: String {
     switch self {
@@ -20,10 +22,13 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .duckdb: rawValue
     case .mysql: "MySQL / MariaDB"
     case .mongodb: rawValue
+    case .clickhouse: rawValue
+    case .sqlserver: rawValue
     }
   }
 
-  /// Asset catalog image name for the database type icon (from simpleicons.org)
+  /// Asset catalog image name for the database type icon (from simpleicons.org; ClickHouse and
+  /// SQL Server use Dblore's own marks)
   var iconAssetName: String {
     switch self {
     case .postgresql:
@@ -36,6 +41,10 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "mysql"
     case .mongodb:
       return "mongodb"
+    case .clickhouse:
+      return "clickhouse"
+    case .sqlserver:
+      return "sqlserver"
     }
   }
 
@@ -44,6 +53,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     switch self {
     case .mysql: 3306
     case .mongodb: 27017
+    case .clickhouse: 8443
+    case .sqlserver: 1433
     case .postgresql, .sqlite, .duckdb: 5432
     }
   }
@@ -56,6 +67,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .duckdb: .duckdb
     case .mysql: .mysql
     case .mongodb: .mongodb
+    case .clickhouse: .clickhouse
+    case .sqlserver: .sqlserver
     }
   }
 
@@ -64,7 +77,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var keychainScope: String? {
     switch self {
     case .postgresql, .sqlite, .duckdb: nil
-    case .mysql, .mongodb: rawValue
+    case .mysql, .mongodb, .clickhouse, .sqlserver: rawValue
     }
   }
 
@@ -75,7 +88,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var interruptKeepsTransaction: Bool {
     switch self {
     case .mysql, .mongodb: true
-    case .postgresql, .sqlite, .duckdb: false
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: false
     }
   }
 
@@ -86,12 +99,29 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     self == .duckdb || self == .postgresql
   }
 
+  /// Catalog id of the plugin that ships this engine; nil for engines built into the app.
+  nonisolated var pluginID: String? {
+    switch self {
+    case .duckdb: "duckdb"
+    case .clickhouse: "clickhouse"
+    case .sqlserver: "sqlserver"
+    case .postgresql, .sqlite, .mysql, .mongodb: nil
+    }
+  }
+
   /// Feature set for this engine. SQLite is a file database. DuckDB is a file database
   /// shipped as a plugin: no staged edits, import, or foreign key lookup. MySQL / MariaDB is a
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
   /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
   /// without transactions, structure editing or SQL dump. Only PostgreSQL lists sequences and
-  /// user-defined types.
+  /// user-defined types. ClickHouse is a network engine shipped as a plugin: its databases are
+  /// the schemas, the statement timeout is its only brake, cancel stops the statement (a capped
+  /// read drops the rest of the stream), and it has no transactions, grid edits, import,
+  /// structure editing, SQL dump or Explain JSON / Analyze. SQL Server is a network engine shipped
+  /// as a plugin: schemas, functions, the statement and lock timeouts as brakes, cancel stops the
+  /// statement, transactions, grid edits of a table with a primary key, `DEFAULT` in an UPDATE
+  /// and foreign key lookup; no structure editing, SQL dump, import, user types, roles, server
+  /// cursor or Explain.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -229,15 +259,70 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsSQLDump: false,
         supportsUserTypes: false
       )
+    case .clickhouse:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: true,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
+        supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
+        supportsRowStaging: false,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: false,
+        requiresPlugin: true,
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: false,
+        supportsStructure: false,
+        supportsSQLDump: false,
+        supportsUserTypes: false
+      )
+    case .sqlserver:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: true,
+        supportsRolesAndUsers: false,
+        supportsFunctions: true,
+        supportsServerCursor: false,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
+        supportsUpdateOnly: false,
+        supportsDefaultInUpdate: true,
+        supportsRowStaging: true,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: true,
+        requiresPlugin: true,
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: true,
+        supportsStructure: false,
+        supportsSQLDump: false,
+        supportsUserTypes: false
+      )
     }
   }
 
   /// Whether tab titles and sidebar rows name a non-default schema. A MySQL "schema" is the
   /// connected database, the only one shown, so it is never named. SQLite keeps naming attached
-  /// and temp databases.
+  /// and temp databases. ClickHouse lists every database, so a table outside `default` is named;
+  /// SQL Server names a table outside `dbo`.
   nonisolated var namesSchema: Bool {
     switch self {
-    case .postgresql, .sqlite, .duckdb: true
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: true
     case .mysql, .mongodb: false
     }
   }
@@ -254,6 +339,85 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       let capabilities = type.capabilities
       guard capabilities.isAvailable || showExperimental else { return false }
       return !capabilities.requiresPlugin || isPluginInstalled(type)
+    }
+  }
+}
+
+/// A wire-compatible engine reached through its base engine's driver. Saved as an optional key
+/// next to `databaseType`, which stays the base engine: a build without the key connects as
+/// PostgreSQL or MySQL.
+nonisolated enum DatabaseFlavor: String, Codable, CaseIterable, Sendable {
+  case cockroachdb
+  case redshift
+  case yugabytedb
+  case tidb
+  case singlestore
+
+  var baseType: DatabaseType {
+    switch self {
+    case .cockroachdb, .redshift, .yugabytedb: .postgresql
+    case .tidb, .singlestore: .mysql
+    }
+  }
+
+  var displayName: String {
+    switch self {
+    case .cockroachdb: "CockroachDB"
+    case .redshift: "Redshift"
+    case .yugabytedb: "YugabyteDB"
+    case .tidb: "TiDB"
+    case .singlestore: "SingleStore"
+    }
+  }
+
+  var defaultPort: Int {
+    switch self {
+    case .cockroachdb: 26257
+    case .redshift: 5439
+    case .yugabytedb: 5433
+    case .tidb: 4000
+    case .singlestore: 3306
+    }
+  }
+}
+
+/// An entry of the connection form's engine picker: an engine, or a preset of one.
+nonisolated enum EnginePickerChoice: Hashable, Sendable {
+  case engine(DatabaseType)
+  case preset(DatabaseFlavor)
+
+  /// A flavor of another engine shows the engine itself.
+  init(_ config: ConnectionConfig) {
+    if let flavor = config.flavor, flavor.baseType == config.databaseType {
+      self = .preset(flavor)
+    } else {
+      self = .engine(config.databaseType)
+    }
+  }
+
+  var databaseType: DatabaseType {
+    switch self {
+    case .engine(let type): type
+    case .preset(let flavor): flavor.baseType
+    }
+  }
+
+  var flavor: DatabaseFlavor? {
+    if case .preset(let flavor) = self { flavor } else { nil }
+  }
+
+  var defaultPort: Int {
+    flavor?.defaultPort ?? databaseType.defaultPort
+  }
+
+  @MainActor var displayName: String {
+    flavor?.displayName ?? databaseType.displayName
+  }
+
+  /// `types` with each engine's presets right after it.
+  static func choices(for types: [DatabaseType]) -> [EnginePickerChoice] {
+    types.flatMap { type in
+      [.engine(type)] + DatabaseFlavor.allCases.filter { $0.baseType == type }.map(Self.preset)
     }
   }
 }
@@ -375,6 +539,9 @@ nonisolated struct AttachedDatabase: Codable, Equatable, Sendable {
 
 struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   var databaseType: DatabaseType
+  /// Wire-compatible engine on `databaseType` (nil: the base engine itself). An attribute of the
+  /// saved row, not part of its identity nor of the Keychain key.
+  var flavor: DatabaseFlavor?
   var host: String
   var port: Int
   var database: String
@@ -567,9 +734,16 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
     databaseType == .mongodb ? mongoHomeDatabase ?? database : database
   }
 
+  /// The flavor's name, else the engine's.
+  var engineDisplayName: String {
+    flavor?.displayName ?? databaseType.displayName
+  }
+
   // Custom CodingKeys for backward compatibility
   private enum CodingKeys: String, CodingKey {
     case databaseType, host, port, database, username, password, sslMode, clientCertificate
+    // Absent unless set
+    case flavor
     // Absent on connections saved before SSH tunnels
     case sshTunnel
     // Absent on connections saved before Vault sources
@@ -613,6 +787,11 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   nonisolated init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     databaseType = try container.decode(DatabaseType.self, forKey: .databaseType)
+    // An unknown flavor (e.g. from a newer version), one of another engine or a value of the
+    // wrong type connects as the base engine
+    let rawFlavor = (try? container.decodeIfPresent(String.self, forKey: .flavor)) ?? nil
+    let decodedFlavor = rawFlavor.flatMap(DatabaseFlavor.init(rawValue:))
+    flavor = decodedFlavor?.baseType == databaseType ? decodedFlavor : nil
     host = try container.decode(String.self, forKey: .host)
     port = try container.decode(Int.self, forKey: .port)
     database = try container.decode(String.self, forKey: .database)
@@ -723,6 +902,7 @@ struct ConnectionConfig: Codable, nonisolated Equatable, Sendable {
   nonisolated func encode(to encoder: Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(databaseType, forKey: .databaseType)
+    try container.encodeIfPresent(flavor?.rawValue, forKey: .flavor)
     try container.encode(host, forKey: .host)
     try container.encode(port, forKey: .port)
     try container.encode(database, forKey: .database)

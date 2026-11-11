@@ -418,7 +418,14 @@ class PendingFileOpen {
   }
 }
 
+/// The entry point: launches the SwiftUI app.
 @main
+enum DbloreMain {
+  @MainActor static func main() {
+    DbloreApp.main()
+  }
+}
+
 struct DbloreApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
@@ -1508,7 +1515,7 @@ private struct ExplainCommandButtons: View {
       NotificationCenter.default.post(name: .explainStatement, object: nil)
     }
     .keyboardShortcut("e", modifiers: .command)
-    .disabled(isDisabled)
+    .disabled(isDisabled || activeViewModel?.explainUnavailableReason != nil)
 
     Button("Explain Analyze (runs the statement)") {
       NotificationCenter.default.post(name: .explainAnalyzeStatement, object: nil)

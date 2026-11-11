@@ -111,13 +111,14 @@ extension DatabaseConnectionManager {
     let epoch = connectionEpoch
     await catalogReadHook?()
     let postgres = config?.databaseType == .postgresql
+    let flavor = config?.flavor
     let (found, candidate) = try await withCatalogSession {
       session -> (EditTable?, ViewEditCandidate?) in
       if let table = try await self.introspector.editTable(named: tableName, in: session) {
         return (table, nil)
       }
       guard postgres else { return (nil, nil) }
-      let candidate = try await PostgresSchemaIntrospector().viewEditCandidate(
+      let candidate = try await PostgresSchemaIntrospector(flavor: flavor).viewEditCandidate(
         named: tableName, in: session)
       return (nil, candidate)
     }

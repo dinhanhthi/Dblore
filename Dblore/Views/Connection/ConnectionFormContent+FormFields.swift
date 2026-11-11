@@ -201,19 +201,22 @@ extension ConnectionFormContent {
   }
 
   /// The certificate pickers a TLS mode offers. MongoDB takes a custom CA only: `MongoSession`
-  /// refuses client certificates.
+  /// refuses client certificates. ClickHouse and SQL Server take a custom CA only too (no client
+  /// certificates).
   enum CertificateFields: Equatable {
     case none
     case customCA
     case clientCertificateAndCA
   }
 
+  /// Follows the mode the engine connects with (`MongoConnectionDraft.normalizedSSLMode`).
   static func certificateFields(for type: DatabaseType, sslMode: SSLMode) -> CertificateFields {
-    if type == .mongodb {
-      return MongoConnectionDraft.normalizedSSLMode(sslMode) == .disable ? .none : .customCA
+    let mode = MongoConnectionDraft.normalizedSSLMode(sslMode, for: type)
+    guard mode == .require || mode == .verifyCa || mode == .verifyFull else { return .none }
+    switch type {
+    case .mongodb, .clickhouse, .sqlserver: return .customCA
+    case .postgresql, .sqlite, .duckdb, .mysql: return .clientCertificateAndCA
     }
-    return sslMode == .require || sslMode == .verifyCa || sslMode == .verifyFull
-      ? .clientCertificateAndCA : .none
   }
 
   @ViewBuilder
@@ -325,10 +328,9 @@ extension ConnectionFormContent {
   private func sslModeMenu(
     selection: Binding<SSLMode>, onSelect: ((SSLMode) -> Void)? = nil
   ) -> some View {
-    // MongoDB shows a stored Prefer/Require as the Verify Full it connects with.
-    let shown =
-      isMongoDB
-      ? MongoConnectionDraft.normalizedSSLMode(selection.wrappedValue) : selection.wrappedValue
+    // MongoDB and ClickHouse show a stored Prefer/Require as the Verify Full they connect with.
+    let shown = MongoConnectionDraft.normalizedSSLMode(
+      selection.wrappedValue, for: connectionConfig.databaseType)
     return FormField(label: "SSL Mode") {
       Menu {
         ForEach(MongoConnectionDraft.sslModes(for: connectionConfig.databaseType), id: \.self) {
@@ -655,8 +657,11 @@ extension ConnectionFormContent {
 
   func preparedCertificateConfig() throws -> ConnectionConfig {
     var config = connectionConfig
+    // The mode the engine connects with, as the SSL picker and `certificateFields` show it
+    let connectMode = MongoConnectionDraft.normalizedSSLMode(
+      config.sslMode, for: config.databaseType)
 
-    if config.clientCertificate != nil && !usesClientCertificate(config.sslMode) {
+    if config.clientCertificate != nil && !usesClientCertificate(connectMode) {
       throw CertificateFormError.tlsMode
     }
 
@@ -679,7 +684,7 @@ extension ConnectionFormContent {
       return config
     }
 
-    guard usesClientCertificate(config.sslMode) else {
+    guard usesClientCertificate(connectMode) else {
       throw CertificateFormError.tlsMode
     }
     config.clientCertificate = try Self.certificateInfo(for: material, sslMode: config.sslMode)
@@ -958,6 +963,16 @@ extension ConnectionFormContent {
           Text(connectionConfig.protectionLevel.description)
             .font(.caption)
             .foregroundColor(.foregroundMuted)
+          if connectionConfig.databaseType == .sqlserver,
+            connectionConfig.protectionLevel == .readOnly
+          {
+            Text(
+              "On SQL Server, Dblore enforces read-only by checking each statement before it is sent. For a guarantee on the server too, sign in with a login that only has the db_datareader role."
+            )
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+            .fixedSize(horizontal: false, vertical: true)
+          }
         }
 
         Spacer()
@@ -1021,13 +1036,16 @@ extension ConnectionFormContent {
 
   // MARK: - Safety
 
-  /// The lock toggle, server-side session brakes and row cap override. File engines have no
-  /// lock or idle brake, so they show only the statement timeout and the row cap.
+  /// The lock toggle, server-side session brakes and row cap override. File engines and
+  /// ClickHouse have no lock or idle brake, so they show only the statement timeout and the row
+  /// cap. SQL Server has no idle brake: it shows the statement and lock timeouts.
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
     let fileBased = connectionConfig.databaseType.capabilities.isFileBased
+    let statementBrakeOnly = fileBased || connectionConfig.databaseType == .clickhouse
+    let hasIdleBrake = !statementBrakeOnly && connectionConfig.databaseType != .sqlserver
     VStack(alignment: .leading, spacing: Spacing.sm) {
       // A lock lives on saved rows; a file engine needs a file to lock
       if connectionConfig.rememberConnection,
@@ -1038,7 +1056,7 @@ extension ConnectionFormContent {
         lockConnectionToggle()
       }
 
-      if fileBased {
+      if statementBrakeOnly {
         statementTimeoutField(global: global.statement)
       } else {
         safetyRow(
@@ -1049,10 +1067,10 @@ extension ConnectionFormContent {
             range: SessionBrakeLimits.lockTimeoutRange))
       }
 
-      if pairsAllSafetyFields && !fileBased {
+      if pairsAllSafetyFields && hasIdleBrake {
         safetyRow(idleTimeoutField(global: global.idle), rowCapField())
       } else {
-        if !fileBased { idleTimeoutField(global: global.idle) }
+        if hasIdleBrake { idleTimeoutField(global: global.idle) }
         rowCapField()
       }
     }

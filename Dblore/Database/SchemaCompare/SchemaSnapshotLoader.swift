@@ -84,6 +84,8 @@ nonisolated enum SchemaSnapshotLoader {
     case .sqlite: return .sqlite(libraryVersion: SQLiteLibraryVersion.current)
     case .duckdb: throw SchemaCompareError.unsupportedEngine("DuckDB")
     case .mongodb: throw SchemaCompareError.unsupportedEngine("MongoDB")
+    case .clickhouse: throw SchemaCompareError.unsupportedEngine("ClickHouse")
+    case .sqlserver: throw SchemaCompareError.unsupportedEngine("SQL Server")
     case nil: throw DatabaseError.notConnected
     }
   }

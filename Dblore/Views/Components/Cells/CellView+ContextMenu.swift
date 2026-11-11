@@ -29,6 +29,8 @@ extension CellView {
     } label: {
       Label("Explain", systemImage: "list.bullet.indent")
     }
+    .disabled(viewModel.explainUnavailableReason != nil)
+    .help(viewModel.explainUnavailableReason ?? "")
 
     Button {
       viewModel.selectedCellId = cell.id

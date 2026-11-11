@@ -216,6 +216,40 @@ struct ConnectionFormMongoTests {
     #expect(MongoConnectionDraft.rebuilt(config).sslMode == .verifyFull)
   }
 
+  @Test(arguments: SSLMode.allCases)
+  func twoValuedTLSNormalizesUpToVerifyFull(mode: SSLMode) throws {
+    let expected: SSLMode = mode == .disable ? .disable : .verifyFull
+    #expect(MongoConnectionDraft.sslModes(for: .clickhouse) == [.disable, .verifyFull])
+    for type in [DatabaseType.mongodb, .clickhouse] {
+      #expect(MongoConnectionDraft.normalizedSSLMode(mode, for: type) == expected)
+    }
+    // Engines that offer every mode keep the stored one
+    for type in [DatabaseType.postgresql, .mysql, .sqlserver] {
+      #expect(MongoConnectionDraft.normalizedSSLMode(mode, for: type) == mode)
+    }
+    // A ClickHouse form switched from PostgreSQL (or imported) saves the normalized mode
+    var clickhouse = ConnectionFormContent.newFormDraft(databaseType: .clickhouse)
+    clickhouse.host = "ch.example.com"
+    clickhouse.sslMode = mode
+    #expect(MongoConnectionDraft.rebuilt(clickhouse).sslMode == expected)
+    #expect(try MongoConnectionDraft.prepared(clickhouse).sslMode == expected)
+    #expect(MongoConnectionDraft.rebuilt(clickhouse).mongoURI == nil)
+    var postgres = clickhouse
+    postgres.databaseType = .postgresql
+    #expect(try MongoConnectionDraft.prepared(postgres).sslMode == mode)
+  }
+
+  @Test func clickHouseCertificateFieldsFollowTheNormalizedMode() {
+    #expect(ConnectionFormContent.certificateFields(for: .clickhouse, sslMode: .disable) == .none)
+    for mode in [SSLMode.allow, .prefer, .require, .verifyCa, .verifyFull] {
+      #expect(ConnectionFormContent.certificateFields(for: .clickhouse, sslMode: mode) == .customCA)
+      #expect(ConnectionFormContent.certificateFields(for: .mongodb, sslMode: mode) == .customCA)
+    }
+    #expect(ConnectionFormContent.certificateFields(for: .sqlserver, sslMode: .prefer) == .none)
+    #expect(
+      ConnectionFormContent.certificateFields(for: .sqlserver, sslMode: .require) == .customCA)
+  }
+
   @Test func reviewIsHiddenForMongoDB() {
     #expect(MongoConnectionDraft.commitStyles(for: .mongodb) == [.immediate, .confirm, .password])
     #expect(MongoConnectionDraft.commitStyles(for: .postgresql) == CommitStyle.allCases)

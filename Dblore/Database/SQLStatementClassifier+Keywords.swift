@@ -19,6 +19,69 @@ nonisolated extension SQLStatementClassifier {
     "BEGIN", "START", "COMMIT", "END", "ROLLBACK", "ABORT", "SAVEPOINT", "RELEASE",
   ]
 
+  /// SQL Server transaction control that starts with no PostgreSQL TCL verb:
+  /// `SAVE TRAN[SACTION] name` sets a savepoint.
+  static let sqlserverTclKeywords: Set<String> = ["SAVE"]
+
+  /// Leading words the shared rules read as a query, transaction control or session SET that
+  /// start no T-SQL statement. SQL Server runs a leading name as a procedure call, so they fail
+  /// closed (`EXPLAIN` too, in `analyze`).
+  static let sqlserverNonStatementKeywords: Set<String> = [
+    "SHOW", "VALUES", "TABLE", "START", "ABORT", "SAVEPOINT", "RELEASE", "RESET", "PREPARE",
+  ]
+
+  /// T-SQL words that start a statement. A batch needs no `;` between statements, so one of
+  /// these after a statement's own verb starts another (`sqlserverAdjusted`). The reserved
+  /// statement verbs (`ADD [COUNTER] SIGNATURE` too), plus the unreserved ones that change data
+  /// or schema (ENABLE / DISABLE TRIGGER, Service Broker RECEIVE / SEND). THROW is left out: the
+  /// server requires a `;` before it. Service Broker `END` / `MOVE` / `GET CONVERSATION` are
+  /// left out: END also closes a CASE and MOVE / GET are unreserved names, so
+  /// `strayStatementVerb` counts them only before CONVERSATION (`sqlserverConversationVerbs`).
+  static let sqlserverStatementVerbs: Set<String> = [
+    "ADD", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "DROP", "ALTER", "TRUNCATE", "BEGIN",
+    "COMMIT", "ROLLBACK", "SAVE", "GRANT", "REVOKE", "DENY", "EXEC", "EXECUTE", "DECLARE", "SET",
+    "PRINT", "RAISERROR", "WAITFOR", "USE", "BACKUP", "RESTORE", "DBCC", "KILL", "BULK",
+    "CHECKPOINT", "RECONFIGURE", "SHUTDOWN", "OPEN", "CLOSE", "FETCH", "DEALLOCATE", "IF",
+    "WHILE", "GOTO", "RETURN", "REVERT", "SETUSER", "UPDATETEXT", "WRITETEXT", "ENABLE",
+    "DISABLE", "RECEIVE", "SEND",
+  ]
+
+  /// Service Broker statements that start with a word T-SQL also uses elsewhere:
+  /// `END CONVERSATION`, `MOVE CONVERSATION`, `GET CONVERSATION GROUP`.
+  static let sqlserverConversationVerbs: Set<String> = ["END", "MOVE", "GET"]
+
+  /// SQL Server `SET` options that change how transactions end: implicit transactions
+  /// (`ANSI_DEFAULTS ON` turns them on too), and `XACT_ABORT`, which rolls the whole transaction
+  /// back on a run-time error.
+  static let sqlserverTransactionOptions: Set<String> = [
+    "IMPLICIT_TRANSACTIONS", "ANSI_DEFAULTS", "XACT_ABORT",
+  ]
+
+  /// SQL Server rowset functions that run a pass-through query on a linked server or open an ad
+  /// hoc data source: what they run is not visible from the text.
+  static let sqlserverRemoteRowsets: Set<String> = ["OPENQUERY", "OPENROWSET", "OPENDATASOURCE"]
+
+  /// ClickHouse schema changes that start with no PostgreSQL DDL verb. `REPLACE` starts
+  /// `REPLACE [TEMPORARY] TABLE`.
+  static let clickhouseDdlKeywords: Set<String> = [
+    "RENAME", "EXCHANGE", "ATTACH", "DETACH", "UNDROP", "REPLACE",
+  ]
+
+  /// ClickHouse commands whose effects are not visible from the text: merges and deduplication,
+  /// server control, query and mutation kills, table checks, backups, access-entity moves, and
+  /// `USE` (the engine plugin sends the connection's database with every statement).
+  static let clickhouseUtilityKeywords: Set<String> = [
+    "OPTIMIZE", "SYSTEM", "KILL", "CHECK", "BACKUP", "RESTORE", "MOVE", "USE",
+  ]
+
+  /// ClickHouse settings (lowercase) that can lift a safety brake the engine plugin sends: the
+  /// read-only level, the statement timeout and the limits that decide when it applies, and a
+  /// settings profile (it may set any of them).
+  static let clickhouseBrakeSettings: Set<String> = [
+    "readonly", "max_execution_time", "max_execution_time_leaf",
+    "timeout_before_checking_execution_speed", "max_estimated_execution_time", "profile",
+  ]
+
   static let utilityKeywords: Set<String> = [
     "COPY", "DO", "CALL", "VACUUM", "ANALYZE", "ANALYSE", "REINDEX", "CLUSTER", "LOCK",
     "GRANT", "REVOKE", "NOTIFY", "LISTEN", "UNLISTEN", "DISCARD", "CHECKPOINT", "REFRESH",

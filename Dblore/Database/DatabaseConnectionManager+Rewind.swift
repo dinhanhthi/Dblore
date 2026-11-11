@@ -47,7 +47,7 @@ nonisolated struct RewindPlan: Sendable, Equatable {
     guard enabled, let engine else { return nil }
     switch engine {
     case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb: return nil
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: return nil
     }
     guard target.rowLocator == nil, !target.primaryKeyColumns.isEmpty, target.name != nil,
       !steps.isEmpty
@@ -117,7 +117,7 @@ extension DatabaseConnectionManager {
     else { return nil }
     switch config.databaseType {
     case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb: return nil
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: return nil
     }
     guard activeRewindRecorder() != nil else { return nil }
     return RewindCapture(

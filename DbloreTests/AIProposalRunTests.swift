@@ -76,6 +76,8 @@ struct AIProposalRunTests {
     #expect(Self.check("DROP MATERIALIZED VIEW mv").confirmName == "mv")
     #expect(Self.check("TRUNCATE TABLE ONLY logs RESTART IDENTITY").confirmName == "logs")
     #expect(Self.check("DROP TABLE `shop`.`orders`", .mysql).confirmName == "shop.orders")
+    let mutation = Self.check("ALTER TABLE events DELETE WHERE 1", .clickhouse)
+    #expect(mutation.kind == .destructive && mutation.confirmName == "events")
     for sql in ["DROP TABLE a, b", "TRUNCATE a, b", "DROP OWNED BY bob"] {
       let check = Self.check(sql)
       #expect(check.kind == .destructive, "\(sql)")

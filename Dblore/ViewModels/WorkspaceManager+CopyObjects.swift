@@ -13,7 +13,7 @@ extension WorkspaceManager {
   var supportsCopyObjects: Bool {
     switch workspace.connectionConfig?.databaseType {
     case .postgresql, .mysql, .sqlite, .duckdb: true
-    case .mongodb, nil: false
+    case .mongodb, .clickhouse, .sqlserver, nil: false
     }
   }
 

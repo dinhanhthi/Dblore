@@ -30,7 +30,13 @@ nonisolated enum DestructiveStatementRule {
   ///   plain single-table statement (see `allRowsTarget`);
   /// - an `EXPLAIN` that runs a statement other than a read (unnamed: the classifier keeps the
   ///   inner kind, not its text);
-  /// - MongoDB `drop()`, `dropIndex`, `dropDatabase()` and `deleteMany({})`.
+  /// - a statement the classifier marks `isDestructive` (ClickHouse `ALTER TABLE … DELETE`,
+  ///   `CLEAR`, `REPLACE PARTITION`, `REPLACE TABLE`, `OPTIMIZE … DEDUPLICATE`), named by its
+  ///   table when it starts `ALTER | REPLACE | OPTIMIZE [TEMPORARY] TABLE name` (see `tableTarget`);
+  /// - MongoDB `drop()`, `dropIndex`, `dropDatabase()` and `deleteMany({})`;
+  /// - on ClickHouse, unnamed: a `PARALLEL WITH` chain (every statement in it runs) and
+  ///   `TRUNCATE ALL TABLES`, `TRUNCATE TABLES FROM db` and `TRUNCATE DATABASE` (see
+  ///   `namesNoSingleTarget`).
   ///
   /// Any other statement, an unrecognized one included, is `.none`: the caller's own rules
   /// apply to it.
@@ -41,7 +47,8 @@ nonisolated enum DestructiveStatementRule {
       return verdict(mongoDestructive(statement, database: database))
     }
     let pieces = lexemes(statement.text, dialect: dialect)
-    if let destructive = sqlDestructive(pieces) { return verdict(destructive) }
+    if dialect == .clickhouse, namesNoSingleTarget(pieces) { return .unnamed }
+    if let destructive = sqlDestructive(pieces, dialect: dialect) { return verdict(destructive) }
     // A plain EXPLAIN runs nothing; EXPLAIN ANALYZE runs its statement
     if case .explain(let inner, let analyze) = statement.kind {
       guard analyze else { return .none }
@@ -50,6 +57,7 @@ nonisolated enum DestructiveStatementRule {
     if let replaced = createOrReplace(pieces) { return verdict(replaced) }
     if let altered = alterTable(pieces, dialect: dialect) { return verdict(altered) }
     if let merged = mergeDelete(pieces) { return verdict(merged) }
+    if statement.isDestructive { return verdict(.some(tableTarget(pieces))) }
     if statement.affectsAllRows { return verdict(.some(allRowsTarget(pieces))) }
     return .none
   }
@@ -89,7 +97,7 @@ nonisolated enum DestructiveStatementRule {
   /// single object. `DROP a, b` names no single object. A `DO` block, `EXECUTE` or `CALL`
   /// runs code the text does not show: destructive, with no name. So does a MySQL executable
   /// comment (`/*! ... */`), which MySQL runs as SQL.
-  private static func sqlDestructive(_ pieces: [Piece]) -> String?? {
+  private static func sqlDestructive(_ pieces: [Piece], dialect: SQLDialect) -> String?? {
     if pieces.contains(where: \.isExecutableComment) { return .some(nil) }
     guard let first = pieces.first?.keyword else { return nil }
     if opaque.contains(first) { return .some(nil) }
@@ -102,9 +110,26 @@ nonisolated enum DestructiveStatementRule {
       index += 1
       skip(["CONCURRENTLY"], in: pieces, at: &index)
     } else {
-      skip(["TABLE", "ONLY"], in: pieces, at: &index)
+      // ClickHouse `TRUNCATE TEMPORARY TABLE t`
+      let words: Set<String> =
+        dialect == .clickhouse ? ["TEMPORARY", "TABLE", "ONLY"] : ["TABLE", "ONLY"]
+      skip(words, in: pieces, at: &index)
     }
     return .some(objectName(pieces, at: &index))
+  }
+
+  /// ClickHouse statements that are destructive with no single target: `PARALLEL WITH` at any
+  /// depth (as the classifier reads it), or `TRUNCATE [TEMPORARY] [TABLE] ALL | TABLES | DATABASE`
+  private static func namesNoSingleTarget(_ pieces: [Piece]) -> Bool {
+    let parallel = pieces.indices.dropLast().contains { index in
+      pieces[index].keyword == "PARALLEL" && pieces[index + 1].keyword == "WITH"
+    }
+    guard !parallel else { return true }
+    guard pieces.first?.keyword == "TRUNCATE" else { return false }
+    var index = 1
+    skip(["TEMPORARY", "TABLE"], in: pieces, at: &index)
+    return index < pieces.count
+      && ["ALL", "TABLES", "DATABASE"].contains(pieces[index].keyword ?? "")
   }
 
   /// `CREATE OR REPLACE [TEMP | TEMPORARY]` of an object that holds data: nil for any other
@@ -182,6 +207,19 @@ nonisolated enum DestructiveStatementRule {
     var index = 2
     skip(["ONLY"], in: pieces, at: &index)
     return .some(objectName(pieces, at: &index))
+  }
+
+  /// The table of `ALTER | REPLACE | OPTIMIZE [TEMPORARY] TABLE [IF EXISTS] name`; nil for any
+  /// other statement or a name that cannot be read
+  private static func tableTarget(_ pieces: [Piece]) -> String? {
+    guard ["ALTER", "REPLACE", "OPTIMIZE"].contains(pieces.first?.keyword ?? "") else {
+      return nil
+    }
+    var index = 1
+    skip(["TEMPORARY"], in: pieces, at: &index)
+    guard index < pieces.count, pieces[index].keyword == "TABLE" else { return nil }
+    index += 1
+    return objectName(pieces, at: &index)
   }
 
   /// The table of an UPDATE or DELETE with no WHERE, read only from a plain single-table

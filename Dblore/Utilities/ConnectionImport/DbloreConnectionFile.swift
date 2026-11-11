@@ -6,11 +6,12 @@
 //  `{format: "dblore-connections", version: 1, exportedAt, connections, favorites}`.
 //
 //  Each connection is copied from an explicit allow list, never by encoding ConnectionConfig:
-//  name, engine, host, port, database, user, TLS mode, SSH host/port/user/auth method, the
-//  MongoDB connection string rebuilt without userinfo, timeouts and row cap, protection, commit
-//  style, AI access and rules, color, group, hidden schemas, and the connection scripts' plain
-//  file names and timeout (never a path or a script's content; an import never applies them),
-//  and the Vault source: address, mount, role, auth method and CA PEM (public).
+//  name, engine and its preset (flavor), host, port, database, user, TLS mode, SSH
+//  host/port/user/auth method, the MongoDB connection string rebuilt without userinfo, timeouts
+//  and row cap, protection, commit style, AI access and rules, color, group, hidden schemas,
+//  and the connection scripts' plain file names and timeout (never a path or a script's
+//  content; an import never applies them), and the Vault source: address, mount, role, auth
+//  method and CA PEM (public).
 //  Never written: passwords, Vault tokens, AppRole role and secret ids, SSH
 //  passwords, passphrases and keys (nor the key's algorithm and fingerprint), client
 //  certificates and their metadata, file bookmarks, the remember flag and the MongoDB identity
@@ -97,6 +98,9 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
   nonisolated struct Connection: Codable, Equatable, Sendable {
     var name: String
     var databaseType: String
+    /// A preset of `databaseType` (`DatabaseFlavor`); absent for the plain engine, so an older
+    /// reader ignores it
+    var flavor: String?
     var host: String
     var port: Int
     var database: String
@@ -214,9 +218,9 @@ nonisolated struct DbloreConnectionFile: Codable, Equatable, Sendable {
     for item in connections {
       // Hidden schemas are normalized by ConnectionConfig itself.
       let fields: [String?] = [
-        item.name, item.databaseType, item.host, item.database, item.username, item.sslMode,
-        item.mongoURI, item.protectionLevel, item.commitStyle, item.aiAccess, item.colorTag,
-        item.groupName, item.ssh?.host, item.ssh?.username, item.ssh?.authMethod,
+        item.name, item.databaseType, item.flavor, item.host, item.database, item.username,
+        item.sslMode, item.mongoURI, item.protectionLevel, item.commitStyle, item.aiAccess,
+        item.colorTag, item.groupName, item.ssh?.host, item.ssh?.username, item.ssh?.authMethod,
         item.preConnectScript, item.postDisconnectScript, item.passwordCommandScript,
         item.vault?.address, item.vault?.mount, item.vault?.role, item.vault?.authMethod,
       ]
@@ -274,6 +278,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     guard config.databaseType.capabilities.usesNetwork else { return nil }
     name = config.name
     databaseType = config.databaseType.rawValue
+    flavor = config.flavor?.rawValue
     host = config.host
     port = config.port
     database = config.identityDatabase
@@ -413,6 +418,10 @@ nonisolated extension DbloreConnectionFile.Connection {
         idleInTransactionTimeoutSeconds, to: SessionBrakeLimits.idleTimeoutRange),
       rowCapOverride: SessionBrakeLimits.clampRowCap(rowCapOverride),
       colorTag: colorTag.flatMap(AccentColor.init(rawValue:)), groupName: groupName)
+    // A flavor this version does not know, or one of another engine, imports the base engine
+    config.flavor = flavor.flatMap(DatabaseFlavor.init(rawValue:)).flatMap {
+      $0.baseType == engine ? $0 : nil
+    }
     config.commitStyle = style
     config.vault = vaultSource
     config.aiAccess = access == .always ? .useDefault : access

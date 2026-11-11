@@ -217,6 +217,27 @@ struct MCPConnectionPoolTests {
     }
   }
 
+  nonisolated static let writeRefused: [(DatabaseType, MCPConnectionError)] = [
+    (.duckdb, .duckDBNotSupported),
+    (.clickhouse, .engineNotSupported(.clickhouse)),
+    (.sqlserver, .engineNotSupported(.sqlserver)),
+  ]
+
+  @Test(
+    "The writable manager refuses DuckDB, ClickHouse and SQL Server without connecting",
+    arguments: writeRefused)
+  func writableManagerRefusesEngine(type: DatabaseType, error: MCPConnectionError) async {
+    let pool = pool()
+    var config = postgres()
+    config.databaseType = type
+    let id = book.add(config)
+    await #expect(throws: error) {
+      _ = try await pool.withWritableManager(for: id) { $0 }
+    }
+    #expect(factory.sessions.isEmpty)
+    await pool.closeAll()
+  }
+
   @Test("A connection with an empty password still connects (trust or passwordless auth)")
   func emptyPasswordConnects() async throws {
     let pool = pool()

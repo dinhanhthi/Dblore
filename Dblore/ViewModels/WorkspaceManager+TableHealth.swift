@@ -6,13 +6,22 @@
 import Foundation
 
 extension WorkspaceManager {
-  /// Connected to a SQL engine other than DuckDB, with a schema read since the last connect. An
-  /// open transaction does not disable it: the sheet says why the run is refused.
+  /// Connected to an engine Table Health runs on (`checksTableHealth`), with a schema read since
+  /// the last connect. An open transaction does not disable it: the sheet says why the run is
+  /// refused.
   var canOpenTableHealth: Bool {
     guard connectionState.isConnected, schemaConnectionEpoch != nil,
       let type = workspace.connectionConfig?.databaseType
     else { return false }
-    return type.capabilities.queryLanguage == .sql && type != .duckdb
+    return Self.checksTableHealth(type)
+  }
+
+  /// The engines Table Health runs on. ClickHouse and SQL Server never get it.
+  nonisolated static func checksTableHealth(_ type: DatabaseType) -> Bool {
+    switch type {
+    case .postgresql, .sqlite, .mysql: true
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    }
   }
 
   /// Shows the sheet in its loading state and starts the run

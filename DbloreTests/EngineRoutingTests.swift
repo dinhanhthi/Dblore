@@ -1,6 +1,8 @@
 // EngineRoutingTests.swift
 // Each engine gets its own catalog SQL and transaction start. DuckDB is refused with
 // `engineUnavailable` while its plugin is not installed; it never falls back to PostgreSQL.
+// ClickHouse and SQL Server read their catalog through the engine plugin's introspector and are
+// refused the same way without their plugin.
 
 import Foundation
 import Testing
@@ -32,6 +34,13 @@ struct EngineRoutingTests {
     let catalogReads = factory.sessions.flatMap(\.queries)
     #expect(catalogReads.contains { $0.contains("duckdb_tables()") })
     #expect(!catalogReads.contains { $0.contains("pg_") })
+  }
+
+  @Test(
+    "ClickHouse and SQL Server route to the engine plugin introspector",
+    arguments: [DatabaseType.clickhouse, .sqlserver])
+  func enginePluginIntrospector(type: DatabaseType) async throws {
+    #expect(try await connectFake(type).introspector is EnginePluginIntrospector)
   }
 
   @Test("App transactions use each engine's own BEGIN")
@@ -100,34 +109,88 @@ struct EngineRoutingTests {
       sslMode: .disable, timeoutSeconds: 5)
   }
 
-  /// The app factory with the DuckDB plugin not installed.
-  private func managerWithoutDuckDBPlugin() -> DatabaseConnectionManager {
+  /// The app factory with no plugin installed, whatever this Mac has installed.
+  private func managerWithoutPlugins() -> DatabaseConnectionManager {
     DatabaseConnectionManager(
-      sessionFactory: AppDatabaseSessionFactory(duckDBLibraryLoader: { nil }))
+      sessionFactory: AppDatabaseSessionFactory(
+        duckDBLibraryLoader: { nil }, enginePluginInstalled: { _ in false }))
   }
 
-  @Test("Connecting to DuckDB without its plugin fails with engineUnavailable")
-  func duckdbConnectRefused() async throws {
-    let manager = managerWithoutDuckDBPlugin()
-    let config = ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/x.duckdb")
+  /// Engines shipped by a plugin; none has an installed plugin in these tests.
+  static let pluginEngines = DatabaseType.allCases.filter(\.capabilities.requiresPlugin)
+
+  @Test("ClickHouse and SQL Server are plugin engines, as DuckDB is")
+  func pluginEnginesListed() {
+    #expect(Self.pluginEngines == [.duckdb, .clickhouse, .sqlserver])
+  }
+
+  @Test(
+    "Connecting to a plugin engine without its plugin fails with engineUnavailable",
+    arguments: pluginEngines)
+  func pluginEngineConnectRefused(type: DatabaseType) async throws {
+    let manager = managerWithoutPlugins()
+    let config = ConnectionConfig(databaseType: type, host: "", database: "/tmp/x.\(type.rawValue)")
     do {
       try await manager.connect(config: config)
-      Issue.record("DuckDB connect should fail")
-    } catch DatabaseError.engineUnavailable(let type) {
-      #expect(type == .duckdb)
+      Issue.record("\(type.rawValue) connect should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == type)
+      // The form offers its Install button for every plugin engine
+      #expect(
+        ConnectionErrorAction.action(for: DatabaseError.engineUnavailable(refused))
+          == .openPluginSettings)
     }
     #expect(await manager.session == nil)
   }
 
-  @Test("Testing a DuckDB connection without its plugin fails with engineUnavailable")
-  func duckdbTestConnectionRefused() async throws {
-    let manager = managerWithoutDuckDBPlugin()
-    let config = ConnectionConfig(databaseType: .duckdb, host: "", database: "/tmp/x.duckdb")
+  @Test(
+    "Testing a plugin engine connection without its plugin fails with engineUnavailable",
+    arguments: pluginEngines)
+  func pluginEngineTestConnectionRefused(type: DatabaseType) async throws {
+    let manager = managerWithoutPlugins()
+    let config = ConnectionConfig(databaseType: type, host: "", database: "/tmp/x.\(type.rawValue)")
     do {
       _ = try await manager.testConnection(config: config)
-      Issue.record("DuckDB test connection should fail")
-    } catch DatabaseError.engineUnavailable(let type) {
-      #expect(type == .duckdb)
+      Issue.record("\(type.rawValue) test connection should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == type)
     }
   }
+
+  @Test(
+    "Connect and Test Connection ask the factory's plugin check, which builds a plugin session",
+    arguments: [DatabaseType.clickhouse, .sqlserver])
+  func enginePluginCheckComesFromFactory(type: DatabaseType) async throws {
+    let asked = AskedEngines()
+    let manager = DatabaseConnectionManager(
+      sessionFactory: AppDatabaseSessionFactory(enginePluginInstalled: { type in
+        await asked.append(type)
+        return false
+      }))
+    let config = ConnectionConfig(databaseType: type, host: "", database: "db")
+    do {
+      try await manager.connect(config: config)
+      Issue.record("\(type.rawValue) connect should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == type)
+    }
+    do {
+      _ = try await manager.testConnection(config: config)
+      Issue.record("\(type.rawValue) test connection should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == type)
+    }
+    #expect(await asked.types == [type, type])
+    // Installed: the factory builds the plugin session (not opened here, so nothing loads)
+    let session = try await AppDatabaseSessionFactory(enginePluginInstalled: { _ in true })
+      .makeSession(config: config)
+    #expect(session is EnginePluginSession)
+  }
+}
+
+/// The engines a plugin check was asked about, in order.
+private actor AskedEngines {
+  private(set) var types: [DatabaseType] = []
+
+  func append(_ type: DatabaseType) { types.append(type) }
 }

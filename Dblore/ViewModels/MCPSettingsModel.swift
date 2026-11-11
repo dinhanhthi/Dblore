@@ -72,9 +72,13 @@ final class MCPSettingsModel {
     portDraft = settings.mcpPort
   }
 
-  /// DuckDB has no read-only second instance in the same process, so MCP refuses it.
+  /// DuckDB has no read-only second instance in the same process, and ClickHouse and SQL Server
+  /// have no read-only MCP path (`MCPReadOnlySessionFactory`), so MCP refuses them.
   static func isAvailable(_ entry: ConnectionHistoryEntry) -> Bool {
-    entry.config.databaseType != .duckdb
+    switch entry.config.databaseType {
+    case .postgresql, .sqlite, .mysql, .mongodb: true
+    case .duckdb, .clickhouse, .sqlserver: false
+    }
   }
 
   /// The saved connections, and the pairing code still waiting when Settings reopens.

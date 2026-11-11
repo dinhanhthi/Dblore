@@ -70,7 +70,11 @@ struct CancelMessageTests {
         readOnlyFile: true))
     let session = try #require(factory.sessions.first)
     let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+    // SQL Server asks @@TRANCOUNT before the app's BEGIN: none open
+    if type == .sqlserver { session.reportAfterInterrupt { false } }
     _ = try await connection.execute(userSQL: "UPDATE t SET a = 1", policy: protected)
+    // After the cancel the fake cannot tell (nil), as on every engine
+    session.reportAfterInterrupt { nil }
     #expect(await connection.transactionSnapshot().pending.count == 1)
 
     let running = Task {

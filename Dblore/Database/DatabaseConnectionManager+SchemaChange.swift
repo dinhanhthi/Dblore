@@ -85,9 +85,10 @@ extension DatabaseConnectionManager {
   }
 
   /// Why the structure editor may not send `statements`, or nil. DuckDB is view-only. MongoDB
-  /// is refused before any classification (an `aggregate` with `$out` classifies as DDL). MySQL
-  /// DDL would commit an open transaction (the app's pending changes or the user's own). Each
-  /// string must classify as exactly one DDL statement in the connection's dialect.
+  /// is refused before any classification (an `aggregate` with `$out` classifies as DDL), and so
+  /// are ClickHouse and SQL Server (no structure editing in Dblore). MySQL DDL would commit an
+  /// open transaction (the app's pending changes or the user's own). Each string must classify
+  /// as exactly one DDL statement in the connection's dialect.
   nonisolated static func schemaChangeRefusal(
     _ statements: [String], databaseType: DatabaseType?, transactionOpen: Bool
   ) -> String? {
@@ -96,6 +97,10 @@ extension DatabaseConnectionManager {
       return "DuckDB table structure cannot be changed in Dblore"
     case .mongodb:
       return "MongoDB collections have no table structure to change in Dblore"
+    case .clickhouse:
+      return "ClickHouse table structure cannot be changed in Dblore"
+    case .sqlserver:
+      return "SQL Server table structure cannot be changed in Dblore"
     case .mysql where transactionOpen:
       return "MySQL commits a schema change immediately, together with the open transaction; "
         + "commit or roll back first"

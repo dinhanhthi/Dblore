@@ -94,9 +94,13 @@ extension NotebookViewModel {
     unavailableFeatureMessage("Importing data", \.supportsDataImport)
   }
 
-  /// Why Generate Rows is refused: the engine (`supportsRowStaging`), then a read-only
-  /// connection. Nil when rows can be generated.
+  /// Why Generate Rows is refused: the engine (`WorkspaceManager.generatesRows`,
+  /// `supportsRowStaging`), then a read-only connection. Nil when rows can be generated.
   var generateRowsUnavailableReason: String? {
+    let type = notebook.connectionConfig?.databaseType ?? .postgresql
+    guard WorkspaceManager.generatesRows(type) else {
+      return "Generating rows is not available for \(type.displayName) connections"
+    }
     if let reason = unavailableFeatureMessage("Generating rows", \.supportsRowStaging) {
       return reason
     }

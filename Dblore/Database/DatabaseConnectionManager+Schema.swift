@@ -131,7 +131,8 @@ extension DatabaseConnectionManager {
   private func readQualifiedTableStructures(
     schema: String, tables: [String], progress: (@Sendable (Int, Int) -> Void)?
   ) async throws -> [TableStructure] {
-    try await withSession { session in
+    let introspector = PostgresSchemaIntrospector(flavor: config?.flavor)
+    return try await withSession { session in
       let result: Result<[TableStructure], Error>
       do {
         _ = try await session.command(
@@ -142,7 +143,7 @@ extension DatabaseConnectionManager {
         for table in tables {
           try Task.checkCancellation()
           structures.append(
-            try await PostgresSchemaIntrospector().tableStructure(
+            try await introspector.tableStructure(
               schema: schema, table: table, in: reader))
           progress?(structures.count, tables.count)
         }

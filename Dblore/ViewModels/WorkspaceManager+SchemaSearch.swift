@@ -173,9 +173,12 @@ extension WorkspaceManager {
     return Self.searchesEveryTable(type)
   }
 
-  /// The engines Find a Value in Every Table runs on
+  /// The engines Find a Value in Every Table runs on. ClickHouse and SQL Server never get it.
   nonisolated static func searchesEveryTable(_ type: DatabaseType) -> Bool {
-    type.capabilities.queryLanguage == .sql && type != .duckdb
+    switch type {
+    case .postgresql, .sqlite, .mysql: true
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    }
   }
 
   /// Shows the search sheet: the last search of this schema read with its results, else a new one

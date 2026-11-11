@@ -93,11 +93,20 @@ class WorkspaceManager: Identifiable {
       && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsDataImport
   }
 
-  /// Generate Rows (table context menu): connected, and the engine stages rows
-  /// (`supportsRowStaging`: PostgreSQL, SQLite, MySQL/MariaDB).
+  /// Generate Rows (table context menu): connected, and the engine generates rows
+  /// (`generatesRows`).
   var canGenerateRows: Bool {
     connectionState.isConnected
-      && (workspace.connectionConfig?.databaseType ?? .postgresql).capabilities.supportsRowStaging
+      && Self.generatesRows(workspace.connectionConfig?.databaseType ?? .postgresql)
+  }
+
+  /// The engines Generate Rows runs on: those that stage rows (`supportsRowStaging`: PostgreSQL,
+  /// SQLite, MySQL/MariaDB). ClickHouse and SQL Server never get it, even with row staging.
+  nonisolated static func generatesRows(_ type: DatabaseType) -> Bool {
+    switch type {
+    case .postgresql, .sqlite, .duckdb, .mysql, .mongodb: type.capabilities.supportsRowStaging
+    case .clickhouse, .sqlserver: false
+    }
   }
 
   /// Import Documents (File menu, collection row) on MongoDB: connected, not read-only, and a
@@ -129,6 +138,8 @@ class WorkspaceManager: Identifiable {
   var pendingWeakeningMaskRulesEdited = false
   /// The held connect's `fromForm` (see `connect(config:…, fromForm:)`)
   var pendingWeakeningFromForm = false
+  /// The held connect's `picksEngine` (see `connectWithoutUnlockCheck(config:…, picksEngine:)`)
+  var pendingWeakeningPicksEngine = false
   /// Why the connect after the Safe Mode unlock failed (or a background connect that needs a
   /// plugin, see `presentConnectErrorIfActionable`), shown inline in the form.
   /// Cleared by the next connect attempt and when the form goes away.
@@ -743,6 +754,10 @@ class WorkspaceManager: Identifiable {
       // Auto-connect in the background: the window opens at once, showing "connecting"
       manager.connectionState = .connecting
       manager.autoConnectTask = Task { await manager.autoConnectIfNeeded() }
+    } else if workspace.unsupportedConnection != nil {
+      WorkspaceWindowManager.shared.showToast(
+        "This workspace uses a database engine this version of Dblore does not support. "
+          + "Update Dblore to connect.", type: .warning)
     }
 
     return manager
@@ -894,13 +909,17 @@ class WorkspaceManager: Identifiable {
   /// is never saved either: it shares the saved entry's key and would replace its database.
   /// A save that writes the row keeps its AI policy and rules (an older copy never weakens them)
   /// unless `aiFieldsEdited`, its mask rules (added to the config's) unless `maskRulesEdited`,
-  /// its color and group unless `fromForm`, and its hidden schemas.
+  /// its color and group unless `fromForm`, and its hidden schemas. Its engine preset changes only
+  /// with `picksEngine` (the connection form's engine picker); every other connect opens with the
+  /// saved row's (`adoptingSavedFlavor`).
   /// A save onto the Keychain key of another saved connection throws
   /// `SessionManagerError.keychainKeyInUse` before anything changes.
   func connectWithoutUnlockCheck(
     config: ConnectionConfig, isAutoConnect: Bool = false, savesConnection: Bool = true,
-    aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false
+    aiFieldsEdited: Bool = false, maskRulesEdited: Bool = false, fromForm: Bool = false,
+    picksEngine: Bool = false
   ) async throws {
+    let config = picksEngine ? config : Self.adoptingSavedFlavor(config, defaults: defaults)
     if savesConnection, config.rememberConnection, config.mongoHomeDatabase == nil,
       SessionManager.keyUsedByAnotherIdentity(config, defaults: defaults)
     {
@@ -1208,7 +1227,7 @@ class WorkspaceManager: Identifiable {
         to: ConnectionFormContent.newFormDraft(databaseType: .duckdb), selected: nil,
         registry: lockCenter.registry
       ).config, defaults: defaults)
-    guard PluginRegistry.shared.manager(id: "duckdb")?.isInstalledOrPending == true else {
+    guard PluginRegistry.shared.isEngineInstalledOrPending(.duckdb) else {
       presentConnectErrorIfActionable(DatabaseError.engineUnavailable(.duckdb), config: config)
       return
     }

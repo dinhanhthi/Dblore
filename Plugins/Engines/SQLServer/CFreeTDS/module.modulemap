@@ -1,0 +1,5 @@
+// The SQL Server plugin's C shim over FreeTDS db-lib; Swift imports only its narrow header
+module CFreeTDS {
+  header "dblore_tds.h"
+  export *
+}

@@ -6,7 +6,7 @@
 // as is, since `MongoSession.query` runs only commands the classifier calls reads (and refuses
 // binds), MCP never calls `command`, and `MongoSchemaIntrospector` needs the `MongoSession`
 // itself. `ReadOnlyQueryGuard` refuses server-side JavaScript first; a read-only database role
-// is the server-side backstop.
+// is the server-side backstop. ClickHouse and SQL Server (plugin engines) are refused.
 //
 // MCP read path: `DatabaseConnectionManager.execute(userSQL:policy:maxRows:)` with a read-only
 // policy and no caller. MCP sends only `.read` statements and never opens a transaction, so a
@@ -32,6 +32,8 @@ nonisolated enum MCPConnectionError: Error, Equatable, LocalizedError {
   /// The pool was closed (MCP server stopped)
   case stopped
   case duckDBNotSupported
+  /// A plugin engine (ClickHouse, SQL Server) without a read-only MCP path
+  case engineNotSupported(DatabaseType)
   case certificateNotSaved
   case sshCredentialNotSaved
   case sshHostKeyNotTrusted
@@ -54,6 +56,8 @@ nonisolated enum MCPConnectionError: Error, Equatable, LocalizedError {
       "The MCP server is stopped."
     case .duckDBNotSupported:
       "MCP does not support DuckDB connections."
+    case .engineNotSupported(let type):
+      "MCP does not support \(type.rawValue) connections. Nothing was sent to the database."
     case .certificateNotSaved:
       "The connection's client certificate is not saved in the Keychain. Connect once in "
         + "Dblore with Remember on."
@@ -99,6 +103,8 @@ nonisolated struct MCPReadOnlySessionFactory: DatabaseSessionFactory {
       throw MCPConnectionError.duckDBNotSupported
     case .mongodb:
       return try await inner.makeSession(config: config)
+    case .clickhouse, .sqlserver:
+      throw MCPConnectionError.engineNotSupported(config.databaseType)
     }
   }
 }
@@ -130,6 +136,7 @@ nonisolated final class MCPReadOnlySession: DatabaseSession, @unchecked Sendable
   }
 
   var capabilities: DatabaseCapabilities { inner.capabilities }
+  var brakeFlavor: DatabaseFlavor? { inner.brakeFlavor }
 
   func open() async throws {
     try await inner.open()

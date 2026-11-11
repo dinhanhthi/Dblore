@@ -1,6 +1,7 @@
 // SQLDialect.swift
-// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, DuckDB, and MySQL,
-// plus the MongoDB marker: no SQL identifiers, every other member PostgreSQL-shaped.
+// Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, DuckDB, MySQL and
+// ClickHouse and SQL Server (T-SQL), plus the MongoDB marker: no SQL identifiers, every other
+// member PostgreSQL-shaped.
 
 import Foundation
 
@@ -24,6 +25,8 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case duckdb
     case mysql
     case mongodb
+    case clickhouse
+    case sqlserver
   }
 
   private let engine: Engine
@@ -33,23 +36,32 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   static let duckdb = SQLDialect(engine: .duckdb)
   static let mysql = SQLDialect(engine: .mysql)
   static let mongodb = SQLDialect(engine: .mongodb)
+  static let clickhouse = SQLDialect(engine: .clickhouse)
+  static let sqlserver = SQLDialect(engine: .sqlserver)
 
-  /// Name used in prompts ("PostgreSQL", "SQLite", "DuckDB", "MySQL").
+  /// Name used in prompts ("PostgreSQL", "SQLite", "DuckDB", "MySQL", "ClickHouse SQL",
+  /// "SQL Server (T-SQL)").
   var promptName: String {
     switch engine {
     case .postgresql, .mongodb: "PostgreSQL"
     case .sqlite: "SQLite"
     case .duckdb: "DuckDB"
     case .mysql: "MySQL"
+    case .clickhouse: "ClickHouse SQL"
+    case .sqlserver: "SQL Server (T-SQL)"
     }
   }
 
   /// Schema omitted by `qualified` when the caller passes it explicitly (PostgreSQL keeps it).
   /// MySQL has none: its schema is the connected database, so any named schema stays.
+  /// ClickHouse's is the `default` database and SQL Server's is `dbo`, which `qualified` keeps
+  /// as PostgreSQL does.
   var defaultSchema: String {
     switch engine {
     case .postgresql, .mongodb: "public"
     case .sqlite, .duckdb: "main"
+    case .clickhouse: "default"
+    case .sqlserver: "dbo"
     case .mysql: ""
     }
   }
@@ -58,51 +70,66 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   var supportsUpdateOnly: Bool {
     switch engine {
     case .postgresql, .mongodb: true
-    case .sqlite, .duckdb, .mysql: false
+    case .sqlite, .duckdb, .mysql, .clickhouse, .sqlserver: false
     }
   }
 
-  /// Whether `UPDATE ... SET c = DEFAULT` is valid (PostgreSQL `UPDATE`, MySQL `UPDATE` docs).
-  /// SQLite and MongoDB have none; DuckDB grid edits stay off (`supportsRowStaging`).
+  /// Whether `UPDATE ... SET c = DEFAULT` is valid (PostgreSQL `UPDATE`, MySQL and T-SQL
+  /// `UPDATE` docs). SQLite and MongoDB have none; DuckDB grid edits stay off
+  /// (`supportsRowStaging`).
   var supportsDefaultInUpdate: Bool {
     switch engine {
-    case .postgresql, .mysql: true
-    case .sqlite, .duckdb, .mongodb: false
+    case .postgresql, .mysql, .sqlserver: true
+    case .sqlite, .duckdb, .mongodb, .clickhouse: false
     }
   }
 
   /// SQLite and MySQL (default `_ci` collations) `LIKE` fold case, and neither has `ILIKE`.
-  /// PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does).
+  /// PostgreSQL and DuckDB `LIKE` do not (`ILIKE` does). SQL Server's depends on the collation,
+  /// so it counts as case-sensitive and a case-insensitive match lowers both sides.
   var likeIsCaseInsensitive: Bool {
     switch engine {
     case .sqlite, .mysql: true
-    case .postgresql, .duckdb, .mongodb: false
+    case .postgresql, .duckdb, .mongodb, .clickhouse, .sqlserver: false
     }
   }
 
-  /// `"name"` with embedded `"` doubled; MySQL `` `name` `` with embedded `` ` `` doubled.
-  /// Rejects a NUL anywhere in `name`, and every name on MongoDB (`notSQL`).
+  /// `"name"` with embedded `"` doubled; MySQL `` `name` `` with embedded `` ` `` doubled;
+  /// ClickHouse `` `name` `` with `\` and `` ` `` backslash-escaped (ClickHouse identifiers take
+  /// the string literal escapes); SQL Server `[name]` with embedded `]` doubled. Escapes walk
+  /// Unicode scalars (`escapingScalars`). Rejects a NUL anywhere in `name`, and every name on
+  /// MongoDB (`notSQL`).
   func quoteIdentifier(_ name: String) throws -> String {
     let quote: Unicode.Scalar
     switch engine {
     case .postgresql, .sqlite, .duckdb: quote = "\""
-    case .mysql: quote = "`"
+    case .mysql, .clickhouse: quote = "`"
+    case .sqlserver: quote = "]"
     case .mongodb: throw SQLDialectError.notSQL
     }
     guard !name.unicodeScalars.contains("\0") else {
       throw SQLDialectError.nulInIdentifier
     }
     let quoteText = String(quote)
-    return quoteText + Self.escapingScalars(name, [quote: quoteText + quoteText]) + quoteText
+    let escapes: [Unicode.Scalar: String] =
+      engine == .clickhouse
+      ? ["\\": "\\\\", quote: "\\" + quoteText] : [quote: quoteText + quoteText]
+    let opening = engine == .sqlserver ? "[" : quoteText
+    return opening + Self.escapingScalars(name, escapes) + quoteText
   }
 
   /// `name` bare when it is a plain lowercase identifier (`[a-z_][a-z0-9_]*`) and no reserved
   /// word, else `quoteIdentifier(name)`. A bare name reads the same as the quoted one on every
   /// engine (PostgreSQL folds an unquoted name to lower case, and it is already lower case).
   /// Only safe for the column part of a qualified name (`alias.column`): the reserved words
-  /// below are not every engine's, and most of them are fine after a dot.
+  /// below are not every engine's, and most of them are fine after a dot. ClickHouse and
+  /// SQL Server always quote.
   func quoteIdentifierIfNeeded(_ name: String) throws -> String {
-    if case .mongodb = engine { throw SQLDialectError.notSQL }
+    switch engine {
+    case .mongodb: throw SQLDialectError.notSQL
+    case .clickhouse, .sqlserver: return try quoteIdentifier(name)
+    case .postgresql, .sqlite, .duckdb, .mysql: break
+    }
     let isPlain = name.utf8.enumerated().allSatisfy { offset, byte in
       byte == UInt8(ascii: "_") || (byte >= UInt8(ascii: "a") && byte <= UInt8(ascii: "z"))
         || (offset > 0 && byte >= UInt8(ascii: "0") && byte <= UInt8(ascii: "9"))
@@ -175,10 +202,15 @@ nonisolated struct SQLDialect: Sendable, Equatable {
 
   /// `quoteIdentifier(name)` for a nil schema, else `schema.name`. Other dialects drop their
   /// default schema; PostgreSQL keeps every schema, `public` too, so an app-run statement never
-  /// resolves a default-schema relation through the user's `search_path`.
+  /// resolves a default-schema relation through the user's `search_path`. ClickHouse keeps every
+  /// database, `default` too: a bare name resolves in the connection's database. SQL Server keeps
+  /// every schema, `dbo` too: a bare name resolves in the login's default schema first.
   func qualified(schema: String?, name: String) throws -> String {
     let quotedName = try quoteIdentifier(name)
-    guard let schema, engine == .postgresql || schema != defaultSchema else {
+    guard let schema,
+      engine == .postgresql || engine == .clickhouse || engine == .sqlserver
+        || schema != defaultSchema
+    else {
       return quotedName
     }
     return try quoteIdentifier(schema) + "." + quotedName
@@ -198,7 +230,11 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .null:
       "NULL"
     case .bool(let flag):
-      flag ? "TRUE" : "FALSE"
+      switch engine {
+      case .clickhouse: flag ? "true" : "false"
+      case .sqlserver: flag ? "1" : "0"
+      case .postgresql, .sqlite, .duckdb, .mysql, .mongodb: flag ? "TRUE" : "FALSE"
+      }
     case .int(let number):
       String(number)
     case .double(let number):
@@ -218,20 +254,76 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   }
 
   /// PostgreSQL and DuckDB `$n`, SQLite `?n`. `index` is written as given (1-based).
-  /// MySQL is a bare `?`: binds are positional, so `index` is ignored.
+  /// MySQL is a bare `?`: binds are positional, so `index` is ignored. ClickHouse is the query
+  /// parameter `{pN:String}`: the engine plugin sends bind N as `param_pN`; where the server
+  /// refuses a `String` against the column's type, `placeholder(_:type:)` types it. SQL Server
+  /// is `@pN`: the engine plugin declares bind N as the batch variable `@pN`.
   func placeholder(_ index: Int) -> String {
     switch engine {
     case .postgresql, .duckdb, .mongodb: "$\(index)"
     case .sqlite: "?\(index)"
+    case .clickhouse: "{p\(index):String}"
+    case .sqlserver: "@p\(index)"
     case .mysql: "?"
     }
   }
 
-  func limitOffset(limit: Int, offset: Int) -> String {
-    "LIMIT \(limit) OFFSET \(offset)"
+  /// `placeholder(index)` typed for a column of `type` (its `ColumnInfo.type`), for a server that
+  /// refuses a `String` parameter against a numeric or date column: ClickHouse `{pN:<type>}`.
+  /// A type text that could end the placeholder or the statement (anything but ASCII letters,
+  /// digits, spaces and `_ ( ) , ' = - / . +`, a `--` or `//`, or an odd count of `'`) stays
+  /// `{pN:String}`. Every other
+  /// dialect ignores `type`.
+  func placeholder(_ index: Int, type: String) -> String {
+    guard engine == .clickhouse, Self.isPlainTypeText(type) else { return placeholder(index) }
+    return "{p\(index):\(type)}"
   }
 
-  /// PostgreSQL `EXPLAIN` with optional ANALYZE, BUFFERS, and FORMAT.
+  private static func isPlainTypeText(_ type: String) -> Bool {
+    let punctuation: Set<Unicode.Scalar> = [" ", "_", "(", ")", ",", "'", "=", "-", "/", ".", "+"]
+    return !type.isEmpty && !type.contains("--") && !type.contains("//")
+      && type.unicodeScalars.filter({ $0 == "'" }).count.isMultiple(of: 2)
+      && type.unicodeScalars.allSatisfy {
+        $0.isASCII
+          && ($0.properties.isAlphabetic || ("0"..."9").contains($0) || punctuation.contains($0))
+      }
+  }
+
+  /// `LIMIT limit OFFSET offset`. SQL Server is `OFFSET offset ROWS FETCH NEXT limit ROWS ONLY`,
+  /// which needs an `ORDER BY`: a statement without one (`ordered` false) gets
+  /// `ORDER BY (SELECT NULL)` first. Every other dialect ignores `ordered`.
+  func limitOffset(limit: Int, offset: Int, ordered: Bool = true) -> String {
+    guard engine == .sqlserver else { return "LIMIT \(limit) OFFSET \(offset)" }
+    return (ordered ? "" : "ORDER BY (SELECT NULL) ")
+      + "OFFSET \(offset) ROWS FETCH NEXT \(limit) ROWS ONLY"
+  }
+
+  /// The first `n` rows: `LIMIT n`, or SQL Server's `limitOffset(limit: n, offset: 0,
+  /// ordered: ordered)`
+  func limit(_ n: Int, ordered: Bool) -> String {
+    engine == .sqlserver ? limitOffset(limit: n, offset: 0, ordered: ordered) : "LIMIT \(n)"
+  }
+
+  /// Opens the savepoint `name` (an app-owned name, inserted unchanged): `SAVEPOINT name`, SQL
+  /// Server `SAVE TRANSACTION name`
+  func savepointSQL(_ name: String) -> String {
+    engine == .sqlserver ? "SAVE TRANSACTION \(name)" : "SAVEPOINT \(name)"
+  }
+
+  /// Undoes the work since savepoint `name`, keeping the transaction: `ROLLBACK TO SAVEPOINT
+  /// name`, SQL Server `ROLLBACK TRANSACTION name`
+  func rollbackToSavepointSQL(_ name: String) -> String {
+    engine == .sqlserver ? "ROLLBACK TRANSACTION \(name)" : "ROLLBACK TO SAVEPOINT \(name)"
+  }
+
+  /// `RELEASE SAVEPOINT name`; nil on SQL Server, which has no release (a savepoint ends with
+  /// its transaction)
+  func releaseSavepointSQL(_ name: String) -> String? {
+    engine == .sqlserver ? nil : "RELEASE SAVEPOINT \(name)"
+  }
+
+  /// PostgreSQL `EXPLAIN` with optional ANALYZE, BUFFERS, and FORMAT. ClickHouse and SQL Server
+  /// are a plain `EXPLAIN` (text), every option ignored.
   /// SQLite is always `EXPLAIN QUERY PLAN`. DuckDB is `EXPLAIN (FORMAT <format>)` or
   /// `EXPLAIN (ANALYZE, FORMAT <format>)` (the plan view reads JSON), and `EXPLAIN` or
   /// `EXPLAIN ANALYZE` (text) without a format, with `buffers` ignored. MySQL is
@@ -245,6 +337,8 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       guard let format else { return analyze ? "EXPLAIN ANALYZE" : "EXPLAIN" }
       let options = (analyze ? ["ANALYZE"] : []) + ["FORMAT \(format.uppercased())"]
       return "EXPLAIN (\(options.joined(separator: ", ")))"
+    case .clickhouse, .sqlserver:
+      return "EXPLAIN"
     case .mysql:
       if analyze { return "EXPLAIN ANALYZE" }
       if let format { return "EXPLAIN FORMAT=\(format.uppercased())" }
@@ -262,10 +356,12 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   }
 
   /// `column` as text for `LIKE`: PostgreSQL `::text`, DuckDB `::VARCHAR`, MySQL `CAST(.. AS CHAR)`,
-  /// SQLite unchanged.
+  /// ClickHouse `toString(..)`, SQL Server `CAST(.. AS NVARCHAR(MAX))`, SQLite unchanged.
   func likeSubject(_ column: String) -> String {
     switch engine {
     case .postgresql, .mongodb: "\(column)::text"
+    case .clickhouse: "toString(\(column))"
+    case .sqlserver: "CAST(\(column) AS NVARCHAR(MAX))"
     case .sqlite: column
     case .duckdb: "\(column)::VARCHAR"
     case .mysql: "CAST(\(column) AS CHAR)"
@@ -274,16 +370,25 @@ nonisolated struct SQLDialect: Sendable, Equatable {
 
   /// `column`, `pattern` and `escape` are SQL fragments, inserted unchanged; `escape` follows
   /// the comparison as `ESCAPE escape`. SQLite and MySQL lower both sides (a MySQL `_bin`
-  /// collation makes `LIKE` case-sensitive), the form Find a Value in Every Table searches with.
+  /// collation makes `LIKE` case-sensitive), the form Find a Value in Every Table searches with;
+  /// so does SQL Server (`lowerLike`).
   func caseInsensitiveLike(column: String, pattern: String, escape: String? = nil) -> String {
     let comparison =
       switch engine {
       case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
+      case .clickhouse: "\(likeSubject(column)) ILIKE \(pattern)"
       case .sqlite: "LOWER(\(column)) LIKE LOWER(\(pattern))"
+      case .sqlserver: lowerLike(column: column, pattern: pattern, negated: false)
       case .duckdb: "\(column)::VARCHAR ILIKE \(pattern)"
       case .mysql: "LOWER(CAST(\(column) AS CHAR)) LIKE LOWER(\(pattern))"
       }
     return escape.map { "\(comparison) ESCAPE \($0)" } ?? comparison
+  }
+
+  /// SQL Server `LOWER(CAST(column AS NVARCHAR(MAX))) [NOT] LIKE LOWER(pattern)`: whether `LIKE`
+  /// folds case depends on the collation, so both sides are lowered (T-SQL has no `ILIKE`)
+  private func lowerLike(column: String, pattern: String, negated: Bool) -> String {
+    "LOWER(\(likeSubject(column))) \(negated ? "NOT " : "")LIKE LOWER(\(pattern))"
   }
 
   // MARK: - PostgreSQL qualification
@@ -353,8 +458,9 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   }
 
   /// `column [NOT] LIKE pattern [ESCAPE escape]`, case-insensitive (`ILIKE`, or both sides
-  /// lowered on SQLite and MySQL) when asked. Fragments are inserted unchanged. PostgreSQL is
-  /// `column::pg_catalog.text OPERATOR(pg_catalog.~~)` (`~~*`, `!~~`, `!~~*`), and an escape
+  /// lowered on SQLite, MySQL and SQL Server, negated too on SQL Server) when asked. Fragments
+  /// are inserted unchanged. PostgreSQL is `column::pg_catalog.text OPERATOR(pg_catalog.~~)`
+  /// (`~~*`, `!~~`, `!~~*`), and an escape
   /// becomes `pg_catalog.like_escape(pattern, escape)`: `ESCAPE` only follows the keyword.
   func like(
     column: String, pattern: String, escape: String? = nil, negated: Bool = false,
@@ -364,6 +470,10 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       let op = (negated ? "!~~" : "~~") + (caseInsensitive ? "*" : "")
       let operand = escape.map { function("like_escape", pattern, $0) } ?? pattern
       return "\(cast(column, to: "text")) OPERATOR(pg_catalog.\(op)) \(operand)"
+    }
+    if caseInsensitive && engine == .sqlserver {
+      let comparison = lowerLike(column: column, pattern: pattern, negated: negated)
+      return escape.map { "\(comparison) ESCAPE \($0)" } ?? comparison
     }
     if caseInsensitive && !negated {
       return caseInsensitiveLike(column: column, pattern: pattern, escape: escape)
@@ -393,12 +503,13 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     "\(engine == .postgresql ? "pg_catalog." : "")\(name)(\(arguments.joined(separator: ", ")))"
   }
 
-  /// Text concatenation: `lhs || rhs`, MySQL `CONCAT(lhs, rhs)`, PostgreSQL
-  /// `lhs OPERATOR(pg_catalog.||) rhs`
+  /// Text concatenation: `lhs || rhs`, MySQL `CONCAT(lhs, rhs)`, ClickHouse `concat(lhs, rhs)`,
+  /// PostgreSQL `lhs OPERATOR(pg_catalog.||) rhs`
   func concatenation(_ lhs: String, _ rhs: String) -> String {
     switch engine {
     case .postgresql: "\(lhs) OPERATOR(pg_catalog.||) \(rhs)"
-    case .mysql: "CONCAT(\(lhs), \(rhs))"
+    case .clickhouse: "concat(\(lhs), \(rhs))"
+    case .mysql, .sqlserver: "CONCAT(\(lhs), \(rhs))"
     case .sqlite, .duckdb, .mongodb: "\(lhs) || \(rhs)"
     }
   }
@@ -407,8 +518,13 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// every `\` becomes `\\` and every `'` becomes `''`, so those characters stay
   /// data with `standard_conforming_strings` on or off. SQLite and DuckDB never use `E`: their
   /// plain strings have no backslash escapes. MySQL plain strings do: every `\` becomes `\\`
-  /// with no prefix.
+  /// with no prefix. ClickHouse escapes both with a backslash: `\` is `\\`, `'` is `\'`.
+  /// SQL Server is `sqlserverLiteral`.
   private func quoteLiteral(_ text: String) -> String {
+    if engine == .clickhouse {
+      return "'" + Self.escapingScalars(text, ["\\": "\\\\", "'": "\\'"]) + "'"
+    }
+    if engine == .sqlserver { return Self.sqlserverLiteral(text) }
     let doubledQuotes = Self.escapingScalars(text, ["'": "''"])
     guard text.unicodeScalars.contains("\\") else {
       return "'\(doubledQuotes)'"
@@ -416,15 +532,40 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     let escaped = Self.escapingScalars(text, ["'": "''", "\\": "\\\\"])
     switch engine {
     case .postgresql, .mongodb: return "E'\(escaped)'"
-    case .mysql: return "'\(escaped)'"
+    case .mysql, .clickhouse, .sqlserver: return "'\(escaped)'"
     case .sqlite, .duckdb: return "'\(doubledQuotes)'"
     }
+  }
+
+  /// T-SQL `N'text'` with every `'` scalar doubled; a backslash stays single (T-SQL has no
+  /// backslash escapes). The server drops a `\` directly followed by CR or LF together with the
+  /// break (line continuation), so the text is cut after each such `\` scalar and the
+  /// `N'…'` pieces are joined with `+`, the first cast to `nvarchar(max)` so the sum is not cut
+  /// at 4000 characters. Walks scalars, as the server lexes the text: a `\` followed by a
+  /// combining mark is no continuation.
+  private static func sqlserverLiteral(_ text: String) -> String {
+    var pieces: [String.UnicodeScalarView] = []
+    var current = String.UnicodeScalarView()
+    var previous: Unicode.Scalar?
+    for scalar in text.unicodeScalars {
+      if previous == "\\", scalar == "\n" || scalar == "\r" {
+        pieces.append(current)
+        current = String.UnicodeScalarView()
+      }
+      current.append(scalar)
+      previous = scalar
+    }
+    pieces.append(current)
+    let literals = pieces.map { "N'" + escapingScalars(String($0), ["'": "''"]) + "'" }
+    guard literals.count > 1 else { return literals[0] }
+    return "CAST(\(literals[0]) AS nvarchar(max))"
+      + literals.dropFirst().map { " + " + $0 }.joined()
   }
 
   private func doubleLiteral(_ number: Double) -> String {
     if number.isFinite { return String(number) }
     switch engine {
-    case .sqlite, .mysql:
+    case .sqlite, .mysql, .clickhouse, .sqlserver:
       return "NULL"
     case .postgresql, .mongodb:
       let type = engine == .postgresql ? "pg_catalog.float8" : "float8"
@@ -442,6 +583,10 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       return "'\\x\(data.hexDigits())'"
     case .sqlite, .mysql:
       return "X'\(data.hexDigits(uppercase: true))'"
+    case .sqlserver:
+      return "0x\(data.hexDigits(uppercase: true))"
+    case .clickhouse:
+      return "unhex('\(data.hexDigits(uppercase: true))')"
     case .duckdb:
       return "'\(data.hexDigits(uppercase: true, bytePrefix: "\\x"))'::BLOB"
     }

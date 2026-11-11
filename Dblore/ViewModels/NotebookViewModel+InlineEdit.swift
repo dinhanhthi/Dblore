@@ -311,7 +311,7 @@ extension NotebookViewModel {
   /// distinct tables it misses, one `origins` call names them (PostgreSQL OIDs; SQLite carries
   /// its names) and `fetchTable` reads them (nil: cache / memo only). A table that resolves to
   /// another identity, a view, an unnamed relation or a failed read gives no label; nor does an
-  /// expression. DuckDB / MongoDB: none.
+  /// expression. DuckDB / MongoDB / ClickHouse / SQL Server: none.
   @concurrent nonisolated static func columnSourceLabels(
     _ columns: [ColumnInfo], databaseType: DatabaseType,
     cachedTable: @Sendable (TableRef) async -> EditTable?,
@@ -322,7 +322,7 @@ extension NotebookViewModel {
       parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ".")
     }
     switch databaseType {
-    case .duckdb, .mongodb:
+    case .duckdb, .mongodb, .clickhouse, .sqlserver:
       return [:]
     case .mysql:
       guard columns.contains(where: { $0.sourceName != nil }) else { return [:] }
@@ -407,7 +407,7 @@ extension NotebookViewModel {
     else { return }
     switch databaseType {
     case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb: return
+    case .duckdb, .mongodb, .clickhouse, .sqlserver: return
     }
     let pendingTargets = resultTargetPatches[cellId]?.task
     columnSourceLabelTasks[cellId] = Task { [weak self] in

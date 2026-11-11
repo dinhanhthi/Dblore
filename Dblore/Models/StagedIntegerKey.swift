@@ -60,10 +60,12 @@ nonisolated enum StagedIntegerKey {
 
   /// Catalog lookup: whether the column has a default, and `MAX(column)` of the table.
   /// MySQL `AUTO_INCREMENT` has no COLUMN_DEFAULT; it is read from COLUMNS.EXTRA.
-  /// Nil when a name cannot be quoted.
+  /// Nil when a name cannot be quoted, and on ClickHouse and SQL Server (a SQL Server IDENTITY
+  /// column has no default either): no key is ever assigned there.
   static func lookupSQL(
     schema: String, table: String, column: String, dialect: SQLDialect
   ) -> String? {
+    guard dialect != .clickhouse, dialect != .sqlserver else { return nil }
     let quotedColumn: String
     let quotedRelation: String
     do {

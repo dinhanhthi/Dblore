@@ -1,6 +1,6 @@
 // MCPReadOnlySessionTests.swift
 // MCP sessions: every PostgreSQL / MySQL query runs inside a read-only transaction that is
-// always rolled back, SQLite opens read-only, DuckDB is refused.
+// always rolled back, SQLite opens read-only, DuckDB, ClickHouse and SQL Server are refused.
 
 import Foundation
 import Testing
@@ -192,11 +192,19 @@ struct MCPReadOnlySessionTests {
     #expect(recording.fake.statements == ["SELECT 1"])
   }
 
-  @Test("DuckDB is refused without building a session")
-  func duckdbRefused() async throws {
+  nonisolated static let refused: [(DatabaseType, MCPConnectionError)] = [
+    (.duckdb, .duckDBNotSupported),
+    (.clickhouse, .engineNotSupported(.clickhouse)),
+    (.sqlserver, .engineNotSupported(.sqlserver)),
+  ]
+
+  @Test(
+    "DuckDB, ClickHouse and SQL Server are refused without building a session",
+    arguments: refused)
+  func duckdbRefused(type: DatabaseType, error: MCPConnectionError) async throws {
     let inner = fakeFactory()
-    await #expect(throws: MCPConnectionError.duckDBNotSupported) {
-      _ = try await MCPReadOnlySessionFactory(inner: inner).makeSession(config: config(.duckdb))
+    await #expect(throws: error) {
+      _ = try await MCPReadOnlySessionFactory(inner: inner).makeSession(config: config(type))
     }
     #expect(inner.sessions.isEmpty)
   }

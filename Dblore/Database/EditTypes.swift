@@ -143,23 +143,31 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// True if `name` has the shape of `format('%I.%I', ...)` output: exactly two identifiers
   /// joined by `.`, each either `[a-z_][a-z0-9_]*` or a non-empty `"..."` with `""` escapes.
   /// MySQL: each a non-empty `` `...` `` with doubled backticks (`MySQLSchemaIntrospector`).
+  /// SQL Server: each a non-empty `[...]` with `]` doubled (`SQLDialect.quoteIdentifier`).
   static func isServerQualifiedName(_ name: String, dialect: SQLDialect = .postgresql) -> Bool {
-    let quote: Unicode.Scalar = dialect == .mysql ? "`" : "\""
+    let quote: Unicode.Scalar =
+      switch dialect {
+      case .mysql: "`"
+      case .sqlserver: "]"
+      default: "\""
+      }
+    let open: Unicode.Scalar = dialect == .sqlserver ? "[" : quote
     let scalars = Array(name.unicodeScalars)
-    guard let dot = identifierEnd(scalars, from: 0, quote: quote), dot < scalars.count,
-      scalars[dot] == ".",
-      let end = identifierEnd(scalars, from: dot + 1, quote: quote)
+    guard let dot = identifierEnd(scalars, from: 0, open: open, quote: quote),
+      dot < scalars.count, scalars[dot] == ".",
+      let end = identifierEnd(scalars, from: dot + 1, open: open, quote: quote)
     else { return false }
     return end == scalars.count
   }
 
   /// End offset of the `%I` identifier starting at `start`, or nil if there is none. A MySQL
-  /// (backtick) identifier is always quoted.
+  /// (backtick) or SQL Server (`[...]`) identifier is always quoted: `open`, then up to an
+  /// undoubled `quote`.
   private static func identifierEnd(
-    _ s: [Unicode.Scalar], from start: Int, quote: Unicode.Scalar
+    _ s: [Unicode.Scalar], from start: Int, open: Unicode.Scalar, quote: Unicode.Scalar
   ) -> Int? {
     guard start < s.count else { return nil }
-    guard s[start] == quote else {
+    guard s[start] == open else {
       guard quote == "\"", s[start] == "_" || ("a"..."z").contains(s[start]) else { return nil }
       var i = start + 1
       while i < s.count, s[i] == "_" || ("a"..."z").contains(s[i]) || ("0"..."9").contains(s[i]) {
@@ -191,14 +199,25 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// as text for `to_regclass` (`name` or `schema.name`, quoted parts re-quoted), or nil for
   /// anything else (fail closed): a comma or `(` after the relation, JOIN, subquery, CTE, set
   /// operation, other clauses, several statements or an ambiguous backslash string.
-  /// `dialect` lexes the query and re-quotes quoted parts.
+  /// `dialect` lexes the query and re-quotes quoted parts. On SQL Server the `SELECT` of a
+  /// top-level `ORDER BY (SELECT NULL)` (the data viewer's unordered paging) is no subquery.
   static func singleRelation(in sql: String, dialect: SQLDialect = .postgresql) -> String? {
     var tokens = SQLTokenizer(dialect: dialect).tokens(sql)
     if tokens.last?.isSymbol(";") == true { tokens.removeLast() }
     guard let first = tokens.first, first.isWord("SELECT") else { return nil }
-    let forbidden = tokens.dropFirst().contains { token in
-      token.kind == .backslashString || token.isSymbol(";")
-        || token.keyword.map(nonEditableWords.contains) == true
+    let unordered: Set<Int> =
+      dialect == .sqlserver
+      ? Set(
+        tokens.indices.filter { index in
+          index >= 3 && index + 2 < tokens.count && tokens[index - 3].depth == 0
+            && tokens[index - 3].isWord("ORDER") && tokens[index - 2].isWord("BY")
+            && tokens[index - 1].isSymbol("(") && tokens[index].isWord("SELECT")
+            && tokens[index + 1].isWord("NULL") && tokens[index + 2].isSymbol(")")
+        }) : []
+    let forbidden = tokens.indices.dropFirst().contains { index in
+      let token = tokens[index]
+      return token.kind == .backslashString || token.isSymbol(";")
+        || (token.keyword.map(nonEditableWords.contains) == true && !unordered.contains(index))
     }
     let froms = tokens.indices.filter { tokens[$0].depth == 0 && tokens[$0].isWord("FROM") }
     guard !forbidden, froms.count == 1, let from = froms.first else { return nil }
@@ -281,11 +300,16 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
   /// A NUL cannot be quoted by the dialect, so it keeps the historical quote-and-double-quotes
   /// text; MySQL keeps backticks (a double-quoted MySQL name is a string literal). The server
   /// then refuses the name. MongoDB (`notSQL`) gets the PostgreSQL text: its callers (row
-  /// staging, FK lookup, data-viewer SQL) are gated off for MongoDB.
+  /// staging, FK lookup, data-viewer SQL) are gated off for MongoDB. ClickHouse reads backslash
+  /// escapes inside a quoted name, so its backslashes are doubled too. SQL Server keeps
+  /// `[name]` with `]` doubled per scalar (a double-quoted name depends on QUOTED_IDENTIFIER).
   static func quoteIdentifier(_ name: String, dialect: SQLDialect = .postgresql) -> String {
     do {
       return try dialect.quoteIdentifier(name)
     } catch {
+      if dialect == .sqlserver {
+        return "[" + SQLDialect.escapingScalars(name, ["]": "]]"]) + "]"
+      }
       let quote: Unicode.Scalar
       switch dialect {
       case .mysql: quote = "`"
@@ -293,39 +317,46 @@ nonisolated struct CellUpdateStatement: Sendable, Equatable {
       default: quote = "\""
       }
       let quoteText = String(quote)
-      return quoteText + SQLDialect.escapingScalars(name, [quote: quoteText + quoteText])
-        + quoteText
+      var escapes: [Unicode.Scalar: String] = [quote: quoteText + quoteText]
+      if dialect == .clickhouse { escapes["\\"] = "\\\\" }
+      return quoteText + SQLDialect.escapingScalars(name, escapes) + quoteText
     }
   }
 
   /// Input text for a result value (nil for NULL). PostgreSQL: `true`/`false`, ISO 8601 dates,
   /// `\x` hex bytes (bytea input). MySQL: `1`/`0`, `YYYY-MM-DD HH:MM:SS.ffffff` (the session is
   /// UTC). MySQL, SQLite and DuckDB: bare hex bytes for `bindPlaceholder`'s `UNHEX(?)`, since
-  /// every bind is sent as text and a text bind would store text, not bytes.
+  /// every bind is sent as text and a text bind would store text, not bytes. SQL Server: `1`/`0`,
+  /// and bytes as their `0x…` literal, which `bindPlaceholder` writes in place of the bind.
   static func inputText(_ value: CellValue, dialect: SQLDialect) -> String? {
     let mysql = dialect == .mysql
     switch value {
     case .null: return nil
     case .int(let number): return String(number)
     case .double(let number): return String(number)
-    case .bool(let flag): return mysql ? (flag ? "1" : "0") : (flag ? "true" : "false")
+    case .bool(let flag):
+      return mysql || dialect == .sqlserver ? (flag ? "1" : "0") : (flag ? "true" : "false")
     case .string(let text), .json(let text), .decimal(let text): return text
     case .date(let date):
       let text = DateBindText.string(from: date)
       guard mysql else { return text }
       return String(text.dropLast()).replacingOccurrences(of: "T", with: " ")
     case .data(let data):
+      if dialect == .sqlserver { return dialect.literal(value) }
       let hex = data.hexDigits()
       return bindsBytesAsHex(dialect) ? hex : "\\x" + hex
     }
   }
 
   /// `placeholder` for `value`'s bind, or `UNHEX(placeholder)` for bytes on MySQL, SQLite
-  /// (3.41+) and DuckDB (`inputText`), so the column stores a blob.
+  /// (3.41+) and DuckDB (`inputText`), so the column stores a blob. SQL Server bytes are their
+  /// `0x…` literal (`SQLDialect.literal`): every bind is an nvarchar, which a varbinary column
+  /// would store as text bytes, so the bind (declared by the engine plugin) goes unused.
   static func bindPlaceholder(
     _ placeholder: String, _ value: CellValue, dialect: SQLDialect
   ) -> String {
     if bindsBytesAsHex(dialect), case .data = value { return "UNHEX(\(placeholder))" }
+    if dialect == .sqlserver, case .data = value { return dialect.literal(value) }
     return placeholder
   }
 

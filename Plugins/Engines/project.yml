@@ -1,0 +1,191 @@
+# project.yml
+# Source of truth for DbloreEngines.xcodeproj, the database engine plugins: loadable bundles that
+# Dblore loads into its own process (and sandbox) and calls through the two C entry points of
+# engine protocol v1 (`dblore_engine_protocol`, `dblore_engine_request`). One target per engine.
+# After editing, regenerate from this folder with `xcodegen generate`. Sources are listed file by
+# file (explicit references, no synced folders).
+#
+# DbloreSQLServer links FreeTDS (db-lib) and OpenSSL statically from dist/deps/sqlserver/: run
+# SQLServer/deps/build-deps.sh before the first build. DbloreClickHouse needs no C dependency.
+
+name: DbloreEngines
+options:
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "27.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: 86H6CNLN4C
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    GCC_C_LANGUAGE_STANDARD: gnu17
+    SWIFT_VERSION: "6.0"
+
+targets:
+  DbloreSQLServer:
+    type: bundle
+    platform: macOS
+    sources:
+      # Protocol v1 has one definition, owned by the app; every engine compiles the app's file
+      - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
+      - path: Shared/EngineEntry.swift
+      - path: Shared/EngineRequestHandler.swift
+      - path: SQLServer/SQLServerTypes.swift
+      - path: SQLServer/SQLServerCatalog.swift
+      - path: SQLServer/SQLServerDriver.swift
+      - path: SQLServer/CFreeTDS/dblore_tds.c
+      - path: SQLServer/CFreeTDS/dblore_tds.h
+        buildPhase: none
+      - path: SQLServer/CFreeTDS/module.modulemap
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.SQLServer
+        PRODUCT_NAME: DbloreSQLServer
+        WRAPPER_EXTENSION: bundle
+        MACH_O_TYPE: mh_bundle
+        # A bundle is not installed by default; archive needs it in Products/Library/Bundles
+        SKIP_INSTALL: NO
+        INSTALL_PATH: $(LOCAL_LIBRARY_DIR)/Bundles
+        GENERATE_INFOPLIST_FILE: YES
+        # Install refuses a bundle whose CFBundleShortVersionString differs from the catalog's
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        ARCHS: arm64
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        # Signed ad hoc for local use; scripts/release-plugin.sh re-signs Release with the Developer ID
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+        # A bundle carries no entitlements (not even get-task-allow): it runs in the app's sandbox
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        # The C shim module (CFreeTDS), and the FreeTDS / OpenSSL headers and static libs that
+        # SQLServer/deps/build-deps.sh builds
+        SWIFT_INCLUDE_PATHS: $(SRCROOT)/SQLServer/CFreeTDS
+        HEADER_SEARCH_PATHS: $(SRCROOT)/../../dist/deps/sqlserver/include
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../dist/deps/sqlserver/lib
+        # Only the two protocol entry points are exported; FreeTDS and OpenSSL stay internal
+        OTHER_LDFLAGS:
+          - -lsybdb
+          - -lssl
+          - -lcrypto
+          - -liconv
+          - -Wl,-exported_symbol,_dblore_engine_protocol
+          - -Wl,-exported_symbol,_dblore_engine_request
+
+  # ClickHouse over its HTTP(S) interface: Foundation and Security only, no C dependency
+  DbloreClickHouse:
+    type: bundle
+    platform: macOS
+    sources:
+      - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
+      - path: Shared/EngineEntry.swift
+      - path: Shared/EngineRequestHandler.swift
+      - path: ClickHouse/ClickHouseHTTP.swift
+      - path: ClickHouse/ClickHouseFormat.swift
+      - path: ClickHouse/ClickHouseCatalog.swift
+      - path: ClickHouse/ClickHouseDriver.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.ClickHouse
+        PRODUCT_NAME: DbloreClickHouse
+        WRAPPER_EXTENSION: bundle
+        MACH_O_TYPE: mh_bundle
+        # A bundle is not installed by default; archive needs it in Products/Library/Bundles
+        SKIP_INSTALL: NO
+        INSTALL_PATH: $(LOCAL_LIBRARY_DIR)/Bundles
+        GENERATE_INFOPLIST_FILE: YES
+        # Install refuses a bundle whose CFBundleShortVersionString differs from the catalog's
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        ARCHS: arm64
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        # Signed ad hoc for local use; scripts/release-plugin.sh re-signs Release with the Developer ID
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+        # A bundle carries no entitlements (not even get-task-allow): it runs in the app's sandbox
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        # Only the two protocol entry points are exported
+        OTHER_LDFLAGS:
+          - -Wl,-exported_symbol,_dblore_engine_protocol
+          - -Wl,-exported_symbol,_dblore_engine_request
+
+  # Host-less unit tests: they compile the shared entry, the engines' pure sources and the
+  # protocol themselves instead of loading a bundle, so no TEST_HOST or BUNDLE_LOADER. Of SQL
+  # Server only the pure SQLServerTypes.swift joins (no FreeTDS shim, no driver).
+  DbloreEnginesTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/EngineRequestHandlerTests.swift
+      - path: Tests/ClickHouseDriverTests.swift
+      - path: Tests/SQLServerTypesTests.swift
+      - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
+      - path: Shared/EngineEntry.swift
+      - path: Shared/EngineRequestHandler.swift
+      - path: ClickHouse/ClickHouseHTTP.swift
+      - path: ClickHouse/ClickHouseFormat.swift
+      - path: ClickHouse/ClickHouseCatalog.swift
+      - path: ClickHouse/ClickHouseDriver.swift
+      - path: SQLServer/SQLServerTypes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.EnginesTests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        ARCHS: arm64
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY: YES
+
+schemes:
+  DbloreSQLServer:
+    build:
+      targets:
+        DbloreSQLServer: all
+        DbloreEnginesTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - DbloreEnginesTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+  DbloreClickHouse:
+    build:
+      targets:
+        DbloreClickHouse: all
+        DbloreEnginesTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - DbloreEnginesTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

@@ -10,6 +10,10 @@
 # dist/plugins/local-ai/ with its source fingerprint (only when notarized); --install-dev also
 # fills .plugin-dev/local-ai/. Its --publish (user-run only) never rebuilds and never rewrites
 # the catalog: it uploads that zip only when it matches the catalog's local-ai entry.
+# For the engine bundles (sqlserver, clickhouse): build the engine's C libraries when it has a deps
+# script, archive Dblore<Engine>.bundle from Plugins/Engines/DbloreEngines.xcodeproj, then sign,
+# notarize, staple and zip it into dist/plugins/<id>/ like local-ai, with a per-engine source
+# fingerprint; the version is the archived bundle's. Their --publish is check-only, like local-ai's.
 
 set -euo pipefail
 
@@ -26,6 +30,9 @@ LOCAL_AI_PROTOCOL="Dblore/Utilities/AI/LocalAIProtocol.swift"
 LOCAL_AI_BUNDLE="DbloreLocalAI.bundle"
 LOCAL_AI_ZIP="DbloreLocalAI.zip"
 LOCAL_AI_DIST="dist/plugins/local-ai"
+ENGINES_DIR="Plugins/Engines"
+ENGINES_PROJECT="$ENGINES_DIR/DbloreEngines.xcodeproj"
+ENGINE_PROTOCOL="Dblore/Database/EnginePlugin/EnginePluginProtocol.swift"
 
 usage() {
   cat <<EOF
@@ -39,13 +46,19 @@ notarizes it and prints its SHA-256. Build recipes:
   local-ai  Archives $LOCAL_AI_BUNDLE ($LOCAL_AI_DIR, version from project.yml), signs it
             inside out with no entitlements, staples it and prints its CDHash too. Once
             notarized, writes $LOCAL_AI_ZIP and source.sha256 to dist/plugins/local-ai/
+  sqlserver, clickhouse
+            Engine bundles: run $ENGINES_DIR/<Engine>/deps/build-deps.sh when it exists,
+            archive Dblore<Engine>.bundle from $ENGINES_PROJECT
+            (version from the archived bundle's Info.plist), then sign, staple and write
+            the zip and source.sha256 to dist/plugins/<id>/ as for local-ai
 
   --plugin <id>     Plugin id in $CATALOG (default duckdb);
-                    an id not in the catalog is refused, except local-ai, which builds
-                    without an entry
+                    an id not in the catalog is refused, except local-ai, sqlserver and
+                    clickhouse, which build without an entry
   --install-dev     duckdb: write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
-                    into .plugin-dev/ at the repo root. local-ai: write the zip, an
-                    ad-hoc-signed zip and their own dev-catalog.json into .plugin-dev/local-ai/
+                    into .plugin-dev/ at the repo root. local-ai, sqlserver, clickhouse: write
+                    the zip, an ad-hoc-signed zip and their own dev-catalog.json into
+                    .plugin-dev/<id>/
   --publish         Upload to GitHub release plugin-<id>-v<version> (--latest=false).
                     Manual, user-run only; afterwards
                     scripts/release-local.sh --check-plugin-only verifies the asset.
@@ -53,11 +66,14 @@ notarizes it and prints its SHA-256. Build recipes:
                     local-ai: no build, no catalog change; uploads
                     $LOCAL_AI_DIST/$LOCAL_AI_ZIP only when its SHA-256 is the entry's,
                     the bundle in it is signed under $TEAM_ID with the entry's cdhash,
-                    and its source.sha256 is the current source fingerprint
+                    and its source.sha256 is the current source fingerprint.
+                    sqlserver, clickhouse: the same checks on dist/plugins/<id>/, plus the
+                    bundle's version must be the entry's
   --yes             Skip the interactive confirmation of --publish
   --skip-notarize   Sign only (not allowed with --publish); local-ai leaves dist/ untouched
   --print-source-fingerprint
-                    Print the local-ai source fingerprint (what source.sha256 holds) and exit
+                    Print the local-ai source fingerprint (what source.sha256 holds) and exit;
+                    with --plugin sqlserver or clickhouse, that engine's fingerprint
   -h, --help        Show this help
 EOF
 }
@@ -435,20 +451,300 @@ publish_local_ai() {
   echo "$CATALOG is unchanged; run scripts/release-local.sh --check-plugin-only --plugin local-ai"
 }
 
+# Sets the names of engine plugin <id>: ENGINE_NAME (its folder under Plugins/Engines and the
+# suffix of its target, scheme and bundle), ENGINE_BUNDLE, ENGINE_ZIP, ENGINE_IDENTIFIER and
+# ENGINE_DIST. Returns 1 for an id that is not an engine plugin.
+engine_names() {
+  case "$1" in
+    sqlserver) ENGINE_NAME="SQLServer" ;;
+    clickhouse) ENGINE_NAME="ClickHouse" ;;
+    *) return 1 ;;
+  esac
+  ENGINE_BUNDLE="Dblore$ENGINE_NAME.bundle"
+  ENGINE_ZIP="Dblore$ENGINE_NAME.zip"
+  ENGINE_IDENTIFIER="ace.thi.Dblore.$ENGINE_NAME"
+  ENGINE_DIST="dist/plugins/$1"
+}
+
+# Prints the source fingerprint of engine plugin <Name> (ENGINE_NAME), from the repo root: one
+# SHA-256 over
+#   { find Plugins/Engines/Shared Plugins/Engines/<Name> -type f -not -path '*/xcuserdata/*'
+#       -not -name .DS_Store -print0
+#     printf '%s\0' Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
+#   } | xargs -0 shasum -a 256 | LC_ALL=C sort | shasum -a 256
+# The shared project.yml and DbloreEngines.xcodeproj are left out, so another engine's target
+# edits never change it.
+engine_source_fingerprint() {
+  local dir
+  for dir in "$ENGINES_DIR/Shared" "$ENGINES_DIR/$1"; do
+    [[ -d "$dir" ]] || fail "$dir not found"
+  done
+  [[ -f "$ENGINE_PROTOCOL" ]] || fail "$ENGINE_PROTOCOL not found"
+  {
+    find "$ENGINES_DIR/Shared" "$ENGINES_DIR/$1" -type f -not -path '*/xcuserdata/*' \
+      -not -name .DS_Store -print0
+    printf '%s\0' "$ENGINE_PROTOCOL"
+  } | xargs -0 shasum -a 256 | LC_ALL=C sort | shasum -a 256 | awk '{ print $1 }'
+}
+
+# The engine-bundle recipe, shared by every engine plugin (names from engine_names): build its C
+# libraries (Plugins/Engines/<Name>/deps/build-deps.sh, when it exists), archive the bundle, read
+# its version from the archived Info.plist, sign it inside out with the Developer ID and no
+# entitlements, check that only the two protocol entry points are exported, notarize and staple
+# it (unless --skip-notarize), then zip it into dist/plugins/<id>/ (only when notarized) with its
+# source fingerprint and, with --install-dev, into .plugin-dev/<id>/.
+release_engine_bundle() {
+  local source_fp deps archive bundle exe item links archs kind exports sig_info cdhash identifier
+  local notary_zip notary_json notary_id notary_status staple_output gatekeeper cdhash_stapled
+  local notarized=false stapled=false zip zip_sha zip_size dist_dir dev_dir adhoc_bundle
+  local adhoc_zip="Dblore$ENGINE_NAME-adhoc.zip"
+  source_fp=$(engine_source_fingerprint "$ENGINE_NAME")
+
+  deps="$ENGINES_DIR/$ENGINE_NAME/deps/build-deps.sh"
+  if [[ -f "$deps" ]]; then
+    echo "==> Building the $PLUGIN_ID C libraries ($deps)"
+    bash "$deps" || fail "$deps failed"
+  fi
+
+  WORK_DIR=$(mktemp -d -t dblore-plugin)
+  archive="$WORK_DIR/Dblore$ENGINE_NAME.xcarchive"
+  bundle="$WORK_DIR/$ENGINE_BUNDLE"
+  exe="$bundle/Contents/MacOS/Dblore$ENGINE_NAME"
+
+  # archive (not build) strips the executable (non-global: the two entry points stay exported).
+  echo "==> Archiving $ENGINE_BUNDLE"
+  xcodebuild archive \
+    -project "$ENGINES_PROJECT" \
+    -scheme "Dblore$ENGINE_NAME" \
+    -configuration Release \
+    -destination 'generic/platform=macOS' \
+    -archivePath "$archive" \
+    ARCHS=arm64 ||
+    fail "xcodebuild archive failed"
+  # project.yml installs the bundle in Library/Bundles (SKIP_INSTALL = NO)
+  [[ -d "$archive/Products/Library/Bundles/$ENGINE_BUNDLE" ]] ||
+    fail "$ENGINE_BUNDLE not found in $archive/Products/Library/Bundles"
+  ditto "$archive/Products/Library/Bundles/$ENGINE_BUNDLE" "$bundle"
+
+  # The version is the target's own (MARKETING_VERSION in project.yml, one per engine target)
+  PLUGIN_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist") ||
+    fail "$ENGINE_BUNDLE has no CFBundleShortVersionString"
+  [[ "$PLUGIN_VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]] ||
+    fail "$ENGINE_BUNDLE has an invalid version: $PLUGIN_VERSION"
+  identifier=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$bundle/Contents/Info.plist") ||
+    fail "$ENGINE_BUNDLE has no CFBundleIdentifier"
+  [[ "$identifier" == "$ENGINE_IDENTIFIER" ]] ||
+    fail "$ENGINE_BUNDLE is $identifier, expected $ENGINE_IDENTIFIER"
+  echo "$ENGINE_BUNDLE version: $PLUGIN_VERSION"
+  links=$(find "$bundle" -type l)
+  [[ -z "$links" ]] || fail "$ENGINE_BUNDLE contains symlinks:"$'\n'"$links"
+
+  # Inside out: nested Mach-O files (the main executable goes with the bundle), then nested
+  # bundles deepest first, then the bundle itself. Never --deep for signing.
+  echo "==> Signing inside out"
+  while IFS= read -r -d '' item; do
+    [[ "$item" != "$exe" && "$(file -b "$item")" == Mach-O* ]] || continue
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$item"
+  done < <(find "$bundle/Contents" -type f -print0)
+  while IFS= read -r item; do
+    codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$item"
+  done < <(find "$bundle/Contents" -type d \( -name '*.bundle' -o -name '*.framework' -o -name '*.app' \
+    -o -name '*.appex' -o -name '*.xpc' \) | awk -F/ '{ print NF "\t" $0 }' | sort -rn | cut -f2-)
+  codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$bundle"
+
+  echo "==> Checking the signature"
+  codesign --verify --strict --deep "$bundle" || fail "codesign --verify --strict --deep failed"
+  sig_info=$(codesign -dvvv "$bundle" 2>&1)
+  grep -qx "TeamIdentifier=$TEAM_ID" <<<"$sig_info" || fail "signature TeamIdentifier is not $TEAM_ID"
+  grep -q '^CodeDirectory .*flags=.*runtime' <<<"$sig_info" ||
+    fail "signature lacks the hardened runtime flag"
+  codesign -d --entitlements - --xml "$bundle" 2>/dev/null | python3 -I -c '
+import plistlib, sys
+data = sys.stdin.buffer.read()
+if data.strip():
+    try:
+        ents = plistlib.loads(data)
+    except Exception as error:
+        sys.exit("unreadable entitlements: %s" % error)
+    if ents != {}:
+        sys.exit("entitlements: %r" % ents)
+' || fail "$ENGINE_BUNDLE must carry no entitlements"
+  archs=$(lipo -archs "$exe")
+  [[ "$archs" == "arm64" ]] || fail "the main executable must be arm64 only (has: $archs)"
+  kind=$(file -b "$exe")
+  [[ "$kind" == "Mach-O 64-bit bundle arm64" ]] || fail "the main executable is not a Mach-O bundle: $kind"
+  # Exactly the two protocol entry points: FreeTDS, OpenSSL and the Swift code stay internal
+  exports=$(nm -gU "$exe" | awk '{ print $NF }' | LC_ALL=C sort)
+  [[ "$exports" == $'_dblore_engine_protocol\n_dblore_engine_request' ]] ||
+    fail "the main executable must export only _dblore_engine_protocol and _dblore_engine_request:"$'\n'"$exports"
+  cdhash=$(sed -n 's/^CDHash=//p' <<<"$sig_info")
+  [[ "$cdhash" =~ ^[0-9a-f]{40}$ ]] || fail "unexpected CDHash: $cdhash"
+
+  if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+    echo "==> Notarizing (this can take several minutes)"
+    notary_zip="$WORK_DIR/Dblore$ENGINE_NAME-notarize.zip"
+    ditto -c -k --keepParent "$bundle" "$notary_zip"
+    notary_json=$(xcrun notarytool submit "$notary_zip" --keychain-profile "$NOTARY_PROFILE" \
+      --wait --output-format json) || fail "notarytool submit failed: $notary_json"
+    notary_id=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("id", ""))' <<<"$notary_json")
+    notary_status=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("status", ""))' <<<"$notary_json")
+    echo "notarization: $notary_status (submission $notary_id)"
+    [[ "$notary_status" == "Accepted" ]] ||
+      fail "notarization not accepted. Log: xcrun notarytool log $notary_id --keychain-profile $NOTARY_PROFILE"
+    notarized=true
+
+    echo "==> Stapling"
+    staple_output=$(xcrun stapler staple "$bundle" 2>&1) || fail "stapling failed: $staple_output"
+    echo "$staple_output"
+    staple_output=$(xcrun stapler validate "$bundle" 2>&1) ||
+      fail "stapling failed: stapler validate: $staple_output"
+    echo "$staple_output"
+    cdhash_stapled=$(codesign -dvvv "$bundle" 2>&1 | sed -n 's/^CDHash=//p')
+    echo "cdhash before stapling: $cdhash"
+    echo "cdhash after stapling:  $cdhash_stapled"
+    [[ "$cdhash_stapled" == "$cdhash" ]] || fail "stapling changed the CDHash"
+    stapled=true
+    # Informational only: spctl has no assessment type made for a loadable bundle.
+    gatekeeper=$(spctl --assess --type open --context context:primary-signature -vv "$bundle" 2>&1) || true
+    echo "spctl --type open (informational): $gatekeeper"
+  else
+    echo "==> Skipping notarization (--skip-notarize): not stapled"
+  fi
+
+  zip="$WORK_DIR/$ENGINE_ZIP"
+  zip_bundle "$bundle" "$zip"
+  zip_sha=$(shasum -a 256 "$zip" | awk '{ print $1 }')
+  zip_size=$(stat -f %z "$zip")
+  echo "$ENGINE_ZIP sha256: $zip_sha"
+  echo "$ENGINE_BUNDLE cdhash: $cdhash"
+  echo "$ENGINE_ZIP size: $zip_size bytes"
+
+  # Only a notarized zip goes to dist/: a sign-only run never replaces it.
+  if [[ $SKIP_NOTARIZE -eq 0 ]]; then
+    dist_dir="$PWD/$ENGINE_DIST"
+    mkdir -p "$dist_dir"
+    cp "$zip" "$dist_dir/$ENGINE_ZIP"
+    echo "$source_fp" >"$dist_dir/source.sha256"
+    echo "dist: $dist_dir/$ENGINE_ZIP (source fingerprint $source_fp)"
+  else
+    echo "==> Skipping $ENGINE_DIST/ (--skip-notarize): left untouched"
+  fi
+
+  if [[ $INSTALL_DEV -eq 1 ]]; then
+    dev_dir="$OUT_DIR/$PLUGIN_ID"
+    echo "==> Installing dev artifacts into $dev_dir"
+    mkdir -p "$dev_dir"
+    cp "$zip" "$dev_dir/$ENGINE_ZIP"
+    # Same bundle signed ad hoc: the app's bundle check must reject it.
+    adhoc_bundle="$WORK_DIR/adhoc/$ENGINE_BUNDLE"
+    mkdir "$WORK_DIR/adhoc"
+    ditto "$bundle" "$adhoc_bundle"
+    codesign --force --deep --sign - "$adhoc_bundle"
+    zip_bundle "$adhoc_bundle" "$dev_dir/$adhoc_zip"
+    python3 -I - "$dev_dir/dev-catalog.json" "$PLUGIN_VERSION" "$zip_sha" "$cdhash" \
+      "$ENGINE_BUNDLE" "$dev_dir/$ENGINE_ZIP" "$dev_dir/$adhoc_zip" "$notarized" \
+      "$stapled" <<'PY'
+import json, sys
+out, version, sha, cdhash, bundle, zip_path, adhoc, notarized, stapled = sys.argv[1:]
+with open(out, "w") as f:
+    json.dump({"version": version, "sha256": sha, "cdhash": cdhash, "bundleName": bundle,
+               "zipPath": zip_path, "adhocZipPath": adhoc, "notarized": notarized == "true",
+               "stapled": stapled == "true"}, f, indent=2)
+    f.write("\n")
+PY
+    echo "dev catalog: $dev_dir/dev-catalog.json"
+  fi
+}
+
+# Offline preflight of an engine --publish: the catalog's entry must pin the zip in
+# dist/plugins/<id>/ (its SHA-256, and the cdhash and version of the bundle in it, whose signature
+# must verify under the Team ID), and that zip must come from the current source tree.
+check_engine_publish() {
+  local dist_zip="$ENGINE_DIST/$ENGINE_ZIP" expected_url zip_sha recorded_fp current_fp
+  local unpacked bundle sig_info bundle_cdhash bundle_version
+  [[ "$ENTRY_KIND" == "bundle" ]] || fail "plugin $PLUGIN_ID is a $ENTRY_KIND in $CATALOG, not a bundle"
+  [[ "$ASSET_NAME" == "$ENGINE_ZIP" ]] ||
+    fail "$CATALOG names the asset $ASSET_NAME for $PLUGIN_ID; the build produces $ENGINE_ZIP"
+  expected_url="https://github.com/$REPO/releases/download/$TAG/$ENGINE_ZIP"
+  [[ "$ENTRY_URL" == "$expected_url" ]] ||
+    fail "the $PLUGIN_ID url in $CATALOG is $ENTRY_URL; the upload lands at $expected_url"
+  [[ "$ENTRY_CDHASH" =~ ^[0-9a-f]{40}$ ]] || fail "the $PLUGIN_ID cdhash in $CATALOG is not 40 lowercase hex digits"
+  [[ -f "$dist_zip" ]] ||
+    fail "$dist_zip not found; a rebuild gives a new zip, so its sha256 and cdhash go into $CATALOG first"
+  [[ -f "$ENGINE_DIST/source.sha256" ]] || fail "$ENGINE_DIST/source.sha256 not found"
+  zip_sha=$(shasum -a 256 "$dist_zip" | awk '{ print $1 }')
+  [[ "$zip_sha" == "$ENTRY_SHA256" ]] ||
+    fail "SHA-256 mismatch: $dist_zip is $zip_sha, the $PLUGIN_ID entry of $CATALOG pins $ENTRY_SHA256; nothing was published"
+  # Unpacked into WORK_DIR, which the EXIT trap deletes when a check fails.
+  WORK_DIR=$(mktemp -d -t dblore-plugin)
+  unpacked="$WORK_DIR/unpacked"
+  mkdir "$unpacked"
+  ditto -x -k "$dist_zip" "$unpacked" || fail "cannot unpack $dist_zip; nothing was published"
+  [[ "$(ls -A "$unpacked")" == "$ENGINE_BUNDLE" ]] ||
+    fail "$dist_zip does not hold exactly $ENGINE_BUNDLE; nothing was published"
+  bundle="$unpacked/$ENGINE_BUNDLE"
+  bundle_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$bundle/Contents/Info.plist" 2>/dev/null) ||
+    fail "cannot read the version of $ENGINE_BUNDLE in $dist_zip; nothing was published"
+  [[ "$bundle_version" == "$ENTRY_VERSION" ]] ||
+    fail "version mismatch: $ENGINE_BUNDLE in $dist_zip is $bundle_version, the $PLUGIN_ID entry of $CATALOG is $ENTRY_VERSION; nothing was published"
+  codesign --verify --strict --deep "$bundle" ||
+    fail "codesign --verify --strict --deep failed for $ENGINE_BUNDLE in $dist_zip; nothing was published"
+  sig_info=$(codesign -dvvv "$bundle" 2>&1) ||
+    fail "cannot read the signature of $ENGINE_BUNDLE in $dist_zip; nothing was published"
+  grep -qx "TeamIdentifier=$TEAM_ID" <<<"$sig_info" ||
+    fail "the signature TeamIdentifier of $ENGINE_BUNDLE in $dist_zip is not $TEAM_ID; nothing was published"
+  bundle_cdhash=$(sed -n 's/^CDHash=//p' <<<"$sig_info")
+  [[ "$bundle_cdhash" == "$ENTRY_CDHASH" ]] ||
+    fail "cdhash mismatch: $ENGINE_BUNDLE in $dist_zip is ${bundle_cdhash:-unreadable}, the $PLUGIN_ID entry of $CATALOG pins $ENTRY_CDHASH; nothing was published"
+  rm -rf "$WORK_DIR"
+  WORK_DIR=""
+  recorded_fp=$(<"$ENGINE_DIST/source.sha256")
+  current_fp=$(engine_source_fingerprint "$ENGINE_NAME")
+  [[ "$recorded_fp" == "$current_fp" ]] ||
+    fail "source fingerprint mismatch: $dist_zip was built from $recorded_fp, the tree is now $current_fp (scripts/release-plugin.sh --plugin $PLUGIN_ID --print-source-fingerprint); nothing was published"
+  echo "$PLUGIN_ID: $dist_zip matches $CATALOG (version $bundle_version, sha256 $zip_sha, cdhash $bundle_cdhash, source fingerprint $current_fp)"
+}
+
+# Uploads exactly the checked dist zip of the engine to release $TAG; the catalog is not touched.
+publish_engine() {
+  local zip zip_sha
+  WORK_DIR=$(mktemp -d -t dblore-plugin)
+  zip="$WORK_DIR/$ENGINE_ZIP"
+  cp "$ENGINE_DIST/$ENGINE_ZIP" "$zip"
+  zip_sha=$(shasum -a 256 "$zip" | awk '{ print $1 }')
+  [[ "$zip_sha" == "$ENTRY_SHA256" ]] ||
+    fail "$ENGINE_DIST/$ENGINE_ZIP changed after the preflight ($zip_sha); nothing was published"
+  echo "==> Publishing GitHub release $TAG"
+  # --latest=false keeps releases/latest pointing at the app DMG.
+  gh release create "$TAG" "$zip" \
+    --repo "$REPO" --latest=false \
+    --title "$ENGINE_NAME engine plugin $PLUGIN_VERSION" \
+    --notes "$ENGINE_BUNDLE $PLUGIN_VERSION, signed with Developer ID ($TEAM_ID), notarized and stapled. $ENGINE_ZIP sha256: $zip_sha, bundle cdhash: $ENTRY_CDHASH" ||
+    fail "gh release create failed; the catalog was not changed"
+  echo "release: $(gh release view "$TAG" --repo "$REPO" --json url -q .url)"
+  echo "$CATALOG is unchanged; run scripts/release-local.sh --check-plugin-only --plugin $PLUGIN_ID"
+}
+
 if [[ $PRINT_SOURCE_FINGERPRINT -eq 1 ]]; then
+  if engine_names "$PLUGIN_ID"; then
+    engine_source_fingerprint "$ENGINE_NAME"
+    exit 0
+  fi
   local_ai_source_fingerprint
   exit 0
 fi
 
 [[ "$PLUGIN_ID" =~ ^[a-z0-9][a-z0-9-]*$ ]] || fail "invalid plugin id: $PLUGIN_ID"
 [[ -f "$CATALOG" ]] || fail "$CATALOG not found"
-# local-ai builds without a catalog entry; only its --publish reads one
-if [[ "$PLUGIN_ID" != "local-ai" || $PUBLISH -eq 1 ]]; then
+# local-ai and the engine plugins build without a catalog entry; only their --publish reads one
+IS_ENGINE=0
+engine_names "$PLUGIN_ID" && IS_ENGINE=1
+if [[ ("$PLUGIN_ID" != "local-ai" && $IS_ENGINE -eq 0) || $PUBLISH -eq 1 ]]; then
   entry_status=0
   entry=$(catalog_entry "$CATALOG" "$PLUGIN_ID") || entry_status=$?
   if [[ $entry_status -eq 3 ]]; then
-    [[ "$PLUGIN_ID" == "local-ai" ]] &&
-      fail "plugin local-ai is not in $CATALOG; add the local-ai entry first"
+    [[ "$PLUGIN_ID" == "local-ai" || $IS_ENGINE -eq 1 ]] &&
+      fail "plugin $PLUGIN_ID is not in $CATALOG; add the $PLUGIN_ID entry first"
     fail "plugin $PLUGIN_ID is not in $CATALOG"
   fi
   [[ $entry_status -eq 0 ]] || fail "the $PLUGIN_ID entry of $CATALOG is not usable"
@@ -473,8 +769,19 @@ case "$PLUGIN_ID" in
       PUBLISH_SUMMARY="uploads $LOCAL_AI_DIST/$LOCAL_AI_ZIP to it; $CATALOG is not changed."
     fi
     ;;
+  sqlserver | clickhouse)
+    if [[ $PUBLISH -eq 1 ]]; then
+      [[ $INSTALL_DEV -eq 0 ]] || fail "--publish --plugin $PLUGIN_ID never rebuilds; drop --install-dev"
+      # check_engine_publish requires the bundle in the dist zip to be this version
+      PLUGIN_VERSION="$ENTRY_VERSION"
+      PUBLISH_SUMMARY="uploads $ENGINE_DIST/$ENGINE_ZIP to it; $CATALOG is not changed."
+    else
+      # Read from the archived bundle's Info.plist by release_engine_bundle
+      PLUGIN_VERSION=""
+    fi
+    ;;
   *)
-    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb and local-ai have one)"
+    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb, local-ai, sqlserver and clickhouse have one)"
     ;;
 esac
 TAG="plugin-$PLUGIN_ID-v$PLUGIN_VERSION"
@@ -489,10 +796,13 @@ trap cleanup EXIT
 if [[ "$PLUGIN_ID" == "local-ai" && $PUBLISH -eq 1 ]]; then
   check_local_ai_publish
 fi
+if [[ $IS_ENGINE -eq 1 && $PUBLISH -eq 1 ]]; then
+  check_engine_publish
+fi
 
 echo "==> Preflight"
-# A local-ai --publish signs and notarizes nothing
-if [[ "$PLUGIN_ID" != "local-ai" || $PUBLISH -eq 0 ]]; then
+# A local-ai or engine --publish signs and notarizes nothing
+if [[ ("$PLUGIN_ID" != "local-ai" && $IS_ENGINE -eq 0) || $PUBLISH -eq 0 ]]; then
   identities=$(security find-identity -v -p codesigning)
   grep -qF "$SIGN_IDENTITY" <<<"$identities" || fail "signing identity not found: $SIGN_IDENTITY"
 
@@ -528,6 +838,16 @@ if [[ "$PLUGIN_ID" == "local-ai" ]]; then
     publish_local_ai
   else
     release_local_ai
+  fi
+  echo "==> Done"
+  exit 0
+fi
+
+if [[ $IS_ENGINE -eq 1 ]]; then
+  if [[ $PUBLISH -eq 1 ]]; then
+    publish_engine
+  else
+    release_engine_bundle
   fi
   echo "==> Done"
   exit 0

@@ -256,6 +256,35 @@ struct ConnectionHistoryReplaceTests {
     #expect(harness.store.deletedKeys.contains("db.example:5432:app:ada"))
   }
 
+  @Test("A preset save of a saved endpoint updates its row: the flavor is set, then cleared")
+  func flavorSaveUpdatesRow() throws {
+    let harness = try Harness()
+    defer { harness.cleanup() }
+    let plain = ConnectionConfig(
+      host: "192.168.64.1", port: 26257, database: "qa_flavor_crdb", username: "root",
+      password: "s3cret", rememberConnection: true)
+    var cockroach = plain
+    cockroach.flavor = .cockroachdb
+    #expect(
+      SessionManager.saveConnection(plain, defaults: harness.defaults, passwords: harness.store))
+    let id = try #require(
+      SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store).first?.id)
+
+    #expect(!SessionManager.keyUsedByAnotherIdentity(cockroach, defaults: harness.defaults))
+    #expect(
+      SessionManager.saveConnection(
+        cockroach, defaults: harness.defaults, passwords: harness.store))
+    var rows = SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store)
+    #expect(rows.map(\.id) == [id])
+    #expect(rows.first?.config.flavor == .cockroachdb)
+
+    #expect(
+      SessionManager.saveConnection(plain, defaults: harness.defaults, passwords: harness.store))
+    rows = SessionManager.loadHistory(defaults: harness.defaults, passwords: harness.store)
+    #expect(rows.map(\.id) == [id])
+    #expect(rows.first?.config.flavor == nil)
+  }
+
   @Test("An empty password deletes the stored one")
   func emptyPasswordDeletes() throws {
     let harness = try Harness()

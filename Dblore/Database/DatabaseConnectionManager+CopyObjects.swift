@@ -78,6 +78,8 @@ extension DatabaseConnectionManager {
     case .postgresql, .mysql, .sqlite: break
     case .duckdb: throw CopyObjectsTargetError.unsupportedEngine("DuckDB")
     case .mongodb: throw CopyObjectsTargetError.unsupportedEngine("MongoDB")
+    case .clickhouse: throw CopyObjectsTargetError.unsupportedEngine("ClickHouse")
+    case .sqlserver: throw CopyObjectsTargetError.unsupportedEngine("SQL Server")
     }
     switch config.protectionLevel {
     case .readOnly: throw CopyObjectsTargetError.readOnly
@@ -173,6 +175,10 @@ extension DatabaseConnectionManager {
       throw CopyObjectsTargetError.unsupportedEngine("DuckDB")
     case .mongodb:
       throw CopyObjectsTargetError.unsupportedEngine("MongoDB")
+    case .clickhouse:
+      throw CopyObjectsTargetError.unsupportedEngine("ClickHouse")
+    case .sqlserver:
+      throw CopyObjectsTargetError.unsupportedEngine("SQL Server")
     case nil:
       throw DatabaseError.notConnected
     }

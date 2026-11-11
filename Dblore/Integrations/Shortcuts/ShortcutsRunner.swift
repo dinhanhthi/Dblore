@@ -33,6 +33,8 @@ nonisolated struct ShortcutsRunner: Sendable {
     case commitStyle(CommitStyle)
     case rowEditsUnsupported(engine: String)
     case duckDBNotSupported
+    /// A plugin engine without a read-only path (`MCPConnectionError.engineNotSupported`)
+    case engineNotSupported(engine: String)
     case valuesNotObject
     case nestedValue(column: String)
     case unknownColumns([String])
@@ -55,6 +57,8 @@ nonisolated struct ShortcutsRunner: Sendable {
         "Add Row is not available for \(engine) connections."
       case .duckDBNotSupported:
         "Shortcuts does not support DuckDB connections."
+      case .engineNotSupported(let engine):
+        "Shortcuts does not support \(engine) connections. Nothing was sent to the database."
       case .valuesNotObject:
         "Values must be a JSON object of column names and values, such as {\"name\": \"Ada\"}."
       case .nestedValue(let column):
@@ -473,6 +477,8 @@ nonisolated struct ShortcutsRunner: Sendable {
       return HeadlessAccessRule.Refusal.notFound
     case MCPConnectionError.duckDBNotSupported:
       return Refusal.duckDBNotSupported
+    case MCPConnectionError.engineNotSupported(let type):
+      return Refusal.engineNotSupported(engine: type.rawValue)
     case is Refusal, is HeadlessAccessRule.Refusal, is MCPConnectionError,
       is ReadOnlyQueryGuard.Refusal, is ShortcutsError:
       return error

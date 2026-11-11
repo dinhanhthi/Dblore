@@ -90,6 +90,19 @@ final class PluginRegistry {
   func manager(id: String) -> PluginManager? {
     managers.first { $0.entry.id == id }
   }
+
+  /// The manager of the plugin that ships `type`; nil for a built-in engine or a plugin missing
+  /// from the catalog.
+  func manager(for type: DatabaseType) -> PluginManager? {
+    type.pluginID.flatMap { manager(id: $0) }
+  }
+
+  /// Whether `type` can run now: always for a built-in engine, else when its plugin is installed
+  /// or its installed file is still being checked.
+  func isEngineInstalledOrPending(_ type: DatabaseType) -> Bool {
+    guard type.pluginID != nil else { return true }
+    return manager(for: type)?.isInstalledOrPending == true
+  }
 }
 
 @MainActor

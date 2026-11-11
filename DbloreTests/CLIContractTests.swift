@@ -624,7 +624,7 @@ struct CLIContractTests {
     case .connectFailed: .queryFailed
     case .unknownConnection, .duckDBNotSupported, .certificateNotSaved, .sshCredentialNotSaved,
       .sshHostKeyNotTrusted, .passwordCommand, .passwordAsksOnConnect, .passwordStoreUnreadable,
-      .commandRefused, .cursorRefused:
+      .commandRefused, .cursorRefused, .engineNotSupported:
       .refused
     }
   }
@@ -656,7 +656,8 @@ struct CLIContractTests {
     let connectionErrors: [MCPConnectionError] = [
       .unknownConnection, .connectFailed, .stopped, .duckDBNotSupported, .certificateNotSaved,
       .sshCredentialNotSaved, .sshHostKeyNotTrusted, .passwordCommand, .passwordAsksOnConnect,
-      .passwordStoreUnreadable, .commandRefused, .cursorRefused,
+      .passwordStoreUnreadable, .commandRefused, .cursorRefused, .engineNotSupported(.clickhouse),
+      .engineNotSupported(.sqlserver),
     ]
     for error in connectionErrors {
       let text = error.localizedDescription

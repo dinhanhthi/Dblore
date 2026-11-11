@@ -2,6 +2,9 @@
 // App-owned catalog queries (schema browser, autocomplete, foreign keys, edit targets, column
 // type enrichment) are never sent inside the pending app transaction: they would run in the
 // user's transaction, and a failing one would abort it. The UI serves cached metadata instead.
+// One exception: SQL Server's result describe (`resolveEnginePluginOrigins`) is still sent
+// inside it. A compile error comes back as rows, but a client timeout (attention) under
+// XACT_ABORT ON can end the transaction, so the server is asked afterwards whether it is open.
 
 import Foundation
 import PostgresNIO

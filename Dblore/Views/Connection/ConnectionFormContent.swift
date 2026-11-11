@@ -333,11 +333,19 @@ struct ConnectionFormContent: View {
         if draftReplaced { adoptReplacedDraft() }
         guard
           let replacement = Self.formAfterEngineChange(
-            fieldsEngine: fieldsEngine, newType: newType, draftReplaced: draftReplaced)
+            fieldsEngine: fieldsEngine, newType: newType, flavor: connectionConfig.flavor,
+            draftReplaced: draftReplaced)
         else { return }
         fieldsEngine = newType
         selectedHistoryId = nil
         connectionConfig = replacement
+      }
+      // ClickHouse speaks HTTPS on 8443 and HTTP on 8123: a port still on one default follows
+      // the SSL mode to the other
+      .onChange(of: connectionConfig.sslMode) { _, mode in
+        guard connectionConfig.databaseType == .clickhouse else { return }
+        let port = Self.clickHousePort(connectionConfig.port, sslMode: mode)
+        if port != connectionConfig.port { connectionConfig.port = port }
       }
       // Either handler may run first when a new draft also changes the engine
       .onChange(of: draftGeneration) { _, _ in
@@ -462,25 +470,38 @@ struct ConnectionFormContent: View {
 
   /// Nil when the field values already belong to `newType` (a history row just loaded, or a
   /// new draft from the owner). Otherwise a blank config, so the previous engine's database
-  /// name is dropped.
+  /// name is dropped. A `flavor` of `newType` (a preset picked in the header) is kept.
   static func formAfterEngineChange(
-    fieldsEngine: DatabaseType?, newType: DatabaseType, draftReplaced: Bool = false
+    fieldsEngine: DatabaseType?, newType: DatabaseType, flavor: DatabaseFlavor? = nil,
+    draftReplaced: Bool = false
   ) -> ConnectionConfig? {
     guard !draftReplaced, fieldsEngine != newType else { return nil }
-    return newFormDraft(databaseType: newType)
+    return newFormDraft(databaseType: newType, flavor: flavor)
+  }
+
+  /// ClickHouse's port after its SSL mode changed to `sslMode`: Disable moves the HTTPS default
+  /// (8443) to the HTTP one (8123), any other mode moves 8123 back to 8443, and any other port
+  /// is kept.
+  static func clickHousePort(_ port: Int, sslMode: SSLMode) -> Int {
+    switch (sslMode, port) {
+    case (.disable, DatabaseType.clickhouse.defaultPort): 8123
+    case (_, 8123) where sslMode != .disable: DatabaseType.clickhouse.defaultPort
+    default: port
+    }
   }
 
   /// The Connection String tab parses and builds `postgresql://` and `mongodb://` URIs.
   static func supportsConnectionString(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .mongodb: true
-    case .mysql, .sqlite, .duckdb: false
+    case .mysql, .sqlite, .duckdb, .clickhouse, .sqlserver: false
     }
   }
 
   /// Note under the SSL mode menu (nil = none). For MySQL only Verify CA and Verify Full check
   /// the server certificate (`MySQLSession.tlsConfiguration`), so only they use a picked CA;
-  /// Prefer and Allow reconnect in plain text when the server offers no SSL.
+  /// Prefer and Allow reconnect in plain text when the server offers no SSL. SQL Server: what
+  /// each mode means for the plugin (`EnginePluginSession.tlsMode`, `SQLServerTLSPlan`).
   static func sslModeHelp(for type: DatabaseType) -> String? {
     switch type {
     case .mysql:
@@ -496,15 +517,31 @@ struct ConnectionFormContent: View {
       "Verify Full encrypts the connection and checks the server certificate and host name. Use "
         + "the server's host name, not an IP address. A picked CA certificate replaces the "
         + "system trust store."
-    case .postgresql, .sqlite, .duckdb: nil
+    case .sqlserver:
+      "Disable sends the data unencrypted. Allow and Prefer encrypt only when the server agrees, "
+        + "without checking its certificate. Require always encrypts but does not check the "
+        + "certificate. Verify CA also checks the certificate chain. Verify Full checks the "
+        + "chain and the host name on every server version: strict encryption (TDS 8.0) on SQL "
+        + "Server 2022 and later, otherwise required encryption, never without the host name "
+        + "check. A picked CA certificate is used only by Verify CA and Verify Full."
+    case .postgresql, .sqlite, .duckdb, .clickhouse: nil
     }
   }
 
   /// Blank connection form. Stores the Default commit style explicitly.
   /// `ConnectionConfig()` stays the unstyled default tests use.
-  static func newFormDraft(databaseType: DatabaseType = .postgresql) -> ConnectionConfig {
+  /// A `flavor` of another engine is ignored.
+  static func newFormDraft(
+    databaseType: DatabaseType = .postgresql, flavor: DatabaseFlavor? = nil
+  ) -> ConnectionConfig {
     var config = ConnectionConfig(databaseType: databaseType, port: databaseType.defaultPort)
+    if let flavor, flavor.baseType == databaseType {
+      config.flavor = flavor
+      config.port = flavor.defaultPort
+    }
     if databaseType == .mongodb { config.sslMode = MongoConnectionDraft.defaultSSLMode }
+    // ClickHouse starts on HTTPS (8443) with the certificate checked
+    if databaseType == .clickhouse { config.sslMode = .verifyFull }
     config.applyCommitStyle(AppSettings.shared.commitStyle)
     return config
   }
@@ -1008,7 +1045,7 @@ struct ConnectionFormContent: View {
           let action = ConnectionErrorAction.action(forMessage: message)
         {
           Spacer(minLength: Spacing.sm)
-          Button(action.title, action: onOpenPluginSettings)
+          Button(action.title(for: connectionConfig.databaseType), action: onOpenPluginSettings)
             .buttonStyle(FilledSecondaryButtonStyle())
             .controlSize(.small)
             .linkPointer()

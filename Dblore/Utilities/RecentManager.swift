@@ -354,12 +354,8 @@ class RecentManager {
   // MARK: - Persistence
 
   private func loadWorkspaces() {
-    guard let data = defaults.data(forKey: Self.workspacesKey),
-      let entries = try? JSONDecoder().decode([WorkspaceHistoryEntry].self, from: data)
-    else {
-      recentWorkspaces = []
-      return
-    }
+    let entries = WorkspaceHistoryEntry.decodeList(defaults.data(forKey: Self.workspacesKey))
+      .entries
 
     // Runs at launch: never prompts. Without access a file looks missing, so only entries
     // whose bookmark shows the file is really gone are dropped.
@@ -400,7 +396,9 @@ class RecentManager {
   }
 
   private func saveWorkspaces() {
-    guard let data = try? JSONEncoder().encode(recentWorkspaces) else { return }
+    let stored = defaults.data(forKey: Self.workspacesKey)
+    guard let data = WorkspaceHistoryEntry.encodeList(recentWorkspaces, keepingUnreadableOf: stored)
+    else { return }
     defaults.set(data, forKey: Self.workspacesKey)
   }
 

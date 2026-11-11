@@ -113,8 +113,8 @@ actor MCPConnectionPool {
   }
 
   /// `withManager` on the connection's writable manager (plain sessions, the saved
-  /// connection's protection), for approved execute_write calls only. DuckDB is refused, as on
-  /// the read path.
+  /// connection's protection), for approved execute_write calls only. DuckDB, ClickHouse and
+  /// SQL Server are refused, as on the read path.
   func withWritableManager<T: Sendable>(
     for entryID: UUID, _ body: @Sendable (DatabaseConnectionManager) async throws -> T
   ) async throws -> T {
@@ -213,9 +213,15 @@ actor MCPConnectionPool {
     }
     if pooled[id] == nil {
       try refuseUnattended(entry.config)
-      // The read wrapper refuses DuckDB; the writable sessions are not wrapped
-      if id.writable, entry.config.databaseType == .duckdb {
-        throw MCPConnectionError.duckDBNotSupported
+      // The read wrapper refuses DuckDB, ClickHouse and SQL Server; the writable sessions are
+      // not wrapped
+      if id.writable {
+        switch entry.config.databaseType {
+        case .duckdb: throw MCPConnectionError.duckDBNotSupported
+        case .clickhouse, .sqlserver:
+          throw MCPConnectionError.engineNotSupported(entry.config.databaseType)
+        case .postgresql, .sqlite, .mysql, .mongodb: break
+        }
       }
       var config = entry.config
       config.statementTimeoutSeconds = min(
