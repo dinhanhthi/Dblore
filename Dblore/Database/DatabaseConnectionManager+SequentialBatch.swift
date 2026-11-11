@@ -43,11 +43,11 @@ extension DatabaseConnectionManager {
     results.reserveCapacity(statements.count)
     try await sendGatedSequentially(
       total: statements.count, next: { remaining.next() }, effective: effective, caller: caller,
-      expectedRows: expectedRows
-    ) {
-      results.append($0)
-      progress?(results.count)
-    }
+      expectedRows: expectedRows,
+      sent: {
+        results.append($0)
+        progress?(results.count)
+      })
     return results
   }
 

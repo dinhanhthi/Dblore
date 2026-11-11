@@ -566,10 +566,8 @@ struct ResultExportSheet: View {
     allRowsRun.start(
       fileExtension: Self.fileExtension(options.format), queryIndex: queryIndex,
       workspaceID: allRows.workspaceID,
-      write: { url, progress in try await allRows.write(source, options, url, progress) }
-    ) { url in
-      finishSaved(url)
-    }
+      write: { url, progress in try await allRows.write(source, options, url, progress) },
+      onSaved: { url in finishSaved(url) })
   }
 
   /// Closes the sheet, then offers to open the saved file

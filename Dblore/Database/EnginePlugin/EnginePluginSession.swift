@@ -261,7 +261,7 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
         do { for try await _ in sent.events {} } catch {}
       }
       // No consumer stays suspended once the answer timed out or was not awaited
-      running.forEach { router.fail($0, with: .connectionClosed(.closed)) }
+      for id in running { router.fail(id, with: .connectionClosed(.closed)) }
     }
     await forwarder?.stop()
     await tunnel?.close()

@@ -222,8 +222,8 @@ struct RunningWorkRegistryTests {
       confirmingCancel: {
         events.list.append("restore confirm")
         return Task { true }
-      }
-    ) { events.list.append("restore cancel") }
+      },
+      cancel: { events.list.append("restore cancel") })
     registry.begin(workspaceID: first, label: "Copy", kind: .copyObjects) {
       events.list.append("copy cancel")
     }
@@ -251,8 +251,8 @@ struct RunningWorkRegistryTests {
       confirmingCancel: {
         events.list.append("restore confirm")
         return Task { false }
-      }
-    ) { events.list.append("restore cancel") }
+      },
+      cancel: { events.list.append("restore cancel") })
     // A plain entry is cancelled as before (and here ends at once)
     var copy: RunningWorkRegistry.Token?
     copy = registry.begin(workspaceID: first, label: "Copy", kind: .copyObjects) {
