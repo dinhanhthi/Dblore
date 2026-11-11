@@ -55,7 +55,7 @@ import Testing
   @Test func bundledCatalogPinsEveryPlugin() throws {
     let catalog = try PluginCatalog.bundled()
     #expect(catalog.schemaVersion == 3)
-    #expect(catalog.plugins.map(\.id) == ["duckdb", "local-ai", "sqlserver"])
+    #expect(catalog.plugins.map(\.id) == ["duckdb", "local-ai", "sqlserver", "clickhouse"])
     let duckdb = try #require(catalog.entry(id: "duckdb"))
     #expect(duckdb.version == "1.5.6")
     #expect(duckdb.url.absoluteString == Self.validURL)
@@ -86,6 +86,18 @@ import Testing
     }
     #expect(name == "DbloreSQLServer.bundle")
     #expect(identifier == "ace.thi.Dblore.SQLServer")
+    let clickHouse = try #require(catalog.entry(id: "clickhouse"))
+    #expect(clickHouse.version == "1.0.0")
+    #expect(
+      clickHouse.url.absoluteString
+        == "https://github.com/dinhanhthi/Dblore/releases/download/plugin-clickhouse-v1.0.0/DbloreClickHouse.zip"
+    )
+    guard case .bundle(let chName, let chIdentifier, _) = clickHouse.kind else {
+      Issue.record("clickhouse is not a bundle: \(clickHouse.kind)")
+      return
+    }
+    #expect(chName == "DbloreClickHouse.bundle")
+    #expect(chIdentifier == "ace.thi.Dblore.ClickHouse")
   }
 
   @Test func validCatalogDecodesEveryEntry() throws {

@@ -1026,13 +1026,15 @@ extension ConnectionFormContent {
 
   // MARK: - Safety
 
-  /// The lock toggle, server-side session brakes and row cap override. File engines have no
-  /// lock or idle brake, so they show only the statement timeout and the row cap.
+  /// The lock toggle, server-side session brakes and row cap override. File engines and
+  /// ClickHouse have no lock or idle brake, so they show only the statement timeout and the row
+  /// cap.
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
     let fileBased = connectionConfig.databaseType.capabilities.isFileBased
+    let statementBrakeOnly = fileBased || connectionConfig.databaseType == .clickhouse
     VStack(alignment: .leading, spacing: Spacing.sm) {
       // A lock lives on saved rows; a file engine needs a file to lock
       if connectionConfig.rememberConnection,
@@ -1043,7 +1045,7 @@ extension ConnectionFormContent {
         lockConnectionToggle()
       }
 
-      if fileBased {
+      if statementBrakeOnly {
         statementTimeoutField(global: global.statement)
       } else {
         safetyRow(
@@ -1054,10 +1056,10 @@ extension ConnectionFormContent {
             range: SessionBrakeLimits.lockTimeoutRange))
       }
 
-      if pairsAllSafetyFields && !fileBased {
+      if pairsAllSafetyFields && !statementBrakeOnly {
         safetyRow(idleTimeoutField(global: global.idle), rowCapField())
       } else {
-        if !fileBased { idleTimeoutField(global: global.idle) }
+        if !statementBrakeOnly { idleTimeoutField(global: global.idle) }
         rowCapField()
       }
     }

@@ -340,6 +340,13 @@ struct ConnectionFormContent: View {
         selectedHistoryId = nil
         connectionConfig = replacement
       }
+      // ClickHouse speaks HTTPS on 8443 and HTTP on 8123: a port still on one default follows
+      // the SSL mode to the other
+      .onChange(of: connectionConfig.sslMode) { _, mode in
+        guard connectionConfig.databaseType == .clickhouse else { return }
+        let port = Self.clickHousePort(connectionConfig.port, sslMode: mode)
+        if port != connectionConfig.port { connectionConfig.port = port }
+      }
       // Either handler may run first when a new draft also changes the engine
       .onChange(of: draftGeneration) { _, _ in
         if draftGeneration != seenDraftGeneration { adoptReplacedDraft() }
@@ -472,6 +479,17 @@ struct ConnectionFormContent: View {
     return newFormDraft(databaseType: newType, flavor: flavor)
   }
 
+  /// ClickHouse's port after its SSL mode changed to `sslMode`: Disable moves the HTTPS default
+  /// (8443) to the HTTP one (8123), any other mode moves 8123 back to 8443, and any other port
+  /// is kept.
+  static func clickHousePort(_ port: Int, sslMode: SSLMode) -> Int {
+    switch (sslMode, port) {
+    case (.disable, DatabaseType.clickhouse.defaultPort): 8123
+    case (_, 8123) where sslMode != .disable: DatabaseType.clickhouse.defaultPort
+    default: port
+    }
+  }
+
   /// The Connection String tab parses and builds `postgresql://` and `mongodb://` URIs.
   static func supportsConnectionString(_ type: DatabaseType) -> Bool {
     switch type {
@@ -514,6 +532,8 @@ struct ConnectionFormContent: View {
       config.port = flavor.defaultPort
     }
     if databaseType == .mongodb { config.sslMode = MongoConnectionDraft.defaultSSLMode }
+    // ClickHouse starts on HTTPS (8443) with the certificate checked
+    if databaseType == .clickhouse { config.sslMode = .verifyFull }
     config.applyCommitStyle(AppSettings.shared.commitStyle)
     return config
   }

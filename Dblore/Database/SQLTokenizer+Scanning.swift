@@ -37,7 +37,9 @@ nonisolated struct SQLLexeme {
 /// MySQL has its own scanner (`mysqlLexeme`), so its rules never reach PostgreSQL.
 /// SQL Server (`sqlserverLexeme`) adds `[…]` identifiers and T-SQL numbers and drops dollar
 /// quotes, `E'…'` and backslash escapes, so a keyword the server runs is never hidden in a
-/// PostgreSQL-only quote.
+/// PostgreSQL-only quote. ClickHouse (`clickhouseLexeme`) follows the server's lexer: backslash
+/// escapes in every quote, Unicode quotes, `#` and `//` comments, heredocs, and `--` comments
+/// that end at LF only.
 nonisolated extension SQLTokenizer {
 
   /// The lexeme starting at scalar offset `i` (which must be a token boundary).
@@ -53,6 +55,9 @@ nonisolated extension SQLTokenizer {
     }
     if dialect == .sqlserver {
       return sqlserverLexeme(in: s, at: i)
+    }
+    if dialect == .clickhouse {
+      return clickhouseLexeme(in: s, at: i)
     }
     return SQLTokenizer.lexeme(in: s, at: i, markBackslash: !standardConformingStrings)
   }
@@ -473,6 +478,142 @@ nonisolated extension SQLTokenizer {
     }
     return SQLLexeme(
       kind: .quoted(.quotedIdentifier, content: String(content)), range: start..<j)
+  }
+
+  /// ClickHouse lexeme, after the server's lexer (`src/Parsers/Lexer.cpp`). `'…'` strings and
+  /// `"…"` / `` `…` `` identifiers take backslash escapes and doubled quotes; `‘…’` strings and
+  /// `“…”` identifiers end at the closing quote. `--` and `//` comments end at LF only; `#`
+  /// followed by a space or `!` is a comment to LF too (any other `#` is a symbol, which the server
+  /// refuses). `$tag$` (a tag of ASCII letters, digits and `_`, maybe empty) opens a heredoc when
+  /// the same tag appears again later: it runs to the end of that copy. Otherwise a `$` before
+  /// an ASCII letter, digit or `_` starts a word, and any other `$` is a symbol. Numbers follow
+  /// `clickhouseNumberEnd`. No `E'…'`: `E` is a word. Whitespace, nested `/* */` comments and
+  /// symbols follow the PostgreSQL scanner.
+  private func clickhouseLexeme(in s: [Unicode.Scalar], at i: Int) -> SQLLexeme {
+    let char = s[i]
+    let next: Unicode.Scalar? = i + 1 < s.count ? s[i + 1] : nil
+    if (char == "-" && next == "-") || (char == "/" && next == "/")
+      || (char == "#" && (next == " " || next == "!"))
+    {
+      return SQLLexeme(kind: .comment, range: i..<Self.scan(s, from: i, while: { $0 != "\n" }))
+    }
+    if char == "'" {
+      return Self.quoted(
+        s, start: i, quoteAt: i, escape: true, kind: .string, markBackslash: false)
+    }
+    if char == "\"" || char == "`" {
+      return Self.quoted(
+        s, start: i, quoteAt: i, escape: true, kind: .quotedIdentifier, markBackslash: false)
+    }
+    if char == "\u{2018}" || char == "\u{201C}" {
+      let close: Unicode.Scalar = char == "\u{2018}" ? "\u{2019}" : "\u{201D}"
+      let closeAt = s[(i + 1)...].firstIndex(of: close)
+      let content = Self.text(s, (i + 1)..<(closeAt ?? s.count))
+      let end = closeAt.map { $0 + 1 } ?? s.count
+      return SQLLexeme(
+        kind: .quoted(char == "\u{2018}" ? .string : .quotedIdentifier, content: content),
+        range: i..<end)
+    }
+    if char == "$" {
+      let tagEnd = Self.scan(s, from: i + 1, while: Self.isASCIIWordCharacter)
+      if tagEnd < s.count, s[tagEnd] == "$",
+        let end = Self.closingTagEnd(of: s[i...tagEnd], in: s, from: tagEnd + 1)
+      {
+        return SQLLexeme(kind: .dollarString, range: i..<end)
+      }
+      guard let next, Self.isASCIIWordCharacter(next) else {
+        return SQLLexeme(kind: .symbol, range: i..<(i + 1))
+      }
+      return SQLLexeme(
+        kind: .word, range: i..<Self.scan(s, from: i + 1, while: Self.isIdentifierCharacter))
+    }
+    if Self.isIdentifierStart(char) {
+      let end = Self.scan(s, from: i + 1, while: Self.isIdentifierCharacter)
+      return SQLLexeme(kind: .word, range: i..<end)
+    }
+    if Self.isDigit(char) {
+      let end = Self.clickhouseNumberEnd(in: s, at: i)
+      guard end < s.count, Self.isASCIIWordCharacter(s[end]) else {
+        return SQLLexeme(kind: .number, range: i..<end)
+      }
+      // A number run straight into letters is one identifier (`1abc`)
+      return SQLLexeme(
+        kind: .word, range: i..<Self.scan(s, from: end, while: Self.isASCIIWordCharacter))
+    }
+    return Self.lexeme(in: s, at: i, markBackslash: false)
+  }
+
+  /// The end of a ClickHouse number at `i` (a digit): `0x` + hex digits or `0b` + binary digits,
+  /// else digits, with `_` between digits, an optional `.` fraction, and an optional exponent
+  /// (`e` / `E`, hex `p` / `P`) with a sign, as the server reads one that follows no `.`. After a
+  /// `.` the server reads only digits (`x.1.1`), so a sign it leaves out may start a `--`
+  /// comment: `clickhouseFailsClosed` refuses a number that ends in `-` before another `-`.
+  private static func clickhouseNumberEnd(in s: [Unicode.Scalar], at i: Int) -> Int {
+    var j = i
+    var hex = false
+    if i + 2 < s.count, s[i] == "0" {
+      if s[i + 1] == "x" || s[i + 1] == "X", isHexDigit(s[i + 2]) {
+        hex = true
+        j = i + 2
+      } else if s[i + 1] == "b" || s[i + 1] == "B", s[i + 2] == "0" || s[i + 2] == "1" {
+        j = i + 2
+      }
+    }
+    let isHex = hex
+    func isDigitOf(_ scalar: Unicode.Scalar) -> Bool {
+      isHex ? isHexDigit(scalar) : isDigit(scalar)
+    }
+    func digits(from start: Int) -> Int {
+      var k = start
+      while k < s.count,
+        isDigitOf(s[k]) || (s[k] == "_" && k > start && k + 1 < s.count && isDigitOf(s[k + 1]))
+      {
+        k += 1
+      }
+      return k
+    }
+    j = digits(from: j)
+    if j < s.count, s[j] == "." { j = digits(from: j + 1) }
+    let exponent: Set<Unicode.Scalar> = hex ? ["p", "P"] : ["e", "E"]
+    if j + 1 < s.count, exponent.contains(s[j]) {
+      j += 1
+      if j + 1 < s.count, s[j] == "-" || s[j] == "+" { j += 1 }
+      while j < s.count, isDigit(s[j]) || (s[j] == "_" && j + 1 < s.count && isDigit(s[j + 1])) {
+        j += 1
+      }
+    }
+    return j
+  }
+
+  /// ClickHouse `isWordCharASCII`: an ASCII letter, digit or `_`
+  private static func isASCIIWordCharacter(_ scalar: Unicode.Scalar) -> Bool {
+    isASCIILetter(scalar) || isDigit(scalar) || scalar == "_"
+  }
+
+  /// Whether the ClickHouse classifier must fail closed on `sql`: a non-ASCII scalar outside
+  /// quotes, heredocs and comments (the server reads a Unicode space as a space and a U+2212 as
+  /// a minus, and refuses any other), a number ending in a `-` sign right before another `-`
+  /// (after a `.` the server leaves the sign out and reads `--` as a comment), or a `$` that opens
+  /// no heredoc here (servers before the word-character tag rule take any text up to the next
+  /// `$` as the tag).
+  func clickhouseFailsClosed(_ sql: String) -> Bool {
+    let scalars = Array(sql.unicodeScalars)
+    var i = 0
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      let end = lexeme.range.upperBound
+      switch lexeme.kind {
+      case .quoted, .dollarString, .comment: break
+      case .number where scalars[end - 1] == "-" && end < scalars.count && scalars[end] == "-":
+        return true
+      case .symbol where scalars[i] == "$", .word where scalars[i] == "$":
+        return true
+      default:
+        if scalars[lexeme.range].contains(where: { !$0.isASCII }) { return true }
+      }
+      i = end
+    }
+    return false
   }
 
   /// MySQL lexeme. `'…'` and `"…"` are strings with backslash and doubled-quote escapes;

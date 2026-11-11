@@ -1,7 +1,8 @@
 // DatabaseCapabilitiesTests.swift
 // DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta;
 // DuckDB is a file engine offered only when its plugin is installed. MongoDB is listed after
-// MySQL. ClickHouse and SQL Server are plugin engines, hidden with every feature off.
+// MySQL. ClickHouse is a network plugin engine (no transactions, edits, import or dump); SQL
+// Server is a plugin engine, hidden with every feature off.
 
 import Foundation
 import Testing
@@ -192,15 +193,15 @@ struct DatabaseCapabilitiesTests {
   )
 
   private static let clickhouse = DatabaseCapabilities(
-    usesNetwork: false,
-    usesPassword: false,
-    supportsSSL: false,
-    supportsSchemas: false,
+    usesNetwork: true,
+    usesPassword: true,
+    supportsSSL: true,
+    supportsSchemas: true,
     supportsRolesAndUsers: false,
     supportsFunctions: false,
     supportsServerCursor: false,
-    supportsSessionBrakes: false,
-    cancelStrategy: .reconnect,
+    supportsSessionBrakes: true,
+    cancelStrategy: .interrupt,
     cappedReadResetsSession: false,
     supportsExplainJSON: false,
     supportsExplainAnalyze: false,
@@ -210,7 +211,7 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: false,
     supportsForeignKeyLookup: false,
     requiresPlugin: true,
-    isAvailable: false,
+    isAvailable: true,
     queryLanguage: .sql,
     supportsTransactions: false,
     supportsStructure: false,

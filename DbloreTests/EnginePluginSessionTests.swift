@@ -69,6 +69,23 @@ struct EnginePluginSessionTests {
     await session.close()
   }
 
+  @Test("A read-only protected connection opens read-only on the server")
+  func readOnlyProtectionOpensReadOnly() async throws {
+    let fake = FakeEnginePlugin()
+    let config = ConnectionConfig(
+      host: "db.example.com", port: 8443, database: "app", username: "u", password: "pw",
+      sslMode: .disable, timeoutSeconds: 5, protectionLevel: .readOnly)
+    let session = session(fake, config: config)
+
+    try await session.open()
+
+    let open = fake.requests.lazy.compactMap { request -> EngineRequest.Open? in
+      if case .open(let open) = request.kind { open } else { nil }
+    }.first
+    #expect(try #require(open).readOnly)
+    await session.close()
+  }
+
   @Test("Rows arrive only as consumed, and a cancel ends the query with cancelled")
   func rowsOnCreditAndCancel() async throws {
     let fake = FakeEnginePlugin()

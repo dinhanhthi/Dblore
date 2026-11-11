@@ -136,7 +136,8 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
       port: forwarder?.localPort ?? config.port,
       tlsServerName: tlsServerNameOverride ?? config.host, database: config.database,
       username: config.username, password: config.password, tls: tls,
-      timeoutSeconds: config.timeoutSeconds, readOnly: config.readOnlyFile, options: openOptions)
+      timeoutSeconds: config.timeoutSeconds,
+      readOnly: config.readOnlyFile || config.protectionLevel == .readOnly, options: openOptions)
     let version: String
     if let forwarder {
       // The plugin dials the forwarder during `open`; never once it has stopped.

@@ -47,6 +47,13 @@ nonisolated struct PluginDisplayInfo {
         ),
         removeMessage:
           "Deletes the downloaded DuckDB library. Install it again to use DuckDB connections.")
+    case "clickhouse":
+      PluginDisplayInfo(
+        name: "ClickHouse",
+        summary: "Connect to ClickHouse servers over HTTPS or HTTP. Downloaded on demand.",
+        removeMessage:
+          "Deletes the downloaded ClickHouse plugin. Install it again to use ClickHouse connections."
+      )
     case "local-ai":
       PluginDisplayInfo(
         name: "On-device AI",

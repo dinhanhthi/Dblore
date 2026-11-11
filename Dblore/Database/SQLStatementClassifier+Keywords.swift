@@ -55,6 +55,23 @@ nonisolated extension SQLStatementClassifier {
     "IMPLICIT_TRANSACTIONS", "ANSI_DEFAULTS",
   ]
 
+  /// ClickHouse schema changes that start with no PostgreSQL DDL verb. `REPLACE` starts
+  /// `REPLACE [TEMPORARY] TABLE`.
+  static let clickhouseDdlKeywords: Set<String> = [
+    "RENAME", "EXCHANGE", "ATTACH", "DETACH", "UNDROP", "REPLACE",
+  ]
+
+  /// ClickHouse commands whose effects are not visible from the text: merges and deduplication,
+  /// server control, query and mutation kills, table checks, backups, access-entity moves, and
+  /// `USE` (the engine plugin sends the connection's database with every statement).
+  static let clickhouseUtilityKeywords: Set<String> = [
+    "OPTIMIZE", "SYSTEM", "KILL", "CHECK", "BACKUP", "RESTORE", "MOVE", "USE",
+  ]
+
+  /// ClickHouse settings (lowercase) the engine plugin sends as safety brakes: the statement
+  /// timeout and the read-only level.
+  static let clickhouseBrakeSettings: Set<String> = ["max_execution_time", "readonly"]
+
   static let utilityKeywords: Set<String> = [
     "COPY", "DO", "CALL", "VACUUM", "ANALYZE", "ANALYSE", "REINDEX", "CLUSTER", "LOCK",
     "GRANT", "REVOKE", "NOTIFY", "LISTEN", "UNLISTEN", "DISCARD", "CHECKPOINT", "REFRESH",

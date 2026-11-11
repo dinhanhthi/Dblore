@@ -113,8 +113,11 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// network engine without schemas or a server cursor: cancel and capped reads stop the
   /// statement with `KILL QUERY` and keep the session. MongoDB speaks the mongosh subset,
   /// without transactions, structure editing or SQL dump. Only PostgreSQL lists sequences and
-  /// user-defined types. ClickHouse and SQL Server are plugin engines, hidden with every
-  /// feature off until their plugins ship.
+  /// user-defined types. ClickHouse is a network engine shipped as a plugin: its databases are
+  /// the schemas, the statement timeout is its only brake, cancel stops the statement (a capped
+  /// read drops the rest of the stream), and it has no transactions, grid edits, import,
+  /// structure editing, SQL dump or Explain JSON / Analyze. SQL Server is a plugin engine, hidden
+  /// with every feature off until its plugin ships.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -252,7 +255,34 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsSQLDump: false,
         supportsUserTypes: false
       )
-    case .clickhouse, .sqlserver:
+    case .clickhouse:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: true,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
+        supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
+        supportsRowStaging: false,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: false,
+        requiresPlugin: true,
+        isAvailable: true,
+        queryLanguage: .sql,
+        supportsTransactions: false,
+        supportsStructure: false,
+        supportsSQLDump: false,
+        supportsUserTypes: false
+      )
+    case .sqlserver:
       DatabaseCapabilities(
         usesNetwork: false,
         usesPassword: false,
@@ -284,11 +314,11 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
 
   /// Whether tab titles and sidebar rows name a non-default schema. A MySQL "schema" is the
   /// connected database, the only one shown, so it is never named. SQLite keeps naming attached
-  /// and temp databases.
+  /// and temp databases. ClickHouse lists every database, so a table outside `default` is named.
   nonisolated var namesSchema: Bool {
     switch self {
-    case .postgresql, .sqlite, .duckdb: true
-    case .mysql, .mongodb, .clickhouse, .sqlserver: false
+    case .postgresql, .sqlite, .duckdb, .clickhouse: true
+    case .mysql, .mongodb, .sqlserver: false
     }
   }
 

@@ -31,6 +31,17 @@
       "bundleName": "DbloreSQLServer.bundle",
       "bundleIdentifier": "ace.thi.Dblore.SQLServer",
       "cdhash": "8d1e3d5e7c5de5d37f1fbd3c0b79c1e0a7efd305"
+    },
+    {
+      "id": "clickhouse",
+      "kind": "bundle",
+      "version": "1.0.0",
+      "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-clickhouse-v1.0.0/DbloreClickHouse.zip",
+      "sha256": "c57b53e81526e8eddebfa7eca9e15957e960011a05e941a3c4218e21f5aa494e",
+      "maxSize": 357344,
+      "bundleName": "DbloreClickHouse.bundle",
+      "bundleIdentifier": "ace.thi.Dblore.ClickHouse",
+      "cdhash": "2d9359ee5b121a4d9871f9b67e1bf33d8b36974b"
     }
   ]
 }

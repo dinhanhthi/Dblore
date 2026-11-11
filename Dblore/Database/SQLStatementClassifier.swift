@@ -44,7 +44,8 @@ nonisolated struct ClassifiedStatement: Sendable, Equatable {
   let changesPrivileges: Bool
   /// SELECT ... INTO / WITH ... SELECT ... INTO (creates a table like CREATE TABLE AS)
   let createsTable: Bool
-  /// Removes data or an index for good (MongoDB `drop`, `dropIndex`); false for SQL
+  /// Removes data or an index for good (MongoDB `drop`, `dropIndex`; ClickHouse statements
+  /// `clickhouseAdjusted` lists); false for other SQL
   var isDestructive: Bool = false
 
   /// True only for statements that cannot modify anything: reads and plain EXPLAIN of a
@@ -93,7 +94,9 @@ nonisolated enum SQLStatementClassifier {
   /// plain string containing a backslash (escape under `standard_conforming_strings = off`),
   /// a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content),
   /// or a SQL Server number that runs straight into a word (`SELECT 0xTRUNCATE TABLE t`) or a
-  /// non-ASCII space or zero-width scalar outside quotes and comments (`SELECT a\u{A0}DELETE ...`).
+  /// SQL Server non-ASCII space or zero-width scalar outside quotes and comments
+  /// (`SELECT a\u{A0}DELETE ...`), or ClickHouse text `clickhouseFailsClosed` refuses (a bare
+  /// non-ASCII scalar, a number's `-` sign before `-`).
   /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing.
   /// `standardConformingStrings` (PostgreSQL, SQL dump restore only): read a plain string with a
   /// backslash as `standard_conforming_strings = on` does, once the session reported it on.
@@ -113,6 +116,7 @@ nonisolated enum SQLStatementClassifier {
       || (dialect == .sqlserver
         && (SQLTokenizer(dialect: dialect).numberRunsIntoWord(text)
           || SQLTokenizer(dialect: dialect).hasUnicodeSpace(text)))
+      || (dialect == .clickhouse && SQLTokenizer(dialect: dialect).clickhouseFailsClosed(text))
     let kind = ambiguous ? .unknown : analysis.kind
     // MySQL: an unrecognized statement may commit implicitly (see `mysqlAdjusted`)
     let mysqlUnknown = dialect == .mysql && kind == .unknown
@@ -123,7 +127,8 @@ nonisolated enum SQLStatementClassifier {
       nonTransactional: analysis.nonTransactional || mysqlUnknown,
       resetsSessionBrakes: analysis.resetsSessionBrakes
         || (dialect == .mysql && hintsMySQLBrake(text)),
-      changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable)
+      changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable,
+      isDestructive: analysis.isDestructive)
   }
 
   /// A MySQL optimizer hint (`/*+ ... */`, anywhere) naming a `mysqlBrakeSettings` variable:
@@ -248,6 +253,7 @@ nonisolated enum SQLStatementClassifier {
     var resetsSessionBrakes = false
     var changesPrivileges = false
     var createsTable = false
+    var isDestructive = false
   }
 
   private static func analyze(
@@ -298,6 +304,11 @@ nonisolated enum SQLStatementClassifier {
     if dialect == .sqlserver, let sqlserver = sqlserverKind(of: body, keyword: keyword) {
       return sqlserver
     }
+    if dialect == .clickhouse,
+      let clickhouse = clickhouseKind(of: body, keyword: keyword, topWords: topWords)
+    {
+      return clickhouse
+    }
     return switch keyword {
     case "SELECT", "VALUES", "TABLE": selectKind(body)
     case "WITH": hasDataModifyingPart(body) || body.contains { $0.isWord("INTO") } ? .dml : .read
@@ -341,6 +352,77 @@ nonisolated enum SQLStatementClassifier {
     case _ where sqlserverTclKeywords.contains(keyword): .tcl
     default: nil
     }
+  }
+
+  /// ClickHouse statements that PostgreSQL classifies differently. Nil leaves the shared rules
+  /// (`ALTER ... UPDATE / DELETE` mutations stay DDL, `INSERT` / `DELETE` / `UPDATE` DML).
+  /// `DESCRIBE` / `DESC` / `EXISTS` only read the catalog. `RENAME`, `EXCHANGE`, `ATTACH`,
+  /// `DETACH`, `UNDROP` and `REPLACE TABLE` change the schema; `OPTIMIZE`, `SYSTEM`, `KILL`,
+  /// `CHECK`, `BACKUP`, `RESTORE`, `MOVE` and `USE` are utilities. A `SET` touches a brake when it
+  /// names one (`clickhouseBrakeSettings`); `SET DEFAULT ROLE` changes an account, a utility.
+  private static func clickhouseKind(
+    of body: ArraySlice<SQLToken>, keyword: String, topWords: [String]
+  ) -> StatementKind? {
+    switch keyword {
+    case "SET" where setsDefaultRole(topWords): .utility
+    case "SET": .sessionSet(touchesBrake: namesClickHouseBrake(body))
+    case "DESCRIBE", "DESC", "EXISTS": .read
+    case _ where clickhouseDdlKeywords.contains(keyword): .ddl
+    case _ where clickhouseUtilityKeywords.contains(keyword): .utility
+    default: nil
+    }
+  }
+
+  /// A word or quoted identifier from `clickhouseBrakeSettings`, at any depth, ASCII
+  /// case-insensitive, or a quoted identifier with a backslash (its escapes are not decoded, so
+  /// it may spell one). Over-matches (a column named `readonly`), which only asks for more.
+  private static func namesClickHouseBrake(_ body: ArraySlice<SQLToken>) -> Bool {
+    body.contains { token in
+      if token.kind == .quotedIdentifier, token.text.unicodeScalars.contains("\\") { return true }
+      guard isIdentifier(token), let text = token.asciiText else { return false }
+      return clickhouseBrakeSettings.contains(SQLTokenizer.asciiLowercased(text))
+    }
+  }
+
+  /// ClickHouse statements that remove data for good are `isDestructive`: DROP, TRUNCATE,
+  /// `REPLACE TABLE`, `OPTIMIZE ... DEDUPLICATE`, and an ALTER with a top-level DELETE, DROP,
+  /// CLEAR or REPLACE (`ALTER TABLE t DELETE WHERE ...`, `DROP PARTITION`, `CLEAR COLUMN`,
+  /// `REPLACE PARTITION`). Fails closed: a column named `drop` in an ALTER counts. DETACH is not
+  /// destructive (ATTACH brings the data back). A statement with a query-level `SETTINGS`
+  /// clause that names a brake (`SELECT ... SETTINGS max_execution_time = 0`) lifts it.
+  /// `PARALLEL WITH` (at any depth) chains statements the server runs together,
+  /// whatever the first verb (a failing read still lets a chained CREATE run): fails closed as
+  /// `.unknown` and destructive (`runsInParallel`).
+  private static func clickhouseAdjusted(
+    _ analysis: Analysis, body: ArraySlice<SQLToken>
+  ) -> Analysis {
+    var analysis = analysis
+    let depth = body.first?.depth ?? 0
+    let topWords = body.filter { $0.depth == depth }.compactMap(\.keyword)
+    switch topWords.first {
+    case "DROP", "TRUNCATE", "REPLACE": analysis.isDestructive = true
+    case "OPTIMIZE": analysis.isDestructive = topWords.contains("DEDUPLICATE")
+    case "ALTER":
+      analysis.isDestructive = topWords.dropFirst().contains {
+        ["DELETE", "DROP", "CLEAR", "REPLACE"].contains($0)
+      }
+    default: break
+    }
+    if body.contains(where: { $0.isWord("SETTINGS") }), namesClickHouseBrake(body) {
+      analysis.resetsSessionBrakes = true
+    }
+    if runsInParallel(body) {
+      analysis.kind = .unknown
+      analysis.isDestructive = true
+    }
+    return analysis
+  }
+
+  /// ClickHouse `PARALLEL WITH`: the two words next to each other, at any depth. A parenthesized
+  /// first statement (`(SELECT 1) PARALLEL WITH …`) puts the chain outside the body's depth, and
+  /// no statement nests a chain, so any pair fails closed (over-matching only asks for more).
+  private static func runsInParallel(_ body: ArraySlice<SQLToken>) -> Bool {
+    zip(body, body.dropFirst()).contains { $0.isWord("PARALLEL") && $1.isWord("WITH") }
   }
 
   /// DuckDB commands that PostgreSQL classifies differently. Nil leaves the shared rules.
@@ -536,6 +618,7 @@ nonisolated enum SQLStatementClassifier {
     case .duckdb: duckdbAdjusted(analysis, body: body)
     case .mysql: mysqlAdjusted(analysis, body: body)
     case .sqlserver: sqlserverAdjusted(analysis, body: body)
+    case .clickhouse: clickhouseAdjusted(analysis, body: body)
     // Unreachable: `classifyStatement` hands MongoDB text to `MongoCommandClassifier`.
     case .mongodb: analysis
     default: analysis

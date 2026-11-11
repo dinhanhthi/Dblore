@@ -3,9 +3,10 @@
 
 import Foundation
 
-/// Rewrites `:name` into PostgreSQL and DuckDB `$n`, SQLite `?n`, or MySQL `?`.
-/// One placeholder per distinct name, in first-occurrence order; MySQL binds are positional,
-/// so it gets one `?` per occurrence. The name keeps the source spelling. A statement with no
+/// Rewrites `:name` into PostgreSQL and DuckDB `$n`, SQLite `?n`, MySQL `?`, or ClickHouse
+/// `{pN:String}`. One placeholder per distinct name, in first-occurrence order; MySQL binds are
+/// positional, so it gets one `?` per occurrence. The name keeps the source spelling. A ClickHouse
+/// query parameter the user wrote (`{name:Type}`) is not a `:name`. A statement with no
 /// `:name` is returned unchanged. MongoDB has no parameters: mongosh text is never scanned, so
 /// `{a :b}` is not `:b` and `$set` is not a placeholder.
 nonisolated enum SQLParameterRewriter: Sendable {
@@ -17,7 +18,7 @@ nonisolated enum SQLParameterRewriter: Sendable {
   ) -> (text: String, names: [String]) {
     if dialect == .mongodb { return (statement, []) }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
-    let hits = namedParameters(in: lexemes, scalars: scalars)
+    let hits = namedParameters(in: lexemes, scalars: scalars, dialect: dialect)
     guard !hits.isEmpty else { return (statement, []) }
     return apply(hits, to: scalars, dialect: dialect)
   }
@@ -28,7 +29,8 @@ nonisolated enum SQLParameterRewriter: Sendable {
     let (scalars, lexemes) = scan(script, dialect: dialect)
     var names: [String] = []
     var seen: Set<String> = []
-    for hit in namedParameters(in: lexemes, scalars: scalars) where seen.insert(hit.name).inserted {
+    for hit in namedParameters(in: lexemes, scalars: scalars, dialect: dialect)
+    where seen.insert(hit.name).inserted {
       names.append(hit.name)
     }
     return names
@@ -37,10 +39,15 @@ nonisolated enum SQLParameterRewriter: Sendable {
   /// PostgreSQL `$n`, DuckDB `?` / `$n` / `$name`, SQLite `?` / `?n` / `@name` / `$name`, or
   /// MySQL `?`. Does not rewrite. SQLite numbers `@name` and `$name` after the `?n` from
   /// `:name`, and nothing binds them. DuckDB `@` is an operator, not a placeholder, and MySQL
-  /// `@name` is a user variable.
+  /// `@name` is a user variable. ClickHouse has only the query parameter `{name:Type}`, which
+  /// counts (a `{p1:String}` the user wrote would take the bind of the first `:name`); `?` is
+  /// its ternary operator.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
     if dialect == .mongodb { return false }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
+    if dialect == .clickhouse {
+      return lexemes.indices.contains { isQueryParameterColon(at: $0, in: lexemes, scalars) }
+    }
     if dialect == .postgresql {
       for index in lexemes.indices {
         guard isSymbol(lexemes[index], scalars, "$"), index + 1 < lexemes.count else { continue }
@@ -75,13 +82,21 @@ nonisolated enum SQLParameterRewriter: Sendable {
   }
 
   /// A `:` symbol lexeme, not half of `::`, immediately followed by a word (not a number),
-  /// and not glued to a preceding word, number, `)` or `]`.
+  /// and not glued to a preceding word, number, `)` or `]`. On ClickHouse, not the `:` of a
+  /// query parameter (`{name :Type}`) or right after a `.` (`json.a.:Int64`).
   private static func namedParameters(
-    in lexemes: [SQLLexeme], scalars: [Unicode.Scalar]
+    in lexemes: [SQLLexeme], scalars: [Unicode.Scalar], dialect: SQLDialect
   ) -> [NamedParameter] {
     var hits: [NamedParameter] = []
     for index in lexemes.indices {
       guard isSymbol(lexemes[index], scalars, ":") else { continue }
+      // `{name :Type}` is the user's own parameter; `json.path.:Type` a JSON subcolumn's type
+      if dialect == .clickhouse,
+        isQueryParameterColon(at: index, in: lexemes, scalars)
+          || (index > 0 && isSymbol(lexemes[index - 1], scalars, "."))
+      {
+        continue
+      }
       let next = index + 1
       guard next < lexemes.count, isWord(lexemes[next]) else { continue }
       // `arr[:n]` and `arr[lo :hi]` read as a parameter, as psql `:var` does. A missing
@@ -155,6 +170,24 @@ nonisolated enum SQLParameterRewriter: Sendable {
     case .whitespace, .comment, .quoted, .dollarString, .executableComment:
       return false
     }
+  }
+
+  /// The `:` of a ClickHouse query parameter: `{`, a word, then this `:`, with only whitespace
+  /// and comments between them
+  private static func isQueryParameterColon(
+    at index: Int, in lexemes: [SQLLexeme], _ scalars: [Unicode.Scalar]
+  ) -> Bool {
+    guard isSymbol(lexemes[index], scalars, ":") else { return false }
+    var before: [SQLLexeme] = []
+    var cursor = index - 1
+    while cursor >= 0, before.count < 2 {
+      switch lexemes[cursor].kind {
+      case .whitespace, .comment: break
+      default: before.append(lexemes[cursor])
+      }
+      cursor -= 1
+    }
+    return before.count == 2 && isWord(before[0]) && isSymbol(before[1], scalars, "{")
   }
 
   private static func isWord(_ lexeme: SQLLexeme) -> Bool {

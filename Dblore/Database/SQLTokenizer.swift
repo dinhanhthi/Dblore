@@ -33,6 +33,7 @@ nonisolated struct SQLTokenizer: Sendable {
   /// or backticks, block comments do not nest, line comments end at LF only, and `$` is not a
   /// quote; a `CREATE TRIGGER … BEGIN …; END` body is one statement (`sqliteSplitStatements`).
   /// MySQL follows `mysqlLexeme` and the `mysql` client `DELIMITER` directive.
+  /// ClickHouse follows `clickhouseLexeme` (backslash escapes, `#` comments, heredocs).
   /// MongoDB is `MongoshSplitter.split` (comment-only pieces dropped).
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
   /// the input (same Unicode scalars), so execution sends exactly what the user typed.
@@ -195,10 +196,14 @@ nonisolated struct SQLTokenizer: Sendable {
   /// Non-final calls: whether more text could change `lexeme`. One that reaches the end may
   /// grow (an open string, comment or dollar quote, `-` before `-`, `E` before `'`, `/` before
   /// `*`), and on PostgreSQL and DuckDB a `$` before a word that reaches the end may open a
-  /// dollar quote (`$tag$`).
+  /// dollar quote (`$tag$`). On ClickHouse any `$` that is not a heredoc yet may become one.
   private func mayGrow(_ lexeme: SQLLexeme, in scalars: [Unicode.Scalar]) -> Bool {
     let end = lexeme.range.upperBound
     if end == scalars.count { return true }
+    if dialect == .clickhouse, scalars[lexeme.range.lowerBound] == "$" {
+      if case .dollarString = lexeme.kind { return false }
+      return true
+    }
     guard dialect == .postgresql || dialect == .duckdb, case .symbol = lexeme.kind,
       scalars[lexeme.range.lowerBound] == "$"
     else { return false }
