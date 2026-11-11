@@ -54,6 +54,9 @@ protocol EngineConnection: AnyObject, Sendable {
   func apply(_ settings: EngineRequest.Settings) throws
   /// One `catalog` read. The default answers `unsupported`.
   func catalog(_ request: EngineRequest.Catalog) throws -> EngineCatalogResult
+  /// The `transactionState` request: whether a transaction is open, nil when unknown. The
+  /// default answers `unsupported`.
+  func transactionOpen() throws -> Bool?
   /// Whether the server connection is gone
   var isLost: Bool { get }
   /// Closes the connection; nothing else is called afterwards
@@ -77,6 +80,11 @@ extension EngineConnection {
   func catalog(_ request: EngineRequest.Catalog) throws -> EngineCatalogResult {
     throw EngineFailure(
       code: .unsupported, message: "This catalog read is not supported by this plugin.")
+  }
+
+  func transactionOpen() throws -> Bool? {
+    throw EngineFailure(
+      code: .unsupported, message: "This request is not supported by this plugin.")
   }
 }
 
@@ -236,9 +244,15 @@ final class EngineRequestHandler: @unchecked Sendable {
       enqueue(request, sink: sink) { connection, control in
         self.answer(on: connection, control, sink) { .catalog(try connection.catalog(catalog)) }
       }
+    case .transactionState:
+      enqueue(request, sink: sink) { connection, control in
+        self.answer(on: connection, control, sink) {
+          .transactionState(open: try connection.transactionOpen())
+        }
+      }
     case .more(let target): lock.withLock { running[target] }?.grant()
     case .cancel(let target): cancel(target)
-    case .transactionState, .unknown:
+    case .unknown:
       sink.fail(
         .init(code: .unsupported, message: "This request is not supported by this plugin."),
         id: request.id)
@@ -396,7 +410,7 @@ final class EngineRequestHandler: @unchecked Sendable {
     }
   }
 
-  /// A request answered by one event (`settings`, `catalog`)
+  /// A request answered by one event (`settings`, `catalog`, `transactionState`)
   private func answer(
     on connection: any EngineConnection, _ control: RequestControl, _ sink: EventSink,
     _ body: () throws -> EngineEvent.Kind

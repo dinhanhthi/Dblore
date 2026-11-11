@@ -15,15 +15,19 @@
 		4A0C2441B2CEEB04F1D39D68 /* ClickHouseCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE3F450ED2BB67629F26BD6 /* ClickHouseCatalog.swift */; };
 		5208831FB3896E71FCD6F7E6 /* ClickHouseFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5C3CB1CCF46019E9F9AA65 /* ClickHouseFormat.swift */; };
 		5F832487929BCCFF85CD6FB2 /* ClickHouseDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B27B46B69D88734B3E9E65 /* ClickHouseDriverTests.swift */; };
+		6EB358F672DF1F2581A152D8 /* SQLServerTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF851D0D7E871EF8D395A28B /* SQLServerTypes.swift */; };
 		7C17580AF1C7D05707E3076B /* ClickHouseDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0155DA93A90B09399C8984 /* ClickHouseDriver.swift */; };
 		7CFFF01369623F3817995ED7 /* ClickHouseCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE3F450ED2BB67629F26BD6 /* ClickHouseCatalog.swift */; };
 		81D5FED35CACF65064D54FF6 /* ClickHouseFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5C3CB1CCF46019E9F9AA65 /* ClickHouseFormat.swift */; };
 		877319F7DEC0575E4DE91FF4 /* EngineRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */; };
+		97251973EF63CBF39D0DE8F1 /* SQLServerTypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F71D83D7CA0931E5DA6CFF7 /* SQLServerTypesTests.swift */; };
+		A2C1CBB00A04ECE94A243AA4 /* SQLServerCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C523CF204A8DBA2BF026AC4A /* SQLServerCatalog.swift */; };
 		AB4C67C87F339A4990D44456 /* EnginePluginProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */; };
 		AE742C528147282D7F722519 /* SQLServerDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC1EE19CED3A61CD6282566 /* SQLServerDriver.swift */; };
 		B29E8EB4939F5709DDAE9F00 /* EnginePluginProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */; };
 		B6999A665FEC273F61FCBED7 /* EngineRequestHandlerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300D01E33BC139DF7B3E683C /* EngineRequestHandlerTests.swift */; };
 		C13458355634E1463F61BECB /* EngineEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF811E0277A9989F950E1038 /* EngineEntry.swift */; };
+		D71C2297A8AC10CDE8EC4525 /* SQLServerTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF851D0D7E871EF8D395A28B /* SQLServerTypes.swift */; };
 		E79741388EB309B08902DA94 /* ClickHouseHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96B7FF98A12874F536125E3F /* ClickHouseHTTP.swift */; };
 		EBB0461431F9FB9B4EC1D9A6 /* ClickHouseDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0155DA93A90B09399C8984 /* ClickHouseDriver.swift */; };
 		F3714D5543C3FD942A369A68 /* dblore_tds.c in Sources */ = {isa = PBXBuildFile; fileRef = 6D41E61B8F9C4BE55E6A1772 /* dblore_tds.c */; };
@@ -32,6 +36,7 @@
 
 /* Begin PBXFileReference section */
 		1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRequestHandler.swift; sourceTree = "<group>"; };
+		2F71D83D7CA0931E5DA6CFF7 /* SQLServerTypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerTypesTests.swift; sourceTree = "<group>"; };
 		300D01E33BC139DF7B3E683C /* EngineRequestHandlerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRequestHandlerTests.swift; sourceTree = "<group>"; };
 		3B5EC51B1A1E66F85C89C575 /* dblore_tds.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = dblore_tds.h; sourceTree = "<group>"; };
 		3BE3F450ED2BB67629F26BD6 /* ClickHouseCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseCatalog.swift; sourceTree = "<group>"; };
@@ -43,10 +48,12 @@
 		A1B27B46B69D88734B3E9E65 /* ClickHouseDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseDriverTests.swift; sourceTree = "<group>"; };
 		B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePluginProtocol.swift; sourceTree = "<group>"; };
 		BE1F5E195F3B36ACE35424A1 /* DbloreSQLServer.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreSQLServer.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
+		C523CF204A8DBA2BF026AC4A /* SQLServerCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerCatalog.swift; sourceTree = "<group>"; };
 		DF811E0277A9989F950E1038 /* EngineEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineEntry.swift; sourceTree = "<group>"; };
 		EBC1EE19CED3A61CD6282566 /* SQLServerDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerDriver.swift; sourceTree = "<group>"; };
 		F7CDE8A6569D80320B01FCDD /* DbloreClickHouse.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreClickHouse.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE5C3CB1CCF46019E9F9AA65 /* ClickHouseFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseFormat.swift; sourceTree = "<group>"; };
+		FF851D0D7E871EF8D395A28B /* SQLServerTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerTypes.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -61,7 +68,9 @@
 		21C8A18A8255ABDDE9B16064 /* SQLServer */ = {
 			isa = PBXGroup;
 			children = (
+				C523CF204A8DBA2BF026AC4A /* SQLServerCatalog.swift */,
 				EBC1EE19CED3A61CD6282566 /* SQLServerDriver.swift */,
+				FF851D0D7E871EF8D395A28B /* SQLServerTypes.swift */,
 				338A321E34F50D4B99783BF8 /* CFreeTDS */,
 			);
 			path = SQLServer;
@@ -120,6 +129,7 @@
 			children = (
 				A1B27B46B69D88734B3E9E65 /* ClickHouseDriverTests.swift */,
 				300D01E33BC139DF7B3E683C /* EngineRequestHandlerTests.swift */,
+				2F71D83D7CA0931E5DA6CFF7 /* SQLServerTypesTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -273,7 +283,9 @@
 				2DFD9E2D65374158AF6198F5 /* EngineEntry.swift in Sources */,
 				AB4C67C87F339A4990D44456 /* EnginePluginProtocol.swift in Sources */,
 				FE2C3E98150CAB8680D2E758 /* EngineRequestHandler.swift in Sources */,
+				A2C1CBB00A04ECE94A243AA4 /* SQLServerCatalog.swift in Sources */,
 				AE742C528147282D7F722519 /* SQLServerDriver.swift in Sources */,
+				6EB358F672DF1F2581A152D8 /* SQLServerTypes.swift in Sources */,
 				F3714D5543C3FD942A369A68 /* dblore_tds.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -291,6 +303,8 @@
 				1AC5A5E30553390F64AE9EBF /* EnginePluginProtocol.swift in Sources */,
 				877319F7DEC0575E4DE91FF4 /* EngineRequestHandler.swift in Sources */,
 				B6999A665FEC273F61FCBED7 /* EngineRequestHandlerTests.swift in Sources */,
+				D71C2297A8AC10CDE8EC4525 /* SQLServerTypes.swift in Sources */,
+				97251973EF63CBF39D0DE8F1 /* SQLServerTypesTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

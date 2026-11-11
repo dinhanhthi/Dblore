@@ -190,11 +190,16 @@ struct ClickHouseCatalog {
     return (String(name[..<dot]), String(name[name.index(after: dot)...]))
   }
 
-  /// A backtick identifier: backslash and backtick escaped
+  /// A backtick identifier: every backslash and backtick scalar escaped. Per Unicode scalar,
+  /// never per Character: a backtick followed by a combining scalar is one Character that String
+  /// matching would skip, while the server still reads the backtick.
   static func quoted(_ name: String) -> String {
-    "`"
-      + name.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(
-        of: "`", with: "\\`") + "`"
+    var out = String.UnicodeScalarView()
+    for scalar in name.unicodeScalars {
+      if scalar == "\\" || scalar == "`" { out.append("\\") }
+      out.append(scalar)
+    }
+    return "`" + String(out) + "`"
   }
 
   /// The comma-separated parts of a key expression, commas inside brackets or quotes kept

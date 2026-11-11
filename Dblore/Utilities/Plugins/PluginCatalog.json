@@ -37,11 +37,11 @@
       "kind": "bundle",
       "version": "1.0.0",
       "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-clickhouse-v1.0.0/DbloreClickHouse.zip",
-      "sha256": "c57b53e81526e8eddebfa7eca9e15957e960011a05e941a3c4218e21f5aa494e",
-      "maxSize": 357344,
+      "sha256": "e0bac7245a8cd22cc1bd6481c5ee5f1c683a68a6d2c9deff7a13827972426bce",
+      "maxSize": 357808,
       "bundleName": "DbloreClickHouse.bundle",
       "bundleIdentifier": "ace.thi.Dblore.ClickHouse",
-      "cdhash": "2d9359ee5b121a4d9871f9b67e1bf33d8b36974b"
+      "cdhash": "afd26b435018156da0dfe2413d3a5b03483a9984"
     }
   ]
 }

@@ -33,6 +33,8 @@ targets:
       - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
       - path: Shared/EngineEntry.swift
       - path: Shared/EngineRequestHandler.swift
+      - path: SQLServer/SQLServerTypes.swift
+      - path: SQLServer/SQLServerCatalog.swift
       - path: SQLServer/SQLServerDriver.swift
       - path: SQLServer/CFreeTDS/dblore_tds.c
       - path: SQLServer/CFreeTDS/dblore_tds.h
@@ -121,14 +123,15 @@ targets:
           - -Wl,-exported_symbol,_dblore_engine_request
 
   # Host-less unit tests: they compile the shared entry, the engines' pure sources and the
-  # protocol themselves instead of loading a bundle, so no TEST_HOST or BUNDLE_LOADER. The
-  # SQL Server sources join once they build without FreeTDS (phase 8).
+  # protocol themselves instead of loading a bundle, so no TEST_HOST or BUNDLE_LOADER. Of SQL
+  # Server only the pure SQLServerTypes.swift joins (no FreeTDS shim, no driver).
   DbloreEnginesTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: Tests/EngineRequestHandlerTests.swift
       - path: Tests/ClickHouseDriverTests.swift
+      - path: Tests/SQLServerTypesTests.swift
       - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
       - path: Shared/EngineEntry.swift
       - path: Shared/EngineRequestHandler.swift
@@ -136,6 +139,7 @@ targets:
       - path: ClickHouse/ClickHouseFormat.swift
       - path: ClickHouse/ClickHouseCatalog.swift
       - path: ClickHouse/ClickHouseDriver.swift
+      - path: SQLServer/SQLServerTypes.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ace.thi.Dblore.EnginesTests
@@ -155,8 +159,13 @@ schemes:
     build:
       targets:
         DbloreSQLServer: all
+        DbloreEnginesTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - DbloreEnginesTests
     profile:
       config: Release
     analyze:

@@ -241,6 +241,31 @@ nonisolated private enum Fixture {
 
 @Suite struct ClickHouseDriverTests {
 
+  /// A backtick identifier read back per scalar: `\` escapes the next scalar, a lone backtick
+  /// ends it, and nothing follows the end
+  @Test(arguments: ["a`\u{0301}b", "`\u{FE0F}", "c\\\u{0301}`", "plain"])
+  func identifiersReadBackWhole(_ name: String) {
+    let quoted = Array(ClickHouseCatalog.quoted(name).unicodeScalars)
+    #expect(quoted.first == "`")
+    var read: [Unicode.Scalar] = []
+    var index = 1
+    var end: Int?
+    while index < quoted.count {
+      if quoted[index] == "\\", index + 1 < quoted.count {
+        read.append(quoted[index + 1])
+        index += 2
+      } else if quoted[index] == "`" {
+        end = index
+        break
+      } else {
+        read.append(quoted[index])
+        index += 1
+      }
+    }
+    #expect(read == Array(name.unicodeScalars))
+    #expect(end == quoted.count - 1)
+  }
+
   @Test func typedRowsStream() throws {
     StubServer.start(port: 19001) { _ in
       reply(
