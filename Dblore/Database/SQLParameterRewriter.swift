@@ -41,12 +41,19 @@ nonisolated enum SQLParameterRewriter: Sendable {
   /// `:name`, and nothing binds them. DuckDB `@` is an operator, not a placeholder, and MySQL
   /// `@name` is a user variable. ClickHouse has only the query parameter `{name:Type}`, which
   /// counts (a `{p1:String}` the user wrote would take the bind of the first `:name`); `?` is
-  /// its ternary operator.
+  /// its ternary operator. SQL Server `@var` / `@@var` are T-SQL variables and `$1.00` money, so
+  /// only `?` and a written `@pN` (ASCII, any case, not after `@@`) count: the engine plugin
+  /// declares bind N as the variable `@pN`.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
     if dialect == .mongodb { return false }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     if dialect == .clickhouse {
       return lexemes.indices.contains { isQueryParameterColon(at: $0, in: lexemes, scalars) }
+    }
+    if dialect == .sqlserver {
+      return lexemes.indices.contains { index in
+        isSymbol(lexemes[index], scalars, "?") || isBindVariable(at: index, in: lexemes, scalars)
+      }
     }
     if dialect == .postgresql {
       for index in lexemes.indices {
@@ -188,6 +195,18 @@ nonisolated enum SQLParameterRewriter: Sendable {
       cursor -= 1
     }
     return before.count == 2 && isWord(before[0]) && isSymbol(before[1], scalars, "{")
+  }
+
+  /// `@` (not after another `@`) directly followed by the word `p<digits>`, ASCII, any case
+  private static func isBindVariable(
+    at index: Int, in lexemes: [SQLLexeme], _ scalars: [Unicode.Scalar]
+  ) -> Bool {
+    guard isSymbol(lexemes[index], scalars, "@"), index + 1 < lexemes.count,
+      isWord(lexemes[index + 1]), !(index > 0 && isSymbol(lexemes[index - 1], scalars, "@"))
+    else { return false }
+    let name = scalars[lexemes[index + 1].range]
+    return name.count > 1 && (name.first == "p" || name.first == "P")
+      && name.dropFirst().allSatisfy { ("0"..."9").contains($0) }
   }
 
   private static func isWord(_ lexeme: SQLLexeme) -> Bool {

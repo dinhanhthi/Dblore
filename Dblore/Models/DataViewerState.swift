@@ -133,17 +133,20 @@ struct DataViewerState: Equatable {
       ? "" : " ORDER BY " + orderColumns.map { quotedIdentifier($0) }.joined(separator: ", ")
   }
 
-  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1).
+  /// `SELECT * FROM rel [WHERE ...] [ORDER BY ...] LIMIT n [OFFSET m]` (OFFSET only after page 1;
+  /// SQL Server's OFFSET / FETCH on every page, `SQLDialect.limit(_:ordered:)`).
   /// A lazy page lists `lazyColumns` instead of `*`, then its `lengthColumns`; a keyless page
   /// appends its `locatorColumns`.
   var pageSQL: String {
     assert(databaseType != .mongodb, "MongoDB pages are mongoQueries()")
     var sql = "SELECT \(selectList) FROM \(relation)\(whereSQL)\(orderBySQL)"
+    let ordered = !orderColumns.isEmpty
     if page > 1 {
       let offset = (page - 1) * pageSize
-      sql += " " + databaseType.dialect.limitOffset(limit: pageSize, offset: offset)
+      sql +=
+        " " + databaseType.dialect.limitOffset(limit: pageSize, offset: offset, ordered: ordered)
     } else {
-      sql += " LIMIT \(pageSize)"
+      sql += " " + databaseType.dialect.limit(pageSize, ordered: ordered)
     }
     return sql
   }

@@ -213,10 +213,15 @@ struct TableFilter: Codable, Hashable {
 
   /// PostgreSQL (`::text`) and DuckDB (`::VARCHAR`) cast to text and keep `LIKE` vs `ILIKE`.
   /// SQLite and MySQL have no `ILIKE`: `ilike` is `caseInsensitiveLike` (both sides lowered),
-  /// `notIlike` is `NOT LIKE`.
+  /// `notIlike` is `NOT LIKE`. SQL Server has none either: `notIlike` lowers both sides too
+  /// (`SQLDialect.like`).
   private nonisolated static func likeSQL(
     column: String, value: String, escape: String?, op: FilterOperator, dialect: SQLDialect
   ) -> String {
+    if op == .notIlike, dialect == .sqlserver {
+      return dialect.like(
+        column: column, pattern: value, escape: escape, negated: true, caseInsensitive: true)
+    }
     if op == .ilike {
       return dialect.caseInsensitiveLike(column: column, pattern: value, escape: escape)
     }

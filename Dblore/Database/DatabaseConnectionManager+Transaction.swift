@@ -170,8 +170,10 @@ extension DatabaseConnectionManager {
         // A MySQL deadlock already ended the user's transaction and discarded its Data Rewind
         // entries, on the raw error (`queryFailure`)
         if !protectedMode {
+          let openBefore = userTxOpen
           noteUserTransaction(after: statement, succeeded: false, commitState: commitState)
-          await confirmUserTransactionWithServer(after: statement, succeeded: false)
+          await confirmUserTransactionWithServer(
+            after: statement, succeeded: false, openBefore: openBefore)
         }
         throw await transactionFailure(error, openedHere: openedHere)
       }
@@ -195,8 +197,10 @@ extension DatabaseConnectionManager {
             dialect: Self.dialect(of: config)))
       }
       if !protectedMode {
+        let openBefore = userTxOpen
         noteUserTransaction(after: statement, succeeded: true, commitState: commitState)
-        await confirmUserTransactionWithServer(after: statement, succeeded: true)
+        await confirmUserTransactionWithServer(
+          after: statement, succeeded: true, openBefore: openBefore)
       }
       noteSchemaChange(statement)
       noteTemporaryTable(statement)
@@ -238,6 +242,8 @@ extension DatabaseConnectionManager {
     if !txState.isIdle, commitGuard.refusesCommit(expectedGeneration: expectedGeneration) {
       throw DatabaseError.commitRefusedTransactionChanged
     }
+    // SQL Server: the previous COMMIT was not confirmed and may be done
+    if try await settleUnverifiedCommit(.commit) { return }
     // DuckDB: a cancel aborted the transaction (an edit, or a statement it missed): rolled back
     if !txState.isIdle, interruptRollbackOwed == connectionEpoch {
       await settleInterruptAbort()
@@ -281,6 +287,15 @@ extension DatabaseConnectionManager {
           "Commit failed and the \(pending.count) pending statement(s) were rolled back: "
             + failure.localizedDescription)
       }
+      // SQL Server with implicit transactions on: the COMMIT may only lower @@TRANCOUNT
+      if metadata.tag == "COMMIT", let cause = await unfinishedCommitCause() {
+        guard txState.endingKind == .commit else { throw Self.closedDuringCommitCheck }
+        txState = .appTx(pending: pending)
+        commitGuard.unverifiedCommitGeneration = commitGuard.generation
+        throw DatabaseError.transactionAborted(
+          "The commit may not have finished: \(cause). It may already be done; Commit or "
+            + "Rollback asks the server again before sending anything.")
+      }
       txState = .idle
       // COMMIT of a transaction the server already aborted answers with a ROLLBACK tag
       guard metadata.tag == "COMMIT" else {
@@ -313,6 +328,11 @@ extension DatabaseConnectionManager {
     guard !previous.isIdle else { return }
     try refuseIfEnding()
     if commitGuard.refusesRollback { throw DatabaseError.rollbackRefusedStatementRunning }
+    if try await settleUnverifiedCommit(.rollback) {
+      throw DatabaseError.transactionAborted(
+        "Nothing was rolled back: the earlier commit had completed, so the changes are "
+          + "committed.")
+    }
     // DuckDB: a cancel aborted the transaction, its ROLLBACK is the one owed
     if interruptRollbackOwed == connectionEpoch {
       await settleInterruptAbort()
@@ -325,6 +345,17 @@ extension DatabaseConnectionManager {
       _ = try await sendTransactionControl("ROLLBACK")
     } catch {
       guard isConnectionLost else {
+        // SQL Server: the server may have ended the transaction itself (a deadlock victim,
+        // XACT_ABORT), so ROLLBACK finds none: then it is rolled back
+        if await serverEndedTransaction(), txState.endingKind == .rollback {
+          txState = .idle
+          discardAppSchemaChange()
+          closeRewindEntries(as: .discarded)
+          await AppLogger.shared.info(
+            "ROLLBACK failed but the server has no transaction open; it ends as rolled back",
+            category: "Database")
+          return
+        }
         if txState.endingKind == .rollback { txState = previous }
         throw error
       }
@@ -370,11 +401,18 @@ extension DatabaseConnectionManager {
   }
 
   /// While the app transaction is aborted the server refuses everything but ROLLBACK.
+  /// While the app's COMMIT is unverified (SQL Server, `unverifiedCommitGeneration`) only
+  /// Commit or Rollback, which ask the server first, may change the transaction.
   func refuseIfAborted() throws {
     if case .aborted(let reason, _) = txState {
       throw DatabaseError.transactionAborted(
         "The pending transaction failed (\(reason)). Only Rollback is possible; nothing was "
           + "executed.")
+    }
+    if case .appTx = txState, commitGuard.unverifiedCommitGeneration == commitGuard.generation {
+      throw DatabaseError.transactionAborted(
+        "Settle the earlier commit first: Commit or Rollback asks the server whether it "
+          + "completed. Nothing was sent.")
     }
   }
 
@@ -390,6 +428,10 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "This database has no transactions, so nothing was sent. Use Confirm instead of Review.")
     }
+    try refuseIfEnding()
+    try refuseIfOwnedByAnotherCaller(caller)
+    try await refuseUntrackedServerTransaction()
+    // Again after the suspension: another caller may have started or ended a transaction
     try refuseIfEnding()
     try refuseIfOwnedByAnotherCaller(caller)
     txOwner = caller
@@ -446,23 +488,39 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// MySQL: after a statement whose effect on the transaction is uncertain
-  /// (`ProtectedTransactionRules.commitIsUncertain`), `userTxOpen` is what the server reports.
+  /// MySQL and SQL Server: after a statement whose effect on the transaction is uncertain
+  /// (`ProtectedTransactionRules.commitIsUncertain`), `userTxOpen` is what the server reports
+  /// (MySQL `isInTransaction`, SQL Server `transactionOpenAfterInterrupt`: `@@TRANCOUNT > 0`).
   /// A transaction the server no longer has was committed implicitly: its schema changes are
-  /// visible now. Unchanged when the server cannot be asked or the connection changed meanwhile.
+  /// visible now. Unchanged when the server cannot be asked or the connection changed meanwhile,
+  /// except on SQL Server, where a transaction open before the statement (`openBefore`) stays
+  /// tracked open when the server cannot answer: the text alone never closes one there (a failed
+  /// or nested COMMIT).
   func confirmUserTransactionWithServer(
-    after statement: ClassifiedStatement, succeeded: Bool
+    after statement: ClassifiedStatement, succeeded: Bool, openBefore: Bool
   ) async {
+    let dialect = Self.dialect(of: config)
     guard
       ProtectedTransactionRules.commitIsUncertain(
-        statement, succeeded: succeeded, dialect: Self.dialect(of: config)),
-      session is MySQLSession
+        statement, succeeded: succeeded, dialect: dialect),
+      session is MySQLSession || dialect == .sqlserver
     else { return }
     let epoch = connectionEpoch
     let reported = try? await withSession { session in
-      try await (session as? MySQLSession)?.isInTransaction()
+      if dialect == .sqlserver { return await session.transactionOpenAfterInterrupt() }
+      return try await (session as? MySQLSession)?.isInTransaction()
     }
-    guard let open = reported ?? nil, epoch == connectionEpoch else { return }
+    guard epoch == connectionEpoch else { return }
+    guard let open = reported ?? nil else {
+      // An unnamed ROLLBACK ends every nesting level, so it may close without the server
+      if dialect == .sqlserver, openBefore,
+        !(succeeded
+          && ProtectedTransactionRules.rolledBackUserTransaction(statement, dialect: dialect))
+      {
+        userTxOpen = true
+      }
+      return
+    }
     if userTxOpen && !open {
       if schemaDirtyInUserTx { schemaRefreshPending = true }
       schemaDirtyInUserTx = false
@@ -547,6 +605,7 @@ extension DatabaseConnectionManager {
   /// otherwise → `.aborted`.
   func transactionFailure(_ error: Error, openedHere: Bool) async -> Error {
     guard case .appTx(let pending) = txState else { return error }
+    let sqlserver = Self.dialect(of: config) == .sqlserver
     if isConnectionLost {
       txState = .idle
       discardAppSchemaChange()
@@ -559,10 +618,31 @@ extension DatabaseConnectionManager {
       closeRewindEntries(as: .discarded)
       return error
     }
+    // SQL Server: the server may have ended the transaction itself (a deadlock victim,
+    // XACT_ABORT), so nothing is left to roll back
+    if sqlserver {
+      let ended = await serverEndedTransaction()
+      // The connection closed while the server was asked: nothing to mark
+      guard txState == .appTx(pending: pending) else { return error }
+      if ended {
+        txState = .idle
+        discardAppSchemaChange()
+        closeRewindEntries(as: .discarded)
+        return DatabaseError.transactionAborted(
+          "The statement failed and the server ended the transaction: the \(pending.count) "
+            + "pending statement(s) were rolled back. \(error.localizedDescription)")
+      }
+    }
     txState = .aborted(reason: error.localizedDescription, pending: pending)
     // The server undid the statements. Rollback does not put them back.
     discardAppSchemaChange()
     return error
+  }
+
+  /// SQL Server: the server reports no transaction open (a failed statement or ROLLBACK found
+  /// it already ended). False on other engines and when the server cannot tell.
+  private func serverEndedTransaction() async -> Bool {
+    await sqlserverTransactionOpen() == false
   }
 
   // MARK: - Private
@@ -598,17 +678,121 @@ extension DatabaseConnectionManager {
 
   /// App-owned transaction start. SQLite takes the writer lock immediately. DuckDB uses the
   /// standard form. MySQL uses `START TRANSACTION` (`BEGIN` is ambiguous inside compound
-  /// statements). A user-typed `BEGIN` is never rewritten. MongoDB has no transactions: its
-  /// sentinel is never sent (`beginAppTransaction` refuses first) and is no mongosh command.
+  /// statements). SQL Server uses `BEGIN TRANSACTION`. A user-typed `BEGIN` is never rewritten.
+  /// MongoDB has no transactions: its sentinel is never sent (`beginAppTransaction` refuses
+  /// first) and is no mongosh command.
   var appOwnedBeginSQL: String {
     switch config?.databaseType {
     case .postgresql, nil: "BEGIN"
     case .sqlite: "BEGIN IMMEDIATE"
-    case .duckdb: "BEGIN TRANSACTION"
+    case .duckdb, .sqlserver: "BEGIN TRANSACTION"
     case .mysql: "START TRANSACTION"
     case .mongodb: "-- dblore: MongoDB has no transactions"
-    case .clickhouse, .sqlserver: "-- dblore: no app transactions on this engine"
+    case .clickhouse: "-- dblore: no app transactions on this engine"
     }
+  }
+
+  /// The server's `@@TRANCOUNT > 0` on SQL Server (`transactionOpenAfterInterrupt`); nil on
+  /// every other engine or when it cannot tell
+  private func sqlserverTransactionOpen() async -> Bool? {
+    guard Self.dialect(of: config) == .sqlserver else { return nil }
+    return (try? await withSession { session in await session.transactionOpenAfterInterrupt() })
+      ?? nil
+  }
+
+  /// SQL Server: refuses the app's own BEGIN, before anything is sent, unless the server
+  /// reports no transaction open: one the app does not track would take the app's
+  /// `BEGIN TRANSACTION` as a nested one, so the app's COMMIT would not commit, and a server that
+  /// cannot answer cannot rule that out. Nothing on other engines.
+  func refuseUntrackedServerTransaction() async throws {
+    guard Self.dialect(of: config) == .sqlserver else { return }
+    switch await sqlserverTransactionOpen() {
+    case false?:
+      // A transaction opened while the server was asked (another tab's BEGIN TRAN)
+      guard !userTxOpen, txState.isIdle else {
+        throw DatabaseError.transactionAborted(
+          "A transaction was opened while the change was being prepared; nothing was sent. "
+            + "Try again.")
+      }
+    case true?:
+      throw DatabaseError.transactionAborted(
+        "The server already has a transaction open that the app does not track (implicit "
+          + "transactions may be on). Commit or roll it back first; nothing was sent.")
+    case nil:
+      throw DatabaseError.transactionAborted(
+        "The server did not report whether a transaction is open, so the app did not start "
+          + "its own; nothing was sent.")
+    }
+  }
+
+  /// Why the app's own COMMIT cannot be taken as done, or nil when it can (always on other
+  /// engines). SQL Server: the server still has a transaction open (implicit transactions on:
+  /// `BEGIN TRANSACTION` nested in the implicit one, so the COMMIT only lowered `@@TRANCOUNT`),
+  /// or it did not report its transaction state.
+  func unfinishedCommitCause() async -> String? {
+    guard Self.dialect(of: config) == .sqlserver else { return nil }
+    switch await sqlserverTransactionOpen() {
+    case false?:
+      return nil
+    case true?:
+      return "the server still has a transaction open after COMMIT (implicit transactions may "
+        + "be on)"
+    case nil:
+      return "the server did not report its transaction state after COMMIT, so the commit "
+        + "could not be verified"
+    }
+  }
+
+  /// SQL Server, right after the app's COMMIT was not confirmed (`unverifiedCommitGeneration`
+  /// is the current state's): asks the server before anything is sent. No transaction open:
+  /// the earlier commit completed, so the transaction ends as committed and the result is true.
+  /// Open: false, and the Commit / Rollback goes on. No answer: nothing is sent and it throws.
+  /// False when there is no unverified commit (every other engine).
+  func settleUnverifiedCommit(_ kind: TransactionEndKind) async throws -> Bool {
+    guard case .appTx(let pending) = txState,
+      commitGuard.unverifiedCommitGeneration == commitGuard.generation
+    else { return false }
+    commitGuard.unverifiedCommitGeneration = nil
+    // Gated entries are refused while the server is asked
+    txState = .ending(kind: kind, pending: pending)
+    let open = await sqlserverTransactionOpen()
+    // The connection closed meanwhile (`forgetConnection`): no transaction to settle
+    guard txState.endingKind == kind else { throw Self.closedDuringCommitCheck }
+    switch open {
+    case false?:
+      txState = .idle
+      closeRewindEntries(as: .committed)
+      promoteAppSchemaChange()
+      await AppLogger.shared.info(
+        "The unverified commit had completed; the app transaction ends as committed",
+        category: "Database")
+      return true
+    case true?:
+      txState = .appTx(pending: pending)
+      return false
+    case nil:
+      txState = .appTx(pending: pending)
+      commitGuard.unverifiedCommitGeneration = commitGuard.generation
+      throw DatabaseError.transactionAborted(
+        "It is unknown whether the earlier commit completed: the server did not report its "
+          + "transaction state, so nothing was sent. Check the data.")
+    }
+  }
+
+  /// The connection closed while the server was asked whether the app's COMMIT finished
+  static let closedDuringCommitCheck = DatabaseError.transactionAborted(
+    "The connection closed while the commit was being checked; it is unknown whether it "
+      + "completed. Check the data.")
+
+  /// After an edit's or batch's own COMMIT: throws unless the commit is done
+  /// (`unfinishedCommitCause`), after asking for a ROLLBACK, whose failure the message names
+  func requireOwnCommitFinished() async throws {
+    guard let cause = await unfinishedCommitCause() else { return }
+    let rolledBack = (try? await sendTransactionControl("ROLLBACK")) != nil
+    throw DatabaseError.transactionAborted(
+      rolledBack
+        ? "The change was not saved: \(cause); it was rolled back."
+        : "The change may not be saved: \(cause), and the rollback failed. Check the data.")
   }
 
   /// PostgreSQL suspends the idle-in-transaction timeout for the app transaction.

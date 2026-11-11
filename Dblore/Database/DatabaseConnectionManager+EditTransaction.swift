@@ -66,7 +66,7 @@ extension DatabaseConnectionManager {
     let opens = txState.isIdle
     if opens { try await beginAppTransaction(caller: caller) }
     do {
-      _ = try await sendTransactionControl("SAVEPOINT \(Self.editSavepoint)")
+      try await sendSavepoint(Self.editSavepoint)
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
@@ -86,7 +86,7 @@ extension DatabaseConnectionManager {
         DatabaseError.editRowCountMismatch(updated: rows, rolledBack: true), openedHere: opens)
     }
     do {
-      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.editSavepoint)")
+      try await releaseSavepoint(Self.editSavepoint)
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
@@ -130,6 +130,7 @@ extension DatabaseConnectionManager {
       recordRewind(capture, committed: false)
       return rows
     }
+    try await refuseUntrackedServerTransaction()
     _ = try await sendTransactionControl(appOwnedBeginSQL)
     let rows: Int
     do {
@@ -147,6 +148,7 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "The server rolled back the edit instead of saving it.")
     }
+    try await requireOwnCommitFinished()
     recordRewind(capture, committed: true)
     return rows
   }
@@ -330,7 +332,7 @@ extension DatabaseConnectionManager {
         let opens = txState.isIdle
         if opens { try await beginAppTransaction(caller: caller) }
         do {
-          _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+          try await sendSavepoint(Self.batchSavepoint)
         } catch {
           throw await transactionFailure(error, openedHere: opens)
         }
@@ -344,7 +346,7 @@ extension DatabaseConnectionManager {
           throw await undoBatch(error, openedHere: opens)
         }
         do {
-          _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+          try await releaseSavepoint(Self.batchSavepoint)
         } catch {
           throw await transactionFailure(error, openedHere: opens)
         }
@@ -360,7 +362,7 @@ extension DatabaseConnectionManager {
         return rows
       }
       if userTxOpen {
-        _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+        try await sendSavepoint(Self.batchSavepoint)
         let rows: Int
         do {
           rows = try await applyStreamedBatch(
@@ -370,10 +372,11 @@ extension DatabaseConnectionManager {
           try await throwIfInterruptRolledBack(since: epoch, generation: cancellationGeneration)
           throw await undoBatch(error, openedHere: false)
         }
-        _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+        try await releaseSavepoint(Self.batchSavepoint)
         noteSchemaSQL(prelude + postlude)
         return rows
       }
+      try await refuseUntrackedServerTransaction()
       _ = try await sendTransactionControl(appOwnedBeginSQL)
       let rows: Int
       do {
@@ -403,7 +406,7 @@ extension DatabaseConnectionManager {
     let opens = txState.isIdle
     if opens { try await beginAppTransaction(caller: caller) }
     do {
-      _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+      try await sendSavepoint(Self.batchSavepoint)
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
@@ -421,7 +424,7 @@ extension DatabaseConnectionManager {
       throw await undoBatch(error, openedHere: opens)
     }
     do {
-      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+      try await releaseSavepoint(Self.batchSavepoint)
     } catch {
       throw await transactionFailure(error, openedHere: opens)
     }
@@ -440,7 +443,7 @@ extension DatabaseConnectionManager {
     var capture = startRewindCapture(rewind, statementCount: count)
     if userTxOpen {
       let epoch = connectionEpoch
-      _ = try await sendTransactionControl("SAVEPOINT \(Self.batchSavepoint)")
+      try await sendSavepoint(Self.batchSavepoint)
       let done: Int
       do {
         let userSearchPath = try await pinSearchPath(searchPathPin)
@@ -455,12 +458,13 @@ extension DatabaseConnectionManager {
         try await throwIfInterruptRolledBack(since: epoch, generation: cancellationGeneration)
         throw await undoBatch(error, openedHere: false)
       }
-      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(Self.batchSavepoint)")
+      try await releaseSavepoint(Self.batchSavepoint)
       recordRewind(capture, committed: false)
       recordRewound(rewinding, committed: false)
       noteSchema()
       return done
     }
+    try await refuseUntrackedServerTransaction()
     _ = try await sendTransactionControl(appOwnedBeginSQL)
     let done: Int
     do {
@@ -498,6 +502,7 @@ extension DatabaseConnectionManager {
       throw DatabaseError.transactionAborted(
         "The server rolled back the batch instead of saving it.")
     }
+    try await requireOwnCommitFinished()
   }
 
   /// With `pin`: the user's search_path (`SearchPathPin.readSQL`, fails closed on no row or
@@ -710,7 +715,19 @@ extension DatabaseConnectionManager {
     }
   }
 
-  /// Undo the edit with `ROLLBACK TO SAVEPOINT` (+ `RELEASE`) and return `editError` to throw. A
+  /// The dialect's savepoint `name` (`SAVEPOINT`, SQL Server `SAVE TRANSACTION`)
+  private func sendSavepoint(_ name: String) async throws {
+    _ = try await sendTransactionControl(Self.dialect(of: config).savepointSQL(name))
+  }
+
+  /// The dialect's release of savepoint `name`; nothing on SQL Server, which has none
+  private func releaseSavepoint(_ name: String) async throws {
+    guard let sql = Self.dialect(of: config).releaseSavepointSQL(name) else { return }
+    _ = try await sendTransactionControl(sql)
+  }
+
+  /// Undo the edit with `ROLLBACK TO SAVEPOINT` (+ `RELEASE`), the dialect's
+  /// (`SQLDialect.rollbackToSavepointSQL`), and return `editError` to throw. A
   /// transaction this edit opened with nothing else pending is rolled back (back to idle). If
   /// the undo fails, the state follows `transactionFailure`.
   private func undoEdit(_ editError: Error, openedHere: Bool) async -> Error {
@@ -723,8 +740,8 @@ extension DatabaseConnectionManager {
 
   private func undoSavepoint(_ name: String, _ editError: Error, openedHere: Bool) async -> Error {
     do {
-      _ = try await sendTransactionControl("ROLLBACK TO SAVEPOINT \(name)")
-      _ = try await sendTransactionControl("RELEASE SAVEPOINT \(name)")
+      _ = try await sendTransactionControl(Self.dialect(of: config).rollbackToSavepointSQL(name))
+      try await releaseSavepoint(name)
     } catch {
       return await transactionFailure(editError, openedHere: openedHere)
     }

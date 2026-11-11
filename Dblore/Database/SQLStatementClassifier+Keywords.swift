@@ -50,10 +50,16 @@ nonisolated extension SQLStatementClassifier {
   /// `END CONVERSATION`, `MOVE CONVERSATION`, `GET CONVERSATION GROUP`.
   static let sqlserverConversationVerbs: Set<String> = ["END", "MOVE", "GET"]
 
-  /// SQL Server `SET` options that turn implicit transactions on (`ANSI_DEFAULTS ON` does too).
-  static let sqlserverImplicitTransactionOptions: Set<String> = [
-    "IMPLICIT_TRANSACTIONS", "ANSI_DEFAULTS",
+  /// SQL Server `SET` options that change how transactions end: implicit transactions
+  /// (`ANSI_DEFAULTS ON` turns them on too), and `XACT_ABORT`, which rolls the whole transaction
+  /// back on a run-time error.
+  static let sqlserverTransactionOptions: Set<String> = [
+    "IMPLICIT_TRANSACTIONS", "ANSI_DEFAULTS", "XACT_ABORT",
   ]
+
+  /// SQL Server rowset functions that run a pass-through query on a linked server or open an ad
+  /// hoc data source: what they run is not visible from the text.
+  static let sqlserverRemoteRowsets: Set<String> = ["OPENQUERY", "OPENROWSET", "OPENDATASOURCE"]
 
   /// ClickHouse schema changes that start with no PostgreSQL DDL verb. `REPLACE` starts
   /// `REPLACE [TEMPORARY] TABLE`.

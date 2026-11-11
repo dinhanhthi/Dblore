@@ -28,7 +28,8 @@ nonisolated enum ForeignKeyLookup: Sendable {
     return nil
   }
 
-  /// `SELECT * FROM <quoted target> WHERE <target column> = :fk1 AND … LIMIT 2`. PostgreSQL
+  /// `SELECT * FROM <quoted target> WHERE <target column> = :fk1 AND … LIMIT 2` (SQL Server's
+  /// unordered OFFSET / FETCH, `SQLDialect.limit(_:ordered:)`). PostgreSQL
   /// compares through `SQLDialect.comparison(_:_:_:type:)` with the target column's type data
   /// from `columnTypes` (keyed by target column name): an extension type's own operator
   /// (`OPERATOR(public.=)`, both sides cast for a domain over it), else
@@ -57,7 +58,9 @@ nonisolated enum ForeignKeyLookup: Sendable {
     }
     let relation = quotedRelation(
       schema: foreignKey.targetSchema, table: foreignKey.targetTable, dialect: dialect)
-    let sql = "SELECT * FROM \(relation) WHERE \(terms.joined(separator: " AND ")) LIMIT 2"
+    let sql =
+      "SELECT * FROM \(relation) WHERE \(terms.joined(separator: " AND ")) "
+      + dialect.limit(2, ordered: false)
     return (sql, parameters)
   }
 

@@ -76,6 +76,9 @@ nonisolated struct StatementSummary: Sendable, Equatable {
 nonisolated struct CommitGuard: Sendable, Equatable {
   var generation: UInt64 = 0
   var inFlight = 0
+  /// SQL Server: the `generation` of the app transaction whose COMMIT the server did not confirm
+  /// (it may be done); the next Commit or Rollback of that same state asks the server first
+  var unverifiedCommitGeneration: UInt64?
 
   /// Commit is refused while a gated statement runs (COMMIT would queue behind it and commit it
   /// too) or when the transaction changed since the confirmation showed `expectedGeneration`.
@@ -250,9 +253,14 @@ nonisolated enum ProtectedTransactionRules {
   /// fails closed on (CALL, unknown statements and executable comments, SET autocommit, UNLOCK
   /// TABLES, ...) or a failed implicit-commit statement (MySQL commits before running the DDL).
   /// Transaction control and statements that surely committed are tracked without asking.
+  /// SQL Server: always. The text cannot tell: a nested `BEGIN TRAN … COMMIT` only lowers
+  /// `@@TRANCOUNT`, `ROLLBACK TRAN <name>` may name a savepoint, procedures and `XACT_ABORT` end
+  /// transactions, and with implicit transactions on (`SET IMPLICIT_TRANSACTIONS`, or the
+  /// server's `user options`) any INSERT, UPDATE, DELETE or SELECT opens one.
   static func commitIsUncertain(
     _ statement: ClassifiedStatement, succeeded: Bool, dialect: SQLDialect
   ) -> Bool {
+    if dialect == .sqlserver { return true }
     guard dialect == .mysql, statement.nonTransactional, statement.kind != .tcl else {
       return false
     }

@@ -424,9 +424,78 @@ nonisolated extension SQLTokenizer {
     return false
   }
 
-  /// Whether `sql` holds a non-ASCII space or format scalar (NBSP, U+0085, U+1680,
-  /// U+2000–U+200D, U+2028, U+2029, U+202F, U+205F, U+2060, U+3000, U+FEFF) outside strings,
-  /// quoted identifiers and comments, or a Unicode line break (U+0085, U+2028, U+2029) inside a
+  /// SQL Server text the classifier cannot read as the server does, so it fails closed:
+  /// `numberRunsIntoWord`, `hasUnicodeSpace`, `endsCommentAtLoneCR` or
+  /// `hasBatchSeparatorLine`.
+  func sqlserverFailsClosed(_ sql: String) -> Bool {
+    numberRunsIntoWord(sql) || hasUnicodeSpace(sql) || endsCommentAtLoneCR(sql)
+      || hasBatchSeparatorLine(sql)
+  }
+
+  /// Whether a `--` comment in `sql` ends at a CR that no LF follows. The scanner ends it there;
+  /// a server that ends it at LF only reads the rest of the line as comment, so the two could
+  /// disagree on where a string or quoted name starts.
+  func endsCommentAtLoneCR(_ sql: String) -> Bool {
+    let scalars = Array(sql.unicodeScalars)
+    var i = 0
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      let end = lexeme.range.upperBound
+      if case .comment = lexeme.kind, scalars[i] == "-", end < scalars.count, scalars[end] == "\r",
+        end + 1 < scalars.count, scalars[end + 1] != "\n"
+      {
+        return true
+      }
+      i = end
+    }
+    return false
+  }
+
+  /// Whether `sql` holds a `GO` batch-separator line: `GO`, maybe with a count, alone on its
+  /// line apart from whitespace and comments (outside strings, quoted names and comments).
+  /// The app does not split batches there, so a statement holding one fails closed.
+  func hasBatchSeparatorLine(_ sql: String) -> Bool {
+    let scalars = Array(sql.unicodeScalars)
+    var lexemes: [SQLLexeme] = []
+    var i = 0
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      lexemes.append(lexeme)
+      i = lexeme.range.upperBound
+    }
+    func breaksLine(_ lexeme: SQLLexeme) -> Bool {
+      guard case .whitespace = lexeme.kind else { return false }
+      return scalars[lexeme.range].contains { $0 == "\n" || $0 == "\r" }
+    }
+    var lineStart = true
+    for (index, lexeme) in lexemes.enumerated() {
+      switch lexeme.kind {
+      case .whitespace:
+        if breaksLine(lexeme) { lineStart = true }
+      case .comment:
+        break
+      case .word
+      where lineStart
+        && Self.asciiUppercased(Self.text(scalars, lexeme.range)) == "GO":
+        let rest = lexemes[(index + 1)...].prefix { !breaksLine($0) }
+        let alone = rest.allSatisfy {
+          switch $0.kind {
+          case .whitespace, .comment, .number: true
+          default: false
+          }
+        }
+        if alone { return true }
+        lineStart = false
+      default:
+        lineStart = false
+      }
+    }
+    return false
+  }
+
+  /// Whether `sql` holds a non-ASCII space, control or format scalar (general category Zs, Zl,
+  /// Zp, Cc or Cf: NBSP, U+0085, U+200B, U+2061, U+FEFF, ...) outside strings, quoted
+  /// identifiers and comments, or a Unicode line break (U+0085, U+2028, U+2029) inside a
   /// comment. The scanner reads one as part of a word or comment, and the server may read it as
   /// a space or a line end, so the SQL Server classifier fails closed on it.
   func hasUnicodeSpace(_ sql: String) -> Bool {
@@ -449,11 +518,10 @@ nonisolated extension SQLTokenizer {
   }
 
   private static func isUnicodeSpace(_ scalar: Unicode.Scalar) -> Bool {
-    switch scalar.value {
-    case 0x00A0, 0x0085, 0x1680, 0x2000...0x200D, 0x2028, 0x2029, 0x202F, 0x205F, 0x2060,
-      0x3000, 0xFEFF:
-      true
-    default: false
+    guard !scalar.isASCII else { return false }
+    switch scalar.properties.generalCategory {
+    case .spaceSeparator, .lineSeparator, .paragraphSeparator, .control, .format: return true
+    default: return false
     }
   }
 

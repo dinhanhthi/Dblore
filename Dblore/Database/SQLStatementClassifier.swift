@@ -93,10 +93,12 @@ nonisolated enum SQLStatementClassifier {
   /// a `;` token (the splitter and the tokenizer disagree on a statement boundary), a
   /// plain string containing a backslash (escape under `standard_conforming_strings = off`),
   /// a MySQL executable comment (`/*! ... */`, `/*M! ... */`: the server runs its content),
-  /// or a SQL Server number that runs straight into a word (`SELECT 0xTRUNCATE TABLE t`) or a
-  /// SQL Server non-ASCII space or zero-width scalar outside quotes and comments
-  /// (`SELECT a\u{A0}DELETE ...`), or ClickHouse text `clickhouseFailsClosed` refuses (a bare
-  /// non-ASCII scalar, a number's `-` sign before `-`).
+  /// or SQL Server text `sqlserverFailsClosed` refuses (a number that runs straight into a word,
+  /// a non-ASCII space, control or format scalar outside quotes and comments, a `--` comment
+  /// ended by a lone CR, a `GO` batch-separator line), or ClickHouse text
+  /// `clickhouseFailsClosed` refuses (a bare non-ASCII scalar, a number's `-` sign before `-`).
+  /// An unrecognized MySQL or SQL Server statement cannot run in the app's transaction
+  /// (`nonTransactional`): it may commit or roll back.
   /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing.
   /// `standardConformingStrings` (PostgreSQL, SQL dump restore only): read a plain string with a
   /// backslash as `standard_conforming_strings = on` does, once the session reported it on.
@@ -113,18 +115,17 @@ nonisolated enum SQLStatementClassifier {
       tokens.contains {
         $0.isSymbol(";") || $0.kind == .backslashString || $0.kind == .executableComment
       }
-      || (dialect == .sqlserver
-        && (SQLTokenizer(dialect: dialect).numberRunsIntoWord(text)
-          || SQLTokenizer(dialect: dialect).hasUnicodeSpace(text)))
+      || (dialect == .sqlserver && SQLTokenizer(dialect: dialect).sqlserverFailsClosed(text))
       || (dialect == .clickhouse && SQLTokenizer(dialect: dialect).clickhouseFailsClosed(text))
     let kind = ambiguous ? .unknown : analysis.kind
-    // MySQL: an unrecognized statement may commit implicitly (see `mysqlAdjusted`)
-    let mysqlUnknown = dialect == .mysql && kind == .unknown
+    // MySQL: an unrecognized statement may commit implicitly (see `mysqlAdjusted`); SQL Server:
+    // a block, a procedure call or a batch may commit or roll back
+    let unknownEndsTransaction = (dialect == .mysql || dialect == .sqlserver) && kind == .unknown
     return ClassifiedStatement(
       text: text, kind: kind, hasReturning: analysis.hasReturning,
       hasTopLevelReturning: analysis.hasTopLevelReturning,
       affectsAllRows: analysis.affectsAllRows,
-      nonTransactional: analysis.nonTransactional || mysqlUnknown,
+      nonTransactional: analysis.nonTransactional || unknownEndsTransaction,
       resetsSessionBrakes: analysis.resetsSessionBrakes
         || (dialect == .mysql && hintsMySQLBrake(text)),
       changesPrivileges: analysis.changesPrivileges, createsTable: analysis.createsTable,
@@ -336,7 +337,8 @@ nonisolated enum SQLStatementClassifier {
   }
 
   /// SQL Server statements that PostgreSQL classifies differently. Nil leaves the shared rules.
-  /// `SAVE TRAN[SACTION] name` sets a savepoint (TCL). A `BEGIN` that starts no transaction
+  /// `SAVE TRAN[SACTION] name` sets a savepoint (TCL); `EXEC` / `EXECUTE` runs a procedure or
+  /// SQL text, a utility like `CALL`. A `BEGIN` that starts no transaction
   /// (not `BEGIN TRAN[SACTION]` / `BEGIN DISTRIBUTED`) opens a block and a lone `END` closes
   /// one: neither is transaction control, so both fail closed, as do the shared rules' leading
   /// words T-SQL has no statement for (`sqlserverNonStatementKeywords`: a procedure call).
@@ -348,6 +350,7 @@ nonisolated enum SQLStatementClassifier {
       ["TRAN", "TRANSACTION", "DISTRIBUTED"].contains(body.dropFirst().first?.keyword ?? "")
         ? nil : .unknown
     case "END": .unknown
+    case "EXEC", "EXECUTE": .utility
     case _ where sqlserverNonStatementKeywords.contains(keyword): .unknown
     case _ where sqlserverTclKeywords.contains(keyword): .tcl
     default: nil
@@ -719,18 +722,26 @@ nonisolated enum SQLStatementClassifier {
   /// trigger body holds statements, and both are refused or confirmed already.
   /// `SET IMPLICIT_TRANSACTIONS` / `SET ANSI_DEFAULTS` is a utility that cannot run in a
   /// transaction: once on, every statement opens a transaction the app does not track, and the
-  /// app's own `BEGIN TRAN` nests, so its COMMIT would not commit.
+  /// app's own `BEGIN TRAN` nests, so its COMMIT would not commit. `SET XACT_ABORT` too: a
+  /// run-time error then rolls the whole transaction back. `EXEC` / `EXECUTE` cannot run in the
+  /// app's transaction either (a procedure may commit or roll back), and `EXECUTE AS` switches
+  /// the privilege context. A read, data change or session SET that names a
+  /// `sqlserverRemoteRowsets` function becomes a utility. Any statement (a block, a batch, a
+  /// GRANT followed by more) affects all rows when an UPDATE / DELETE in it has no WHERE
+  /// (`sqlserverAffectsAllRows`).
   private static func sqlserverAdjusted(
     _ analysis: Analysis, body: ArraySlice<SQLToken>
   ) -> Analysis {
     var analysis = analysis
     let depth = body.first?.depth ?? 0
     let topWords = body.filter { $0.depth == depth }.compactMap(\.keyword)
-    if topWords.first == "SET",
-      topWords.contains(where: sqlserverImplicitTransactionOptions.contains)
-    {
+    if topWords.first == "SET", topWords.contains(where: sqlserverTransactionOptions.contains) {
       analysis.kind = .utility
       analysis.nonTransactional = true
+    }
+    if topWords.first == "EXEC" || topWords.first == "EXECUTE" {
+      analysis.nonTransactional = true
+      if topWords.dropFirst().first == "AS" { analysis.changesPrivileges = true }
     }
     switch analysis.kind {
     case .read, .dml:
@@ -742,8 +753,119 @@ nonisolated enum SQLStatementClassifier {
       if query || strayStatementVerb(body) { analysis.kind = .unknown }
     default: break
     }
+    switch analysis.kind {
+    case .read, .dml, .sessionSet:
+      if body.contains(where: { sqlserverRemoteRowsets.contains($0.keyword ?? "") }) {
+        analysis.kind = .utility
+      }
+    default: break
+    }
+    analysis.affectsAllRows = analysis.affectsAllRows || sqlserverAffectsAllRows(body)
     return analysis
   }
+
+  /// Some UPDATE / DELETE, at any position and depth, with no WHERE in its own scope: the
+  /// tokens after it at its depth or deeper, up to the next statement verb, `SELECT`, `END` or
+  /// `;` at its depth (an UPDATE's first `SET` belongs to it). Skipped only where the position
+  /// says the word is no statement (`isNoSQLServerStatement`); when unsure it counts.
+  private static func sqlserverAffectsAllRows(_ body: ArraySlice<SQLToken>) -> Bool {
+    body.indices.contains { index in
+      let verb = body[index]
+      guard verb.isWord("UPDATE") || verb.isWord("DELETE") else { return false }
+      if isNoSQLServerStatement(body, at: index) { return false }
+      var ownSet = verb.isWord("UPDATE")
+      for token in body[(index + 1)...] {
+        if token.depth < verb.depth { break }
+        guard token.depth == verb.depth else { continue }
+        if token.isWord("WHERE") { return false }
+        if ownSet, token.isWord("SET") {
+          ownSet = false
+          continue
+        }
+        let word = token.keyword ?? ""
+        if token.isSymbol(";") || word == "SELECT" || word == "END"
+          || sqlserverStatementVerbs.contains(word)
+        {
+          break
+        }
+      }
+      return true
+    }
+  }
+
+  /// The UPDATE / DELETE at `index` names no statement: a foreign key action (`ON DELETE` /
+  /// `ON UPDATE` followed by CASCADE, NO ACTION, SET NULL or SET DEFAULT), a MERGE arm (`THEN`
+  /// after a MERGE at its depth), the `UPDATE(column)` test after IF / AND / OR / NOT, an event
+  /// of a `CREATE` / `ALTER TRIGGER` before its AS (after FOR, AFTER, OF or a comma), or a
+  /// permission of a GRANT / DENY / REVOKE before its TO / FROM. Every word these checks rely on
+  /// is reserved in T-SQL, unlike AFTER alone (a valid alias).
+  private static func isNoSQLServerStatement(_ body: ArraySlice<SQLToken>, at index: Int) -> Bool {
+    let verb = body[index]
+    let previous = index > body.startIndex ? body[index - 1] : nil
+    let next = body[(index + 1)...].prefix(2).map { $0.keyword ?? "" }
+    if previous?.isWord("ON") == true,
+      next.first == "CASCADE" || next == ["NO", "ACTION"] || next == ["SET", "NULL"]
+        || next == ["SET", "DEFAULT"]
+    {
+      return true
+    }
+    let before = body[..<index].reversed().filter { $0.depth == verb.depth }
+    if previous?.isWord("THEN") == true, before.contains(where: { $0.isWord("MERGE") }) {
+      return true
+    }
+    if verb.isWord("UPDATE"), index + 1 < body.endIndex, body[index + 1].isSymbol("("),
+      ["IF", "AND", "OR", "NOT"].contains(previous?.keyword ?? "")
+    {
+      return true
+    }
+    // The nearest header word back at this depth decides
+    for (offset, token) in before.enumerated() {
+      switch token.keyword ?? "" {
+      case "AS", "TO", "FROM", "SELECT", "BEGIN", "END":
+        return false
+      case "GRANT", "DENY", "REVOKE":
+        return inPermissionList(before, header: offset)
+      case "TRIGGER":
+        let creates = before.dropFirst(offset + 1).first.map {
+          $0.isWord("CREATE") || $0.isWord("ALTER")
+        }
+        let event =
+          ["FOR", "AFTER", "OF"].contains(previous?.keyword ?? "")
+          || previous?.isSymbol(",") == true
+        return creates == true && event
+      default:
+        continue
+      }
+    }
+    return false
+  }
+
+  /// Whether the candidate `isNoSQLServerStatement` scans back from sits in the permission list
+  /// of the GRANT / DENY / REVOKE at `before[header]` (`before` runs backward from it): only
+  /// permission words, commas and parentheses (a column list) between them, after a leading
+  /// `GRANT OPTION FOR` of a REVOKE. A GRANT after WITH (`WITH GRANT OPTION`) is no header.
+  private static func inPermissionList(_ before: [SQLToken], header: Int) -> Bool {
+    let earlier = before.dropFirst(header + 1).first
+    if earlier?.isWord("WITH") == true { return false }
+    var between = before[..<header].reversed().map { $0 }
+    if before[header].isWord("GRANT"), earlier?.isWord("REVOKE") == true {
+      guard between.count >= 2, between[0].isWord("OPTION"), between[1].isWord("FOR") else {
+        return false
+      }
+      between.removeFirst(2)
+    }
+    return between.allSatisfy { token in
+      token.isSymbol(",") || token.isSymbol("(") || token.isSymbol(")")
+        || sqlserverPermissionWords.contains(token.keyword ?? "")
+    }
+  }
+
+  /// Words of a T-SQL permission list (`GRANT UPDATE, DELETE ...`, `VIEW DEFINITION`, ...)
+  private static let sqlserverPermissionWords: Set<String> = [
+    "SELECT", "INSERT", "UPDATE", "DELETE", "EXECUTE", "EXEC", "REFERENCES", "ALTER", "CONTROL",
+    "ALL", "PRIVILEGES", "VIEW", "DEFINITION", "TAKE", "OWNERSHIP", "IMPERSONATE", "RECEIVE",
+    "SEND", "CONNECT", "CHANGE", "TRACKING",
+  ]
 
   /// A `sqlserverStatementVerbs` word, at any depth, after the statement's own verb (the data
   /// change after a WITH list, else the first word) that is not part of that statement:
@@ -774,12 +896,35 @@ nonisolated enum SQLStatementClassifier {
       // A query hint only inside `OPTION (...)`; at the statement's depth `USE` runs
       case "USE":
         return !(["HINT", "PLAN"].contains(next) && body[index].depth > body[start].depth)
-      case "FETCH": return previous != "ROW" && previous != "ROWS"
+      case "FETCH": return !followsOffsetRows(body, fetch: index)
       case "UPDATE", "INSERT", "DELETE": return !(verb == "MERGE" && previous == "THEN")
       case "SET": return !(verb == "MERGE" && previous == "UPDATE")
       default: return true
       }
     }
+  }
+
+  /// `OFFSET <value> ROW[S]` right before the `FETCH` at `fetch`, at its depth: the value is one
+  /// word or number, a variable (`@` and a word), or a parenthesized expression.
+  private static func followsOffsetRows(_ body: ArraySlice<SQLToken>, fetch: Int) -> Bool {
+    let depth = body[fetch].depth
+    let rows = fetch - 1
+    guard rows > body.startIndex, body[rows].depth == depth,
+      body[rows].isWord("ROW") || body[rows].isWord("ROWS")
+    else { return false }
+    var offset = rows - 1
+    if body[offset].isSymbol(")") {
+      guard
+        let open = body[..<offset].lastIndex(where: { $0.isSymbol("(") && $0.depth == depth })
+      else { return false }
+      offset = open - 1
+    } else {
+      guard body[offset].kind == .word else { return false }
+      offset -= 1
+      if offset >= body.startIndex, body[offset].isSymbol("@") { offset -= 1 }
+    }
+    return offset >= body.startIndex && body[offset].depth == depth
+      && body[offset].isWord("OFFSET")
   }
 
   private static func isSessionSet(_ kind: StatementKind) -> Bool {

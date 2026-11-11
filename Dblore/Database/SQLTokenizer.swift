@@ -34,6 +34,7 @@ nonisolated struct SQLTokenizer: Sendable {
   /// quote; a `CREATE TRIGGER … BEGIN …; END` body is one statement (`sqliteSplitStatements`).
   /// MySQL follows `mysqlLexeme` and the `mysql` client `DELIMITER` directive.
   /// ClickHouse follows `clickhouseLexeme` (backslash escapes, `#` comments, heredocs).
+  /// SQL Server splits at a `;` outside every `BEGIN … END` block (`sqlserverSplitStatements`).
   /// MongoDB is `MongoshSplitter.split` (comment-only pieces dropped).
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
   /// the input (same Unicode scalars), so execution sends exactly what the user typed.
@@ -62,6 +63,14 @@ nonisolated struct SQLTokenizer: Sendable {
     var hasContent = false
     /// SQLite: the `sqlite3_complete` state at `resume`
     var sqlite = SQLiteCompleteState.invalid
+    /// SQL Server: the open `BEGIN … END` blocks (true) and `CASE … END` expressions (false)
+    var sqlserverFrames: [Bool] = []
+    /// SQL Server: a `BEGIN` or `END` whose next word decides what it opens or closes
+    var sqlserverPending: SQLServerKeyword?
+
+    enum SQLServerKeyword: Sendable, Equatable {
+      case begin, end
+    }
   }
 
   /// Incremental `splitStatements(scalars:)` for text read in chunks. `scalars` starts at a
@@ -89,6 +98,9 @@ nonisolated struct SQLTokenizer: Sendable {
     }
     if dialect == .sqlite {
       return sqliteSplitStatements(scalars, isFinal: isFinal, state: &state)
+    }
+    if dialect == .sqlserver {
+      return sqlserverSplitStatements(scalars, isFinal: isFinal, state: &state)
     }
     var statements: [String] = []
     var start = 0
@@ -191,6 +203,66 @@ nonisolated struct SQLTokenizer: Sendable {
     }
     split.sqlite = state
     return Self.endSplit(scalars, start: start, at: i, isFinal: isFinal, statements, &split)
+  }
+
+  /// SQL Server split: at a `;` only outside every block, as procedure and trigger bodies and
+  /// `BEGIN TRY` / `BEGIN CATCH` blocks hold statements. A `BEGIN` opens a block unless the next
+  /// word is TRAN, TRANSACTION, DISTRIBUTED (a transaction), DIALOG or CONVERSATION (Service
+  /// Broker); `CASE` opens an expression. An `END` closes the innermost of them (`END TRY` /
+  /// `END CATCH` too), unless the next word is CONVERSATION; one with nothing open is ignored.
+  private func sqlserverSplitStatements(
+    _ scalars: [Unicode.Scalar], isFinal: Bool, state split: inout SplitState
+  ) -> (statements: [String], consumed: Int) {
+    var statements: [String] = []
+    var frames = split.sqlserverFrames
+    var pending = split.sqlserverPending
+    var start = 0
+    var i = split.resume
+    while i < scalars.count {
+      let lexeme = self.lexeme(in: scalars, at: i)
+      if !isFinal, mayGrow(lexeme, in: scalars) { break }
+      switch lexeme.kind {
+      case .whitespace, .comment:
+        break
+      case .word:
+        let word =
+          lexeme.range.count <= 12 ? Self.asciiUppercased(Self.text(scalars, lexeme.range)) : ""
+        Self.settle(&pending, next: word, frames: &frames)
+        switch word {
+        case "BEGIN": pending = .begin
+        case "END": pending = .end
+        case "CASE": frames.append(false)
+        default: break
+        }
+      default:
+        Self.settle(&pending, next: "", frames: &frames)
+        if case .symbol = lexeme.kind, scalars[i] == ";", frames.isEmpty {
+          Self.appendTrimmed(scalars, start..<i, to: &statements)
+          start = lexeme.range.upperBound
+        }
+      }
+      i = lexeme.range.upperBound
+    }
+    split.sqlserverFrames = frames
+    split.sqlserverPending = pending
+    return Self.endSplit(scalars, start: start, at: i, isFinal: isFinal, statements, &split)
+  }
+
+  /// The pending `BEGIN` / `END` decided by the `next` word (empty for any other lexeme)
+  private static func settle(
+    _ pending: inout SplitState.SQLServerKeyword?, next: String, frames: inout [Bool]
+  ) {
+    switch pending {
+    case .begin:
+      if !["TRAN", "TRANSACTION", "DISTRIBUTED", "DIALOG", "CONVERSATION"].contains(next) {
+        frames.append(true)
+      }
+    case .end:
+      if next != "CONVERSATION", !frames.isEmpty { frames.removeLast() }
+    case nil:
+      break
+    }
+    pending = nil
   }
 
   /// Non-final calls: whether more text could change `lexeme`. One that reaches the end may
