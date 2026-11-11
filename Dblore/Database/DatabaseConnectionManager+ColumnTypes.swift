@@ -3,7 +3,8 @@
 //  Dblore
 //
 //  Column type enrichment (precision, scale, length) as information_schema reports it,
-//  MySQL result column origins, and the tables mask rules match result columns against
+//  MySQL and SQL Server result column origins, and the tables mask rules match result
+//  columns against
 //
 
 import Foundation
@@ -15,7 +16,9 @@ extension DatabaseConnectionManager {
   /// Reads the modifiers information_schema reports (from pg_catalog), always read fresh
   /// (MCP, CLI and the app's own reads never take a cached type). Skipped (driver types kept)
   /// while the app transaction is pending: a failing catalog query would abort it.
-  /// MySQL: resolves the result column origins instead (`resolveMySQLOrigins`).
+  /// MySQL and SQL Server: resolve the result column origins instead (`resolveMySQLOrigins`,
+  /// `resolveEnginePluginOrigins`, whose describe is still sent inside the pending app
+  /// transaction).
   func enrichColumnTypes(columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
     // Only PostgreSQL has modifiers to add. SQLite keeps declared types; DuckDB has no
     // enrichment yet. MySQL types already come from the column definitions. MongoDB has no
@@ -23,7 +26,8 @@ extension DatabaseConnectionManager {
     switch databaseType {
     case .postgresql: break
     case .mysql: return await resolveMySQLOrigins(columns)
-    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver, nil: return columns
+    case .sqlserver: return await resolveEnginePluginOrigins(columns, query: query)
+    case .sqlite, .duckdb, .mongodb, .clickhouse, nil: return columns
     }
     guard !columns.isEmpty, Self.enrichesColumnTypes(query) else { return columns }
     return await freshColumnTypes(columns, query: query) ?? columns
@@ -139,6 +143,161 @@ extension DatabaseConnectionManager {
         "Failed to resolve MySQL column origins: \(error)", category: "Database")
       return nil
     }
+  }
+}
+
+extension DatabaseConnectionManager {
+  // MARK: - Engine Plugin Column Origins
+
+  /// SQL Server: `origin` of each column the plugin's describe of `query` names a base column
+  /// of (`EnginePluginIntrospector.enrichColumnTypes`, as its `sourceName`): the identity
+  /// `TableRef.enginePlugin` of the open session's plugin and the column's 1-based ordinal in
+  /// the table's `EditTable.attributeNames`. The describe covers the first result set only, so
+  /// it is asked only for one read statement of exactly one relation
+  /// (`CellUpdateStatement.singleRelation`: no second SELECT, so the first result set is the
+  /// one read). The describe reports a view's columns with its base table, so a column whose
+  /// table is not the relation the query names (`relationNames`) gets no origin. A table without
+  /// an edit table (no primary key, a view, not found), a failed read or a connection change
+  /// meanwhile gives no origin. Edit tables come from `editTableCache`, else one catalog read
+  /// per table, which caches it (`fetchEditTable`). Source names stay.
+  /// Inside the pending app transaction (`.appTx`) the describe is still sent, past the
+  /// metadata pause (`withCatalogReadSession`, not `withCatalogSession`): there the plugin's
+  /// batch takes its `sys.dm_exec_describe_first_result_set` branch (`@@TRANCOUNT > 0`), which
+  /// returns a compile error as rows (XACT_STATE stays 1, XACT_ABORT ON too) and leaves
+  /// @@TRANCOUNT as it was, as does its `SELECT DB_NAME()`. A client timeout (attention) during
+  /// either one can still end the transaction under XACT_ABORT ON, so the server is asked right
+  /// after, on the same session: unless it reports the transaction open, the transaction is
+  /// aborted (`settleTransactionAfterDescribe`) and no column gets an origin.
+  /// Edit tables then come from the cache only (a table not cached gets no origin), and only a
+  /// `schema.table` relation gets origins. Aborted, ending or BEGIN in flight: no describe.
+  func resolveEnginePluginOrigins(_ columns: [ColumnInfo], query: String) async -> [ColumnInfo] {
+    let dialect = Self.dialect(of: config)
+    let statements = SQLStatementClassifier.classify(query, dialect: dialect)
+    let inAppTransaction: Bool
+    if case .appTx = txState { inAppTransaction = true } else { inAppTransaction = false }
+    guard !isMetadataPaused || inAppTransaction, !columns.isEmpty, statements.count == 1,
+      statements[0].kind == .read,
+      let relation = CellUpdateStatement.singleRelation(in: query, dialect: dialect),
+      let pluginID = (session as? EnginePluginSession)?.pluginID,
+      let plugin = introspector as? EnginePluginIntrospector
+    else { return columns }
+    let epoch = connectionEpoch
+    let describe: @Sendable (any DatabaseSession) async -> [ColumnInfo] = { session in
+      await plugin.enrichColumnTypes(columns, query: query, in: session)
+    }
+    let described: [ColumnInfo]?
+    if inAppTransaction {
+      let read = try? await withCatalogReadSession { session in
+        (await describe(session), await session.transactionOpenAfterInterrupt())
+      }
+      guard read?.1 == true else {
+        await settleTransactionAfterDescribe()
+        return columns
+      }
+      described = read?.0
+    } else {
+      described = try? await withCatalogSession(describe)
+    }
+    guard let described, epoch == connectionEpoch else { return columns }
+    var tables: [TableRef: EditTable?] = [:]
+    var resolved: [ColumnInfo] = []
+    for column in described {
+      guard let source = column.sourceName else {
+        resolved.append(column)
+        continue
+      }
+      let tableID = TableRef.enginePlugin(pluginID, schema: source.schema, table: source.table)
+      guard Self.relationNames(relation, source, qualifiedOnly: inAppTransaction) else {
+        resolved.append(
+          ColumnInfo(
+            name: column.name, type: column.type, sourceName: source,
+            wallClock: column.wallClock, masked: column.masked))
+        continue
+      }
+      if tables[tableID] == nil {
+        tables[tableID] = .some(await enginePluginEditTable(source, tableID: tableID, epoch: epoch))
+      }
+      let ordinal = tables[tableID]??.attributeNames.first {
+        $0.value.unicodeScalars.elementsEqual(source.column.unicodeScalars)
+      }?.key
+      resolved.append(
+        ColumnInfo(
+          name: column.name, type: column.type,
+          origin: ordinal.map { ColumnOrigin(tableID: tableID, columnOrdinal: Int($0)) },
+          sourceName: source, wallClock: column.wallClock, masked: column.masked))
+    }
+    return resolved
+  }
+
+  /// The server did not report the app transaction open after the describe sent inside it
+  /// (it ended it, or gave no answer): aborted with this reason, as `transactionFailure` marks a
+  /// failed statement, even when the server ended it, so the banner shows the earlier statements
+  /// are gone and Rollback (which ends as rolled back when the server has no transaction) closes
+  /// it and its Data Rewind entries. A lost connection follows `transactionFailure`. The read
+  /// itself returned, so nothing is thrown.
+  private func settleTransactionAfterDescribe() async {
+    guard case .appTx(let pending) = txState else { return }
+    let reason =
+      "the server did not report the transaction open after the result columns were described "
+      + "(a timeout may have ended it)"
+    if session == nil {
+      _ = await transactionFailure(DatabaseError.transactionAborted(reason), openedHere: false)
+    } else {
+      txState = .aborted(reason: reason, pending: pending)
+      // The server undid the statements. Rollback does not put them back.
+      discardAppSchemaChange()
+    }
+    await AppLogger.shared.warning(
+      "The app transaction (\(pending.count) pending statement(s)) was not reported open after "
+        + "the result column describe; it is now \(txState.isIdle ? "ended" : "aborted")",
+      category: "Database")
+  }
+
+  /// Whether `relation` (`CellUpdateStatement.singleRelation` text) is `table` or
+  /// `schema.table` of `source`. Quoted parts compare exactly, unquoted ones without ASCII case
+  /// (the tokenizer uppercases words). A one-part name is resolved by the server in the default
+  /// schema, so only its table part is compared; with `qualifiedOnly` (inside the app
+  /// transaction, where the cached edit table is served without the server resolving the name
+  /// again) it fails closed: a same-named view in the default schema would get its base table's
+  /// target. Any other form (a database or server part) fails closed.
+  private static func relationNames(
+    _ relation: String, _ source: ColumnSourceName, qualifiedOnly: Bool
+  ) -> Bool {
+    func matches(_ token: SQLToken, _ name: String) -> Bool {
+      switch token.kind {
+      case .quotedIdentifier: return token.text.unicodeScalars.elementsEqual(name.unicodeScalars)
+      case .word:
+        return token.text.unicodeScalars.elementsEqual(
+          SQLTokenizer.asciiUppercased(name).unicodeScalars)
+      default: return false
+      }
+    }
+    let tokens = SQLTokenizer.tokens(relation, dialect: .sqlserver)
+    switch tokens.count {
+    case 1: return !qualifiedOnly && matches(tokens[0], source.table)
+    case 3:
+      return tokens[1].isSymbol(".") && matches(tokens[0], source.schema)
+        && matches(tokens[2], source.table)
+    default: return false
+    }
+  }
+
+  /// The edit table of `source`'s table (`tableID`): the cached one, or (metadata not paused)
+  /// one catalog read of the server's names, bracket-quoted. Nil when not cached while paused,
+  /// not editable, the read fails, it resolves to another identity or the connection changed
+  /// meanwhile.
+  private func enginePluginEditTable(
+    _ source: ColumnSourceName, tableID: TableRef, epoch: UInt64
+  ) async -> EditTable? {
+    if let cached = cachedEditTable(id: tableID) { return cached }
+    let dialect = Self.dialect(of: config)
+    guard !isMetadataPaused,
+      let name = try? dialect.quoteIdentifier(source.schema) + "."
+        + dialect.quoteIdentifier(source.table),
+      let table = try? await fetchEditTable(tableName: name, probesViews: false),
+      epoch == connectionEpoch, table.resolvedTableRef == tableID
+    else { return nil }
+    return table
   }
 }
 

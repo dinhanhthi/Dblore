@@ -84,6 +84,8 @@ extension DatabaseConnectionManager {
         since: epoch, generation: cancelGeneration, remaining: statements.count - results.count)
       // Another tab may have opened the transaction while this script was suspended
       try refuseIfOwnedByAnotherCaller(caller)
+      // A read's result describe may have aborted it (`resolveEnginePluginOrigins`)
+      try refuseIfAborted()
       let action =
         protectedMode
         ? ProtectedTransactionRules.action(for: statement, inTransaction: !txState.isIdle) : .run

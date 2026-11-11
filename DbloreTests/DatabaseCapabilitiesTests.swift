@@ -2,7 +2,8 @@
 // DatabaseType.capabilities: PostgreSQL keeps today's features; SQLite is available as beta;
 // DuckDB is a file engine offered only when its plugin is installed. MongoDB is listed after
 // MySQL. ClickHouse is a network plugin engine (no transactions, edits, import or dump); SQL
-// Server is a plugin engine, hidden with every feature off.
+// Server is a network plugin engine with transactions, keyed grid edits and foreign key lookup
+// (no structure editing, dump, import, user types, roles or Explain).
 
 import Foundation
 import Testing
@@ -50,6 +51,17 @@ struct DatabaseCapabilitiesTests {
       showExperimental: false, isPluginInstalled: { _ in false })
     #expect(types.last == .mongodb)
     #expect(types.firstIndex(of: .mysql).map { $0 + 1 } == types.firstIndex(of: .mongodb))
+  }
+
+  @Test("A SQL Server tab names a table outside dbo, so dbo.t and sales.t differ")
+  @MainActor
+  func sqlServerNamesNonDefaultSchema() {
+    var state = DataViewerState(schema: "dbo", name: "orders", orderColumns: [])
+    state.databaseType = .sqlserver
+    #expect(state.title == "orders")
+    state.schema = "sales"
+    #expect(state.title == "sales.orders")
+    #expect(SidebarSectionModel.filtersSchemas(.sqlserver))
   }
 
   private static let expected: [DatabaseType: DatabaseCapabilities] = [
@@ -220,27 +232,27 @@ struct DatabaseCapabilitiesTests {
   )
 
   private static let sqlserver = DatabaseCapabilities(
-    usesNetwork: false,
-    usesPassword: false,
-    supportsSSL: false,
-    supportsSchemas: false,
+    usesNetwork: true,
+    usesPassword: true,
+    supportsSSL: true,
+    supportsSchemas: true,
     supportsRolesAndUsers: false,
-    supportsFunctions: false,
+    supportsFunctions: true,
     supportsServerCursor: false,
-    supportsSessionBrakes: false,
-    cancelStrategy: .reconnect,
+    supportsSessionBrakes: true,
+    cancelStrategy: .interrupt,
     cappedReadResetsSession: false,
     supportsExplainJSON: false,
     supportsExplainAnalyze: false,
     supportsUpdateOnly: false,
-    supportsDefaultInUpdate: false,
-    supportsRowStaging: false,
+    supportsDefaultInUpdate: true,
+    supportsRowStaging: true,
     supportsDataImport: false,
-    supportsForeignKeyLookup: false,
+    supportsForeignKeyLookup: true,
     requiresPlugin: true,
-    isAvailable: false,
+    isAvailable: true,
     queryLanguage: .sql,
-    supportsTransactions: false,
+    supportsTransactions: true,
     supportsStructure: false,
     supportsSQLDump: false,
     supportsUserTypes: false

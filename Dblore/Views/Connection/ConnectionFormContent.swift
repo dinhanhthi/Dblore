@@ -500,7 +500,8 @@ struct ConnectionFormContent: View {
 
   /// Note under the SSL mode menu (nil = none). For MySQL only Verify CA and Verify Full check
   /// the server certificate (`MySQLSession.tlsConfiguration`), so only they use a picked CA;
-  /// Prefer and Allow reconnect in plain text when the server offers no SSL.
+  /// Prefer and Allow reconnect in plain text when the server offers no SSL. SQL Server: what
+  /// each mode means for the plugin (`EnginePluginSession.tlsMode`, `SQLServerTLSPlan`).
   static func sslModeHelp(for type: DatabaseType) -> String? {
     switch type {
     case .mysql:
@@ -516,7 +517,14 @@ struct ConnectionFormContent: View {
       "Verify Full encrypts the connection and checks the server certificate and host name. Use "
         + "the server's host name, not an IP address. A picked CA certificate replaces the "
         + "system trust store."
-    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: nil
+    case .sqlserver:
+      "Disable sends the data unencrypted. Allow and Prefer encrypt only when the server agrees, "
+        + "without checking its certificate. Require always encrypts but does not check the "
+        + "certificate. Verify CA also checks the certificate chain. Verify Full checks the "
+        + "chain and the host name on every server version: strict encryption (TDS 8.0) on SQL "
+        + "Server 2022 and later, otherwise required encryption, never without the host name "
+        + "check. A picked CA certificate is used only by Verify CA and Verify Full."
+    case .postgresql, .sqlite, .duckdb, .clickhouse: nil
     }
   }
 

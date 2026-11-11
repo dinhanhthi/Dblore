@@ -3,9 +3,10 @@
 // counts from sys.partitions, an estimate), views, functions and procedures with their
 // parameters, triggers, definitions (OBJECT_DEFINITION), foreign keys, columns, the edit target,
 // primary keys, exact row counts and table structure (columns, defaults, identity, computed
-// columns, indexes, key, foreign-key and check constraints, MS_Description comments). Objects
-// Microsoft ships are left out. Users, roles and type enrichment answer `unsupported`, which the
-// app reads as empty.
+// columns, indexes, key, foreign-key and check constraints, MS_Description comments), and the
+// origins of a result's columns (`enrichColumnTypes`, from a describe of its first result set).
+// Objects Microsoft ships are left out. Users and roles answer `unsupported`, which the app reads
+// as empty.
 //
 // Names from the app go in as binds (`@p1`, ...), never into the SQL text; only the row count
 // quotes them, as bracket identifiers.
@@ -55,6 +56,12 @@ struct SQLServerCatalog {
         try tableStructure(
           schema: try Self.string(request.args, "schema"),
           table: try Self.string(request.args, "table")))
+    case .enrichColumnTypes:
+      guard let columns = SQLServerTypes.requestColumns(request.args["columns"]) else {
+        throw EngineFailure(code: .invalid, message: "The catalog request has malformed columns.")
+      }
+      return .enrichColumnTypes(
+        originColumns(columns, query: try Self.string(request.args, "query")))
     default:
       throw EngineFailure(
         code: .unsupported, message: "This catalog read is not supported by SQL Server.")
@@ -496,6 +503,35 @@ struct SQLServerCatalog {
         onUpdate: key.onUpdate, onDelete: key.onDelete))
   }
 
+  // MARK: Result column origins
+
+  /// `columns` (a result of `query`, without origins) with the origins the server describes for
+  /// its first result set (`SQLServerTypes.describeSQL`, `originColumns`). An error of the
+  /// describe or of the current database read leaves them without origins: never thrown.
+  private func originColumns(
+    _ columns: [EngineEvent.Column], query: String
+  ) -> [EngineEvent.Column] {
+    guard !columns.isEmpty else { return columns }
+    do {
+      // No table read: opens no transaction under IMPLICIT_TRANSACTIONS ON
+      let database = Self.text(try connection.rows("SELECT DB_NAME()").first ?? [], 0)
+      defer { connection.discardResults() }
+      try connection.execute(
+        SQLServerTypes.describeSQL, binds: [query, SQLServerTypes.describeParameters(query)])
+      var names: [String] = []
+      var rows: [[EngineCell]] = []
+      if let described = try connection.nextResult() {
+        names = described.map(\.name)
+        while let row = try connection.nextRow() { rows.append(row) }
+      }
+      return SQLServerTypes.originColumns(
+        columns, described: SQLServerTypes.describedColumns(names: names, rows: rows),
+        database: database)
+    } catch {
+      return columns
+    }
+  }
+
   // MARK: Helpers
 
   private static func string(_ args: [String: EngineJSONValue], _ key: String) throws -> String {
@@ -505,18 +541,13 @@ struct SQLServerCatalog {
     return value
   }
 
-  /// `name` as `table` (the user's default schema) or `schema.table`
+  /// `name` as `table` (the user's default schema) or `schema.table`, each part bracketed
+  /// (`[dbo].[t]`) or bare (`SQLServerTypes.qualifiedName`); a malformed name is refused
   private static func qualifiedName(_ args: [String: EngineJSONValue]) throws -> (String?, String) {
-    let name = try string(args, "name")
-    // Per Unicode scalar: a dot joined to a combining scalar still separates
-    let scalars = name.unicodeScalars
-    guard let dot = scalars.firstIndex(of: "."), dot != scalars.startIndex,
-      scalars.index(after: dot) != scalars.endIndex
-    else { return (nil, name) }
-    return (
-      String(String.UnicodeScalarView(scalars[..<dot])),
-      String(String.UnicodeScalarView(scalars[scalars.index(after: dot)...]))
-    )
+    guard let parts = SQLServerTypes.qualifiedName(try string(args, "name")) else {
+      throw EngineFailure(code: .invalid, message: "The catalog request has a malformed name.")
+    }
+    return (parts.schema, parts.table)
   }
 
   /// The type of a row's type name at `index` and its max length, precision and scale after it

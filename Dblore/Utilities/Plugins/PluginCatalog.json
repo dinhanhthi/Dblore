@@ -26,11 +26,11 @@
       "kind": "bundle",
       "version": "1.0.0",
       "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-sqlserver-v1.0.0/DbloreSQLServer.zip",
-      "sha256": "260264066c407e283ee6c8b193b881cb461611f2810fd150c14d13895ec103fb",
-      "maxSize": 4678150,
+      "sha256": "f71092cbc98a36e9fdb124f663c1cbef9578a7c9b1321dc233efaed2a47775eb",
+      "maxSize": 4774778,
       "bundleName": "DbloreSQLServer.bundle",
       "bundleIdentifier": "ace.thi.Dblore.SQLServer",
-      "cdhash": "8d1e3d5e7c5de5d37f1fbd3c0b79c1e0a7efd305"
+      "cdhash": "5a0230a4932f73395cac63e0c810deed001d1e3b"
     },
     {
       "id": "clickhouse",

@@ -31,7 +31,8 @@ struct PluginsSettingsSection: View {
 nonisolated struct PluginDisplayInfo {
   let name: String
   var summary: String?
-  var license: (title: String, url: URL)?
+  /// License and source links, shown in order under the controls
+  var licenses: [(title: String, url: URL)] = []
   var removeMessage: String
 
   static func forID(_ id: String) -> PluginDisplayInfo {
@@ -41,10 +42,12 @@ nonisolated struct PluginDisplayInfo {
         name: "DuckDB",
         summary:
           "Query .duckdb files and Parquet/CSV with DuckDB. Downloaded on demand (~117 MB).",
-        license: (
-          "DuckDB is MIT licensed",
-          URL(string: "https://github.com/duckdb/duckdb/blob/main/LICENSE")!
-        ),
+        licenses: [
+          (
+            "DuckDB is MIT licensed",
+            URL(string: "https://github.com/duckdb/duckdb/blob/main/LICENSE")!
+          )
+        ],
         removeMessage:
           "Deletes the downloaded DuckDB library. Install it again to use DuckDB connections.")
     case "clickhouse":
@@ -54,15 +57,43 @@ nonisolated struct PluginDisplayInfo {
         removeMessage:
           "Deletes the downloaded ClickHouse plugin. Install it again to use ClickHouse connections."
       )
+    case "sqlserver":
+      PluginDisplayInfo(
+        name: "SQL Server",
+        summary:
+          "Connect to SQL Server with TLS, built on FreeTDS and OpenSSL. Downloaded on demand (~2.3 MB).",
+        licenses: [
+          (
+            "FreeTDS is LGPL-2.1 licensed",
+            URL(string: "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html")!
+          ),
+          (
+            "OpenSSL is Apache-2.0 licensed",
+            URL(string: "https://www.apache.org/licenses/LICENSE-2.0")!
+          ),
+          (
+            "Plugin source: Plugins/Engines in the Dblore repository",
+            URL(string: "https://github.com/dinhanhthi/Dblore/tree/main/Plugins/Engines")!
+          ),
+          (
+            "FreeTDS 1.5.21 source code (the version the plugin is built from)",
+            URL(string: "https://www.freetds.org/files/stable/freetds-1.5.21.tar.bz2")!
+          ),
+        ],
+        removeMessage:
+          "Deletes the downloaded SQL Server plugin. Install it again to use SQL Server connections."
+      )
     case "local-ai":
       PluginDisplayInfo(
         name: "On-device AI",
         summary:
           "Runs AI models on this Mac with MLX. Downloaded on demand (~6 MB); models are downloaded separately.",
-        license: (
-          "MLX is MIT licensed",
-          URL(string: "https://github.com/ml-explore/mlx-swift/blob/main/LICENSE")!
-        ),
+        licenses: [
+          (
+            "MLX is MIT licensed",
+            URL(string: "https://github.com/ml-explore/mlx-swift/blob/main/LICENSE")!
+          )
+        ],
         removeMessage:
           "Deletes the downloaded On-device AI plugin. Your downloaded models are kept. Install it again to use on-device models. If on-device AI is in use, its code stays loaded until you quit Dblore."
       )
@@ -108,16 +139,21 @@ private struct PluginRow: View {
             .foregroundColor(.foregroundMuted)
         }
 
-        if let license = info.license {
+        if !info.licenses.isEmpty {
           Divider()
 
-          Button(license.title) {
-            NSWorkspace.shared.open(license.url)
+          VStack(alignment: .leading, spacing: Spacing.xs) {
+            ForEach(info.licenses.indices, id: \.self) { index in
+              let license = info.licenses[index]
+              Button(license.title) {
+                NSWorkspace.shared.open(license.url)
+              }
+              .buttonStyle(.plain)
+              .font(.small)
+              .foregroundColor(.foregroundSubtle)
+              .linkPointer()
+            }
           }
-          .buttonStyle(.plain)
-          .font(.small)
-          .foregroundColor(.foregroundSubtle)
-          .linkPointer()
         }
       }
     }

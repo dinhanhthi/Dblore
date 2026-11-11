@@ -157,8 +157,10 @@ nonisolated struct EnginePluginIntrospector: SchemaIntrospector {
       generatedColumns: Set(table.generatedColumns ?? []))
   }
 
-  /// Result types with precision, scale and length from the plugin, matched by position and
-  /// name. `columns` unchanged when the read fails or answers other columns.
+  /// Result types with precision, scale and length from the plugin, and the base column it
+  /// names as `sourceName` (none: no source name), matched by position and name. `columns`
+  /// unchanged when the read fails or answers other columns. `origin` is kept: the plugin
+  /// knows no table identity.
   func enrichColumnTypes(
     _ columns: [ColumnInfo], query: String, in session: any DatabaseSession
   ) async -> [ColumnInfo] {
@@ -174,7 +176,8 @@ nonisolated struct EnginePluginIntrospector: SchemaIntrospector {
     return zip(columns, typed).map { column, typed in
       ColumnInfo(
         name: column.name, type: typed.type, origin: column.origin,
-        sourceName: column.sourceName, wallClock: column.wallClock, masked: column.masked)
+        sourceName: EnginePluginRowReader.column(typed).sourceName, wallClock: column.wallClock,
+        masked: column.masked)
     }
   }
 

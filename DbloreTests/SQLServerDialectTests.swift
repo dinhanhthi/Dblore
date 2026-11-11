@@ -731,6 +731,21 @@ struct SQLServerDialectTests {
     }
   }
 
+  @Test("A GO batch-separator line is refused at every protection level; GO in a string is not")
+  func batchSeparatorRefused() {
+    let reason = "GO batch separators are not supported; run each batch on its own"
+    for level in ConnectionProtectionLevel.allCases {
+      for protectedMode in [false, true] {
+        let policy = ProtectionPolicy(protectionLevel: level, protectedMode: protectedMode)
+        #expect(
+          DatabaseConnectionManager.evaluate(
+            Self.classify("SELECT 1\nGO\nSELECT 2"), policy: policy, dialect: Self.dialect)
+            == .blocked(statementIndex: 0, kind: .unknown, reason: reason), "\(level)")
+      }
+    }
+    #expect(!Self.refused("SELECT 'a\nGO\nb', [x\nGO\ny] FROM t", on: .none))
+  }
+
   @Test("BEGIN blocks stay unknown: blocked on schema-only, all-rows writes warn")
   func beginBlocks() throws {
     #expect(Self.refused("BEGIN DROP TABLE t END", on: .schemaOnly))

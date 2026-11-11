@@ -25,6 +25,8 @@ final class FakeEnginePlugin: @unchecked Sendable {
   var answersOpen = true
   /// False leaves `close` unanswered, as a plugin that hangs
   var answersClose = true
+  /// What `transactionState` answers (`@@TRANCOUNT > 0`); nil answers it with an error
+  var transactionOpen: Bool? = false
   /// The answer to a `catalog` request, by its read; any other read is answered `unsupported`
   var catalogAnswers: [EngineCatalogRead: EngineEvent.Kind] = [:]
 
@@ -148,7 +150,12 @@ final class FakeEnginePlugin: @unchecked Sendable {
         answer(.done(affectedRows: commandAffectedRows, tag: commandTag))
       }
     case .settings: answer(.settingsApplied)
-    case .transactionState: answer(.transactionState(open: false))
+    case .transactionState:
+      if let open = transactionOpen {
+        answer(.transactionState(open: open))
+      } else {
+        answer(.error(.init(code: .unsupported, message: "unsupported")))
+      }
     case .catalog(let catalog):
       answer(
         catalogAnswers[catalog.read] ?? .error(.init(code: .unsupported, message: "unsupported")))

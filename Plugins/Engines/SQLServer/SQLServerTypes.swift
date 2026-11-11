@@ -1,7 +1,8 @@
 // SQLServerTypes.swift
 // The pure parts of the SQL Server engine, free of FreeTDS so the host-less tests compile them:
 // the TLS plan of an open, the TDS type codes and the mapping of the shim's cell buffers
-// (dblore_tds.h) to engine cells, column type names, statement parameters and server errors.
+// (dblore_tds.h) to engine cells, column type names, table names from the app, statement
+// parameters, result column origins from a describe and server errors.
 //
 // Cells (by the type code db-lib gives each cell):
 // - decimal / numeric and money / smallmoney → exact decimal text, never through a Double
@@ -426,6 +427,13 @@ enum SQLServerTypes {
     return "DECLARE " + declarations.joined(separator: ", ") + "; " + sql
   }
 
+  /// Whether result `index` (0-based) of a `batch` adds its row count. With binds, the first
+  /// result is the declaring prelude's: SQL Server counts a variable assignment as one row, a
+  /// row of no statement of `sql`, so it is not added.
+  static func countsRows(result index: Int, hasBinds: Bool) -> Bool {
+    !hasBinds || index > 0
+  }
+
   /// `text` as an nvarchar(max) expression of T-SQL Unicode literals (`'` doubled). T-SQL drops a
   /// backslash directly followed by a line break inside a literal, with the break, so the text is
   /// cut after every such backslash and the pieces concatenated. Read per Unicode scalar, as the
@@ -471,6 +479,196 @@ enum SQLServerTypes {
       if each == scalar { out.append(each) }
     }
     return String(out)
+  }
+
+  // MARK: Catalog names
+
+  /// A table name from the app, `table` or `schema.table`: a part is `[…]` (`]]` for a `]`, a
+  /// `.` inside is part of the name) or bare, taken as written (the app sends an unquoted name
+  /// upper-cased; the lookup then relies on a case-insensitive collation). Nil for anything else:
+  /// an unclosed or empty bracket, text after a `]`, an empty part, a bare `[` or `]`, or more
+  /// than two parts. Read per Unicode scalar, as the server lexes it: a `]` or `.` counts even
+  /// when a combining scalar joins it into one Character.
+  static func qualifiedName(_ name: String) -> (schema: String?, table: String)? {
+    let scalars = Array(name.unicodeScalars)
+    var parts: [String] = []
+    var index = 0
+    while true {
+      var part = String.UnicodeScalarView()
+      if index < scalars.count, scalars[index] == "[" {
+        index += 1
+        var closed = false
+        while index < scalars.count {
+          if scalars[index] == "]" {
+            guard index + 1 < scalars.count, scalars[index + 1] == "]" else {
+              index += 1
+              closed = true
+              break
+            }
+            index += 1
+          }
+          part.append(scalars[index])
+          index += 1
+        }
+        guard closed else { return nil }
+      } else {
+        while index < scalars.count, scalars[index] != "." {
+          guard scalars[index] != "[", scalars[index] != "]" else { return nil }
+          part.append(scalars[index])
+          index += 1
+        }
+      }
+      guard !part.isEmpty else { return nil }
+      parts.append(String(part))
+      if index == scalars.count { break }
+      guard scalars[index] == ".", parts.count < 2 else { return nil }
+      index += 1
+    }
+    return parts.count == 2 ? (parts[0], parts[1]) : (nil, parts[0])
+  }
+
+  // MARK: Result column origins
+
+  /// The describe of a query's first result set with browse information, `@p1` the query and
+  /// `@p2` its `@params` (`describeParameters`). Inside an open transaction the DMF: a failing
+  /// EXEC dooms the transaction under XACT_ABORT ON, the DMF returns the error as a row. Else
+  /// the procedure: under IMPLICIT_TRANSACTIONS ON the DMF's SELECT would open a transaction.
+  /// The two branches return different columns: read them by name (`describedColumns`).
+  static let describeSQL = """
+    IF @@TRANCOUNT > 0
+      SELECT is_hidden, column_ordinal, name, source_server, source_database, source_schema,
+        source_table, source_column, error_number
+      FROM sys.dm_exec_describe_first_result_set(@p1, @p2, 1)
+      ORDER BY column_ordinal
+    ELSE
+      EXEC sys.sp_describe_first_result_set @p1, @p2, 1
+    """
+
+  /// The `@params` of a describe: every `@p<digits>` name in `sql` (the app's binds, `batch`;
+  /// `@P` too, which the app also reads as a bind) once, as `@p<digits>`, in order of first
+  /// use, as `nvarchar(max)`; nil when there is none. `@p` without digits, a name that runs on
+  /// into an identifier scalar (`@p1x`) or follows one (`a@p1`, `@@p1`) is not one. A name
+  /// inside a string or comment only declares an unused parameter.
+  static func describeParameters(_ sql: String) -> String? {
+    func isIdentifier(_ scalar: Unicode.Scalar) -> Bool {
+      CharacterSet.alphanumerics.contains(scalar) || "_@#$".unicodeScalars.contains(scalar)
+    }
+    let scalars = Array(sql.unicodeScalars)
+    var names: [String] = []
+    var index = 0
+    while index < scalars.count {
+      guard scalars[index] == "@", index + 1 < scalars.count,
+        "pP".unicodeScalars.contains(scalars[index + 1]),
+        index == 0 || !isIdentifier(scalars[index - 1])
+      else {
+        index += 1
+        continue
+      }
+      var end = index + 2
+      while end < scalars.count, ("0"..."9").contains(scalars[end]) { end += 1 }
+      if end > index + 2, end == scalars.count || !isIdentifier(scalars[end]) {
+        let name = "@p" + String(String.UnicodeScalarView(scalars[(index + 2)..<end]))
+        if !names.contains(name) { names.append(name) }
+      }
+      index = end
+    }
+    return names.isEmpty ? nil : names.map { "\($0) nvarchar(max)" }.joined(separator: ", ")
+  }
+
+  /// One row of a describe (`describeSQL`)
+  struct DescribedColumn: Equatable, Sendable {
+    var isHidden = false
+    let ordinal: Int
+    /// Empty for a column without a name
+    let name: String
+    var server: String? = nil
+    var database: String? = nil
+    var schema: String? = nil
+    var table: String? = nil
+    var column: String? = nil
+  }
+
+  /// The rows of a describe whose columns came back named `names`, or nil when it reports an
+  /// error (a non-NULL `error_number`, the DMF's), lacks a column the origins need, or has a
+  /// row it cannot read
+  static func describedColumns(names: [String], rows: [[EngineCell]]) -> [DescribedColumn]? {
+    func index(_ name: String) -> Int? {
+      names.firstIndex { $0.unicodeScalars.elementsEqual(name.unicodeScalars) }
+    }
+    guard let hidden = index("is_hidden"), let ordinal = index("column_ordinal"),
+      let name = index("name"), let server = index("source_server"),
+      let database = index("source_database"), let schema = index("source_schema"),
+      let table = index("source_table"), let column = index("source_column")
+    else { return nil }
+    let error = index("error_number")
+    var described: [DescribedColumn] = []
+    for row in rows {
+      guard row.count == names.count, error.map({ row[$0] == .null }) ?? true else { return nil }
+      let isHidden: Bool
+      switch row[hidden] {
+      case .bool(let flag): isHidden = flag
+      case .int(let value): isHidden = value != 0
+      default: return nil
+      }
+      guard case .int(let position) = row[ordinal] else { return nil }
+      func text(_ index: Int) -> String? {
+        if case .text(let text) = row[index] { text } else { nil }
+      }
+      described.append(
+        DescribedColumn(
+          isHidden: isHidden, ordinal: position, name: text(name) ?? "", server: text(server),
+          database: text(database), schema: text(schema), table: text(table),
+          column: text(column)))
+    }
+    return described
+  }
+
+  /// `columns` with the origin of each one the describe names a base column of in `database`
+  /// (the connection's `DB_NAME()`): no linked server, and schema, table and column all known.
+  /// Fails closed (no origin at all) unless the visible rows (`is_hidden` 0), in ordinal order,
+  /// match `columns` one to one by name, per Unicode scalar. An origin only ever comes from
+  /// `described`: one the columns came with is dropped.
+  static func originColumns(
+    _ columns: [EngineEvent.Column], described: [DescribedColumn]?, database: String?
+  ) -> [EngineEvent.Column] {
+    let plain = columns.map {
+      EngineEvent.Column(name: $0.name, type: $0.type, wallClock: $0.wallClock)
+    }
+    let visible = (described ?? []).filter { !$0.isHidden }.sorted { $0.ordinal < $1.ordinal }
+    guard let database, described != nil, visible.count == columns.count,
+      zip(columns, visible).allSatisfy({
+        $0.name.unicodeScalars.elementsEqual($1.name.unicodeScalars)
+      })
+    else { return plain }
+    return zip(plain, visible).map { column, source in
+      var column = column
+      if source.server == nil,
+        source.database?.unicodeScalars.elementsEqual(database.unicodeScalars) == true,
+        let schema = source.schema, let table = source.table, let name = source.column
+      {
+        column.origin = .init(schema: schema, table: table, column: name)
+      }
+      return column
+    }
+  }
+
+  /// The result columns of an `enrichColumnTypes` request (`EngineEvent.Column` objects, an
+  /// origin ignored), nil when the list or a column is malformed
+  static func requestColumns(_ value: EngineJSONValue?) -> [EngineEvent.Column]? {
+    guard case .array(let items)? = value else { return nil }
+    var columns: [EngineEvent.Column] = []
+    for item in items {
+      guard case .object(let object) = item, case .string(let name)? = object["name"],
+        case .string(let type)? = object["type"]
+      else { return nil }
+      var wallClock = false
+      if let flag = object["wallClock"] {
+        guard case .bool(let value) = flag else { return nil }
+        wallClock = value
+      }
+      columns.append(EngineEvent.Column(name: name, type: type, wallClock: wallClock))
+    }
+    return columns
   }
 
   // MARK: Errors

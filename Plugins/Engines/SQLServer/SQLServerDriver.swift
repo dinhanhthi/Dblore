@@ -22,12 +22,14 @@
 // Binds: the app writes `@p1`, `@p2`, ...; the batch declares them as nvarchar(max) variables
 // ahead of the statement (`SQLServerTypes.batch`). Not `sp_executesql`: db-lib reports no row
 // count for a statement inside a procedure (a DONEINPROC token), and its RPC parameters can be
-// neither an empty string (length 0 is NULL) nor over 4000 characters.
+// neither an empty string (length 0 is NULL) nor over 4000 characters. SQL Server reports the
+// declaring prelude as the batch's first result, counting one row (a variable assignment counts
+// as a row); that count is not added (`SQLServerTypes.countsRows`).
 //
 // Results: a batch may return several results. The rows of its last tabular result are returned
-// and the row counts of its other statements summed (`done.affectedRows`). To find the last one,
-// the rows of a tabular result are read ahead up to `readAheadBytes`; a bigger result is streamed
-// at once, and tabular results after it are dropped.
+// and the row counts of its other statements summed (`done.affectedRows`), the bind prelude's
+// left out. To find the last one, the rows of a tabular result are read ahead up to
+// `readAheadBytes`; a bigger result is streamed at once, and tabular results after it are dropped.
 //
 // Settings: `SET LOCK_TIMEOUT` and the client statement timeout (the statement is stopped like a
 // cancel); the idle timeout has no SQL Server counterpart and is ignored.
@@ -323,8 +325,12 @@ final class SQLServerConnection: EngineConnection, @unchecked Sendable {
   private var rowsPending = false
   /// db-lib has no more results for the batch
   private var batchDone = false
-  /// Summed row counts of the batch's results without columns
+  /// Summed row counts of the batch's results without columns, but the bind prelude's
   private var affected: Int?
+  /// The batch has a bind prelude (`SQLServerTypes.countsRows`)
+  private var hasBinds = false
+  /// Results db-lib has begun for the batch
+  private var resultCount = 0
 
   init(handle: OpaquePointer, encryption: SQLServerEncryption) {
     self.handle = handle
@@ -357,6 +363,7 @@ final class SQLServerConnection: EngineConnection, @unchecked Sendable {
     }
     resetResults()
     guard dblore_tds_execute(handle, batch) else { throw failure(code: .query) }
+    hasBinds = !binds.isEmpty
     phase = .started
   }
 
@@ -485,13 +492,17 @@ final class SQLServerConnection: EngineConnection, @unchecked Sendable {
     rowsPending = false
     batchDone = false
     affected = nil
+    hasBinds = false
+    resultCount = 0
   }
 
   /// The next result's column count, nil when the batch has no more
   private func nextBatchResult() throws -> Int? {
     guard !batchDone else { return nil }
     switch dblore_tds_next_result(handle) {
-    case 1: return Int(dblore_tds_column_count(handle))
+    case 1:
+      resultCount += 1
+      return Int(dblore_tds_column_count(handle))
     case 0:
       batchDone = true
       return nil
@@ -499,9 +510,10 @@ final class SQLServerConnection: EngineConnection, @unchecked Sendable {
     }
   }
 
-  /// Ends a result without columns and adds its row count
+  /// Ends a result without columns and adds its row count, unless it is the bind prelude's
   private func countRows() throws {
     while try readRow([]) != nil {}
+    guard SQLServerTypes.countsRows(result: resultCount - 1, hasBinds: hasBinds) else { return }
     let count = dblore_tds_rows_affected(handle)
     if count >= 0 { affected = (affected ?? 0) + count }
   }

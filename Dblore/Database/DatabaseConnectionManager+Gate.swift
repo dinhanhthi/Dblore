@@ -606,7 +606,8 @@ extension DatabaseConnectionManager {
     dialect: SQLDialect = .postgresql
   ) -> GateDecision {
     for (index, statement) in statements.enumerated() {
-      if let reason = violation(statement, level: policy.protectionLevel)
+      if let reason = batchSeparatorViolation(statement, dialect: dialect)
+        ?? violation(statement, level: policy.protectionLevel)
         ?? (policy.protectedMode ? protectedModeViolation(statement, dialect: dialect) : nil)
       {
         return .blocked(statementIndex: index, kind: statement.kind, reason: reason)
@@ -631,6 +632,17 @@ extension DatabaseConnectionManager {
       }
     }
     return .allowed
+  }
+
+  /// SQL Server, at every protection level: a `GO` batch-separator line is a client command the
+  /// server rejects, and the app does not split batches there
+  private nonisolated static func batchSeparatorViolation(
+    _ statement: ClassifiedStatement, dialect: SQLDialect
+  ) -> String? {
+    guard dialect == .sqlserver,
+      SQLTokenizer(dialect: .sqlserver).hasBatchSeparatorLine(statement.text)
+    else { return nil }
+    return "GO batch separators are not supported; run each batch on its own"
   }
 
   private nonisolated static func violation(

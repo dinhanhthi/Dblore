@@ -963,6 +963,16 @@ extension ConnectionFormContent {
           Text(connectionConfig.protectionLevel.description)
             .font(.caption)
             .foregroundColor(.foregroundMuted)
+          if connectionConfig.databaseType == .sqlserver,
+            connectionConfig.protectionLevel == .readOnly
+          {
+            Text(
+              "On SQL Server, Dblore enforces read-only by checking each statement before it is sent. For a guarantee on the server too, sign in with a login that only has the db_datareader role."
+            )
+            .font(.caption)
+            .foregroundColor(.foregroundMuted)
+            .fixedSize(horizontal: false, vertical: true)
+          }
         }
 
         Spacer()
@@ -1028,13 +1038,14 @@ extension ConnectionFormContent {
 
   /// The lock toggle, server-side session brakes and row cap override. File engines and
   /// ClickHouse have no lock or idle brake, so they show only the statement timeout and the row
-  /// cap.
+  /// cap. SQL Server has no idle brake: it shows the statement and lock timeouts.
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
     let fileBased = connectionConfig.databaseType.capabilities.isFileBased
     let statementBrakeOnly = fileBased || connectionConfig.databaseType == .clickhouse
+    let hasIdleBrake = !statementBrakeOnly && connectionConfig.databaseType != .sqlserver
     VStack(alignment: .leading, spacing: Spacing.sm) {
       // A lock lives on saved rows; a file engine needs a file to lock
       if connectionConfig.rememberConnection,
@@ -1056,10 +1067,10 @@ extension ConnectionFormContent {
             range: SessionBrakeLimits.lockTimeoutRange))
       }
 
-      if pairsAllSafetyFields && !statementBrakeOnly {
+      if pairsAllSafetyFields && hasIdleBrake {
         safetyRow(idleTimeoutField(global: global.idle), rowCapField())
       } else {
-        if !statementBrakeOnly { idleTimeoutField(global: global.idle) }
+        if hasIdleBrake { idleTimeoutField(global: global.idle) }
         rowCapField()
       }
     }

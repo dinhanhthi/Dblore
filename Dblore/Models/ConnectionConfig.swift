@@ -27,7 +27,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  /// Asset catalog image name for the database type icon (from simpleicons.org)
+  /// Asset catalog image name for the database type icon (from simpleicons.org; ClickHouse and
+  /// SQL Server use Dblore's own marks)
   var iconAssetName: String {
     switch self {
     case .postgresql:
@@ -116,8 +117,11 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// user-defined types. ClickHouse is a network engine shipped as a plugin: its databases are
   /// the schemas, the statement timeout is its only brake, cancel stops the statement (a capped
   /// read drops the rest of the stream), and it has no transactions, grid edits, import,
-  /// structure editing, SQL dump or Explain JSON / Analyze. SQL Server is a plugin engine, hidden
-  /// with every feature off until its plugin ships.
+  /// structure editing, SQL dump or Explain JSON / Analyze. SQL Server is a network engine shipped
+  /// as a plugin: schemas, functions, the statement and lock timeouts as brakes, cancel stops the
+  /// statement, transactions, grid edits of a table with a primary key, `DEFAULT` in an UPDATE
+  /// and foreign key lookup; no structure editing, SQL dump, import, user types, roles, server
+  /// cursor or Explain.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -284,27 +288,27 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       )
     case .sqlserver:
       DatabaseCapabilities(
-        usesNetwork: false,
-        usesPassword: false,
-        supportsSSL: false,
-        supportsSchemas: false,
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: true,
         supportsRolesAndUsers: false,
-        supportsFunctions: false,
+        supportsFunctions: true,
         supportsServerCursor: false,
-        supportsSessionBrakes: false,
-        cancelStrategy: .reconnect,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
         cappedReadResetsSession: false,
         supportsExplainJSON: false,
         supportsExplainAnalyze: false,
         supportsUpdateOnly: false,
-        supportsDefaultInUpdate: false,
-        supportsRowStaging: false,
+        supportsDefaultInUpdate: true,
+        supportsRowStaging: true,
         supportsDataImport: false,
-        supportsForeignKeyLookup: false,
+        supportsForeignKeyLookup: true,
         requiresPlugin: true,
-        isAvailable: false,
+        isAvailable: true,
         queryLanguage: .sql,
-        supportsTransactions: false,
+        supportsTransactions: true,
         supportsStructure: false,
         supportsSQLDump: false,
         supportsUserTypes: false
@@ -314,11 +318,12 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
 
   /// Whether tab titles and sidebar rows name a non-default schema. A MySQL "schema" is the
   /// connected database, the only one shown, so it is never named. SQLite keeps naming attached
-  /// and temp databases. ClickHouse lists every database, so a table outside `default` is named.
+  /// and temp databases. ClickHouse lists every database, so a table outside `default` is named;
+  /// SQL Server names a table outside `dbo`.
   nonisolated var namesSchema: Bool {
     switch self {
-    case .postgresql, .sqlite, .duckdb, .clickhouse: true
-    case .mysql, .mongodb, .sqlserver: false
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: true
+    case .mysql, .mongodb: false
     }
   }
 

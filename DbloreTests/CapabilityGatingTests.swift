@@ -1,7 +1,8 @@
 // CapabilityGatingTests.swift
 // SQLite skips Keychain save/load/delete. PostgreSQL still uses host:port:database:username.
 // Staged and inline row edits and foreign key lookup follow the engine's capability flags:
-// DuckDB refuses them with a clear message, PostgreSQL keeps them. Table import is open on both.
+// DuckDB refuses them with a clear message, PostgreSQL keeps them, SQL Server keeps them on a
+// table with a primary key and refuses a table without one. Table import is open on both.
 // The structure menu and the SQL INSERT export format are hidden for MongoDB. Find a Value in
 // Every Table, Table Health and Generate Rows are off for ClickHouse and SQL Server.
 
@@ -89,6 +90,24 @@ struct CapabilityGatingTests {
     #expect(postgres.rowStagingUnavailableReason == nil)
     #expect(postgres.canEdit(try #require(postgres.editorResult)))
     #expect(postgres.stageEdit(row: 0, column: "nickname", value: .string("neo")) == nil)
+  }
+
+  @Test("SQL Server stages rows of a keyed table; a table without a primary key refuses edits")
+  func sqlServerRowEditsNeedPrimaryKey() throws {
+    let keyed = makeDataViewer(.sqlserver)
+    #expect(keyed.rowStagingUnavailableReason == nil)
+    #expect(keyed.canEdit(try #require(keyed.editorResult)))
+    #expect(keyed.stageEdit(row: 0, column: "nickname", value: .string("neo")) == nil)
+
+    // A heap: the plugin's edit-table read finds no primary key, so the page has no edit target
+    let heap = makeDataViewer(.sqlserver, keyed: false)
+    let message = NotebookViewModel.tableHasNoPrimaryKey
+    #expect(heap.rowStagingUnavailableReason == message)
+    #expect(!heap.stagingEnabled)
+    #expect(heap.stageEdit(row: 0, column: "nickname", value: .string("neo")) == message)
+    #expect(heap.stageDelete(rows: [0]) == message)
+    #expect(heap.dataViewer?.changeSet == nil)
+    #expect(!heap.canEdit(try #require(heap.editorResult)))
   }
 
   // MARK: - Import
@@ -197,8 +216,9 @@ struct CapabilityGatingTests {
     }
   }
 
-  /// A data viewer on `users` with a primary-key edit target, as a live result would give.
-  private func makeDataViewer(_ type: DatabaseType) -> NotebookViewModel {
+  /// A data viewer on `users` with a primary-key edit target, as a live result would give;
+  /// `keyed` false: no edit target, as for a table without a primary key.
+  private func makeDataViewer(_ type: DatabaseType, keyed: Bool = true) -> NotebookViewModel {
     let viewModel = NotebookViewModel()
     viewModel.viewMode = .editor
     viewModel.notebook.connectionConfig = config(type)
@@ -215,8 +235,9 @@ struct CapabilityGatingTests {
       ],
       rows: [[.int(1), .string("old")]],
       rowCount: 1,
-      editTarget: EditTarget(
-        qualifiedName: "main.users", tableID: Self.usersID, primaryKeyColumns: ["id"]))
+      editTarget: keyed
+        ? EditTarget(
+          qualifiedName: "main.users", tableID: Self.usersID, primaryKeyColumns: ["id"]) : nil)
     viewModel.connectionManager = DatabaseConnectionManager()
     return viewModel
   }

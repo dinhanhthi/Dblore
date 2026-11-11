@@ -1,7 +1,8 @@
 // SQLServerTypesTests.swift
 // The pure parts of the SQL Server engine (SQLServerTypes.swift), without FreeTDS: cells from
-// buffers recorded in the shim's layouts (dblore_tds.h), server errors, the bind encoding, and
-// the TLS plan's fallback rule.
+// buffers recorded in the shim's layouts (dblore_tds.h), server errors, the bind encoding, the
+// catalog's table names from the app, result column origins from describe rows, and the TLS
+// plan's fallback rule.
 
 import Foundation
 import Testing
@@ -214,6 +215,16 @@ nonisolated private let trickyValues = [
     #expect(SQLServerTypes.batch("SELECT 'x'", binds: []) == "SELECT 'x'")
   }
 
+  @Test func theBindPreludeCountsNoRows() {
+    // The prelude's DECLARE is the first result of a batch with binds: its one row is not added
+    #expect(!SQLServerTypes.countsRows(result: 0, hasBinds: true))
+    #expect(SQLServerTypes.countsRows(result: 1, hasBinds: true))
+    #expect(SQLServerTypes.countsRows(result: 2, hasBinds: true))
+    // Without binds every result is the statement's own
+    #expect(SQLServerTypes.countsRows(result: 0, hasBinds: false))
+    #expect(SQLServerTypes.countsRows(result: 1, hasBinds: false))
+  }
+
   @Test(arguments: trickyValues)
   func everyValueReadsBackWhole(_ value: String) {
     let read = literals(in: SQLServerTypes.batch("SELECT @p1", binds: [value]))
@@ -249,6 +260,188 @@ nonisolated private let trickyValues = [
       SQLServerTypes.expression("c\\\r\nd'") == "CAST(N'c\\' AS nvarchar(max)) + N'\r\nd'''")
     // Elsewhere a backslash is plain text
     #expect(SQLServerTypes.expression("e\\f\\") == "N'e\\f\\'")
+  }
+}
+
+// MARK: - Catalog names
+
+/// Names with brackets, dots and combining scalars after a `]`
+nonisolated private let trickyNames = [
+  "a]\u{0301}b", "]\u{FE0F}", "x]]\u{200D}", "plain", "a.b", "[x]", ".", "with space", "日本語",
+]
+
+@Suite struct SQLServerNameTests {
+  @Test(arguments: trickyNames)
+  func aBracketedNameReadsBackWhole(_ name: String) throws {
+    let both = SQLServerTypes.quoted(name) + "." + SQLServerTypes.quoted(name + "2")
+    let parts = try #require(SQLServerTypes.qualifiedName(both))
+    #expect(parts.schema.map { Array($0.unicodeScalars) } == Array(name.unicodeScalars))
+    #expect(Array(parts.table.unicodeScalars) == Array((name + "2").unicodeScalars))
+    let alone = try #require(SQLServerTypes.qualifiedName(SQLServerTypes.quoted(name)))
+    #expect(alone.schema == nil)
+    #expect(Array(alone.table.unicodeScalars) == Array(name.unicodeScalars))
+  }
+
+  @Test func bareAndMixedPartsAreTakenAsWritten() throws {
+    for (name, schema, table): (String, String?, String) in [
+      ("users", nil, "users"), ("DBO.USERS", "DBO", "USERS"),
+      ("SALES.[order.items]", "SALES", "order.items"),
+      ("[dbo].T", "dbo", "T"),
+    ] {
+      let parts = try #require(SQLServerTypes.qualifiedName(name), "\(name)")
+      #expect(parts.schema == schema, "\(name)")
+      #expect(parts.table == table, "\(name)")
+    }
+  }
+
+  /// An unclosed bracket (`]]` is no close), text after `]`, an empty part, three parts, a bare
+  /// bracket
+  @Test(arguments: ["[dbo].[t", "[a]]", "[a]b", "[]", ".t", "a.b.c", "a]b"])
+  func aMalformedNameIsRefused(_ name: String) {
+    #expect(SQLServerTypes.qualifiedName(name) == nil)
+  }
+}
+
+// MARK: - Result column origins
+
+@Suite struct SQLServerOriginTests {
+  private typealias Described = SQLServerTypes.DescribedColumn
+
+  /// The procedure's column names (the DMF adds `error_number`)
+  private static let procedureNames = [
+    "is_hidden", "column_ordinal", "name", "is_nullable", "system_type_id", "source_server",
+    "source_database", "source_schema", "source_table", "source_column",
+  ]
+
+  private func base(_ ordinal: Int, _ name: String, column: String? = nil) -> Described {
+    Described(
+      ordinal: ordinal, name: name, database: "shop", schema: "dbo", table: "orders",
+      column: column ?? name)
+  }
+
+  private func columns(_ names: String...) -> [EngineEvent.Column] {
+    names.map { EngineEvent.Column(name: $0, type: "int") }
+  }
+
+  @Test func paramsDeclareEveryAppBindOnce() {
+    #expect(
+      SQLServerTypes.describeParameters("SELECT * FROM t WHERE a = @p1 AND b = @p2 OR c = @p1")
+        == "@p1 nvarchar(max), @p2 nvarchar(max)")
+    #expect(SQLServerTypes.describeParameters("SELECT @p12") == "@p12 nvarchar(max)")
+    #expect(SQLServerTypes.describeParameters("@p3,@p1") == "@p3 nvarchar(max), @p1 nvarchar(max)")
+    // The app reads `@P1` as bind 1 too
+    #expect(SQLServerTypes.describeParameters("SELECT @P1, @p1") == "@p1 nvarchar(max)")
+  }
+
+  @Test(arguments: [
+    "SELECT * FROM t", "SELECT @p", "SELECT @pX", "SELECT @p1x", "SELECT a@p1",
+    "SELECT @@p1", "SELECT @p_1",
+  ])
+  func paramsIgnoreWhatIsNoAppBind(_ sql: String) {
+    #expect(SQLServerTypes.describeParameters(sql) == nil)
+  }
+
+  @Test func procedureRowsAreReadByName() throws {
+    let rows: [[EngineCell]] = [
+      [
+        .bool(false), .int(1), .text("id"), .bool(false), .int(56), .null, .text("shop"),
+        .text("dbo"), .text("orders"), .text("id"),
+      ],
+      [.bool(false), .int(2), .null, .bool(true), .int(56), .null, .null, .null, .null, .null],
+    ]
+    let described = try #require(
+      SQLServerTypes.describedColumns(names: Self.procedureNames, rows: rows))
+    #expect(described == [base(1, "id"), Described(ordinal: 2, name: "")])
+  }
+
+  @Test func dmfErrorRowsOrAMissingColumnGiveNothing() {
+    let names = [
+      "is_hidden", "column_ordinal", "name", "source_server", "source_database",
+      "source_schema", "source_table", "source_column", "error_number",
+    ]
+    let error: [EngineCell] = [.null, .null, .null, .null, .null, .null, .null, .null, .int(208)]
+    #expect(SQLServerTypes.describedColumns(names: names, rows: [error]) == nil)
+    let fine: [EngineCell] = [
+      .bool(false), .int(1), .text("id"), .null, .text("shop"), .text("dbo"), .text("orders"),
+      .text("id"), .null,
+    ]
+    #expect(SQLServerTypes.describedColumns(names: names, rows: [fine]) == [base(1, "id")])
+    #expect(SQLServerTypes.describedColumns(names: Array(names.dropFirst()), rows: []) == nil)
+    // A row of another width
+    #expect(SQLServerTypes.describedColumns(names: names, rows: [Array(fine.dropLast())]) == nil)
+  }
+
+  @Test func baseColumnsGetOriginsAliasesTheirBaseExpressionsNone() {
+    let described = [
+      base(2, "order_id", column: "id"), base(1, "note"), Described(ordinal: 3, name: "two"),
+      // Browse mode adds the key when the result lacks it
+      Described(
+        isHidden: true, ordinal: 4, name: "id", database: "shop", schema: "dbo",
+        table: "orders", column: "id"),
+    ]
+    let origins = SQLServerTypes.originColumns(
+      columns("note", "order_id", "two"), described: described, database: "shop"
+    ).map(\.origin)
+    #expect(
+      origins == [
+        .init(schema: "dbo", table: "orders", column: "note"),
+        .init(schema: "dbo", table: "orders", column: "id"), nil,
+      ])
+  }
+
+  @Test func anotherDatabaseOrServerOrAPartialSourceHasNoOrigin() {
+    var otherDatabase = base(1, "a")
+    otherDatabase.database = "archive"
+    var linked = base(2, "b")
+    linked.server = "remote"
+    var noTable = base(3, "c")
+    noTable.table = nil
+    let kept = SQLServerTypes.originColumns(
+      columns("a", "b", "c", "d"), described: [otherDatabase, linked, noTable, base(4, "d")],
+      database: "shop")
+    #expect(
+      kept.map(\.origin) == [nil, nil, nil, .init(schema: "dbo", table: "orders", column: "d")])
+  }
+
+  @Test func aCountOrNameMismatchFailsClosed() {
+    let input = columns("id", "note").map {
+      var column = $0
+      column.origin = .init(schema: "x", table: "y", column: "z")
+      column.wallClock = true
+      return column
+    }
+    for described: [Described]? in [
+      [base(1, "id")], [base(1, "id"), base(2, "Note")], [base(1, "id"), base(2, "note\u{301}")],
+      [base(1, "id"), base(2, "note"), base(3, "extra")], nil,
+    ] {
+      let kept = SQLServerTypes.originColumns(input, described: described, database: "shop")
+      #expect(kept.map(\.origin) == [nil, nil])
+      #expect(kept.map(\.name) == ["id", "note"])
+      #expect(kept.allSatisfy { $0.wallClock })
+    }
+    // No database read
+    #expect(
+      SQLServerTypes.originColumns(
+        columns("id"), described: [base(1, "id")], database: nil
+      ).map(\.origin) == [nil])
+  }
+
+  @Test func requestColumnsDecodeTheWireFormAndDropOrigins() {
+    let wire = EngineJSONValue.array([
+      .object(["name": .string("id"), "type": .string("int"), "wallClock": .bool(false)]),
+      .object([
+        "name": .string("at"), "type": .string("datetime2"), "wallClock": .bool(true),
+        "origin": .object([
+          "schema": .string("dbo"), "table": .string("t"), "column": .string("at"),
+        ]),
+      ]),
+    ])
+    #expect(
+      SQLServerTypes.requestColumns(wire) == [
+        .init(name: "id", type: "int"), .init(name: "at", type: "datetime2", wallClock: true),
+      ])
+    #expect(SQLServerTypes.requestColumns(nil) == nil)
+    #expect(SQLServerTypes.requestColumns(.array([.object(["name": .string("id")])])) == nil)
   }
 }
 

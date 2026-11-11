@@ -1519,7 +1519,7 @@ private struct ExplainCommandButtons: View {
       NotificationCenter.default.post(name: .explainStatement, object: nil)
     }
     .keyboardShortcut("e", modifiers: .command)
-    .disabled(isDisabled)
+    .disabled(isDisabled || activeViewModel?.explainUnavailableReason != nil)
 
     Button("Explain Analyze (runs the statement)") {
       NotificationCenter.default.post(name: .explainAnalyzeStatement, object: nil)
