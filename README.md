@@ -7,7 +7,8 @@
 A native macOS database client: query in Jupyter-style **notebooks** or a classic
 **SQL editor**, browse and edit results and tables, explore the schema, guard production
 with Safe Mode, and get help from an AI assistant that works with your own key or a local
-model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plugin).
+model. Supports PostgreSQL, MySQL/MariaDB, MongoDB and SQLite; DuckDB, SQL Server and
+ClickHouse as plugins; and CockroachDB, Redshift, YugabyteDB, TiDB and SingleStore as presets.
 
 [Download](https://github.com/dinhanhthi/Dblore/releases/latest) &nbsp;·&nbsp; [Website](https://dblore.dinhanhthi.com)
 &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; signed &amp; notarized
@@ -179,6 +180,18 @@ model. Supports PostgreSQL, MySQL/MariaDB, MongoDB, SQLite and DuckDB (as a plug
   restore
 - **SQLite**: open a file and work with it like a server connection, with an EXPLAIN QUERY
   PLAN tree, and attach up to 10 other SQLite files on every connect
+- **SQL Server** (plugin): TLS, SSH tunnels, schemas, procedures and functions, data viewer
+  paging and filters, grid edits on tables with a primary key, transactions and Stop.
+  Read-only is checked by Dblore (use a `db_datareader` login for a server-side guarantee). No
+  structure editor, dump, import or Explain. `GO` lines are refused; the editor splits
+  statements at `;`, so a T-SQL variable does not reach the next statement, and a procedure that
+  returns several result sets shows only the last one
+- **ClickHouse** (plugin): HTTPS or HTTP, SSH tunnels, databases as schemas, data viewer paging
+  and filters, Stop and Explain as text. Read-only connections are enforced by the server. No
+  grid edits, transactions, structure editor, dump or import
+- **Presets**: CockroachDB, Redshift and YugabyteDB connect with the PostgreSQL driver, TiDB and
+  SingleStore with the MySQL one. A preset sets the default port; the PostgreSQL presets also skip
+  the session settings and catalog reads the engine lacks. Redshift and SingleStore are untested
 
 ## Plugins
 
@@ -190,6 +203,8 @@ features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 | Plugin | Version | What it adds |
 | ------ | ------- | ------------ |
 | **DuckDB** | 1.5.6 | Open a `.duckdb` file (read-only by default, also from Finder), create one or use an in-memory database, browse its schema and query Parquet or CSV files, with a plan tree, data import, SQL dump and restore, and Parquet export |
+| **SQL Server** | 1.0.0 | Connect to SQL Server with TLS (about 2.3 MB). Built on FreeTDS (LGPL-2.1) and OpenSSL (Apache-2.0); Settings > Plugins links their licenses and the exact FreeTDS source |
+| **ClickHouse** | 1.0.0 | Connect to ClickHouse over HTTPS or HTTP, with no third-party code |
 | **On-device AI** | 1.0.0 | Run AI models on this Mac with MLX for the AI chat and inline suggestions. Models download separately from Hugging Face, each file checked by its SHA-256, and are kept when you remove the plugin |
 
 ## Install
@@ -204,7 +219,9 @@ features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 
 - macOS 14 or later
 - Xcode 27 on macOS 26 (only to build from source)
-- A PostgreSQL, MySQL/MariaDB or MongoDB server, or a SQLite or DuckDB file, to connect to
+- A PostgreSQL (or CockroachDB, Redshift, YugabyteDB), MySQL/MariaDB (or TiDB, SingleStore),
+  MongoDB, SQL Server or ClickHouse server, or a SQLite or DuckDB file, to connect to (DuckDB,
+  SQL Server and ClickHouse need their plugin)
 
 ## Build from source
 

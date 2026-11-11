@@ -6,7 +6,7 @@
     <title>Dblore: notebooks and a database editor for macOS</title>
     <meta
       name="description"
-      content="Dblore is a native macOS app for working with databases: notebooks and a database editor in one tabbed workspace. PostgreSQL, MySQL, MariaDB, MongoDB, SQLite and DuckDB. Free and open source."
+      content="Dblore is a native macOS app for working with databases: notebooks and a database editor in one tabbed workspace. PostgreSQL, MySQL, MariaDB, MongoDB, SQLite, DuckDB, SQL Server and ClickHouse, plus CockroachDB, Redshift, YugabyteDB, TiDB and SingleStore presets. Free and open source."
     />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Dblore: notebooks and a database editor for macOS" />
@@ -347,6 +347,9 @@
             <li><strong>MySQL and MariaDB</strong>: TCP or SSH tunnel, TLS and client certificates, staged edits by primary key, foreign-key lookup, CSV import, routine and trigger source, and import from DBeaver, TablePlus, DataGrip or a <code>mysql://</code> URI.</li>
             <li><strong>MongoDB</strong>: a connection string or form, mongosh commands, a collection screen with a filter bar, schema, indexes and validation, editable document cards, an aggregation builder, index and collection administration, export, import, backup and restore, and edits staged by <code>_id</code> and confirmed in Safe Mode.</li>
             <li><strong>SQLite</strong>: open a file and work with it like a server connection.</li>
+            <li><strong>SQL Server</strong> (<a href="#plugins">plugin</a>): TLS or an SSH tunnel, schemas, procedures and functions, data viewer paging and filters, grid edits on tables with a primary key, transactions and Stop.</li>
+            <li><strong>ClickHouse</strong> (<a href="#plugins">plugin</a>): HTTPS or HTTP, directly or through an SSH tunnel, databases as schemas, data viewer paging and filters, Stop and Explain as text. Read-only connections are enforced by the server.</li>
+            <li><strong>Presets</strong>: CockroachDB, Redshift and YugabyteDB through the PostgreSQL driver, TiDB and SingleStore through the MySQL one, with their default port; the PostgreSQL presets also skip the settings and catalog reads the engine lacks. Redshift and SingleStore are untested.</li>
           </ul>
         </section>
 
@@ -355,6 +358,8 @@
           <p>Optional engines and features, installed from Settings &gt; Plugins: a signed, notarized download, checked before every load and removable at any time.</p>
           <ul class="list">
             <li><strong>DuckDB</strong>: open a .duckdb file or an in-memory database, browse its schema and query Parquet or CSV files.</li>
+            <li><strong>SQL Server</strong>: connect to SQL Server with TLS (about 2.3 MB). Built on FreeTDS (LGPL-2.1) and OpenSSL (Apache-2.0); Settings &gt; Plugins links their licenses and the exact FreeTDS source.</li>
+            <li><strong>ClickHouse</strong>: connect to ClickHouse over HTTPS or HTTP, with no third-party code.</li>
             <li><strong>On-device AI</strong>: run AI models on this Mac with MLX for the AI chat and inline suggestions. Models download separately, each file checked by its SHA-256.</li>
           </ul>
         </section>
@@ -363,7 +368,7 @@
           <h2>Get started</h2>
           <ol class="steps">
             <li>Download the signed and notarized DMG from the <a href="https://github.com/dinhanhthi/Dblore/releases/latest" target="_blank" rel="noopener noreferrer">releases page</a> and drag Dblore to Applications.</li>
-            <li>Connect to a PostgreSQL, MySQL, MariaDB or MongoDB server, or open a SQLite file.</li>
+            <li>Connect to a PostgreSQL, MySQL, MariaDB or MongoDB server (or a SQL Server or ClickHouse server once its plugin is installed), or open a SQLite file.</li>
             <li>Create a notebook (<code>Cmd+T</code>) and run a cell (<code>Ctrl+Enter</code>).</li>
           </ol>
           <p class="note">More in the <a href="docs.html">docs</a>. Dblore updates itself.</p>
