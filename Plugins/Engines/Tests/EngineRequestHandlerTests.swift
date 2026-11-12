@@ -1,7 +1,8 @@
 // EngineRequestHandlerTests.swift
 // The protocol v1 request-to-event mapping of the shared handler, driven with a scripted driver
 // (no database, no network): rows only on credit, oversized cells as chunks, cancel routing,
-// and the unsupported answers of a connection without binds, settings or catalog.
+// the unsupported answers of a connection without binds, settings, catalog or argv, and a
+// connection lost while a cancelled statement drains.
 
 import Foundation
 import Testing
@@ -9,21 +10,28 @@ import Testing
 // MARK: - Fakes
 
 /// A connection that answers every statement with `columns` and `rows`; `blocksAfter` rows in,
-/// `nextRow` waits until interrupted and then fails, as a server statement would
+/// `nextRow` waits until interrupted and then fails, as a server statement would. With
+/// `losesOnDiscard`, the connection is lost once `discardResults` drains it.
 nonisolated private final class ScriptedConnection: EngineConnection, @unchecked Sendable {
   let columns: [EngineEvent.Column]
   let rows: [[EngineCell]]
   let blocksAfter: Int?
+  let losesOnDiscard: Bool
   private let condition = NSCondition()
   private var interrupted = false
+  private var lost = false
   private var next = 0
   private(set) var interrupts = 0
   private(set) var statements: [(sql: String, binds: [String?])] = []
 
-  init(columns: [EngineEvent.Column], rows: [[EngineCell]], blocksAfter: Int? = nil) {
+  init(
+    columns: [EngineEvent.Column], rows: [[EngineCell]], blocksAfter: Int? = nil,
+    losesOnDiscard: Bool = false
+  ) {
     self.columns = columns
     self.rows = rows
     self.blocksAfter = blocksAfter
+    self.losesOnDiscard = losesOnDiscard
   }
 
   var serverVersion: String { "scripted" }
@@ -66,13 +74,14 @@ nonisolated private final class ScriptedConnection: EngineConnection, @unchecked
   }
 
   var affectedRows: Int? { nil }
-  func discardResults() {}
-  var isLost: Bool { false }
+  func discardResults() { condition.withLock { lost = losesOnDiscard } }
+  var isLost: Bool { condition.withLock { lost } }
   func close() {}
 }
 
 nonisolated private struct ScriptedDriver: EngineDriver {
   let connection: any EngineConnection
+  var features: [String] = []
   var engine: String { "scripted" }
   var queryLanguage: String { "sql" }
   var libraries: [String: String] { [:] }
@@ -90,6 +99,9 @@ nonisolated final class EventLog: @unchecked Sendable {
       lock.withLock { events.append(event) }
     }
   }
+
+  /// Every event so far, in order
+  var all: [EngineEvent] { lock.withLock { events } }
 
   func kinds(_ id: String) -> [EngineEvent.Kind] {
     lock.withLock { events.filter { $0.id == id }.map(\.kind) }
@@ -115,8 +127,9 @@ nonisolated private struct Harness {
   let handler: EngineRequestHandler
   let log = EventLog()
 
-  init(_ connection: any EngineConnection) {
-    handler = EngineRequestHandler(driver: ScriptedDriver(connection: connection))
+  init(_ connection: any EngineConnection, features: [String] = []) {
+    handler = EngineRequestHandler(
+      driver: ScriptedDriver(connection: connection, features: features))
   }
 
   func send(_ id: String, _ kind: EngineRequest.Kind, connection: Int? = 1) throws {
@@ -273,7 +286,7 @@ nonisolated func waitUntil(_ condition: () -> Bool) async throws {
     #expect(connection.statements.count == 1)
   }
 
-  @Test func withoutThemBindsSettingsAndCatalogAreUnsupported() async throws {
+  @Test func withoutThemBindsSettingsCatalogAndArgvAreUnsupported() async throws {
     let harness = Harness(
       ScriptedConnection(columns: [.init(name: "n", type: "int")], rows: [[.int(1)]]))
     try await harness.open()
@@ -282,15 +295,45 @@ nonisolated func waitUntil(_ condition: () -> Bool) async throws {
       "s",
       .settings(.init(statementTimeoutSeconds: 1, lockTimeoutSeconds: 0, idleTimeoutSeconds: 0)))
     try harness.send("k", .catalog(.init(read: .tables, args: [:])))
+    try harness.send("a", .argv(.init(args: [Data("GET".utf8), Data("key".utf8)], db: 0)))
     try await waitUntil {
-      ["q", "s", "k"].allSatisfy(harness.log.isFinished)
+      ["q", "s", "k", "a"].allSatisfy(harness.log.isFinished)
     }
-    for id in ["q", "s", "k"] {
+    for id in ["q", "s", "k", "a"] {
       guard case .error(let failure)? = harness.log.kinds(id).last else {
         Issue.record("\(id) did not fail")
         continue
       }
       #expect(failure.code == .unsupported)
     }
+  }
+
+  @Test func helloListsTheDriverFeatures() throws {
+    let harness = Harness(ScriptedConnection(columns: [], rows: []), features: ["argv"])
+    try harness.send("h", .hello, connection: nil)
+    guard case .hello(let hello)? = harness.log.kinds("h").first else {
+      Issue.record("no hello")
+      return
+    }
+    #expect(hello.features == ["argv"])
+  }
+
+  /// A cancel reaches a statement that fails once interrupted (`blocksAfter` 1) or a query
+  /// waiting for credit (nil): either way the drain loses the connection after `cancelled`
+  @Test(arguments: [1, nil] as [Int?])
+  func connectionLostWhileDrainingACancelCloses(blocksAfter: Int?) async throws {
+    let connection = ScriptedConnection(
+      columns: [.init(name: "n", type: "int")], rows: (0..<6).map { [.int($0)] },
+      blocksAfter: blocksAfter, losesOnDiscard: true)
+    let harness = Harness(connection)
+    try await harness.open()
+    try harness.query("q")
+    try await waitUntil { !harness.log.kinds("q").isEmpty }
+    try harness.send("c", .cancel(target: "q"), connection: nil)
+
+    let closed = EngineEvent(connection: 1, kind: .closed(reason: .lost))
+    try await waitUntil { harness.log.all.contains(closed) }
+    let tail = harness.log.all.filter { $0.id == "q" || $0.id == nil }.suffix(2)
+    #expect(Array(tail) == [EngineEvent(id: "q", kind: .cancelled), closed])
   }
 }
