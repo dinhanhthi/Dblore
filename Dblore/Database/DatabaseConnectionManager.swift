@@ -629,6 +629,8 @@ actor DatabaseConnectionManager {
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
     if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
+    // `probe` refuses Redis: refused before its password command runs or a Vault lease is taken
+    if config.databaseType == .redis { throw DatabaseError.engineUnavailable(.redis) }
     let config = try await withPasswordCommand(config)
     guard config.vault != nil else { return try await probe(config) }
     let lease = try await vaultLeasing.take(for: config)

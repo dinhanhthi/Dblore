@@ -373,6 +373,17 @@ struct DbloreConnectionFileTests {
     #expect(skipped.message == "Skipped \"Sales\": \(reason).")
   }
 
+  @Test("A Redis entry is skipped as an unsupported engine while Redis is not available")
+  func redisEntrySkipped() throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    entry.databaseType = DatabaseType.redis.rawValue
+    guard case .failure(let skipped) = entry.importedConnection() else {
+      Issue.record("kept a Redis entry")
+      return
+    }
+    #expect(skipped.message == "Skipped \"Sales\": unsupported engine.")
+  }
+
   @Test("A tunnel without a user is kept, with the importers' note to set it")
   func sshTunnelWithoutUser() throws {
     var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))

@@ -559,12 +559,17 @@ struct SQLTextViewGhostTextTests {
     #expect(cell.isAllowed())
   }
 
-  @Test("MongoDB and read-only source tabs get no ghost text")
+  @Test("MongoDB, Redis and read-only source tabs get no ghost text")
   func wiringNeverForMongoOrSource() {
     let mongo = makeViewModel(.mongodb)
     #expect(mongo.aiInlineSource == nil)
     #expect(mongo.aiInlineCompletion(cellId: nil) == nil)
     #expect(mongo.aiInlineCompletion(cellId: UUID()) == nil)
+
+    let redis = makeViewModel(.redis)
+    #expect(redis.aiInlineSource == nil)
+    #expect(redis.aiInlineCompletion(cellId: nil) == nil)
+    #expect(redis.aiInlineCompletion(cellId: UUID()) == nil)
 
     let source = makeViewModel(.postgresql)
     source.objectSourceLoad = .loaded

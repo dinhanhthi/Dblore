@@ -329,14 +329,25 @@ final class AIAssistantViewModel {
     return !settings.isConfigured(provider)
   }
 
-  var showsSidebarPanel: Bool { isVisible && presentation == .sidebar }
+  /// The assistant speaks SQL and mongosh only: on Redis it never shows or sends a turn, so no
+  /// Redis data reaches a prompt
+  var isAvailableForConnection: Bool {
+    switch sqlDialect.language {
+    case .sql, .mongosh: true
+    case .redis: false
+    }
+  }
 
-  var showsBubble: Bool { isVisible && presentation == .bubble }
+  var showsSidebarPanel: Bool { isVisible && presentation == .sidebar && isAvailableForConnection }
+
+  var showsBubble: Bool { isVisible && presentation == .bubble && isAvailableForConnection }
 
   // MARK: - Presentation
 
-  /// Hidden opens in `defaultMode`, a collapsed bubble expands, anything else hides
+  /// Hidden opens in `defaultMode`, a collapsed bubble expands, anything else hides. Refused
+  /// where the assistant is unavailable (`isAvailableForConnection`).
   func toggleVisibility(defaultMode: AIPanelMode) {
+    guard isAvailableForConnection else { return }
     if !isVisible {
       presentation = defaultMode
       isBubbleExpanded = defaultMode == .bubble
@@ -379,7 +390,9 @@ final class AIAssistantViewModel {
     if let name, selectedTableNames.insert(name).inserted { viewerTableName = name }
   }
 
+  /// Sends the draft; nothing is sent or changed where the assistant is unavailable
   func send() {
+    guard isAvailableForConnection else { return }
     let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !isGenerating, !question.isEmpty, activeProvider != nil,
       let access = admitTurn(resume: { [weak self] in self?.send() })
@@ -405,10 +418,11 @@ final class AIAssistantViewModel {
   /// are dropped, then the question (or `editedText` when given) is sent with the current
   /// provider, model and tables. The draft is left alone. On a connection private to AI nothing
   /// is dropped or sent: the stored message may hold Explain or Fix text. Returns true when sent.
-  /// A retried Review or Optimize question is sent without the EXPLAIN plan.
+  /// A retried Review or Optimize question is sent without the EXPLAIN plan. Where the assistant
+  /// is unavailable nothing is dropped or sent.
   @discardableResult
   func retry(from id: UUID, editedText: String? = nil) -> Bool {
-    guard let index = messages.firstIndex(where: { $0.id == id }),
+    guard isAvailableForConnection, let index = messages.firstIndex(where: { $0.id == id }),
       messages[index].role == .user, activeProvider != nil
     else { return false }
     let question = (editedText ?? messages[index].text)

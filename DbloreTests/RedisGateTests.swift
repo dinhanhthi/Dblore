@@ -74,11 +74,17 @@ struct RedisGateTests {
     #expect(factory.redisCommands.isEmpty)
   }
 
-  @Test("Read-only refuses SET and sends INFO keyspace")
+  @Test("Read-only and Protected mode refuse SET; read-only sends INFO keyspace")
   func readOnly() async throws {
     let (manager, factory) = try await connect(level: .readOnly)
     #expect(blockedKind(await refusal(manager, Self.command("SET", "k", "v"))) == .dml)
     #expect(factory.redisCommands.isEmpty)
+    // Protected mode: the gate's Redis arm refuses the write before anything else could
+    let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+    let (open, openFactory) = try await connect()
+    #expect(
+      blockedKind(await refusal(open, Self.command("SET", "k", "v"), policy: protected)) == .dml)
+    #expect(openFactory.redisCommands.isEmpty)
     let info = Self.command("INFO", "keyspace")
     #expect(await refusal(manager, info) == nil)
     #expect(factory.redisCommands == [info])
@@ -159,6 +165,46 @@ struct RedisGateTests {
     #expect(message == "ERR unknown command 'FOO'")
   }
 
+  @Test("A command holding a password never shows the server's error text")
+  func secretCommandErrorHidden() async throws {
+    let (manager, factory) = try await connect()
+    let session = try #require(factory.sessions.first)
+    let command = Self.command("ACL", "SETUSER", "u", "<s3cret")
+    #expect(RedisCommandClassifier.classify(command.args).refusal == nil)
+    // The server echoes the mistyped rule, password included, without "with args"
+    session.failNextRedisSend(
+      with: EnginePluginError.server(
+        EngineEvent.Failure(
+          code: .query, message: "ERR Error in ACL SETUSER modifier '<s3cret': Syntax error",
+          serverCode: "ERR")))
+    let error = await refusal(manager, command, confirmed: true)
+    guard case .queryFailed(let message, _)? = error as? DatabaseError else {
+      Issue.record("Expected queryFailed, got \(String(describing: error))")
+      return
+    }
+    #expect(
+      message
+        == "The server refused the command. Its message is hidden because the command holds a "
+        + "password.")
+
+    // A lost or failed connection reported during the send keeps its case, never the text
+    let failures: [DatabaseError] = [
+      .connectionLost("Connection closed after ACL SETUSER u <s3cret"),
+      .connectionFailed("Could not send ACL SETUSER u <s3cret"),
+    ]
+    for failure in failures {
+      session.failNextRedisSend(with: failure)
+      let error = await refusal(manager, command, confirmed: true)
+      switch (failure, error as? DatabaseError) {
+      case (.connectionLost, .connectionLost(let text)?),
+        (.connectionFailed, .connectionFailed(let text)?):
+        #expect(!text.contains("s3cret"), "\(text)")
+      default:
+        Issue.record("Expected the same case, got \(String(describing: error))")
+      }
+    }
+  }
+
   @Test("A reply of more rows than the cap is refused, not collected")
   func replyRowCap() async throws {
     let (manager, factory) = try await connect()
@@ -200,6 +246,316 @@ struct RedisGateTests {
 
 // Nested, so `-only-testing:DbloreTests/RedisGateTests` runs them too
 extension RedisGateTests {
+  /// Every safety gate given `.redis` answers with `RedisCommandClassifier`, never with the SQL
+  /// classifier or the SQL text matchers
+  @Suite("Redis safety gate arms")
+  struct GateArms {
+    private static func classify(_ text: String) -> [ClassifiedStatement] {
+      SQLStatementClassifier.classify(text, dialect: .redis)
+    }
+
+    @Test("Redis text is classified by the Redis classifier, untokenizable text fails closed")
+    func classifierArm() {
+      // SQL would read `SET` as a session setting and `SELECT 1` as a read
+      #expect(Self.classify("SET k v").map(\.kind) == [.dml])
+      #expect(Self.classify("SELECT 1").map(\.kind) == [.unknown])
+      #expect(Self.classify("GET k\nFLUSHALL").map(\.kind) == [.read, .utility])
+      #expect(Self.classify("GET \"k").map(\.kind) == [.unknown])
+      #expect(
+        SQLStatementClassifier.classifyStatement("SET k v", dialect: .redis)?.kind == .dml)
+      #expect(
+        SQLStatementClassifier.classifyStatement("GET a\nGET b", dialect: .redis)?.kind
+          == .unknown)
+    }
+
+    @Test("A Redis secret skips history; untokenizable text counts as one")
+    func passwordLiteral() {
+      #expect(SQLStatementClassifier.containsPasswordLiteral("AUTH x", dialect: .redis))
+      #expect(SQLStatementClassifier.containsPasswordLiteral("GET k\nAUTH x", dialect: .redis))
+      #expect(SQLStatementClassifier.containsPasswordLiteral("AUTH \"x", dialect: .redis))
+      #expect(!SQLStatementClassifier.containsPasswordLiteral("GET k", dialect: .redis))
+    }
+
+    @Test("FLUSHALL needs its name typed; SQL DROP text is not destructive on Redis")
+    func destructiveRule() throws {
+      let flush = try #require(Self.classify("FLUSHALL").first)
+      #expect(DestructiveStatementRule.evaluate(flush, dialect: .redis) == .confirm("FLUSHALL"))
+      let drop = try #require(Self.classify("DROP TABLE t").first)
+      #expect(DestructiveStatementRule.evaluate(drop, dialect: .redis) == .none)
+    }
+
+    @Test("The read-only guard passes GET and refuses SET and read-only scripts")
+    func readOnlyGuard() throws {
+      #expect(try ReadOnlyQueryGuard.check("GET k", dialect: .redis).map(\.kind) == [.read])
+      for command in [
+        "SET k v", "EVAL_RO \"return 1\" 0", "EVALSHA_RO abc123 0", "FCALL_RO myfunc 0",
+      ] {
+        #expect(throws: ReadOnlyQueryGuard.Refusal.notRead) {
+          try ReadOnlyQueryGuard.check(command, dialect: .redis)
+        }
+      }
+      // The scripts classify as reads: the guard's script list refuses them, not their kind
+      for script in ["EVAL_RO \"return 1\" 0", "EVALSHA_RO abc123 0", "FCALL_RO myfunc 0"] {
+        #expect(Self.classify(script).map(\.kind) == [.read], "\(script)")
+      }
+    }
+
+    @Test("The Protected mode backstop flags every Redis write and lets reads through")
+    func protectedBackstop() {
+      let protected = ProtectionPolicy(protectionLevel: .none, protectedMode: true)
+      let write = DatabaseConnectionManager.evaluate(
+        Self.classify("SET k v"), policy: protected, dialect: .redis)
+      guard case .blocked(0, .dml, _) = write else {
+        Issue.record("Expected SET blocked, got \(write)")
+        return
+      }
+      #expect(
+        DatabaseConnectionManager.evaluate(
+          Self.classify("GET k"), policy: protected, dialect: .redis) == .allowed)
+    }
+
+    @Test("The MCP write check refuses Redis")
+    func mcpWriteRefused() {
+      #expect(throws: MCPConnectionError.engineNotSupported(.redis)) {
+        try MCPToolService.checkWrite(
+          "SET k v", statements: Self.classify("SET k v"), dialect: .redis, scope: .schema,
+          database: "0")
+      }
+    }
+  }
+
+  /// Helpers that branch on the dialect never read Redis text as SQL: no `:name` binds, no LIKE
+  /// check, no written tables, no literal exception for invisible characters, no split at `;`,
+  /// and a redacted History row keeps none of the text
+  @Suite("Redis text never takes a SQL arm")
+  struct NonSQLArms {
+    /// A write whose text reads as SQL: binds, a LIKE and a table on the SQL arm
+    private static let sqlShaped = ClassifiedStatement(
+      text: "DELETE FROM t WHERE a LIKE :p", kind: .dml, hasReturning: false,
+      hasTopLevelReturning: false, affectsAllRows: false, nonTransactional: false,
+      resetsSessionBrakes: false, changesPrivileges: false, createsTable: false)
+
+    @Test("No :name binds or placeholders, no rewrite")
+    func parameters() {
+      for text in ["GET :a", "GET ?"] {
+        let rewritten = SQLParameterRewriter.rewrite(statement: text, dialect: .redis)
+        #expect(rewritten.text == text && rewritten.names.isEmpty, "\(text)")
+        #expect(SQLParameterRewriter.parameterNames(in: text, dialect: .redis).isEmpty)
+        #expect(!SQLParameterRewriter.containsPositionalPlaceholder(in: text, dialect: .redis))
+      }
+    }
+
+    @Test("The confirmation shows the text, with no parameter note and no LIKE check")
+    func confirmation() throws {
+      let parameters: [String: SQLBindValue] = ["p": .text("%")]
+      #expect(
+        !NotebookViewModel.scriptMatchesAllRowsByLike(
+          [Self.sqlShaped], parameters: parameters, dialect: .redis))
+      let listed = try #require(
+        NotebookViewModel.statementsNeedingConfirmation(
+          [Self.sqlShaped], commitStyle: .confirm, parameters: parameters, dialect: .redis))
+      #expect(listed.map(\.preview) == ["DELETE FROM t WHERE a LIKE :p"])
+      #expect(listed.first?.parameterNote == nil)
+      #expect(listed.first?.likePatternAffectsAllRows == false)
+    }
+
+    @Test("No written tables or transaction boundaries")
+    func writtenRelations() async {
+      #expect(
+        WrittenRelations.relations(
+          writtenBy: "DELETE FROM t", dialect: .redis, defaultSchema: "public"
+        ).isEmpty)
+      #expect(
+        await WrittenRelations.steps(
+          of: ["DELETE FROM t", "COMMIT"], dialect: .redis, defaultSchema: "public"
+        ).isEmpty)
+    }
+
+    @Test("An invisible character counts anywhere, also inside quotes")
+    func hiddenCharacters() {
+      #expect(HiddenCharacterRule.hasHiddenCharacters("SET k 'a\u{200D}b'", dialect: .redis))
+      #expect(!HiddenCharacterRule.hasHiddenCharacters("SET k 'ab'", dialect: .redis))
+    }
+
+    @Test("The SQL tokenizer reads Redis text as one opaque piece")
+    func tokenizer() {
+      let tokenizer = SQLTokenizer(dialect: .redis)
+      #expect(tokenizer.splitStatements("GET a; GET b") == ["GET a; GET b"])
+      #expect(tokenizer.splitStatements("  \n ").isEmpty)
+      #expect(tokenizer.tokens("SET k v").map(\.kind) == [.string])
+      #expect(tokenizer.tokens("SET k v").allSatisfy { $0.keyword == nil })
+      // Fail safe: a capped read never runs Redis text through a cursor and drains it
+      #expect(SQLStatementClassifier.mayCallFunctions("GET k", dialect: .redis))
+    }
+
+    @Test("A redacted History row keeps none of the Redis text")
+    func historyRedaction() {
+      let redacted = MCPToolService.redactingStrings("AUTH s3cret", dialect: .redis)
+      #expect(!redacted.contains("s3cret"))
+      #expect(redacted == "(Redis command not recorded)")
+    }
+  }
+
+  /// MCP's tools refuse a Redis connection before History, so no Redis text (an `AUTH` password
+  /// the SQL redaction would keep) is ever recorded, and nothing is read, approved or sent
+  @MainActor
+  @Suite("Redis MCP tools")
+  struct MCPTools {
+    private let history = RedisRecordedHistory()
+    private let reads = RedisReadSourceProbe()
+    private let approver = RedisApproverProbe()
+
+    private func service() -> (MCPToolService, UUID) {
+      let config = ConnectionConfig(
+        databaseType: .redis, host: "fake", port: 6379, database: "0", username: "",
+        sslMode: .disable, protectionLevel: .none, name: "Cache", safeMode: .silent,
+        protectedMode: false)
+      let entry = ConnectionHistoryEntry(config: config)
+      let id = entry.id
+      let service = MCPToolService(
+        connections: { [entry] }, allowlist: { [id] }, aiSettings: { .empty },
+        source: reads, recorder: history, historyEnabled: { true }, gate: AIAccessGate(),
+        writes: MCPWriteAccess(
+          enabled: { true }, scopes: { [id: .schema] }, defaultCommitStyle: { .immediate },
+          approver: approver, source: RedisWriteSourceProbe()))
+      return (service, id)
+    }
+
+    @Test("run_query and execute_write refuse Redis and record nothing")
+    func refusedBeforeHistory() async {
+      let (service, id) = service()
+      for tool in ["run_query", "execute_write"] {
+        let result = await service.call(
+          tool, arguments: ["connection_id": .string(id.uuidString), "sql": .string("AUTH s3cret")])
+        #expect(result.isError)
+        #expect(result.text == MCPConnectionError.engineNotSupported(.redis).localizedDescription)
+      }
+      #expect(history.entries.isEmpty)
+      #expect(reads.count == 0)
+      #expect(approver.count == 0)
+    }
+  }
+
+  /// The app's SQL entry points refuse or hide a Redis connection
+  @MainActor
+  @Suite("Redis entry points")
+  struct EntryPoints {
+    private static let redis = ConnectionConfig(
+      databaseType: .redis, host: "fake", port: 6379, database: "0", username: "",
+      sslMode: .disable, protectionLevel: .none, safeMode: .silent, protectedMode: false)
+
+    @Test("The AI assistant never runs queries, opens or builds a schema prompt on Redis")
+    func assistantUnavailable() {
+      #expect(!AIAssistantViewModel.runsReadQueries(.redis))
+      let defaults = UserDefaults(suiteName: "redis-assistant-\(UUID().uuidString)")!
+      let assistant = AIAssistantViewModel(
+        settings: AISettings(defaults: defaults, keyStore: InMemoryAIKeyStore()))
+      var dialect = SQLDialect.postgresql
+      assistant.dialectSource = { dialect }
+      assistant.toggleVisibility(defaultMode: .sidebar)
+      #expect(assistant.showsSidebarPanel)
+      // Opened on PostgreSQL, then the workspace is on Redis: hidden, and the toggle is refused
+      dialect = .redis
+      #expect(!assistant.showsSidebarPanel)
+      assistant.togglePresentation()
+      #expect(!assistant.showsBubble)
+      assistant.hide()
+      for mode in [AIPanelMode.sidebar, .bubble] {
+        assistant.toggleVisibility(defaultMode: mode)
+        #expect(!assistant.isVisible)
+      }
+      let prompt = AIPrompts.system(
+        databaseName: "0", schema: "user:42", dialect: .redis, runsQueries: true,
+        review: "plan", rules: "my rules")
+      for text in ["user:42", "plan", "my rules", "SQL"] {
+        #expect(!prompt.contains(text))
+      }
+    }
+
+    @Test("Send and Retry on Redis build no client and leave the draft and messages as they are")
+    func assistantSendsNothing() {
+      let defaults = UserDefaults(suiteName: "redis-assistant-send-\(UUID().uuidString)")!
+      let settings = AISettings(defaults: defaults, keyStore: InMemoryAIKeyStore())
+      settings.configuration = AIConfiguration(
+        activeProvider: .ollama,
+        configs: [.ollama: AIProviderConfig(baseURL: "http://127.0.0.1:11434/v1", model: "m1")])
+      var clientsBuilt = 0
+      let assistant = AIAssistantViewModel(
+        settings: settings,
+        makeClient: { _, _, _ in
+          clientsBuilt += 1
+          throw AIClientError.missingModel
+        })
+      assistant.dialectSource = { .redis }
+      let question = AIChatEntry(id: UUID(), role: .user, text: "KEYS user:*", isError: false)
+      assistant.messages = [question]
+      assistant.draft = "GET user:42"
+      assistant.send()
+      #expect(!assistant.retry(from: question.id))
+      #expect(clientsBuilt == 0)
+      #expect(assistant.draft == "GET user:42")
+      #expect(assistant.messages == [question])
+    }
+
+    @Test("SQLDialect.redis builds no SQL: quoting throws notSQL, every builder its marker")
+    func redisDialectBuildsNoSQL() {
+      let dialect = SQLDialect.redis
+      #expect(throws: SQLDialectError.notSQL) { try dialect.quoteIdentifier("k") }
+      #expect(throws: SQLDialectError.notSQL) { try dialect.quoteIdentifierIfNeeded("k") }
+      #expect(throws: SQLDialectError.notSQL) { try dialect.qualified(schema: "s", name: "k") }
+      let fragments: [String?] = [
+        dialect.literal(.int(1)), dialect.literal(.null), dialect.literal(.string("it's")),
+        dialect.literal(.bool(true), wallClock: true), dialect.placeholder(1),
+        dialect.placeholder(1, type: "Int64"), dialect.limitOffset(limit: 1, offset: 0),
+        dialect.limit(1, ordered: false), dialect.savepointSQL("s"),
+        dialect.rollbackToSavepointSQL("s"), dialect.releaseSavepointSQL("s"),
+        dialect.explainPrefix(analyze: true, buffers: true, format: "json"),
+        dialect.likeSubject("c"), dialect.caseInsensitiveLike(column: "c", pattern: "'%a%'"),
+        dialect.comparison("c", .equal, "1"), dialect.comparison("c", .equal, "1", type: nil),
+        dialect.inList("c", ["1"]), dialect.inList("c", ["1"], type: nil),
+        dialect.like(column: "c", pattern: "'a'"), dialect.cast("c", to: "text"),
+        dialect.function("lower", "c"), dialect.concatenation("a", "b"),
+      ]
+      for fragment in fragments {
+        #expect(fragment == SQLDialect.notSQLMarker)
+      }
+      let parts = dialect.comparisonParts("c", .equal, type: nil)
+      #expect(parts.lead == SQLDialect.notSQLMarker && parts.trail.isEmpty)
+    }
+
+    @Test("Join, Explain and the all-rows export refuse Redis")
+    func joinExplainExportRefused() async throws {
+      let workspace = WorkspaceManager(
+        workspace: Workspace(connectionConfig: Self.redis), restoreTabs: false)
+      workspace.connectionState = .connected
+      workspace.schemaConnectionEpoch = 1
+      #expect(!workspace.canBuildJoinQuery)
+
+      let notebook = NotebookViewModel()
+      notebook.notebook.connectionConfig = Self.redis
+      #expect(notebook.explainUnavailableReason == "Explain is not available for Redis connections")
+
+      let tab = FakeDatabaseSessionFactory(capabilities: DatabaseType.redis.capabilities)
+      let export = FakeDatabaseSessionFactory(capabilities: DatabaseType.redis.capabilities)
+      let runner = ResultExportRunner(
+        tabManager: DatabaseConnectionManager(sessionFactory: tab), config: Self.redis,
+        material: nil, sshCredential: nil, sessionFactory: export,
+        temporaryDirectory: FileManager.default.temporaryDirectory)
+      let request = ResultExportRequest(
+        sql: "GET k", columns: [ColumnInfo(name: "value", type: "bulk")],
+        format: .download(ExportOptions(format: .csv)))
+      await #expect(throws: ResultExportError.unsupportedEngine(.redis)) {
+        _ = try await runner.write(
+          request,
+          to: FileManager.default.temporaryDirectory.appendingPathComponent(
+            "dblore-redis-\(UUID().uuidString).csv"),
+          hasStagedChanges: false, mask: { $0 })
+      }
+      #expect(tab.sessions.isEmpty)
+      #expect(export.sessions.isEmpty)
+    }
+  }
+
   @Suite("Redis reply tree")
   struct ReplyTree {
     private static func row(_ path: String, _ type: String, _ value: CellValue) -> [CellValue] {
@@ -302,7 +658,8 @@ extension RedisGateTests {
     /// The protocol's declaration
     private static let declaration = "Dblore/Database/Redis/RedisCommandSending.swift"
 
-    @Test("RedisCommandSending is named only by the gate's two casts, its declaration and conformances")
+    @Test(
+      "RedisCommandSending is named only by the gate's two casts, its declaration and conformances")
     func onlyThroughTheGate() throws {
       let mention = try Regex(#"\bRedisCommandSending\b"#)
       // A type declaring its conformance (`final class RedisSession: …, RedisCommandSending`)
@@ -375,5 +732,60 @@ extension RedisGateTests {
       else { return 0..<0 }
       return start..<end
     }
+  }
+}
+
+/// History rows MCP recorded
+private final class RedisRecordedHistory: QueryHistoryRecording, @unchecked Sendable {
+  private let lock = NSLock()
+  private var recorded: [QueryHistoryEntry] = []
+
+  var entries: [QueryHistoryEntry] { lock.withLock { recorded } }
+
+  func record(_ entry: QueryHistoryEntry) async {
+    lock.withLock { recorded.append(entry) }
+  }
+}
+
+/// Counts the reads that reached it
+private final class RedisReadSourceProbe: MCPReadSource, @unchecked Sendable {
+  private let lock = NSLock()
+  private var reads = 0
+
+  var count: Int { lock.withLock { reads } }
+
+  func listTables(connectionID: UUID, schema: String?) async throws -> [MCPTableName] { [] }
+
+  func describeTable(
+    connectionID: UUID, schema: String?, table: String
+  ) async throws -> [MCPColumnDescription] { [] }
+
+  func runRead(_ request: MCPReadRequest) async throws -> MCPReadResult {
+    lock.withLock { reads += 1 }
+    return MCPReadResult(columns: [], rows: [], rowsTruncated: false)
+  }
+}
+
+/// Counts the approvals asked, and denies them
+private final class RedisApproverProbe: MCPWriteApproving, @unchecked Sendable {
+  private let lock = NSLock()
+  private var asked = 0
+
+  var count: Int { lock.withLock { asked } }
+
+  func approve(_ request: MCPWriteApprovalRequest) async throws -> Bool {
+    lock.withLock { asked += 1 }
+    return false
+  }
+
+  func denyWaiting(connections: Set<UUID>) async {}
+  func denyAllWaiting() async {}
+}
+
+/// A write source no Redis call may reach
+private struct RedisWriteSourceProbe: MCPWriteSource {
+  func runWrite(_ request: MCPWriteRequest) async throws -> MCPWriteResult {
+    Issue.record("A Redis write reached the write source")
+    return MCPWriteResult(affectedRows: 0)
   }
 }

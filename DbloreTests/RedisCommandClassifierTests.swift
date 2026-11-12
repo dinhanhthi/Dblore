@@ -215,7 +215,9 @@ struct RedisCommandClassifierTests {
 
     @Test(
       "Admin commands with harmless subcommands are admin and not destructive",
-      arguments: ["CLIENT LIST", "SCRIPT LOAD x", "ACL WHOAMI", "SLOWLOG GET", "FUNCTION LOAD code"])
+      arguments: [
+        "CLIENT LIST", "SCRIPT LOAD x", "ACL WHOAMI", "SLOWLOG GET", "FUNCTION LOAD code",
+      ])
     func admin(line: String) {
       let result = Self.classify(line)
       #expect(result.statement.kind == .utility)
@@ -238,6 +240,10 @@ struct RedisCommandClassifierTests {
         (
           "config set MasterAuth s3cret masteruser s3cret",
           "config set MasterAuth •••• masteruser ••••"
+        ),
+        (
+          "CONFIG SET primaryauth s3cret PrimaryUser s3cret",
+          "CONFIG SET primaryauth •••• PrimaryUser ••••"
         ),
         // Mistyped forms: a missing value or user name still hides the password
         ("CONFIG SET maxmemory requirepass s3cret", "CONFIG SET maxmemory requirepass ••••"),

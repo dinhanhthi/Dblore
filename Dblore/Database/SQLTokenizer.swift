@@ -35,14 +35,23 @@ nonisolated struct SQLTokenizer: Sendable {
   /// MySQL follows `mysqlLexeme` and the `mysql` client `DELIMITER` directive.
   /// ClickHouse follows `clickhouseLexeme` (backslash escapes, `#` comments, heredocs).
   /// SQL Server splits at a `;` outside every `BEGIN … END` block (`sqlserverSplitStatements`).
-  /// MongoDB is `MongoshSplitter.split` (comment-only pieces dropped).
+  /// MongoDB is `MongoshSplitter.split` (comment-only pieces dropped). Redis text is never
+  /// lexed as SQL: the whole text is one opaque piece (`redisPieces`).
   /// Returns the statements trimmed of PostgreSQL whitespace; each is an exact substring of
   /// the input (same Unicode scalars), so execution sends exactly what the user typed.
   func splitStatements(_ sql: String) -> [String] {
-    if dialect == .mongodb {
-      return MongoshSplitter.split(sql)
+    switch dialect.language {
+    case .sql: return splitStatements(scalars: Array(sql.unicodeScalars))
+    case .mongosh: return MongoshSplitter.split(sql)
+    case .redis: return Self.redisPieces(sql)
     }
-    return splitStatements(scalars: Array(sql.unicodeScalars))
+  }
+
+  /// Redis text as one opaque piece, trimmed; none when it is blank. A Redis classifier reads
+  /// several lines in one piece as one `.unknown` statement (fail closed).
+  private static func redisPieces(_ text: String) -> [String] {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? [] : [trimmed]
   }
 
   /// `splitStatements` of text already held as Unicode scalars (a restore builds them once and
@@ -85,13 +94,18 @@ nonisolated struct SQLTokenizer: Sendable {
   /// is lexed again, whole, on each call: one literal or comment open over k chunks costs about
   /// k²/2 chunks of scanning (about 2 Gi scalars for a 64 MiB literal in 1 MiB chunks), and a
   /// quoted string also rebuilds its content each time; dollar bodies and comments only scan.
-  /// MongoDB is split only at `isFinal`.
+  /// MongoDB and Redis are split only at `isFinal`.
   func splitStatements(
     scalars: [Unicode.Scalar], isFinal: Bool, state: inout SplitState
   ) -> (statements: [String], consumed: Int) {
-    if dialect == .mongodb {
+    switch dialect.language {
+    case .sql: break
+    case .mongosh:
       guard isFinal else { return ([], 0) }
       return (MongoshSplitter.split(Self.text(scalars, scalars.indices)), scalars.count)
+    case .redis:
+      guard isFinal else { return ([], 0) }
+      return (Self.redisPieces(Self.text(scalars, scalars.indices)), scalars.count)
     }
     if dialect == .mysql {
       return mysqlSplitStatements(scalars, isFinal: isFinal, state: &state)
@@ -352,10 +366,15 @@ nonisolated struct SQLTokenizer: Sendable {
   /// On PostgreSQL, block comments nest and line comments end at CR or LF.
   /// MySQL executable comments (`/*! */`, `/*M! */`) are kept as `.executableComment` tokens.
   /// MongoDB is never lexed as SQL: one opaque `.string` token (depth 0) per
-  /// `MongoshSplitter` piece, so comment-only text has no tokens and no keyword matches.
+  /// `MongoshSplitter` piece, so comment-only text has no tokens and no keyword matches. Redis
+  /// neither: one opaque `.string` token for the whole text (`redisPieces`).
   func tokens(_ sql: String) -> [SQLToken] {
-    if dialect == .mongodb {
+    switch dialect.language {
+    case .sql: break
+    case .mongosh:
       return MongoshSplitter.split(sql).map { SQLToken(kind: .string, text: $0, depth: 0) }
+    case .redis:
+      return Self.redisPieces(sql).map { SQLToken(kind: .string, text: $0, depth: 0) }
     }
     let scalars = Array(sql.unicodeScalars)
     var result: [SQLToken] = []

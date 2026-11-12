@@ -92,10 +92,18 @@ final class JoinBuilderModel {
 }
 
 extension WorkspaceManager {
-  /// Build Join Query: a connected SQL engine (not MongoDB) with its schema read since the last
-  /// connect (the tables, columns and foreign keys the sheet joins)
+  /// Build Join Query: a connected SQL engine (not MongoDB or Redis) with its schema read since
+  /// the last connect (the tables, columns and foreign keys the sheet joins)
   var canBuildJoinQuery: Bool {
-    connectionState.isConnected && !isMongoWorkspace && schemaConnectionEpoch != nil
+    connectionState.isConnected && isSQLWorkspace && schemaConnectionEpoch != nil
+  }
+
+  /// The workspace connection speaks SQL; true without a connection, as before
+  private var isSQLWorkspace: Bool {
+    switch workspace.connectionConfig?.databaseType.dialect.language {
+    case .sql, nil: true
+    case .mongosh, .redis: false
+    }
   }
 
   /// The sheet's model over this workspace's schema, picking `initialTables` in order

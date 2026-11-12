@@ -1,7 +1,7 @@
 // SQLDialect.swift
 // Quote, literal, and statement-fragment rules for PostgreSQL, SQLite, DuckDB, MySQL and
 // ClickHouse and SQL Server (T-SQL), plus the MongoDB and Redis markers: no SQL identifiers,
-// every other member PostgreSQL-shaped (Redis: every flag false).
+// every other MongoDB member PostgreSQL-shaped, every Redis flag false and builder `notSQLMarker`.
 
 import Foundation
 
@@ -19,7 +19,7 @@ nonisolated enum SQLDialectError: Error, Equatable, Sendable {
 /// `qualified` throw `notSQL`, and the other members return the PostgreSQL value without the
 /// `pg_catalog` qualification; capability guards keep those SQL paths unreachable for MongoDB.
 /// `redis` is the same kind of marker: `quoteIdentifier` and `qualified` throw `notSQL`, every
-/// flag is false and the other members take the MongoDB marker's value.
+/// flag is false, and every other member that builds SQL text returns `notSQLMarker`.
 nonisolated struct SQLDialect: Sendable, Equatable {
   private enum Engine: Sendable, Equatable {
     case postgresql
@@ -42,6 +42,10 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   static let clickhouse = SQLDialect(engine: .clickhouse)
   static let sqlserver = SQLDialect(engine: .sqlserver)
   static let redis = SQLDialect(engine: .redis)
+
+  /// What every SQL-building member returns on `redis`: text no SQL engine parses (a statement
+  /// or fragment built with it fails), never a PostgreSQL-shaped fragment
+  static let notSQLMarker = "<not SQL: Redis>"
 
   /// The language the engine speaks: mongosh on MongoDB, Redis commands on Redis, SQL on every
   /// other engine
@@ -241,7 +245,8 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// date is its stored wall clock (`CellValue.outputString(wallClock: true)`); a zoned date is
   /// its bind text (`DateBindText`: UTC with six fractional digits, MySQL without a zone).
   func literal(_ value: CellValue, wallClock: Bool) -> String {
-    switch value {
+    if engine == .redis { return Self.notSQLMarker }
+    return switch value {
     case .null:
       "NULL"
     case .bool(let flag):
@@ -275,7 +280,8 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// is `@pN`: the engine plugin declares bind N as the batch variable `@pN`.
   func placeholder(_ index: Int) -> String {
     switch engine {
-    case .postgresql, .duckdb, .mongodb, .redis: "$\(index)"
+    case .postgresql, .duckdb, .mongodb: "$\(index)"
+    case .redis: Self.notSQLMarker
     case .sqlite: "?\(index)"
     case .clickhouse: "{p\(index):String}"
     case .sqlserver: "@p\(index)"
@@ -308,6 +314,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// which needs an `ORDER BY`: a statement without one (`ordered` false) gets
   /// `ORDER BY (SELECT NULL)` first. Every other dialect ignores `ordered`.
   func limitOffset(limit: Int, offset: Int, ordered: Bool = true) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     guard engine == .sqlserver else { return "LIMIT \(limit) OFFSET \(offset)" }
     return (ordered ? "" : "ORDER BY (SELECT NULL) ")
       + "OFFSET \(offset) ROWS FETCH NEXT \(limit) ROWS ONLY"
@@ -316,25 +323,29 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// The first `n` rows: `LIMIT n`, or SQL Server's `limitOffset(limit: n, offset: 0,
   /// ordered: ordered)`
   func limit(_ n: Int, ordered: Bool) -> String {
-    engine == .sqlserver ? limitOffset(limit: n, offset: 0, ordered: ordered) : "LIMIT \(n)"
+    engine == .sqlserver || engine == .redis
+      ? limitOffset(limit: n, offset: 0, ordered: ordered) : "LIMIT \(n)"
   }
 
   /// Opens the savepoint `name` (an app-owned name, inserted unchanged): `SAVEPOINT name`, SQL
   /// Server `SAVE TRANSACTION name`
   func savepointSQL(_ name: String) -> String {
-    engine == .sqlserver ? "SAVE TRANSACTION \(name)" : "SAVEPOINT \(name)"
+    if engine == .redis { return Self.notSQLMarker }
+    return engine == .sqlserver ? "SAVE TRANSACTION \(name)" : "SAVEPOINT \(name)"
   }
 
   /// Undoes the work since savepoint `name`, keeping the transaction: `ROLLBACK TO SAVEPOINT
   /// name`, SQL Server `ROLLBACK TRANSACTION name`
   func rollbackToSavepointSQL(_ name: String) -> String {
-    engine == .sqlserver ? "ROLLBACK TRANSACTION \(name)" : "ROLLBACK TO SAVEPOINT \(name)"
+    if engine == .redis { return Self.notSQLMarker }
+    return engine == .sqlserver ? "ROLLBACK TRANSACTION \(name)" : "ROLLBACK TO SAVEPOINT \(name)"
   }
 
   /// `RELEASE SAVEPOINT name`; nil on SQL Server, which has no release (a savepoint ends with
   /// its transaction)
   func releaseSavepointSQL(_ name: String) -> String? {
-    engine == .sqlserver ? nil : "RELEASE SAVEPOINT \(name)"
+    if engine == .redis { return Self.notSQLMarker }
+    return engine == .sqlserver ? nil : "RELEASE SAVEPOINT \(name)"
   }
 
   /// PostgreSQL `EXPLAIN` with optional ANALYZE, BUFFERS, and FORMAT. ClickHouse and SQL Server
@@ -358,7 +369,9 @@ nonisolated struct SQLDialect: Sendable, Equatable {
       if analyze { return "EXPLAIN ANALYZE" }
       if let format { return "EXPLAIN FORMAT=\(format.uppercased())" }
       return "EXPLAIN"
-    case .postgresql, .mongodb, .redis:
+    case .redis:
+      return Self.notSQLMarker
+    case .postgresql, .mongodb:
       var options: [String] = []
       if analyze { options.append("ANALYZE") }
       if buffers { options.append("BUFFERS") }
@@ -374,7 +387,8 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// ClickHouse `toString(..)`, SQL Server `CAST(.. AS NVARCHAR(MAX))`, SQLite unchanged.
   func likeSubject(_ column: String) -> String {
     switch engine {
-    case .postgresql, .mongodb, .redis: "\(column)::text"
+    case .postgresql, .mongodb: "\(column)::text"
+    case .redis: Self.notSQLMarker
     case .clickhouse: "toString(\(column))"
     case .sqlserver: "CAST(\(column) AS NVARCHAR(MAX))"
     case .sqlite: column
@@ -388,9 +402,11 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// collation makes `LIKE` case-sensitive), the form Find a Value in Every Table searches with;
   /// so does SQL Server (`lowerLike`).
   func caseInsensitiveLike(column: String, pattern: String, escape: String? = nil) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     let comparison =
       switch engine {
-      case .postgresql, .mongodb, .redis: "\(column)::text ILIKE \(pattern)"
+      case .postgresql, .mongodb: "\(column)::text ILIKE \(pattern)"
+      case .redis: Self.notSQLMarker
       case .clickhouse: "\(likeSubject(column)) ILIKE \(pattern)"
       case .sqlite: "LOWER(\(column)) LIKE LOWER(\(pattern))"
       case .sqlserver: lowerLike(column: column, pattern: pattern, negated: false)
@@ -415,6 +431,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   func comparison(
     _ lhs: String, _ op: SQLComparison, _ rhs: String, operand: SQLOperandKind = .qualified
   ) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     guard engine == .postgresql, operand == .qualified else {
       return "\(lhs) \(op.rawValue) \(rhs)"
     }
@@ -428,6 +445,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     _ column: String, _ items: [String], negated: Bool = false,
     operand: SQLOperandKind = .qualified
   ) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     guard engine == .postgresql else {
       return "\(column) \(negated ? "NOT " : "")IN (\(items.joined(separator: ", ")))"
     }
@@ -445,6 +463,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   func comparison(
     _ lhs: String, _ op: SQLComparison, _ rhs: String, type: PostgresColumnType?
   ) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     let parts = comparisonParts(lhs, op, type: type)
     return parts.lead + rhs + parts.trail
   }
@@ -481,6 +500,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     column: String, pattern: String, escape: String? = nil, negated: Bool = false,
     caseInsensitive: Bool = false
   ) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     if engine == .postgresql {
       let op = (negated ? "!~~" : "~~") + (caseInsensitive ? "*" : "")
       let operand = escape.map { function("like_escape", pattern, $0) } ?? pattern
@@ -503,6 +523,7 @@ nonisolated struct SQLDialect: Sendable, Equatable {
   /// (`integer`, `character varying(20)`, `timestamp with time zone`) are bound by the parser
   /// itself and stay; user and extension types keep the given name.
   func cast(_ expression: String, to type: String) -> String {
+    if engine == .redis { return Self.notSQLMarker }
     guard engine == .postgresql else { return "CAST(\(expression) AS \(type))" }
     let type = type.trimmingCharacters(in: .whitespaces)
     let parts = TypeName.parts(type)
@@ -515,7 +536,9 @@ nonisolated struct SQLDialect: Sendable, Equatable {
 
   /// `name(arguments)`; PostgreSQL `pg_catalog.name(arguments)`
   func function(_ name: String, _ arguments: String...) -> String {
-    "\(engine == .postgresql ? "pg_catalog." : "")\(name)(\(arguments.joined(separator: ", ")))"
+    if engine == .redis { return Self.notSQLMarker }
+    return
+      "\(engine == .postgresql ? "pg_catalog." : "")\(name)(\(arguments.joined(separator: ", ")))"
   }
 
   /// Text concatenation: `lhs || rhs`, MySQL `CONCAT(lhs, rhs)`, ClickHouse `concat(lhs, rhs)`,
@@ -525,7 +548,8 @@ nonisolated struct SQLDialect: Sendable, Equatable {
     case .postgresql: "\(lhs) OPERATOR(pg_catalog.||) \(rhs)"
     case .clickhouse: "concat(\(lhs), \(rhs))"
     case .mysql, .sqlserver: "CONCAT(\(lhs), \(rhs))"
-    case .sqlite, .duckdb, .mongodb, .redis: "\(lhs) || \(rhs)"
+    case .sqlite, .duckdb, .mongodb: "\(lhs) || \(rhs)"
+    case .redis: Self.notSQLMarker
     }
   }
 

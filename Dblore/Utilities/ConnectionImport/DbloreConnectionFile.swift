@@ -342,7 +342,8 @@ nonisolated extension DbloreConnectionFile.Connection {
     func skip(_ reason: String) -> Result<ImportedConnection, Skipped> {
       .failure(Skipped(message: "Skipped \(label): \(reason)."))
     }
-    guard let engine = DatabaseType(rawValue: databaseType) else {
+    // An engine not yet available (Redis) is skipped as unsupported until it is
+    guard let engine = DatabaseType(rawValue: databaseType), engine.capabilities.isAvailable else {
       return skip("unsupported engine")
     }
     guard engine.capabilities.usesNetwork else { return skip("file databases are not imported") }

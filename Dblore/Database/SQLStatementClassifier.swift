@@ -79,11 +79,16 @@ nonisolated enum SQLStatementClassifier {
 
   /// Split `sql` into statements and classify each. Empty / comment-only statements are dropped.
   /// `dialect` defaults to PostgreSQL, which keeps every existing caller on today's rules.
-  /// MongoDB text goes to `MongoCommandClassifier` and is never lexed as SQL.
+  /// MongoDB text goes to `MongoCommandClassifier` and Redis text to `classifyRedis`; neither is
+  /// ever lexed as SQL.
   static func classify(
     _ sql: String, dialect: SQLDialect = .postgresql
   ) -> [ClassifiedStatement] {
-    if dialect == .mongodb { return MongoCommandClassifier.classify(sql) }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh: return MongoCommandClassifier.classify(sql)
+    case .redis: return classifyRedis(sql)
+    }
     let tokenizer = SQLTokenizer(dialect: dialect)
     return tokenizer.splitStatements(sql).compactMap { classifyStatement($0, dialect: dialect) }
   }
@@ -99,13 +104,22 @@ nonisolated enum SQLStatementClassifier {
   /// `clickhouseFailsClosed` refuses (a bare non-ASCII scalar, a number's `-` sign before `-`).
   /// An unrecognized MySQL or SQL Server statement cannot run in the app's transaction
   /// (`nonTransactional`): it may commit or roll back.
-  /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing.
+  /// MongoDB text goes to `MongoCommandClassifier`, before any SQL lexing. Redis text goes to
+  /// `classifyRedis`: several commands are `.unknown` (fail closed), as on MongoDB.
   /// `standardConformingStrings` (PostgreSQL, SQL dump restore only): read a plain string with a
   /// backslash as `standard_conforming_strings = on` does, once the session reported it on.
   static func classifyStatement(
     _ text: String, dialect: SQLDialect = .postgresql, standardConformingStrings: Bool = false
   ) -> ClassifiedStatement? {
-    if dialect == .mongodb { return MongoCommandClassifier.classifyStatement(text) }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh: return MongoCommandClassifier.classifyStatement(text)
+    case .redis:
+      let statements = classifyRedis(text)
+      guard let first = statements.first else { return nil }
+      return statements.count == 1
+        ? first : redisUnknown(statements.map(\.text).joined(separator: "\n"))
+    }
     let tokens = SQLTokenizer(
       dialect: dialect, standardConformingStrings: standardConformingStrings
     ).tokens(text)
@@ -132,6 +146,25 @@ nonisolated enum SQLStatementClassifier {
       isDestructive: analysis.isDestructive)
   }
 
+  /// Redis text, one command per line (`RedisTokenizer`), each classified by
+  /// `RedisCommandClassifier`, whose `text` is the command's redacted render. Text the tokenizer
+  /// refuses is one `.unknown` statement (fail closed) whose text is the tokenizer's error, not
+  /// the input: a secret in text that does not tokenize cannot be redacted.
+  private static func classifyRedis(_ text: String) -> [ClassifiedStatement] {
+    do {
+      return try RedisTokenizer.tokenize(text).map { RedisCommandClassifier.classify($0).statement }
+    } catch {
+      return [redisUnknown(error.localizedDescription)]
+    }
+  }
+
+  private static func redisUnknown(_ text: String) -> ClassifiedStatement {
+    ClassifiedStatement(
+      text: text, kind: .unknown, hasReturning: false, hasTopLevelReturning: false,
+      affectsAllRows: false, nonTransactional: false, resetsSessionBrakes: false,
+      changesPrivileges: false, createsTable: false)
+  }
+
   /// A MySQL optimizer hint (`/*+ ... */`, anywhere) naming a `mysqlBrakeSettings` variable:
   /// `MAX_EXECUTION_TIME(n)` or `SET_VAR(innodb_lock_wait_timeout = n)` lifts a brake for one
   /// statement. ASCII case-insensitive substring match; over-matches, which only asks for more
@@ -155,11 +188,19 @@ nonisolated enum SQLStatementClassifier {
   /// `START` statement, a `CONNECTION '...'` or password-bearing `OPTION_LIST '...'` table
   /// option, and `IDENTIFIED VIA` / `USING` / `AS` / `WITH <plugin> AS`.
   /// Otherwise a SELECT is never a match, even when a column or a comment contains PASSWORD.
-  /// Always false on MongoDB (mongosh text is not SQL).
+  /// Always false on MongoDB (mongosh text is not SQL). On Redis, true when a command carries a
+  /// secret (`RedisCommandClassifier.containsSecret`) or the text does not tokenize: a secret
+  /// there cannot be found, so callers skip it as if it held one.
   nonisolated static func containsPasswordLiteral(
     _ sql: String, dialect: SQLDialect = .postgresql
   ) -> Bool {
-    if dialect == .mongodb { return false }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh: return false
+    case .redis:
+      guard let commands = try? RedisTokenizer.tokenize(sql) else { return true }
+      return commands.contains(where: RedisCommandClassifier.containsSecret)
+    }
     let tokens = SQLTokenizer.tokens(sql, dialect: dialect)
     let words = tokens.compactMap(\.keyword)
     if words.starts(with: ["SET", "PASSWORD"]) || identifiesByPassword(words) { return true }
@@ -634,8 +675,8 @@ nonisolated enum SQLStatementClassifier {
     case .mysql: mysqlAdjusted(analysis, body: body)
     case .sqlserver: sqlserverAdjusted(analysis, body: body)
     case .clickhouse: clickhouseAdjusted(analysis, body: body)
-    // Unreachable: `classifyStatement` hands MongoDB text to `MongoCommandClassifier`.
-    case .mongodb: analysis
+    // Unreachable: `classifyStatement` hands MongoDB and Redis text to their own classifiers.
+    case .mongodb, .redis: analysis
     default: analysis
     }
   }

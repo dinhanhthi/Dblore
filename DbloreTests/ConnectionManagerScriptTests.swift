@@ -158,6 +158,22 @@ struct ConnectionManagerScriptTests {
     await workspace.connectionManager.disconnect()
   }
 
+  @Test("Test Connection refuses Redis before its password command runs")
+  func redisTestRefusedBeforePasswordCommand() async throws {
+    defer { cleanUp() }
+    var config = Self.config(password: "pw.sh")
+    config.databaseType = .redis
+    let factory = FakeDatabaseSessionFactory(capabilities: .contract())
+    do {
+      _ = try await manager(factory).testConnection(config: config)
+      Issue.record("Redis Test Connection should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == .redis)
+    }
+    #expect(started.all.isEmpty)
+    #expect(factory.sessions.isEmpty)
+  }
+
   @Test("The post-disconnect script starts once, by the time disconnect returns")
   func postDisconnectRunsOnce() async throws {
     defer { cleanUp() }

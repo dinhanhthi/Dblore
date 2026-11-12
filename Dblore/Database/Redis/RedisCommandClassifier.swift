@@ -176,9 +176,11 @@ nonisolated enum RedisCommandClassifier {
     "WAITAOF",
   ]
 
-  /// The password parameters of `CONFIG SET`
+  /// The password parameters of `CONFIG SET` (`PRIMARYAUTH` / `PRIMARYUSER`: the aliases of
+  /// `MASTERAUTH` / `MASTERUSER`)
   private static let secretParameters: Set<String> = [
-    "REQUIREPASS", "MASTERAUTH", "MASTERUSER", "TLS-KEY-FILE-PASS", "TLS-CLIENT-KEY-FILE-PASS",
+    "REQUIREPASS", "MASTERAUTH", "MASTERUSER", "PRIMARYAUTH", "PRIMARYUSER", "TLS-KEY-FILE-PASS",
+    "TLS-CLIENT-KEY-FILE-PASS",
   ]
   /// The options of `SENTINEL SET` that log in to the monitored master
   private static let sentinelSecretOptions: Set<String> = ["AUTH-PASS", "AUTH-USER"]

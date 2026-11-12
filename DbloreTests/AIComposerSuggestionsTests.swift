@@ -49,10 +49,12 @@ struct AIComposerSuggestionsTests {
     #expect(listed.last?.detail == "List indexes")
   }
 
-  @Test("MongoDB lists no Review or Optimize")
+  @Test("MongoDB and Redis list no Review or Optimize")
   func mongoListsNoReview() {
-    let commands = AISlashCommand.available(custom: [], dialect: .mongodb)
-    #expect(items("/", commands: commands).map(\.title) == ["/explain", "/fix", "/settings"])
+    for dialect in [SQLDialect.mongodb, .redis] {
+      let commands = AISlashCommand.available(custom: [], dialect: dialect)
+      #expect(items("/", commands: commands).map(\.title) == ["/explain", "/fix", "/settings"])
+    }
   }
 
   @Test("a partial name filters ignoring case, and a pick replaces the draft")

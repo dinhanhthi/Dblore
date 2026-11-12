@@ -29,14 +29,18 @@ extension DatabaseConnectionManager {
   /// (`DatabaseError.sessionChanged`), `command.db` must be in
   /// `0...maxRedisDatabaseIndex` (`RedisCommandRefusal`); `command.args` (the bytes sent) are
   /// classified: an editor-refused command, a command `evaluate` forbids under the stricter of
-  /// `policy` and the connection's, and a destructive command without `confirmed` are refused
-  /// (`DatabaseError.blockedByProtection`); another caller's pending app transaction is refused;
-  /// a write is refused while a transaction is open or Protected mode applies (never in
-  /// practice: Redis has no transactions); then a session must exist, be open and send Redis
-  /// commands. `userInitiated` (editor runs and edits) counts the command in
-  /// `commitGuard.inFlight`, so Cancel can stop it; the app's own reads are not counted.
+  /// `policy` and the connection's (`effectivePolicy`: a pending app transaction counts as
+  /// Protected mode, whose Redis arm refuses every write: "Redis has no transactions, so
+  /// Protected mode cannot hold this change. Use Confirm."), and a destructive command without
+  /// `confirmed` are refused (`DatabaseError.blockedByProtection`); another caller's pending app
+  /// transaction is refused; a write is refused while the user's own transaction is open
+  /// (`sequentialTransactionOpenRefusal`; never in practice: Redis has no transactions); then a
+  /// session must exist, be open and send Redis commands. `userInitiated` (editor runs and
+  /// edits) counts the command in `commitGuard.inFlight`, so Cancel can stop it; the app's own
+  /// reads are not counted.
   /// Logs name the command and its argument count only (`RedisCommand.logDescription`); a
-  /// server error is cut before any argument it echoes (`withoutArgumentEcho`).
+  /// server error is cut before any argument it echoes, and a command holding a password keeps
+  /// no server text at all (`withoutServerEcho`).
   func executeGatedRedisCommand(
     _ command: RedisCommand, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
     caller: UUID? = nil, userInitiated: Bool, confirmed: Bool = false
@@ -71,15 +75,9 @@ extension DatabaseConnectionManager {
           reason: "This command removes data or changes the server for good; confirm it first")
       }
       try refuseIfOwnedByAnotherCaller(caller)
-      if !statement.isReadOnlySafe {
-        if !txState.isIdle || userTxOpen {
-          throw DatabaseError.sequentialBatchRefused(Self.sequentialTransactionOpenRefusal)
-        }
-        if effective.protectedMode {
-          throw DatabaseError.sequentialBatchRefused(
-            "Redis has no transactions, so Protected mode cannot hold this change. Turn "
-              + "Protected mode off for this connection to run it.")
-        }
+      // A pending app transaction already made `effective` Protected, refused above
+      if !statement.isReadOnlySafe, userTxOpen {
+        throw DatabaseError.sequentialBatchRefused(Self.sequentialTransactionOpenRefusal)
       }
       guard let current = session else { throw DatabaseError.notConnected }
       try refuseIfConnectionClosed()
@@ -123,12 +121,33 @@ extension DatabaseConnectionManager {
           executionTime: Date().timeIntervalSince(startTime))
       }
     } catch let error as DatabaseError {
-      throw Self.withoutArgumentEcho(error)
+      throw Self.withoutServerEcho(error, of: command)
     } catch let error as RedisCommandRefusal {
       throw error
     } catch {
-      throw Self.withoutArgumentEcho(
-        queryFailure(error, query: command.logDescription, startTime: startTime))
+      throw Self.withoutServerEcho(
+        queryFailure(error, query: command.logDescription, startTime: startTime), of: command)
+    }
+  }
+
+  /// `error` without what the server may echo of `command`: a command holding a password
+  /// (`RedisCommandClassifier.containsSecret`) keeps no server or session text at all (`ACL
+  /// SETUSER` echoes a mistyped rule, password included; a session may word a lost or failed
+  /// connection with what it was sending), only the error's case; any other is cut by
+  /// `withoutArgumentEcho`. The other cases a send can end in carry no text or only the app's own.
+  private nonisolated static func withoutServerEcho(
+    _ error: DatabaseError, of command: RedisCommand
+  ) -> DatabaseError {
+    guard RedisCommandClassifier.containsSecret(command.args) else {
+      return withoutArgumentEcho(error)
+    }
+    let hidden = "Its message is hidden because the command holds a password."
+    switch error {
+    case .queryFailed(_, let time):
+      return .queryFailed("The server refused the command. " + hidden, time)
+    case .connectionLost: return .connectionLost("The connection was lost. " + hidden)
+    case .connectionFailed: return .connectionFailed("The connection failed. " + hidden)
+    default: return error
     }
   }
 

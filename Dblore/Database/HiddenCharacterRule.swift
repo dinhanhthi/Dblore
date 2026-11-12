@@ -13,10 +13,13 @@ nonisolated enum HiddenCharacterRule {
 
   /// Text that renders other than it runs (`isHidden`), except `isLiteralInvisible` inside a
   /// string literal of `dialect` (quoted, escape or dollar-quoted; never an identifier). MongoDB
-  /// text is not lexed as SQL, so it allows them nowhere.
+  /// and Redis text is not lexed as SQL, so it allows them nowhere.
   static func hasHiddenCharacters(_ sql: String, dialect: SQLDialect) -> Bool {
     let scalars = Array(sql.unicodeScalars)
-    guard dialect != .mongodb else { return scalars.contains(where: isHidden) }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return scalars.contains(where: isHidden)
+    }
     let tokenizer = SQLTokenizer(dialect: dialect)
     var index = 0
     while index < scalars.count {

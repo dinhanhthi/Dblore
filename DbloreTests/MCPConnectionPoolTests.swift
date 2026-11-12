@@ -221,10 +221,11 @@ struct MCPConnectionPoolTests {
     (.duckdb, .duckDBNotSupported),
     (.clickhouse, .engineNotSupported(.clickhouse)),
     (.sqlserver, .engineNotSupported(.sqlserver)),
+    (.redis, .engineNotSupported(.redis)),
   ]
 
   @Test(
-    "The writable manager refuses DuckDB, ClickHouse and SQL Server without connecting",
+    "The writable manager refuses DuckDB, ClickHouse, SQL Server and Redis without connecting",
     arguments: writeRefused)
   func writableManagerRefusesEngine(type: DatabaseType, error: MCPConnectionError) async {
     let pool = pool()
