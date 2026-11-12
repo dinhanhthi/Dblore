@@ -416,12 +416,21 @@ actor QueryHistoryStore {
 
   /// No statement (blank or comment-only) stays nil. Several statements keep a write over
   /// schema, then transaction, other, and read, so a trailing write is not stored as a read.
+  /// Redis text is read by `RedisTokenizer` and `RedisCommandClassifier`, never lexed as SQL;
+  /// text that does not tokenize is other.
   private static func classifiedKind(
     sql: String, connectionKey: String
   ) -> QueryHistoryEntry.Kind? {
-    SQLStatementClassifier.classify(sql, dialect: dialect(for: connectionKey))
-      .map { historyKind($0.kind) }
-      .max { rank($0) < rank($1) }
+    let engineDialect = dialect(for: connectionKey)
+    let kinds: [StatementKind]
+    switch engineDialect.language {
+    case .sql, .mongosh:
+      kinds = SQLStatementClassifier.classify(sql, dialect: engineDialect).map(\.kind)
+    case .redis:
+      guard let commands = try? RedisTokenizer.tokenize(sql) else { return .other }
+      kinds = commands.map { RedisCommandClassifier.classify($0).statement.kind }
+    }
+    return kinds.map(historyKind).max { rank($0) < rank($1) }
   }
 
   private static func historyKind(_ kind: StatementKind) -> QueryHistoryEntry.Kind {
