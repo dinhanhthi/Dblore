@@ -192,6 +192,42 @@ nonisolated enum RedisCommandClassifier {
     UInt8(ascii: ">"), UInt8(ascii: "<"), UInt8(ascii: "#"), UInt8(ascii: "!"),
   ]
 
+  // MARK: - Editor names
+
+  /// Every command name the tables above know, refused ones included, plus the scripts and the
+  /// commands refused by name in `refusal`. The editor's highlighter and completion read it;
+  /// classification does not.
+  static let commandNames: Set<String> = reads.union(writes).union(admin).union(destructive)
+    .union(subcommandReads.keys).union(connectionState).union(push).union(blocking)
+    .union(["EVAL", "EVALSHA", "FCALL", "SHUTDOWN", "DEBUG"])
+
+  /// The subcommands of the commands that take one, refused ones included (a superset of the
+  /// subcommand tables above). The editor's highlighter and completion read it; classification
+  /// does not.
+  static let subcommandNames: [String: Set<String>] = [
+    "ACL": [
+      "CAT", "DELUSER", "DRYRUN", "GENPASS", "GETUSER", "HELP", "LIST", "LOAD", "LOG", "SAVE",
+      "SETUSER", "USERS", "WHOAMI",
+    ],
+    "CLIENT": [
+      "CACHING", "GETNAME", "GETREDIR", "HELP", "ID", "INFO", "KILL", "LIST", "NO-EVICT",
+      "NO-TOUCH", "PAUSE", "REPLY", "SETINFO", "SETNAME", "TRACKING", "TRACKINGINFO", "UNBLOCK",
+      "UNPAUSE",
+    ],
+    "COMMAND": ["COUNT", "DOCS", "GETKEYS", "GETKEYSANDFLAGS", "HELP", "INFO", "LIST"],
+    "CONFIG": ["GET", "HELP", "RESETSTAT", "REWRITE", "SET"],
+    "FUNCTION": ["DELETE", "DUMP", "FLUSH", "HELP", "KILL", "LIST", "LOAD", "RESTORE", "STATS"],
+    "LATENCY": ["DOCTOR", "GRAPH", "HELP", "HISTOGRAM", "HISTORY", "LATEST", "RESET"],
+    "MEMORY": ["DOCTOR", "HELP", "MALLOC-STATS", "PURGE", "STATS", "USAGE"],
+    "MODULE": ["HELP", "LIST", "LOAD", "LOADEX", "UNLOAD"],
+    "OBJECT": ["ENCODING", "FREQ", "HELP", "IDLETIME", "REFCOUNT"],
+    "PUBSUB": ["CHANNELS", "HELP", "NUMPAT", "NUMSUB", "SHARDCHANNELS", "SHARDNUMSUB"],
+    "SCRIPT": ["DEBUG", "EXISTS", "FLUSH", "HELP", "KILL", "LOAD"],
+    "SLOWLOG": ["GET", "HELP", "LEN", "RESET"],
+    "XGROUP": ["CREATE", "CREATECONSUMER", "DELCONSUMER", "DESTROY", "HELP", "SETID"],
+    "XINFO": ["CONSUMERS", "GROUPS", "HELP", "STREAM"],
+  ]
+
   // MARK: - Classification
 
   /// Why the editor refuses `args`, nil when it does not

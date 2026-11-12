@@ -2,7 +2,8 @@
 // The connection form for MongoDB (`MongoConnectionDraft`): a pasted URI fills the fields and
 // moves its password out of the stored `mongoURI`, field edits rebuild that URI through
 // `MongoURIParser`, TLS is Disable or Verify Full, no Review, no SSH, a custom CA without a
-// client certificate, and a warning when TLS is off to a remote host.
+// client certificate, and a warning when TLS is off to a remote host. The Redis rows: an
+// optional user and a database index from 0 to 15.
 
 import Foundation
 import Testing
@@ -287,5 +288,45 @@ struct ConnectionFormMongoTests {
       "mongodb://localhost:27017,db2.example.com:27017/", into: config
     ).config
     #expect(MongoConnectionDraft.tlsWarning(for: seeds) != nil)
+  }
+
+  // MARK: - Redis
+
+  @Test func redisDraftStartsOnVerifyFullInDatabaseZeroWithoutAUser() {
+    let draft = ConnectionFormContent.newFormDraft(databaseType: .redis)
+    #expect(draft.port == 6379)
+    #expect(draft.sslMode == .verifyFull)
+    #expect(draft.database == "0")
+    #expect(draft.username.isEmpty)
+    #expect(ConnectionFormContent.isFormInputValid(draft))
+    #expect(MongoConnectionDraft.sslModes(for: .redis) == [.disable, .verifyFull])
+    #expect(!ConnectionFormContent.supportsConnectionString(.redis))
+    #expect(MongoConnectionDraft.commitStyles(for: .redis) == [.immediate, .confirm, .password])
+  }
+
+  @Test func redisNeedsAHostButNoUser() {
+    var config = ConnectionFormContent.newFormDraft(databaseType: .redis)
+    config.username = "app"
+    #expect(ConnectionFormContent.isFormInputValid(config))
+    config.username = ""
+    config.host = ""
+    #expect(!ConnectionFormContent.isFormInputValid(config))
+  }
+
+  @Test func redisDatabaseIndexIsAWholeNumberFrom0To15() {
+    var config = ConnectionFormContent.newFormDraft(databaseType: .redis)
+    for index in ["0", "7", "15"] {
+      config.database = index
+      #expect(ConnectionFormContent.redisDatabaseIndexError(config) == nil, "\(index)")
+      #expect(ConnectionFormContent.isFormInputValid(config), "\(index)")
+    }
+    for text in ["", "16", "-1", "a", "03", "+3", " 3", "1.5"] {
+      config.database = text
+      #expect(ConnectionFormContent.redisDatabaseIndexError(config) != nil, "\(text)")
+      #expect(!ConnectionFormContent.isFormInputValid(config), "\(text)")
+    }
+    // Other engines never get the index error
+    config.databaseType = .postgresql
+    #expect(ConnectionFormContent.redisDatabaseIndexError(config) == nil)
   }
 }

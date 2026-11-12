@@ -108,14 +108,20 @@ extension SQLSyntaxHighlighter {
   }
 
   /// Resets `range` to the default attributes, then highlights it. MongoDB re-highlights the
-  /// whole text: mongosh tokens depend on context `dirtyRange` does not track.
+  /// whole text: mongosh tokens depend on context `dirtyRange` does not track. So does Redis:
+  /// its lines end at LF only, while `dirtyRange` aligns to paragraphs (CR, U+2029 too), so a
+  /// partial range could start inside a command line.
   static func rehighlight(
     storage: NSMutableAttributedString, range: NSRange, palette: Palette,
     dialect: SQLDialect = .postgresql
   ) {
-    let range = dialect == .mongodb ? NSRange(location: 0, length: storage.length) : range
-    storage.addAttributes(palette.defaultAttributes, range: range)
-    highlight(in: storage, range: range, palette: palette, dialect: dialect)
+    let target: NSRange
+    switch dialect.language {
+    case .sql: target = range
+    case .mongosh, .redis: target = NSRange(location: 0, length: storage.length)
+    }
+    storage.addAttributes(palette.defaultAttributes, range: target)
+    highlight(in: storage, range: target, palette: palette, dialect: dialect)
   }
 
   private static func spanPrecedes(_ a: NSRange, _ b: NSRange) -> Bool {

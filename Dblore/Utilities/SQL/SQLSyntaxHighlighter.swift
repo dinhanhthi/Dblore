@@ -282,8 +282,10 @@ enum SQLSyntaxHighlighter {
   static func scanBlockSpans(
     in text: NSString, range: NSRange, dialect: SQLDialect = .postgresql
   ) -> [(range: NSRange, kind: BlockKind)] {
-    if dialect == .mongodb {
-      return MongoshSyntaxHighlighter.blockSpans(in: text, range: range)
+    switch dialect.language {
+    case .sql: break
+    case .mongosh: return MongoshSyntaxHighlighter.blockSpans(in: text, range: range)
+    case .redis: return RedisSyntaxHighlighter.blockSpans(in: text, range: range)
     }
     if dialect == .sqlite || dialect == .duckdb || dialect == .mysql {
       return lexedBlockSpans(in: text, range: range, dialect: dialect)
@@ -431,8 +433,13 @@ enum SQLSyntaxHighlighter {
     dialect: SQLDialect = .postgresql
   ) {
     guard range.length > 0 else { return }
-    if dialect == .mongodb {
+    switch dialect.language {
+    case .sql: break
+    case .mongosh:
       MongoshSyntaxHighlighter.highlight(in: storage, range: range, palette: palette)
+      return
+    case .redis:
+      RedisSyntaxHighlighter.highlight(in: storage, range: range, palette: palette)
       return
     }
     let text = storage.string

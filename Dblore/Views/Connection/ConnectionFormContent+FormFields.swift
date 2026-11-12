@@ -51,7 +51,7 @@ extension ConnectionFormContent {
       }
 
       HStack(alignment: .top, spacing: Spacing.md) {
-        FormField(label: "Database") {
+        FormField(label: isRedis ? "Database Index" : "Database") {
           TextField(databasePlaceholder, text: $connectionConfig.database)
             .textFieldStyle(.plain)
             .inputCapsuleStyle()
@@ -60,6 +60,13 @@ extension ConnectionFormContent {
 
         usernameField()
           .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
+      if let error = Self.redisDatabaseIndexError(connectionConfig) {
+        Text(error)
+          .font(.caption)
+          .foregroundColor(.destructive)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       if capabilities.usesPassword {
@@ -158,9 +165,15 @@ extension ConnectionFormContent {
     }
   }
 
-  /// MongoDB without a database uses `test`.
+  private var isRedis: Bool { connectionConfig.databaseType == .redis }
+
+  /// MongoDB without a database uses `test`. Redis takes a database index.
   private var databasePlaceholder: String {
-    connectionConfig.databaseType == .mongodb ? MongoSession.defaultDatabase : "database_name"
+    switch connectionConfig.databaseType {
+    case .mongodb: MongoSession.defaultDatabase
+    case .redis: "0"
+    case .postgresql, .sqlite, .duckdb, .mysql, .clickhouse, .sqlserver: "database_name"
+    }
   }
 
   /// Stored in `mongoURI` only: an edit rebuilds the URI.
@@ -233,9 +246,10 @@ extension ConnectionFormContent {
     .disabled(certificateDraftPending)
   }
 
+  /// A Redis ACL user is optional: empty signs in as the server's default user.
   private func usernameField() -> some View {
-    FormField(label: "Username") {
-      TextField("username", text: $connectionConfig.username)
+    FormField(label: isRedis ? "ACL User (optional)" : "Username") {
+      TextField(isRedis ? "default user" : "username", text: $connectionConfig.username)
         .textFieldStyle(.plain)
         .inputCapsuleStyle()
     }
@@ -1036,15 +1050,16 @@ extension ConnectionFormContent {
 
   // MARK: - Safety
 
-  /// The lock toggle, server-side session brakes and row cap override. File engines and
-  /// ClickHouse have no lock or idle brake, so they show only the statement timeout and the row
+  /// The lock toggle, server-side session brakes and row cap override. File engines, ClickHouse
+  /// and Redis have no lock or idle brake, so they show only the statement timeout and the row
   /// cap. SQL Server has no idle brake: it shows the statement and lock timeouts.
   /// The section card supplies the "Safety" title.
   @ViewBuilder
   func safetySection() -> some View {
     let global = AppSettings.shared.sessionBrakeDefaults
     let fileBased = connectionConfig.databaseType.capabilities.isFileBased
-    let statementBrakeOnly = fileBased || connectionConfig.databaseType == .clickhouse
+    let statementBrakeOnly =
+      fileBased || connectionConfig.databaseType == .clickhouse || isRedis
     let hasIdleBrake = !statementBrakeOnly && connectionConfig.databaseType != .sqlserver
     VStack(alignment: .leading, spacing: Spacing.sm) {
       // A lock lives on saved rows; a file engine needs a file to lock
