@@ -131,8 +131,12 @@ targets:
       - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
       - path: Shared/EngineEntry.swift
       - path: Shared/EngineRequestHandler.swift
+      - path: Redis/RedisLocalNetwork.swift
       - path: Redis/RedisTransport.swift
       - path: Redis/RESP.swift
+      - path: Redis/RedisHandshake.swift
+      - path: Redis/RedisReadOnly.swift
+      - path: Redis/RedisBrakes.swift
       - path: Redis/RedisConnection.swift
       - path: Redis/RedisDriver.swift
     dependencies:
@@ -170,7 +174,9 @@ targets:
 
   # Host-less unit tests: they compile the shared entry, the engines' pure sources and the
   # protocol themselves instead of loading a bundle, so no TEST_HOST or BUNDLE_LOADER. Of SQL
-  # Server only the pure SQLServerTypes.swift joins (no FreeTDS shim, no driver).
+  # Server only the pure SQLServerTypes.swift joins (no FreeTDS shim, no driver), of Redis only
+  # the pure RESP.swift, RedisHandshake.swift, RedisReadOnly.swift, RedisBrakes.swift and
+  # RedisLocalNetwork.swift (no transport).
   DbloreEnginesTests:
     type: bundle.unit-test
     platform: macOS
@@ -178,6 +184,11 @@ targets:
       - path: Tests/EngineRequestHandlerTests.swift
       - path: Tests/ClickHouseDriverTests.swift
       - path: Tests/SQLServerTypesTests.swift
+      - path: Tests/RESPTests.swift
+      - path: Tests/RedisHandshakeTests.swift
+      - path: Tests/RedisReadOnlyTests.swift
+      - path: Tests/RedisBrakesTests.swift
+      - path: Tests/RedisLocalNetworkTests.swift
       - path: ../../Dblore/Database/EnginePlugin/EnginePluginProtocol.swift
       - path: Shared/EngineEntry.swift
       - path: Shared/EngineRequestHandler.swift
@@ -185,6 +196,11 @@ targets:
       - path: ClickHouse/ClickHouseFormat.swift
       - path: ClickHouse/ClickHouseCatalog.swift
       - path: ClickHouse/ClickHouseDriver.swift
+      - path: Redis/RESP.swift
+      - path: Redis/RedisHandshake.swift
+      - path: Redis/RedisReadOnly.swift
+      - path: Redis/RedisBrakes.swift
+      - path: Redis/RedisLocalNetwork.swift
       - path: SQLServer/SQLServerTypes.swift
     settings:
       base:

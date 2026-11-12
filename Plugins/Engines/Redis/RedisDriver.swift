@@ -3,10 +3,11 @@
 // TLS and the plain-host policy, RESP.swift for the reply rows, RedisConnection.swift for
 // requests and cancel).
 //
-// Open: dial, `HELLO 3` (with `AUTH <user> <password>` when a password is set; the user defaults
-// to `default`), then `SELECT <database>` when the home database is not 0, all within the open's
-// timeout. `opened.serverVersion` is "Redis x.y.z", plus " (TLS)" over TLS. Only the `argv`
-// request runs commands (`hello.features` = ["argv"]).
+// Open: dial, then the handshake of RedisHandshake.swift (`HELLO 3` with `AUTH` when a user or a
+// password is set, RESP2 `AUTH` when the server takes RESP2 only, Redis 6.0 or later, `SELECT
+// <database>` when the home database is not 0), all within the open's timeout.
+// `opened.serverVersion` is "Redis x.y.z", plus " (TLS)" over TLS. Only the `argv` request runs
+// commands (`hello.features` = ["argv"]).
 //
 // The host and the outcome are logged (os_log, subsystem ace.thi.Dblore.Redis); never the
 // password or a command's arguments, and server texts only as private.
@@ -32,10 +33,9 @@ struct RedisDriver: EngineDriver {
     let deadline = Date(timeIntervalSinceNow: TimeInterval(timeoutSeconds))
     let connection = RedisConnection(
       transport: RedisTransport(endpoint: endpoint, connectTimeoutSeconds: timeoutSeconds),
-      usesTLS: endpoint.usesTLS)
+      usesTLS: endpoint.usesTLS, request: open)
     do {
-      try connection.open(
-        username: open.username, password: open.password, database: database, deadline: deadline)
+      try connection.open(database: database, deadline: deadline)
     } catch {
       connection.close()
       let failure = Self.openFailure(error, password: open.password)
@@ -63,23 +63,17 @@ struct RedisDriver: EngineDriver {
   /// An open failure as a `connect` error whose message holds neither the password nor the
   /// arguments a server error may echo
   static func openFailure(_ error: any Error, password: String) -> EngineFailure {
-    var failure = EngineFailure.from(error, code: .connect)
+    let failure = EngineFailure.from(error, code: .connect)
     var message = failure.message
-    if failure.serverCode == "ERR", message.lowercased().contains("unknown command") {
-      message = "The server does not know HELLO: Dblore needs Redis 6.0 or later."
-    } else if failure.serverCode == "NOPROTO" {
-      message = "The server does not speak RESP3 (HELLO 3): Dblore needs Redis 6.0 or later."
-    } else if failure.serverCode == "NOAUTH", password.isEmpty {
+    if failure.serverCode == "NOAUTH", password.isEmpty {
       message = "The server needs a password."
     } else if (error as? EngineFailure)?.message
       == RedisTransportError.closedByServer.failure.message
     {
       message = "The server closed the connection during the handshake (does it need TLS?)."
     }
-    if !password.isEmpty {
-      message = message.replacingOccurrences(of: password, with: "••••")
-    }
-    failure = EngineFailure(code: .connect, message: message, serverCode: failure.serverCode)
-    return failure
+    return RedisHandshake.redact(
+      EngineFailure(code: .connect, message: message, serverCode: failure.serverCode),
+      password: password)
   }
 }

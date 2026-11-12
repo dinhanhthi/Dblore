@@ -58,8 +58,11 @@ protocol RESPSource: AnyObject {
   func skip(_ count: inout Int) throws
 }
 
-/// The reply's bytes do not follow RESP: the stream is out of step
-struct RESPProtocolError: Error {}
+/// The reply's bytes do not follow RESP, or pass a cap the decoder keeps: the stream is out of
+/// step. `message` says which cap, when one was passed.
+struct RESPProtocolError: Error {
+  var message: String? = nil
+}
 
 /// One node of a reply
 struct RESPNode {
@@ -133,10 +136,10 @@ final class RESPReply {
       let header = try Self.header(try source.line())
       switch header {
       case .attribute(let children):
-        pendingNodes += children
+        try owe(children)
         continue
       case .aggregate("push", let children) where !started:
-        pendingNodes += children
+        try owe(children)
         continue
       default: break
       }
@@ -177,7 +180,10 @@ final class RESPReply {
         return RESPNode(path: path, type: type, value: Self.cell(data))
       case .aggregate(let type, let children):
         if children > 0 {
-          guard depth <= Self.maxDepth else { throw RESPProtocolError() }
+          guard depth <= Self.maxDepth else {
+            throw RESPProtocolError(
+              message: "The reply is nested deeper than \(Self.maxDepth) levels.")
+          }
           stack.append(Frame(path: keep ? path : "", depth: depth, remaining: children))
         }
         guard keep else { return Self.skipped }
@@ -196,16 +202,23 @@ final class RESPReply {
       switch try Self.header(try source.line()) {
       case .attribute(let children):
         // The node it describes still follows
-        pendingNodes += children
+        try owe(children)
       case .line:
         pendingNodes -= 1
       case .blob(_, let length):
         pendingNodes -= 1
         pendingBytes = length + 2
       case .aggregate(_, let children):
-        pendingNodes += children - 1
+        try owe(children - 1)
       }
     }
+  }
+
+  /// Adds `count` whole nodes to drop; a total past `Int.max` is a protocol error, not a trap
+  private func owe(_ count: Int) throws {
+    let (total, overflow) = pendingNodes.addingReportingOverflow(count)
+    guard !overflow else { throw RESPProtocolError() }
+    pendingNodes = total
   }
 
   /// The largest aggregate a header may announce

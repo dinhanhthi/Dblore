@@ -8,17 +8,24 @@
 
 /* Begin PBXBuildFile section */
 		0064AAF47E1036E84E189102 /* EngineRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */; };
+		044BEBC9495031AAFEAFC4E8 /* RESP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ABC957696E25DE26EEE8B02 /* RESP.swift */; };
 		0486113CD5B675927184CA64 /* RedisConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A392C1F5012C07C25D85AE85 /* RedisConnection.swift */; };
+		0619C4EDB55663C508D34D7D /* RESPTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C847734DBDD8B6C52793B8EC /* RESPTests.swift */; };
+		09F90EEB64D07630F98187C0 /* RedisBrakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54543FF13714F8707440051F /* RedisBrakes.swift */; };
+		0EED6096D9BF30E8126E3219 /* RedisHandshake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723BC23C86275457E85C5311 /* RedisHandshake.swift */; };
 		14773B670E8F293BFAD38AB3 /* ClickHouseHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96B7FF98A12874F536125E3F /* ClickHouseHTTP.swift */; };
 		1A0B06144367688213CBE1ED /* EngineEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF811E0277A9989F950E1038 /* EngineEntry.swift */; };
 		1AC5A5E30553390F64AE9EBF /* EnginePluginProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */; };
 		2DFD9E2D65374158AF6198F5 /* EngineEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF811E0277A9989F950E1038 /* EngineEntry.swift */; };
 		4A0C2441B2CEEB04F1D39D68 /* ClickHouseCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE3F450ED2BB67629F26BD6 /* ClickHouseCatalog.swift */; };
 		5208831FB3896E71FCD6F7E6 /* ClickHouseFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5C3CB1CCF46019E9F9AA65 /* ClickHouseFormat.swift */; };
+		5CE191D8864B144E8048F52E /* RedisReadOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DAD25EE90784B3629C4D187 /* RedisReadOnly.swift */; };
 		5E66DE31EF9709B2DF202ED0 /* RedisDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44C75EF04275FAFEF70B3E31 /* RedisDriver.swift */; };
 		5F832487929BCCFF85CD6FB2 /* ClickHouseDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B27B46B69D88734B3E9E65 /* ClickHouseDriverTests.swift */; };
+		6EAB19402A521B56E2CEBF47 /* RedisHandshakeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15FAF09E4D17082915105A9E /* RedisHandshakeTests.swift */; };
 		6EB358F672DF1F2581A152D8 /* SQLServerTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF851D0D7E871EF8D395A28B /* SQLServerTypes.swift */; };
 		729E77A52F09C9BAD585C603 /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6A8FC3AB42D6E39BEFA38C39 /* Network.framework */; };
+		76FE9A2CC58833711FCEA2BB /* RedisLocalNetworkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702C376E40285F46EBB7C4BC /* RedisLocalNetworkTests.swift */; };
 		7C17580AF1C7D05707E3076B /* ClickHouseDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0155DA93A90B09399C8984 /* ClickHouseDriver.swift */; };
 		7CFBAA8F196B98C5BC7F7126 /* RESP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ABC957696E25DE26EEE8B02 /* RESP.swift */; };
 		7CFFF01369623F3817995ED7 /* ClickHouseCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BE3F450ED2BB67629F26BD6 /* ClickHouseCatalog.swift */; };
@@ -26,9 +33,15 @@
 		81D5FED35CACF65064D54FF6 /* ClickHouseFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5C3CB1CCF46019E9F9AA65 /* ClickHouseFormat.swift */; };
 		877319F7DEC0575E4DE91FF4 /* EngineRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */; };
 		8FDA29A54547AC530A5C5428 /* EngineRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */; };
+		90A5E917026568FC5B3DF561 /* RedisHandshake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 723BC23C86275457E85C5311 /* RedisHandshake.swift */; };
+		90B4CFDC500418C356F2955F /* RedisReadOnly.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DAD25EE90784B3629C4D187 /* RedisReadOnly.swift */; };
+		912B2E1B5D465265AE03CF28 /* RedisReadOnlyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F9622C6CD786FDFEB864940 /* RedisReadOnlyTests.swift */; };
+		93F6557AB32314FAA3E57C0C /* RedisBrakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54543FF13714F8707440051F /* RedisBrakes.swift */; };
 		97251973EF63CBF39D0DE8F1 /* SQLServerTypesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F71D83D7CA0931E5DA6CFF7 /* SQLServerTypesTests.swift */; };
 		9834EF6F6C37B0FA436BF776 /* EngineEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF811E0277A9989F950E1038 /* EngineEntry.swift */; };
+		A09474AE14506DF3822B712C /* RedisLocalNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3375909FE7A606A0823A6306 /* RedisLocalNetwork.swift */; };
 		A2C1CBB00A04ECE94A243AA4 /* SQLServerCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C523CF204A8DBA2BF026AC4A /* SQLServerCatalog.swift */; };
+		A2C66B2484D94C237BE16892 /* RedisBrakesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5788A9A7150DCF0CCFBC8C1F /* RedisBrakesTests.swift */; };
 		AB4C67C87F339A4990D44456 /* EnginePluginProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */; };
 		AE742C528147282D7F722519 /* SQLServerDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC1EE19CED3A61CD6282566 /* SQLServerDriver.swift */; };
 		B29E8EB4939F5709DDAE9F00 /* EnginePluginProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */; };
@@ -39,31 +52,41 @@
 		E79741388EB309B08902DA94 /* ClickHouseHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96B7FF98A12874F536125E3F /* ClickHouseHTTP.swift */; };
 		EA0C412C958DC6AC7E337263 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E9E9F1870A0F7A168C8FE5F2 /* Security.framework */; };
 		EBB0461431F9FB9B4EC1D9A6 /* ClickHouseDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0155DA93A90B09399C8984 /* ClickHouseDriver.swift */; };
+		F30CA790B8224FBB20E971EF /* RedisLocalNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3375909FE7A606A0823A6306 /* RedisLocalNetwork.swift */; };
 		F3714D5543C3FD942A369A68 /* dblore_tds.c in Sources */ = {isa = PBXBuildFile; fileRef = 6D41E61B8F9C4BE55E6A1772 /* dblore_tds.c */; };
 		FE2C3E98150CAB8680D2E758 /* EngineRequestHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0F4EAB6F0865AD294737DA9E /* RedisTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisTransport.swift; sourceTree = "<group>"; };
+		0F9622C6CD786FDFEB864940 /* RedisReadOnlyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisReadOnlyTests.swift; sourceTree = "<group>"; };
+		15FAF09E4D17082915105A9E /* RedisHandshakeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisHandshakeTests.swift; sourceTree = "<group>"; };
 		1964F6CC49BC6E892810C82F /* EngineRequestHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRequestHandler.swift; sourceTree = "<group>"; };
 		247E6A7E7B0EA1EB2AC4B91D /* DbloreRedis.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreRedis.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		2F71D83D7CA0931E5DA6CFF7 /* SQLServerTypesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerTypesTests.swift; sourceTree = "<group>"; };
 		300D01E33BC139DF7B3E683C /* EngineRequestHandlerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineRequestHandlerTests.swift; sourceTree = "<group>"; };
+		3375909FE7A606A0823A6306 /* RedisLocalNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisLocalNetwork.swift; sourceTree = "<group>"; };
 		3B5EC51B1A1E66F85C89C575 /* dblore_tds.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = dblore_tds.h; sourceTree = "<group>"; };
 		3BE3F450ED2BB67629F26BD6 /* ClickHouseCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseCatalog.swift; sourceTree = "<group>"; };
 		44C75EF04275FAFEF70B3E31 /* RedisDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisDriver.swift; sourceTree = "<group>"; };
 		48ECF083BC3F339C2F07AD15 /* module.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = module.modulemap; sourceTree = "<group>"; };
 		493E5F3A47EA4EE0CC1307CB /* DbloreEnginesTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreEnginesTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		54543FF13714F8707440051F /* RedisBrakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisBrakes.swift; sourceTree = "<group>"; };
+		5788A9A7150DCF0CCFBC8C1F /* RedisBrakesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisBrakesTests.swift; sourceTree = "<group>"; };
 		6A8FC3AB42D6E39BEFA38C39 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		6ABC957696E25DE26EEE8B02 /* RESP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RESP.swift; sourceTree = "<group>"; };
 		6D0155DA93A90B09399C8984 /* ClickHouseDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseDriver.swift; sourceTree = "<group>"; };
 		6D41E61B8F9C4BE55E6A1772 /* dblore_tds.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = dblore_tds.c; sourceTree = "<group>"; };
+		702C376E40285F46EBB7C4BC /* RedisLocalNetworkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisLocalNetworkTests.swift; sourceTree = "<group>"; };
+		723BC23C86275457E85C5311 /* RedisHandshake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisHandshake.swift; sourceTree = "<group>"; };
+		7DAD25EE90784B3629C4D187 /* RedisReadOnly.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisReadOnly.swift; sourceTree = "<group>"; };
 		96B7FF98A12874F536125E3F /* ClickHouseHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseHTTP.swift; sourceTree = "<group>"; };
 		A1B27B46B69D88734B3E9E65 /* ClickHouseDriverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClickHouseDriverTests.swift; sourceTree = "<group>"; };
 		A392C1F5012C07C25D85AE85 /* RedisConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedisConnection.swift; sourceTree = "<group>"; };
 		B9EB709B8DB6C40ABACD3EEF /* EnginePluginProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnginePluginProtocol.swift; sourceTree = "<group>"; };
 		BE1F5E195F3B36ACE35424A1 /* DbloreSQLServer.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DbloreSQLServer.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		C523CF204A8DBA2BF026AC4A /* SQLServerCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerCatalog.swift; sourceTree = "<group>"; };
+		C847734DBDD8B6C52793B8EC /* RESPTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RESPTests.swift; sourceTree = "<group>"; };
 		DF811E0277A9989F950E1038 /* EngineEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineEntry.swift; sourceTree = "<group>"; };
 		E9E9F1870A0F7A168C8FE5F2 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		EBC1EE19CED3A61CD6282566 /* SQLServerDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SQLServerDriver.swift; sourceTree = "<group>"; };
@@ -168,6 +191,11 @@
 			children = (
 				A1B27B46B69D88734B3E9E65 /* ClickHouseDriverTests.swift */,
 				300D01E33BC139DF7B3E683C /* EngineRequestHandlerTests.swift */,
+				5788A9A7150DCF0CCFBC8C1F /* RedisBrakesTests.swift */,
+				15FAF09E4D17082915105A9E /* RedisHandshakeTests.swift */,
+				702C376E40285F46EBB7C4BC /* RedisLocalNetworkTests.swift */,
+				0F9622C6CD786FDFEB864940 /* RedisReadOnlyTests.swift */,
+				C847734DBDD8B6C52793B8EC /* RESPTests.swift */,
 				2F71D83D7CA0931E5DA6CFF7 /* SQLServerTypesTests.swift */,
 			);
 			path = Tests;
@@ -187,8 +215,12 @@
 		B1A61418882A1E813C5F4597 /* Redis */ = {
 			isa = PBXGroup;
 			children = (
+				54543FF13714F8707440051F /* RedisBrakes.swift */,
 				A392C1F5012C07C25D85AE85 /* RedisConnection.swift */,
 				44C75EF04275FAFEF70B3E31 /* RedisDriver.swift */,
+				723BC23C86275457E85C5311 /* RedisHandshake.swift */,
+				3375909FE7A606A0823A6306 /* RedisLocalNetwork.swift */,
+				7DAD25EE90784B3629C4D187 /* RedisReadOnly.swift */,
 				0F4EAB6F0865AD294737DA9E /* RedisTransport.swift */,
 				6ABC957696E25DE26EEE8B02 /* RESP.swift */,
 			);
@@ -358,8 +390,12 @@
 				7F14DE5156D2EA4C3C71B27C /* EnginePluginProtocol.swift in Sources */,
 				8FDA29A54547AC530A5C5428 /* EngineRequestHandler.swift in Sources */,
 				7CFBAA8F196B98C5BC7F7126 /* RESP.swift in Sources */,
+				09F90EEB64D07630F98187C0 /* RedisBrakes.swift in Sources */,
 				0486113CD5B675927184CA64 /* RedisConnection.swift in Sources */,
 				5E66DE31EF9709B2DF202ED0 /* RedisDriver.swift in Sources */,
+				0EED6096D9BF30E8126E3219 /* RedisHandshake.swift in Sources */,
+				A09474AE14506DF3822B712C /* RedisLocalNetwork.swift in Sources */,
+				5CE191D8864B144E8048F52E /* RedisReadOnly.swift in Sources */,
 				C4F69AB61F1FD38E870C9077 /* RedisTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -391,6 +427,16 @@
 				1AC5A5E30553390F64AE9EBF /* EnginePluginProtocol.swift in Sources */,
 				877319F7DEC0575E4DE91FF4 /* EngineRequestHandler.swift in Sources */,
 				B6999A665FEC273F61FCBED7 /* EngineRequestHandlerTests.swift in Sources */,
+				044BEBC9495031AAFEAFC4E8 /* RESP.swift in Sources */,
+				0619C4EDB55663C508D34D7D /* RESPTests.swift in Sources */,
+				93F6557AB32314FAA3E57C0C /* RedisBrakes.swift in Sources */,
+				A2C66B2484D94C237BE16892 /* RedisBrakesTests.swift in Sources */,
+				90A5E917026568FC5B3DF561 /* RedisHandshake.swift in Sources */,
+				6EAB19402A521B56E2CEBF47 /* RedisHandshakeTests.swift in Sources */,
+				F30CA790B8224FBB20E971EF /* RedisLocalNetwork.swift in Sources */,
+				76FE9A2CC58833711FCEA2BB /* RedisLocalNetworkTests.swift in Sources */,
+				90B4CFDC500418C356F2955F /* RedisReadOnly.swift in Sources */,
+				912B2E1B5D465265AE03CF28 /* RedisReadOnlyTests.swift in Sources */,
 				D71C2297A8AC10CDE8EC4525 /* SQLServerTypes.swift in Sources */,
 				97251973EF63CBF39D0DE8F1 /* SQLServerTypesTests.swift in Sources */,
 			);

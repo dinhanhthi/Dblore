@@ -4,12 +4,21 @@
 //
 // The socket's database is tracked: a request in another database is preceded by its own
 // `SELECT <db>`, and while that `SELECT` is unanswered the database counts as unknown. The text
-// `query` / `command` requests are refused.
+// `query` / `command` requests are refused. A read-only open sends only the reads of
+// RedisReadOnly.swift (checked before the `SELECT`); catalog reads answer empty lists.
 //
 // Cancel: `interrupt` wakes a blocked read, which throws without consuming anything. The
 // handler then calls `discardResults`, which drains what the reply still owes (whole nodes and
 // payload bytes, never built into rows) for up to `drainBytes` or `drainSeconds`, so the socket
 // stays in step and is kept. Past either cap the socket is closed and `isLost` turns true.
+//
+// Brakes (RedisBrakes.swift): the statement timeout is a deadline on the command's write and on
+// its reply's first node (the server's run time; rows the app reads later on credit are not
+// timed). Passing it on the read answers the timeout failure and takes the interrupt path above;
+// on the write (part of the command may be sent) the connection is lost. When a drain passes its
+// time cap (nothing came: the server may be busy running a script), a short-lived second
+// connection asks the server to stop it, within `RedisBrakes.killSeconds`, before the loss is
+// reported. A value over 256 MiB loses the connection at once (the stream is mid-payload).
 
 import Foundation
 import os
@@ -24,11 +33,20 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
 
   private let transport: RedisTransport
   private let usesTLS: Bool
+  /// The open request (host, port, user, password, TLS), kept in memory only for the second
+  /// connection that stops a busy script. Never logged: its descriptions redact the password.
+  let request: EngineRequest.Open
   private(set) var serverVersion = ""
+  /// 3 after `HELLO 3`, 2 when the server took RESP2 only
+  private(set) var protocolVersion = 3
+  /// The statement timeout of the `settings` request, 0 for none
+  private var statementTimeoutSeconds = 0
 
   // Connection queue only
   /// The socket's database, nil while unknown
   private var database: Int?
+  /// When the running command passes the statement timeout, nil without one
+  private var commandDeadline: Date?
   /// The reply on the wire, read or drained
   private var reply: RESPReply?
   /// The reply's first row, read by `execute`
@@ -39,35 +57,26 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
   private var lost = false
   private var closed = false
 
-  init(transport: RedisTransport, usesTLS: Bool) {
+  init(transport: RedisTransport, usesTLS: Bool, request: EngineRequest.Open) {
     self.transport = transport
     self.usesTLS = usesTLS
+    self.request = request
   }
 
   // MARK: Open
 
-  /// Dials, then `HELLO 3` (with `AUTH` when a password is set) and `SELECT <database>`, all by
-  /// `deadline`. Throws `EngineFailure`; the caller cleans the message of the password.
-  func open(username: String, password: String, database home: Int, deadline: Date) throws {
+  /// Dials, then runs the open handshake (RedisHandshake.swift), all by `deadline`. Throws
+  /// `EngineFailure`; the caller cleans the message of the password.
+  func open(database home: Int, deadline: Date) throws {
     try io { try transport.connect(deadline: deadline) }
-    var hello = ["HELLO", "3"]
-    if !password.isEmpty {
-      hello += ["AUTH", username.isEmpty ? "default" : username, password]
-    }
-    let nodes = try handshake(RESP.command(hello.map { Data($0.utf8) }), deadline: deadline)
-    // The map's direct children alternate key and value
-    let pairs = nodes.filter { $0.path.split(separator: ".").count == 2 }
-    var version: String?
-    var index = 0
-    while index + 1 < pairs.count {
-      if pairs[index].text == "version" { version = pairs[index + 1].text }
-      index += 2
-    }
-    if home != 0 {
-      _ = try handshake(RESP.command("SELECT", String(home)), deadline: deadline)
+    let outcome = try RedisHandshake.run(
+      username: request.username, password: request.password, database: home
+    ) { args in
+      try handshake(RESP.command(args.map { Data($0.utf8) }), deadline: deadline)
     }
     database = home
-    serverVersion = "Redis" + (version.map { " \($0)" } ?? "") + (usesTLS ? " (TLS)" : "")
+    protocolVersion = outcome.protocolVersion
+    serverVersion = RedisHandshake.serverVersion(outcome.version, usesTLS: usesTLS)
   }
 
   /// Sends one open command and reads its whole reply (a short one) by `deadline`
@@ -93,6 +102,14 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
     transport.resetInterrupt()
   }
 
+  /// The statement timeout first (it stays applied), then `unsupported` when a lock or idle
+  /// timeout is asked for: Redis has neither
+  func apply(_ settings: EngineRequest.Settings) throws {
+    let (seconds, refusal) = RedisBrakes.apply(settings)
+    statementTimeoutSeconds = seconds
+    if let refusal { throw refusal }
+  }
+
   func execute(_ sql: String) throws {
     throw EngineFailure(code: .unsupported, message: "Redis runs commands from the Redis editor.")
   }
@@ -102,9 +119,12 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
   }
 
   /// Sends `SELECT <db>` first when the socket is on another database, then the command, and
-  /// reads the reply's first node: a top-level error throws here
+  /// reads the reply's first node: a top-level error throws here. On a read-only connection a
+  /// command off the allowlist (RedisReadOnly.swift) throws before anything is sent. The
+  /// statement timeout covers the `SELECT` and the command.
   func execute(argv args: [Data], db: Int) throws {
     discardResults()
+    commandDeadline = nil
     guard !lost, !closed else {
       throw EngineFailure(code: .connect, message: "The connection to the server was lost.")
     }
@@ -113,6 +133,10 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
     }
     guard db >= 0 else {
       throw EngineFailure(code: .invalid, message: "The database index must be 0 or more.")
+    }
+    if request.readOnly, let refusal = RedisReadOnly.refusal(args) { throw refusal }
+    if statementTimeoutSeconds > 0 {
+      commandDeadline = Date(timeIntervalSinceNow: TimeInterval(statementTimeoutSeconds))
     }
     if database != db {
       database = nil
@@ -129,14 +153,15 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
     columnsReturned = false
   }
 
-  /// Writes `command` and reads the first node of its reply. A top-level error throws (the
-  /// reply is then whole).
+  /// Writes `command` and reads the first node of its reply, both by `commandDeadline`. A
+  /// top-level error throws (the reply is then whole).
   private func send(_ command: Data) throws -> RESPNode {
     // Interrupted before the write: nothing was sent, nothing is owed
-    try io { try transport.write(command, deadline: nil) }
+    try io { try braked(write: true) { try transport.write(command, deadline: commandDeadline) } }
     let reply = RESPReply()
     self.reply = reply
-    guard let node = try io({ try reply.next(from: reader()) }) else {
+    let reader = RedisReader(transport, deadline: commandDeadline, interruptible: true)
+    guard let node = try io({ try braked(write: false) { try reply.next(from: reader) } }) else {
       throw RedisTransportError.malformed.failure
     }
     if node.type == "error", reply.isComplete {
@@ -169,6 +194,28 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
 
   var affectedRows: Int? { nil }
 
+  /// Redis has no tables, views or columns: the list reads answer empty, so the app's
+  /// introspector lists nothing (keys are read with `argv`). Other reads stay unsupported.
+  func catalog(_ read: EngineRequest.Catalog) throws -> EngineCatalogResult {
+    switch read.read {
+    case .tables: .tables([])
+    case .views: .views([])
+    case .functions: .functions([])
+    case .procedures: .procedures([])
+    case .triggers: .triggers([])
+    case .users: .users([])
+    case .roles: .roles([])
+    case .foreignKeys: .foreignKeys([])
+    case .allColumns: .allColumns([:])
+    case .primaryKey: .primaryKey([])
+    case .definition: .definition(nil)
+    case .editTable: .editTable(nil)
+    default:
+      throw EngineFailure(
+        code: .unsupported, message: "This catalog read is not supported by this plugin.")
+    }
+  }
+
   /// Drains what the current reply still owes, within `drainBytes` / `drainSeconds`; past
   /// either the socket is closed and the connection is lost. An interrupt does not stop it.
   func discardResults() {
@@ -185,8 +232,45 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
     } catch {
       log.notice("The rest of a reply could not be drained; the connection closes.")
       markLost()
+      // The drain passed its `drainSeconds` deadline (bytes may still have been arriving): the
+      // server may be busy running a script
+      if error as? RedisTransportError == .timedOut { stopBusyScript() }
     }
   }
+
+  /// Best effort, within `RedisBrakes.killSeconds` in all: a second connection to the same
+  /// endpoint (same TLS and local-host policy) sends only the open's authentication,
+  /// `SCRIPT KILL` and `FUNCTION KILL` (RedisBrakes.swift), skips their replies whatever they
+  /// say (`NOTBUSY`, `UNKILLABLE`, ...), then closes. Nothing it reads is logged: an error can
+  /// echo the password.
+  private func stopBusyScript() {
+    guard let endpoint = try? RedisEndpoint(request) else { return }
+    let deadline = Date(timeIntervalSinceNow: RedisBrakes.killSeconds)
+    let kill = RedisTransport(
+      endpoint: endpoint, connectTimeoutSeconds: Int(RedisBrakes.killSeconds))
+    defer { kill.close() }
+    let commands = RedisBrakes.killCommands(
+      username: request.username, password: request.password, protocolVersion: protocolVersion)
+    do {
+      try kill.connect(deadline: deadline)
+      // One write: the server reads them all once it reads clients again
+      try kill.write(
+        commands.reduce(into: Data()) { $0.append(RESP.command($1.map { Data($0.utf8) })) },
+        deadline: deadline)
+      let reader = RedisReader(
+        kill, deadline: deadline, interruptible: false, budget: Self.killReplyBytes)
+      for _ in commands {
+        let reply = RESPReply()
+        while try reply.skipNext(from: reader) {}
+      }
+      log.notice("\(endpoint.host, privacy: .public): asked the server to stop a busy script.")
+    } catch {
+      log.notice("\(endpoint.host, privacy: .public): the request to stop a busy script failed.")
+    }
+  }
+
+  /// What the kill connection's replies may hold at most
+  private static let killReplyBytes = 1 << 20
 
   var isLost: Bool { lost }
 
@@ -207,16 +291,33 @@ final class RedisConnection: EngineConnection, @unchecked Sendable {
   }
 
   /// `body`, with transport and stream failures as `EngineFailure`. Any of them but an
-  /// interrupt leaves the stream out of step: the connection is lost.
+  /// interrupt leaves the stream out of step: the connection is lost. So does a value over
+  /// 256 MiB (`tooLarge`): the stream stops mid-payload, past what a drain would skip.
   private func io<T>(_ body: () throws -> T) throws -> T {
     do {
       return try body()
     } catch let error as RedisTransportError {
       if error != .interrupted { markLost() }
       throw error.failure
-    } catch is RESPProtocolError {
+    } catch let error as RESPProtocolError {
       markLost()
-      throw RedisTransportError.malformed.failure
+      throw error.failure
+    } catch let failure as EngineFailure where failure.code == .tooLarge {
+      markLost()
+      throw failure
+    }
+  }
+
+  /// `body`, a command's write or its reply's first read, with the statement deadline's
+  /// timeout as the timeout failure. A read stopped by it consumed nothing (the drain follows,
+  /// as after an interrupt); a write may have sent part of the command, so the connection is
+  /// lost.
+  private func braked<T>(write: Bool, _ body: () throws -> T) throws -> T {
+    do {
+      return try body()
+    } catch RedisTransportError.timedOut where commandDeadline != nil {
+      if write { markLost() }
+      throw RedisBrakes.timeoutFailure(seconds: statementTimeoutSeconds)
     }
   }
 

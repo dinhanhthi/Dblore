@@ -48,11 +48,11 @@
       "kind": "bundle",
       "version": "1.0.0",
       "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-redis-v1.0.0/DbloreRedis.zip",
-      "sha256": "49a8a186a0d65622e0330448aec4401054f8ff1b9c1420772b90fd0982762c66",
-      "maxSize": 324568,
+      "sha256": "5af1dfae1554e7cc2181efd3f87733cd6f62380eb1eac3ffe9f75a81a1d822ad",
+      "maxSize": 354630,
       "bundleName": "DbloreRedis.bundle",
       "bundleIdentifier": "ace.thi.Dblore.Redis",
-      "cdhash": "af8b239cd5c4b7f10fbed7ede41d4f677f989d38"
+      "cdhash": "8987c5b418bc17218d5a6cf975420c6407b0b300"
     }
   ]
 }
