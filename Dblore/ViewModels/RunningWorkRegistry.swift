@@ -331,7 +331,7 @@ final class RunningWorkRegistry {
   nonisolated static func restoreConsequence(_ engine: DatabaseType) -> String {
     switch engine {
     case .postgresql, .sqlite, .duckdb: "will be stopped and rolled back"
-    case .mysql, .mongodb, .clickhouse, .sqlserver:
+    case .mysql, .mongodb, .clickhouse, .sqlserver, .redis:
       "will be stopped; statements already run stay in the database"
     }
   }

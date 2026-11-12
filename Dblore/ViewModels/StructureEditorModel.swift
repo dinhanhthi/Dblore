@@ -254,7 +254,7 @@ final class StructureEditorModel {
   var supportsTableComment: Bool {
     switch context.databaseType {
     case .postgresql, .mysql: true
-    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: false
     }
   }
 
@@ -1025,7 +1025,7 @@ final class StructureEditorModel {
     case .sqlite: .sqlite(libraryVersion: SQLiteLibraryVersion.current)
     case .duckdb: .duckdb
     // No structure editing: no engine, so no preview and nothing to apply
-    case .mongodb, .clickhouse, .sqlserver: nil
+    case .mongodb, .clickhouse, .sqlserver, .redis: nil
     }
   }
 

@@ -740,7 +740,7 @@ final class DatabaseBackupModel {
       name = "memory"
     case .sqlite, .duckdb:
       name = URL(fileURLWithPath: config.database).deletingPathExtension().lastPathComponent
-    case .postgresql, .mysql, .mongodb, .clickhouse, .sqlserver:
+    case .postgresql, .mysql, .mongodb, .clickhouse, .sqlserver, .redis:
       name = config.database
     }
     return name.isEmpty ? "dump" : name

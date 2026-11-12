@@ -86,6 +86,7 @@ nonisolated enum SchemaSnapshotLoader {
     case .mongodb: throw SchemaCompareError.unsupportedEngine("MongoDB")
     case .clickhouse: throw SchemaCompareError.unsupportedEngine("ClickHouse")
     case .sqlserver: throw SchemaCompareError.unsupportedEngine("SQL Server")
+    case .redis: throw SchemaCompareError.unsupportedEngine("Redis")
     case nil: throw DatabaseError.notConnected
     }
   }

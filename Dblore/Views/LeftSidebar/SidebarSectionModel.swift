@@ -105,6 +105,8 @@ nonisolated enum SidebarSectionModel {
         Section(kind: .tables, title: "Collections", icon: "tablecells"),
         Section(kind: .views, title: "Views", icon: "eye"),
       ]
+    case .redis:
+      []
     }
   }
 
@@ -153,7 +155,7 @@ nonisolated enum SidebarSectionModel {
         .union(schemas.filter { $0.wholeMatch(of: /pg_(toast_)?temp_[0-9]+/) != nil })
     case .sqlite:
       Set(schemas).intersection(["temp"])
-    case .mysql, .duckdb, .mongodb, .clickhouse, .sqlserver:
+    case .mysql, .duckdb, .mongodb, .clickhouse, .sqlserver, .redis:
       []
     }
   }
@@ -215,7 +217,7 @@ nonisolated enum SidebarSectionModel {
   static func supportsTableChanges(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .mysql, .sqlite: true
-    case .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: false
     }
   }
 

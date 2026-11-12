@@ -78,7 +78,7 @@ final class CreateTableModel: Identifiable {
   var supportsComment: Bool {
     switch context.databaseType {
     case .postgresql, .mysql: true
-    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    case .sqlite, .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: false
     }
   }
 
@@ -152,7 +152,7 @@ final class CreateTableModel: Identifiable {
     case .sqlite: .sqlite(libraryVersion: SQLiteLibraryVersion.current)
     case .duckdb: .duckdb
     // No tables to create: no engine, so no preview and nothing to send
-    case .mongodb, .clickhouse, .sqlserver: nil
+    case .mongodb, .clickhouse, .sqlserver, .redis: nil
     }
   }
 

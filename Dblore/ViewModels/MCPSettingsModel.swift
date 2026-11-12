@@ -77,7 +77,7 @@ final class MCPSettingsModel {
   static func isAvailable(_ entry: ConnectionHistoryEntry) -> Bool {
     switch entry.config.databaseType {
     case .postgresql, .sqlite, .mysql, .mongodb: true
-    case .duckdb, .clickhouse, .sqlserver: false
+    case .duckdb, .clickhouse, .sqlserver, .redis: false
     }
   }
 

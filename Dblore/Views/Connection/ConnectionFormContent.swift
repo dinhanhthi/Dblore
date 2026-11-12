@@ -494,7 +494,7 @@ struct ConnectionFormContent: View {
   static func supportsConnectionString(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .mongodb: true
-    case .mysql, .sqlite, .duckdb, .clickhouse, .sqlserver: false
+    case .mysql, .sqlite, .duckdb, .clickhouse, .sqlserver, .redis: false
     }
   }
 
@@ -524,7 +524,7 @@ struct ConnectionFormContent: View {
         + "chain and the host name on every server version: strict encryption (TDS 8.0) on SQL "
         + "Server 2022 and later, otherwise required encryption, never without the host name "
         + "check. A picked CA certificate is used only by Verify CA and Verify Full."
-    case .postgresql, .sqlite, .duckdb, .clickhouse: nil
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .redis: nil
     }
   }
 

@@ -227,7 +227,7 @@ struct WorkspaceLeftSidebarContent: View {
     case .mysql: fallback = workspaceManager.workspace.connectionConfig?.database ?? ""
     case .postgresql, .sqlite, .duckdb, .mongodb:
       fallback = connectionDatabaseType.dialect.defaultSchema
-    case .clickhouse, .sqlserver: fallback = ""
+    case .clickhouse, .sqlserver, .redis: fallback = ""
     }
     var schemas = publicSchemas.listed
     // The default schema stays pickable but goes last, so "+" on a flat list targets its schema

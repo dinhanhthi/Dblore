@@ -96,7 +96,7 @@ nonisolated enum TablePlusImporter {
     switch engine {
     case .mysql: defaultPort = engine.defaultPort
     case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       return .failure(
         Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }
@@ -116,7 +116,7 @@ nonisolated enum TablePlusImporter {
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
     case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       return .failure(
         Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }

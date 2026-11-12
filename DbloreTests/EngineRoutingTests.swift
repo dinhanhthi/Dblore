@@ -2,7 +2,7 @@
 // Each engine gets its own catalog SQL and transaction start. DuckDB is refused with
 // `engineUnavailable` while its plugin is not installed; it never falls back to PostgreSQL.
 // ClickHouse and SQL Server read their catalog through the engine plugin's introspector and are
-// refused the same way without their plugin.
+// refused the same way without their plugin. Redis is refused even with its plugin installed.
 
 import Foundation
 import Testing
@@ -119,9 +119,22 @@ struct EngineRoutingTests {
   /// Engines shipped by a plugin; none has an installed plugin in these tests.
   static let pluginEngines = DatabaseType.allCases.filter(\.capabilities.requiresPlugin)
 
-  @Test("ClickHouse and SQL Server are plugin engines, as DuckDB is")
+  @Test("ClickHouse, SQL Server and Redis are plugin engines, as DuckDB is")
   func pluginEnginesListed() {
-    #expect(Self.pluginEngines == [.duckdb, .clickhouse, .sqlserver])
+    #expect(Self.pluginEngines == [.duckdb, .clickhouse, .sqlserver, .redis])
+  }
+
+  // Phase 8 flips this: Redis then builds a plugin session once its plugin is installed.
+  @Test("Redis is refused with engineUnavailable even with its plugin installed")
+  func redisRefusedWithPluginInstalled() async throws {
+    let config = ConnectionConfig(databaseType: .redis, host: "", database: "0")
+    do {
+      _ = try await AppDatabaseSessionFactory(enginePluginInstalled: { _ in true })
+        .makeSession(config: config)
+      Issue.record("Redis makeSession should fail")
+    } catch DatabaseError.engineUnavailable(let refused) {
+      #expect(refused == .redis)
+    }
   }
 
   @Test(

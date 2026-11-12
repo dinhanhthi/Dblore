@@ -59,7 +59,7 @@ nonisolated enum SQLDumpDataRenderer {
       isMySQLHexType(typeName) ? "HEX(\(quotedName))" : "CAST(\(quotedName) AS CHAR)"
     case .duckdb:
       isDuckDBBlob(typeName) ? "hex(\(quotedName))" : "CAST(\(quotedName) AS VARCHAR)"
-    case .sqlite, .mongodb, .clickhouse, .sqlserver: "quote(\(quotedName))"
+    case .sqlite, .mongodb, .clickhouse, .sqlserver, .redis: "quote(\(quotedName))"
     }
   }
 

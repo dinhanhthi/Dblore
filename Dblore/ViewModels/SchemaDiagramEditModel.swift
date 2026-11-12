@@ -480,7 +480,7 @@ final class SchemaDiagramEditModel {
     case .mysql: mysqlServerInfo.map { .mysql($0) }
     case .sqlite: .sqlite(libraryVersion: SQLiteLibraryVersion.current)
     // Not editable here: no engine, so no preview and nothing to apply
-    case .duckdb, .mongodb, .clickhouse, .sqlserver: nil
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: nil
     }
   }
 

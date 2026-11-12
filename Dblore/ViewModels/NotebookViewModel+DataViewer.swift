@@ -288,7 +288,7 @@ extension NotebookViewModel {
   func dataViewerSourceLabels(_ state: DataViewerState, columns: [ColumnInfo]) -> [Int: String] {
     switch state.databaseType {
     case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb, .clickhouse, .sqlserver: return [:]
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: return [:]
     }
     let relation = [state.schema, state.name].filter { !$0.isEmpty }
     var labels: [Int: String] = [:]

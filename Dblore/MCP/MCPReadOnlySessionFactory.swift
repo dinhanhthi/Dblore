@@ -103,7 +103,7 @@ nonisolated struct MCPReadOnlySessionFactory: DatabaseSessionFactory {
       throw MCPConnectionError.duckDBNotSupported
     case .mongodb:
       return try await inner.makeSession(config: config)
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       throw MCPConnectionError.engineNotSupported(config.databaseType)
     }
   }

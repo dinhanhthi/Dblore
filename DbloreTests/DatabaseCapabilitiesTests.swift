@@ -3,7 +3,8 @@
 // DuckDB is a file engine offered only when its plugin is installed. MongoDB is listed after
 // MySQL. ClickHouse is a network plugin engine (no transactions, edits, import or dump); SQL
 // Server is a network plugin engine with transactions, keyed grid edits and foreign key lookup
-// (no structure editing, dump, import, user types, roles or Explain).
+// (no structure editing, dump, import, user types, roles or Explain). Redis is a network plugin
+// engine that is not available yet: Redis commands, the statement brake, nothing else.
 
 import Foundation
 import Testing
@@ -66,7 +67,7 @@ struct DatabaseCapabilitiesTests {
 
   private static let expected: [DatabaseType: DatabaseCapabilities] = [
     .postgresql: postgresql, .sqlite: sqlite, .duckdb: duckdb, .mysql: mysql, .mongodb: mongodb,
-    .clickhouse: clickhouse, .sqlserver: sqlserver,
+    .clickhouse: clickhouse, .sqlserver: sqlserver, .redis: redis,
   ]
 
   private static let postgresql = DatabaseCapabilities(
@@ -253,6 +254,33 @@ struct DatabaseCapabilitiesTests {
     isAvailable: true,
     queryLanguage: .sql,
     supportsTransactions: true,
+    supportsStructure: false,
+    supportsSQLDump: false,
+    supportsUserTypes: false
+  )
+
+  private static let redis = DatabaseCapabilities(
+    usesNetwork: true,
+    usesPassword: true,
+    supportsSSL: true,
+    supportsSchemas: false,
+    supportsRolesAndUsers: false,
+    supportsFunctions: false,
+    supportsServerCursor: false,
+    supportsSessionBrakes: true,
+    cancelStrategy: .interrupt,
+    cappedReadResetsSession: false,
+    supportsExplainJSON: false,
+    supportsExplainAnalyze: false,
+    supportsUpdateOnly: false,
+    supportsDefaultInUpdate: false,
+    supportsRowStaging: false,
+    supportsDataImport: false,
+    supportsForeignKeyLookup: false,
+    requiresPlugin: true,
+    isAvailable: false,
+    queryLanguage: .redis,
+    supportsTransactions: false,
     supportsStructure: false,
     supportsSQLDump: false,
     supportsUserTypes: false

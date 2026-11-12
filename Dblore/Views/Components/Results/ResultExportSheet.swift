@@ -71,7 +71,7 @@ struct ResultExportSheet: View {
   static func exportFormats(for language: DatabaseCapabilities.QueryLanguage) -> [ExportFormat] {
     switch language {
     case .sql: ExportFormat.allCases
-    case .mongosh: ExportFormat.allCases.filter { $0 != .sqlInsert && $0 != .parquet }
+    case .mongosh, .redis: ExportFormat.allCases.filter { $0 != .sqlInsert && $0 != .parquet }
     }
   }
 

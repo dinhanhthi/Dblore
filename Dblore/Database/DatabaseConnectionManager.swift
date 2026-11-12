@@ -28,7 +28,7 @@ actor DatabaseConnectionManager {
       MySQLSchemaIntrospector(database: config?.database ?? "")
     case .mongodb:
       MongoSchemaIntrospector()
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       EnginePluginIntrospector()
     }
   }
@@ -659,6 +659,8 @@ actor DatabaseConnectionManager {
       return try await MongoSession.probe(config: config, hostKeyValidator: sshHostKeyPolicy)
     case .clickhouse, .sqlserver:
       return try await probeEnginePlugin(config)
+    case .redis:
+      throw DatabaseError.engineUnavailable(.redis)
     }
   }
 
@@ -1211,6 +1213,8 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       // `open()` loads the plugin bundle (signature check, dlopen) before it connects.
       return EnginePluginSession(
         pluginID: pluginID, config: config, hostKeyValidator: hostKeyValidator)
+    case .redis:
+      throw DatabaseError.engineUnavailable(.redis)
     }
   }
 }

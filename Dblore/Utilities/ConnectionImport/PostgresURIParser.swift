@@ -200,7 +200,7 @@ nonisolated enum PostgresURIParser {
       switch engine {
       case .mysql: try applyMySQL(key: key, value: value)
       case .postgresql, .sqlite, .duckdb, .mongodb: try applyPostgres(key: key, value: value)
-      case .clickhouse, .sqlserver: throw ParseError.unsupportedScheme
+      case .clickhouse, .sqlserver, .redis: throw ParseError.unsupportedScheme
       }
     }
 
@@ -281,7 +281,7 @@ nonisolated enum PostgresURIParser {
       case .postgresql, .sqlite, .duckdb, .mongodb:
         // libpq: dbname defaults to the user name.
         if database.isEmpty { database = username.isEmpty ? "postgres" : username }
-      case .clickhouse, .sqlserver:
+      case .clickhouse, .sqlserver, .redis:
         throw ParseError.unsupportedScheme
       }
       let config = ConnectionConfig(
@@ -328,7 +328,7 @@ nonisolated enum PostgresURIParser {
       switch engine {
       case .mysql: return engine.defaultPort
       case .postgresql, .sqlite, .duckdb, .mongodb: return defaultPort
-      case .clickhouse, .sqlserver: throw ParseError.unsupportedScheme
+      case .clickhouse, .sqlserver, .redis: throw ParseError.unsupportedScheme
       }
     }
     guard text.allSatisfy({ $0.isASCII && $0.isNumber }), let value = Int(text),

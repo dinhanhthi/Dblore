@@ -19,6 +19,7 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   nonisolated enum QueryLanguage: Sendable, Equatable {
     case sql
     case mongosh
+    case redis
   }
 
   let usesNetwork: Bool
@@ -48,7 +49,7 @@ nonisolated struct DatabaseCapabilities: Sendable, Equatable {
   let requiresPlugin: Bool
   /// False means the engine is not a working database in the app.
   let isAvailable: Bool
-  /// SQL or the mongosh subset. Drives editor and view-model branching.
+  /// SQL, the mongosh subset or Redis commands. Drives editor and view-model branching.
   let queryLanguage: QueryLanguage
   /// Writes can run inside a transaction (Review commit style, Protected mode).
   let supportsTransactions: Bool

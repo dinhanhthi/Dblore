@@ -109,9 +109,14 @@ enum TabDocumentType: String, Codable, Equatable {
     }
   }
 
-  /// Script file extension for a connection: "js" for a mongosh connection, else "sql"
+  /// Script file extension for a connection: "js" for a mongosh connection, "redis" for a Redis
+  /// one, else "sql"
   nonisolated static func scriptExtension(for databaseType: DatabaseType?) -> String {
-    databaseType?.capabilities.queryLanguage == .mongosh ? "js" : "sql"
+    switch databaseType?.capabilities.queryLanguage {
+    case .mongosh: "js"
+    case .redis: "redis"
+    case .sql, nil: "sql"
+    }
   }
 
   /// Message when a script file does not fit the connection, nil when it opens. A workspace

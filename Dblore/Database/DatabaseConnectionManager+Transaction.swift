@@ -690,7 +690,7 @@ extension DatabaseConnectionManager {
     case .duckdb, .sqlserver: "BEGIN TRANSACTION"
     case .mysql: "START TRANSACTION"
     case .mongodb: "-- dblore: MongoDB has no transactions"
-    case .clickhouse: "-- dblore: no app transactions on this engine"
+    case .clickhouse, .redis: "-- dblore: no app transactions on this engine"
     }
   }
 
@@ -814,7 +814,7 @@ extension DatabaseConnectionManager {
     case .postgresql, nil:
       session?.brakeFlavor?.supportsIdleInTransactionTimeout == false
         ? nil : Self.suspendIdleTimeoutSQL
-    case .sqlite, .duckdb, .mysql, .mongodb, .clickhouse, .sqlserver: nil
+    case .sqlite, .duckdb, .mysql, .mongodb, .clickhouse, .sqlserver, .redis: nil
     }
   }
 

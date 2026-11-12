@@ -218,7 +218,7 @@ actor MCPConnectionPool {
       if id.writable {
         switch entry.config.databaseType {
         case .duckdb: throw MCPConnectionError.duckDBNotSupported
-        case .clickhouse, .sqlserver:
+        case .clickhouse, .sqlserver, .redis:
           throw MCPConnectionError.engineNotSupported(entry.config.databaseType)
         case .postgresql, .sqlite, .mysql, .mongodb: break
         }

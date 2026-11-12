@@ -61,7 +61,7 @@ nonisolated struct SQLStatementStream {
   ) throws {
     switch engine {
     case .postgresql, .mysql, .sqlite, .duckdb: break
-    case .mongodb, .clickhouse, .sqlserver:
+    case .mongodb, .clickhouse, .sqlserver, .redis:
       throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
     handle = try FileHandle(forReadingFrom: url)

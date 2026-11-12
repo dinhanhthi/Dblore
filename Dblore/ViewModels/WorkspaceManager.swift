@@ -105,7 +105,7 @@ class WorkspaceManager: Identifiable {
   nonisolated static func generatesRows(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .sqlite, .duckdb, .mysql, .mongodb: type.capabilities.supportsRowStaging
-    case .clickhouse, .sqlserver: false
+    case .clickhouse, .sqlserver, .redis: false
     }
   }
 

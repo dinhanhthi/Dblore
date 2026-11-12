@@ -204,7 +204,7 @@ struct CapabilityGatingTests {
 
   private func config(_ type: DatabaseType) -> ConnectionConfig {
     switch type {
-    case .postgresql, .mysql, .mongodb, .clickhouse, .sqlserver:
+    case .postgresql, .mysql, .mongodb, .clickhouse, .sqlserver, .redis:
       ConnectionConfig(
         databaseType: type, host: "localhost", port: type.defaultPort,
         database: "app", username: "ana", password: "x",

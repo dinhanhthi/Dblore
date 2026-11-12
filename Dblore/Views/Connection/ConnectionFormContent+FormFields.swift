@@ -214,7 +214,7 @@ extension ConnectionFormContent {
     let mode = MongoConnectionDraft.normalizedSSLMode(sslMode, for: type)
     guard mode == .require || mode == .verifyCa || mode == .verifyFull else { return .none }
     switch type {
-    case .mongodb, .clickhouse, .sqlserver: return .customCA
+    case .mongodb, .clickhouse, .sqlserver, .redis: return .customCA
     case .postgresql, .sqlite, .duckdb, .mysql: return .clientCertificateAndCA
     }
   }
