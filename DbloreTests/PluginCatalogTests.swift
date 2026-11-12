@@ -55,7 +55,8 @@ import Testing
   @Test func bundledCatalogPinsEveryPlugin() throws {
     let catalog = try PluginCatalog.bundled()
     #expect(catalog.schemaVersion == 3)
-    #expect(catalog.plugins.map(\.id) == ["duckdb", "local-ai", "sqlserver", "clickhouse"])
+    #expect(
+      catalog.plugins.map(\.id) == ["duckdb", "local-ai", "sqlserver", "clickhouse", "redis"])
     let duckdb = try #require(catalog.entry(id: "duckdb"))
     #expect(duckdb.version == "1.5.6")
     #expect(duckdb.url.absoluteString == Self.validURL)
@@ -98,6 +99,18 @@ import Testing
     }
     #expect(chName == "DbloreClickHouse.bundle")
     #expect(chIdentifier == "ace.thi.Dblore.ClickHouse")
+    let redis = try #require(catalog.entry(id: "redis"))
+    #expect(redis.version == "1.0.0")
+    #expect(
+      redis.url.absoluteString
+        == "https://github.com/dinhanhthi/Dblore/releases/download/plugin-redis-v1.0.0/DbloreRedis.zip"
+    )
+    guard case .bundle(let redisName, let redisIdentifier, _) = redis.kind else {
+      Issue.record("redis is not a bundle: \(redis.kind)")
+      return
+    }
+    #expect(redisName == "DbloreRedis.bundle")
+    #expect(redisIdentifier == "ace.thi.Dblore.Redis")
   }
 
   @Test func validCatalogDecodesEveryEntry() throws {

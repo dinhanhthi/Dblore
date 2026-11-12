@@ -42,6 +42,17 @@
       "bundleName": "DbloreClickHouse.bundle",
       "bundleIdentifier": "ace.thi.Dblore.ClickHouse",
       "cdhash": "afd26b435018156da0dfe2413d3a5b03483a9984"
+    },
+    {
+      "id": "redis",
+      "kind": "bundle",
+      "version": "1.0.0",
+      "url": "https://github.com/dinhanhthi/Dblore/releases/download/plugin-redis-v1.0.0/DbloreRedis.zip",
+      "sha256": "49a8a186a0d65622e0330448aec4401054f8ff1b9c1420772b90fd0982762c66",
+      "maxSize": 324568,
+      "bundleName": "DbloreRedis.bundle",
+      "bundleIdentifier": "ace.thi.Dblore.Redis",
+      "cdhash": "af8b239cd5c4b7f10fbed7ede41d4f677f989d38"
     }
   ]
 }
