@@ -2,14 +2,15 @@
 //  TablePlusImporter.swift
 //  Dblore
 //
-//  Imports PostgreSQL and MySQL/MariaDB connections from TablePlus's `Connections.plist`
+//  Imports PostgreSQL, MySQL/MariaDB and Redis connections from TablePlus's `Connections.plist`
 //  (`~/Library/Application Support/com.tinyapp.TablePlus/Data/`), a plist array of dictionaries.
 //  Passwords stay in TablePlus's Keychain and are never imported. The file is external input:
 //  its size is bounded and warnings never carry secret values.
 //
-//  Key names: `ConnectionName`, `Driver` ("PostgreSQL", "MySQL", "MariaDB"), `DatabaseHost`,
-//  `DatabasePort` (string), `DatabaseName`, `DatabaseUser`, `isUseSocket`, `tLSMode` (integer),
-//  `isOverSSH`, `ServerAddress`, `ServerPort` (string), `ServerUser`, `isUsePrivateKey`.
+//  Key names: `ConnectionName`, `Driver` ("PostgreSQL", "MySQL", "MariaDB", "Redis"),
+//  `DatabaseHost`, `DatabasePort` (string), `DatabaseName` (a Redis entry's database index),
+//  `DatabaseUser` (a Redis entry's ACL user), `isUseSocket`, `tLSMode` (integer), `isOverSSH`,
+//  `ServerAddress`, `ServerPort` (string), `ServerUser`, `isUsePrivateKey`.
 //  The `.tableplusconnection` export is RNCryptor-encrypted with a user passphrase: not supported.
 //
 
@@ -83,6 +84,7 @@ nonisolated enum TablePlusImporter {
     switch driver.lowercased() {
     case "postgresql": engine = .postgresql
     case "mysql", "mariadb": engine = .mysql
+    case "redis": engine = .redis
     default:
       return .failure(
         Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
@@ -94,9 +96,9 @@ nonisolated enum TablePlusImporter {
     guard !host.isEmpty else { return .failure(Skipped(message: "Skipped \(label): no host.")) }
     let defaultPort: Int
     switch engine {
-    case .mysql: defaultPort = engine.defaultPort
+    case .mysql, .redis: defaultPort = engine.defaultPort
     case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
-    case .clickhouse, .sqlserver, .redis:
+    case .clickhouse, .sqlserver:
       return .failure(
         Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }
@@ -116,11 +118,18 @@ nonisolated enum TablePlusImporter {
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
     case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
-    case .clickhouse, .sqlserver, .redis:
+    case .redis:
+      let checked = ImportedConnection.redisDatabase(redisDatabaseText(entry["DatabaseName"]))
+      database = checked.database
+      if let warning = checked.warning { warnings.append(warning) }
+    case .clickhouse, .sqlserver:
       return .failure(
         Skipped(message: "Skipped \(label): unsupported driver \(sanitized(driver))."))
     }
-    let sslMode = sslMode(entry["tLSMode"], warnings: &warnings)
+    let sslMode =
+      engine == .redis
+      ? redisSSLMode(entry["tLSMode"], warnings: &warnings)
+      : sslMode(entry["tLSMode"], warnings: &warnings)
 
     var sshTunnel: SSHTunnelConfig?
     if bool(entry["isOverSSH"]) == true {
@@ -155,6 +164,35 @@ nonisolated enum TablePlusImporter {
     warnings.append(
       "TLS mode not imported; using \(SSLMode.prefer.rawValue). Check it after import.")
     return .prefer
+  }
+
+  /// Redis connects with TLS off or with the certificate checked, nothing in between, and the
+  /// picker index does not say which: only the mode names "disable" and "verify-full" are
+  /// mapped. Anything else, a missing value included, is verify-full (never a silent downgrade
+  /// to plain TCP), with a note to choose Disable when the server has no TLS.
+  private static func redisSSLMode(_ value: Any?, warnings: inout [String]) -> SSLMode {
+    // The modes the connection form offers for Redis (`MongoConnectionDraft.sslModes`)
+    if let text = value as? String, let mode = SSLMode(rawValue: text.lowercased()),
+      mode == .disable || mode == .verifyFull
+    {
+      return mode
+    }
+    warnings.append(
+      "TLS mode not imported; using \(SSLMode.verifyFull.rawValue). Choose Disable after "
+        + "import if the server has no TLS.")
+    return .verifyFull
+  }
+
+  /// A Redis database index as text for `ImportedConnection.redisDatabase`: a string trimmed, a
+  /// whole number as its digits, nothing as "". Any other value is not an index ("-").
+  private static func redisDatabaseText(_ value: Any?) -> String {
+    switch value {
+    case nil: return ""
+    case let text as String: return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID():
+      return number.stringValue
+    default: return "-"
+    }
   }
 
   private static func mapTunnel(

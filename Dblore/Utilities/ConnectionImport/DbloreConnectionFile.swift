@@ -22,7 +22,8 @@
 //
 //  The file is external input on import: its size, entry counts and field lengths are bounded,
 //  an unknown format or a newer version is refused, every value is checked again (ports,
-//  engines, TLS modes, timeouts) and sanitized by ConnectionConfig's own rules (color, group,
+//  engines, TLS modes, timeouts; a Redis database that is not an index the form accepts opens
+//  database 0, with a note) and sanitized by ConnectionConfig's own rules (color, group,
 //  hidden schemas). AI access "Always" falls back to the AI settings. Each row warns about what
 //  a file could use against the user: an SSH tunnel host, a weakened protection, custom AI
 //  rules, a connection string that names other hosts (then dropped). Scripts are never imported:
@@ -342,7 +343,7 @@ nonisolated extension DbloreConnectionFile.Connection {
     func skip(_ reason: String) -> Result<ImportedConnection, Skipped> {
       .failure(Skipped(message: "Skipped \(label): \(reason)."))
     }
-    // An engine not yet available (Redis) is skipped as unsupported until it is
+    // An engine that is not available is skipped as unsupported
     guard let engine = DatabaseType(rawValue: databaseType), engine.capabilities.isAvailable else {
       return skip("unsupported engine")
     }
@@ -405,9 +406,16 @@ nonisolated extension DbloreConnectionFile.Connection {
       warnings += checked.warnings
     }
 
+    var savedDatabase = database
+    if engine == .redis {
+      let checked = ImportedConnection.redisDatabase(database)
+      savedDatabase = checked.database
+      if let warning = checked.warning { warnings.append(warning) }
+    }
+
     var config = ConnectionConfig(
-      databaseType: engine, host: savedHost, port: port, database: database, username: username,
-      sslMode: tls, sshTunnel: tunnel,
+      databaseType: engine, host: savedHost, port: port, database: savedDatabase,
+      username: username, sslMode: tls, sshTunnel: tunnel,
       timeoutSeconds: SessionBrakeLimits.clamp(
         timeoutSeconds, to: DbloreConnectionFile.connectTimeoutRange, default: 30),
       protectionLevel: protection, name: name, safeMode: safe, protectedMode: protectedMode,
@@ -566,5 +574,29 @@ nonisolated extension DbloreConnectionFile.Connection {
     let removed = CharacterSet.controlCharacters.union(.newlines)
     let line = String(text.unicodeScalars.filter { !removed.contains($0) })
     return line.count > 60 ? String(line.prefix(60)) + "…" : line
+  }
+}
+
+// MARK: - Redis database index
+
+nonisolated extension ImportedConnection {
+  /// Database indexes a Redis connection keeps on import: the connection form's range
+  /// (`ConnectionFormContent.redisDatabaseIndexes`)
+  static let redisDatabaseIndexes = 0...15
+
+  static let redisDatabaseWarning =
+    "The database index is not a whole number from \(redisDatabaseIndexes.lowerBound) to "
+    + "\(redisDatabaseIndexes.upperBound); database 0 is used. Check it after import."
+
+  /// The Redis database an import saves for `value`: `value` when it is an index of
+  /// `redisDatabaseIndexes` in plain digits ("3", not "03" or "+3"), as the form accepts;
+  /// otherwise "0", never another database. A value that is neither empty nor an index comes
+  /// with `redisDatabaseWarning`.
+  static func redisDatabase(_ value: String) -> (database: String, warning: String?) {
+    if value.isEmpty { return ("0", nil) }
+    if let index = Int(value), redisDatabaseIndexes.contains(index), String(index) == value {
+      return (value, nil)
+    }
+    return ("0", redisDatabaseWarning)
   }
 }

@@ -128,9 +128,9 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// as a plugin: schemas, functions, the statement and lock timeouts as brakes, cancel stops the
   /// statement, transactions, grid edits of a table with a primary key, `DEFAULT` in an UPDATE
   /// and foreign key lookup; no structure editing, SQL dump, import, user types, roles, server
-  /// cursor or Explain. Redis is a network engine shipped as a plugin, not yet available: it
-  /// speaks Redis commands, the statement timeout is its only brake, cancel stops the command,
-  /// and every other feature is off.
+  /// cursor or Explain. Redis is a network engine shipped as a plugin: it speaks Redis commands,
+  /// the statement timeout is its only brake, cancel stops the command, and every other feature
+  /// is off.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -342,7 +342,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsDataImport: false,
         supportsForeignKeyLookup: false,
         requiresPlugin: true,
-        isAvailable: false,
+        isAvailable: true,
         queryLanguage: .redis,
         supportsTransactions: false,
         supportsStructure: false,

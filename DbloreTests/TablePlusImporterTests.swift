@@ -50,7 +50,7 @@ struct TablePlusImporterTests {
 
   // MARK: - Mapping
 
-  @Test("maps PostgreSQL and MySQL connections and skips other drivers and sockets with a warning")
+  @Test("maps PostgreSQL, MySQL and Redis connections and skips sockets with a warning")
   func mapsPostgresAndSkipsOthers() throws {
     let folder = try Folder()
     let file = try folder.writePlist([
@@ -63,7 +63,7 @@ struct TablePlusImporterTests {
 
     let result = try TablePlusImporter.importConnections(fromFile: file)
 
-    #expect(result.connections.count == 3)
+    #expect(result.connections.count == 4)
     let prod = try #require(result.connections.first { $0.config.name == "Prod" })
     #expect(prod.config.databaseType == .postgresql)
     #expect(prod.config.host == "db.example.com")
@@ -83,9 +83,80 @@ struct TablePlusImporterTests {
     #expect(shop.config.port == 3306)
     #expect(shop.config.database == "")
     #expect(shop.warnings.contains(PostgresURIParser.missingDatabaseWarning))
-    #expect(result.warnings.count == 2)
-    #expect(result.warnings.contains { $0.contains("\"Cache\"") && $0.contains("Redis") })
+    let cache = try #require(result.connections.first { $0.config.name == "Cache" })
+    #expect(cache.config.databaseType == .redis)
+    #expect(cache.config.host == "r")
+    #expect(cache.config.port == 6379)
+    #expect(cache.config.database == "0")
+    #expect(cache.config.username == "")
+    #expect(cache.config.sslMode == .verifyFull)
+    #expect(cache.password == nil)
+    #expect(result.warnings.count == 1)
     #expect(result.warnings.contains { $0.contains("\"Local socket\"") })
+  }
+
+  @Test("maps Redis entries: user, port, a database index of the form's range, and TLS")
+  func mapsRedis() throws {
+    func redis(_ name: String, database: Any, tls: Any? = nil) -> [String: Any] {
+      var entry: [String: Any] = [
+        "ConnectionName": name, "Driver": "Redis", "DatabaseHost": "cache.example.com",
+        "DatabasePort": "6380", "DatabaseUser": "app", "DatabaseName": database,
+      ]
+      entry["tLSMode"] = tls
+      return entry
+    }
+    let folder = try Folder()
+    let file = try folder.writePlist([
+      redis("Exact", database: "3", tls: "verify-full"),
+      redis("Plain", database: "", tls: "disable"),
+      redis("Index", database: "15", tls: 0),
+      redis("Name", database: "sales", tls: "require"),
+      redis("Past", database: "16"),
+      redis("Padded", database: "03", tls: 4),
+      redis("Number", database: 7, tls: "verify-full"),
+      redis("Listed", database: [3], tls: "disable"),
+    ])
+
+    let result = try TablePlusImporter.importConnections(fromFile: file)
+
+    #expect(result.warnings.isEmpty)
+    #expect(result.connections.count == 8)
+    func connection(_ name: String) throws -> ImportedConnection {
+      try #require(result.connections.first { $0.config.name == name })
+    }
+    let exact = try connection("Exact")
+    #expect(exact.config.databaseType == .redis)
+    #expect(exact.config.host == "cache.example.com")
+    #expect(exact.config.port == 6380)
+    #expect(exact.config.username == "app")
+    #expect(exact.config.database == "3")
+    #expect(exact.config.sslMode == .verifyFull)
+    #expect(exact.warnings.isEmpty)
+    let plain = try connection("Plain")
+    #expect(plain.config.database == "0")
+    #expect(plain.config.sslMode == .disable)
+    #expect(plain.warnings.isEmpty)
+    // A TLS setting other than the two Redis modes, or none, is Verify Full with a note
+    for name in ["Index", "Name", "Past", "Padded"] {
+      let imported = try connection(name)
+      #expect(imported.config.sslMode == .verifyFull, "\(name)")
+      #expect(imported.warnings.contains { $0.contains("TLS mode") }, "\(name)")
+    }
+    #expect(try connection("Index").config.database == "15")
+    #expect(try connection("Number").config.database == "7")
+    // Never another database than the one named: an index the form refuses opens 0, with a note
+    for name in ["Name", "Past", "Padded", "Listed"] {
+      let imported = try connection(name)
+      #expect(imported.config.database == "0", "\(name)")
+      #expect(imported.warnings.contains { $0.contains("database index") }, "\(name)")
+    }
+    for name in ["Exact", "Plain", "Index", "Number"] {
+      #expect(!(try connection(name)).warnings.contains { $0.contains("database index") })
+    }
+    for imported in result.connections {
+      #expect(MongoConnectionDraft.sslModes(for: .redis).contains(imported.config.sslMode))
+      #expect(ConnectionFormContent.redisDatabaseIndexError(imported.config) == nil)
+    }
   }
 
   @Test("maps MySQL and MariaDB entries with their database, port and SSH tunnel")
@@ -198,16 +269,27 @@ struct TablePlusImporterTests {
         "DatabasePassword": "db-secret", "isOverSSH": 1, "ServerAddress": "b",
         "ServerPassword": "ssh-secret",
       ]),
-      ["ConnectionName": "Other", "Driver": "Redis", "DatabasePassword": "redis-secret"],
+      [
+        "ConnectionName": "Other", "Driver": "Redis", "DatabaseHost": "r",
+        "DatabasePassword": "redis-secret",
+      ],
+      ["ConnectionName": "Legacy", "Driver": "Oracle", "DatabasePassword": "oracle-secret"],
     ])
 
     let result = try TablePlusImporter.importConnections(fromFile: file)
 
-    let connection = try #require(result.connections.first)
+    let connection = try #require(result.connections.first { $0.config.name == "Prod" })
     #expect(connection.password == nil)
     #expect(connection.sshCredential == nil)
-    let text = (result.warnings + connection.warnings).joined() + connection.description
-    for secret in ["db-secret", "ssh-secret", "redis-secret"] {
+    let redis = try #require(result.connections.first { $0.config.name == "Other" })
+    #expect(redis.config.databaseType == .redis)
+    #expect(redis.password == nil)
+    #expect(redis.config.password.isEmpty)
+    #expect(result.warnings.contains { $0.contains("\"Legacy\"") && $0.contains("Oracle") })
+    let text =
+      (result.warnings + connection.warnings + redis.warnings).joined()
+      + connection.description + redis.description
+    for secret in ["db-secret", "ssh-secret", "redis-secret", "oracle-secret"] {
       #expect(!text.contains(secret))
     }
   }

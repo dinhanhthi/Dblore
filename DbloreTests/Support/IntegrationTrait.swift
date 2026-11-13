@@ -1,7 +1,7 @@
 // IntegrationTrait.swift
 // Every live-database gate is opt-in (PostgreSQL, mTLS, SSH, DuckDB plugin, On-device AI
 // plugin, engine plugin, MySQL, MySQL TLS, MongoDB, MongoDB TLS, MongoDB spike, SQL Server,
-// ClickHouse, large catalog).
+// ClickHouse, Redis, large catalog).
 // SKIP_INTEGRATION_TESTS or TEST_RUNNER_SKIP_INTEGRATION_TESTS (true, 1, or yes) turns them
 // all off.
 
@@ -156,6 +156,17 @@ nonisolated enum ClickHouseIntegrationGate {
   }
 }
 
+nonisolated enum RedisIntegrationGate {
+  static func isEnabled(env: [String: String]) -> Bool {
+    guard IntegrationGate.isEnabled(env: env),
+      let value = env["REDIS_TESTS"] ?? env["TEST_RUNNER_REDIS_TESTS"]
+    else {
+      return false
+    }
+    return ["true", "1", "yes"].contains(value.lowercased())
+  }
+}
+
 /// The Phase 2 spike suite (1M-document insert, exact NIO thread counts) runs only on request,
 /// on top of the MongoDB gate, so CI's MongoDB service never runs it.
 nonisolated enum MongoSpikeIntegrationGate {
@@ -283,6 +294,14 @@ extension Trait where Self == ConditionTrait {
     .enabled(
       if: ClickHouseIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
       "Set TEST_RUNNER_CLICKHOUSE_TESTS=1 and start a ClickHouse test server to run"
+    )
+  }
+
+  /// The Redis test server is opt-in.
+  static var requiresRedis: Self {
+    .enabled(
+      if: RedisIntegrationGate.isEnabled(env: ProcessInfo.processInfo.environment),
+      "Set TEST_RUNNER_REDIS_TESTS=1 and start a Redis test server to run"
     )
   }
 

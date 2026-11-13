@@ -3,8 +3,8 @@
 // DuckDB is a file engine offered only when its plugin is installed. MongoDB is listed after
 // MySQL. ClickHouse is a network plugin engine (no transactions, edits, import or dump); SQL
 // Server is a network plugin engine with transactions, keyed grid edits and foreign key lookup
-// (no structure editing, dump, import, user types, roles or Explain). Redis is a network plugin
-// engine that is not available yet: Redis commands, the statement brake, nothing else.
+// (no structure editing, dump, import, user types, roles or Explain). Redis is an available
+// network plugin engine: Redis commands, the statement brake, nothing else.
 
 import Foundation
 import Testing
@@ -52,6 +52,18 @@ struct DatabaseCapabilitiesTests {
       showExperimental: false, isPluginInstalled: { _ in false })
     #expect(types.last == .mongodb)
     #expect(types.firstIndex(of: .mysql).map { $0 + 1 } == types.firstIndex(of: .mongodb))
+  }
+
+  @Test("Redis is available, so the picker lists it without experimental engines once installed")
+  func pickerListsRedisOnlyWithPlugin() {
+    #expect(DatabaseType.redis.capabilities.isAvailable)
+    #expect(DatabaseType.redis.capabilities.requiresPlugin)
+    let installed = DatabaseType.connectionPickerTypes(
+      showExperimental: false, isPluginInstalled: { $0 == .redis })
+    #expect(installed.contains(.redis))
+    let missing = DatabaseType.connectionPickerTypes(
+      showExperimental: false, isPluginInstalled: { _ in false })
+    #expect(!missing.contains(.redis))
   }
 
   @Test("A SQL Server tab names a table outside dbo, so dbo.t and sales.t differ")
@@ -278,7 +290,7 @@ struct DatabaseCapabilitiesTests {
     supportsDataImport: false,
     supportsForeignKeyLookup: false,
     requiresPlugin: true,
-    isAvailable: false,
+    isAvailable: true,
     queryLanguage: .redis,
     supportsTransactions: false,
     supportsStructure: false,
