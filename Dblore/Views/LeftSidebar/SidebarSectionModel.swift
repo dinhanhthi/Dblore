@@ -14,6 +14,7 @@
 //  when first expanded; their rows offer Show DDL and Copy Name.
 //  PostgreSQL, SQLite and DuckDB can hide schemas from the Public tab (`listedSchemas`); only the
 //  sidebar leaves them out.
+//  Redis has no sections: its Public tab is the key browser (`RedisKeySidebar`).
 //  The session's temporary objects leave the schema groups and the filter menu for one Temporary
 //  section (`temporarySchemas`, `temporarySplit`); on MySQL a temporary table row offers no
 //  structure item, Rename, Drop, Generate Rows or Build Join Query (`rowReadsStructure`).
@@ -201,7 +202,7 @@ nonisolated enum SidebarSectionModel {
     Set(tables.map(\.schema)).count > 1
   }
 
-  /// The Security tab (Users and Roles). MongoDB has none.
+  /// The Security tab (Users and Roles). MongoDB and Redis have none.
   static func showsSecurityTab(_ language: QueryLanguage) -> Bool {
     language == .sql
   }
