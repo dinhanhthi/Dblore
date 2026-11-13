@@ -21,8 +21,14 @@ struct TabItem: Identifiable, Equatable {
   /// Read-only routine or trigger source on a .sqlFile tab: never dirty, never saved, and
   /// rebuilt on demand rather than persisted or restored at launch
   var objectSource: ObjectSourceRef?
+  /// The key a `.redisKey` tab shows. In memory only: not in `CodingKeys`, never encoded.
+  var redisKey: RedisKeyRef?
 
   var isReadOnlySource: Bool { objectSource != nil }
+
+  /// Preview, object source and Redis key tabs live only in this session: never written to the
+  /// workspace or the launch snapshot
+  var isSessionOnly: Bool { isPreview || isReadOnlySource || documentType == .redisKey }
 
   init(
     id: UUID = UUID(),
@@ -33,7 +39,8 @@ struct TabItem: Identifiable, Equatable {
     lastAccessed: Date = Date(),
     isPreview: Bool = false,
     isPinned: Bool = false,
-    objectSource: ObjectSourceRef? = nil
+    objectSource: ObjectSourceRef? = nil,
+    redisKey: RedisKeyRef? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -44,6 +51,7 @@ struct TabItem: Identifiable, Equatable {
     self.isPreview = isPreview
     self.isPinned = isPinned
     self.objectSource = objectSource
+    self.redisKey = redisKey
   }
 
   /// Creates a new untitled notebook tab
@@ -80,12 +88,13 @@ enum TabDocumentType: String, Codable, Equatable {
   case sqlFile  // .sql files, .js queries in a MongoDB workspace, Redis command tabs
   case dataViewer  // table/view data viewer, no file
   case markdown  // .md files
+  case redisKey  // one Redis key, no file; session-only, never saved or restored
 
   var fileExtension: String {
     switch self {
     case .notebook: return "dblore"
     case .sqlFile: return "sql"
-    case .dataViewer: return ""
+    case .dataViewer, .redisKey: return ""
     case .markdown: return "md"
     }
   }
@@ -96,6 +105,7 @@ enum TabDocumentType: String, Codable, Equatable {
     case .sqlFile: return "doc"
     case .dataViewer: return "tablecells"
     case .markdown: return "doc.richtext"
+    case .redisKey: return "key"
     }
   }
 
@@ -207,11 +217,17 @@ extension TabItem: Codable {
     id = try container.decode(UUID.self, forKey: .id)
     fileURL = try container.decodeIfPresent(URL.self, forKey: .fileURL)
     documentType = try container.decode(TabDocumentType.self, forKey: .documentType)
+    // A key tab is never saved, so one read back is not ours
+    guard documentType != .redisKey else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .documentType, in: container, debugDescription: "Redis key tabs are not restored")
+    }
     title = try container.decode(String.self, forKey: .title)
     isDirty = try container.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
     lastAccessed = try container.decodeIfPresent(Date.self, forKey: .lastAccessed) ?? Date()
     isPreview = false
     isPinned = false
     objectSource = try container.decodeIfPresent(ObjectSourceRef.self, forKey: .objectSource)
+    redisKey = nil
   }
 }

@@ -270,3 +270,146 @@ struct RedisKeyIdentityTests {
     #expect(RedisKeyCommands.xadd(key, id: nil, fields: []) == nil)
   }
 }
+
+// MARK: - Key tabs
+
+/// A key tab (`TabDocumentType.redisKey`) is session-only: never written to the workspace or the
+/// launch snapshot, never decoded back. A click opens the key in one reused preview tab at once;
+/// a double click keeps that tab.
+extension RedisKeyIdentityTests {
+  @MainActor
+  private static func redisWorkspace() -> WorkspaceManager {
+    WorkspaceManager(
+      workspace: Workspace(
+        name: "Cache",
+        connectionConfig: ConnectionConfig(databaseType: .redis, host: "fake", database: "0")),
+      restoreTabs: false)
+  }
+
+  @MainActor
+  private static func decodedWorkspace(_ data: Data) throws -> Workspace {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return try decoder.decode(Workspace.self, from: data)
+  }
+
+  @Test("A kept or pinned key tab is never saved; the other tabs and the active tab hand-over stay")
+  @MainActor
+  func keyTabsNeverPersisted() throws {
+    let manager = Self.redisWorkspace()
+    let command = manager.newSQLFile()
+    let kept = try #require(manager.pinRedisKey(RedisKeyRef(db: 3, bytes: Self.injectionKey)))
+    let pinned = try #require(manager.pinRedisKey(RedisKeyRef(db: 0, bytes: Self.cafeNFC)))
+    // In the pinned zone too (set directly: the Pin action refuses key tabs)
+    let index = try #require(manager.tabs.firstIndex { $0.id == pinned })
+    manager.tabs[index].isPinned = true
+    manager.selectTab(id: kept)
+    #expect(manager.tabs.first { $0.id == kept }?.isPreview == false)
+
+    let saved = try Self.decodedWorkspace(manager.encodedWorkspaceData())
+    #expect(saved.tabs.map(\.id) == [command])
+    #expect(!saved.tabs.contains { $0.documentType == .redisKey })
+    #expect(saved.activeTabId == command)
+
+    // The launch snapshot of this untitled workspace goes through the same encoding
+    let session = LaunchSessionCapture.session(
+      windows: [
+        LaunchSessionCapture.WindowDescriptor(
+          frame: WindowFrame(x: 0, y: 0, width: 800, height: 600),
+          isMiniaturized: false, groupID: "cache", tabIndex: 0, isSelectedInGroup: true,
+          orderedIndex: 0, content: .workspace(manager.id))
+      ],
+      workspaces: [manager.id: manager])
+    guard case .workspace(let launch) = session.windows.first?.content else {
+      Issue.record("Expected the captured window to be the untitled workspace")
+      return
+    }
+    #expect(launch.workspace?.tabs.map(\.id) == [command])
+    #expect(launch.workspace?.activeTabId == command)
+    #expect(!launch.textOverlays.contains { $0.tabId == kept || $0.tabId == pinned })
+  }
+
+  @Test("Decoding never yields a key tab: a tab item refuses one, a workspace drops it")
+  @MainActor
+  func keyTabsNeverDecoded() async throws {
+    let item = Data(#"{"id":"\#(UUID().uuidString)","documentType":"redisKey","title":"k"}"#.utf8)
+    #expect(throws: DecodingError.self) { try JSONDecoder().decode(TabItem.self, from: item) }
+
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let script = folder.appendingPathComponent("ping.redis")
+    let other = folder.appendingPathComponent("key.redis")
+    try Data("PING".utf8).write(to: script)
+    try Data("GET k".utf8).write(to: other)
+    let keyRef = WorkspaceTabReference(fileURL: other, documentType: .redisKey, title: "k")
+    let scriptRef = WorkspaceTabReference(fileURL: script, documentType: .sqlFile, title: "ping")
+    // No connection: a loaded workspace with one would auto-connect
+    let file = Workspace(name: "Cache", tabs: [keyRef, scriptRef], activeTabId: keyRef.id)
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let url = folder.appendingPathComponent("cache.sqlws")
+    try encoder.encode(file).write(to: url)
+
+    let loaded = try await WorkspaceManager.load(from: url)
+    defer { loaded.releaseFileAccess() }
+    #expect(loaded.tabs.map(\.id) == [scriptRef.id])
+    // Launch restore builds tab shells from the decoded workspace
+    let shells = WorkspaceManager(workspace: try Self.decodedWorkspace(Data(contentsOf: url)))
+    #expect(shells.tabs.map(\.id) == [scriptRef.id])
+    #expect(shells.activeTabId == nil)
+  }
+
+  @Test("A click opens the key in one reused preview tab at once; its own key selects that tab")
+  @MainActor
+  func clickOpensPreview() throws {
+    let manager = Self.redisWorkspace()
+    let nfc = RedisKeyRef(db: 0, bytes: Self.cafeNFC)
+    let nfd = RedisKeyRef(db: 0, bytes: Self.cafeNFD)
+    let id = try #require(manager.openRedisKey(nfc))
+    let tab = try #require(manager.tabs.first { $0.id == id })
+    #expect(manager.activeTabId == id)
+    #expect(tab.documentType == .redisKey && tab.isPreview && tab.redisKey == nfc)
+    #expect(tab.title == "café")
+    // The NFD twin is another key: the preview tab now shows it
+    #expect(manager.openRedisKey(nfd) == id)
+    #expect(manager.tabs.count == 1 && manager.tabs.first?.redisKey == nfd)
+    // The same key again selects its tab
+    manager.newSQLFile()
+    #expect(manager.openRedisKey(nfd) == id)
+    #expect(manager.activeTabId == id && manager.tabs.count == 2)
+    // The title is escaped and capped
+    let long = RedisKeyRef(db: 0, bytes: Self.injectionKey + Data(repeating: 0x61, count: 500))
+    #expect(manager.openRedisKey(long) == id)
+    let title = try #require(manager.tabs.first { $0.id == id }?.title)
+    #expect(!title.unicodeScalars.contains { $0.properties.generalCategory == .control })
+    #expect(title.count <= WorkspaceManager.redisKeyTitleLength + 1 && title.hasSuffix("…"))
+    // Never in a SQL workspace
+    let sql = WorkspaceManager(workspace: Workspace(name: "Draft"), restoreTabs: false)
+    #expect(sql.openRedisKey(nfc) == nil && sql.tabs.isEmpty)
+  }
+
+  @Test("A double click keeps the key's tab; a later click on that key reuses it")
+  @MainActor
+  func doubleClickKeepsTab() throws {
+    let manager = Self.redisWorkspace()
+    let home = RedisKeyRef(db: 0, bytes: Self.text("user:1"))
+    let other = RedisKeyRef(db: 3, bytes: Self.text("user:1"))
+    // The single click acts first, the double click adds to it
+    let preview = try #require(manager.openRedisKey(home))
+    let kept = try #require(manager.pinRedisKey(home))
+    #expect(kept == preview)
+    #expect(manager.tabs.first { $0.id == kept }?.isPreview == false)
+    // Same bytes in another db is another key: a new preview tab
+    let next = try #require(manager.openRedisKey(other))
+    #expect(next != kept)
+    #expect(manager.openRedisKey(home) == kept)
+    #expect(manager.activeTabId == kept && manager.tabs.count == 2)
+    // A double click on a key with no tab keeps the preview it opened in
+    let third = RedisKeyRef(db: 0, bytes: Self.binaryKey)
+    #expect(manager.pinRedisKey(third) == next)
+    #expect(manager.tabs.first { $0.id == next }?.isPreview == false)
+    #expect(manager.tabs.count == 2)
+  }
+}

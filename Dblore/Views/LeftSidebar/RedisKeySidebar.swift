@@ -5,8 +5,9 @@
 //  The Public tab of a Redis workspace: a MATCH filter, then one row per database (0–15 and any
 //  other `INFO keyspace` names) with its key count; an open database lists its keys as a tree
 //  split on `:` (`RedisKeyBrowserModel`), with "Load more" while `SCAN` has more. A click on a
-//  key selects it in the same frame; nothing is read for it here. Opening a database never
-//  changes the db the command tabs run in.
+//  key selects it and shows it in the key preview tab in the same frame, a double click keeps
+//  that tab; nothing is read for it here. Opening a database never changes the db the command
+//  tabs run in.
 //
 
 import SwiftUI
@@ -51,6 +52,8 @@ struct RedisKeySidebar: View {
         }
       }
     }
+    // Another key tab picked in the tab bar: its key is the selected row
+    .background { RedisActiveKeySync(model: model, workspaceManager: workspaceManager) }
     // An unstructured task: leaving the tab must not cancel a read half way
     .onAppear {
       let connection = workspaceManager.connectionManager
@@ -159,8 +162,10 @@ struct RedisKeySidebar: View {
       }
       .padding(.top, isFirst ? 0 : Spacing.sm)
     case .node(let row):
-      RedisKeyRowHost(model: model, row: row, onTap: { tap(row.id) })
-        .modifier(DatabaseContentIndent())
+      RedisKeyRowHost(
+        model: model, row: row, onTap: { tap(row.id) }, onDoubleTap: { doubleTap(row.id) }
+      )
+      .modifier(DatabaseContentIndent())
     case .progress:
       DelayedProgressRow(text: "Scanning keys...")
         .modifier(DatabaseContentIndent())
@@ -179,12 +184,20 @@ struct RedisKeySidebar: View {
     }
   }
 
-  /// A folder opens or closes; a key is selected at once
+  /// A folder opens or closes; a key is selected and shown in the key preview tab at once
   private func tap(_ id: RedisKeyBrowserModel.NodeID) {
     switch id {
     case .folder: model.toggleFolder(id)
-    case .key(let key): model.select(key)
+    case .key(let key):
+      model.select(key)
+      workspaceManager.openRedisKey(key)
     }
+  }
+
+  /// After the single click's open: the key's tab is kept (a folder ignores it)
+  private func doubleTap(_ id: RedisKeyBrowserModel.NodeID) {
+    guard case .key(let key) = id else { return }
+    workspaceManager.pinRedisKey(key)
   }
 
   private func note(_ text: String) -> some View {
@@ -254,12 +267,28 @@ private struct DatabaseContentIndent: ViewModifier {
   }
 }
 
+/// Selects the active key tab's key in the tree. Its own body reads the tabs, so a tab change
+/// re-runs only this empty view, never the list.
+private struct RedisActiveKeySync: View {
+  let model: RedisKeyBrowserModel
+  let workspaceManager: WorkspaceManager
+
+  var body: some View {
+    Color.clear
+      .frame(width: 0, height: 0)
+      .onChange(of: workspaceManager.activeRedisKey) { _, key in
+        if let key { model.select(key) }
+      }
+  }
+}
+
 /// Reads the selection for one row, so a click re-runs only this tiny body per row and redraws
 /// only the rows whose `isSelected` changed
 private struct RedisKeyRowHost: View {
   let model: RedisKeyBrowserModel
   let row: RedisKeyBrowserModel.Row
   let onTap: () -> Void
+  let onDoubleTap: () -> Void
 
   var body: some View {
     let isSelected: Bool
@@ -268,16 +297,20 @@ private struct RedisKeyRowHost: View {
     } else {
       isSelected = false
     }
-    return RedisKeyRow(row: row, isSelected: isSelected, onTap: onTap).equatable()
+    return RedisKeyRow(
+      row: row, isSelected: isSelected, onTap: onTap, onDoubleTap: onDoubleTap
+    )
+    .equatable()
   }
 }
 
 /// One folder or key of the tree, drawn as the table rows of the SQL sidebar. Equal by its row
-/// and selection (the tap action never changes for a row id), so an unchanged row is not redrawn.
+/// and selection (the tap actions never change for a row id), so an unchanged row is not redrawn.
 private struct RedisKeyRow: View, Equatable {
   let row: RedisKeyBrowserModel.Row
   let isSelected: Bool
   let onTap: () -> Void
+  let onDoubleTap: () -> Void
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.row == rhs.row && lhs.isSelected == rhs.isSelected
@@ -319,7 +352,10 @@ private struct RedisKeyRow: View, Equatable {
     .padding(.horizontal, Spacing.md)
     .padding(.vertical, Spacing.xs)
     .contentShape(Rectangle())
+    // The single click acts at once; the double click adds to it (never an exclusive pair,
+    // which would hold every click until the double-click interval ends)
     .onTapGesture(perform: onTap)
+    .simultaneousGesture(TapGesture(count: 2).onEnded { onDoubleTap() })
     .background(
       RoundedRectangle(cornerRadius: CornerRadius.sm)
         .fill(isSelected ? Color.selectionFill : (isHovering ? Color.hoverFill : Color.clear))

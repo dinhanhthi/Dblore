@@ -175,7 +175,7 @@ class TabStateManager {
       viewModels[tab.id] = viewModel
       editorDocuments[tab.id] = document
 
-    case .dataViewer, .markdown:
+    case .dataViewer, .markdown, .redisKey:
       return  // Never detected from a file URL
     }
 
@@ -326,7 +326,7 @@ class TabStateManager {
       }
       try SecurityScopedAccess.write(data, to: url)
 
-    case .dataViewer, .markdown:
+    case .dataViewer, .markdown, .redisKey:
       return  // Data viewer tabs have no file
     }
 
@@ -349,7 +349,7 @@ class TabStateManager {
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
       panel.nameFieldStringValue += ".sql"
-    case .dataViewer, .markdown:
+    case .dataViewer, .markdown, .redisKey:
       return  // Data viewer tabs have no file
     }
 

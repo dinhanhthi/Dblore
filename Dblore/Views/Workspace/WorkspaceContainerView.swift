@@ -49,11 +49,11 @@ struct WorkspaceContainerView: View {
     return workspaceManager.viewModel(for: activeTabId)
   }
 
-  /// Whether the content area shows `WorkspaceEmptyStateView` (no tab, no schema visualizer and
-  /// no MongoDB overview screen)
+  /// Whether the content area shows `WorkspaceEmptyStateView` (no tab or key tab, no schema
+  /// visualizer and no MongoDB overview screen)
   private var showsEmptyState: Bool {
     !workspaceManager.isSchemaVisualizerActive && workspaceManager.mongoOverview == nil
-      && activeViewModel == nil
+      && activeViewModel == nil && workspaceManager.activeRedisKey == nil
   }
 
   /// Hides the AI assistant only in its sidebar mode: the floating bubble takes no width
@@ -184,6 +184,14 @@ struct WorkspaceContainerView: View {
                 case .databases: MongoDatabasesView(workspaceManager: workspaceManager)
                 case .collections: MongoCollectionsView(workspaceManager: workspaceManager)
                 }
+              } else if let activeTabId = workspaceManager.activeTabId,
+                let key = workspaceManager.activeRedisKey
+              {
+                // A Redis key tab has no notebook view model: before that gate. Its own view per
+                // tab; a new key in the same preview tab keeps the view and reads again.
+                RedisKeyViewerView(key: key, workspaceManager: workspaceManager)
+                  .id(activeTabId)
+                  .overlay { ToastOverlay() }
               } else if let activeTabId = workspaceManager.activeTabId,
                 let viewModel = workspaceManager.viewModel(for: activeTabId)
               {

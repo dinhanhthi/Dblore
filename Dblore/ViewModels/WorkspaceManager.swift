@@ -546,6 +546,8 @@ class WorkspaceManager: Identifiable {
     // the saved row's only, and it never weakens the saved row's protection. Its own password is
     // never used (a connect reads the Keychain or the form), so it is dropped
     var workspace = workspace
+    // Redis key tabs are never saved: one in a file is not restored
+    workspace.tabs.removeAll { $0.documentType == .redisKey }
     if sanitizesFileConfig {
       workspace.connectionConfig = Self.sanitizedFileAIPolicy(
         workspace.connectionConfig, defaults: defaults
@@ -1024,7 +1026,11 @@ class WorkspaceManager: Identifiable {
         $0.databaseType == config.databaseType && $0.host == config.host
           && $0.port == config.port && $0.database == config.database
       }
-      if sameDatabase != true { redisDatabaseChoice = nil }
+      if sameDatabase != true {
+        redisDatabaseChoice = nil
+        // Their keys belong to the previous server or db (a SQL or MongoDB workspace has none)
+        closeRedisKeyTabs()
+      }
       workspace.connectionConfig = config
       aiAssistant.connectionDidChange()
       if !config.rememberConnection {
@@ -1526,7 +1532,8 @@ class WorkspaceManager: Identifiable {
     var deniedFiles: [String] = []
     // Pinned tabs lead, whatever the file order (stable partition)
     let ordered = tabRefs.filter { $0.isPinned == true } + tabRefs.filter { $0.isPinned != true }
-    for tabRef in ordered {
+    // Redis key tabs are never saved: one in a file is not restored (nothing is read for it)
+    for tabRef in ordered where tabRef.documentType != .redisKey {
       if let ref = tabRef.dataViewer {
         restoreDataViewer(tabRef: tabRef, ref: ref)
         continue
@@ -1650,6 +1657,8 @@ class WorkspaceManager: Identifiable {
 
     case .dataViewer:
       return false  // File-less: restored by restoreDataViewer
+    case .redisKey:
+      return false  // Session-only: skipped by restoreTabs
     }
     hold(read.session)
     tabAccess[tab.id] = access?.token
@@ -1665,7 +1674,7 @@ class WorkspaceManager: Identifiable {
     // .sql and MongoDB .js scripts
     case .sqlFile: .script
     case .markdown: .markdown
-    case .dataViewer: nil
+    case .dataViewer, .redisKey: nil
     }
   }
 
@@ -1786,7 +1795,7 @@ class WorkspaceManager: Identifiable {
       viewModels[tab.id] = viewModel
       store(document, for: tab.id)
 
-    case .dataViewer:
+    case .dataViewer, .redisKey:
       return  // Never detected from a file URL
     }
     hold(read.session)
@@ -2306,10 +2315,11 @@ class WorkspaceManager: Identifiable {
 
   func markDirty(tabId: UUID) {
     editCounts[tabId, default: 0] += 1
-    // Data viewer and object source tabs have no document to save. Called per keystroke: an
-    // already dirty tab is not written again, so `tabs` readers are not re-evaluated
+    // Data viewer, object source and key tabs have no document to save. Called per keystroke:
+    // an already dirty tab is not written again, so `tabs` readers are not re-evaluated
     guard let index = tabs.firstIndex(where: { $0.id == tabId }),
-      tabs[index].documentType != .dataViewer, !tabs[index].isReadOnlySource,
+      tabs[index].documentType != .dataViewer, tabs[index].documentType != .redisKey,
+      !tabs[index].isReadOnlySource,
       !tabs[index].isDirty
     else { return }
     tabs[index].isDirty = true
@@ -2397,7 +2407,7 @@ class WorkspaceManager: Identifiable {
       kind = tab.documentType == .markdown ? .markdown : .script
       keyId = document.lockKeyId
 
-    case .dataViewer:
+    case .dataViewer, .redisKey:
       return  // Unreachable: saveTab returns early
     }
 
@@ -2455,7 +2465,7 @@ class WorkspaceManager: Identifiable {
       if !tab.title.hasSuffix(".md") {
         panel.nameFieldStringValue += ".md"
       }
-    case .dataViewer:
+    case .dataViewer, .redisKey:
       return  // Unreachable: saveTab returns early
     }
 
