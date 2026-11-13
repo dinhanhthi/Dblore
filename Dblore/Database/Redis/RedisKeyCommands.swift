@@ -113,6 +113,11 @@ nonisolated enum RedisKeyCommands {
     command("HSET", key, field, value)
   }
 
+  /// `HSETNX k f v`: adds a field, never over an existing one (answers 0 then)
+  static func hsetnx(_ key: RedisKeyRef, field: Data, value: Data) -> RedisCommand {
+    command("HSETNX", key, field, value)
+  }
+
   /// `HDEL k f`
   static func hdel(_ key: RedisKeyRef, field: Data) -> RedisCommand {
     command("HDEL", key, field)
@@ -148,6 +153,13 @@ nonisolated enum RedisKeyCommands {
   static func zadd(_ key: RedisKeyRef, score: Double, member: Data) -> RedisCommand? {
     guard score.isFinite else { return nil }
     return command("ZADD", key, Data("\(score)".utf8), member)
+  }
+
+  /// `ZADD k NX score m`: adds a member, never over an existing one (answers 0 then); nil for
+  /// NaN or an infinity
+  static func zaddNX(_ key: RedisKeyRef, score: Double, member: Data) -> RedisCommand? {
+    guard score.isFinite else { return nil }
+    return command("ZADD", key, word("NX"), Data("\(score)".utf8), member)
   }
 
   /// `ZREM k m`

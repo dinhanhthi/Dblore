@@ -1,7 +1,8 @@
 // RedisKeyIdentityTests.swift
 // The key browser's command builders: every key, member, field, value, pattern and stream id is
 // its own argument with its exact bytes, the command runs in the key's database, and the gate
-// classifies each command as the read or write it is
+// classifies each command as the read or write it is. A key's bytes stay its identity from the
+// SCAN reply through the tree rows and the key tab to the edit sent through the gate.
 
 import Foundation
 import Testing
@@ -80,12 +81,19 @@ struct RedisKeyIdentityTests {
         [text("XRANGE"), key, text("5-4"), text("+"), text("COUNT"), text("100")], .read
       ),
       ("INFO", RedisKeyCommands.infoKeyspace(db: 3), [text("INFO"), text("keyspace")], .read),
+      (
+        "HSTRLEN", RedisKeyEditor.hstrlen(ref, field: f), [text("HSTRLEN"), key, f], .read
+      ),
       // Writes
       (
         "SET", RedisKeyCommands.set(ref, value: v),
         [text("SET"), key, v, text("KEEPTTL"), text("XX")], .dml
       ),
       ("HSET", RedisKeyCommands.hset(ref, field: f, value: v), [text("HSET"), key, f, v], .dml),
+      (
+        "HSETNX", RedisKeyCommands.hsetnx(ref, field: f, value: v),
+        [text("HSETNX"), key, f, v], .dml
+      ),
       ("HDEL", RedisKeyCommands.hdel(ref, field: f), [text("HDEL"), key, f], .dml),
       (
         "LSET", RedisKeyCommands.lset(ref, index: -2, value: v),
@@ -98,6 +106,10 @@ struct RedisKeyIdentityTests {
       (
         "ZADD", try #require(RedisKeyCommands.zadd(ref, score: 1.5, member: m)),
         [text("ZADD"), key, text("1.5"), m], .dml
+      ),
+      (
+        "ZADD NX", try #require(RedisKeyCommands.zaddNX(ref, score: 1.5, member: m)),
+        [text("ZADD"), key, text("NX"), text("1.5"), m], .dml
       ),
       ("ZREM", RedisKeyCommands.zrem(ref, member: m), [text("ZREM"), key, m], .dml),
       (
@@ -411,5 +423,250 @@ extension RedisKeyIdentityTests {
     #expect(manager.pinRedisKey(third) == next)
     #expect(manager.tabs.first { $0.id == next }?.isPreview == false)
     #expect(manager.tabs.count == 2)
+  }
+}
+
+// MARK: - Key identity through the edit flow
+
+/// History rows a write context handed over (kept here, never written to the History store)
+@MainActor
+private final class EditHistorySink {
+  var outcomes: [QueryHistoryOutcome] = []
+}
+
+/// A key's exact bytes go from the `SCAN` reply's cells through the sidebar's tree rows and the
+/// key tab to the edit command the gate sends, never through a label or a Swift `String`
+/// comparison: a binary key keeps its bytes, NFC / NFD twins stay two keys, and an edit under the
+/// epoch of an older connection is refused before anything is sent.
+extension RedisKeyIdentityTests {
+  private static let editDB = 3
+
+  /// A Redis workspace on a fake session, connected to db `editDB` (no protection, Immediate)
+  @MainActor
+  private static func connectedWorkspace() async throws -> (
+    WorkspaceManager, FakeDatabaseSessionFactory, ConnectionConfig
+  ) {
+    let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.redis.capabilities)
+    var config = ConnectionConfig(
+      databaseType: .redis, host: "fake", port: 6379, database: "\(editDB)", username: "",
+      sslMode: .disable, protectionLevel: .none, safeMode: .silent)
+    config.applyCommitStyle(.immediate)
+    let manager = WorkspaceManager(
+      workspace: Workspace(name: "Cache", connectionConfig: config), restoreTabs: false,
+      connectionManager: DatabaseConnectionManager(sessionFactory: factory),
+      sanitizesFileConfig: false)
+    try await manager.connectionManager.connect(config: config)
+    return (manager, factory, config)
+  }
+
+  /// A `SCAN` reply as the plugin's rows: a key that is valid UTF-8 is a text cell, any other a
+  /// bytes cell (`.data`)
+  private static func scanRows(_ keys: [Data]) -> [[CellValue]] {
+    func row(_ path: String, _ type: String, _ value: CellValue) -> [CellValue] {
+      [.string(path), .string(type), value]
+    }
+    var rows = [
+      row("0", "array", .int(2)), row("0.0", "bulk", .string("0")),
+      row("0.1", "array", .int(keys.count)),
+    ]
+    for (index, key) in keys.enumerated() {
+      let text = String(data: key, encoding: .utf8).flatMap { Data($0.utf8) == key ? $0 : nil }
+      rows.append(row("0.1.\(index)", "bulk", text.map(CellValue.string) ?? .data(key)))
+    }
+    return rows
+  }
+
+  /// The key rows of `editDB` the sidebar shows after reading `keys` with `SCAN`
+  @MainActor
+  private static func treeKeys(
+    _ keys: [Data], workspace: WorkspaceManager, factory: FakeDatabaseSessionFactory
+  ) async throws -> [RedisKeyRef] {
+    let session = try #require(factory.sessions.last)
+    session.answerRedisSends(with: scanRows(keys))
+    let browser = RedisKeyBrowserModel()
+    await browser.open(
+      manager: workspace.connectionManager, policy: { workspace.redisKeyPolicy },
+      homeDatabase: editDB)
+    #expect(browser.listings[editDB]?.error == nil)
+    return browser.rows(db: editDB).compactMap { row in
+      if case .key(let ref) = row.id { return ref }
+      return nil
+    }
+  }
+
+  /// The key a tab shows, read back from the workspace's tabs
+  @MainActor
+  private static func tabKey(_ id: UUID, in workspace: WorkspaceManager) throws -> RedisKeyRef {
+    try #require(workspace.tabs.first { $0.id == id }?.redisKey)
+  }
+
+  /// The epoch the key tab's load read `key` under (every edit of the key is sent under it)
+  @MainActor
+  private static func loadEpoch(
+    _ key: RedisKeyRef, workspace: WorkspaceManager
+  ) async throws -> UInt64 {
+    let model = RedisKeyViewerModel()
+    await model.load(key, manager: workspace.connectionManager, policy: workspace.redisKeyPolicy)
+      .value
+    let epoch = try #require(model.loadEpoch)
+    model.stop()
+    return epoch
+  }
+
+  /// The workspace's gated write path, its History handed to `sink`
+  @MainActor
+  private static func gatedContext(
+    _ workspace: WorkspaceManager, sink: EditHistorySink
+  ) -> RedisKeyWriteContext {
+    RedisKeyWriteContext.gated(
+      manager: workspace.connectionManager, policy: { workspace.redisKeyPolicy },
+      commitStyle: { .immediate }, recordHistory: { sink.outcomes += $0 })
+  }
+
+  @Test("A binary key read back as a bytes cell reaches the tab and every edit with its bytes")
+  @MainActor
+  func binaryKeyFlowsToEdits() async throws {
+    let plain = Self.text("plain")
+    // The binary key comes as a bytes cell, the plain one as a text cell
+    #expect(
+      Self.scanRows([Self.injectionKey, plain]).suffix(2).map { $0[2] } == [
+        .data(Self.injectionKey), .string("plain"),
+      ])
+    let (workspace, factory, _) = try await Self.connectedWorkspace()
+    let keys = try await Self.treeKeys(
+      [Self.injectionKey, plain], workspace: workspace, factory: factory)
+    let inDB = [Self.injectionKey, plain].map { RedisKeyRef(db: Self.editDB, bytes: $0) }
+    #expect(Set(keys) == Set(inDB))
+    let row = try #require(keys.first { $0.bytes == Self.injectionKey })
+
+    let tab = try #require(workspace.openRedisKey(row))
+    let key = try Self.tabKey(tab, in: workspace)
+    #expect(key.bytes == Self.injectionKey && key.db == Self.editDB)
+    // The tab's own reads name the key by its bytes
+    let session = try #require(factory.sessions.last)
+    let readsBefore = session.redisCommands.count
+    let epoch = try await Self.loadEpoch(key, workspace: workspace)
+    let reads = session.redisCommands.dropFirst(readsBefore)
+    #expect(!reads.isEmpty)
+    #expect(
+      reads.allSatisfy {
+        $0.args.filter { $0 == Self.injectionKey }.count == 1 && $0.db == Self.editDB
+      })
+
+    let (field, value) = (Self.text("f"), Self.text("v"))
+    let writes: [RedisKeyWrite] = [
+      try .stringValue(key, value: value, old: Self.text("old")),
+      try .hashField(key, field: field, value: value, old: nil),
+      try .listElement(key, index: 0, value: value, old: Self.text("old")),
+      try .sortedSetMember(key, member: field, score: 2, oldScore: nil),
+      try .addStreamEntry(key, fields: [(field, value)]),
+      try .expire(key, seconds: 60),
+      try .rename(key, to: Self.text("renamed")),
+      .delete(key),
+    ]
+    for write in writes {
+      let args = write.command.args
+      #expect(args.filter { $0 == Self.injectionKey }.count == 1, "\(args[0])")
+      #expect(args[1] == Self.injectionKey, "\(args[0])")
+      #expect(write.command.db == Self.editDB, "\(args[0])")
+    }
+    #expect(
+      writes.map { String(decoding: $0.command.args[0], as: UTF8.self) } == [
+        "SET", "HSETNX", "LSET", "ZADD", "XADD", "PEXPIRE", "RENAMENX", "UNLINK",
+      ])
+    #expect(writes[0].command.args.suffix(2) == [Self.text("KEEPTTL"), Self.text("XX")])
+
+    // Through the gate the same array reaches the session, byte for byte
+    session.answerRedisSends(with: [[.string("0"), .string("simple"), .string("OK")]])
+    let sink = EditHistorySink()
+    let context = Self.gatedContext(workspace, sink: sink)
+    let sentBefore = session.redisCommands.count
+    for write in writes {
+      _ = try await context.write(write.command, epoch, true)
+    }
+    #expect(Array(session.redisCommands.dropFirst(sentBefore)) == writes.map(\.command))
+  }
+
+  @Test("NFC and NFD \"café\" stay two tree rows and two tabs; an edit sends only its twin's bytes")
+  @MainActor
+  func normalizationTwinsThroughEdits() async throws {
+    // Both come as text cells (equal as Swift strings, so matched by case, not by ==)
+    for row in Self.scanRows([Self.cafeNFC, Self.cafeNFD]).suffix(2) {
+      guard case .string = row[2] else {
+        Issue.record("Expected a text cell, got \(row[2])")
+        return
+      }
+    }
+    let (workspace, factory, _) = try await Self.connectedWorkspace()
+    let keys = try await Self.treeKeys(
+      [Self.cafeNFC, Self.cafeNFD], workspace: workspace, factory: factory)
+    #expect(keys.count == 2)
+    let nfcRow = try #require(keys.first { $0.bytes == Self.cafeNFC })
+    let nfdRow = try #require(keys.first { $0.bytes == Self.cafeNFD })
+    #expect(nfcRow != nfdRow)
+
+    // A kept tab for the NFC key: the NFD key opens its own tab, never the NFC one
+    let nfcTab = try #require(workspace.pinRedisKey(nfcRow))
+    let nfdTab = try #require(workspace.openRedisKey(nfdRow))
+    #expect(nfdTab != nfcTab)
+    #expect(workspace.openRedisKey(nfcRow) == nfcTab)
+    #expect(workspace.openRedisKey(nfdRow) == nfdTab)
+    #expect(workspace.tabs.count == 2)
+    let nfc = try Self.tabKey(nfcTab, in: workspace)
+    let nfd = try Self.tabKey(nfdTab, in: workspace)
+    #expect(nfc.bytes == Self.cafeNFC && nfd.bytes == Self.cafeNFD)
+
+    let session = try #require(factory.sessions.last)
+    let sink = EditHistorySink()
+    let editor = RedisKeyEditor(context: Self.gatedContext(workspace, sink: sink))
+    for (key, own, twin) in [(nfc, Self.cafeNFC, Self.cafeNFD), (nfd, Self.cafeNFD, Self.cafeNFC)] {
+      let epoch = try await Self.loadEpoch(key, workspace: workspace)
+      // TYPE answers hash, then HSETNX is sent
+      session.answerRedisSends(with: [[.string("0"), .string("simple"), .string("hash")]])
+      let sentBefore = session.redisCommands.count
+      let write = try RedisKeyWrite.hashField(
+        key, field: Self.text("f"), value: Self.text("v"), old: nil)
+      #expect(await editor.request(write, epoch: epoch) == .written(.simple(.text("hash"))))
+      let sent = Array(session.redisCommands.dropFirst(sentBefore))
+      #expect(sent == [RedisKeyCommands.type(key), write.command])
+      for command in sent {
+        #expect(command.args.filter { $0 == own }.count == 1)
+        #expect(!command.args.contains { $0.range(of: twin) != nil })
+      }
+    }
+    #expect(sink.outcomes.count == 2)
+  }
+
+  @Test("An edit under the epoch of an older connection sends nothing, not even its check")
+  @MainActor
+  func staleEpochEditRefused() async throws {
+    let (workspace, factory, config) = try await Self.connectedWorkspace()
+    let keys = try await Self.treeKeys(
+      [Self.injectionKey], workspace: workspace, factory: factory)
+    let row = try #require(keys.first)
+    let key = try Self.tabKey(try #require(workspace.openRedisKey(row)), in: workspace)
+    let loaded = try await Self.loadEpoch(key, workspace: workspace)
+    // A reconnect since the key was read
+    try await workspace.connectionManager.connect(config: config)
+    #expect(await workspace.connectionManager.connectionEpoch != loaded)
+    try #require(factory.sessions.last).answerRedisSends(
+      with: [[.string("0"), .string("simple"), .string("hash")]])
+    let sent = factory.redisCommands.count
+
+    let sink = EditHistorySink()
+    let context = Self.gatedContext(workspace, sink: sink)
+    let write = try RedisKeyWrite.hashField(
+      key, field: Self.text("f"), value: Self.text("v"), old: nil)
+    await #expect {
+      _ = try await context.write(write.command, loaded, true)
+    } throws: { error in
+      if case .sessionChanged = error as? DatabaseError { return true }
+      return false
+    }
+    let editor = RedisKeyEditor(context: context)
+    #expect(await editor.request(write, epoch: loaded) == nil)
+    #expect(editor.phase == .failed(context.staleMessage))
+    #expect(factory.redisCommands.count == sent)
+    #expect(sink.outcomes.isEmpty)
   }
 }

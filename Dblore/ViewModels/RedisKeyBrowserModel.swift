@@ -201,6 +201,27 @@ final class RedisKeyBrowserModel {
     }
   }
 
+  /// The connection epoch the keys were read under: New Key is sent under it, so a reconnect
+  /// since makes the gate refuse it. Nil before `open` and after `reset`.
+  var connectionEpoch: UInt64? { epoch }
+
+  /// After a write in `db` (an edit, a rename, a delete, a new key): the key counts and the
+  /// first page of `db` read again, its open folders kept. A closed db's keys are dropped, so it
+  /// reads them when it opens. Keys read past the first page are read again with "Load more".
+  func reload(db: Int) {
+    guard epoch != nil else { return }
+    Task {
+      await loadDatabases()
+      // A new listing (a new token): pages in flight for the old one are dropped
+      listings[db] = nil
+      guard expandedDatabases.contains(db) else {
+        visibleRows[db] = nil
+        return
+      }
+      await loadPage(db: db)
+    }
+  }
+
   /// Drops every listing (and the folders opened in them), then reads the first page of each
   /// open database. Pages in flight for the dropped listings are dropped when they answer.
   func reloadListings() async {

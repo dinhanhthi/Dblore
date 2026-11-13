@@ -7,7 +7,9 @@
 //  split on `:` (`RedisKeyBrowserModel`), with "Load more" while `SCAN` has more. A click on a
 //  key selects it and shows it in the key preview tab in the same frame, a double click keeps
 //  that tab; nothing is read for it here. Opening a database never changes the db the command
-//  tabs run in.
+//  tabs run in. A database's context menu offers New Key per type (not on a read-only
+//  connection): the edit sheet, sent under the epoch the keys were read with. Any key write
+//  (`redisKeysChanged`) reads that db's key counts and keys again.
 //
 
 import SwiftUI
@@ -15,6 +17,9 @@ import SwiftUI
 struct RedisKeySidebar: View {
   let model: RedisKeyBrowserModel
   let workspaceManager: WorkspaceManager
+
+  /// The New Key sheet on screen
+  @State private var newKey: RedisKeyEditTarget?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -54,6 +59,28 @@ struct RedisKeySidebar: View {
     }
     // Another key tab picked in the tab bar: its key is the selected row
     .background { RedisActiveKeySync(model: model, workspaceManager: workspaceManager) }
+    .onReceive(
+      NotificationCenter.default.publisher(for: .redisKeysChanged, object: workspaceManager)
+    ) { note in
+      guard let db = note.userInfo?[WorkspaceManager.redisKeysChangedDatabase] as? Int else {
+        return
+      }
+      model.reload(db: db)
+    }
+    .sheet(item: $newKey) { target in
+      RedisKeyEditSheet(
+        request: target.request,
+        context: workspaceManager.redisKeyWriteContext(
+          staleMessage: "The connection changed; reload the keys."),
+        epoch: target.epoch,
+        databasePassword: workspaceManager.workspace.connectionConfig?.password,
+        isConnected: workspaceManager.connectionState.isConnected
+      ) { write, _ in
+        workspaceManager.noteRedisKeysChanged(db: write.key.db)
+        model.select(write.key)
+        workspaceManager.openRedisKey(write.key)
+      }
+    }
     // An unstructured task: leaving the tab must not cancel a read half way
     .onAppear {
       let connection = workspaceManager.connectionManager
@@ -161,6 +188,18 @@ struct RedisKeySidebar: View {
         }
       }
       .padding(.top, isFirst ? 0 : Spacing.sm)
+      .contextMenu {
+        if !workspaceManager.isRedisReadOnly {
+          Menu("New Key") {
+            ForEach(Self.newKeyTypes, id: \.title) { type in
+              Button(type.title) {
+                newKey = RedisKeyEditTarget(
+                  request: .newKey(db: database.index, type: type), epoch: model.connectionEpoch)
+              }
+            }
+          }
+        }
+      }
     case .node(let row):
       RedisKeyRowHost(
         model: model, row: row, onTap: { tap(row.id) }, onDoubleTap: { doubleTap(row.id) }
@@ -183,6 +222,11 @@ struct RedisKeySidebar: View {
       .modifier(DatabaseContentIndent())
     }
   }
+
+  /// The types New Key creates
+  private static let newKeyTypes: [RedisKeyViewerModel.KeyType] = [
+    .string, .hash, .list, .set, .sortedSet, .stream,
+  ]
 
   /// A folder opens or closes; a key is selected and shown in the key preview tab at once
   private func tap(_ id: RedisKeyBrowserModel.NodeID) {
