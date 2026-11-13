@@ -356,8 +356,10 @@ extension WorkspaceManager {
   /// Load database schema. While a Protected transaction is pending the cached schema is kept
   /// and no catalog query is sent (the actor refuses them too).
   func loadDatabaseSchema() async {
-    // A task cancelled before it ran must not start a load (it would supersede the newer one)
-    guard !Task.isCancelled, connectionState == .connected, !isSchemaPaused else { return }
+    // A task cancelled before it ran must not start a load (it would supersede the newer one).
+    // Redis has no SQL catalog: nothing is read (its sidebar stays empty).
+    guard !Task.isCancelled, connectionState == .connected, !isSchemaPaused, !isRedisWorkspace
+    else { return }
     // Only the latest load may assign results or clear the flag; an older one is superseded
     schemaLoadGeneration += 1
     let generation = schemaLoadGeneration

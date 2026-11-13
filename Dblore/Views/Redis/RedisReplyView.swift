@@ -4,24 +4,38 @@
 //
 //  One Redis reply in two modes: Grid (one row per node, depth first: path, type, value; nested
 //  nodes indented, map children marked key / value, values one escaped line cut for display) and
-//  Raw (redis-cli style text). Both are built once per reply off the main actor (a new reply
-//  cancels the build in flight), and both stay mounted once shown, so a mode switch rebuilds
-//  nothing; the Raw text view is mounted the first time Raw is shown for a reply, the Grid's list
-//  lays out only the rows on screen. Server text is shown as plain text only: no Markdown,
-//  attributes or link detection, and invisible or line-breaking characters escaped
-//  (`RedisDisplayText`).
+//  Raw (redis-cli style text). Both are built once per reply off the main actor (a new `stamp`
+//  cancels the build in flight; the tree is never compared), and both stay mounted once shown, so
+//  a mode switch rebuilds nothing; the Raw text view is mounted the first time Raw is shown for a
+//  reply, the Grid's list lays out only the rows on screen. A reply cut short arrives as its
+//  Grid rows only (a cut reply is no tree): it shows the Grid under the banner, without Raw.
+//  Server text is shown as plain text only: no Markdown, attributes or link detection, and
+//  invisible or line-breaking characters escaped (`RedisDisplayText`).
 //
 
 import AppKit
 import SwiftUI
 
-struct RedisReplyView: View {
-  let reply: RedisReply
+struct RedisReplyView: View, Equatable {
+  /// What is shown: a whole reply, or the Grid rows of a reply cut short
+  enum Input: Sendable {
+    case reply(RedisReply)
+    case rows([RedisReplyDisplayRow])
+  }
+
+  let input: Input
+  /// Changes whenever `input` does (e.g. the command result's id): the view rebuilds on it
+  /// instead of comparing the reply
+  let stamp: UUID
   /// Banner over the reply when it was cut short; nil shows none
   var truncatedMessage: String? = nil
 
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.stamp == rhs.stamp && lhs.truncatedMessage == rhs.truncatedMessage
+  }
+
   @State private var mode: Mode = .grid
-  /// The Grid rows and Raw text of `reply`; nil while they are built
+  /// The Grid rows and Raw text of `input`; nil while they are built
   @State private var content: Content?
   /// Counts the builds, so the Raw text view compares a number instead of the text
   @State private var builds = 0
@@ -38,8 +52,15 @@ struct RedisReplyView: View {
 
   nonisolated private struct Content: Sendable {
     let rows: [RedisReplyDisplayRow]
-    let rawText: String
+    /// Nil for rows of a reply cut short: Raw is not offered
+    let rawText: String?
     let version: Int
+  }
+
+  /// Raw is offered for a whole reply only
+  private var hasRaw: Bool {
+    if case .reply = input { return true }
+    return false
   }
 
   var body: some View {
@@ -53,9 +74,9 @@ struct RedisReplyView: View {
         ZStack {
           RedisReplyGrid(rows: content.rows)
             .shown(mode == .grid)
-          if rawMounted || mode == .raw {
+          if let rawText = content.rawText, rawMounted || mode == .raw {
             RedisRawTextView(
-              text: content.rawText, version: content.version, isShown: mode == .raw,
+              text: rawText, version: content.version, isShown: mode == .raw,
               takesFocus: rawTakesFocus
             )
             .shown(mode == .raw)
@@ -66,8 +87,8 @@ struct RedisReplyView: View {
       }
     }
     .background(Color.appBackground)
-    // `==` walks the tree, but only when the view is rebuilt; the build itself runs once per reply
-    .task(id: reply) { await build() }
+    // The stamp, not the tree: a long reply is never compared
+    .task(id: stamp) { await build() }
     .onChange(of: mode) { _, newMode in
       if newMode == .raw { rawMounted = true }
       rawTakesFocus = newMode == .raw && content != nil
@@ -76,12 +97,20 @@ struct RedisReplyView: View {
 
   private var header: some View {
     HStack(spacing: Spacing.sm) {
-      CapsuleTabPicker(selection: $mode, tabs: [Mode.grid, .raw], height: 28) { value in
-        CapsuleTabLabel(text: value.title, isSelected: mode == value)
+      if hasRaw {
+        CapsuleTabPicker(selection: $mode, tabs: [Mode.grid, .raw], height: 28) { value in
+          CapsuleTabLabel(text: value.title, isSelected: mode == value)
+        }
+        .fitsContent()
+        .accessibilityLabel("Reply view")
+        .help("Grid: one row per reply node. Raw: the reply as text.")
+      } else {
+        Text("Grid")
+          .font(.small.weight(.semibold))
+          .foregroundColor(.foregroundMuted)
+          .frame(height: 28)
+          .help("A reply cut short shows its Grid rows only")
       }
-      .fitsContent()
-      .accessibilityLabel("Reply view")
-      .help("Grid: one row per reply node. Raw: the reply as text.")
       Spacer(minLength: Spacing.sm)
     }
     .padding(.horizontal, Spacing.md)
@@ -93,18 +122,24 @@ struct RedisReplyView: View {
   /// and its builders stop early.
   private func build() async {
     content = nil
+    if !hasRaw { mode = .grid }
     rawMounted = mode == .raw
     rawTakesFocus = false
     builds += 1
     let version = builds
-    let reply = self.reply
+    let input = self.input
     let task = Task.detached(priority: .userInitiated) { () -> Content? in
       PerfSignpost.interval("redis.replyView") {
-        let rows = reply.displayRows()
-        guard !Task.isCancelled else { return nil }
-        let rawText = reply.rawText
-        guard !Task.isCancelled else { return nil }
-        return Content(rows: rows, rawText: rawText, version: version)
+        switch input {
+        case .rows(let rows):
+          return Content(rows: rows, rawText: nil, version: version)
+        case .reply(let reply):
+          let rows = reply.displayRows()
+          guard !Task.isCancelled else { return nil }
+          let rawText = reply.rawText
+          guard !Task.isCancelled else { return nil }
+          return Content(rows: rows, rawText: rawText, version: version)
+        }
       }
     }
     let built = await withTaskCancellationHandler {
@@ -349,19 +384,21 @@ private struct LoadingPlaceholder: View {
 
 #Preview("Redis reply") {
   RedisReplyView(
-    reply: .array([
-      .map([
-        RedisReplyPair(key: .bulk(.text("name")), value: .bulk(.text("Ada"))),
-        RedisReplyPair(
-          key: .simple(.text("tags")),
-          value: .array([.bulk(.text("admin")), .bulk(.bytes(Data([0xDE, 0xAD, 0x00])))])),
-      ]),
-      .error(.text("WRONGTYPE Operation against a key holding the wrong kind of value")),
-      .integer(42),
-      .null,
-      .double("3.14"),
-      .boolean(true),
-    ]),
+    input: .reply(
+      .array([
+        .map([
+          RedisReplyPair(key: .bulk(.text("name")), value: .bulk(.text("Ada"))),
+          RedisReplyPair(
+            key: .simple(.text("tags")),
+            value: .array([.bulk(.text("admin")), .bulk(.bytes(Data([0xDE, 0xAD, 0x00])))])),
+        ]),
+        .error(.text("WRONGTYPE Operation against a key holding the wrong kind of value")),
+        .integer(42),
+        .null,
+        .double("3.14"),
+        .boolean(true),
+      ])),
+    stamp: UUID(),
     truncatedMessage: "The reply was cut at 10,000 rows."
   )
   .frame(width: 720, height: 420)

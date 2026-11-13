@@ -75,6 +75,24 @@ struct ConnectionManagerScriptTests {
     }
   }
 
+  /// Fake sessions whose Redis sends answer `answer` (a PONG unless a test changes it).
+  private nonisolated final class RedisPingFactory: DatabaseSessionFactory, @unchecked Sendable {
+    let made = FakeDatabaseSessionFactory(capabilities: .contract())
+    private let lock = NSLock()
+    private var reply: [[CellValue]] = [[.string("0"), .string("simple"), .string("PONG")]]
+
+    var answer: [[CellValue]] {
+      get { lock.withLock { reply } }
+      set { lock.withLock { reply = newValue } }
+    }
+
+    func makeSession(config: ConnectionConfig) async throws -> any DatabaseSession {
+      let session = made.makeSession(config: config)
+      (session as? FakeDatabaseSession)?.answerRedisSends(with: answer)
+      return session
+    }
+  }
+
   private let folder: URL
   private let started = Started()
 
@@ -158,20 +176,26 @@ struct ConnectionManagerScriptTests {
     await workspace.connectionManager.disconnect()
   }
 
-  @Test("Test Connection refuses Redis before its password command runs")
-  func redisTestRefusedBeforePasswordCommand() async throws {
+  @Test("Test Connection on Redis runs its password command, then one PING on its own session")
+  func redisTestPingsAfterPasswordCommand() async throws {
     defer { cleanUp() }
     var config = Self.config(password: "pw.sh")
     config.databaseType = .redis
-    let factory = FakeDatabaseSessionFactory(capabilities: .contract())
-    do {
+    let factory = RedisPingFactory()
+
+    #expect(try await manager(factory).testConnection(config: config))
+
+    #expect(started.all == ["pw.sh"])
+    #expect(factory.made.configs.map(\.password) == ["from-command"])
+    #expect(factory.made.redisCommands.map(\.args) == [[Data("PING".utf8)]])
+    #expect(factory.made.statements.isEmpty)
+    #expect(factory.made.sessions.map(\.didClose) == [true])
+
+    // Any reply other than PONG fails the test
+    factory.answer = [[.string("0"), .string("simple"), .string("OK")]]
+    await #expect(throws: DatabaseError.self) {
       _ = try await manager(factory).testConnection(config: config)
-      Issue.record("Redis Test Connection should fail")
-    } catch DatabaseError.engineUnavailable(let refused) {
-      #expect(refused == .redis)
     }
-    #expect(started.all.isEmpty)
-    #expect(factory.sessions.isEmpty)
   }
 
   @Test("The post-disconnect script starts once, by the time disconnect returns")

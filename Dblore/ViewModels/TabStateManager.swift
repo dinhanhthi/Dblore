@@ -344,6 +344,8 @@ class TabStateManager {
     case .notebook:
       panel.allowedContentTypes = [.dblore]
       panel.nameFieldStringValue += ".dblore"
+    case .sqlFile where tab.title.lowercased().hasSuffix(".redis"):
+      panel.allowedContentTypes = [.redisScript]
     case .sqlFile:
       panel.allowedContentTypes = [.sql]
       panel.nameFieldStringValue += ".sql"

@@ -25,6 +25,20 @@ extension UTType {
   nonisolated static var markdownText: UTType {
     UTType(importedAs: "net.daringfireball.markdown")
   }
+
+  /// Redis command file (".redis"), plain text: one command per line
+  nonisolated static var redisScript: UTType {
+    UTType(exportedAs: "ace.thi.dblore.redis-script", conformingTo: .plainText)
+  }
+
+  /// File panel type of a script file extension: ".redis" commands, ".js" queries, else SQL
+  nonisolated static func scriptContentType(forExtension fileExtension: String) -> UTType {
+    switch fileExtension {
+    case "redis": .redisScript
+    case "js": .javaScript
+    default: .sql
+    }
+  }
 }
 
 /// Document wrapper for Dblore files (.dblore)

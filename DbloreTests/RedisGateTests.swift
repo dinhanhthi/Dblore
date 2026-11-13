@@ -554,6 +554,66 @@ extension RedisGateTests {
       #expect(tab.sessions.isEmpty)
       #expect(export.sessions.isEmpty)
     }
+
+    @Test(
+      "A Redis workspace opens command tabs only: New Notebook makes one, a notebook is refused")
+    func commandTabsOnly() async throws {
+      let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("redis-seam-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: folder) }
+      let notebookURL = folder.appendingPathComponent("n.dblore")
+      try DocumentCoder.encode(DbloreNotebook(), includeResultsOnSave: false)
+        .write(to: notebookURL)
+      let suiteName = "RedisSeam.\(UUID().uuidString)"
+      let suite = try #require(UserDefaults(suiteName: suiteName))
+      defer { suite.removePersistentDomain(forName: suiteName) }
+      func manager(_ config: ConnectionConfig) -> WorkspaceManager {
+        let manager = WorkspaceManager(
+          workspace: Workspace(connectionConfig: config), restoreTabs: false)
+        manager.recents = RecentManager(defaults: suite)
+        var hooks = SecurityScopedAccessHooks()
+        hooks.resolve = { _ in throw CocoaError(.fileNoSuchFile) }
+        hooks.makeBookmark = { _ in nil }
+        manager.accessHooks = hooks
+        return manager
+      }
+
+      let workspace = manager(Self.redis)
+      let id = workspace.newNotebook()
+      #expect(workspace.tabs.map(\.title) == ["Untitled.redis"])
+      #expect(workspace.tabs.first?.id == id && workspace.tabs.first?.documentType == .sqlFile)
+      #expect(workspace.activeTabId == id)
+      // The tab records History with the Redis dialect
+      #expect(workspace.viewModel(for: id)?.sqlDialect == .redis)
+
+      // Refused on every path, the restore open (no kind check) too
+      for checks in [true, false] {
+        await #expect(throws: (any Error).self) {
+          try await workspace.openFile(url: notebookURL, checksScriptKind: checks)
+        }
+      }
+      #expect(workspace.tabs.count == 1)
+
+      // The same file opens in a SQL workspace
+      let postgres = manager(
+        ConnectionConfig(
+          databaseType: .postgresql, host: "fake", port: 5432, database: "db", username: "u",
+          sslMode: .disable))
+      try await postgres.openFile(url: notebookURL, checksScriptKind: true)
+      #expect(postgres.tabs.map(\.documentType) == [.notebook])
+    }
+
+    @Test("The schema visualizer never opens in a Redis workspace")
+    func noSchemaVisualizer() {
+      let workspace = WorkspaceManager(
+        workspace: Workspace(connectionConfig: Self.redis), restoreTabs: false)
+      workspace.showSchemaVisualizer()
+      #expect(!workspace.isSchemaVisualizerActive)
+      workspace.toggleSchemaVisualizer()
+      #expect(!workspace.isSchemaVisualizerActive)
+      #expect(!workspace.paletteSources().actions.contains { $0.id == "schema-visualizer" })
+    }
   }
 
   @Suite("Redis reply tree")
@@ -652,16 +712,29 @@ extension RedisGateTests {
     /// The gate: the only file that may cast a session to `RedisCommandSending` and send
     private static let gate = "Dblore/Database/DatabaseConnectionManager+RedisCommands.swift"
     /// Holds the Test Connection probe (`func probe(`), whose `PING` on its own session is the
-    /// documented bypass added in task 8.1: allowed inside that function only, not yet used
+    /// documented bypass: allowed inside that function only
     private static let probeFile = "Dblore/Database/DatabaseConnectionManager.swift"
     private static let probeStart = "  private func probe(_ config: ConnectionConfig)"
     /// The protocol's declaration
     private static let declaration = "Dblore/Database/Redis/RedisCommandSending.swift"
+    /// The Redis session, the app's only conformer: the one file that may name its own casts
+    /// and sends
+    private static let session = "Dblore/Database/Redis/RedisSession.swift"
 
     @Test(
-      "RedisCommandSending is named only by the gate's two casts, its declaration and conformances")
+      "Only the gate (two casts) and the probe cast to the Redis send seam or send through it")
     func onlyThroughTheGate() throws {
       let mention = try Regex(#"\bRedisCommandSending\b"#)
+      // A cast to the concrete session, which sends without the gate
+      let sessionCast = try Regex(#"\b(?:is|as[?!]?)\s+RedisSession\b"#)
+      // The seam's send: `.send(` with one unlabelled argument, a name or a `RedisCommand(`
+      let seamSend = try Regex(#"\.send\(\s*(?:RedisCommand\b|[A-Za-z_][\w.?!]*\s*\))"#)
+      #expect("guard let redis = session as? RedisSession".contains(sessionCast))
+      #expect("if current is RedisSession {".contains(sessionCast))
+      #expect("let source = try await sender.send(command)".contains(seamSend))
+      #expect("try await redis.send(RedisCommand(args: [ping], db: 0))".contains(seamSend))
+      #expect(!"entry.send(json, context) { receive($0, $1) }".contains(seamSend))
+      #expect(!"try await sender.send(command, expectedRows: rows)".contains(seamSend))
       // A type declaring its conformance (`final class RedisSession: …, RedisCommandSending`)
       let conformance = try Regex(
         #"^(?:(?:public|internal|private|fileprivate|final|nonisolated)\s+)*(?:class|struct|actor|enum|extension)\s+\w+[^{]*:[^{]*\bRedisCommandSending\b"#
@@ -698,6 +771,13 @@ extension RedisGateTests {
           let continuesList = inInheritanceList && code.wholeMatch(of: inheritanceLine) != nil
           inInheritanceList =
             code.wholeMatch(of: openDeclaration) != nil || (continuesList && code.hasSuffix(","))
+          if path != Self.session {
+            if code.contains(sessionCast) {
+              violations.append("\(path):\(index + 1): \(code)")
+            } else if code.contains(seamSend), path != Self.gate, !probe.contains(index) {
+              violations.append("\(path):\(index + 1): \(code)")
+            }
+          }
           guard code.contains(mention) else { continue }
           if path == Self.gate {
             if code.contains(cast) {
@@ -713,7 +793,7 @@ extension RedisGateTests {
         }
       }
       #expect(gateCasts == 2, "the gate checks the session's type, then casts it to send")
-      #expect(violations.isEmpty, "RedisCommandSending outside the gate: \(violations)")
+      #expect(violations.isEmpty, "A Redis send seam outside the gate: \(violations)")
     }
 
     /// `line` trimmed, without the `/* … */` comments it starts with
@@ -731,6 +811,171 @@ extension RedisGateTests {
         let end = lines[start...].firstIndex(where: { $0 == "  }" })
       else { return 0..<0 }
       return start..<end
+    }
+  }
+}
+
+// Nested, so `-only-testing:DbloreTests/RedisGateTests` runs them too
+extension RedisGateTests {
+  /// The command tab's runner on a fake session: everything is tokenized, classified and checked
+  /// before anything is sent, writes wait for the commit style's confirmation, a long reply is
+  /// cut, Cancel stops the rest, and History never holds a password
+  @Suite("Redis command runner")
+  @MainActor
+  struct CommandRunner {
+    /// History rows the runner handed over
+    private final class Recorded {
+      var outcomes: [QueryHistoryOutcome] = []
+    }
+
+    private static func args(_ words: String...) -> [Data] { words.map { Data($0.utf8) } }
+
+    private func runner(
+      style: CommitStyle, db: Int = 0
+    ) async throws -> (RedisCommandRunner, FakeDatabaseSession, Recorded) {
+      let factory = FakeDatabaseSessionFactory(capabilities: DatabaseType.redis.capabilities)
+      let manager = DatabaseConnectionManager(sessionFactory: factory)
+      var config = ConnectionConfig(
+        databaseType: .redis, host: "fake", port: 6379, database: "0", username: "",
+        sslMode: .disable, protectionLevel: .none, safeMode: .silent)
+      config.applyCommitStyle(style)
+      try await manager.connect(config: config)
+      let recorded = Recorded()
+      let runner = RedisCommandRunner(
+        context: RedisCommandContext(
+          manager: manager, policy: { ProtectionPolicy(protectionLevel: .none) },
+          commitStyle: { RedisCommandContext.commitStyle(of: config) }, database: { db },
+          caller: nil, recordHistory: { recorded.outcomes += $0 }))
+      return (runner, try #require(factory.sessions.first), recorded)
+    }
+
+    @Test("A script with one refused line sends nothing and says which line")
+    func refusedLineSendsNothing() async throws {
+      let (runner, session, recorded) = try await runner(style: .immediate)
+      await runner.runAll(text: "GET a\nSELECT 1")
+      #expect(session.redisCommands.isEmpty)
+      #expect(runner.results.isEmpty)
+      #expect(runner.pendingConfirmation == nil)
+      #expect(runner.message?.contains("Line 2") == true)
+      // A tokenize error refuses the whole text too
+      await runner.runAll(text: "GET a\nGET \"b")
+      #expect(session.redisCommands.isEmpty)
+      #expect(runner.message?.contains("Line 2") == true)
+      #expect(recorded.outcomes.isEmpty)
+    }
+
+    @Test("A command holding a password never reaches History; others are stored as rendered")
+    func historySkipsSecrets() async throws {
+      let (runner, session, recorded) = try await runner(style: .immediate)
+      await runner.runAll(text: "AUTH x")
+      #expect(runner.message != nil)
+      #expect(session.redisCommands.isEmpty)
+      // Sent (destructive: confirmed first), yet never recorded
+      await runner.runAll(text: "CONFIG SET requirepass s3cret")
+      let pending = try #require(runner.pendingConfirmation)
+      #expect(pending.listed.map(\.text).allSatisfy { !$0.contains("s3cret") })
+      await runner.confirm(pending)
+      #expect(
+        session.redisCommands.map(\.args) == [Self.args("CONFIG", "SET", "requirepass", "s3cret")])
+      #expect(recorded.outcomes.isEmpty)
+
+      await runner.runAll(text: "GET \"a b\"")
+      #expect(recorded.outcomes.map(\.sql) == [RedisTokenizer.render(Self.args("GET", "a b"))])
+      #expect(recorded.outcomes.first?.status == .success)
+    }
+
+    @Test("Password style holds a SET until confirm; nothing is sent before")
+    func passwordStyleHoldsWrites() async throws {
+      let (runner, session, _) = try await runner(style: .password, db: 3)
+      await runner.runAll(text: "SET k v")
+      let pending = try #require(runner.pendingConfirmation)
+      #expect(pending.requiresPassword)
+      #expect(pending.needsSafeModePanel)
+      #expect(pending.database == 3)
+      #expect(pending.listed.map(\.text) == ["SET k v"])
+      #expect(session.redisCommands.isEmpty)
+      await runner.confirm(pending)
+      #expect(session.redisCommands == [RedisCommand(args: Self.args("SET", "k", "v"), db: 3)])
+      #expect(runner.pendingConfirmation == nil)
+      #expect(runner.results.map(\.outcome) == [.reply(.simple(.text("OK")))])
+    }
+
+    @Test("Confirm style asks for EVAL, not for a read; Cancel sends nothing")
+    func confirmStyle() async throws {
+      let (runner, session, _) = try await runner(style: .confirm)
+      await runner.runAll(text: "EVAL \"return 1\" 0")
+      let pending = try #require(runner.pendingConfirmation)
+      #expect(!pending.requiresPassword)
+      runner.cancelConfirmation()
+      #expect(runner.pendingConfirmation == nil)
+      await runner.confirm(pending)
+      #expect(session.redisCommands.isEmpty)
+      // Run: the caret's line only (CRLF text: CR is whitespace)
+      let text = "SET a b\r\nGET k\r\nDEL x"
+      let caret = (text as NSString).range(of: "GET").location + 1
+      await runner.run(text: text, selection: NSRange(location: caret, length: 0))
+      #expect(runner.pendingConfirmation == nil)
+      #expect(session.redisCommands.map(\.args) == [Self.args("GET", "k")])
+    }
+
+    @Test("Immediate style runs SET at once; FLUSHDB still asks")
+    func immediateStyle() async throws {
+      let (runner, session, _) = try await runner(style: .immediate)
+      await runner.runAll(text: "SET k v")
+      #expect(runner.pendingConfirmation == nil)
+      #expect(session.redisCommands.map(\.args) == [Self.args("SET", "k", "v")])
+      await runner.runAll(text: "FLUSHDB")
+      let pending = try #require(runner.pendingConfirmation)
+      #expect(!pending.needsSafeModePanel)
+      #expect(session.redisCommands.count == 1)
+      await runner.confirm(pending)
+      #expect(session.redisCommands.last?.args == Self.args("FLUSHDB"))
+    }
+
+    @Test("A reply past 10,000 rows is cut with a banner and the next command still runs")
+    func replyCutAtCap() async throws {
+      let (runner, session, _) = try await runner(style: .immediate)
+      let items = 10_000
+      session.answerRedisSends(
+        with: [[.string("0"), .string("array"), .int(items)]]
+          + (0..<items).map { [.string("0.\($0)"), .string("integer"), .int($0)] })
+      await runner.runAll(text: "LRANGE big 0 -1\nGET k")
+      #expect(session.redisCommands.count == 2)
+      #expect(runner.results.count == 2)
+      guard case .truncated(let rows)? = runner.results.first?.outcome else {
+        Issue.record("Expected a cut reply, got \(String(describing: runner.results.first))")
+        return
+      }
+      #expect(rows.count == RedisCommandRunner.maxReplyRows)
+      #expect(rows.first?.value == "10000 items")
+      #expect(
+        rows.last
+          == RedisReplyDisplayRow(
+            path: "0.9998", depth: 1, role: nil, type: "integer", value: "9998"))
+    }
+
+    @Test("Cancel stops the command in flight and sends none after it", .timeLimit(.minutes(1)))
+    func cancelStopsTheRest() async throws {
+      let (runner, session, recorded) = try await runner(style: .immediate)
+      session.holdNextRedisSend()
+      // What the plugin answers to an interrupt
+      session.failNextRedisSend(with: EnginePluginSessionError.cancelled)
+      let running = Task { await runner.runAll(text: "GET a\nGET b") }
+      let held = await boundedWait("Redis send held") {
+        while session.heldRedisSendCount == 0, !Task.isCancelled {
+          try? await Task.sleep(for: .milliseconds(5))
+        }
+        return true
+      }
+      #expect(held == true)
+      #expect(runner.isRunning)
+      await runner.cancel()
+      session.releaseHeldRedisSends()
+      await running.value
+      #expect(session.redisCommands.map(\.args) == [Self.args("GET", "a")])
+      #expect(runner.results.map(\.outcome) == [.cancelled])
+      #expect(!runner.isRunning)
+      #expect(recorded.outcomes.map(\.status) == [.cancelled])
     }
   }
 }

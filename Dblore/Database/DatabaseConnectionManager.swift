@@ -629,8 +629,6 @@ actor DatabaseConnectionManager {
   func testConnection(config: ConnectionConfig) async throws -> Bool {
     if let refusal = lockSource.refusal(for: config) { throw refusal }
     if Self.lacksTypedPassword(config) { throw DatabaseError.passwordRequiredOnConnect }
-    // `probe` refuses Redis: refused before its password command runs or a Vault lease is taken
-    if config.databaseType == .redis { throw DatabaseError.engineUnavailable(.redis) }
     let config = try await withPasswordCommand(config)
     guard config.vault != nil else { return try await probe(config) }
     let lease = try await vaultLeasing.take(for: config)
@@ -647,7 +645,9 @@ actor DatabaseConnectionManager {
     }
   }
 
-  /// `SELECT 1` (or the engine's ping) on a session of its own, closed after.
+  /// `SELECT 1` (or the engine's ping) on a session of its own, closed after. Redis sends one
+  /// `PING` and expects `PONG`: the documented bypass of its gate (a fixed command with no user
+  /// or server text), the only send outside `executeGatedRedisCommand`.
   private func probe(_ config: ConnectionConfig) async throws -> Bool {
     switch config.databaseType {
     case .postgresql:
@@ -662,7 +662,34 @@ actor DatabaseConnectionManager {
     case .clickhouse, .sqlserver:
       return try await probeEnginePlugin(config)
     case .redis:
-      throw DatabaseError.engineUnavailable(.redis)
+      let session = try await sessionFactory.makeSession(config: config)
+      let reply: RedisReply?
+      do {
+        try await session.open()
+        guard let sender = session as? any RedisCommandSending else {
+          throw DatabaseError.connectionFailed("This connection cannot run Redis commands.")
+        }
+        let ping = RedisCommand(args: [Data("PING".utf8)], db: Int(config.database) ?? 0)
+        let source = try await sender.send(ping)
+        var rows: [[CellValue]] = []
+        for try await row in source.rows {
+          rows.append(row)
+          // Not a PONG: the rest is dropped (cancelled)
+          if rows.count > 1 { break }
+        }
+        reply = try? RedisReply(rows: rows, maxNodes: 1)
+      } catch {
+        await session.close()
+        switch error {
+        case is DatabaseError, is SSHTunnelError, is SSHPrivateKeyError: throw error
+        default: throw DatabaseError.connectionFailed(session.formatError(error))
+        }
+      }
+      await session.close()
+      guard reply == .simple(.text("PONG")) else {
+        throw DatabaseError.connectionFailed("The server did not answer PING with PONG.")
+      }
+      return true
     }
   }
 
@@ -1162,7 +1189,7 @@ private struct PreparedSQLiteOpen: Sendable {
 /// PostgreSQL stays `PostgresSession`. SQLite is `SQLiteSession` and DuckDB `DuckDBSession`
 /// after the caller has resolved sandbox access. MySQL / MariaDB is `MySQLSession`, MongoDB
 /// `MongoSession`. ClickHouse and SQL Server are `EnginePluginSession` once their plugin is
-/// installed.
+/// installed, Redis a `RedisSession` (which wraps one) once its plugin is.
 nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
   /// The DuckDB plugin's loader, or nil when the plugin is not installed. Read on the main actor
   /// before each DuckDB session, after the launch check: a removed plugin stays loaded (and
@@ -1178,8 +1205,9 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
     else { return nil }
     return { try manager.loadDuckDBLibrary() }
   }
-  /// Whether the catalog plugin that ships an engine (ClickHouse, SQL Server) is installed, once
-  /// its launch check is done. Read on the main actor before each session of that engine.
+  /// Whether the catalog plugin that ships an engine (ClickHouse, SQL Server, Redis) is
+  /// installed, once its launch check is done. Read on the main actor before each session of that
+  /// engine.
   var enginePluginInstalled: @Sendable (DatabaseType) async -> Bool = { @MainActor type in
     guard let manager = PluginRegistry.shared.manager(for: type) else { return false }
     return await manager.isInstalledAfterLaunchCheck()
@@ -1207,16 +1235,17 @@ nonisolated struct AppDatabaseSessionFactory: DatabaseSessionFactory {
       return MySQLSession(config: config, hostKeyValidator: hostKeyValidator)
     case .mongodb:
       return MongoSession(config: config, hostKeyValidator: hostKeyValidator)
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       let type = config.databaseType
       guard let pluginID = type.pluginID, await enginePluginInstalled(type) else {
         throw DatabaseError.engineUnavailable(type)
       }
       // `open()` loads the plugin bundle (signature check, dlopen) before it connects.
+      if type == .redis {
+        return RedisSession(pluginID: pluginID, config: config, hostKeyValidator: hostKeyValidator)
+      }
       return EnginePluginSession(
         pluginID: pluginID, config: config, hostKeyValidator: hostKeyValidator)
-    case .redis:
-      throw DatabaseError.engineUnavailable(.redis)
     }
   }
 }

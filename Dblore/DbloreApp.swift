@@ -1135,7 +1135,7 @@ struct TabCommands: Commands {
 
   private func openFile() {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .redisScript, .markdownText]
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
 

@@ -31,6 +31,8 @@ final class FakeEnginePlugin: @unchecked Sendable {
   var catalogAnswers: [EngineCatalogRead: EngineEvent.Kind] = [:]
   /// `hello.features`; with `argv` an `argv` request is answered as a query, else `unsupported`
   var features: [String] = []
+  /// `hello.engine`
+  var engine = "fake"
 
   private let queue = DispatchQueue(label: "FakeEnginePlugin.emit")
   private let lock = NSLock()
@@ -126,7 +128,7 @@ final class FakeEnginePlugin: @unchecked Sendable {
       answer(
         .hello(
           .init(
-            protocolVersion: Int(entryProtocol), version: "1.0.0", engine: "fake",
+            protocolVersion: Int(entryProtocol), version: "1.0.0", engine: engine,
             queryLanguage: "sql", features: features)))
     case .open: if answersOpen { answer(.opened(serverVersion: "fake 1")) }
     case .close: if answersClose { answer(.closed(reason: .closed)) }

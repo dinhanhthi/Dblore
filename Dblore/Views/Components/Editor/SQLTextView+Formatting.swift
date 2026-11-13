@@ -11,9 +11,9 @@ import AppKit
 
 extension SQLTextView {
 
-  /// Format SQL applies to SQL dialects only; mongosh cells are not SQL
+  /// Format SQL applies to SQL dialects only; mongosh and Redis text is not SQL
   nonisolated static func canFormat(dialect: SQLDialect) -> Bool {
-    dialect != .mongodb
+    dialect.language == .sql
   }
 
   /// Replace the whole text with its formatted version (undoable). When the formatter refuses,

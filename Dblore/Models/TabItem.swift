@@ -77,7 +77,7 @@ struct TabItem: Identifiable, Equatable {
 /// The type of document in a tab
 enum TabDocumentType: String, Codable, Equatable {
   case notebook  // .dblore files
-  case sqlFile  // .sql files, and .js queries in a MongoDB workspace
+  case sqlFile  // .sql files, .js queries in a MongoDB workspace, Redis command tabs
   case dataViewer  // table/view data viewer, no file
   case markdown  // .md files
 
@@ -103,7 +103,7 @@ enum TabDocumentType: String, Codable, Equatable {
   static func from(url: URL) -> TabDocumentType? {
     switch url.pathExtension.lowercased() {
     case "dblore": return .notebook
-    case "sql", "js": return .sqlFile
+    case "sql", "js", "redis": return .sqlFile
     case "md": return .markdown
     default: return nil
     }
@@ -120,16 +120,28 @@ enum TabDocumentType: String, Codable, Equatable {
   }
 
   /// Message when a script file does not fit the connection, nil when it opens. A workspace
-  /// with no connection accepts both kinds; other file types are never refused here.
+  /// with no connection accepts every kind; other file types are never refused here.
   nonisolated static func scriptKindRefusal(for url: URL, databaseType: DatabaseType?) -> String? {
     guard let databaseType else { return nil }
     let ext = url.pathExtension.lowercased()
-    guard ext == "sql" || ext == "js", ext != scriptExtension(for: databaseType) else {
-      return nil
+    let own = scriptExtension(for: databaseType)
+    guard ["sql", "js", "redis"].contains(ext), ext != own else { return nil }
+    switch ext {
+    case "sql":
+      return own == "redis"
+        ? "SQL files can't run in a Redis workspace. Open a .redis command file instead."
+        : "SQL files can't run in a MongoDB workspace. Open a .js query instead."
+    case "js": return "JavaScript query files run only in a MongoDB workspace."
+    default: return "Redis command files run only in a Redis workspace."
     }
-    return ext == "sql"
-      ? "SQL files can't run in a MongoDB workspace. Open a .js query instead."
-      : "JavaScript query files run only in a MongoDB workspace."
+  }
+
+  /// Message when a notebook cannot open in the workspace: a Redis workspace has no notebooks
+  nonisolated static func notebookRefusal(for url: URL, databaseType: DatabaseType?) -> String? {
+    guard url.pathExtension.lowercased() == "dblore",
+      databaseType?.capabilities.queryLanguage == .redis
+    else { return nil }
+    return "Notebooks are not available in a Redis workspace. Open a .redis command file instead."
   }
 }
 

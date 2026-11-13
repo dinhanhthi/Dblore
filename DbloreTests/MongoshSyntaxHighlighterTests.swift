@@ -217,9 +217,10 @@ struct MongoshSyntaxHighlighterTests {
 
   // MARK: - Format SQL Gate
 
-  @Test("Format SQL is disabled for MongoDB only")
+  @Test("Format SQL is enabled for SQL dialects only")
   func formatGate() {
     #expect(!SQLTextView.canFormat(dialect: .mongodb))
+    #expect(!SQLTextView.canFormat(dialect: .redis))
     #expect(SQLTextView.canFormat(dialect: .postgresql))
     #expect(SQLTextView.canFormat(dialect: .mysql))
     #expect(SQLTextView.canFormat(dialect: .sqlite))

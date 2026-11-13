@@ -122,8 +122,30 @@ class WorkspaceManager: Identifiable {
     workspace.connectionConfig?.databaseType.capabilities.queryLanguage == .mongosh
   }
 
-  /// Label of the new script entry: "New Query" on MongoDB, else "New SQL File"
-  var newScriptLabel: String { isMongoWorkspace ? "New Query" : "New SQL File" }
+  /// The workspace connection runs Redis commands: script tabs are ".redis" command tabs, and
+  /// no notebook, data viewer or SQL editor is shown
+  var isRedisWorkspace: Bool {
+    workspace.connectionConfig?.databaseType.capabilities.queryLanguage == .redis
+  }
+
+  /// Label of the new script entry: "New Query" on MongoDB, "New Command" on Redis, else
+  /// "New SQL File"
+  var newScriptLabel: String {
+    isMongoWorkspace ? "New Query" : isRedisWorkspace ? "New Command" : "New SQL File"
+  }
+
+  /// The db index Redis command tabs run in, picked in their dropdown; nil is the connection's
+  /// own (its Database Index). App state only: never written back to the connection.
+  var redisDatabaseChoice: Int?
+
+  /// The db index Redis commands run in now
+  var redisDatabase: Int {
+    redisDatabaseChoice ?? workspace.connectionConfig.flatMap { Int($0.database) } ?? 0
+  }
+
+  /// One command runner per Redis command tab, made on first use, so its results and a run in
+  /// flight outlive a tab switch
+  @ObservationIgnored private var redisRunners: [UUID: RedisCommandRunner] = [:]
 
   /// Connect to the same database with weaker safety settings, held until the Safe Mode
   /// unlock succeeds (see `WorkspaceManager+ConnectionSync.swift`)
@@ -939,6 +961,8 @@ class WorkspaceManager: Identifiable {
     cancelSchemaLayout()
     clearSchemaGraph()
     if config.databaseType != .mongodb { mongoOverview = nil }  // MongoDB screens only
+    // Redis has no schema to draw
+    if config.databaseType == .redis { isSchemaVisualizerActive = false }
     // A search running with its sheet hidden must not reach the new server
     dropCrossTableSearch()
     if !isAutoConnect { await supersedeAutoConnect() }
@@ -953,6 +977,7 @@ class WorkspaceManager: Identifiable {
       viewModel.cancelPendingQuery()
       viewModel.cancelRunAllCells()
     }
+    for runner in redisRunners.values { runner.cancelConfirmation() }
     // Their transaction ends with the previous connection
     heldWrittenRelations = [:]
     heldImportRelations = []
@@ -994,6 +1019,12 @@ class WorkspaceManager: Identifiable {
         }
       }
       invalidateEditTargetsInTabs()  // targets resolved while the actor was switching
+      // Another server or home db: commands go to the new connection's own db
+      let sameDatabase = workspace.connectionConfig.map {
+        $0.databaseType == config.databaseType && $0.host == config.host
+          && $0.port == config.port && $0.database == config.database
+      }
+      if sameDatabase != true { redisDatabaseChoice = nil }
       workspace.connectionConfig = config
       aiAssistant.connectionDidChange()
       if !config.rememberConnection {
@@ -1018,9 +1049,10 @@ class WorkspaceManager: Identifiable {
       // Update all tab ViewModels with connection state
       syncConnectionStateToTabs()
 
-      // Restored data viewers load once connected (before the schema, they are what the user sees)
+      // Restored data viewers load once connected (before the schema, they are what the user
+      // sees). A Redis workspace shows them as unavailable and reads no table.
       dataViewerLoadTasks = viewModels.values
-        .filter { $0.dataViewer != nil && $0.editorResult == nil }
+        .filter { $0.dataViewer != nil && $0.editorResult == nil && !isRedisWorkspace }
         .map { viewModel in Task { await viewModel.loadDataViewerPage() } }
 
       // The schema loads in the background; tabs get it when the load finishes
@@ -1257,8 +1289,10 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Tab Operations
 
+  /// A Redis workspace has no notebooks: it opens a command tab instead
   @discardableResult
   func newNotebook() -> UUID {
+    guard !isRedisWorkspace else { return newSQLFile() }
     let document = DbloreDocument()
     document.lockKeyId = lockKeyId
     let viewModel = createViewModel(for: document.notebook)
@@ -1296,6 +1330,30 @@ class WorkspaceManager: Identifiable {
 
     selectTab(id: tab.id)
     return tab.id
+  }
+
+  /// The command runner of a Redis command tab, made on first use. Nil outside a Redis workspace
+  /// or for an unknown tab. History gets the tab's commands with the Redis dialect only.
+  func redisRunner(for tabId: UUID) -> RedisCommandRunner? {
+    if let runner = redisRunners[tabId] { return runner }
+    guard isRedisWorkspace, let viewModel = viewModels[tabId] else { return nil }
+    let runner = RedisCommandRunner(
+      context: RedisCommandContext(
+        manager: connectionManager,
+        // Read at each run: a write unlock or a protection change since counts
+        policy: { [viewModel] in viewModel.protectionPolicy },
+        commitStyle: { [viewModel] in
+          viewModel.notebook.connectionConfig.map(RedisCommandContext.commitStyle(of:))
+            ?? AppSettings.shared.commitStyle
+        },
+        database: { [weak self] in self?.redisDatabase ?? 0 },
+        caller: viewModel.id,
+        recordHistory: { [viewModel] outcomes in
+          guard viewModel.sqlDialect == .redis else { return }
+          await viewModel.recordExecution(outcomes, source: .editor)
+        }))
+    redisRunners[tabId] = runner
+    return runner
   }
 
   /// Opens the MongoDB Import form through the active tab, or a new query tab when none is open
@@ -1659,6 +1717,13 @@ class WorkspaceManager: Identifiable {
       WorkspaceWindowManager.shared.showToast(message, type: .error)
       throw CocoaError(.fileReadUnsupportedScheme)
     }
+    // On every path (reopen, move to a new window): a notebook runs SQL cells
+    if let message = TabDocumentType.notebookRefusal(
+      for: url, databaseType: workspace.connectionConfig?.databaseType)
+    {
+      WorkspaceWindowManager.shared.showToast(message, type: .error)
+      throw CocoaError(.fileReadUnsupportedScheme)
+    }
 
     guard let docType = TabDocumentType.from(url: url) else {
       throw CocoaError(.fileReadUnsupportedScheme)
@@ -1939,6 +2004,11 @@ class WorkspaceManager: Identifiable {
     viewModels[id]?.resolveStagedBlockerPrompt(commitAnyway: false)
     // Stops the collection screen's reads and a running export of the tab
     viewModels.removeValue(forKey: id)?.mongoCollectionModel?.cancel()
+    // Nothing the closed command tab asked is sent; its command in flight stops
+    if let runner = redisRunners.removeValue(forKey: id) {
+      runner.cancelConfirmation()
+      Task { await runner.cancel() }
+    }
     // Unregister the file presenter: the file coordinator keeps a registered document alive
     notebookDocuments.removeValue(forKey: id)?.setFileURL(nil)
     editorDocuments.removeValue(forKey: id)?.setFileURL(nil)
@@ -2356,6 +2426,14 @@ class WorkspaceManager: Identifiable {
       if !tab.title.hasSuffix(".dblore") {
         panel.nameFieldStringValue += ".dblore"
       }
+    case .sqlFile where isRedisWorkspace:
+      panel.allowedContentTypes = [.redisScript]
+      for other in [".sql", ".js"] where tab.title.lowercased().hasSuffix(other) {
+        panel.nameFieldStringValue = String(tab.title.dropLast(other.count))
+      }
+      if !panel.nameFieldStringValue.hasSuffix(".redis") {
+        panel.nameFieldStringValue += ".redis"
+      }
     case .sqlFile where isMongoWorkspace:
       panel.allowedContentTypes = [.javaScript]
       if tab.title.lowercased().hasSuffix(".sql") {
@@ -2433,10 +2511,17 @@ class WorkspaceManager: Identifiable {
 
   func openSQLFileWithPanel() async {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = isMongoWorkspace ? [.javaScript] : [.sql]
+    panel.allowedContentTypes = [
+      UTType.scriptContentType(
+        forExtension: TabDocumentType.scriptExtension(for: workspace.connectionConfig?.databaseType)
+      )
+    ]
     panel.allowsMultipleSelection = false
     panel.canChooseDirectories = false
-    panel.message = isMongoWorkspace ? "Select a query file to open" : "Select a SQL file to open"
+    panel.message =
+      isMongoWorkspace
+      ? "Select a query file to open"
+      : isRedisWorkspace ? "Select a Redis command file to open" : "Select a SQL file to open"
 
     guard let window = NSApp.keyWindow else { return }
     let response = await panel.beginSheetModal(for: window)
@@ -2461,8 +2546,9 @@ class WorkspaceManager: Identifiable {
 
   // MARK: - Schema Visualizer
 
-  /// Toggle the schema visualizer visibility
+  /// Toggle the schema visualizer visibility. Never opens in a Redis workspace.
   func toggleSchemaVisualizer() {
+    guard !isRedisWorkspace else { return }
     isSchemaVisualizerActive.toggle()
 
     if isSchemaVisualizerActive {
@@ -2472,8 +2558,9 @@ class WorkspaceManager: Identifiable {
     }
   }
 
-  /// Show the schema visualizer
+  /// Show the schema visualizer. Never in a Redis workspace: Redis has no tables.
   func showSchemaVisualizer() {
+    guard !isRedisWorkspace else { return }
     mongoOverview = nil
     isSchemaVisualizerActive = true
 

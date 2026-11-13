@@ -41,9 +41,13 @@ extension DatabaseConnectionManager {
   /// Logs name the command and its argument count only (`RedisCommand.logDescription`); a
   /// server error is cut before any argument it echoes, and a command holding a password keeps
   /// no server text at all (`withoutServerEcho`).
+  /// `truncatingAt`: keep the first `n` rows of a longer reply instead of refusing it
+  /// (`QueryResult.truncated`; the rest is dropped as past the cap). A Cancel that stopped the
+  /// command throws `DatabaseError.queryCancelled`.
   func executeGatedRedisCommand(
     _ command: RedisCommand, policy: ProtectionPolicy, connectionEpoch epoch: UInt64,
-    caller: UUID? = nil, userInitiated: Bool, confirmed: Bool = false
+    caller: UUID? = nil, userInitiated: Bool, confirmed: Bool = false,
+    truncatingAt rowLimit: Int? = nil
   ) async throws -> QueryResult {
     try await PerfSignpost.interval("redis.command") {
       try refuseIfRelocked(config)
@@ -82,10 +86,13 @@ extension DatabaseConnectionManager {
       guard let current = session else { throw DatabaseError.notConnected }
       try refuseIfConnectionClosed()
       guard current is any RedisCommandSending else { throw Self.notRedisSession }
-      // Counted before the first suspension, so Cancel sees it from the start
+      // Counted before the first suspension, so Cancel sees it from the start; a Cancel from
+      // now on moves the generation (`cancelError(since:generation:)`)
       if userInitiated { commitGuard.inFlight += 1 }
       defer { if userInitiated { commitGuard.inFlight -= 1 } }
-      return try await sendRedis(command, epoch: epoch)
+      let generation = batchCancellationGeneration
+      return try await sendRedis(
+        command, epoch: epoch, generation: generation, rowLimit: rowLimit)
     }
   }
 
@@ -95,11 +102,16 @@ extension DatabaseConnectionManager {
     message: "This connection cannot run Redis commands. Nothing was sent.")
 
   /// Sends `command` on the current session and reads the whole reply, up to
-  /// `RedisReply.defaultMaxNodes` rows: past it the rows are dropped, which cancels the rest
-  /// (`EnginePluginSession`). Errors other than the manager's own are reported with
+  /// `RedisReply.defaultMaxNodes` rows (or `rowLimit`, which keeps the rows read and marks the
+  /// result `truncated`): past it the rows are dropped, which cancels the rest
+  /// (`EnginePluginSession`). A Cancel since `generation` is reported as
+  /// `DatabaseError.queryCancelled`; other errors than the manager's own are reported with
   /// `command.logDescription`, never its arguments.
-  private func sendRedis(_ command: RedisCommand, epoch: UInt64) async throws -> QueryResult {
+  private func sendRedis(
+    _ command: RedisCommand, epoch: UInt64, generation: UInt64, rowLimit: Int?
+  ) async throws -> QueryResult {
     let startTime = Date()
+    let cap = min(rowLimit ?? RedisReply.defaultMaxNodes, RedisReply.defaultMaxNodes)
     do {
       return try await withSession { current in
         guard connectionEpoch == epoch else {
@@ -108,25 +120,34 @@ extension DatabaseConnectionManager {
         guard let sender = current as? any RedisCommandSending else { throw Self.notRedisSession }
         let source = try await sender.send(command)
         var rows: [[CellValue]] = []
+        var truncated = false
         for try await row in source.rows {
-          guard rows.count < RedisReply.defaultMaxNodes else {
-            throw DatabaseError.queryFailed(
-              "The reply has more than \(RedisReply.defaultMaxNodes) nodes; it was not read.",
-              Date().timeIntervalSince(startTime))
+          guard rows.count < cap else {
+            guard rowLimit != nil else {
+              throw DatabaseError.queryFailed(
+                "The reply has more than \(RedisReply.defaultMaxNodes) nodes; it was not read.",
+                Date().timeIntervalSince(startTime))
+            }
+            truncated = true
+            break
           }
           rows.append(row)
         }
-        return QueryResult(
+        var result = QueryResult(
           columns: source.columns, rows: rows, rowCount: rows.count,
           executionTime: Date().timeIntervalSince(startTime))
+        result.truncated = truncated
+        return result
       }
-    } catch let error as DatabaseError {
-      throw Self.withoutServerEcho(error, of: command)
     } catch let error as RedisCommandRefusal {
       throw error
     } catch {
-      throw Self.withoutServerEcho(
-        queryFailure(error, query: command.logDescription, startTime: startTime), of: command)
+      if let cancelled = cancelError(since: epoch, generation: generation) { throw cancelled }
+      guard let error = error as? DatabaseError else {
+        throw Self.withoutServerEcho(
+          queryFailure(error, query: command.logDescription, startTime: startTime), of: command)
+      }
+      throw Self.withoutServerEcho(error, of: command)
     }
   }
 

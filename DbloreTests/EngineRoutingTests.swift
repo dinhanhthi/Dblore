@@ -2,7 +2,9 @@
 // Each engine gets its own catalog SQL and transaction start. DuckDB is refused with
 // `engineUnavailable` while its plugin is not installed; it never falls back to PostgreSQL.
 // ClickHouse and SQL Server read their catalog through the engine plugin's introspector and are
-// refused the same way without their plugin. Redis is refused even with its plugin installed.
+// refused the same way without their plugin. Redis is a `RedisSession` once its plugin is
+// installed: it opens only a plugin that answers hello as `redis` with the `argv` feature, sends
+// commands as exact argument bytes and forwards the brakes and the close to its plugin session.
 
 import Foundation
 import Testing
@@ -124,17 +126,115 @@ struct EngineRoutingTests {
     #expect(Self.pluginEngines == [.duckdb, .clickhouse, .sqlserver, .redis])
   }
 
-  // Phase 8 flips this: Redis then builds a plugin session once its plugin is installed.
-  @Test("Redis is refused with engineUnavailable even with its plugin installed")
-  func redisRefusedWithPluginInstalled() async throws {
+  @Test("Redis is a RedisSession once its plugin is installed, engineUnavailable before")
+  func redisSessionNeedsPlugin() async throws {
     let config = ConnectionConfig(databaseType: .redis, host: "", database: "0")
+    let session = try await AppDatabaseSessionFactory(enginePluginInstalled: { _ in true })
+      .makeSession(config: config)
+    #expect(session is RedisSession)
     do {
-      _ = try await AppDatabaseSessionFactory(enginePluginInstalled: { _ in true })
+      _ = try await AppDatabaseSessionFactory(enginePluginInstalled: { _ in false })
         .makeSession(config: config)
-      Issue.record("Redis makeSession should fail")
+      Issue.record("Redis makeSession should fail without its plugin")
     } catch DatabaseError.engineUnavailable(let refused) {
       #expect(refused == .redis)
     }
+  }
+
+  private static let redisConfig = ConnectionConfig(
+    databaseType: .redis, host: "cache.example.com", port: 6379, database: "0", username: "u",
+    password: "pw", sslMode: .disable, timeoutSeconds: 5)
+
+  private func redisSession(_ fake: FakeEnginePlugin) -> RedisSession {
+    RedisSession(
+      pluginID: fake.install(), config: Self.redisConfig,
+      hostKeyValidator: RejectUnknownSSHHostKeys())
+  }
+
+  @Test(
+    "A plugin that is not a Redis plugin with argv is refused before its open (no password sent)",
+    arguments: [("fake", ["argv"]), ("redis", [])])
+  func redisHelloRefused(engine: String, features: [String]) async throws {
+    let fake = FakeEnginePlugin()
+    fake.engine = engine
+    fake.features = features
+    let session = redisSession(fake)
+
+    let error = await #expect(throws: DatabaseError.self) { try await session.open() }
+
+    guard case .connectionFailed(let message) = error else {
+      Issue.record("Expected connectionFailed, got \(String(describing: error))")
+      return
+    }
+    #expect(message.contains("Update the Redis plugin"))
+    #expect(fake.count { if case .open = $0 { true } else { false } } == 0)
+    await session.close()
+  }
+
+  @Test("A Redis session sends a command's exact bytes in its db and refuses SQL text")
+  func redisSessionSendsArgv() async throws {
+    let fake = FakeEnginePlugin()
+    fake.engine = "redis"
+    fake.features = ["argv"]
+    fake.columns = [
+      .init(name: "path", type: "text"), .init(name: "type", type: "text"),
+      .init(name: "value", type: "value"),
+    ]
+    fake.batches = [[[.text("0"), .text("simple"), .text("OK")]]]
+    let session = redisSession(fake)
+    try await session.open()
+    let command = RedisCommand(args: [Data("SET".utf8), Data("k".utf8), Data([0xFF, 0x00])], db: 3)
+
+    let source = try await session.send(command)
+    var rows: [[CellValue]] = []
+    for try await row in source.rows { rows.append(row) }
+
+    #expect(try RedisReply(rows: rows) == .simple(.text("OK")))
+    let sent = fake.requests.compactMap { if case .argv(let argv) = $0.kind { argv } else { nil } }
+    #expect(sent.map(\.args) == [command.args])
+    #expect(sent.map(\.db) == [3])
+    await #expect(throws: (any Error).self) { _ = try await session.query("SELECT 1", binds: []) }
+    await #expect(throws: (any Error).self) { _ = try await session.command("SET", binds: []) }
+    #expect(fake.count { if case .query = $0 { true } else { false } } == 0)
+    #expect(fake.count { if case .command = $0 { true } else { false } } == 0)
+    await session.close()
+  }
+
+  @Test(
+    "A Redis session forwards the brakes, cancel, error redaction, a loss and the close")
+  func redisSessionForwards() async throws {
+    let fake = FakeEnginePlugin()
+    fake.engine = "redis"
+    fake.features = ["argv"]
+    // More rows events than the credit: the command stays in flight until cancelled
+    fake.batches = Array(repeating: [[.int(1)]], count: 4)
+    let session = redisSession(fake)
+    try await session.open()
+    #expect(session.serverVersion == "fake 1")
+
+    try await session.applySessionSettings(
+      statementTimeoutSeconds: 2, lockTimeoutSeconds: 0, idleTimeoutSeconds: 0)
+    let settings = fake.requests.compactMap {
+      if case .settings(let settings) = $0.kind { settings } else { nil }
+    }
+    #expect(settings.map(\.statementTimeoutSeconds) == [2])
+
+    let running = try await session.send(RedisCommand(args: [Data("EVAL".utf8)], db: 0))
+    let id = try #require(
+      fake.requests.first { if case .argv = $0.kind { true } else { false } }
+    ).id
+    await session.interrupt()
+    #expect(fake.count { $0 == .cancel(target: id) } == 1)
+    withExtendedLifetime(running) {}
+
+    let echoed = EnginePluginError.server(.init(code: .query, message: "bad password pw"))
+    #expect(session.formatError(echoed) == "bad password ••••")
+
+    var events = session.closeEvents.makeAsyncIterator()
+    fake.loseConnection(try #require(fake.openedConnection))
+    #expect(await events.next() == .connectionLost)
+    await session.close()
+    #expect(fake.count { $0 == .close } == 1)
   }
 
   @Test(
