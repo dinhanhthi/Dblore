@@ -39,7 +39,11 @@ struct WorkspaceSidebarTopArea: View {
           .accessibilityLabel("Databases")
         }
 
-        if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema {
+        // Expand/Collapse all and Refresh act on the SQL / MongoDB schema: the Redis key sidebar
+        // has its own reload in its filter row
+        if workspaceManager.connectionState.isConnected && !workspaceManager.isLoadingSchema
+          && !workspaceManager.isRedisWorkspace
+        {
           // Expand/Collapse all button
           Button {
             workspaceManager.toggleExpandCollapseAll()
@@ -57,7 +61,7 @@ struct WorkspaceSidebarTopArea: View {
         }
 
         // Refresh button
-        if workspaceManager.connectionState.isConnected {
+        if workspaceManager.connectionState.isConnected && !workspaceManager.isRedisWorkspace {
           Button {
             Task {
               await workspaceManager.refreshDatabaseSchema()

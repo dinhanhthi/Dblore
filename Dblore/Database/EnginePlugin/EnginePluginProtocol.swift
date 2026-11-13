@@ -352,6 +352,9 @@ nonisolated struct EngineRequest: Equatable, Sendable {
     case transactionState
     /// Answered by `catalog`
     case catalog(Catalog)
+    /// Answered like `query` (`columns`, `rows` on credit, `chunk`, then `done`); served only
+    /// by a plugin whose `hello.features` holds `argv`
+    case argv(Argv)
     /// A kind this side does not know; answer it with an `unsupported` error
     case unknown(String)
   }
@@ -396,6 +399,20 @@ nonisolated struct EngineRequest: Equatable, Sendable {
   nonisolated struct Command: Codable, Equatable, Sendable {
     let sql: String
     let binds: [String?]
+  }
+
+  /// One command as its raw arguments, the command name first. On the wire an argument is text
+  /// when its bytes are valid UTF-8, else `{x: base64}`; either way it decodes to the exact
+  /// bytes. Descriptions, mirror and `dump` show the command name and the argument count only:
+  /// the other arguments can be keys, values or passwords.
+  nonisolated struct Argv: Equatable, Sendable {
+    let args: [Data]
+    /// The database index the command runs in
+    let db: Int
+    /// Rows per `rows` event at most; nil lets the plugin choose
+    var batchRows: Int? = nil
+    /// Cells over this many bytes may be cut; nil reads them whole
+    var maxCellBytes: Int? = nil
   }
 
   /// Safety timeouts in seconds; 0 turns one off
@@ -493,6 +510,76 @@ nonisolated extension EngineRequest.Query: Codable {
   }
 }
 
+nonisolated extension EngineRequest.Argv: Codable {
+  private enum CodingKeys: String, CodingKey { case args, db, batchRows, maxCellBytes }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      args: try container.decode([Argument].self, forKey: .args).map(\.bytes),
+      db: try container.decode(Int.self, forKey: .db),
+      batchRows: try container.decodeIfPresent(Int.self, forKey: .batchRows),
+      maxCellBytes: try container.decodeIfPresent(Int.self, forKey: .maxCellBytes))
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(args.map(Argument.init), forKey: .args)
+    try container.encode(db, forKey: .db)
+    try container.encodeIfPresent(batchRows, forKey: .batchRows)
+    try container.encodeIfPresent(maxCellBytes, forKey: .maxCellBytes)
+  }
+
+  /// The argument as text when its bytes survive a UTF-8 round trip unchanged, else nil
+  fileprivate static func text(_ bytes: Data) -> String? {
+    guard let text = String(data: bytes, encoding: .utf8), Data(text.utf8) == bytes else {
+      return nil
+    }
+    return text
+  }
+
+  /// One argument on the wire: a JSON string, or the bytes cell `{x: base64}`
+  private struct Argument: Codable {
+    let bytes: Data
+
+    init(_ bytes: Data) { self.bytes = bytes }
+
+    init(from decoder: any Decoder) throws {
+      if let text = try? decoder.singleValueContainer().decode(String.self) {
+        bytes = Data(text.utf8)
+      } else if case .bytes(let value) = try EngineCell(from: decoder) {
+        bytes = value
+      } else {
+        throw DecodingError.dataCorrupted(
+          .init(codingPath: decoder.codingPath, debugDescription: "Not an argument"))
+      }
+    }
+
+    func encode(to encoder: any Encoder) throws {
+      if let text = EngineRequest.Argv.text(bytes) {
+        var container = encoder.singleValueContainer()
+        try container.encode(text)
+      } else {
+        try EngineCell.bytes(bytes).encode(to: encoder)
+      }
+    }
+  }
+}
+
+/// Shows the command name and the argument count, never the other arguments
+nonisolated extension EngineRequest.Argv: CustomStringConvertible, CustomDebugStringConvertible,
+  CustomReflectable
+{
+  /// The first argument as text, or a placeholder when it is not UTF-8 or missing
+  private var command: String { args.first.flatMap(Self.text) ?? "<bytes>" }
+
+  var description: String { "Argv(command: \(command), argCount: \(args.count))" }
+
+  var debugDescription: String { description }
+
+  var customMirror: Mirror { Mirror(self, children: ["command": command, "argCount": args.count]) }
+}
+
 nonisolated extension EngineRequest.Catalog: Codable {
   private enum CodingKeys: String, CodingKey { case read, args }
 
@@ -523,6 +610,7 @@ nonisolated extension EngineRequest: Codable {
     case "settings": kind = .settings(try Settings(from: decoder))
     case "transactionState": kind = .transactionState
     case "catalog": kind = .catalog(try Catalog(from: decoder))
+    case "argv": kind = .argv(try Argv(from: decoder))
     default: kind = .unknown(type)
     }
     self.init(
@@ -560,6 +648,9 @@ nonisolated extension EngineRequest: Codable {
     case .catalog(let catalog):
       type = "catalog"
       try catalog.encode(to: encoder)
+    case .argv(let argv):
+      type = "argv"
+      try argv.encode(to: encoder)
     case .unknown(let name): type = name
     }
     try container.encode(type, forKey: .type)

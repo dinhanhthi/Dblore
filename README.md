@@ -33,13 +33,13 @@ See everything Dblore can do, and search for a specific feature, on the
 
 ## Databases
 
-PostgreSQL, MySQL/MariaDB, MongoDB and SQLite are built in. DuckDB, SQL Server and ClickHouse
-are plugins. CockroachDB, Redshift, YugabyteDB, TiDB and SingleStore connect as presets.
-Per-engine details are on the [features page](https://dblore.dinhanhthi.com/features.html).
+PostgreSQL, MySQL/MariaDB, MongoDB and SQLite are built in. DuckDB, SQL Server, ClickHouse
+and Redis are plugins. CockroachDB, Redshift, YugabyteDB, TiDB and SingleStore connect as
+presets. Per-engine details are on the [features page](https://dblore.dinhanhthi.com/features.html).
 
 ## Plugins
 
-DuckDB, SQL Server, ClickHouse and On-device AI are optional plugins. Install them from
+DuckDB, SQL Server, ClickHouse, Redis and On-device AI are optional plugins. Install them from
 **Settings > Plugins**: each is a signed, notarized download, checked before it loads.
 Which features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plugins).
 
@@ -54,7 +54,8 @@ Which features ship as plugins is decided in [CONTRIBUTING](CONTRIBUTING.md#plug
 
 - macOS 14 or later
 - Xcode 27 on macOS 26 (only to build from source)
-- A database server or file to connect to (DuckDB, SQL Server and ClickHouse need their plugin)
+- A database server or file to connect to (DuckDB, SQL Server, ClickHouse and Redis need their
+  plugin; Redis 6.0 or later)
 
 ## Build from source
 

@@ -403,7 +403,7 @@ nonisolated struct SQLRestorePlan: Sendable {
     guard bytes <= Self.maxScriptBytes else { throw SQLRestoreError.tooLarge(bytes: bytes) }
     switch engine {
     case .postgresql, .mysql, .sqlite, .duckdb: break
-    case .mongodb, .clickhouse, .sqlserver:
+    case .mongodb, .clickhouse, .sqlserver, .redis:
       throw SQLRestoreError.unsupportedEngine(engine.rawValue)
     }
     // mariadb-dump's sandbox line has no `;`: dropped, as the exact first line only
@@ -1279,7 +1279,7 @@ nonisolated extension SQLRestorePlan {
       return shape.words("INDEX") && shape.sqliteName()
     case .duckdb:
       return isDuckDBSchema(&shape)
-    case .mongodb, .clickhouse, .sqlserver:
+    case .mongodb, .clickhouse, .sqlserver, .redis:
       return false
     }
   }
@@ -1306,7 +1306,7 @@ nonisolated extension SQLRestorePlan {
     case .postgresql: ["VIEW", "TABLE", "SEQUENCE", "DOMAIN", "TYPE"]
     case .duckdb: ["VIEW", "TABLE", "SEQUENCE", "TYPE"]
     case .mysql, .sqlite: ["VIEW", "TABLE"]
-    case .mongodb, .clickhouse, .sqlserver: []
+    case .mongodb, .clickhouse, .sqlserver, .redis: []
     }
   }
 
@@ -1402,7 +1402,7 @@ nonisolated extension SQLRestorePlan {
       } else {
         return nil
       }
-    case .mongodb, .clickhouse, .sqlserver:
+    case .mongodb, .clickhouse, .sqlserver, .redis:
       return nil
     }
     return ObjectKey(kind: kind, parts: key)
@@ -1664,7 +1664,7 @@ nonisolated extension SQLRestorePlan {
       guard target.count == 2, !isDuckDBSystemName(target[0]) else { return notWritten(tokens) }
     case .mysql, .sqlite, .mongodb:
       guard target.count == 1 else { return notWritten(tokens) }
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       return notWritten(tokens)
     }
     if shape.words("DEFAULT", "VALUES") { return shape.atEnd ? nil : notWritten(tokens) }
@@ -2278,7 +2278,7 @@ extension DatabaseConnectionManager {
         summary.statementsRun = try await runMySQLRestore(
           plan, access: access, policy: policy, effective: effective, epoch: epoch,
           caller: caller, progress: report)
-      case .mongodb, .clickhouse, .sqlserver:
+      case .mongodb, .clickhouse, .sqlserver, .redis:
         throw SQLRestoreError.unsupportedEngine(engine.rawValue)
       }
     }

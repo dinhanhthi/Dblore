@@ -139,10 +139,10 @@ actor ResultExportRunner {
   /// `progress` gets the rows written so far after each batch and at the end.
   /// - Throws, before connecting: `ReadOnlyQueryGuard.Refusal` (not one read),
   ///   `ResultExportError` (parameters, user variables, open changes, temporary tables, another
-  ///   role, sql_mode, unreadable state, MongoDB), `SQLDumpError.destinationIsDatabase`. On the snapshot:
-  ///   `ResultExportError.columnsChanged`, `SQLDumpError.notRead`, connection and read errors,
-  ///   `DatabaseError.connectionLocked` after a relock, `CancellationError` when the task is
-  ///   cancelled. The destination is untouched then and the temporary file deleted.
+  ///   role, sql_mode, unreadable state, MongoDB, Redis), `SQLDumpError.destinationIsDatabase`.
+  ///   On the snapshot: `ResultExportError.columnsChanged`, `SQLDumpError.notRead`, connection
+  ///   and read errors, `DatabaseError.connectionLocked` after a relock, `CancellationError` when
+  ///   the task is cancelled. The destination is untouched then and the temporary file deleted.
   func write(
     _ request: ResultExportRequest, to destination: URL, hasStagedChanges: Bool,
     mask: @escaping @Sendable ([CellValue]) -> [CellValue],
@@ -150,7 +150,10 @@ actor ResultExportRunner {
   ) async throws -> Int {
     let config = connection.config
     let engine = config.databaseType
-    if engine == .mongodb { throw ResultExportError.unsupportedEngine(engine) }
+    switch engine.dialect.language {
+    case .sql: break
+    case .mongosh, .redis: throw ResultExportError.unsupportedEngine(engine)
+    }
     let statement = try Self.checkedRead(request.sql, dialect: engine.dialect)
     if SQLDumpWriter.isConnectedDatabaseFile(destination, config: config) {
       throw SQLDumpError.destinationIsDatabase

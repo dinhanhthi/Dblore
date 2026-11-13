@@ -164,7 +164,7 @@ final class CopyObjectsModel: Identifiable {
     entries = savedConnections.filter {
       switch $0.config.databaseType {
       case .postgresql, .mysql, .sqlite: true
-      case .duckdb, .mongodb, .clickhouse, .sqlserver: false
+      case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: false
       }
     }
     targets = entries.map {
@@ -635,6 +635,7 @@ final class CopyObjectsModel: Identifiable {
     case .mongodb: throw CopyObjectsTargetError.unsupportedEngine("MongoDB")
     case .clickhouse: throw CopyObjectsTargetError.unsupportedEngine("ClickHouse")
     case .sqlserver: throw CopyObjectsTargetError.unsupportedEngine("SQL Server")
+    case .redis: throw CopyObjectsTargetError.unsupportedEngine("Redis")
     case nil: throw DatabaseError.notConnected
     }
   }

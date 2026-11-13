@@ -161,6 +161,7 @@ extension WorkspaceManager {
         canShowMongoOverview
       case .dataRewind: canOpenDataRewind
       case .findValueInEveryTable: canSearchEveryTable
+      case .schemaVisualizer: !isRedisWorkspace
       default: true
       }
     }

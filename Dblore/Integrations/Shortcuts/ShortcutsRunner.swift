@@ -146,10 +146,15 @@ nonisolated struct ShortcutsRunner: Sendable {
 
   // MARK: - Run Query
 
-  /// The rows of one read-only statement as CSV (`csv`).
+  /// The rows of one read-only statement as CSV (`csv`). Redis is refused first, before the
+  /// guard and History: no check here reads Redis text, and none of it is recorded.
   @concurrent func runQuery(connectionID: UUID, sql: String) async throws -> String {
     let entry = try await entry(id: connectionID)
     let dialect = entry.config.databaseType.dialect
+    switch dialect.language {
+    case .sql, .mongosh: break
+    case .redis: throw Refusal.engineNotSupported(engine: entry.config.databaseType.rawValue)
+    }
     let started = ContinuousClock.now
     do {
       _ = try ReadOnlyQueryGuard.check(sql, dialect: dialect)

@@ -7,8 +7,8 @@ import Foundation
 /// `{pN:String}`. One placeholder per distinct name, in first-occurrence order; MySQL binds are
 /// positional, so it gets one `?` per occurrence. The name keeps the source spelling. A ClickHouse
 /// query parameter the user wrote (`{name:Type}`) is not a `:name`. A statement with no
-/// `:name` is returned unchanged. MongoDB has no parameters: mongosh text is never scanned, so
-/// `{a :b}` is not `:b` and `$set` is not a placeholder.
+/// `:name` is returned unchanged. MongoDB and Redis have no parameters: their text is never
+/// scanned, so `{a :b}` is not `:b`, `$set` is not a placeholder and `GET :a` stays as typed.
 nonisolated enum SQLParameterRewriter: Sendable {
 
   /// `statement` with each `:name` replaced, plus the distinct names in first-seen order
@@ -16,7 +16,10 @@ nonisolated enum SQLParameterRewriter: Sendable {
   static func rewrite(
     statement: String, dialect: SQLDialect
   ) -> (text: String, names: [String]) {
-    if dialect == .mongodb { return (statement, []) }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return (statement, [])
+    }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     let hits = namedParameters(in: lexemes, scalars: scalars, dialect: dialect)
     guard !hits.isEmpty else { return (statement, []) }
@@ -25,7 +28,10 @@ nonisolated enum SQLParameterRewriter: Sendable {
 
   /// Distinct `:name` values in `script`, in first-occurrence order.
   static func parameterNames(in script: String, dialect: SQLDialect) -> [String] {
-    if dialect == .mongodb { return [] }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return []
+    }
     let (scalars, lexemes) = scan(script, dialect: dialect)
     var names: [String] = []
     var seen: Set<String> = []
@@ -45,7 +51,10 @@ nonisolated enum SQLParameterRewriter: Sendable {
   /// only `?` and a written `@pN` (ASCII, any case, not after `@@`) count: the engine plugin
   /// declares bind N as the variable `@pN`.
   static func containsPositionalPlaceholder(in statement: String, dialect: SQLDialect) -> Bool {
-    if dialect == .mongodb { return false }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return false
+    }
     let (scalars, lexemes) = scan(statement, dialect: dialect)
     if dialect == .clickhouse {
       return lexemes.indices.contains { isQueryParameterColon(at: $0, in: lexemes, scalars) }
@@ -66,8 +75,8 @@ nonisolated enum SQLParameterRewriter: Sendable {
       switch dialect {
       case .duckdb: ["$"]
       case .mysql: []
-      // Unreachable: MongoDB returned above.
-      case .mongodb: []
+      // Unreachable: MongoDB and Redis returned above.
+      case .mongodb, .redis: []
       default: ["@", "$"]
       }
     for index in lexemes.indices {

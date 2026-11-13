@@ -322,7 +322,7 @@ extension NotebookViewModel {
       parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ".")
     }
     switch databaseType {
-    case .duckdb, .mongodb, .clickhouse, .sqlserver:
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis:
       return [:]
     case .mysql:
       guard columns.contains(where: { $0.sourceName != nil }) else { return [:] }
@@ -407,7 +407,7 @@ extension NotebookViewModel {
     else { return }
     switch databaseType {
     case .postgresql, .mysql, .sqlite: break
-    case .duckdb, .mongodb, .clickhouse, .sqlserver: return
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: return
     }
     let pendingTargets = resultTargetPatches[cellId]?.task
     columnSourceLabelTasks[cellId] = Task { [weak self] in

@@ -14,6 +14,7 @@
 //  when first expanded; their rows offer Show DDL and Copy Name.
 //  PostgreSQL, SQLite and DuckDB can hide schemas from the Public tab (`listedSchemas`); only the
 //  sidebar leaves them out.
+//  Redis has no sections: its Public tab is the key browser (`RedisKeySidebar`).
 //  The session's temporary objects leave the schema groups and the filter menu for one Temporary
 //  section (`temporarySchemas`, `temporarySplit`); on MySQL a temporary table row offers no
 //  structure item, Rename, Drop, Generate Rows or Build Join Query (`rowReadsStructure`).
@@ -105,6 +106,8 @@ nonisolated enum SidebarSectionModel {
         Section(kind: .tables, title: "Collections", icon: "tablecells"),
         Section(kind: .views, title: "Views", icon: "eye"),
       ]
+    case .redis:
+      []
     }
   }
 
@@ -153,7 +156,7 @@ nonisolated enum SidebarSectionModel {
         .union(schemas.filter { $0.wholeMatch(of: /pg_(toast_)?temp_[0-9]+/) != nil })
     case .sqlite:
       Set(schemas).intersection(["temp"])
-    case .mysql, .duckdb, .mongodb, .clickhouse, .sqlserver:
+    case .mysql, .duckdb, .mongodb, .clickhouse, .sqlserver, .redis:
       []
     }
   }
@@ -199,7 +202,7 @@ nonisolated enum SidebarSectionModel {
     Set(tables.map(\.schema)).count > 1
   }
 
-  /// The Security tab (Users and Roles). MongoDB has none.
+  /// The Security tab (Users and Roles). MongoDB and Redis have none.
   static func showsSecurityTab(_ language: QueryLanguage) -> Bool {
     language == .sql
   }
@@ -215,7 +218,7 @@ nonisolated enum SidebarSectionModel {
   static func supportsTableChanges(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .mysql, .sqlite: true
-    case .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: false
     }
   }
 

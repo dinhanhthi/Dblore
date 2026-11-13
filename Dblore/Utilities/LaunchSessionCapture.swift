@@ -83,10 +83,11 @@ enum LaunchSessionCapture {
   /// the frontmost window (`orderedIndex`). Welcome stays welcome. A saved workspace stores its
   /// file and bookmarks. An untitled workspace stores the encoded document with the password
   /// cleared. Preview tabs are omitted. Text overlays are the live editor contents of dirty or
-  /// file-less tabs. Object source tabs are omitted too. Text of a locked workspace, or of a tab
-  /// sealed by one, is stored only sealed (a seal error drops it); a window still asking for a
-  /// locked workspace (`lockedOpens`, no manager yet) keeps its file and its still-sealed text,
-  /// and so does an open workspace for snapshot text it has not opened yet.
+  /// file-less tabs. Object source and Redis key tabs are omitted too. Text of a locked
+  /// workspace, or of a tab sealed by one, is stored only sealed (a seal error drops it); a
+  /// window still asking for a locked workspace (`lockedOpens`, no manager yet) keeps its file
+  /// and its still-sealed text, and so does an open workspace for snapshot text it has not
+  /// opened yet.
   static func session(
     windows: [WindowDescriptor], workspaces: [UUID: WorkspaceManager],
     lockedOpens: [UUID: LockedWorkspaceOpen] = [:]
@@ -260,10 +261,11 @@ enum LaunchSessionCapture {
   }
 
   /// Live notebook cells or SQL editor text. The stored document can be behind the editor.
-  /// Preview and object source tabs are omitted, matching `encodedWorkspaceData()`.
+  /// Session-only tabs (preview, object source, Redis key) are omitted, matching
+  /// `encodedWorkspaceData()`.
   private static func liveOverlays(of manager: WorkspaceManager) -> [LaunchTextOverlay] {
     manager.tabs.compactMap { tab in
-      guard !tab.isPreview, !tab.isReadOnlySource, tab.isDirty || tab.fileURL == nil else {
+      guard !tab.isSessionOnly, tab.isDirty || tab.fileURL == nil else {
         return nil
       }
       guard let viewModel = manager.viewModel(for: tab.id) else { return nil }
@@ -277,7 +279,7 @@ enum LaunchSessionCapture {
         return LaunchTextOverlay(tabId: tab.id, text: .script(viewModel.editorContent))
       case .markdown:
         return LaunchTextOverlay(tabId: tab.id, text: .markdown(viewModel.editorContent))
-      case .dataViewer:
+      case .dataViewer, .redisKey:
         return nil
       }
     }

@@ -14,6 +14,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   case mongodb = "MongoDB"
   case clickhouse = "ClickHouse"
   case sqlserver = "SQL Server"
+  case redis = "Redis"
 
   var displayName: String {
     switch self {
@@ -24,6 +25,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .mongodb: rawValue
     case .clickhouse: rawValue
     case .sqlserver: rawValue
+    case .redis: rawValue
     }
   }
 
@@ -45,6 +47,8 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
       return "clickhouse"
     case .sqlserver:
       return "sqlserver"
+    case .redis:
+      return "redis"
     }
   }
 
@@ -55,6 +59,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .mongodb: 27017
     case .clickhouse: 8443
     case .sqlserver: 1433
+    case .redis: 6379
     case .postgresql, .sqlite, .duckdb: 5432
     }
   }
@@ -69,6 +74,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .mongodb: .mongodb
     case .clickhouse: .clickhouse
     case .sqlserver: .sqlserver
+    case .redis: .redis
     }
   }
 
@@ -77,7 +83,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var keychainScope: String? {
     switch self {
     case .postgresql, .sqlite, .duckdb: nil
-    case .mysql, .mongodb, .clickhouse, .sqlserver: rawValue
+    case .mysql, .mongodb, .clickhouse, .sqlserver, .redis: rawValue
     }
   }
 
@@ -88,7 +94,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var interruptKeepsTransaction: Bool {
     switch self {
     case .mysql, .mongodb: true
-    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: false
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver, .redis: false
     }
   }
 
@@ -105,6 +111,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     case .duckdb: "duckdb"
     case .clickhouse: "clickhouse"
     case .sqlserver: "sqlserver"
+    case .redis: "redis"
     case .postgresql, .sqlite, .mysql, .mongodb: nil
     }
   }
@@ -121,7 +128,9 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   /// as a plugin: schemas, functions, the statement and lock timeouts as brakes, cancel stops the
   /// statement, transactions, grid edits of a table with a primary key, `DEFAULT` in an UPDATE
   /// and foreign key lookup; no structure editing, SQL dump, import, user types, roles, server
-  /// cursor or Explain.
+  /// cursor or Explain. Redis is a network engine shipped as a plugin: it speaks Redis commands,
+  /// the statement timeout is its only brake, cancel stops the command, and every other feature
+  /// is off.
   nonisolated var capabilities: DatabaseCapabilities {
     switch self {
     case .postgresql:
@@ -313,6 +322,33 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
         supportsSQLDump: false,
         supportsUserTypes: false
       )
+    case .redis:
+      DatabaseCapabilities(
+        usesNetwork: true,
+        usesPassword: true,
+        supportsSSL: true,
+        supportsSchemas: false,
+        supportsRolesAndUsers: false,
+        supportsFunctions: false,
+        supportsServerCursor: false,
+        supportsSessionBrakes: true,
+        cancelStrategy: .interrupt,
+        cappedReadResetsSession: false,
+        supportsExplainJSON: false,
+        supportsExplainAnalyze: false,
+        supportsUpdateOnly: false,
+        supportsDefaultInUpdate: false,
+        supportsRowStaging: false,
+        supportsDataImport: false,
+        supportsForeignKeyLookup: false,
+        requiresPlugin: true,
+        isAvailable: true,
+        queryLanguage: .redis,
+        supportsTransactions: false,
+        supportsStructure: false,
+        supportsSQLDump: false,
+        supportsUserTypes: false
+      )
     }
   }
 
@@ -323,7 +359,7 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
   nonisolated var namesSchema: Bool {
     switch self {
     case .postgresql, .sqlite, .duckdb, .clickhouse, .sqlserver: true
-    case .mysql, .mongodb: false
+    case .mysql, .mongodb, .redis: false
     }
   }
 

@@ -21,8 +21,14 @@ struct TabItem: Identifiable, Equatable {
   /// Read-only routine or trigger source on a .sqlFile tab: never dirty, never saved, and
   /// rebuilt on demand rather than persisted or restored at launch
   var objectSource: ObjectSourceRef?
+  /// The key a `.redisKey` tab shows. In memory only: not in `CodingKeys`, never encoded.
+  var redisKey: RedisKeyRef?
 
   var isReadOnlySource: Bool { objectSource != nil }
+
+  /// Preview, object source and Redis key tabs live only in this session: never written to the
+  /// workspace or the launch snapshot
+  var isSessionOnly: Bool { isPreview || isReadOnlySource || documentType == .redisKey }
 
   init(
     id: UUID = UUID(),
@@ -33,7 +39,8 @@ struct TabItem: Identifiable, Equatable {
     lastAccessed: Date = Date(),
     isPreview: Bool = false,
     isPinned: Bool = false,
-    objectSource: ObjectSourceRef? = nil
+    objectSource: ObjectSourceRef? = nil,
+    redisKey: RedisKeyRef? = nil
   ) {
     self.id = id
     self.fileURL = fileURL
@@ -44,6 +51,7 @@ struct TabItem: Identifiable, Equatable {
     self.isPreview = isPreview
     self.isPinned = isPinned
     self.objectSource = objectSource
+    self.redisKey = redisKey
   }
 
   /// Creates a new untitled notebook tab
@@ -77,15 +85,16 @@ struct TabItem: Identifiable, Equatable {
 /// The type of document in a tab
 enum TabDocumentType: String, Codable, Equatable {
   case notebook  // .dblore files
-  case sqlFile  // .sql files, and .js queries in a MongoDB workspace
+  case sqlFile  // .sql files, .js queries in a MongoDB workspace, Redis command tabs
   case dataViewer  // table/view data viewer, no file
   case markdown  // .md files
+  case redisKey  // one Redis key, no file; session-only, never saved or restored
 
   var fileExtension: String {
     switch self {
     case .notebook: return "dblore"
     case .sqlFile: return "sql"
-    case .dataViewer: return ""
+    case .dataViewer, .redisKey: return ""
     case .markdown: return "md"
     }
   }
@@ -96,6 +105,7 @@ enum TabDocumentType: String, Codable, Equatable {
     case .sqlFile: return "doc"
     case .dataViewer: return "tablecells"
     case .markdown: return "doc.richtext"
+    case .redisKey: return "key"
     }
   }
 
@@ -103,28 +113,45 @@ enum TabDocumentType: String, Codable, Equatable {
   static func from(url: URL) -> TabDocumentType? {
     switch url.pathExtension.lowercased() {
     case "dblore": return .notebook
-    case "sql", "js": return .sqlFile
+    case "sql", "js", "redis": return .sqlFile
     case "md": return .markdown
     default: return nil
     }
   }
 
-  /// Script file extension for a connection: "js" for a mongosh connection, else "sql"
+  /// Script file extension for a connection: "js" for a mongosh connection, "redis" for a Redis
+  /// one, else "sql"
   nonisolated static func scriptExtension(for databaseType: DatabaseType?) -> String {
-    databaseType?.capabilities.queryLanguage == .mongosh ? "js" : "sql"
+    switch databaseType?.capabilities.queryLanguage {
+    case .mongosh: "js"
+    case .redis: "redis"
+    case .sql, nil: "sql"
+    }
   }
 
   /// Message when a script file does not fit the connection, nil when it opens. A workspace
-  /// with no connection accepts both kinds; other file types are never refused here.
+  /// with no connection accepts every kind; other file types are never refused here.
   nonisolated static func scriptKindRefusal(for url: URL, databaseType: DatabaseType?) -> String? {
     guard let databaseType else { return nil }
     let ext = url.pathExtension.lowercased()
-    guard ext == "sql" || ext == "js", ext != scriptExtension(for: databaseType) else {
-      return nil
+    let own = scriptExtension(for: databaseType)
+    guard ["sql", "js", "redis"].contains(ext), ext != own else { return nil }
+    switch ext {
+    case "sql":
+      return own == "redis"
+        ? "SQL files can't run in a Redis workspace. Open a .redis command file instead."
+        : "SQL files can't run in a MongoDB workspace. Open a .js query instead."
+    case "js": return "JavaScript query files run only in a MongoDB workspace."
+    default: return "Redis command files run only in a Redis workspace."
     }
-    return ext == "sql"
-      ? "SQL files can't run in a MongoDB workspace. Open a .js query instead."
-      : "JavaScript query files run only in a MongoDB workspace."
+  }
+
+  /// Message when a notebook cannot open in the workspace: a Redis workspace has no notebooks
+  nonisolated static func notebookRefusal(for url: URL, databaseType: DatabaseType?) -> String? {
+    guard url.pathExtension.lowercased() == "dblore",
+      databaseType?.capabilities.queryLanguage == .redis
+    else { return nil }
+    return "Notebooks are not available in a Redis workspace. Open a .redis command file instead."
   }
 }
 
@@ -190,11 +217,17 @@ extension TabItem: Codable {
     id = try container.decode(UUID.self, forKey: .id)
     fileURL = try container.decodeIfPresent(URL.self, forKey: .fileURL)
     documentType = try container.decode(TabDocumentType.self, forKey: .documentType)
+    // A key tab is never saved, so one read back is not ours
+    guard documentType != .redisKey else {
+      throw DecodingError.dataCorruptedError(
+        forKey: .documentType, in: container, debugDescription: "Redis key tabs are not restored")
+    }
     title = try container.decode(String.self, forKey: .title)
     isDirty = try container.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
     lastAccessed = try container.decodeIfPresent(Date.self, forKey: .lastAccessed) ?? Date()
     isPreview = false
     isPinned = false
     objectSource = try container.decodeIfPresent(ObjectSourceRef.self, forKey: .objectSource)
+    redisKey = nil
   }
 }

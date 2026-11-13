@@ -13,6 +13,12 @@ import Testing
     tls: .init(mode: .verifyFull, caPEM: "-----BEGIN CERTIFICATE-----"), timeoutSeconds: 10,
     readOnly: false, options: ["tdsStrict": .bool(false)])
 
+  /// A command name, a non-UTF-8 argument and one holding `\r\n`
+  private static let argvArgs: [Data] = [
+    Data("SET".utf8), Data([0xFF, 0x00, 0x0D, 0x0A] + Array("FLUSHALL".utf8)),
+    Data("a\r\nb".utf8),
+  ]
+
   /// Every request kind and its exact wire line (sorted keys)
   private static let requests: [(EngineRequest, String)] = [
     (EngineRequest(id: "1", kind: .hello), #"{"id":"1","type":"hello"}"#),
@@ -65,6 +71,15 @@ import Testing
     (
       EngineRequest(id: "10", connection: 1, kind: .close),
       #"{"connection":1,"id":"10","type":"close"}"#
+    ),
+    // Byte-exact arguments: valid UTF-8 (`\r\n` included) goes as text, anything else as `{x}`
+    (
+      EngineRequest(
+        id: "11", connection: 1,
+        kind: .argv(
+          .init(
+            args: argvArgs, db: 3, batchRows: 500, maxCellBytes: 65536))),
+      #"{"args":["SET",{"x":"/wANCkZMVVNIQUxM"},"a\r\nb"],"batchRows":500,"connection":1,"db":3,"id":"11","maxCellBytes":65536,"type":"argv"}"#
     ),
   ]
 
@@ -294,6 +309,29 @@ import Testing
     } catch {
       #expect(error as? EngineProtocolError == .invalid(requestID: "2"))
       #expect(!String(reflecting: error).contains("Pw-7731-secret"))
+    }
+  }
+
+  /// The database index is part of every argv request: one without `db` is refused with its id.
+  @Test func argvWithoutDatabaseIsInvalid() {
+    let line = #"{"args":["GET","k"],"connection":1,"id":"12","type":"argv"}"#
+    #expect(throws: EngineProtocolError.invalid(requestID: "12")) {
+      try EnginePluginProtocol.decodeRequest(Data(line.utf8))
+    }
+  }
+
+  /// Argv arguments can be keys, values or passwords: descriptions, reflection and dumps show
+  /// the command name and the argument count only.
+  @Test func argvRequestShowsOnlyItsCommandName() {
+    let request = EngineRequest(
+      id: "13", connection: 1,
+      kind: .argv(.init(args: [Data("AUTH".utf8), Data("Pw-7731-secret".utf8)], db: 0)))
+    #expect(String(describing: request.kind) == "argv(Argv(command: AUTH, argCount: 2))")
+    var dumped = ""
+    dump(request, to: &dumped)
+    for text in [String(describing: request), String(reflecting: request), dumped] {
+      #expect(!text.contains("Pw-7731-secret"))
+      #expect(text.contains("AUTH"))
     }
   }
 }

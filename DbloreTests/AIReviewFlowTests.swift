@@ -352,7 +352,7 @@ struct AIReviewFlowTests {
     #expect(vm.messages.last?.review == nil)
   }
 
-  @Test("a read-only source tab and a MongoDB tab offer no Review or Optimize")
+  @Test("a read-only source tab, a MongoDB tab and a Redis tab offer no Review or Optimize")
   func readOnlyAndMongoOfferNothing() {
     #expect(AIAssistantViewModel.offersReview(in: editorTab(), dialect: .postgresql))
     #expect(!AIAssistantViewModel.offersReview(in: nil, dialect: .postgresql))
@@ -364,6 +364,13 @@ struct AIReviewFlowTests {
     let mongo = editorTab("db.orders.find({})", type: .mongodb)
     #expect(!AIAssistantViewModel.offersReview(in: mongo, dialect: .mongodb))
     #expect(!AIAssistantViewModel.offersReview(in: editorTab(), dialect: .mongodb))
+
+    // Redis text (an AUTH password, say) never reaches a draft
+    let redis = editorTab("AUTH s3cret", type: .redis)
+    #expect(redis.aiCurrentSQL == nil)
+    #expect(!AIAssistantViewModel.offersReview(in: redis, dialect: .redis))
+    #expect(!AIAssistantViewModel.offersReview(in: editorTab(), dialect: .redis))
+    #expect(editorTab("db.orders.find({})", type: .mongodb).aiCurrentSQL == "db.orders.find({})")
 
     let vm = makeVM(FakeReviewClient())
     vm.review(.review, in: source)

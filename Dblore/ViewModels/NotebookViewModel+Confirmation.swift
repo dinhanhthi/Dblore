@@ -159,7 +159,11 @@ extension NotebookViewModel {
     index: Int, statement: ClassifiedStatement, parameters: [String: SQLBindValue],
     dialect: SQLDialect
   ) -> StatementConfirmation {
-    if dialect == .mongodb { return mongoConfirmation(index: index, statement: statement) }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh: return mongoConfirmation(index: index, statement: statement)
+    case .redis: return redisConfirmation(index: index, statement: statement)
+    }
     return StatementConfirmation(
       index: index, preview: preview(statement.text, dialect: dialect),
       kindLabel: DatabaseConnectionManager.describe(statement.kind),
@@ -190,6 +194,23 @@ extension NotebookViewModel {
       changesPrivileges: statement.changesPrivileges,
       allDocumentsCollection: statement.affectsAllRows
         ? command?.collection.map(confirmationValue) : nil)
+  }
+
+  /// A Redis command, previewed as the first line of its text (the classifier's redacted render),
+  /// cut as `preview` cuts. Never lexed as SQL: no `:name` binds, no LIKE check.
+  private nonisolated static func redisConfirmation(
+    index: Int, statement: ClassifiedStatement
+  ) -> StatementConfirmation {
+    let line =
+      statement.text.split(whereSeparator: \.isNewline)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .first { !$0.isEmpty } ?? ""
+    let preview = line.count > previewLimit ? String(line.prefix(previewLimit - 1)) + "…" : line
+    return StatementConfirmation(
+      index: index, preview: preview,
+      kindLabel: DatabaseConnectionManager.describe(statement.kind),
+      affectsAllRows: statement.affectsAllRows, touchesBrake: statement.resetsSessionBrakes,
+      changesPrivileges: statement.changesPrivileges)
   }
 
   /// `"name" = "value"` or `"name" = NULL` for each `:name`, in first-seen order.
@@ -246,8 +267,11 @@ extension NotebookViewModel {
   private nonisolated static func likeWildcardBindsAllRows(
     _ text: String, kind: StatementKind, parameters: [String: SQLBindValue], dialect: SQLDialect
   ) -> Bool {
-    // mongosh has no LIKE; the SQL lexer would misread its text.
-    guard dialect != .mongodb else { return false }
+    // mongosh and Redis have no LIKE; the SQL lexer would misread their text.
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return false
+    }
     let isUnknown = SQLStatementClassifier.effectiveKind(kind) == .unknown
     guard likePatternApplies(to: kind) || (dialect == .mysql && isUnknown) else { return false }
     let pieces = likeLexemes(text, dialect: dialect)

@@ -198,7 +198,7 @@ nonisolated enum DBeaverImporter {
     switch engine {
     case .mysql: defaultPort = engine.defaultPort
     case .postgresql, .sqlite, .duckdb, .mongodb: defaultPort = PostgresURIParser.defaultPort
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       return .failure(
         Skipped(
           message:
@@ -221,7 +221,7 @@ nonisolated enum DBeaverImporter {
       if configuredDatabase == nil { warnings.append(PostgresURIParser.missingDatabaseWarning) }
     case .postgresql, .sqlite, .duckdb, .mongodb:
       database = configuredDatabase ?? "postgres"
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       return .failure(
         Skipped(
           message:
@@ -243,7 +243,7 @@ nonisolated enum DBeaverImporter {
         handlers: handlers, isMariaDB: driver.lowercased() == "mariadb", warnings: &warnings)
     case .postgresql, .sqlite, .duckdb, .mongodb:
       sslMode = self.sslMode(handlers: handlers, warnings: &warnings)
-    case .clickhouse, .sqlserver:
+    case .clickhouse, .sqlserver, .redis:
       return .failure(
         Skipped(
           message:

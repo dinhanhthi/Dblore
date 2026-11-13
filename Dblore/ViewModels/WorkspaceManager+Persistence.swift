@@ -159,9 +159,9 @@ extension WorkspaceManager {
   /// Always plaintext: only the writers hand it to LockedFileIO, so it is sealed once. Tabs whose
   /// unlock was refused at load stay in it (after the open tabs) unless their file is open again.
   func encodedWorkspaceData() throws -> Data {
-    // Preview and object source tabs are session-only: an active one hands over to the latest
-    // persisted tab
-    let persisted = tabs.filter { !$0.isPreview && !$0.isReadOnlySource }
+    // Preview, object source and Redis key tabs are session-only: an active one hands over to
+    // the latest persisted tab
+    let persisted = tabs.filter { !$0.isSessionOnly }
     workspace.tabs = persisted.map { tab in
       let state = viewModels[tab.id]?.dataViewer
       return WorkspaceTabReference.from(
@@ -174,9 +174,7 @@ extension WorkspaceManager {
     workspace.tabs += unrestoredLockedTabs.filter { ref in
       !saved.contains { $0.id == ref.id || $0.fileURL == ref.fileURL }
     }
-    let activeIsSessionOnly = tabs.contains {
-      $0.id == activeTabId && ($0.isPreview || $0.isReadOnlySource)
-    }
+    let activeIsSessionOnly = tabs.contains { $0.id == activeTabId && $0.isSessionOnly }
     workspace.activeTabId =
       activeIsSessionOnly ? persisted.max { $0.lastAccessed < $1.lastAccessed }?.id : activeTabId
     workspace.lastOpenedAt = Date()
@@ -356,8 +354,10 @@ extension WorkspaceManager {
   /// Load database schema. While a Protected transaction is pending the cached schema is kept
   /// and no catalog query is sent (the actor refuses them too).
   func loadDatabaseSchema() async {
-    // A task cancelled before it ran must not start a load (it would supersede the newer one)
-    guard !Task.isCancelled, connectionState == .connected, !isSchemaPaused else { return }
+    // A task cancelled before it ran must not start a load (it would supersede the newer one).
+    // Redis has no SQL catalog: nothing is read (its sidebar stays empty).
+    guard !Task.isCancelled, connectionState == .connected, !isSchemaPaused, !isRedisWorkspace
+    else { return }
     // Only the latest load may assign results or clear the flag; an older one is superseded
     schemaLoadGeneration += 1
     let generation = schemaLoadGeneration

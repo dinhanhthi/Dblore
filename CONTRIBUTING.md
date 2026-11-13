@@ -348,10 +348,10 @@ The catalog `Dblore/Utilities/Plugins/PluginCatalog.json` is `schemaVersion` 3 w
 - `library` (`duckdb`): a signed, notarized `.dylib` named by `libraryFileName`.
   `PluginLoader` opens it without following symlinks and checks its size, SHA-256 and Team ID
   before `dlopen`.
-- `bundle` (`local-ai`, `sqlserver`, `clickhouse`): a signed, notarized, stapled `.bundle`
-  (`bundleName`, `bundleIdentifier`) shipped as `<Name>.zip`; the zip's SHA-256 is checked
-  before it is unpacked, then `PluginLoader` checks the Team ID, the pinned `cdhash` and every
-  sealed resource before `Bundle.load`.
+- `bundle` (`local-ai`, `sqlserver`, `clickhouse`, `redis`): a signed, notarized, stapled
+  `.bundle` (`bundleName`, `bundleIdentifier`) shipped as `<Name>.zip`; the zip's SHA-256 is
+  checked before it is unpacked, then `PluginLoader` checks the Team ID, the pinned `cdhash`
+  and every sealed resource before `Bundle.load`.
 
 Decoding is strict and a bad catalog is refused as a whole: ids are unique and match
 `[a-z0-9][a-z0-9-]*`, `version` is dot-separated digits, `sha256` is 64 and `cdhash` 40
@@ -376,8 +376,8 @@ xcodebuild test -project Plugins/LocalAI/DbloreLocalAI.xcodeproj -scheme DbloreL
 
 **Database engines** are bundles too, built from `Plugins/Engines` (`project.yml`, regenerate
 `DbloreEngines.xcodeproj` with `xcodegen generate`): `Shared/` holds the entry points and the
-request handler every engine compiles, `ClickHouse/` and `SQLServer/` one driver each, and
-`Tests/` host-less unit tests. Engine protocol v1 lives in
+request handler every engine compiles, `ClickHouse/`, `SQLServer/` and `Redis/` one driver
+each, and `Tests/` host-less unit tests. Engine protocol v1 lives in
 `Dblore/Database/EnginePlugin/EnginePluginProtocol.swift` (Foundation only, compiled into each
 bundle by path); the app side is `EnginePluginSession`, `EnginePluginIntrospector` and the
 runtime loader next to it. A bundle exports exactly two C symbols:
@@ -386,19 +386,25 @@ one request JSON object and answers through `emit` with event JSON objects. Requ
 `DatabaseSession` and `SchemaIntrospector` calls; rows come in batches of about 512 KiB under a
 1 MiB event cap, at most two ahead of the app's `more` credit, and a larger cell goes as
 `chunk` events up to 256 MiB.
-New features are additive and advertised in `hello.features`, so the version stays 1. The
-password appears only in `open` and is never logged or echoed. For an SSH tunnel the app opens
-the tunnel and hands the plugin `127.0.0.1:<port>` plus the TLS server name. Every event is
-untrusted input to the app.
+New features are additive and advertised in `hello.features`, so the version stays 1: Redis
+advertises `argv`, a request that carries one command as an argument array (text, or
+`{x: base64}` for bytes that are not UTF-8) plus a database index; the driver implements
+`EngineDriver.features` and `EngineConnection.execute(argv:db:)`, and the reply comes back as
+`path`, `type`, `value` rows, one per RESP node. The app sends `argv` only to a plugin that
+advertises it. The password appears only in `open` and is never logged or echoed. For an SSH
+tunnel the app opens the tunnel and hands the plugin `127.0.0.1:<port>` plus the TLS server
+name. Every event is untrusted input to the app.
 
-ClickHouse uses only Foundation and Security (its HTTP interface). SQL Server links FreeTDS
-(db-lib, LGPL-2.1) and OpenSSL (Apache-2.0) statically: run
-`Plugins/Engines/SQLServer/deps/build-deps.sh` once before building it. The script pins FreeTDS
-1.5.21 and OpenSSL 3.5.9 by source URL and SHA-256 and builds arm64 static libraries into the
-gitignored `dist/deps/sqlserver/`; with the public plugin source, the pinned tarball lets the
-bundle be relinked against a modified FreeTDS. To bump FreeTDS, change the pin and also the FreeTDS version in the source link of
-`PluginDisplayInfo` (`Dblore/Views/Settings/PluginsSettingsSection.swift`). Both schemes run the
-same unit tests; `DbloreSQLServer` also builds the SQL Server bundle, so it needs the libraries:
+ClickHouse uses only Foundation and Security (its HTTP interface), and Redis only Network and
+Security (RESP over TCP or TLS). SQL Server links FreeTDS (db-lib, LGPL-2.1) and OpenSSL
+(Apache-2.0) statically: run `Plugins/Engines/SQLServer/deps/build-deps.sh` once before
+building it. The script pins FreeTDS 1.5.21 and OpenSSL 3.5.9 by source URL and SHA-256 and
+builds arm64 static libraries into the gitignored `dist/deps/sqlserver/`; with the public
+plugin source, the pinned tarball lets the bundle be relinked against a modified FreeTDS. To
+bump FreeTDS, change the pin and also the FreeTDS version in the source link of
+`PluginDisplayInfo` (`Dblore/Views/Settings/PluginsSettingsSection.swift`). The three schemes
+(`DbloreClickHouse`, `DbloreRedis`, `DbloreSQLServer`) run the same unit tests;
+`DbloreSQLServer` also builds the SQL Server bundle, so it needs the libraries:
 
 ```bash
 xcodebuild test -project Plugins/Engines/DbloreEngines.xcodeproj -scheme DbloreClickHouse \
@@ -410,13 +416,14 @@ commit SHA (`revision`) and every file by name, size and SHA-256, checked before
 `scripts/pin-local-model.py <repo> <revision> [...]` prints those `files:` pins without
 downloading weights. Bump a revision deliberately, after reviewing the upstream repo.
 
-`scripts/release-plugin.sh --plugin <id>` (`duckdb`, the default, `local-ai`, `sqlserver` or
-`clickhouse`) builds a plugin artifact. `duckdb` downloads the pinned official DuckDB release,
-checks the upstream SHA-256, re-signs the dylib with the Developer ID (hardened runtime) and notarizes it.
+`scripts/release-plugin.sh --plugin <id>` (`duckdb`, the default, `local-ai`, `sqlserver`,
+`clickhouse` or `redis`) builds a plugin artifact. `duckdb` downloads the pinned official
+DuckDB release, checks the upstream SHA-256, re-signs the dylib with the Developer ID
+(hardened runtime) and notarizes it.
 `local-ai` archives the bundle, signs it inside out, notarizes and staples it, writes
 `dist/plugins/local-ai/DbloreLocalAI.zip` with its source fingerprint, and prints the zip's
-SHA-256 and the bundle's cdhash for the catalog. `sqlserver` and `clickhouse` do the same into
-`dist/plugins/<id>/` (SQL Server runs `build-deps.sh` first) with a source fingerprint per
+SHA-256 and the bundle's cdhash for the catalog. `sqlserver`, `clickhouse` and `redis` do the
+same into `dist/plugins/<id>/` (SQL Server runs `build-deps.sh` first) with a source fingerprint per
 engine; the version is the archived bundle's.
 
 - **Local tests:** `--install-dev` writes the signed artifact, an ad-hoc-signed copy and a
@@ -428,15 +435,22 @@ engine; the version is the archived bundle's.
   in front of the app's `xcodebuild test` command in step 1 and without
   `SKIP_INTEGRATION_TESTS=true` (that variable turns every gate off). Engine bundles go to
   `.plugin-dev/<id>/`. Live engine suites get the traits `requiresEnginePlugin`,
-  `requiresSQLServer` and `requiresClickHouse` (`TEST_RUNNER_ENGINE_PLUGIN_TESTS`,
-  `TEST_RUNNER_SQLSERVER_TESTS`, `TEST_RUNNER_CLICKHOUSE_TESTS`); no suite uses them yet.
+  `requiresSQLServer`, `requiresClickHouse` and `requiresRedis`
+  (`TEST_RUNNER_ENGINE_PLUGIN_TESTS`, `TEST_RUNNER_SQLSERVER_TESTS`,
+  `TEST_RUNNER_CLICKHOUSE_TESTS`, `TEST_RUNNER_REDIS_TESTS`).
+  `RedisIntegrationTests` needs both `TEST_RUNNER_ENGINE_PLUGIN_TESTS=1` and
+  `TEST_RUNNER_REDIS_TESTS=1`, the notarized bundle from `--plugin redis --install-dev` and a
+  Redis 6.0+ server, set with `TEST_RUNNER_TEST_REDIS_HOST` / `TEST_RUNNER_TEST_REDIS_PORT`
+  (the tests read `TEST_REDIS_HOST` / `TEST_REDIS_PORT`; default 127.0.0.1:6379, plain TCP) and
+  `TEST_RUNNER_TEST_REDIS_USER` / `TEST_RUNNER_TEST_REDIS_PASSWORD` when it needs a login; it uses
+  random key names and never flushes, so a shared server is safe. No CI job sets these variables yet.
 - **Publish (maintainer only, manual):** `--publish` creates the public GitHub release
   `plugin-<id>-v<version>` with `--latest=false`, so `releases/latest` keeps pointing at the
   app DMG. `duckdb` builds, uploads and rewrites its catalog entry (review and commit it).
-  `local-ai`, `sqlserver` and `clickhouse` never rebuild and never touch the catalog: put the
-  printed SHA-256 and cdhash in the entry, test with `--install-dev`, then `--publish` uploads
-  exactly that zip, and only when its SHA-256, cdhash and source fingerprint match (for an
-  engine, also the bundle's version).
+  `local-ai`, `sqlserver`, `clickhouse` and `redis` never rebuild and never touch the catalog:
+  put the printed SHA-256 and cdhash in the entry, test with `--install-dev`, then `--publish`
+  uploads exactly that zip, and only when its SHA-256, cdhash and source fingerprint match (for
+  an engine, also the bundle's version).
 - **Before an app release:** `scripts/release-local.sh --check-plugin-only` downloads the
   published asset of every catalog entry and checks it against the catalog (add
   `--plugin <id>` to check one entry). The full release preflight runs the same check on

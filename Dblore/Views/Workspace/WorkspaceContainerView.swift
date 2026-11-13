@@ -49,11 +49,11 @@ struct WorkspaceContainerView: View {
     return workspaceManager.viewModel(for: activeTabId)
   }
 
-  /// Whether the content area shows `WorkspaceEmptyStateView` (no tab, no schema visualizer and
-  /// no MongoDB overview screen)
+  /// Whether the content area shows `WorkspaceEmptyStateView` (no tab or key tab, no schema
+  /// visualizer and no MongoDB overview screen)
   private var showsEmptyState: Bool {
     !workspaceManager.isSchemaVisualizerActive && workspaceManager.mongoOverview == nil
-      && activeViewModel == nil
+      && activeViewModel == nil && workspaceManager.activeRedisKey == nil
   }
 
   /// Hides the AI assistant only in its sidebar mode: the floating bubble takes no width
@@ -173,7 +173,7 @@ struct WorkspaceContainerView: View {
               }
 
               // Content area
-              if workspaceManager.isSchemaVisualizerActive {
+              if workspaceManager.isSchemaVisualizerActive, !workspaceManager.isRedisWorkspace {
                 // Schema visualizer at workspace level (overlays everything)
                 WorkspaceSchemaVisualizerContent(
                   workspaceManager: workspaceManager,
@@ -184,6 +184,14 @@ struct WorkspaceContainerView: View {
                 case .databases: MongoDatabasesView(workspaceManager: workspaceManager)
                 case .collections: MongoCollectionsView(workspaceManager: workspaceManager)
                 }
+              } else if let activeTabId = workspaceManager.activeTabId,
+                let key = workspaceManager.activeRedisKey
+              {
+                // A Redis key tab has no notebook view model: before that gate. Its own view per
+                // tab; a new key in the same preview tab keeps the view and reads again.
+                RedisKeyViewerView(key: key, workspaceManager: workspaceManager)
+                  .id(activeTabId)
+                  .overlay { ToastOverlay() }
               } else if let activeTabId = workspaceManager.activeTabId,
                 let viewModel = workspaceManager.viewModel(for: activeTabId)
               {
@@ -257,19 +265,22 @@ struct WorkspaceContainerView: View {
 
                   // Connect stays available until a connection exists. Details live on the info button.
                   if case .connected = workspaceManager.connectionState {
-                    Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
-                      Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 12))
-                        .foregroundColor(
-                          workspaceManager.isSchemaVisualizerActive
-                            ? Color.accent : Color.foregroundMuted)
+                    // Redis has no tables: no schema visualizer button
+                    if !workspaceManager.isRedisWorkspace {
+                      Button(action: { workspaceManager.toggleSchemaVisualizer() }) {
+                        Image(systemName: "point.3.connected.trianglepath.dotted")
+                          .font(.system(size: 12))
+                          .foregroundColor(
+                            workspaceManager.isSchemaVisualizerActive
+                              ? Color.accent : Color.foregroundMuted)
+                      }
+                      .buttonStyle(GhostButtonStyle(iconOnly: true))
+                      .controlSize(.small)
+                      .blockDoubleClickZoom()
+                      .help(
+                        workspaceManager.isSchemaVisualizerActive
+                          ? "Close Schema Visualizer" : "Visualize Schema Relationships")
                     }
-                    .buttonStyle(GhostButtonStyle(iconOnly: true))
-                    .controlSize(.small)
-                    .blockDoubleClickZoom()
-                    .help(
-                      workspaceManager.isSchemaVisualizerActive
-                        ? "Close Schema Visualizer" : "Visualize Schema Relationships")
                   } else {
                     DatabaseConnectionButton(workspaceManager: workspaceManager)
                   }
@@ -379,7 +390,7 @@ struct WorkspaceContainerView: View {
     .bridgedFocusedSceneValue(\.toggleRightSidebarAction) { [workspaceManager] in
       if let activeTabId = workspaceManager.activeTabId,
         let viewModel = workspaceManager.viewModel(for: activeTabId),
-        viewModel.viewMode != .markdown
+        viewModel.viewMode != .markdown, !workspaceManager.isRedisWorkspace
       {
         viewModel.toggleSidebar()
       }
@@ -999,7 +1010,9 @@ struct WorkspaceTabContentView: View {
 
   @ViewBuilder
   private var contentView: some View {
-    if viewModel.viewMode == .notebook {
+    if workspaceManager.isRedisWorkspace, viewModel.viewMode != .markdown {
+      redisContent
+    } else if viewModel.viewMode == .notebook {
       notebookContent
     } else if viewModel.viewMode == .markdown {
       // No SQL handlers, destructive-query dialog or search on a note. PlainTextEditor's
@@ -1060,10 +1073,12 @@ struct WorkspaceTabContentView: View {
     }
   }
 
-  /// Markdown notes have no right sidebar content.
+  /// Markdown notes and Redis tabs have no right sidebar content.
   private var toggleRightSidebarAction: () -> Void {
-    { [viewModel] in
-      if viewModel.viewMode != .markdown { viewModel.toggleSidebar() }
+    { [viewModel, workspaceManager] in
+      if viewModel.viewMode != .markdown, !workspaceManager.isRedisWorkspace {
+        viewModel.toggleSidebar()
+      }
     }
   }
 
@@ -1112,6 +1127,34 @@ struct WorkspaceTabContentView: View {
     )
     .destructiveQueryDialog(viewModel: viewModel, syncDocument: syncNotebookDocument)
     .searchNotifications(viewModel: viewModel)
+  }
+
+  // MARK: - Redis Content
+
+  /// A Redis workspace: a script tab is a command tab; a notebook, data viewer or object source
+  /// tab (left over from a connection switch, or restored) shows that it is not available, so no
+  /// SQL view is reachable. No SQL header, Run handler or destructive-query dialog is attached.
+  @ViewBuilder
+  private var redisContent: some View {
+    Group {
+      if viewModel.viewMode == .editor, viewModel.dataViewer == nil,
+        !viewModel.isReadOnlySource, let runner = workspaceManager.redisRunner(for: tabId)
+      {
+        RedisCommandTabView(
+          viewModel: viewModel, runner: runner, workspaceManager: workspaceManager,
+          isActiveTab: { [workspaceManager, tabId, hostWindow] in
+            workspaceManager.isActiveTab(tabId, in: hostWindow)
+          }
+        )
+        // The view is reused across tabs: the text view and dialogs belong to one tab
+        .id(tabId)
+      } else {
+        RedisUnavailableTabView(onNewCommand: { [workspaceManager] in
+          workspaceManager.newSQLFile()
+        })
+      }
+    }
+    .overlay { ToastOverlay() }
   }
 
   // MARK: - Editor Content
@@ -1708,7 +1751,7 @@ struct WorkspaceTitleBarTabsView: View {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .redisScript, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }

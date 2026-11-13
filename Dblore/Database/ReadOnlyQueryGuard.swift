@@ -3,8 +3,10 @@
 // Assistant): exactly one statement the dialect classifies as `.read`, that neither changes the
 // session's brakes nor its privileges and, on PostgreSQL, calls no `postgresSideEffectFunctions`
 // function; on MongoDB, one read command that runs no server-side JavaScript
-// (`MongoCommandClassifier.usesServerSideJavaScript`); on request (the AI Assistant), no DuckDB
-// file read (only queries starting with SELECT, WITH, FROM, VALUES or `(` pass that check).
+// (`MongoCommandClassifier.usesServerSideJavaScript`); on Redis, one command
+// `RedisCommandClassifier` classifies as `.read` that runs no script (`redisScriptReads`); on
+// request (the AI Assistant), no DuckDB file read (only queries starting with SELECT, WITH, FROM,
+// VALUES or `(` pass that check).
 // Refused SQL is never sent. The guard only classifies (a function it does not know may still
 // write): SQL that passes runs under the read-only gate on a read-only session
 // (`MCPReadOnlySessionFactory`: PostgreSQL / MySQL inside a READ ONLY transaction always rolled
@@ -58,17 +60,29 @@ nonisolated enum ReadOnlyQueryGuard {
     guard statement.kind == .read, !statement.resetsSessionBrakes,
       !statement.changesPrivileges
     else { throw Refusal.notRead }
-    if dialect == .postgresql, callsPostgresSideEffectFunction(sql) {
-      throw Refusal.sideEffectFunction
-    }
-    if dialect == .mongodb, MongoCommandClassifier.usesServerSideJavaScript(statement.text) {
-      throw Refusal.serverSideJavaScript
-    }
-    if refuseFileAccess, dialect == .duckdb, readsDuckDBFiles(sql) {
-      throw Refusal.fileAccess
+    switch dialect.language {
+    case .sql:
+      if dialect == .postgresql, callsPostgresSideEffectFunction(sql) {
+        throw Refusal.sideEffectFunction
+      }
+      if refuseFileAccess, dialect == .duckdb, readsDuckDBFiles(sql) {
+        throw Refusal.fileAccess
+      }
+    case .mongosh:
+      if MongoCommandClassifier.usesServerSideJavaScript(statement.text) {
+        throw Refusal.serverSideJavaScript
+      }
+    case .redis:
+      // The command name: the first word of the classifier's render, printable ASCII when known
+      let name = statement.text.split(separator: " ", maxSplits: 1).first?.uppercased()
+      if let name, redisScriptReads.contains(name) { throw Refusal.notRead }
     }
     return statements
   }
+
+  /// Redis read-only scripts: the server refuses a write inside them, but they run code the text
+  /// does not show, so they never run automatically (as MongoDB server-side JavaScript)
+  static let redisScriptReads: Set<String> = ["EVAL_RO", "EVALSHA_RO", "FCALL_RO"]
 
   /// DuckDB table functions that read local or remote files or run SQL text the classifier never
   /// sees (`query_table`; `query` and `getenv` are already refused by the classifier), besides

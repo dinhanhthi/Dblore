@@ -1,7 +1,7 @@
 // EnginePluginSessionTests.swift
 // The core side of an engine plugin (`EnginePluginSession` over the runtime and router) against
 // `FakeEnginePlugin`: the handshake refusal, pull credit and cancel, connection loss, plugin
-// error text, and the command tag the transaction code reads.
+// error text, the command tag the transaction code reads, and the argv feature gate.
 
 import Foundation
 import Testing
@@ -260,6 +260,48 @@ struct EnginePluginSessionTests {
 
     fake.emitRaw(#"{"connection":\#(connection),"event":"rows","rows":[[{"s":"\#(filler)"}]]}"#)
     #expect(try await session.command("commit", binds: []).tag == "COMMIT")
+    await session.close()
+  }
+
+  @Test("argv is refused without sending when the plugin's hello lacks the argv feature")
+  func argvRefusedWithoutFeature() async throws {
+    let fake = FakeEnginePlugin()
+    let session = session(fake)
+    try await session.open()
+
+    let error = await #expect(throws: EnginePluginSessionError.self) {
+      _ = try await session.sendArgv([Data("GET".utf8), Data("k".utf8)], db: 0)
+    }
+
+    guard case .unsupported = error else {
+      Issue.record("Expected unsupported, got \(String(describing: error))")
+      return
+    }
+    #expect(fake.count { if case .argv = $0 { true } else { false } } == 0)
+    await session.close()
+  }
+
+  @Test("argv streams its reply as rows, with byte cells byte-exact")
+  func argvReturnsByteCells() async throws {
+    let fake = FakeEnginePlugin()
+    fake.features = ["argv"]
+    let bytes = Data([0xff, 0x00, 0x0d, 0x0a])
+    fake.columns = [.init(name: "value", type: "bulk")]
+    fake.batches = [[[.bytes(bytes)]]]
+    let session = session(fake)
+    try await session.open()
+    let args = [Data("GET".utf8), Data([0xfe, 0x01])]
+
+    let source = try await session.sendArgv(args, db: 3)
+    var rows: [[CellValue]] = []
+    for try await row in source.rows { rows.append(row) }
+
+    #expect(source.columns.map(\.name) == ["value"])
+    #expect(rows == [[.data(bytes)]])
+    let sent = fake.requests.lazy.compactMap { request -> EngineRequest.Argv? in
+      if case .argv(let argv) = request.kind { argv } else { nil }
+    }.first
+    #expect(sent == .init(args: args, db: 3, batchRows: EnginePluginSession.batchRows))
     await session.close()
   }
 

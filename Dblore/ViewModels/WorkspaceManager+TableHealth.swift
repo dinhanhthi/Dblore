@@ -20,7 +20,7 @@ extension WorkspaceManager {
   nonisolated static func checksTableHealth(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .sqlite, .mysql: true
-    case .duckdb, .mongodb, .clickhouse, .sqlserver: false
+    case .duckdb, .mongodb, .clickhouse, .sqlserver, .redis: false
     }
   }
 

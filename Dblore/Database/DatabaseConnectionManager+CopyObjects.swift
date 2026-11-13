@@ -80,6 +80,7 @@ extension DatabaseConnectionManager {
     case .mongodb: throw CopyObjectsTargetError.unsupportedEngine("MongoDB")
     case .clickhouse: throw CopyObjectsTargetError.unsupportedEngine("ClickHouse")
     case .sqlserver: throw CopyObjectsTargetError.unsupportedEngine("SQL Server")
+    case .redis: throw CopyObjectsTargetError.unsupportedEngine("Redis")
     }
     switch config.protectionLevel {
     case .readOnly: throw CopyObjectsTargetError.readOnly
@@ -179,6 +180,8 @@ extension DatabaseConnectionManager {
       throw CopyObjectsTargetError.unsupportedEngine("ClickHouse")
     case .sqlserver:
       throw CopyObjectsTargetError.unsupportedEngine("SQL Server")
+    case .redis:
+      throw CopyObjectsTargetError.unsupportedEngine("Redis")
     case nil:
       throw DatabaseError.notConnected
     }

@@ -5,9 +5,9 @@
 // - `open` loads the plugin (handshake) then sends `open`, the only request with the password,
 //   under the session timeout (plus a margin, so the plugin's own connect error comes first).
 //   Request JSON is never logged.
-// - `query` pulls: `more` is sent once per consumed `rows` event, `cancel` after a stream
-//   failure or when the caller drops the rows early (row cap). Queries and commands have no
-//   deadline; the statement brakes bound them.
+// - `query` and `sendArgv` (only when `hello.features` holds `argv`) pull: `more` is sent once
+//   per consumed `rows` event, `cancel` after a stream failure or when the caller drops the rows
+//   early (row cap). Queries and commands have no deadline; the statement brakes bound them.
 // - `close` cancels what still runs, lets go of the close stream (so the answer is not a loss),
 //   sends `close` and waits up to `closeTimeout` for its answer (not at all after a loss or a
 //   failed open), fails what still waits with `connectionClosed`, then stops the forwarder and
@@ -61,6 +61,8 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
   private var isOpen = false
   /// `opened.serverVersion`, plain text from the plugin
   private var openedServerVersion: String?
+  /// The plugin's `hello`, kept from the handshake in `open`
+  private var pluginHello: EngineEvent.Hello?
   private var inFlight: Set<String> = []
   private var tunnelStorage: (any SSHTunneling)?
   private var forwarderStorage: SSHLoopbackForwarder?
@@ -104,6 +106,9 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
   /// The plugin's `opened.serverVersion`; nil before a successful open
   var serverVersion: String? { lock.withLock { openedServerVersion } }
 
+  /// The plugin's `hello` (engine, features); nil before `open` reached the plugin
+  var hello: EngineEvent.Hello? { lock.withLock { pluginHello } }
+
   deinit {
     let finished = lock.withLock { emitted != nil }
     if !finished { closeContinuation.finish() }
@@ -116,7 +121,8 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
   /// cancelled) when the caller's task is cancelled. The caller closes after a failure.
   func open() async throws {
     let runtime = EnginePluginRuntime.runtime(for: pluginID)
-    _ = try await runtime.start()
+    let hello = try await runtime.start()
+    lock.withLock { pluginHello = hello }
     let router = runtime.router
     let tls = try tlsSettings()
     let forwarder = config.sshTunnel != nil ? try await openTunnelForwarder() : nil
@@ -284,7 +290,25 @@ nonisolated final class EnginePluginSession: DatabaseSession, @unchecked Sendabl
     let (router, connection) = try live()
     let query = EngineRequest.Query(
       sql: sql, binds: binds.map(Self.wire), language: "sql", batchRows: Self.batchRows)
-    let sent = try router.send(.query(query), connection: connection)
+    return try await rows(of: .query(query), router: router, connection: connection)
+  }
+
+  /// One command as raw arguments in database `db`, answered as rows like `query`. Refused
+  /// before anything is sent unless the plugin's `hello.features` holds `argv`.
+  func sendArgv(_ args: [Data], db: Int) async throws -> SessionRowSource {
+    guard hello?.features.contains("argv") == true else {
+      throw EnginePluginSessionError.unsupported("A raw command")
+    }
+    let (router, connection) = try live()
+    let argv = EngineRequest.Argv(args: args, db: db, batchRows: Self.batchRows)
+    return try await rows(of: .argv(argv), router: router, connection: connection)
+  }
+
+  /// Sends `kind` and reads its answer as rows, tracked until the reader ends
+  private func rows(
+    of kind: EngineRequest.Kind, router: EnginePluginRouter, connection: Int
+  ) async throws -> SessionRowSource {
+    let sent = try router.send(kind, connection: connection)
     track(sent.id)
     let reader = EnginePluginRowReader(
       id: sent.id, router: router, events: sent.events, password: config.password

@@ -2,6 +2,16 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Security`, `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- **Redis (plugin).** Connect to Redis 6.0 or later once the Redis plugin is installed from Settings > Plugins (about 177 KB, downloaded on demand): host and port (6379), an optional ACL user, the password and a database index from 0 to 15, over TLS (Verify Full, optionally with a custom CA) or plain TCP to a host on the local network, directly or through an SSH tunnel. A Redis workspace has command tabs (`.redis` files) that run commands in the database you pick, show each reply as Grid or Raw and Cancel a running command (a reply stops at 10,000 rows); a sidebar with db0 to db15, their key counts and their keys in folders split at `:`, filtered by a match pattern; and key tabs that show a key's type, TTL and size and its value (a string as Text, Hex or JSON, a hash, list, set, sorted set or stream in pages of 200). Edit strings, hash fields, list elements, sorted set scores and the TTL, add fields, elements, members and stream entries, remove fields, members and entries, rename or delete a key and create one with New Key; every edit is listed in History. Each command is checked before it is sent: Read-only allows reads only, Schema Protected blocks admin, destructive, script and unknown commands, destructive commands such as `FLUSHALL` always ask first, and command tabs refuse `SELECT`, `AUTH`, `MULTI`, subscribe and blocking commands. Read-only is checked by Dblore and the plugin, not the server; for a guarantee on the server, use an ACL user without write commands. Import Connections reads Redis connections from TablePlus (no password; a TLS mode other than Disable or Verify Full becomes Verify Full and a database outside 0 to 15 becomes 0, each with a note) and from a Dblore connections file. Not in this version: notebooks, the schema visualizer, the AI assistant, result export, MCP and Shortcuts. [#30444658](https://github.com/dinhanhthi/Dblore/commit/30444658) [#acf3278a](https://github.com/dinhanhthi/Dblore/commit/acf3278a) [#b4d2e554](https://github.com/dinhanhthi/Dblore/commit/b4d2e554) [#a188f000](https://github.com/dinhanhthi/Dblore/commit/a188f000) [#e59283a4](https://github.com/dinhanhthi/Dblore/commit/e59283a4) [#143f89c8](https://github.com/dinhanhthi/Dblore/commit/143f89c8) [#6830e110](https://github.com/dinhanhthi/Dblore/commit/6830e110) [#276cc474](https://github.com/dinhanhthi/Dblore/commit/276cc474) [#a40d62f2](https://github.com/dinhanhthi/Dblore/commit/a40d62f2)
+
+### Upgrade notes
+
+- **Older versions and Redis.** A workspace that holds a Redis connection needs this version or later: Dblore 0.10.0 shows "This workspace uses a database engine this version of Dblore does not support. Update Dblore to connect." and keeps the connection unchanged when it saves the workspace; older versions cannot open it (see the 0.10.0 note on new engines).
+
 ## v0.10.0 (2026-11-11)
 
 ### Security

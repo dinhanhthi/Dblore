@@ -41,10 +41,10 @@ struct ShortcutsRunnerTests {
   private let history = HistoryBook()
 
   private static func entry(
-    name: String = "Orders", style: CommitStyle = .immediate
+    name: String = "Orders", style: CommitStyle = .immediate, type: DatabaseType = .postgresql
   ) -> ConnectionHistoryEntry {
     var config = ConnectionConfig(
-      databaseType: .postgresql, host: "fake", port: 1, database: "db", username: "u",
+      databaseType: type, host: "fake", port: 1, database: "db", username: "u",
       sslMode: .disable, protectionLevel: .none, name: name, safeMode: .silent,
       protectedMode: false)
     config.applyCommitStyle(style)
@@ -94,6 +94,19 @@ struct ShortcutsRunnerTests {
     #expect(factory.sessions.count == 1)
     #expect(csv.hasPrefix("n\r\n1\r\n1 row."))
     #expect(csv.hasSuffix(MCPResultEncoder.dataNotice))
+    await runner.pool.closeAll()
+  }
+
+  @Test("Run Query refuses Redis before the read-only guard and records nothing")
+  func runQueryRefusesRedis() async {
+    let entry = Self.entry(type: .redis)
+    let runner = runner([entry])
+    // A non-read holding a password: the guard would refuse it and History would keep it
+    await #expect(throws: ShortcutsRunner.Refusal.engineNotSupported(engine: "Redis")) {
+      try await runner.runQuery(connectionID: entry.id, sql: "AUTH s3cret")
+    }
+    #expect(factory.sessions.isEmpty)
+    #expect(await history.entries.isEmpty)
     await runner.pool.closeAll()
   }
 

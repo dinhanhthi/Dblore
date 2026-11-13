@@ -24,8 +24,14 @@ protocol EngineDriver: Sendable {
   var queryLanguage: String { get }
   /// Bundled client libraries and their versions, for `hello`
   var libraries: [String: String] { get }
+  /// Request kinds beyond the base set this bundle serves (`argv`), for `hello`. Default none.
+  var features: [String] { get }
   /// Opens a connection, on the connection's serial queue. Throws `EngineFailure`.
   func connect(_ open: EngineRequest.Open) throws -> any EngineConnection
+}
+
+extension EngineDriver {
+  var features: [String] { [] }
 }
 
 /// One open connection. Every member runs on the connection's serial queue, except `interrupt`.
@@ -42,6 +48,10 @@ protocol EngineConnection: AnyObject, Sendable {
   /// `execute` with parameters: `binds[i]` is parameter i + 1 in the engine's own placeholder
   /// syntax, nil is NULL. The default refuses any bind (`unsupported`).
   func execute(_ sql: String, binds: [String?]) throws
+  /// The `argv` request: sends one command as its raw arguments (command name first) in database
+  /// `db` and waits for its first result, read like `execute`'s. The default answers
+  /// `unsupported`.
+  func execute(argv args: [Data], db: Int) throws
   /// The next result's columns (empty when it returns no rows), nil when none is left
   func nextResult() throws -> [EngineEvent.Column]?
   /// The next row of the current result, nil at its end
@@ -70,6 +80,11 @@ extension EngineConnection {
         code: .unsupported, message: "Statement parameters are not supported yet.")
     }
     try execute(sql)
+  }
+
+  func execute(argv args: [Data], db: Int) throws {
+    throw EngineFailure(
+      code: .unsupported, message: "This request is not supported by this plugin.")
   }
 
   func apply(_ settings: EngineRequest.Settings) throws {
@@ -227,11 +242,22 @@ final class EngineRequestHandler: @unchecked Sendable {
     case .close: close(request, sink: sink)
     case .query(let query):
       enqueue(request, sink: sink) { connection, control in
-        self.run(query.sql, binds: query.binds, query: query, on: connection, control, sink)
+        self.run(rows: (query.batchRows, query.maxCellBytes), on: connection, control, sink) {
+          try connection.execute(query.sql, binds: query.binds)
+        }
       }
     case .command(let command):
       enqueue(request, sink: sink) { connection, control in
-        self.run(command.sql, binds: command.binds, query: nil, on: connection, control, sink)
+        self.run(rows: nil, on: connection, control, sink) {
+          try connection.execute(command.sql, binds: command.binds)
+        }
+      }
+    case .argv(let argv):
+      let rows = (argv.batchRows ?? RowStreamer.defaultBatchRows, argv.maxCellBytes)
+      enqueue(request, sink: sink) { connection, control in
+        self.run(rows: rows, on: connection, control, sink) {
+          try connection.execute(argv: argv.args, db: argv.db)
+        }
       }
     case .settings(let settings):
       enqueue(request, sink: sink) { connection, control in
@@ -266,7 +292,7 @@ final class EngineRequestHandler: @unchecked Sendable {
     return EngineEvent.Hello(
       protocolVersion: EnginePluginProtocol.version, version: version ?? "unknown",
       engine: driver.engine, queryLanguage: driver.queryLanguage, libraries: driver.libraries,
-      features: [])
+      features: driver.features)
   }
 
   // MARK: Connections
@@ -424,27 +450,29 @@ final class EngineRequestHandler: @unchecked Sendable {
     }
   }
 
-  /// A `query` (columns, rows on credit, chunks, then done) or, with `query` nil, a `command`
-  /// (done with the affected rows). Only the first result set with columns is streamed; later
-  /// ones are read and dropped, since a query has one `columns` event.
+  /// A `query` or `argv` (columns, rows on credit, chunks, then done) or, with `rows` nil, a
+  /// `command` (done with the affected rows); `execute` starts the statement. Only the first
+  /// result set with columns is streamed; later ones are read and dropped, since a query has one
+  /// `columns` event.
   private func run(
-    _ sql: String, binds: [String?], query: EngineRequest.Query?,
-    on connection: any EngineConnection,
-    _ control: RequestControl, _ sink: EventSink
+    rows: (batchRows: Int, maxCellBytes: Int?)?, on connection: any EngineConnection,
+    _ control: RequestControl, _ sink: EventSink, execute: () throws -> Void
   ) {
     let id = control.id
     do {
-      try connection.execute(sql, binds: binds)
+      try execute()
       var affectedRows: Int?
       var streamed = false
       while !control.isCancelled, let columns = try connection.nextResult() {
-        if let query, !streamed, !columns.isEmpty {
+        if let rows, !streamed, !columns.isEmpty {
           streamed = true
           guard sink.send(EngineEvent(id: id, kind: .columns(columns))) else {
             return connection.discardResults()
           }
           control.grant(Self.initialCredit)
-          var streamer = RowStreamer(query: query, control: control, sink: sink)
+          var streamer = RowStreamer(
+            batchRows: rows.batchRows, maxCellBytes: rows.maxCellBytes, control: control,
+            sink: sink)
           while !control.isCancelled, let row = try connection.nextRow() {
             guard streamer.add(row) else { break }
           }
@@ -457,7 +485,9 @@ final class EngineRequestHandler: @unchecked Sendable {
       }
       guard !control.isCancelled else {
         connection.discardResults()
-        return sink.send(.cancelled, id: id)
+        sink.send(.cancelled, id: id)
+        if connection.isLost { lose(control.slot, sink: sink) }
+        return
       }
       sink.send(.done(affectedRows: affectedRows, tag: ""), id: id)
     } catch {
@@ -466,7 +496,7 @@ final class EngineRequestHandler: @unchecked Sendable {
   }
 
   /// Answers a failed request: `cancelled` when it was cancelled (an interrupted statement
-  /// fails), else its `error`; a lost connection also closes
+  /// fails), else its `error`; a lost connection (also one lost while its results drain) closes
   private func failed(
     _ error: any Error, on connection: any EngineConnection, _ control: RequestControl,
     _ sink: EventSink
@@ -481,8 +511,12 @@ final class EngineRequestHandler: @unchecked Sendable {
       return lose(control.slot, sink: sink)
     }
     connection.discardResults()
-    guard !control.isCancelled else { return sink.send(.cancelled, id: id) }
-    sink.fail(.from(error, code: .query), id: id)
+    if control.isCancelled {
+      sink.send(.cancelled, id: id)
+    } else {
+      sink.fail(.from(error, code: .query), id: id)
+    }
+    if connection.isLost { lose(control.slot, sink: sink) }
   }
 }
 
@@ -503,6 +537,8 @@ struct RowStreamer {
   /// A cell smaller than this is never chunked
   static let minimumChunkedCost = 1 << 10
   static let chunkedCellCost = 12
+  /// Rows per `rows` event when the request leaves it to the plugin (`argv`)
+  static let defaultBatchRows = 1_000
 
   let id: String
   let batchRows: Int
@@ -517,10 +553,10 @@ struct RowStreamer {
   /// An event could not be sent (its `error` went instead): the query must stop
   private(set) var failed = false
 
-  init(query: EngineRequest.Query, control: RequestControl, sink: EventSink) {
+  init(batchRows: Int, maxCellBytes: Int?, control: RequestControl, sink: EventSink) {
     id = control.id
-    batchRows = max(1, query.batchRows)
-    maxCellBytes = query.maxCellBytes
+    self.batchRows = max(1, batchRows)
+    self.maxCellBytes = maxCellBytes
     self.control = control
     self.sink = sink
   }

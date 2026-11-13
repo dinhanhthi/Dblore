@@ -494,7 +494,7 @@ struct ConnectionFormContent: View {
   static func supportsConnectionString(_ type: DatabaseType) -> Bool {
     switch type {
     case .postgresql, .mongodb: true
-    case .mysql, .sqlite, .duckdb, .clickhouse, .sqlserver: false
+    case .mysql, .sqlite, .duckdb, .clickhouse, .sqlserver, .redis: false
     }
   }
 
@@ -524,7 +524,7 @@ struct ConnectionFormContent: View {
         + "chain and the host name on every server version: strict encryption (TDS 8.0) on SQL "
         + "Server 2022 and later, otherwise required encryption, never without the host name "
         + "check. A picked CA certificate is used only by Verify CA and Verify Full."
-    case .postgresql, .sqlite, .duckdb, .clickhouse: nil
+    case .postgresql, .sqlite, .duckdb, .clickhouse, .redis: nil
     }
   }
 
@@ -542,6 +542,11 @@ struct ConnectionFormContent: View {
     if databaseType == .mongodb { config.sslMode = MongoConnectionDraft.defaultSSLMode }
     // ClickHouse starts on HTTPS (8443) with the certificate checked
     if databaseType == .clickhouse { config.sslMode = .verifyFull }
+    // Redis starts on TLS with the certificate checked, in database 0, with no user
+    if databaseType == .redis {
+      config.sslMode = .verifyFull
+      config.database = "0"
+    }
     config.applyCommitStyle(AppSettings.shared.commitStyle)
     return config
   }
@@ -867,7 +872,8 @@ struct ConnectionFormContent: View {
 
   /// Form fields are complete enough to test or connect.
   /// A file engine only needs the file path. Password stays optional. MongoDB needs only a host
-  /// (no database means `test`, no user means no authentication) that forms a valid URI.
+  /// (no database means `test`, no user means no authentication) that forms a valid URI. Redis
+  /// needs a host and a database index; its ACL user is optional.
   static func isFormInputValid(_ config: ConnectionConfig) -> Bool {
     let capabilities = config.databaseType.capabilities
     if !capabilities.usesNetwork {
@@ -876,7 +882,25 @@ struct ConnectionFormContent: View {
     if config.databaseType == .mongodb {
       return !config.host.isEmpty && MongoConnectionDraft.fieldError(config) == nil
     }
+    if config.databaseType == .redis {
+      return !config.host.isEmpty && redisDatabaseIndexError(config) == nil
+    }
     return !config.host.isEmpty && !config.database.isEmpty && !config.username.isEmpty
+  }
+
+  /// Redis database indexes the form accepts
+  static let redisDatabaseIndexes = 0...15
+
+  /// Why a Redis form's database is not an index of `redisDatabaseIndexes` (nil when it is, or
+  /// the engine is not Redis). Only the plain digits ("3", not "03" or "+3") count.
+  static func redisDatabaseIndexError(_ config: ConnectionConfig) -> String? {
+    guard config.databaseType == .redis else { return nil }
+    if let index = Int(config.database), redisDatabaseIndexes.contains(index),
+      String(index) == config.database
+    {
+      return nil
+    }
+    return "The database index must be a whole number from 0 to 15."
   }
 
   private var isUnchanged: Bool {

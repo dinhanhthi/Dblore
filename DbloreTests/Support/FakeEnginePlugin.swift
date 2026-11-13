@@ -1,9 +1,9 @@
 // FakeEnginePlugin.swift
 // An in-process engine plugin for tests: the engine side of protocol v1 written with the codec,
-// behind a fake `EngineEntryPoint`. Scriptable per test (handshake versions, open, query batches,
-// command answers) and emitting from its own serial queue, as a bundle emits from its connection
-// queue. It honors the rows credit (2 events ahead of `more`), answers `cancel` with
-// `cancelled`, and answers each catalog read as scripted.
+// behind a fake `EngineEntryPoint`. Scriptable per test (handshake versions, features, open,
+// query batches, command answers) and emitting from its own serial queue, as a bundle emits from
+// its connection queue. It honors the rows credit (2 events ahead of `more`), answers `cancel`
+// with `cancelled`, answers each catalog read as scripted, and `argv` as a query when featured.
 
 import Foundation
 
@@ -29,6 +29,10 @@ final class FakeEnginePlugin: @unchecked Sendable {
   var transactionOpen: Bool? = false
   /// The answer to a `catalog` request, by its read; any other read is answered `unsupported`
   var catalogAnswers: [EngineCatalogRead: EngineEvent.Kind] = [:]
+  /// `hello.features`; with `argv` an `argv` request is answered as a query, else `unsupported`
+  var features: [String] = []
+  /// `hello.engine`
+  var engine = "fake"
 
   private let queue = DispatchQueue(label: "FakeEnginePlugin.emit")
   private let lock = NSLock()
@@ -114,19 +118,21 @@ final class FakeEnginePlugin: @unchecked Sendable {
     func answer(_ kind: EngineEvent.Kind) {
       queue.async { sink.send(EngineEvent(id: id, connection: connection, kind: kind)) }
     }
+    func runQuery() {
+      lock.withLock { query = RunningQuery(id: id, connection: connection, remaining: batches) }
+      answer(.columns(columns))
+      pump(sink)
+    }
     switch request.kind {
     case .hello:
       answer(
         .hello(
           .init(
-            protocolVersion: Int(entryProtocol), version: "1.0.0", engine: "fake",
-            queryLanguage: "sql")))
+            protocolVersion: Int(entryProtocol), version: "1.0.0", engine: engine,
+            queryLanguage: "sql", features: features)))
     case .open: if answersOpen { answer(.opened(serverVersion: "fake 1")) }
     case .close: if answersClose { answer(.closed(reason: .closed)) }
-    case .query:
-      lock.withLock { query = RunningQuery(id: id, connection: connection, remaining: batches) }
-      answer(.columns(columns))
-      pump(sink)
+    case .query: runQuery()
     case .more(let target):
       lock.withLock { if query?.id == target { query?.credit += 1 } }
       pump(sink)
@@ -159,6 +165,12 @@ final class FakeEnginePlugin: @unchecked Sendable {
     case .catalog(let catalog):
       answer(
         catalogAnswers[catalog.read] ?? .error(.init(code: .unsupported, message: "unsupported")))
+    case .argv:
+      if features.contains("argv") {
+        runQuery()
+      } else {
+        answer(.error(.init(code: .unsupported, message: "unsupported")))
+      }
     case .unknown:
       answer(.error(.init(code: .unsupported, message: "unsupported")))
     }

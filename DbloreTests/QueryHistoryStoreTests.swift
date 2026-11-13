@@ -476,7 +476,7 @@ struct QueryHistoryStoreTests {
     #expect(again == rows)
   }
 
-  @Test("A v1 backfill classifies MySQL and DuckDB keys with their own dialect")
+  @Test("A v1 backfill classifies MySQL, DuckDB and Redis keys with their own dialect")
   func version1BackfillUsesEngineDialect() async throws {
     let url = temporaryDatabaseURL()
     defer { removeDatabase(at: url) }
@@ -484,6 +484,7 @@ struct QueryHistoryStoreTests {
     let mysql = "MySQL|localhost|3306|app|user"
     let duckdb = "DuckDB|/tmp/app.duckdb|0|app|user"
     let unknown = "Oracle|localhost|1521|app|user"
+    let redis = "Redis|localhost|6379|0|user"
     let rows: [(sql: String, key: String, kind: QueryHistoryEntry.Kind?)] = [
       ("REPLACE INTO t VALUES (1)", mysql, .write),
       ("DESCRIBE t", mysql, .read),
@@ -492,6 +493,8 @@ struct QueryHistoryStoreTests {
       ("FROM t", postgres, .other),
       ("DESCRIBE t", postgres, .other),
       ("REPLACE INTO t VALUES (1)", unknown, .other),
+      ("SET k v", redis, .write),
+      ("GET k", redis, .read),
     ]
     try seedVersion1(at: url, rows: rows.map { (sql: $0.sql, key: $0.key) })
 

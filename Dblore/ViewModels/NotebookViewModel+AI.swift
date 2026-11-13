@@ -34,8 +34,13 @@ extension NotebookViewModel {
   }
 
   /// SQL the quick actions work on: editor selection (else whole editor) or the selected cell.
-  /// Nil on a source tab: its text comes from the server and never goes into a prompt.
+  /// Nil on a source tab: its text comes from the server and never goes into a prompt. Nil on
+  /// Redis: its text can hold a password (`AUTH`, `ACL SETUSER`) and never reaches an AI draft.
   var aiCurrentSQL: String? {
+    switch sqlDialect.language {
+    case .sql, .mongosh: break
+    case .redis: return nil
+    }
     if viewMode == .markdown || isReadOnlySource { return nil }
     let text: String
     if viewMode == .editor {
@@ -173,8 +178,8 @@ extension NotebookViewModel {
   }
 
   /// Ghost text controller of the editor tab (`cellId` nil) or one SQL cell, created once per
-  /// editor. Nil where ghost text never goes: MongoDB (mongosh tabs and cells), read-only source
-  /// tabs and Markdown notes. Creating one drops the controllers of deleted cells.
+  /// editor. Nil where ghost text never goes: MongoDB (mongosh tabs and cells), Redis, read-only
+  /// source tabs and Markdown notes. Creating one drops the controllers of deleted cells.
   func aiInlineCompletion(cellId: UUID?) -> AIInlineCompletionController? {
     guard aiInlineSource != nil else { return nil }
     let key = cellId ?? id
@@ -199,10 +204,14 @@ extension NotebookViewModel {
     }
   }
 
-  /// Dialect of the ghost text prompt; nil on MongoDB, a read-only source tab or a Markdown
-  /// note, so nothing is sent from them
+  /// Dialect of the ghost text prompt; nil on MongoDB, Redis, a read-only source tab or a
+  /// Markdown note, so nothing is sent from them (the prompt is SQL's)
   var aiInlineSource: (dialect: SQLDialect, isReadOnlySource: Bool)? {
-    guard sqlDialect != .mongodb, !isReadOnlySource, viewMode != .markdown else { return nil }
+    switch sqlDialect.language {
+    case .sql: break
+    case .mongosh, .redis: return nil
+    }
+    guard !isReadOnlySource, viewMode != .markdown else { return nil }
     return (sqlDialect, isReadOnlySource)
   }
 

@@ -38,11 +38,11 @@ extension AIAssistantViewModel {
     }
   }
 
-  /// Review and Optimize read the quick actions' SQL (`aiCurrentSQL`: nil on a read-only source
-  /// or Markdown tab) and need a SQL connection. SQL longer than a prompt holds is not offered:
+  /// Review and Optimize read the quick actions' SQL (`aiCurrentSQL`: nil on a read-only source,
+  /// Redis or Markdown tab) and need a SQL connection. SQL longer than a prompt holds is not offered:
   /// the model would see only its start, and Apply would replace all of it.
   static func offersReview(in tab: NotebookViewModel?, dialect: SQLDialect) -> Bool {
-    guard let tab, dialect != .mongodb, tab.sqlDialect != .mongodb,
+    guard let tab, dialect.language == .sql, tab.sqlDialect.language == .sql,
       let sql = tab.aiCurrentSQL
     else { return false }
     return sql.count <= AIPrompts.maxInputChars

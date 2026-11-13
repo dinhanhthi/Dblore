@@ -34,6 +34,8 @@ nonisolated enum DestructiveStatementRule {
   ///   `CLEAR`, `REPLACE PARTITION`, `REPLACE TABLE`, `OPTIMIZE … DEDUPLICATE`), named by its
   ///   table when it starts `ALTER | REPLACE | OPTIMIZE [TEMPORARY] TABLE name` (see `tableTarget`);
   /// - MongoDB `drop()`, `dropIndex`, `dropDatabase()` and `deleteMany({})`;
+  /// - a Redis command `RedisCommandClassifier` marks `isDestructive` (`FLUSHALL`, `KEYS`,
+  ///   `CONFIG …`), named by its command name (see `redisDestructive`); no SQL rule applies;
   /// - on ClickHouse, unnamed: a `PARALLEL WITH` chain (every statement in it runs) and
   ///   `TRUNCATE ALL TABLES`, `TRUNCATE TABLES FROM db` and `TRUNCATE DATABASE` (see
   ///   `namesNoSingleTarget`).
@@ -43,8 +45,10 @@ nonisolated enum DestructiveStatementRule {
   static func evaluate(
     _ statement: ClassifiedStatement, dialect: SQLDialect, database: String? = nil
   ) -> Verdict {
-    if dialect == .mongodb {
-      return verdict(mongoDestructive(statement, database: database))
+    switch dialect.language {
+    case .sql: break
+    case .mongosh: return verdict(mongoDestructive(statement, database: database))
+    case .redis: return verdict(redisDestructive(statement))
     }
     let pieces = lexemes(statement.text, dialect: dialect)
     if dialect == .clickhouse, namesNoSingleTarget(pieces) { return .unnamed }
@@ -91,6 +95,15 @@ nonisolated enum DestructiveStatementRule {
       // and Safe Mode treats it as a write
       return statement.isDestructive ? .some(nil) : nil
     }
+  }
+
+  /// nil when the Redis `statement` is not destructive, else its command name as written, the
+  /// first word of the classifier's redacted render (a recognized name is printable ASCII, so it
+  /// is never quoted): a Redis command has no single target to type (`FLUSHALL` clears every
+  /// database). `.some(nil)` when the text has no first word.
+  private static func redisDestructive(_ statement: ClassifiedStatement) -> String?? {
+    guard statement.isDestructive else { return nil }
+    return .some(statement.text.split(separator: " ", maxSplits: 1).first.map(String.init))
   }
 
   /// nil when `pieces` are not a DROP or TRUNCATE; `.some(nil)` when they are but name no

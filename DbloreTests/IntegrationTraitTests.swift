@@ -1,5 +1,5 @@
 // IntegrationTraitTests.swift
-// Env parsing of the opt-in MongoDB, engine plugin, SQL Server and ClickHouse gates: bare or
+// Env parsing of the opt-in MongoDB, engine plugin, SQL Server, ClickHouse and Redis gates: bare or
 // TEST_RUNNER_ keys, true/1/yes only, and SKIP_INTEGRATION_TESTS wins. The spike gate also
 // needs the MongoDB gate.
 
@@ -105,5 +105,22 @@ struct IntegrationTraitTests {
   )
   func clickHouseGate(env: [String: String], expected: Bool) {
     #expect(ClickHouseIntegrationGate.isEnabled(env: env) == expected)
+  }
+
+  @Test(
+    "RedisIntegrationGate parses REDIS_TESTS",
+    arguments: [
+      ([:], false),
+      (["REDIS_TESTS": "1"], true),
+      (["TEST_RUNNER_REDIS_TESTS": "YES"], true),
+      (["REDIS_TESTS": "true", "TEST_RUNNER_REDIS_TESTS": "0"], true),
+      (["REDIS_TESTS": "no"], false),
+      (["ENGINE_PLUGIN_TESTS": "1"], false),
+      (["REDIS_TESTS": "1", "SKIP_INTEGRATION_TESTS": "true"], false),
+      (["TEST_RUNNER_REDIS_TESTS": "1", "TEST_RUNNER_SKIP_INTEGRATION_TESTS": "1"], false),
+    ] as [([String: String], Bool)]
+  )
+  func redisGate(env: [String: String], expected: Bool) {
+    #expect(RedisIntegrationGate.isEnabled(env: env) == expected)
   }
 }

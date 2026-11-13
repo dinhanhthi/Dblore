@@ -8,6 +8,8 @@
 //  autocomplete, schema search and AI context keep them), and lists each schema's folders
 //  (`SidebarFolderStore`) above its ungrouped tables and views. The session's temporary objects
 //  sit in one Temporary section on top, outside every schema group, folder and the filter menu.
+//  A Redis workspace has no schema: its Public tab is the key browser (`RedisKeySidebar`), and
+//  Security is hidden.
 //
 
 import SwiftUI
@@ -45,6 +47,9 @@ struct WorkspaceLeftSidebarContent: View {
   /// Public sections the user opened or closed, by id (`sectionExpansion`): kept here, so a
   /// section the filter takes out, or the list drops far off screen, comes back as it was
   @State private var expandedSections: [String: Bool] = [:]
+  /// A Redis workspace's key browser: kept here, so a trip to Favorites or History keeps its
+  /// listings and selection; reset on a disconnect
+  @State private var redisKeys = RedisKeyBrowserModel()
 
   enum SidebarTab: String, CaseIterable {
     case `public` = "Public"
@@ -69,6 +74,9 @@ struct WorkspaceLeftSidebarContent: View {
         HistoryTabContent(workspaceManager: workspaceManager)
       } else if !workspaceManager.connectionState.isConnected {
         emptyState
+      } else if workspaceManager.isRedisWorkspace {
+        // No schema is loaded for Redis: the key browser reads its own data
+        RedisKeySidebar(model: redisKeys, workspaceManager: workspaceManager)
       } else if workspaceManager.isLoadingSchema && workspaceManager.schemaConnectionEpoch == nil {
         // A first load; a refresh keeps the rows, its progress in the row above them
         loadingState
@@ -97,12 +105,14 @@ struct WorkspaceLeftSidebarContent: View {
     .onChange(of: workspaceManager.sidebarEntityIndex.id) {
       if shownTab != .public || publicKeywords.isEmpty { publicFilterResult = nil }
     }
-    // A disconnect with no schema read (its epoch already nil)
+    // A disconnect with no schema read (its epoch already nil). A reconnect or another
+    // connection always passes through here (connecting), so the key browser starts over.
     .onChange(of: workspaceManager.connectionState.isConnected) { _, isConnected in
       if !isConnected {
         publicFilterResult = nil
         expandedSections = [:]
         openedPartitions = []
+        redisKeys.reset()
       }
     }
     .sheet(item: $aggregationBuilder) { model in
@@ -128,7 +138,7 @@ struct WorkspaceLeftSidebarContent: View {
     }
   }
 
-  /// Security (users and roles) is hidden for MongoDB
+  /// Security (users and roles) is hidden for MongoDB and Redis
   private var visibleTabs: [SidebarTab] {
     SidebarSectionModel.showsSecurityTab(queryLanguage)
       ? SidebarTab.allCases : SidebarTab.allCases.filter { $0 != .security }
@@ -227,7 +237,7 @@ struct WorkspaceLeftSidebarContent: View {
     case .mysql: fallback = workspaceManager.workspace.connectionConfig?.database ?? ""
     case .postgresql, .sqlite, .duckdb, .mongodb:
       fallback = connectionDatabaseType.dialect.defaultSchema
-    case .clickhouse, .sqlserver: fallback = ""
+    case .clickhouse, .sqlserver, .redis: fallback = ""
     }
     var schemas = publicSchemas.listed
     // The default schema stays pickable but goes last, so "+" on a flat list targets its schema

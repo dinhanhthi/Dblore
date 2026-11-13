@@ -111,12 +111,19 @@ final class FakeDatabaseSessionFactory: DatabaseSessionFactory, @unchecked Senda
   var typedCommands: [MongoCommand] {
     sessions.flatMap(\.typedCommands)
   }
+
+  /// Redis commands that reached any session (`RedisCommandSending.send`), in the order sent.
+  var redisCommands: [RedisCommand] {
+    sessions.flatMap(\.redisCommands)
+  }
 }
 
 /// One scripted connection. `query`, `command`, and `openCursor` record the text and binds
 /// they were given. FETCH and CLOSE record no binds. Typed MongoDB commands are recorded apart
-/// (`typedCommands`).
-final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unchecked Sendable {
+/// (`typedCommands`), Redis commands too (`redisCommands`, with their exact argument bytes).
+final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, RedisCommandSending,
+  @unchecked Sendable
+{
   let capabilities: DatabaseCapabilities
   let closeEvents: AsyncStream<SessionCloseReason>
 
@@ -144,6 +151,14 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   private var recordedBinds: [[SQLBindValue]] = []
   private var queriesRecorded: [String] = []
   private var typedRecorded: [MongoCommand] = []
+  private var redisRecorded: [RedisCommand] = []
+  /// The rows each Redis `send` answers: a simple "OK" unless `answerRedisSends(with:)`
+  private var redisReplyRows: [[CellValue]] = [[.string("0"), .string("simple"), .string("OK")]]
+  /// The next Redis `send` records its command, then throws this (`failNextRedisSend`)
+  private var redisFailure: Error?
+  /// The next Redis `send` waits in `heldRedisSends` (`holdNextRedisSend`)
+  private var redisHold = false
+  private var heldRedisSends: [CheckedContinuation<Void, Never>] = []
   private var didEmitClose = false
   /// Slow reads waiting for `interrupt`, which ends them all
   private var slowContinuations: [CheckedContinuation<Void, Error>] = []
@@ -318,6 +333,63 @@ final class FakeDatabaseSession: DatabaseSession, MongoTypedCommandSending, @unc
   }
 
   func writeLimits() async -> MongoWriteLimits { limits }
+
+  /// Records `command` (its exact argument bytes and db), then answers `redisReplyRows`
+  /// (`[path, type, value]`); a held send waits for `releaseHeldRedisSends` first.
+  func send(_ command: RedisCommand) async throws -> SessionRowSource {
+    let (hold, failure, rows) = lock.withLock {
+      redisRecorded.append(command)
+      defer {
+        redisHold = false
+        redisFailure = nil
+      }
+      return (redisHold, redisFailure, redisReplyRows)
+    }
+    if hold {
+      await withCheckedContinuation { wait in lock.withLock { heldRedisSends.append(wait) } }
+    }
+    if let failure { throw failure }
+    return Self.rowSource(
+      columns: [
+        ColumnInfo(name: "path", type: "text"), ColumnInfo(name: "type", type: "text"),
+        ColumnInfo(name: "value", type: "value"),
+      ], rows: rows)
+  }
+
+  /// Every later Redis `send` answers `rows`
+  func answerRedisSends(with rows: [[CellValue]]) {
+    lock.withLock { redisReplyRows = rows }
+  }
+
+  /// The next Redis `send` is recorded, then throws `error` (once)
+  func failNextRedisSend(with error: Error) {
+    lock.withLock { redisFailure = error }
+  }
+
+  /// Redis commands sent, in order
+  var redisCommands: [RedisCommand] {
+    lock.withLock { redisRecorded }
+  }
+
+  /// The next Redis `send` is recorded, then waits until `releaseHeldRedisSends`
+  func holdNextRedisSend() {
+    lock.withLock { redisHold = true }
+  }
+
+  /// Redis sends `holdNextRedisSend` left waiting
+  var heldRedisSendCount: Int {
+    lock.withLock { heldRedisSends.count }
+  }
+
+  /// Lets the held Redis sends answer
+  func releaseHeldRedisSends() {
+    let held = lock.withLock {
+      let held = heldRedisSends
+      heldRedisSends = []
+      return held
+    }
+    for wait in held { wait.resume() }
+  }
 
   /// The next `command` whose SQL contains `text` answers with `tag` (once), e.g. a PostgreSQL
   /// COMMIT of an aborted transaction answering ROLLBACK

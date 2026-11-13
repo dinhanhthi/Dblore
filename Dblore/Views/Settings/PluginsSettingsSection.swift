@@ -83,6 +83,14 @@ nonisolated struct PluginDisplayInfo {
         removeMessage:
           "Deletes the downloaded SQL Server plugin. Install it again to use SQL Server connections."
       )
+    case "redis":
+      PluginDisplayInfo(
+        name: "Redis",
+        summary:
+          "Connect to Redis servers over TLS, or plain TCP on a local network. Browse keys, edit values and run commands. Downloaded on demand.",
+        removeMessage:
+          "Deletes the downloaded Redis plugin. Install it again to use Redis connections."
+      )
     case "local-ai":
       PluginDisplayInfo(
         name: "On-device AI",

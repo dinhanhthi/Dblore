@@ -30,7 +30,7 @@ nonisolated enum AISlashCommand: Equatable, Sendable {
       }
     }
 
-    /// Review and Optimize read SQL only: never offered on MongoDB
+    /// Review and Optimize read SQL only: never offered on MongoDB or Redis
     var isSQLOnly: Bool { self == .review || self == .optimize }
   }
 
@@ -122,11 +122,11 @@ nonisolated enum AISlashCommand: Equatable, Sendable {
     return custom.first { $0.name == name }.map { .custom($0) }
   }
 
-  /// The commands listed on a connection of `dialect`: the built-ins (Review and Optimize not on
-  /// MongoDB), then the custom commands by name. Whether a built-in can run right now (SQL, an
+  /// The commands listed on a connection of `dialect`: the built-ins (Review and Optimize only on
+  /// SQL), then the custom commands by name. Whether a built-in can run right now (SQL, an
   /// error) is checked when it runs.
   static func available(custom: [AICustomCommand], dialect: SQLDialect) -> [AISlashCommand] {
-    let builtIns = BuiltIn.allCases.filter { !($0.isSQLOnly && dialect == .mongodb) }
+    let builtIns = BuiltIn.allCases.filter { !($0.isSQLOnly && dialect.language != .sql) }
     return builtIns.map { .builtIn($0) }
       + custom.sorted { $0.name < $1.name }.map { .custom($0) }
   }

@@ -599,7 +599,7 @@ extension DatabaseConnectionManager {
   /// - `.none`: everything (Safe Mode confirmation lives in the ViewModel).
   /// - Protected mode (any level): no transaction control and no statement that cannot run in
   ///   a transaction (the app owns the transaction); `dialect` picks the MySQL wording for an
-  ///   implicit commit, and refuses every MongoDB write (no transactions).
+  ///   implicit commit, and refuses every MongoDB and Redis write (no transactions).
   /// `statements` may be lazy (a file-backed restore plan's, built one at a time).
   nonisolated static func evaluate(
     _ statements: some Sequence<ClassifiedStatement>, policy: ProtectionPolicy,
@@ -686,9 +686,18 @@ extension DatabaseConnectionManager {
   private nonisolated static func protectedModeViolation(
     _ statement: ClassifiedStatement, dialect: SQLDialect
   ) -> String? {
-    // Backstop: Protected mode should never reach a MongoDB write (it has no transactions).
-    if dialect == .mongodb, !statement.isReadOnlySafe {
-      return "MongoDB has no transactions, so Protected mode cannot hold this change. Use Confirm."
+    // Backstop: Protected mode should never reach a MongoDB or Redis write (no transactions).
+    switch dialect.language {
+    case .sql: break
+    case .mongosh:
+      if !statement.isReadOnlySafe {
+        return "MongoDB has no transactions, so Protected mode cannot hold this change. "
+          + "Use Confirm."
+      }
+    case .redis:
+      if !statement.isReadOnlySafe {
+        return "Redis has no transactions, so Protected mode cannot hold this change. Use Confirm."
+      }
     }
     if statement.kind == .tcl {
       return "Transaction control is managed by Protected mode — use Commit / Rollback"

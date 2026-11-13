@@ -46,4 +46,24 @@ struct SQLFingerprintTests {
       SQLFingerprint.fingerprint("db.t.find({ _id: { $in: [1, 2, 3] } })", dialect: .mongodb)
         == "db.t.find({_id:{$in:[?]}})")
   }
+
+  @Test("Redis: the command (and subcommand) name, then one placeholder per argument")
+  func redisCommandShape() {
+    let rows: [(text: String, fingerprint: String)] = [
+      ("get user:1", "GET ?"),
+      ("GET \"user:2\"", "GET ?"),
+      ("GET config", "GET ?"),
+      ("config get maxmemory", "CONFIG GET ?"),
+      ("AUTH ana s3cret", "AUTH ? ?"),
+      ("# note\nset k v\nxinfo stream s", "SET ? ?; XINFO STREAM ?"),
+      ("  set k \"open", "SET …"),
+      // Untokenizable text whose first word does not look like a command keeps nothing
+      ("pa$$w0rd \"open", "…"),
+      ("\"s3cret k", "…"),
+    ]
+    for row in rows {
+      #expect(SQLFingerprint.fingerprint(row.text, dialect: .redis) == row.fingerprint)
+    }
+    #expect(QueryHistoryStore.dialect(for: "Redis|localhost|6379|0|ana") == .redis)
+  }
 }

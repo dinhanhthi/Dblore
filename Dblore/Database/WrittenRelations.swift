@@ -74,7 +74,10 @@ nonisolated enum WrittenRelations {
   @concurrent static func steps(
     of statements: [String], dialect: SQLDialect, defaultSchema: String
   ) async -> [Step] {
-    guard dialect != .mongodb else { return [] }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return []
+    }
     return statements.compactMap { statement in
       let step = Step(
         relations: relations(writtenBy: statement, dialect: dialect, defaultSchema: defaultSchema),
@@ -174,7 +177,10 @@ nonisolated enum WrittenRelations {
   static func relations(
     writtenBy statement: String, dialect: SQLDialect, defaultSchema: String
   ) -> [Relation] {
-    guard dialect != .mongodb else { return [] }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return []
+    }
     let head = head(of: statement)
     return read(
       head.text, truncated: head.truncated, dialect: dialect, defaultSchema: defaultSchema)
@@ -218,7 +224,10 @@ nonisolated enum WrittenRelations {
   /// Read from the statement's head: transaction control is short, so a cut statement only
   /// commits (a MySQL implicit commit), never begins or rolls back
   private static func boundary(of statement: String, dialect: SQLDialect) -> Boundary? {
-    guard dialect != .mongodb else { return nil }
+    switch dialect.language {
+    case .sql: break
+    case .mongosh, .redis: return nil
+    }
     let head = head(of: statement)
     let first = SQLTokenizer(dialect: dialect).tokens(head.text).first?.keyword ?? ""
     // Only MySQL commits implicitly: elsewhere a boundary is transaction control

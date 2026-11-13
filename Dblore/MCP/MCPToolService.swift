@@ -535,6 +535,7 @@ nonisolated struct MCPToolService: Sendable {
   ) async throws -> MCPToolResult {
     guard let sql = Self.string(arguments["sql"]) else { throw MCPToolError.missingArgument("sql") }
     let dialect = entry.config.databaseType.dialect
+    try Self.refuseRedis(dialect)
     let statements = SQLStatementClassifier.classify(sql, dialect: dialect)
     let started = ContinuousClock.now
     do {
@@ -564,6 +565,7 @@ nonisolated struct MCPToolService: Sendable {
     guard scope != .read else { throw MCPToolError.writeNotAllowed }
     guard let sql = Self.string(arguments["sql"]) else { throw MCPToolError.missingArgument("sql") }
     let dialect = entry.config.databaseType.dialect
+    try Self.refuseRedis(dialect)
     let statements = SQLStatementClassifier.classify(sql, dialect: dialect)
     let started = ContinuousClock.now
     do {
@@ -596,6 +598,15 @@ nonisolated struct MCPToolService: Sendable {
         sql, entry: entry, statements: statements, started: started, rowCount: nil,
         status: status, error: message)
       return MCPToolResult(text: message, isError: true)
+    }
+  }
+
+  /// Refuses Redis before a tool call reaches History: MCP has no Redis path, and History's
+  /// redaction reads SQL, so it would keep an `AUTH` password
+  private static func refuseRedis(_ dialect: SQLDialect) throws {
+    switch dialect.language {
+    case .sql, .mongosh: break
+    case .redis: throw MCPConnectionError.engineNotSupported(.redis)
     }
   }
 
@@ -665,11 +676,16 @@ nonisolated struct MCPToolService: Sendable {
   /// (`isCoveredMongoCommand`). MySQL side-effect
   /// functions, LOAD DATA and INTO OUTFILE / DUMPFILE, SQLite ATTACH / DETACH / load_extension
   /// and DuckDB INSTALL / LOAD / ATTACH / COPY are classified as utilities, so they are refused
-  /// as such.
+  /// as such. Redis is refused first (`engineNotSupported`): MCP has no Redis path, and no check
+  /// below may read Redis text as SQL.
   static func checkWrite(
     _ sql: String, statements: [ClassifiedStatement], dialect: SQLDialect, scope: MCPWriteScope,
     database: String
   ) throws -> ClassifiedStatement {
+    switch dialect.language {
+    case .sql, .mongosh: break
+    case .redis: throw MCPConnectionError.engineNotSupported(.redis)
+    }
     guard !HiddenCharacterRule.hasHiddenCharacters(sql, dialect: dialect) else {
       throw MCPToolError.writeHiddenCharacters
     }
@@ -681,7 +697,8 @@ nonisolated struct MCPToolService: Sendable {
     guard !statement.resetsSessionBrakes, !statement.changesPrivileges else {
       throw MCPToolError.writeNotVerifiable
     }
-    if dialect != .mongodb {
+    switch dialect.language {
+    case .sql:
       let tokens = SQLTokenizer.tokens(statement.text, dialect: dialect)
       // Words are keywords or unquoted names; a look-alike letter would read as another word
       if tokens.contains(where: { $0.kind == .word && $0.asciiText == nil }) {
@@ -695,9 +712,12 @@ nonisolated struct MCPToolService: Sendable {
       {
         throw MCPToolError.writeNotVerifiable
       }
-    } else if !isCoveredMongoCommand(statement.text, database: database) {
+    case .mongosh:
       // Before the scope, so a write into another database is refused in every scope
-      throw MCPToolError.writeNotVerifiable
+      if !isCoveredMongoCommand(statement.text, database: database) {
+        throw MCPToolError.writeNotVerifiable
+      }
+    case .redis: throw MCPConnectionError.engineNotSupported(.redis)
     }
     // The statement's own kind: EXPLAIN is refused, never unwrapped to what it explains
     var needed: MCPWriteScope
@@ -709,11 +729,16 @@ nonisolated struct MCPToolService: Sendable {
     }
     if statement.createsTable { needed = .schema }
     guard needed <= scope else { throw MCPToolError.writeOutOfScope(needed: needed) }
-    if dialect == .postgresql, ReadOnlyQueryGuard.callsPostgresSideEffectFunction(sql) {
-      throw MCPToolError.sideEffectFunction
-    }
-    if dialect == .mongodb, MongoCommandClassifier.usesServerSideJavaScript(statement.text) {
-      throw MCPToolError.serverSideJavaScript
+    switch dialect.language {
+    case .sql:
+      if dialect == .postgresql, ReadOnlyQueryGuard.callsPostgresSideEffectFunction(sql) {
+        throw MCPToolError.sideEffectFunction
+      }
+    case .mongosh:
+      if MongoCommandClassifier.usesServerSideJavaScript(statement.text) {
+        throw MCPToolError.serverSideJavaScript
+      }
+    case .redis: throw MCPConnectionError.engineNotSupported(.redis)
     }
     return statement
   }
@@ -1129,11 +1154,14 @@ nonisolated struct MCPToolService: Sendable {
   private static func confirmName(
     of statement: ClassifiedStatement, dialect: SQLDialect, database: String
   ) throws -> String? {
-    if dialect == .mongodb {
+    switch dialect.language {
+    case .sql: break
+    case .mongosh:
       switch try? MongoshParser.parse(statement.text) {
       case .admin(.drop), .deleteMany: break
       default: return nil
       }
+    case .redis: throw MCPConnectionError.engineNotSupported(.redis)
     }
     switch DestructiveStatementRule.evaluate(statement, dialect: dialect, database: database) {
     case .none: return nil
@@ -1216,8 +1244,13 @@ nonisolated struct MCPToolService: Sendable {
 
   /// `sql` with every string literal of `dialect` (quoted, escape, dollar-quoted) replaced by
   /// `'…'` and every comment (which may hold anything) by `/*…*/`; keywords, identifiers and
-  /// layout are kept.
+  /// layout are kept. Redis text is not SQL (an unquoted `AUTH` password would be kept): it is
+  /// dropped whole, `redisHistoryPlaceholder` stands in for it.
   static func redactingStrings(_ sql: String, dialect: SQLDialect) -> String {
+    switch dialect.language {
+    case .sql, .mongosh: break
+    case .redis: return redisHistoryPlaceholder
+    }
     let tokenizer = SQLTokenizer(dialect: dialect)
     let scalars = Array(sql.unicodeScalars)
     var result = ""
@@ -1234,6 +1267,9 @@ nonisolated struct MCPToolService: Sendable {
     }
     return result
   }
+
+  /// What a redacted History row of Redis text holds
+  static let redisHistoryPlaceholder = "(Redis command not recorded)"
 
   /// Concise text for the agent. Server text is passed as data, scrubbed of `config`'s
   /// identifiers (`scrub`), cut to `maxErrorCharacters`; nothing here holds a password

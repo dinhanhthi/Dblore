@@ -173,10 +173,14 @@ extension AIAssistantViewModel {
   }
 
   /// The read-only query path (`MCPReadOnlySessionFactory`; DuckDB reads on the tab's connection)
-  /// refuses ClickHouse and SQL Server, so the assistant never offers `run_read_query` or a run
-  /// block there
+  /// refuses ClickHouse, SQL Server and Redis, so the assistant never offers `run_read_query` or
+  /// a run block there
   nonisolated static func runsReadQueries(_ dialect: SQLDialect) -> Bool {
-    dialect != .clickhouse && dialect != .sqlserver
+    switch dialect.language {
+    case .sql: dialect != .clickhouse && dialect != .sqlserver
+    case .mongosh: true
+    case .redis: false
+    }
   }
 
   /// Rows and database errors can hold row values, so they never go to the model: a result entry

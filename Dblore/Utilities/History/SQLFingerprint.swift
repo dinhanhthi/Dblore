@@ -7,10 +7,14 @@ import Foundation
 /// the connection's dialect (`SQLTokenizer.lexeme`): strings, numbers and dollar-quoted strings
 /// become `?`, an `IN (?, ?, …)` list becomes `IN (?)`, comments are dropped, keywords (the
 /// highlighter's, for the dialect) are uppercased and tokens are joined by single spaces. Other
-/// words and quoted identifiers keep their text. MongoDB is `mongosh(_:)`.
+/// words and quoted identifiers keep their text. MongoDB is `mongosh(_:)`, Redis `redis(_:)`.
 nonisolated enum SQLFingerprint {
   static func fingerprint(_ sql: String, dialect: SQLDialect) -> String {
-    dialect == .mongodb ? mongosh(sql) : self.sql(sql, dialect: dialect)
+    switch dialect.language {
+    case .sql: self.sql(sql, dialect: dialect)
+    case .mongosh: mongosh(sql)
+    case .redis: redis(sql)
+    }
   }
 
   // MARK: - SQL
@@ -314,5 +318,61 @@ nonisolated enum SQLFingerprint {
       j += 1
     }
     return bytes.count
+  }
+
+  // MARK: - Redis
+
+  /// Commands whose second argument names a subcommand (`CONFIG GET`, `XINFO STREAM`)
+  private static let redisContainers: Set<String> = [
+    "ACL", "CLIENT", "CLUSTER", "COMMAND", "CONFIG", "FUNCTION", "LATENCY", "MEMORY", "MODULE",
+    "OBJECT", "PUBSUB", "SCRIPT", "SLOWLOG", "XGROUP", "XINFO",
+  ]
+
+  /// Each `RedisTokenizer` command, joined by `; `: the upper-cased command name (and the
+  /// subcommand of a `redisContainers` command), then `?` for every other argument, so no key,
+  /// value or password is kept. Text that does not tokenize keeps only the first word of its
+  /// first command line, upper-cased, and `…`, when that word looks like a command name (an
+  /// ASCII letter, then ASCII letters, digits, `_`, `.` or `-`); else only `…`, so a pasted
+  /// secret is never kept.
+  private static func redis(_ text: String) -> String {
+    guard let commands = try? RedisTokenizer.tokenize(text) else {
+      let line = text.split(whereSeparator: \.isNewline).first { line in
+        guard let first = line.first(where: { !$0.isWhitespace }) else { return false }
+        return first != "#"
+      }
+      let word = Data((line?.split(whereSeparator: \.isWhitespace).first ?? "").utf8)
+      guard let first = word.first, isASCIILetter(first),
+        word.allSatisfy({ isASCIILetter($0) || isASCIIDigit($0) || "_.-".utf8.contains($0) })
+      else { return "…" }
+      return redisUppercased(word) + " …"
+    }
+    return commands.map(redisCommand).joined(separator: "; ")
+  }
+
+  private static func redisCommand(_ args: [Data]) -> String {
+    guard let name = args.first.map(redisUppercased) else { return "" }
+    var pieces = [name]
+    var rest = args.dropFirst()
+    if redisContainers.contains(name), let subcommand = rest.first, !subcommand.isEmpty,
+      subcommand.allSatisfy({ isASCIILetter($0) || $0 == UInt8(ascii: "-") })
+    {
+      pieces.append(redisUppercased(subcommand))
+      rest = rest.dropFirst()
+    }
+    pieces += rest.map { _ in "?" }
+    return pieces.joined(separator: " ")
+  }
+
+  /// ASCII upper case only, shown as `RedisTokenizer.label` (control and non-UTF-8 bytes escaped)
+  private static func redisUppercased(_ bytes: Data) -> String {
+    RedisTokenizer.label(Data(bytes.map { (0x61...0x7A).contains($0) ? $0 - 0x20 : $0 }))
+  }
+
+  private static func isASCIILetter(_ byte: UInt8) -> Bool {
+    (0x41...0x5A).contains(byte) || (0x61...0x7A).contains(byte)
+  }
+
+  private static func isASCIIDigit(_ byte: UInt8) -> Bool {
+    (0x30...0x39).contains(byte)
   }
 }

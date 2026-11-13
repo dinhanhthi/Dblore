@@ -41,7 +41,7 @@ enum MongoConnectionDraft {
   /// ClickHouse over HTTPS is two-valued too; SQL Server takes every mode.
   static func sslModes(for type: DatabaseType) -> [SSLMode] {
     switch type {
-    case .mongodb, .clickhouse: [.disable, .verifyFull]
+    case .mongodb, .clickhouse, .redis: [.disable, .verifyFull]
     case .postgresql, .sqlite, .duckdb, .mysql, .sqlserver: SSLMode.allCases
     }
   }

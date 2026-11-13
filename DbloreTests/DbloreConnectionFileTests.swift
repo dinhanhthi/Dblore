@@ -373,6 +373,24 @@ struct DbloreConnectionFileTests {
     #expect(skipped.message == "Skipped \"Sales\": \(reason).")
   }
 
+  @Test(
+    "A Redis entry is imported in its database index; one the form refuses opens 0, with a note",
+    arguments: [
+      ("3", "3", false), ("", "0", false), ("15", "15", false), ("sales", "0", true),
+      ("16", "0", true), ("03", "0", true),
+    ])
+  func redisEntryImported(database: String, expected: String, warns: Bool) throws {
+    var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))
+    entry.databaseType = DatabaseType.redis.rawValue
+    entry.database = database
+
+    let imported = try entry.importedConnection().get()
+    #expect(imported.config.databaseType == .redis)
+    #expect(imported.config.database == expected)
+    #expect(ConnectionFormContent.redisDatabaseIndexError(imported.config) == nil)
+    #expect(imported.warnings.contains { $0.contains("database index") } == warns)
+  }
+
   @Test("A tunnel without a user is kept, with the importers' note to set it")
   func sshTunnelWithoutUser() throws {
     var entry = try #require(DbloreConnectionFile.Connection(config: Self.fullConfig()))

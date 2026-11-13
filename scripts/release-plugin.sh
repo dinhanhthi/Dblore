@@ -10,10 +10,11 @@
 # dist/plugins/local-ai/ with its source fingerprint (only when notarized); --install-dev also
 # fills .plugin-dev/local-ai/. Its --publish (user-run only) never rebuilds and never rewrites
 # the catalog: it uploads that zip only when it matches the catalog's local-ai entry.
-# For the engine bundles (sqlserver, clickhouse): build the engine's C libraries when it has a deps
-# script, archive Dblore<Engine>.bundle from Plugins/Engines/DbloreEngines.xcodeproj, then sign,
-# notarize, staple and zip it into dist/plugins/<id>/ like local-ai, with a per-engine source
-# fingerprint; the version is the archived bundle's. Their --publish is check-only, like local-ai's.
+# For the engine bundles (sqlserver, clickhouse, redis): build the engine's C libraries when it
+# has a deps script, archive Dblore<Engine>.bundle from Plugins/Engines/DbloreEngines.xcodeproj,
+# then sign, notarize, staple and zip it into dist/plugins/<id>/ like local-ai, with a per-engine
+# source fingerprint; the version is the archived bundle's. Their --publish is check-only, like
+# local-ai's.
 
 set -euo pipefail
 
@@ -46,19 +47,19 @@ notarizes it and prints its SHA-256. Build recipes:
   local-ai  Archives $LOCAL_AI_BUNDLE ($LOCAL_AI_DIR, version from project.yml), signs it
             inside out with no entitlements, staples it and prints its CDHash too. Once
             notarized, writes $LOCAL_AI_ZIP and source.sha256 to dist/plugins/local-ai/
-  sqlserver, clickhouse
+  sqlserver, clickhouse, redis
             Engine bundles: run $ENGINES_DIR/<Engine>/deps/build-deps.sh when it exists,
             archive Dblore<Engine>.bundle from $ENGINES_PROJECT
             (version from the archived bundle's Info.plist), then sign, staple and write
             the zip and source.sha256 to dist/plugins/<id>/ as for local-ai
 
   --plugin <id>     Plugin id in $CATALOG (default duckdb);
-                    an id not in the catalog is refused, except local-ai, sqlserver and
-                    clickhouse, which build without an entry
+                    an id not in the catalog is refused, except local-ai, sqlserver,
+                    clickhouse and redis, which build without an entry
   --install-dev     duckdb: write the signed dylib, an ad-hoc-signed copy and dev-catalog.json
-                    into .plugin-dev/ at the repo root. local-ai, sqlserver, clickhouse: write
-                    the zip, an ad-hoc-signed zip and their own dev-catalog.json into
-                    .plugin-dev/<id>/
+                    into .plugin-dev/ at the repo root. local-ai and the engines (sqlserver,
+                    clickhouse, redis): write the zip, an ad-hoc-signed zip and their own
+                    dev-catalog.json into .plugin-dev/<id>/
   --publish         Upload to GitHub release plugin-<id>-v<version> (--latest=false).
                     Manual, user-run only; afterwards
                     scripts/release-local.sh --check-plugin-only verifies the asset.
@@ -67,13 +68,13 @@ notarizes it and prints its SHA-256. Build recipes:
                     $LOCAL_AI_DIST/$LOCAL_AI_ZIP only when its SHA-256 is the entry's,
                     the bundle in it is signed under $TEAM_ID with the entry's cdhash,
                     and its source.sha256 is the current source fingerprint.
-                    sqlserver, clickhouse: the same checks on dist/plugins/<id>/, plus the
+                    sqlserver, clickhouse, redis: the same checks on dist/plugins/<id>/, plus the
                     bundle's version must be the entry's
   --yes             Skip the interactive confirmation of --publish
   --skip-notarize   Sign only (not allowed with --publish); local-ai leaves dist/ untouched
   --print-source-fingerprint
                     Print the local-ai source fingerprint (what source.sha256 holds) and exit;
-                    with --plugin sqlserver or clickhouse, that engine's fingerprint
+                    with --plugin sqlserver, clickhouse or redis, that engine's fingerprint
   -h, --help        Show this help
 EOF
 }
@@ -458,6 +459,7 @@ engine_names() {
   case "$1" in
     sqlserver) ENGINE_NAME="SQLServer" ;;
     clickhouse) ENGINE_NAME="ClickHouse" ;;
+    redis) ENGINE_NAME="Redis" ;;
     *) return 1 ;;
   esac
   ENGINE_BUNDLE="Dblore$ENGINE_NAME.bundle"
@@ -769,7 +771,7 @@ case "$PLUGIN_ID" in
       PUBLISH_SUMMARY="uploads $LOCAL_AI_DIST/$LOCAL_AI_ZIP to it; $CATALOG is not changed."
     fi
     ;;
-  sqlserver | clickhouse)
+  sqlserver | clickhouse | redis)
     if [[ $PUBLISH -eq 1 ]]; then
       [[ $INSTALL_DEV -eq 0 ]] || fail "--publish --plugin $PLUGIN_ID never rebuilds; drop --install-dev"
       # check_engine_publish requires the bundle in the dist zip to be this version
@@ -781,7 +783,7 @@ case "$PLUGIN_ID" in
     fi
     ;;
   *)
-    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb, local-ai, sqlserver and clickhouse have one)"
+    fail "plugin $PLUGIN_ID has no build recipe in scripts/release-plugin.sh (only duckdb, local-ai, sqlserver, clickhouse and redis have one)"
     ;;
 esac
 TAG="plugin-$PLUGIN_ID-v$PLUGIN_VERSION"

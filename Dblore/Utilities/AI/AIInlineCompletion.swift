@@ -29,7 +29,7 @@ nonisolated enum AIInlineCompletion {
   /// The editable query text around `caret`, a UTF-16 offset (`NSTextView.selectedRange()`):
   /// the last `maxPrefixChars` characters before it and the first `maxSuffixChars` after it.
   /// Nil on a read-only source tab (its text comes from the server and never goes into a
-  /// prompt), for a caret outside the text or inside a character, when only whitespace
+  /// prompt), on Redis, for a caret outside the text or inside a character, when only whitespace
   /// precedes the caret, and when text follows the caret on its line (ghost text would cover
   /// it).
   ///
@@ -41,6 +41,11 @@ nonisolated enum AIInlineCompletion {
   static func context(
     text: String, caret: Int, dialect: SQLDialect, schema: String?, isReadOnlySource: Bool
   ) -> Context? {
+    // The prompt is SQL's; Redis text (an `AUTH` password, say) never goes into it
+    switch dialect.language {
+    case .sql, .mongosh: break
+    case .redis: return nil
+    }
     guard !isReadOnlySource, caret >= 0,
       let range = Range(NSRange(location: caret, length: 0), in: text),
       let index = range.lowerBound.samePosition(in: text)

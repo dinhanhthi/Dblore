@@ -3,10 +3,11 @@
 // queries ("New Query"), other connections make and open ".sql" files ("New SQL File"). A
 // user-initiated open of the other kind is refused and adds no tab; a restore open (the
 // default) never refuses, so saved tabs keep opening. A workspace with no connection accepts
-// both. Temp files only; recents use an injected suite, never the user's defaults.
+// both. A Redis workspace makes, opens and saves ".redis" command files. Temp files only; recents use an injected suite, never the user's defaults.
 
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 
 @testable import Dblore
 
@@ -15,6 +16,9 @@ import Testing
 struct MongoScriptFileTests {
   private static let mongo = ConnectionConfig(
     databaseType: .mongodb, host: "fake", port: 27017, database: "db", username: "u",
+    sslMode: .disable)
+  private static let redis = ConnectionConfig(
+    databaseType: .redis, host: "fake", port: 6379, database: "0", username: "",
     sslMode: .disable)
   private static let postgres = ConnectionConfig(
     databaseType: .postgresql, host: "fake", port: 5432, database: "db", username: "u",
@@ -122,6 +126,59 @@ struct MongoScriptFileTests {
     #expect(TabDocumentType.scriptKindRefusal(for: sql, databaseType: .postgresql) == nil)
     #expect(TabDocumentType.scriptKindRefusal(for: js, databaseType: nil) == nil)
     #expect(TabDocumentType.scriptKindRefusal(for: sql, databaseType: nil) == nil)
+    // A Redis workspace takes ".redis" command files only, and only it takes them
+    let redis = URL(fileURLWithPath: "/tmp/q.redis")
+    #expect(TabDocumentType.scriptKindRefusal(for: redis, databaseType: .redis) == nil)
+    #expect(TabDocumentType.scriptKindRefusal(for: redis, databaseType: .postgresql) != nil)
+    #expect(TabDocumentType.scriptKindRefusal(for: redis, databaseType: .mongodb) != nil)
+    #expect(TabDocumentType.scriptKindRefusal(for: js, databaseType: .redis) != nil)
+    let sqlInRedis = TabDocumentType.scriptKindRefusal(for: sql, databaseType: .redis)
+    #expect(sqlInRedis?.contains("Redis workspace") == true)
     #expect(RecentManager.isRecentDocument(js))
+  }
+
+  @Test("A .redis file is a script tab and saves as Redis commands; .sql and .js are unchanged")
+  func redisScriptType() {
+    #expect(TabDocumentType.from(url: URL(fileURLWithPath: "/tmp/q.redis")) == .sqlFile)
+    #expect(TabDocumentType.from(url: URL(fileURLWithPath: "/tmp/Q.REDIS")) == .sqlFile)
+    #expect(TabDocumentType.scriptExtension(for: .redis) == "redis")
+
+    let redisExtension = TabDocumentType.scriptExtension(for: .redis)
+    #expect(UTType.scriptContentType(forExtension: redisExtension) == .redisScript)
+    #expect(UTType.scriptContentType(forExtension: "redis") == .redisScript)
+    #expect(
+      UTType.scriptContentType(forExtension: TabDocumentType.scriptExtension(for: .mongodb))
+        == .javaScript)
+    #expect(
+      UTType.scriptContentType(forExtension: TabDocumentType.scriptExtension(for: .postgresql))
+        == .sql)
+    #expect(UTType.scriptContentType(forExtension: "js") == .javaScript)
+    #expect(UTType.scriptContentType(forExtension: "sql") == .sql)
+    #expect(UTType.redisScript.identifier == "ace.thi.dblore.redis-script")
+  }
+
+  @Test("A Redis workspace makes Untitled.redis, refuses a user .sql open and opens a .redis")
+  func redisWorkspace() async throws {
+    let (folder, _, sql) = try Self.makeFiles()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let redisFile = folder.appendingPathComponent("commands.redis")
+    try Data("GET user:1".utf8).write(to: redisFile)
+    let (manager, suite, name) = try Self.manager(Self.redis)
+    defer { suite.removePersistentDomain(forName: name) }
+
+    #expect(manager.isRedisWorkspace)
+    manager.newSQLFile()
+    #expect(manager.tabs.map(\.title) == ["Untitled.redis"])
+
+    await #expect(throws: (any Error).self) {
+      try await manager.openFile(url: sql, checksScriptKind: true)
+    }
+    #expect(manager.tabs.count == 1)
+
+    try await manager.openFile(url: redisFile, checksScriptKind: true)
+    #expect(manager.tabs.map(\.fileURL) == [nil, redisFile])
+    #expect(manager.tabs.last?.documentType == .sqlFile)
+    let tabId = try #require(manager.tabs.last?.id)
+    #expect(manager.editorDocument(for: tabId)?.content == "GET user:1")
   }
 }

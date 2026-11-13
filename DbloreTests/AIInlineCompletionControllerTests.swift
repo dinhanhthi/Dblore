@@ -116,6 +116,7 @@ struct AIInlineCompletionControllerTests {
       inlineEnabled: true)
     var allowed = true
     var isReadOnlySource = false
+    var dialect = SQLDialect.postgresql
     var hasClient = true
     var keyRevision = 0
     var clientBuilds = 0
@@ -138,7 +139,7 @@ struct AIInlineCompletionControllerTests {
         keyRevision: { self.keyRevision },
         sleep: { await self.sleeper.sleep($0) }, registry: registry)
       controller.isAllowed = { self.allowed }
-      controller.source = { (.postgresql, self.isReadOnlySource) }
+      controller.source = { (self.dialect, self.isReadOnlySource) }
       controller.schema = { prefix in
         self.schemaCalls.append(prefix)
         return "public.orders(id int4 PK)"
@@ -361,17 +362,23 @@ struct AIInlineCompletionControllerTests {
     #expect(harness.controller.suggestion == nil)
   }
 
-  @Test("a read-only source or an unconfigured provider sends nothing")
+  @Test("a read-only source, a Redis source or an unconfigured provider sends nothing")
   func readOnlySourceOrNoClient() async throws {
     let readOnly = Harness()
     readOnly.isReadOnlySource = true
     try await readOnly.typeAndPause()
 
+    // Redis text (an AUTH password, say) never goes into the SQL prompt: no client is built
+    let redis = Harness()
+    redis.dialect = .redis
+    try await redis.typeAndPause("AUTH s3cret ")
+    #expect(redis.clientBuilds == 0)
+
     let noClient = Harness()
     noClient.hasClient = false
     try await noClient.typeAndPause()
 
-    for harness in [readOnly, noClient] {
+    for harness in [readOnly, redis, noClient] {
       #expect(harness.client.requests.isEmpty)
       #expect(harness.schemaCalls.isEmpty)
     }

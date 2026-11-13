@@ -17,8 +17,21 @@ struct WorkspaceEmptyStateView: View {
     guard workspaceManager.connectionState.isConnected else {
       return "Connect to a database to browse its tables"
     }
+    if workspaceManager.isRedisWorkspace { return "Run Redis commands in a command tab" }
     return
       "Open a \(workspaceManager.isMongoWorkspace ? "collection" : "table") from the sidebar to view its data"
+  }
+
+  private var subtitle: String {
+    if workspaceManager.isRedisWorkspace { return "Or create a Markdown note" }
+    return
+      "Or create a notebook, \(workspaceManager.isMongoWorkspace ? "query" : "SQL file") or note"
+  }
+
+  private var openHelp: String {
+    if workspaceManager.isRedisWorkspace { return "Open a Redis command file or Markdown note" }
+    return
+      "Open a notebook, \(workspaceManager.isMongoWorkspace ? "query" : "SQL file") or Markdown note"
   }
 
   var body: some View {
@@ -32,17 +45,18 @@ struct WorkspaceEmptyStateView: View {
         Text(hint)
           .font(.headline)
           .foregroundColor(.foreground)
-        Text(
-          "Or create a notebook, \(workspaceManager.isMongoWorkspace ? "query" : "SQL file") or note"
-        )
-        .font(.callout)
-        .foregroundColor(.foregroundMuted)
+        Text(subtitle)
+          .font(.callout)
+          .foregroundColor(.foregroundMuted)
       }
       .multilineTextAlignment(.center)
 
       VStack(spacing: Spacing.sm) {
-        WelcomeActionButton(title: "New Notebook", systemImage: "doc.text") {
-          workspaceManager.newNotebook()
+        // Redis workspaces have no notebooks
+        if !workspaceManager.isRedisWorkspace {
+          WelcomeActionButton(title: "New Notebook", systemImage: "doc.text") {
+            workspaceManager.newNotebook()
+          }
         }
         WelcomeActionButton(title: workspaceManager.newScriptLabel, systemImage: "doc") {
           workspaceManager.newSQLFile()
@@ -52,8 +66,7 @@ struct WorkspaceEmptyStateView: View {
         }
         WelcomeActionButton(
           title: "Open File...", systemImage: "folder",
-          help:
-            "Open a notebook, \(workspaceManager.isMongoWorkspace ? "query" : "SQL file") or Markdown note",
+          help: openHelp,
           action: openFiles)
       }
       .frame(width: ComponentSize.welcomeSidebarWidth)
@@ -82,7 +95,7 @@ struct WorkspaceEmptyStateView: View {
     let panel = NSOpenPanel()
     panel.allowsMultipleSelection = true
     panel.canChooseDirectories = false
-    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .markdownText]
+    panel.allowedContentTypes = [.dblore, .sql, .javaScript, .redisScript, .markdownText]
 
     panel.begin { response in
       guard response == .OK else { return }

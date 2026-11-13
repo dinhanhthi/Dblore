@@ -10,34 +10,44 @@ nonisolated enum AIPrompts {
   private static let truncationMarker = "-- [truncated]"
 
   /// System prompt for the connection's query language: MongoDB gets the mongosh subset prompt
-  /// and never a SQL one; every other dialect is a SQL engine. `screen` (the collection screen
-  /// shown) only reaches the MongoDB prompt. Non-nil `review` makes it a Review or Optimize turn:
-  /// the reply is the review JSON instead of a SQL block, and a non-empty `review` (the
-  /// statement's catalog-only context) is added as data. Non-empty `rules` (the connection's AI
-  /// rules, only when AI may read the connection) end the prompt in their own labelled section.
-  /// `tools` (a turn that offers the AI tools) replaces the run block rules with tool rules;
-  /// `compact` (on-device, never offered tools) wins over it.
+  /// and never a SQL one; Redis only a refusal, with no connection data; every other dialect is
+  /// a SQL engine. `screen` (the collection screen shown) only reaches the MongoDB prompt.
+  /// Non-nil `review` makes it a Review or Optimize turn: the reply is the review JSON instead of
+  /// a SQL block, and a non-empty `review` (the statement's catalog-only context) is added as
+  /// data. Non-empty `rules` (the connection's AI rules, only when AI may read the connection)
+  /// end the prompt in their own labelled section. `tools` (a turn that offers the AI tools)
+  /// replaces the run block rules with tool rules; `compact` (on-device, never offered tools)
+  /// wins over it.
   static func system(
     databaseName: String?, schema: String, dialect: SQLDialect = .postgresql,
     runsQueries: Bool = false, compact: Bool = false, screen: AIMongoAssist.Screen? = nil,
     review: String? = nil, rules: String = "", tools: Bool = false
   ) -> String {
     let tools = tools && !compact
-    var prompt =
-      switch dialect {
-      case .mongodb:
-        mongoSystem(
-          databaseName: databaseName, schema: schema, runsQueries: runsQueries, compact: compact,
-          screen: screen, tools: tools)
-      default:
-        sqlSystem(
-          databaseName: databaseName, schema: schema, dialect: dialect, runsQueries: runsQueries,
-          compact: compact, tools: tools)
-      }
+    var prompt: String
+    switch dialect.language {
+    case .mongosh:
+      prompt = mongoSystem(
+        databaseName: databaseName, schema: schema, runsQueries: runsQueries, compact: compact,
+        screen: screen, tools: tools)
+    case .sql:
+      prompt = sqlSystem(
+        databaseName: databaseName, schema: schema, dialect: dialect, runsQueries: runsQueries,
+        compact: compact, tools: tools)
+    case .redis:
+      // Unreachable (the assistant is unavailable on Redis): no connection data, no rules
+      return redisRefusal
+    }
     if let review { prompt += "\n\n" + reviewSection(context: review) }
     let rules = rules.trimmingCharacters(in: .whitespacesAndNewlines)
     return rules.isEmpty ? prompt : prompt + "\n\nConnection rules (from the user):\n" + rules
   }
+
+  /// The whole system prompt on Redis: the assistant does not support it
+  private static let redisRefusal = """
+    You are an assistant inside a database client. This connection is not supported: reply \
+    only that the assistant cannot help with it.
+    """
 
   private static func sqlSystem(
     databaseName: String?, schema: String, dialect: SQLDialect, runsQueries: Bool, compact: Bool,

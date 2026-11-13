@@ -87,9 +87,13 @@ extension NotebookViewModel {
   }
 
   /// Why Explain is not offered: SQL Server has no `EXPLAIN` statement and its plans are not
-  /// read. Nil elsewhere.
+  /// read; Redis has no plans. Nil elsewhere.
   var explainUnavailableReason: String? {
-    sqlDialect == .sqlserver ? "Explain is not available for SQL Server connections" : nil
+    switch sqlDialect.language {
+    case .sql where sqlDialect == .sqlserver: "Explain is not available for SQL Server connections"
+    case .sql, .mongosh: nil
+    case .redis: "Explain is not available for Redis connections"
+    }
   }
 
   private var isMongoConnection: Bool {

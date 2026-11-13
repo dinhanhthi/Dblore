@@ -101,10 +101,9 @@ struct MongoRoutingTests {
     // Explain Analyze
     #expect(!capabilities.supportsExplainAnalyze)
     #expect(!capabilities.supportsExplainJSON)
+    // The dialect's language and the capabilities' query language agree for every engine
     for type in DatabaseType.allCases {
-      #expect(
-        (type.capabilities.queryLanguage == .mongosh) == (type.dialect == .mongodb),
-        "\(type.rawValue)")
+      #expect(type.dialect.language == type.capabilities.queryLanguage, "\(type.rawValue)")
     }
   }
 
