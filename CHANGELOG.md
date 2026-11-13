@@ -2,11 +2,15 @@
 
 All notable user-visible changes to Dblore, newest first. Each release is a section headed `## vX.Y.Z (YYYY-MM-DD)` with `### Security`, `### Added`, `### Improved`, `### Fixed` and `### Upgrade notes` subsections (empty ones omitted); every entry ends with links to its commits. Sections are written by `/cf-ship`, and the release workflow publishes the matching section as the GitHub Release notes.
 
-## Unreleased
+## v0.10.1 (2026-11-13)
 
 ### Added
 
 - **Redis (plugin).** Connect to Redis 6.0 or later once the Redis plugin is installed from Settings > Plugins (about 177 KB, downloaded on demand): host and port (6379), an optional ACL user, the password and a database index from 0 to 15, over TLS (Verify Full, optionally with a custom CA) or plain TCP to a host on the local network, directly or through an SSH tunnel. A Redis workspace has command tabs (`.redis` files) that run commands in the database you pick, show each reply as Grid or Raw and Cancel a running command (a reply stops at 10,000 rows); a sidebar with db0 to db15, their key counts and their keys in folders split at `:`, filtered by a match pattern; and key tabs that show a key's type, TTL and size and its value (a string as Text, Hex or JSON, a hash, list, set, sorted set or stream in pages of 200). Edit strings, hash fields, list elements, sorted set scores and the TTL, add fields, elements, members and stream entries, remove fields, members and entries, rename or delete a key and create one with New Key; every edit is listed in History. Each command is checked before it is sent: Read-only allows reads only, Schema Protected blocks admin, destructive, script and unknown commands, destructive commands such as `FLUSHALL` always ask first, and command tabs refuse `SELECT`, `AUTH`, `MULTI`, subscribe and blocking commands. Read-only is checked by Dblore and the plugin, not the server; for a guarantee on the server, use an ACL user without write commands. Import Connections reads Redis connections from TablePlus (no password; a TLS mode other than Disable or Verify Full becomes Verify Full and a database outside 0 to 15 becomes 0, each with a note) and from a Dblore connections file. Not in this version: notebooks, the schema visualizer, the AI assistant, result export, MCP and Shortcuts. [#bc96e522](https://github.com/dinhanhthi/Dblore/commit/bc96e522) [#bbef502d](https://github.com/dinhanhthi/Dblore/commit/bbef502d) [#8ac878c0](https://github.com/dinhanhthi/Dblore/commit/8ac878c0) [#82874413](https://github.com/dinhanhthi/Dblore/commit/82874413) [#0ca22c38](https://github.com/dinhanhthi/Dblore/commit/0ca22c38) [#716e3d6b](https://github.com/dinhanhthi/Dblore/commit/716e3d6b) [#667c56b3](https://github.com/dinhanhthi/Dblore/commit/667c56b3) [#027b01fa](https://github.com/dinhanhthi/Dblore/commit/027b01fa) [#a16ccae8](https://github.com/dinhanhthi/Dblore/commit/a16ccae8)
+
+### Improved
+
+- **Settings > Developer.** The "Show experimental engines" toggle is gone: every available engine is listed in the connection form's engine picker, a plugin engine once its plugin is installed. [#62d03b32](https://github.com/dinhanhthi/Dblore/commit/62d03b32)
 
 ### Upgrade notes
 
