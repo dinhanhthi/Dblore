@@ -517,19 +517,9 @@ struct SettingsModalSaveOptionsSection: View {
 
 struct SettingsModalDeveloperSection: View {
   @Binding var isExportingLogs: Bool
-  @Bindable private var appSettings = AppSettings.shared
 
   var body: some View {
     VStack(alignment: .leading, spacing: Spacing.lg) {
-      SettingsGroupCard(title: "Connection form") {
-        SettingsToggle(
-          title: "Show experimental engines",
-          description:
-            "Include database engines that are not ready for general use in the connection form.",
-          isOn: $appSettings.showExperimentalEngines
-        )
-      }
-
       SettingsGroupCard(
         title: "Logs",
         accessory: {

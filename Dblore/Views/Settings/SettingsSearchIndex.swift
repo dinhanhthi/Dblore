@@ -377,15 +377,10 @@ extension SettingsModal.SettingsTab {
     case .developer:
       return [
         .init(
-          card: "Connection form", title: "Show experimental engines",
-          detail:
-            "Include database engines that are not ready for general use in the connection form."
-        ),
-        .init(
           card: "Logs", title: "Export Logs",
           detail:
             "Export diagnostic logs to share with developers for troubleshooting. Logs include app activity and error messages."
-        ),
+        )
       ]
     case .shortcuts:
       return [

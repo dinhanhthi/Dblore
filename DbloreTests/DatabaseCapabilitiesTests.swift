@@ -28,41 +28,34 @@ struct DatabaseCapabilitiesTests {
   @Test("The picker hides DuckDB while its plugin is not installed")
   func pickerHidesDuckDBWithoutPlugin() {
     let types = DatabaseType.connectionPickerTypes(
-      showExperimental: false, isPluginInstalled: { _ in false })
+      isPluginInstalled: { _ in false })
     #expect(types == [.postgresql, .sqlite, .mysql, .mongodb])
   }
 
   @Test("The picker lists DuckDB once its plugin is installed")
   func pickerListsDuckDBWithPlugin() {
     let types = DatabaseType.connectionPickerTypes(
-      showExperimental: false, isPluginInstalled: { $0 == .duckdb })
+      isPluginInstalled: { $0 == .duckdb })
     #expect(types == [.postgresql, .sqlite, .duckdb, .mysql, .mongodb])
   }
 
-  @Test("Showing experimental engines does not list DuckDB without its plugin")
-  func experimentalToggleDoesNotBypassPlugin() {
+  @Test("MongoDB is listed after MySQL")
+  func pickerListsMongoDBAfterMySQL() {
     let types = DatabaseType.connectionPickerTypes(
-      showExperimental: true, isPluginInstalled: { _ in false })
-    #expect(!types.contains(.duckdb))
-  }
-
-  @Test("MongoDB is listed after MySQL without experimental engines")
-  func pickerListsMongoDBWithoutExperimental() {
-    let types = DatabaseType.connectionPickerTypes(
-      showExperimental: false, isPluginInstalled: { _ in false })
+      isPluginInstalled: { _ in false })
     #expect(types.last == .mongodb)
     #expect(types.firstIndex(of: .mysql).map { $0 + 1 } == types.firstIndex(of: .mongodb))
   }
 
-  @Test("Redis is available, so the picker lists it without experimental engines once installed")
+  @Test("Redis is available, so the picker lists it once its plugin is installed")
   func pickerListsRedisOnlyWithPlugin() {
     #expect(DatabaseType.redis.capabilities.isAvailable)
     #expect(DatabaseType.redis.capabilities.requiresPlugin)
     let installed = DatabaseType.connectionPickerTypes(
-      showExperimental: false, isPluginInstalled: { $0 == .redis })
+      isPluginInstalled: { $0 == .redis })
     #expect(installed.contains(.redis))
     let missing = DatabaseType.connectionPickerTypes(
-      showExperimental: false, isPluginInstalled: { _ in false })
+      isPluginInstalled: { _ in false })
     #expect(!missing.contains(.redis))
   }
 

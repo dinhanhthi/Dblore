@@ -419,7 +419,6 @@ class AppSettings {
     static let historyMaxEntries = "app.settings.historyMaxEntries"
     static let rewindEnabled = "app.settings.rewindEnabled"
     static let rewindRetentionDays = "app.settings.rewindRetentionDays"
-    static let showExperimentalEngines = "app.settings.showExperimentalEngines"
     static let resultFontSize = "app.settings.resultFontSize"
     static let colorValuesByType = "app.settings.colorValuesByType"
     static let neutralizesCopiedFormulas = "app.settings.neutralizesCopiedFormulas"
@@ -918,14 +917,6 @@ class AppSettings {
       }
       defaults.set(rewindRetentionDays, forKey: Keys.rewindRetentionDays)
       RewindPrune.schedule()
-    }
-  }
-
-  /// Show database engines with `isAvailable == false` in the connection type picker.
-  /// Default: false (the picker stays hidden while only PostgreSQL is available)
-  var showExperimentalEngines: Bool = false {
-    didSet {
-      defaults.set(showExperimentalEngines, forKey: Keys.showExperimentalEngines)
     }
   }
 
@@ -1457,10 +1448,6 @@ class AppSettings {
       rewindRetentionDays = clamped
     }
 
-    if defaults.object(forKey: Keys.showExperimentalEngines) != nil {
-      showExperimentalEngines = defaults.bool(forKey: Keys.showExperimentalEngines)
-    }
-
     if defaults.object(forKey: Keys.historyMaxEntries) != nil {
       let stored = defaults.integer(forKey: Keys.historyMaxEntries)
       let clamped = Self.clampHistoryMaxEntries(stored)
@@ -1616,7 +1603,6 @@ class AppSettings {
     historyMaxEntries = Self.defaultHistoryMaxEntries
     rewindEnabled = true
     rewindRetentionDays = Self.defaultRewindRetentionDays
-    showExperimentalEngines = false
     notifyLongQueries = false
     longQueryThresholdSeconds = Self.defaultLongQueryThresholdSeconds
     notifyOnlyWhenInactive = true

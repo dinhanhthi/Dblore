@@ -271,9 +271,6 @@ nonisolated enum AppSettingsTools {
     points("maxResultHeight", "Max Height", "Results", 200...1000, step: 50, \.maxResultHeight),
     toggle("historyEnabled", "Record query history", "Data", onOnly: true, \.historyEnabled),
     toggle("rewindEnabled", "Record Data Rewind", "Data", onOnly: true, \.rewindEnabled),
-    toggle(
-      "showExperimentalEngines", "Show experimental engines", "Developer",
-      \.showExperimentalEngines),
   ]
 
   /// Settings and areas the AI may not change: security, keys, outside access, data exposure,

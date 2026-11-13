@@ -14,7 +14,7 @@ struct DatabaseTypePickerTests {
   @Test("A saved DuckDB connection keeps DuckDB selectable without the plugin")
   func savedDuckDBKeepsSelection() {
     let types = ConnectionFormModal.pickerTypes(
-      showExperimental: false, current: .duckdb, isPluginInstalled: { _ in false })
+      current: .duckdb, isPluginInstalled: { _ in false })
     #expect(types == [.postgresql, .sqlite, .duckdb, .mysql, .mongodb])
   }
 

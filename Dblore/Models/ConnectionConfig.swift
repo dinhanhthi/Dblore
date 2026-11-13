@@ -363,17 +363,15 @@ enum DatabaseType: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  /// Engines listed in the connection form. Unavailable engines appear only when
-  /// `showExperimental` is on. An engine that `requiresPlugin` appears only when
-  /// `isPluginInstalled` says so, whatever the toggle. The default provider reports no plugin
-  /// installed. Saved connections are not filtered here.
+  /// Engines listed in the connection form: available ones only. An engine that
+  /// `requiresPlugin` appears only when `isPluginInstalled` says so. The default provider reports
+  /// no plugin installed. Saved connections are not filtered here.
   nonisolated static func connectionPickerTypes(
-    showExperimental: Bool,
     isPluginInstalled: (DatabaseType) -> Bool = { _ in false }
   ) -> [DatabaseType] {
     allCases.filter { type in
       let capabilities = type.capabilities
-      guard capabilities.isAvailable || showExperimental else { return false }
+      guard capabilities.isAvailable else { return false }
       return !capabilities.requiresPlugin || isPluginInstalled(type)
     }
   }

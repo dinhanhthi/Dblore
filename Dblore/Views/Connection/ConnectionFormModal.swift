@@ -62,7 +62,6 @@ struct ConnectionFormModal: View {
   private var databaseTypeMenu: some View {
     let registry = PluginRegistry.shared
     let types = Self.pickerTypes(
-      showExperimental: AppSettings.shared.showExperimentalEngines,
       current: connectionConfig.databaseType,
       isPluginInstalled: { registry.isEngineInstalledOrPending($0) })
     // A capsule like the form's dropdowns, so it is white on the header in light
@@ -143,12 +142,10 @@ struct ConnectionFormModal: View {
   /// Picker engines. The engine of the connection being edited stays listed even when its
   /// plugin is missing, so the picker never shows an empty selection.
   nonisolated static func pickerTypes(
-    showExperimental: Bool,
     current: DatabaseType,
     isPluginInstalled: (DatabaseType) -> Bool
   ) -> [DatabaseType] {
     DatabaseType.connectionPickerTypes(
-      showExperimental: showExperimental,
       isPluginInstalled: { $0 == current || isPluginInstalled($0) })
   }
 }
