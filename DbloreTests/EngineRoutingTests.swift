@@ -183,7 +183,8 @@ struct EngineRoutingTests {
     fake.batches = [[[.text("0"), .text("simple"), .text("OK")]]]
     let session = redisSession(fake)
     try await session.open()
-    let command = RedisCommand(args: [Data("SET".utf8), Data("k".utf8), Data([0xFF, 0x00])], db: 3)
+    let command = RedisCommand(
+      args: [Data("SET".utf8), Data("k".utf8), Data([0xFF, 0x00])], db: 3)
 
     let source = try await session.send(command)
     var rows: [[CellValue]] = []

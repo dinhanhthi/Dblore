@@ -418,14 +418,10 @@ class PendingFileOpen {
   }
 }
 
-/// The entry point: the app, or in a DEBUG build launched with `-DbloreEngineProbe <json>` only
-/// the engine plugin probe (no app, delegate, window or saved state; see `EnginePluginProbe`).
+/// The entry point: launches the SwiftUI app.
 @main
 enum DbloreMain {
   @MainActor static func main() {
-    #if DEBUG
-      if EnginePluginProbe.isRequested { EnginePluginProbe.runAndExit() }
-    #endif
     DbloreApp.main()
   }
 }
